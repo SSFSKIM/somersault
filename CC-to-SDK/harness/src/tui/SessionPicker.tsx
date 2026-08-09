@@ -27,9 +27,10 @@ import { InputText, Select } from "./select/Select.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import type { SessionInfo } from "./useChat.js";
 import {
-  filterSessions, NO_CONVERSATIONS, noSessionsMatch, PREVIEW_EMPTY, PREVIEW_FOOTER, PREVIEW_LOADING,
-  previewLines, previewMeta, REFRESHING, RENAME_FOOTER, RENAME_TITLE, renamePlaceholder, RESUME_FOOTER,
-  resumeHeader, resumeVisibleRows, SEARCH_PLACEHOLDER, SEARCH_PREFIX, sessionMeta, sessionTitle,
+  filterSessions, NARROWED_SCOPE, NO_CONVERSATIONS, noSessionsMatch, PREVIEW_EMPTY, PREVIEW_FOOTER,
+  PREVIEW_LOADING, previewLines, previewMessageCount, previewMeta, REFRESHING, RENAME_FOOTER, RENAME_TITLE,
+  renamePlaceholder, RESUME_FOOTER, resumeFooter, resumeHeader, resumeVisibleRows, SEARCH_PLACEHOLDER,
+  SEARCH_PREFIX, sessionMeta, sessionTitle, type ResumeScope,
 } from "./sessionPickerModel.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
@@ -52,10 +53,16 @@ function PickerFrame({ header, footer, children }: { header: React.ReactNode; fo
   );
 }
 
-export function SessionPicker({ sessions, onPick, onCancel, loadMessages, renameSession, refreshing = false, rows, columns }: {
+export function SessionPicker({ sessions, onPick, onCancel, loadMessages, renameSession, reload, hasWorktree = false, refreshing = false, rows, columns }: {
   sessions: SessionInfo[];
   onPick: (s: SessionInfo) => void;
   onCancel: () => void;
+  /** Re-run `listSessions` under a widened scope (Wave S T10). Absent → neither widen chord is offered, which
+   *  is upstream's own gate: Ctrl+A appears only when an `onToggleAllProjects` callback exists (`d`, L476627). */
+  reload?: (scope: ResumeScope) => Promise<SessionInfo[]>;
+  /** Upstream's `R` gate — `git worktree list --porcelain` found more than one checkout. Detected by the
+   *  caller (useChat) so the picker never waits on a child process to open. */
+  hasWorktree?: boolean;
   /** The preview fetch (`getSessionMessages`). Absent → Space is inert, which is what an unwired caller
    *  should get rather than a pane that can never fill. */
   loadMessages?: (id: string) => Promise<unknown[]>;
@@ -82,15 +89,23 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   // `lines: null` is "still loading". No session id is kept beside it: which session the pane is about is
   // `focused`, and the token below is what makes a late arrival for another row a no-op.
   const [preview, setPreview] = useState<{ lines: ReturnType<typeof previewLines> | null; count: number }>({ lines: null, count: 0 });
+  // Wave S T10. The scope is the PICKER's, not the caller's: only this component knows which chords have been
+  // pressed, and the caller's `sessions` prop is just the narrowed set it opened with. `widened` holds what the
+  // last re-query returned (null = "nobody has widened anything yet, use the prop").
+  const [scope, setScope, scopeRef] = useRefState<ResumeScope>(NARROWED_SCOPE);
+  const [widened, setWidened] = useState<SessionInfo[] | null>(null);
+  const [reloading, setReloading] = useState(false);
   const mounted = useRef(true);
   const previewToken = useRef(0);
+  const reloadToken = useRef(0);
   useEffect(() => () => { mounted.current = false; }, []);
 
   const titleOf = (s: SessionInfo) => renames[s.sessionId] ?? sessionTitle(s);
-  const filtered = filterSessions(sessions, query, titleOf);
+  const rowsOf = () => widened ?? sessions;
+  const filtered = filterSessions(rowsOf(), query, titleOf);
   /** The list as of the LATEST dispatched key — what an accept in the same chunk as a query keystroke must
    *  resolve its row against. Identical to `filtered` at render time; only handlers need the getter. */
-  const liveFiltered = () => filterSessions(sessions, queryRef.current, titleOf);
+  const liveFiltered = () => filterSessions(rowsOf(), queryRef.current, titleOf);
   const focused = filtered.find((s) => s.sessionId === focusId) ?? filtered[0];
   const liveFocused = () => { const f = liveFiltered(); return f.find((s) => s.sessionId === focusId) ?? f[0]; };
   const visible = resumeVisibleRows(rows ?? process.stdout.rows ?? 24);
@@ -108,8 +123,23 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     setStage("preview");
     void loadMessages(id).then((msgs) => {
       if (!mounted.current || previewToken.current !== token) return;
-      setPreview({ lines: previewLines(msgs), count: msgs.length });
+      // ONE PREDICATE (sessionPickerModel.ts): the `N messages` line counts exactly the rows the pane draws,
+      // windowing aside. `msgs.length` counted tool traffic the pane had already dropped (qa4-07 ii).
+      setPreview({ lines: previewLines(msgs), count: previewMessageCount(msgs) });
     }, () => { if (mounted.current && previewToken.current === token) setPreview({ lines: [], count: 0 }); });
+  };
+  /** A widen chord: flip one axis, then re-query through the caller's loader. Tokened like the preview fetch —
+   *  Ctrl+A Ctrl+A in one chunk fires two queries, and only the last one may land. */
+  const widen = (patch: Partial<ResumeScope>) => {
+    if (!reload) return;
+    const next = { ...scopeRef.current, ...patch };
+    setScope(next);
+    const token = ++reloadToken.current;
+    setReloading(true);
+    void reload(next).then((rows) => {
+      if (!mounted.current || reloadToken.current !== token) return;
+      setWidened(rows); setReloading(false);
+    }, () => { if (mounted.current && reloadToken.current === token) setReloading(false); });
   };
   const startRename = () => {
     if (!liveFocused() || !renameSession) return;
@@ -144,6 +174,11 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     // which is the state the footer advertises it in. Recorded divergence (T15).
     ...(stage === "list" && query === "" ? { "sessionPicker:preview": openPreview } : {}),
     ...(stage === "list" ? { "sessionPicker:rename": startRename } : {}),
+    // The widen chords, gated exactly as upstream gates their hints (L476627): Ctrl+A on the reload seam
+    // existing (`d`), Ctrl+W on that AND a detected worktree (`R`). Unregistered, they fall through to the
+    // fallback, which drops every ctrl key — so an ungated repo sees a dead chord, not a stray search char.
+    ...(stage === "list" && reload ? { "sessionPicker:allProjects": () => widen({ allProjects: !scopeRef.current.allProjects }) } : {}),
+    ...(stage === "list" && reload && hasWorktree ? { "sessionPicker:allWorktrees": () => widen({ allWorktrees: !scopeRef.current.allWorktrees }) } : {}),
     "sessionPicker:dismiss": () => { if (stage !== "list") backToList(); else escapeList(); },
   });
 
@@ -215,17 +250,17 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   const header = (
     <Text bold color={role("suggestion")}>
       {resumeHeader(position, filtered.length, filtered.length > visible)}
-      {refreshing ? <Text dimColor>{REFRESHING}</Text> : null}
+      {refreshing || reloading ? <Text dimColor>{REFRESHING}</Text> : null}
     </Text>
   );
   return (
-    <PickerFrame footer={RESUME_FOOTER} header={header}>
+    <PickerFrame footer={reload ? resumeFooter(scope, hasWorktree) : RESUME_FOOTER} header={header}>
       {/* `AL` (L435311): the prefix, then the query or its placeholder, in a rounded box of its own. */}
       <Box borderStyle="round" borderDimColor paddingX={1}>
         <Text dimColor={!query}>{SEARCH_PREFIX} </Text>
         <InputText text={query} cursor={query.length} placeholder={SEARCH_PLACEHOLDER} />
       </Box>
-      {sessions.length === 0
+      {rowsOf().length === 0
         ? <Box paddingLeft={1}><Text dimColor>{NO_CONVERSATIONS}</Text></Box>
         : filtered.length === 0
           ? <Box paddingLeft={1}><Text dimColor>{noSessionsMatch(query)}</Text></Box>

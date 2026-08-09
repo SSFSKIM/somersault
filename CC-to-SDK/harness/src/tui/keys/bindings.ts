@@ -152,6 +152,10 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // into the rename field instead of opening a preview.
   { context: "SessionPicker", bindings: {
     "space": "sessionPicker:preview", "ctrl+r": "sessionPicker:rename", "escape": "sessionPicker:dismiss",
+    // Wave S T10: the two widen controls (`fr`, L476542). They MUST be bound here — SessionPicker.tsx's own
+    // fallback drops anything with `key.ctrl` set, so an unbound \x01 would reach nobody. `ctrl+b` (upstream's
+    // third, all-branches) stays NULL below: CTRL-B-1, a permanent recorded divergence, not an omission to fix.
+    "ctrl+a": "sessionPicker:allProjects", "ctrl+w": "sessionPicker:allWorktrees",
     // An overlay owner, like Select/Settings/MessageSelector — and it needs its OWN copy of the suppression
     // rather than leaning on the inner Select's, because rename and preview unmount that Select. ctrl+r is
     // REBOUND above rather than nulled (HistorySearch's precedent, same reasoning: the surface owns the key).
@@ -275,8 +279,10 @@ export const VALID_ACTIONS: readonly string[] = [
   "messageSelector:dismiss",
   // F6 T11. `modelPicker:decreaseEffort`/`increaseEffort` are upstream's other two ModelPicker actions and are
   // deliberately NOT declared: the effort axis is a non-goal this wave, and this list is pinned to exactly what
-  // the table binds. The three `sessionPicker:*` names are OURS — upstream reads those keys raw (see the block).
+  // the table binds. The five `sessionPicker:*` names are OURS — upstream reads those keys raw (see the block);
+  // the last two arrived with Wave S T10's widen controls.
   "modelPicker:thisSessionOnly", "sessionPicker:preview", "sessionPicker:rename", "sessionPicker:dismiss",
+  "sessionPicker:allProjects", "sessionPicker:allWorktrees",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
   "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal", "confirm:toggleExplanation",
   "settings:search",

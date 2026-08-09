@@ -9,9 +9,11 @@ import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import type { SessionInfo } from "../../src/tui/useChat.js";
 import {
-  filterSessions, NO_CONVERSATIONS, noSessionsMatch, previewLines, previewMeta, RENAME_FALLBACK,
-  renamePlaceholder, resumeHeader, resumeVisibleRows, sessionMeta, sessionTitle,
+  filterSessions, isPreviewMessage, NARROWED_SCOPE, NO_CONVERSATIONS, noSessionsMatch, PREVIEW_ROWS,
+  previewLines, previewMessageCount, previewMeta, RENAME_FALLBACK, renamePlaceholder, RESUME_CANCELLED,
+  resumeFooter, resumeHeader, resumeVisibleRows, sessionMeta, sessionTitle, widenHints,
 } from "../../src/tui/sessionPickerModel.js";
+import type { ResumeScope } from "../../src/tui/sessionPickerModel.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -86,6 +88,71 @@ describe("sessionPickerModel — the pure half", () => {
     ];
     expect(previewLines(msgs)).toEqual([{ role: "user", text: "hello there" }, { role: "assistant", text: "hi" }]);
     expect(previewLines(Array.from({ length: 30 }, () => ({ type: "user", message: { content: "x" } })), 3)).toHaveLength(3);
+  });
+});
+
+// ── Wave S Task 10 ─────────────────────────────────────────────────────────────────────────────────
+const userPrompt = (text: string) => ({ type: "user", message: { content: text } });
+const assistantText = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+const toolResultOnly = () => ({ type: "user", message: { content: [{ type: "tool_result", content: "x" }] } });
+const toolUseOnly = () => ({ type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } });
+const manyMixedRows = (n: number) =>
+  Array.from({ length: n }, (_, i) => [userPrompt(`ask ${i}`), toolResultOnly(), assistantText(`say ${i}`), toolUseOnly(),
+                                       { type: "system", subtype: "init" }][i % 5]!);
+
+describe("sessionPickerModel — the resume outcome line and the widen controls (Wave S T10)", () => {
+  it("prints upstream's cancel copy, exactly (A11, L476806)", () => {
+    expect(RESUME_CANCELLED).toBe("Resume cancelled");
+  });
+
+  it("labels each widen control with the state it would move TO (A12, L476627)", () => {
+    expect(widenHints({ allProjects: false, allWorktrees: false }, true)).toEqual([
+      { chord: "Ctrl+A", action: "show all projects" },
+      { chord: "Ctrl+W", action: "show all worktrees" },
+    ]);
+    expect(widenHints({ allProjects: true, allWorktrees: false }, true)[0])
+      .toEqual({ chord: "Ctrl+A", action: "only show current repo" });
+    expect(widenHints({ allProjects: false, allWorktrees: true }, true)[1])
+      .toEqual({ chord: "Ctrl+W", action: "only show current worktree" });
+  });
+
+  it("hides Ctrl+W when no worktree is detected (upstream's `R` gate)", () => {
+    expect(widenHints(NARROWED_SCOPE, false).map((h) => h.chord)).toEqual(["Ctrl+A"]);
+    expect(NARROWED_SCOPE).toEqual({ allProjects: false, allWorktrees: false });   // upstream STARTS narrowed
+  });
+
+  it("puts the widen clauses ahead of the rest of the footer, in upstream's order", () => {
+    expect(resumeFooter(NARROWED_SCOPE, true))
+      .toBe("Ctrl+A to show all projects · Ctrl+W to show all worktrees · space to preview · Ctrl+R to rename · Type to search · esc to cancel");
+    expect(resumeFooter(NARROWED_SCOPE, false)).not.toContain("Ctrl+W");
+  });
+
+  it("counts only the rows the preview pane actually renders (qa4-07 ii, `Pqs` L369043)", () => {
+    const rows = [userPrompt("hi"), assistantText("hello"), toolResultOnly(), userPrompt("again")];
+    expect(previewMessageCount(rows)).toBe(3);              // the tool-result-only row is not a message
+    // `$$_`/`B$_` (L369021/L369035) in full: meta user turns, blank text, tool-use-only and thinking-only
+    // assistant turns, and every attachment/system/progress entry are all out.
+    expect(isPreviewMessage({ type: "user", isMeta: true, message: { content: "caveat" } })).toBe(false);
+    expect(isPreviewMessage({ type: "user", message: { content: "   " } })).toBe(false);
+    expect(isPreviewMessage({ type: "user", message: { content: [{ type: "image" }] } })).toBe(true);
+    expect(isPreviewMessage(toolUseOnly())).toBe(false);
+    expect(isPreviewMessage({ type: "assistant", message: { content: [{ type: "thinking", thinking: "hm" }] } })).toBe(false);
+    expect(isPreviewMessage({ type: "assistant", message: { content: [{ type: "text", text: "  " }] } })).toBe(false);
+    expect(isPreviewMessage({ type: "system", subtype: "init" })).toBe(false);
+    expect(isPreviewMessage({ type: "progress" })).toBe(false);
+  });
+
+  it("count and pane apply the SAME predicate", () => {
+    // NOT "the count equals the pane's row count" — `previewLines` ends `return out.slice(-PREVIEW_ROWS)`,
+    // so for any transcript longer than the window the total and the windowed tail MUST differ. What has to
+    // be shared is the predicate.
+    const rows = manyMixedRows(40);
+    expect(previewMessageCount(rows)).toBe(rows.filter(isPreviewMessage).length);
+    expect(previewMessageCount(rows)).toBeGreaterThan(PREVIEW_ROWS);
+    expect(previewLines(rows).length).toBeLessThanOrEqual(PREVIEW_ROWS);
+    // …and no row the count admits is silently dropped by the pane: on a short transcript they agree exactly.
+    const short = manyMixedRows(10);
+    expect(previewLines(short).length).toBe(previewMessageCount(short));
   });
 });
 
@@ -297,6 +364,21 @@ describe("SessionPicker — Ctrl-R renames (L476568/L476609)", () => {
     expect(r.renamed).toEqual([]);
   });
 
+  it("counts the previewed transcript with the PANE's predicate, not its raw row count (qa4-07 ii)", async () => {
+    const r = mount({
+      loadMessages: async () => [
+        { type: "user", message: { content: "what does this do?" } },
+        { type: "user", message: { content: [{ type: "tool_result", content: "1000 lines" }] } },
+        { type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } },
+        { type: "assistant", message: { content: [{ type: "text", text: "it resumes" }] } },
+      ],
+    });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("it resumes"));
+    expect(flat(frame(r.lastFrame))).toContain("2 messages");               // not "4 messages"
+  });
+
   it("with no rename seam wired, Ctrl-R is inert rather than a dead-end stage", async () => {
     const picked: string[] = [];
     const r = render(<SessionPicker sessions={SESSIONS} onPick={(s) => picked.push(s.sessionId)} onCancel={() => {}} rows={40} columns={100} />);
@@ -304,5 +386,66 @@ describe("SessionPicker — Ctrl-R renames (L476568/L476609)", () => {
     r.stdin.write("\x12"); r.stdin.write(" ");
     await tick();
     expect(flat(frame(r.lastFrame))).toContain("space to preview");         // still the list
+  });
+});
+
+describe("SessionPicker — the widen controls (Wave S T10, A12)", () => {
+  const OTHER: SessionInfo[] = [{ sessionId: "4444dddd-0004", summary: "a session from another repo", lastModified: NOW }];
+  const WORKTREE: SessionInfo[] = [{ sessionId: "5555eeee-0005", summary: "a session from a linked worktree", lastModified: NOW }];
+
+  function mountWiden(hasWorktree: boolean) {
+    const calls: ResumeScope[] = [];
+    const reload = async (scope: ResumeScope) => {
+      calls.push(scope);
+      return scope.allProjects ? [...SESSIONS, ...OTHER] : scope.allWorktrees ? [...SESSIONS, ...WORKTREE] : SESSIONS;
+    };
+    const r = render(
+      <SessionPicker sessions={SESSIONS} onPick={() => {}} onCancel={() => {}} reload={reload} hasWorktree={hasWorktree}
+                     rows={40} columns={100} />,
+    );
+    return { ...r, calls };
+  }
+
+  it("Ctrl+A widens to every project, re-queries WITHOUT the cwd filter, and flips its own label", async () => {
+    const r = mountWiden(true);
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    expect(flat(frame(r.lastFrame))).toContain("Ctrl+A to show all projects");
+    r.stdin.write("\x01");                                                  // Ctrl+A
+    await waitFor(() => flat(frame(r.lastFrame)).includes("a session from another repo"));
+    expect(r.calls.at(-1)).toEqual({ allProjects: true, allWorktrees: false });
+    expect(flat(frame(r.lastFrame))).toContain("Ctrl+A to only show current repo");
+    r.stdin.write("\x01");                                                  // …and back
+    await waitFor(() => !flat(frame(r.lastFrame)).includes("a session from another repo"));
+    expect(r.calls.at(-1)).toEqual({ allProjects: false, allWorktrees: false });
+    expect(flat(frame(r.lastFrame))).toContain("Ctrl+A to show all projects");
+  });
+
+  it("Ctrl+W widens to every worktree of this repo, and only when one was detected", async () => {
+    const r = mountWiden(true);
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    expect(flat(frame(r.lastFrame))).toContain("Ctrl+W to show all worktrees");
+    r.stdin.write("\x17");                                                  // Ctrl+W
+    await waitFor(() => flat(frame(r.lastFrame)).includes("a session from a linked worktree"));
+    expect(r.calls.at(-1)).toEqual({ allProjects: false, allWorktrees: true });
+    expect(flat(frame(r.lastFrame))).toContain("Ctrl+W to only show current worktree");
+  });
+
+  it("hides Ctrl+W — and leaves the chord inert — with no worktree detected", async () => {
+    const r = mountWiden(false);
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    expect(flat(frame(r.lastFrame))).not.toContain("Ctrl+W");
+    r.stdin.write("\x17");
+    await tick();
+    expect(r.calls).toEqual([]);
+    expect(flat(frame(r.lastFrame))).toContain("refactor the parser");      // and it did NOT type into the query
+  });
+
+  it("with no reload seam wired, neither chord is offered (upstream gates Ctrl+A on the callback existing)", async () => {
+    const r = mount();                                                      // no `reload` prop
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    const f = flat(frame(r.lastFrame));
+    expect(f).not.toContain("Ctrl+A");
+    expect(f).not.toContain("Ctrl+W");
+    expect(f).toContain("space to preview");
   });
 });

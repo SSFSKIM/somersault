@@ -52,6 +52,8 @@ import { STARTER_KEYBINDINGS, userBindingsPath } from "./keys/userBindings.js";
 import { useBindingLookup } from "./keys/KeymapProvider.js";
 import { backgroundHintText, expandHintText } from "./keys/hints.js";
 import { shortCwd } from "./banner.js";
+import { NARROWED_SCOPE, RESUME_CANCELLED, type ResumeScope } from "./sessionPickerModel.js";
+import { hasWorktrees as realHasWorktrees } from "./worktrees.js";
 import { clearViewport } from "./clearViewport.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
 import type { RawContextUsage } from "../index.js";
@@ -77,7 +79,7 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[] }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -104,7 +106,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: () => Promise<SessionInfo[]>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -257,7 +259,7 @@ export function useChat(
   // typed anything. Stays undefined for `ccx attach` (that client never saw the host's launch config).
   const [model, setModel] = useState<string | undefined>(opts.initialModel);
   const [thinkLevel, setThinkLevel] = useState(opts.initialThink ?? "default");
-  const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[] }>({ open: false, sessions: [] });
+  const [picker, setPicker] = useState<{ open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }>({ open: false, sessions: [], hasWorktree: false });
   // F6 T11: `current` is the row the picker opens on and marks as the value in force (the catalog VALUE, not
   // the resolved id — `openModelPicker` maps between them); `sessionModel` is set only by the `s` path and is
   // the sole thing that renders the picker's third header line.
@@ -305,7 +307,14 @@ export function useChat(
   const drainGen = useRef(0);                          // bumped by interrupt → invalidates any scheduled drain (no post-interrupt dispatch)
   const [staticEpoch, setStaticEpoch] = useState(0);  // bumped at a terminal boundary → mounts a FRESH append-only <Static>
   const disposed = useRef(false);
-  const listSessions = deps.listSessions ?? (() => realListSessions({ cwd: opts.cwd, limit: 30 }) as Promise<SessionInfo[]>);
+  // Wave S T10: the reader takes the picker's SCOPE now. Both axes are real `listSessions` options — dropping
+  // `cwd` widens past this project, `includeWorktrees` widens past this checkout. The flag is passed
+  // explicitly even when false because the SDK's own default is `true`: upstream STARTS narrowed on both axes
+  // (that is what makes its opening footer offer to widen), and inheriting the SDK default would start us
+  // half-widened with a footer offering a widening that had already happened.
+  const listSessions = deps.listSessions ?? ((scope: ResumeScope = NARROWED_SCOPE) =>
+    realListSessions({ ...(scope.allProjects ? {} : { cwd: opts.cwd }), includeWorktrees: scope.allWorktrees, limit: 30 }) as Promise<SessionInfo[]>);
+  const hasWorktreesFn = deps.hasWorktrees ?? ((dir: string) => realHasWorktrees(dir));
   const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
   // GONE with F5 task 12: `getSessionMessagesIn` and `listHistorySessions`, the two readers that existed
   // solely to reconstruct prompt history out of persisted TRANSCRIPTS. `loadHistory` reads `history.jsonl`
@@ -1041,10 +1050,18 @@ export function useChat(
   }
 
   async function openPicker() {
-    try { const sessions = await listSessions(); if (!disposed.current) setPicker({ open: true, sessions }); }
-    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
+    try { const sessions = await listSessions(NARROWED_SCOPE); if (!disposed.current) setPicker({ open: true, sessions, hasWorktree: false }); }
+    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); return; }
+    // Ctrl+W's gate, detected AFTER the picker is up: upstream kicks the same enumeration off in an effect
+    // (`D(...)`, L476394), and a `git worktree list` behind a slow fsmonitor must not delay the list. The
+    // chord and its hint simply appear when the answer lands, and never appear at all if git says no.
+    void hasWorktreesFn(cwd).then((yes) => { if (yes && !disposed.current) setPicker((p) => (p.open ? { ...p, hasWorktree: true } : p)); }, () => {});
   }
-  function closePicker() { if (!disposed.current) setPicker({ open: false, sessions: [] }); }
+  /** Wave S T10 (A11): the CANCEL path, and only it. A successful pick closes the same overlay through
+   *  `pickSession` below, which sets the state directly — so the outcome line cannot follow a resume. */
+  function closePicker() { if (!disposed.current) { setPicker({ open: false, sessions: [], hasWorktree: false }); notice(RESUME_CANCELLED); } }
+  /** The picker's widen re-query (Wave S T10). Same reader the open used, under the scope the picker holds. */
+  const reloadSessions = (scope: ResumeScope) => listSessions(scope);
   // Fetch the persisted transcript FIRST; only swap + replay if it has history (never drop into a broken resume).
   // Guarded on `busy` (mirrors the host's own busy-gated `resume` op, Task 2): swapping `session` mid-turn would
   // unsubscribe the `[session]`-keyed event effect from the OLD session before its turn-end event arrives, and
@@ -1085,7 +1102,7 @@ export function useChat(
   }
   function pickSession(info: SessionInfo) {
     if (disposed.current) return;
-    setPicker({ open: false, sessions: [] });
+    setPicker({ open: false, sessions: [], hasWorktree: false });   // NOT closePicker: a pick is not a cancel
     void resumeInto(info.sessionId);
   }
   // F6 T11: the resume picker's two extra verbs. They are the SAME two session calls `/resume` and `/rename`
@@ -1672,5 +1689,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }

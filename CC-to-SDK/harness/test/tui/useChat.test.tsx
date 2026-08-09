@@ -317,6 +317,32 @@ describe("useChat", () => {
     expect(calls).toBe(2);                    // initial makeSession() + resumeInto's makeSession(id)
   });
 
+  // Wave S T10 (A11). Every sibling dialog prints an outcome when it is dismissed; `/resume` printed nothing.
+  // Upstream's copy is `Resume cancelled` (L476806), and it is a CANCEL line — the successful pick closes the
+  // same overlay and must stay silent, which is why the two paths cannot share one close function.
+  it("prints `Resume cancelled` when the picker is dismissed, and never on a successful pick (A11)", async () => {
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs, hasWorktrees: async () => false };
+    const api: { run?: (s: string) => void; pick?: (s: any) => void; close?: () => void } = {};
+    function H() {
+      const c = useChat((resume?: string) => fakeRemote(resume ? { sessionId: resume } : {}), {}, deps);
+      api.run = c.submit; api.pick = (c as any).pickSession; api.close = c.closePicker;
+      return <Text>{c.state.picker.open ? "PICKER" : "NOPICK"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    api.run!("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER"));
+    api.pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
+    await waitFor(() => flat(lastFrame).includes("prior prompt"));
+    expect(frame(lastFrame)).not.toContain("Resume cancelled");       // a pick is not a cancel
+    api.run!("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER"));
+    api.close!();
+    await waitFor(() => frame(lastFrame).includes("Resume cancelled"));
+    expect(frame(lastFrame)).toContain("NOPICK");
+  });
+
   it("/resume mid-turn is blocked (no session swap); a notice is appended; the queue drains once the ORIGINAL turn ends", async () => {
     // The old session's submit pushes a turn-start event and then NEVER resolves and NEVER pushes a
     // turn-end — the test pushes that manually, later, once it has proven the swap didn't happen.

@@ -5,9 +5,14 @@
 // WHAT IS HERE VERSUS WHAT UPSTREAM HAS. Upstream's picker filters over four fields (title, git branch, tag,
 // PR) and groups forked sessions into an expandable tree (`Vgb`/`bGa`). Our session store carries neither the
 // PR/worktree metadata nor a fork lineage, and tree-select groups are a stated non-goal, so the filter is the
-// reachable subset: TITLE plus SESSION ID. The three scope toggles (Ctrl-A all projects, Ctrl-B all branches,
-// Ctrl-W all worktrees) are omitted for the same reason — `listSessions` is already cwd-scoped and there is
-// no project/branch/worktree axis to toggle. Recorded for the T15 ledger, not faked.
+// reachable subset: TITLE plus SESSION ID.
+//
+// THE SCOPE TOGGLES (Wave S T10). Two of upstream's three are BUILT here, because `listSessions` has a real
+// option behind each: Ctrl-A drops the `cwd` filter (all projects), Ctrl-W flips `includeWorktrees` (all
+// worktrees of this repo). The third, Ctrl-B (all branches), is a PERMANENT RECORDED DIVERGENCE (CTRL-B-1):
+// `listSessions` has no branch axis, and the only branch datum we hold is the `gitBranch` a row happens to
+// carry — which cannot widen a query it never narrowed. It is left unbound (bindings.ts nulls `ctrl+b` in the
+// SessionPicker context) rather than faked with a client-side filter that would silently shrink the list.
 
 import { formatRelativeTime } from "./format.js";
 
@@ -69,11 +74,41 @@ export const RENAME_FALLBACK = "Enter new session name";
 export const renamePlaceholder = (s: SessionRow): string => sessionTitle(s, RENAME_FALLBACK);
 
 /** The three footers (L476627), reduced to the reachable clauses. Upstream's list footer leads with the
- *  Ctrl-A/Ctrl-B/Ctrl-W scope toggles (omitted, above) and ends with the tree's expand/collapse hint (no
- *  tree here); what remains is verbatim, mixed case included — upstream prints `space`/`enter`/`esc` in
- *  lower case through `$e` but formats the rename chord `{modCase:"title", charCase:"upper"}` and writes
- *  `Type to search` as plain text. */
+ *  Ctrl-A/Ctrl-B/Ctrl-W scope toggles (two of them reachable — `resumeFooter` below) and ends with the tree's
+ *  expand/collapse hint (no tree here); what remains is verbatim, mixed case included — upstream prints
+ *  `space`/`enter`/`esc` in lower case through `$e` but formats the chords `{modCase:"title",
+ *  charCase:"upper"}` and writes `Type to search` as plain text. */
 export const RESUME_FOOTER = "space to preview · Ctrl+R to rename · Type to search · esc to cancel";
+
+/** L476627's two-state toggle labels. Each names the state the chord moves you TO — that is upstream's
+ *  convention, and inverting it is the obvious way to get this wrong. */
+export const WIDEN_ALL_PROJECTS = "show all projects";
+export const WIDEN_CURRENT_REPO = "only show current repo";
+export const WIDEN_ALL_WORKTREES = "show all worktrees";
+export const WIDEN_CURRENT_WORKTREE = "only show current worktree";
+/** Which way each axis is currently pointing. Upstream STARTS NARROWED on both (`u`/`L` begin false), which
+ *  is why the opening footer offers to widen; our loader has to say `includeWorktrees: false` explicitly to
+ *  match, since the SDK's own default is to include them. */
+export interface ResumeScope { allProjects: boolean; allWorktrees: boolean }
+export const NARROWED_SCOPE: ResumeScope = { allProjects: false, allWorktrees: false };
+
+/** The widen clauses, in upstream's order. `hasWorktree` is upstream's `R` gate (L476627): the chord is
+ *  offered only when `git worktree list --porcelain` enumerated more than one checkout (worktrees.ts).
+ *  Ctrl-B is absent on purpose — see the header (CTRL-B-1). */
+export function widenHints(scope: ResumeScope, hasWorktree: boolean): { chord: string; action: string }[] {
+  return [
+    { chord: "Ctrl+A", action: scope.allProjects ? WIDEN_CURRENT_REPO : WIDEN_ALL_PROJECTS },
+    ...(hasWorktree ? [{ chord: "Ctrl+W", action: scope.allWorktrees ? WIDEN_CURRENT_WORKTREE : WIDEN_ALL_WORKTREES }] : []),
+  ];
+}
+/** The list footer with the widen clauses in front of it, upstream's order (L476627). Callers that cannot
+ *  actually re-query — no reload seam — print the bare `RESUME_FOOTER`, which is upstream's `d` gate. */
+export const resumeFooter = (scope: ResumeScope, hasWorktree: boolean): string =>
+  [...widenHints(scope, hasWorktree).map((h) => `${h.chord} to ${h.action}`), RESUME_FOOTER].join(" · ");
+
+/** The outcome line `/resume` prints when it is CANCELLED — Esc from the list, never a successful pick and
+ *  never the `--resume` CLI path (`A` at L476806, `display: "system"`). */
+export const RESUME_CANCELLED = "Resume cancelled";
 export const RENAME_FOOTER = "enter to save · esc to cancel";
 export const PREVIEW_FOOTER = "enter to resume · esc to cancel";
 /** `fGa`'s loading state (L476141). `PREVIEW_EMPTY` has no upstream twin — upstream's pane renders the real
@@ -98,24 +133,55 @@ export function previewMeta(s: SessionRow, count: number, now: Date = new Date()
  *  the cursor sits on, not a second transcript view (the pager and `/resume` itself both exist for that). */
 export const PREVIEW_ROWS = 12;
 
+/** Upstream's countable-message predicate, `$$_` + `B$_` (L369021/L369035) as `Pqs` (L369043) applies them:
+ *  a USER row that is not `isMeta` and carries non-blank text or an image/document block, or an ASSISTANT row
+ *  carrying at least one non-blank text block. Everything else — tool-result-only user rows, tool-use-only and
+ *  thinking-only assistant rows, and every `attachment`/`system`/`progress` entry — is not a message.
+ *
+ *  ONE PREDICATE, TWO CONSUMERS. `previewMessageCount` (the pane's `N messages` line) and `previewLines` (the
+ *  pane itself) both gate on this. They disagreed before — the count was the raw row count — so the number and
+ *  the rows under it contradicted each other in both directions (qa4-07 ii). Keep them on this function.
+ *  Note a slash command contributes 2 upstream (the `<command-name>` message and its `<local-command-stdout>`
+ *  reply are both ordinary non-meta user rows); ours inherits that arithmetic unchanged. */
+export function isPreviewMessage(m: unknown): boolean {
+  const r = m as any;
+  if (r?.type === "user") {
+    if (r.isMeta) return false;
+    const c = r.message?.content;
+    if (!c) return false;
+    if (typeof c === "string") return c.trim().length > 0;
+    return Array.isArray(c) && c.some((b: any) => b?.type === "text" || b?.type === "image" || b?.type === "document");
+  }
+  if (r?.type === "assistant") {
+    const c = r.message?.content;
+    return Array.isArray(c) && c.some((b: any) => b?.type === "text" && typeof b.text === "string" && b.text.trim().length > 0);
+  }
+  return false;
+}
+/** `messageCount` as `dGa`'s footer prints it (L476179). Upstream stamps it at index time (`fqs`, L369062);
+ *  we have the rows in hand, so we run the same predicate over them. */
+export const previewMessageCount = (messages: readonly unknown[]): number =>
+  messages.reduce<number>((n, m) => n + (isPreviewMessage(m) ? 1 : 0), 0);
+
 export interface PreviewLine { role: "user" | "assistant"; text: string }
-/** First text block of a persisted row, however its content is shaped. A user row that carries only a
- *  `tool_result` yields "" and is dropped — the pane is the CONVERSATION, not the tool traffic. */
+/** First text block of a persisted row, however its content is shaped. */
 function rowText(m: any): string {
   const c = m?.message?.content;
   if (typeof c === "string") return c;
   if (Array.isArray(c)) return c.filter((b: any) => b?.type === "text").map((b: any) => String(b.text ?? "")).join("\n");
   return "";
 }
+/** A countable row with nothing printable in it — an image- or document-only user turn. Upstream's pane draws
+ *  the attachment through the real message renderer; ours is one line per message, so it says what is there
+ *  rather than dropping a row the count admitted. */
+export const PREVIEW_ATTACHMENT = "[attachment]";
 /** The tail of a transcript as one line per message, newest LAST (reading order). */
 export function previewLines(messages: readonly unknown[], limit = PREVIEW_ROWS): PreviewLine[] {
   const out: PreviewLine[] = [];
   for (const m of messages) {
-    const type = (m as any)?.type;
-    if (type !== "user" && type !== "assistant") continue;
-    const text = rowText(m).split("\n").map((l) => l.trim()).find((l) => l.length > 0);
-    if (!text) continue;
-    out.push({ role: type, text });
+    if (!isPreviewMessage(m)) continue;
+    const text = rowText(m).split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? PREVIEW_ATTACHMENT;
+    out.push({ role: (m as any).type, text });
   }
   return out.slice(-limit);
 }
