@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderWithKeymap } from "./keysTestUtil.js";
 import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
+import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { useChat } from "../../src/tui/useChat.js";
 import { EMPTY_SUGGESTION, suggestionRenderStep, suggestionText, markSuggestionAccepted, type PromptSuggestion, type Suggester } from "../../src/tui/suggester.js";
@@ -109,24 +110,31 @@ describe("the suggestion as composer placeholder (annex §C5.4 render path)", ()
     expect(strip(lastFrame() ?? "")).toContain("/clear");
   });
 
-  it("Tab does NOT accept while a completion popup is open — the popup owns the key", async () => {
+  // REVIEW finding #4: this used to claim it pinned Tab-vs-the-completion-popup. It cannot — the popup term
+  // in the accept guard is unreachable under the empty-buffer term (typing `/` to open the popup is itself
+  // what makes the buffer non-empty), and deleting that term leaves this file entirely green. What the case
+  // DOES pin, and what is worth pinning, is the empty-buffer rule: once there is any text, Tab belongs to the
+  // popup and never to the suggestion.
+  it("Tab stops accepting the moment the buffer has text — even with the suggestion still live", async () => {
     const sink = { status: "" };
     const { lastFrame, stdin } = renderWithKeymap(<SuggestionHost initial={{ status: "generated", text: "run the tests" }} sink={sink} />);
     await settle();
-    stdin.write("/");                                   // opens the slash-command popup, buffer no longer empty
+    stdin.write("/");                                   // buffer no longer empty (and the slash popup is up)
     await waitFor(() => strip(lastFrame() ?? "").includes("/clear"));
     stdin.write("\t");
     await settle();
     expect(sink.status).not.toBe("accepted");
   });
 
-  it("typing DISCARDS a `generated` suggestion as `timing` (L495704)", async () => {
+  // REVIEW finding #8: retitled. The `timing` discard is the NEXT case's subject; this one asserts the
+  // opposite outcome, which is the other half of the transition table — a suggestion the empty composer
+  // already SHOWED is not taken back when the user starts typing.
+  it("a suggestion already `shown` SURVIVES the user typing over it (only `generated` times out)", async () => {
     const sink = { status: "" };
     const { stdin } = renderWithKeymap(<SuggestionHost initial={{ status: "generated", text: "run the tests" }} sink={sink} />);
     await settle();
     expect(sink.status).toBe("shown");                  // the empty composer showed it first
     stdin.write("x");
-    await waitFor(() => sink.status !== "shown" || true);
     await settle();
     expect(sink.status).toBe("shown");                  // already SHOWN: it survives, per the transition table
   });
@@ -309,5 +317,67 @@ describe("useChat — the turn-end trigger and the suggester's lifecycle (spec E
     await waitFor(() => s.rec.calls.length === 1);
     await act(async () => { unmount(); });
     expect(s.rec.retired).toBe(1);
+  });
+
+  // REVIEW finding #10. Turning the row OFF is not "off from the next turn": the eligibility chain alone
+  // would leave the suggestion already on screen standing and the warm engine running for a feature the user
+  // just switched off. Both halves are asserted, and the second one is the leak.
+  it("turning the setting OFF drops the suggestion on screen AND retires the warm session", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { status: "", text: null as string | null, api: undefined as ReturnType<typeof useChat> | undefined }, s = fakeSuggester();
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} sugg={s.create} enabled />);
+    await tick();
+    try {
+      await runTurn(fake, 1); await runTurn(fake, 2);
+      await waitFor(() => sink.status === "generated");
+      expect(s.rec.spawned).toBe(1);
+      await act(async () => { sink.api!.setPromptSuggestionEnabled(false); });
+      await tick();
+      expect(sink.status).toBe("empty");                          // the ghost text goes at once
+      expect(s.rec.retired).toBe(1);                              // …and so does the engine behind it
+      await runTurn(fake, 3);                                     // and nothing revives it while it is off
+      await tick();
+      expect(s.rec.calls).toHaveLength(1);
+      expect(s.rec.spawned).toBe(1);
+    } finally { unmount(); }
+  });
+
+  it("turning it back ON asks again at the next turn end, on a FRESH session", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { status: "", text: null as string | null, api: undefined as ReturnType<typeof useChat> | undefined }, s = fakeSuggester();
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} sugg={s.create} enabled />);
+    await tick();
+    try {
+      await runTurn(fake, 1); await runTurn(fake, 2);
+      await waitFor(() => s.rec.calls.length === 1);
+      await act(async () => { sink.api!.setPromptSuggestionEnabled(false); });
+      await act(async () => { sink.api!.setPromptSuggestionEnabled(true); });
+      await runTurn(fake, 3);
+      await waitFor(() => s.rec.calls.length === 2);
+      expect(s.rec.spawned).toBe(2);
+    } finally { unmount(); }
+  });
+});
+
+// ── REVIEW finding #6: the prop THREAD, at the layer the review changed ──────────────────────────────────
+// `ChatApp` passes `suggestionEnabled={state.promptSuggestionEnabled}` into the composer, where it gates the
+// first-run `Try "…"` template as well as the suggestion itself (placeholder rule 4). Nothing pinned that
+// wire, so the whole knock-on of shipping the setting OFF by default — a fresh ccx session showing no
+// template — rested on an unasserted prop. These two drive the real `ChatApp`, one per polarity.
+describe("ChatApp threads `promptSuggestionEnabled` down to the placeholder ladder", () => {
+  const bare = () => ({ env: tmpRoot(), fake: fakeRemote(), sugg: fakeSuggester() });
+  it("OFF (ccx's default): a fresh session offers no `Try \"…\"` template either", async () => {
+    const { env, fake, sugg } = bare();
+    const { lastFrame, unmount } = renderWithKeymap(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={tmpdir()}
+        hookOpts={{ initialPromptSuggestionEnabled: false }} deps={{ env, createSuggester: sugg.create }} />);
+    await tick();
+    try { expect(strip(lastFrame() ?? "")).not.toContain('Try "'); } finally { unmount(); }
+  });
+  it("ON: the same fresh session does show one", async () => {
+    const { env, fake, sugg } = bare();
+    const { lastFrame, unmount } = renderWithKeymap(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={tmpdir()}
+        hookOpts={{ initialPromptSuggestionEnabled: true }} deps={{ env, createSuggester: sugg.create }} />);
+    await tick();
+    try { expect(strip(lastFrame() ?? "")).toContain('Try "'); } finally { unmount(); }
   });
 });

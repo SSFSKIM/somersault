@@ -320,9 +320,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  to `historyPrev` when the queue declines — a state-then-effect handoff cannot answer in time. */
   queuePop?: () => { text: string; pastedContents?: PastedMap } | null;
   /** The placeholder ladder's four remaining inputs (`placeholder.ts` / upstream `NVf`, L495107).
-   *  `suggestionEnabled` is upstream's `promptSuggestionEnabled` setting, which this port has no UI for and
-   *  therefore leaves at its default of true — carried as a prop so the ladder is exhaustive over all six of
-   *  upstream's inputs rather than over five plus an assumption. */
+   *  `suggestionEnabled` is upstream's `promptSuggestionEnabled` setting. W-C T12 gave it both a real owner
+   *  (useChat's `promptSuggestionEnabled` slice, threaded down by `ChatApp`) and a `/config` row, and ccx
+   *  defaults it OFF where upstream defaults it on — so a fresh ccx session shows no `Try "…"` template
+   *  either, which is the accepted knock-on recorded in the spec. The `= true` default below is for BARE
+   *  renders only (a test or any caller that does not thread the prop); the product always passes it. */
   queueHasEditable?: boolean; submitCount?: number; hasMessages?: boolean; suggestionEnabled?: boolean;
   /** The queued-up hint's once-per-SESSION guard, owned by ChatApp so it outlives this component's remounts
    *  — exactly like `searchHintFiredRef` above, and for exactly the same reason. */
@@ -740,10 +742,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // an interception of what would otherwise fall through, not a competing registration.
     //   The gates are upstream's, in upstream's own order: the buffer must be EMPTY (a Right on text is a
     // cursor move and a Tab on text is the popup's), no autocomplete popup may be live (upstream: "only when
-    // there are no autocomplete suggestions"), and no inline ghost text may be offering its own completion —
-    // that one is belt-and-braces here, since a ghost needs typed text to match against and this branch has
-    // already required none. Shift+Tab is excluded because it is `chat:cycleMode`; a modified Right is a word
-    // motion. `endInterceptedEditorAction` first, exactly like every other interception in this body.
+    // there are no autocomplete suggestions"), and no inline ghost text may be offering its own completion.
+    //   THE LAST TWO TERMS ARE UNREACHABLE UNDER THE FIRST, and are kept anyway because upstream's clause is
+    // equally redundant and this is a transcription: a `/` or `@` popup needs its own trigger character in
+    // the buffer and a ghost needs typed text to match against, so both imply a NON-empty buffer, which
+    // `isEmptyBuffer` has already excluded. Removing either leaves every test in `suggestion.test.tsx` green
+    // — which is why no test here claims to pin them. Shift+Tab is excluded because it is `chat:cycleMode`;
+    // a modified Right is a word motion. `endInterceptedEditorAction` first, like every other interception.
     const acceptsSuggestion = (!!key.tab || !!key.rightArrow) && !key.shift && !key.ctrl && !key.meta;
     if (acceptsSuggestion && suggestionRef.current && isEmptyBuffer(s) && !completionActive(s) && !ghostText(s)?.visible) {
       const text = suggestionRef.current;

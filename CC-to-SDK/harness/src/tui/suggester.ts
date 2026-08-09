@@ -102,14 +102,16 @@ export function suggestionRequestMessage(transcriptTail: string): string {
 }
 
 // ── Response cleanup (annex §C5.3, L235214) ────────────────────────────────────────────────────────────────
-// DIVERGENCE (elision, not a choice): the annex gives the tag list in full — `suggestion|response|output|
-// answer|result` — but abbreviates the LABEL list to "`suggested response:` / `suggestion:` / `reply:` / …".
-// The four named ones are transcribed; the tag names are reused as labels too, which is the obvious shape of
-// the elided tail and costs nothing if upstream's list is longer. Anything this misses still meets
-// `prefixed_label` below, so an unstripped label is rejected rather than shown.
-const WRAPPER_TAGS = "suggestion|response|output|answer|result";
-const WRAPPED = new RegExp(`^<(${WRAPPER_TAGS})>([\\s\\S]*)</\\1>$`, "i");
-const LEADING_LABEL = new RegExp(`^(?:suggested response|suggested reply|reply|${WRAPPER_TAGS}):\\s*`, "i");
+// BOTH regexes are upstream's OWN, byte for byte. The annex gives the tag list in full but abbreviates the
+// LABEL list ("`suggested response:` / `suggestion:` / `reply:` / …"), so the label one was recovered from
+// the shipped 2.1.226 binary instead — `strings` on the executable yields the two source literals adjacent
+// to each other, which is what makes this a transcription rather than the approximation the elision had
+// forced. Two things the recovered form carries that a guess would not: `suggested input` / `suggested
+// prompt` are labels too, and the separator is `\s*:\s*` — whitespace is tolerated on BOTH sides of the
+// colon, not only after it. Anything either regex still misses meets `prefixed_label` below, so an
+// unstripped label is rejected rather than shown.
+const WRAPPED = /^<(suggestion|response|output|answer|result)>([\s\S]*)<\/\1>$/i;
+const LEADING_LABEL = /^\s*(suggested\s+(response|reply|input|prompt)|suggestion|response|reply|answer|output|result)\s*:\s*/i;
 
 export function cleanSuggestion(raw: string): string {
   let text = raw.trim();
@@ -289,7 +291,16 @@ export function createSuggester(deps: SuggesterDeps = {}): Suggester {
       const current = session;
       let raw: unknown;
       try { raw = (await current.submit(suggestionRequestMessage(ctx.transcriptTail))).result; }
-      catch { return null; }                // a dead suggester must never take a turn end down with it
+      catch {
+        // A dead suggester must never take a turn end down with it — AND must not outlive its own death.
+        // A submit failure is usually terminal here (an engine crash or a dropped transport makes the
+        // library Session reject EVERY later submit with "<label> is not running"), so a retained handle
+        // would silently swallow every suggestion for the rest of the REPL. Drop it and let the next
+        // request respawn; the identity check is because a `retire()` may already have installed a
+        // successor while this one was in flight, and that one must survive.
+        if (session === current) { session = null; void current.dispose().catch(() => {}); }
+        return null;
+      }
       if (gen !== generation) return null;  // aborted, superseded, or retired while in flight
       if (typeof raw !== "string") return null;
       const verdict = postFilterSuggestion(cleanSuggestion(raw));
@@ -326,15 +337,23 @@ export function createSuggester(deps: SuggesterDeps = {}): Suggester {
  *  awaits whatever that produced and is a no-op if nothing ever did. */
 function defaultOpenSession(deps: SuggesterDeps): SuggesterSession {
   let opened: Promise<SuggesterSession> | null = null;
+  // The annotated return type — not a cast — is what keeps tsc on the hook: `Session.submit`'s second
+  // parameter is defaulted and `TurnOutcome` carries `result`, so a `Session` IS structurally a
+  // `SuggesterSession` and the compiler proves it. A `as unknown as` here would go on compiling after either
+  // signature moved out from under this module.
   const ensure = (): Promise<SuggesterSession> => {
-    if (opened === null) opened = import("../index.js").then(({ openSession }) => openSession({
+    if (opened === null) opened = import("../index.js").then(({ openSession }): SuggesterSession => openSession({
       model: deps.model ?? SUGGESTER_MODEL,
       ...(deps.cwd ? { cwd: deps.cwd } : {}),
+      // DIVERGENCE (annex §C5.3): upstream's fork inherits the session's OWN systemPrompt, userContext,
+      // systemContext and stickyBetas — it is the same conversation, so there is nothing to load. Ours is a
+      // separate session that would otherwise pay a per-session CLAUDE.md + settings read for context this
+      // one prompt never reasons over, so the project context is switched off outright.
       disableProjectContext: true,     // → settingSources [] : no CLAUDE.md, no user/project settings
       permissionMode: "default",
       permissionBroker: { request: async () => ({ kind: "deny", feedback: "No tools needed for suggestion" }) },
       forkSubagent: false, workflow: false,   // two system-prompt appends (and four allowlisted tools) this thread has no use for
-    }) as unknown as SuggesterSession);
+    }));
     return opened;
   };
   return {

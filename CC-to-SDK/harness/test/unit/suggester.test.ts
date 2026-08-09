@@ -73,10 +73,19 @@ describe("suggester.cleanSuggestion (annex §C5.3 response cleanup, L235214)", (
       expect(cleanSuggestion(`<${tag}>run the tests</${tag}>`)).toBe("run the tests");
     }
   });
-  it("drops a leading label", () => {
-    expect(cleanSuggestion("suggested response: run the tests")).toBe("run the tests");
-    expect(cleanSuggestion("Suggestion: run the tests")).toBe("run the tests");
-    expect(cleanSuggestion("reply: run the tests")).toBe("run the tests");
+  it("drops every label in upstream's own list (recovered from the 2.1.226 binary)", () => {
+    for (const label of ["suggested response", "suggested reply", "suggested input", "suggested prompt",
+                         "suggestion", "response", "reply", "answer", "output", "result"]) {
+      expect(cleanSuggestion(`${label}: run the tests`)).toBe("run the tests");
+      expect(cleanSuggestion(`${label.toUpperCase()}: run the tests`)).toBe("run the tests");   // the /i flag
+    }
+  });
+  it("tolerates whitespace on BOTH sides of the colon, and any run of it inside `suggested …`", () => {
+    expect(cleanSuggestion("Suggestion : run the tests")).toBe("run the tests");
+    expect(cleanSuggestion("  \n  suggested   input :   run the tests")).toBe("run the tests");
+  });
+  it("leaves a word that merely LOOKS like a label alone — the list is closed", () => {
+    expect(cleanSuggestion("note: run the tests")).toBe("note: run the tests");   // → `prefixed_label` downstream
   });
   it("leaves a clean suggestion alone (and trims)", () => {
     expect(cleanSuggestion("  run the tests  ")).toBe("run the tests");
@@ -323,6 +332,49 @@ describe("suggester.createSuggester — one warm session per REPL (spec EP-C5 li
     const s = createSuggester({ openSession: open });
     expect(await s.request({ transcriptTail: "a" })).toBeNull();
     expect(await s.request({ transcriptTail: "b" })).toBe("run the tests");
+  });
+
+  it("REPLACES a session that has died for good — a corpse must not swallow every later request", async () => {
+    // Review finding #1, and the reason the fixture above does not cover it: that one throws ONCE and then
+    // succeeds on the SAME object, so it is green whether the dead session is dropped or reused. A real
+    // Session whose engine crashed rejects EVERY submit thereafter (`"<label> is not running"`), so the only
+    // thing that can distinguish "respawned" from "reused the corpse" is the FACTORY COUNT — and with the
+    // corpse retained the feature goes silent for the rest of the REPL, with nothing but /clear to revive it.
+    let opened = 0; const disposed: number[] = [];
+    const open = (): SuggesterSession => {
+      const n = opened++;
+      return { async submit(): Promise<{ result: unknown }> { throw new Error("chat is not running"); }, async dispose() { disposed.push(n); } };
+    };
+    const s = createSuggester({ openSession: open });
+    expect(await s.request({ transcriptTail: "a" })).toBeNull();
+    expect(await s.request({ transcriptTail: "b" })).toBeNull();
+    expect(await s.request({ transcriptTail: "c" })).toBeNull();
+    expect(opened).toBe(3);                          // one fresh session per request, not one corpse three times
+    expect(disposed).toEqual([0, 1, 2]);             // …and each corpse is torn down rather than leaked
+  });
+
+  it("a failure that lands AFTER a retire does not clobber the session the retire installed", async () => {
+    // The catch nulls `session` — but only when it is still the one that failed. Without that check a slow
+    // failure from the retired conversation would drop the fresh session mid-flight and leak it.
+    let fail!: (e: Error) => void;
+    const spawned: SuggesterSession[] = [];
+    const open = (): SuggesterSession => {
+      const first = spawned.length === 0;
+      const rec: SuggesterSession = {
+        async submit() { if (first) { await new Promise<void>((_, rj) => { fail = rj as (e: Error) => void; }); } return { result: "commit this" }; },
+        async dispose() {},
+      };
+      spawned.push(rec); return rec;
+    };
+    const s = createSuggester({ openSession: open });
+    const slow = s.request({ transcriptTail: "old" });
+    s.retire();
+    const fresh = s.request({ transcriptTail: "new" });      // spawns session #2 and keeps it
+    fail(new Error("chat is not running"));
+    expect(await slow).toBeNull();
+    expect(await fresh).toBe("commit this");
+    expect(await s.request({ transcriptTail: "again" })).toBe("commit this");
+    expect(spawned).toHaveLength(2);                          // session #2 survived the late failure
   });
 
   it("a non-string result is not a suggestion", async () => {
