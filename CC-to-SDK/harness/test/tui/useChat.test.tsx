@@ -2767,9 +2767,13 @@ describe("W-S7: compaction is a real busy state with an ephemeral progress affor
 describe("the token-warning and usage-warning notifications", () => {
   // `18_000_000` is five hours: an entry that is never re-posted and never removed would outlive the
   // conversation that earned it, which is exactly why the "falls back to ok → remove" case below exists.
-  const WINDOW = 200_000, CEILING = 160_000;
-  function NotifHost({ makeSession }: { makeSession: () => ChatSession }) {
+  // 167 000 = 200 000 − min(maxOutputTokens, 20 000) − 13 000, upstream's own ceiling (`Tbe` L164098 fed
+  // through `Sfo` L163981). The ladder's arithmetic on it is pinned in the unit test; here it only has to be
+  // the SAME number the implementation uses, or the plumbing assertions below would pass on a lie.
+  const WINDOW = 200_000, CEILING = 167_000;
+  function NotifHost({ makeSession, api }: { makeSession: () => ChatSession; api?: { run?: (s: string) => void } }) {
     const c = useChat(makeSession);
+    if (api) api.run = c.submit;
     const n = c.state.notification;
     return <Text>n:{n ? `${n.key}|${n.text}|${n.color ?? "-"}|${n.priority}|${n.timeoutMs}` : "none"}</Text>;
   }
@@ -2792,7 +2796,8 @@ describe("the token-warning and usage-warning notifications", () => {
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => frame(lastFrame).includes("token-warning"));
     // no colour of its own → the slot renders it dim, which is upstream's own auto-compact-enabled arm
-    expect(frame(lastFrame)).toContain("n:token-warning|12% until auto-compact|-|medium|18000000");
+    // used = 148 000 → (167 000 − 148 000) / 167 000 = 11.377% → 11
+    expect(frame(lastFrame)).toContain("n:token-warning|11% until auto-compact|-|medium|18000000");
   });
 
   it("escalates past the ceiling to the error-coloured Context low text", async () => {
@@ -2820,6 +2825,32 @@ describe("the token-warning and usage-warning notifications", () => {
     await waitFor(() => frame(lastFrame).includes("n:none"));
   });
 
+  // REVIEW FIX (finding 1). The entry is a FIVE-HOUR row that describes one specific conversation. `/clear`,
+  // a resume and a rewind all swap that conversation out through `replaceDocument` — the shared reset boundary
+  // where `ctxPct`, the cache-miss ack and the suggester already go — so the row has to come down with them.
+  // Left up, `Context low (0% remaining) · Run /compact…` sits on screen describing a transcript that no
+  // longer exists, until the next COMPLETED turn happens to re-measure. The plan-usage warning deliberately
+  // does not follow: that one is an account-level fact about the rate-limit window, and /clear does not
+  // refill your quota.
+  it("takes the token-warning down at the document swap — and leaves the account-level usage warning alone", async () => {
+    const fake = fakeRemote({
+      getContextUsage: () => ({ totalTokens: CEILING + 5_000, maxTokens: WINDOW }),
+      usage: () => ({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 91 } } }),
+      clearSession: async () => {},
+    });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<NotifHost makeSession={() => fake} api={api} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("token-warning"));
+    api.run!("/clear");
+    // The usage warning is queued behind it and surfaces the moment the slot frees up; what must NOT survive
+    // is the context row, so the assertion is on that key's absence rather than on an empty slot.
+    await waitFor(() => !frame(lastFrame).includes("token-warning"));
+    expect(frame(lastFrame)).not.toContain("Context low");
+  });
+
   it("the plan-usage warning posts as a queued notification too, and only when it CHANGES", async () => {
     let util = 91;
     const fake = fakeRemote({
@@ -2831,7 +2862,11 @@ describe("the token-warning and usage-warning notifications", () => {
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => frame(lastFrame).includes("⚠ 5h 91%"));
-    expect(frame(lastFrame)).toContain("n:usage-warning|");
+    // REVIEW FIX (finding 3): the LONG timeout, not the queue's 8 s default. The post is change-gated, so an
+    // 8 s row would flash once and never come back while the percentage held — a standing condition rendered
+    // as a blink. Five hours is "until something replaces or removes it", which is what a standing condition
+    // deserves and what this warning had as permanent status-bar chrome before Wave C moved it here.
+    expect(frame(lastFrame)).toMatch(/n:usage-warning\|[^|]*\|[^|]*\|medium\|18000000/);
     util = 40;                                                          // the window rolled over
     fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });

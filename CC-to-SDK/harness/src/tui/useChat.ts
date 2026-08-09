@@ -826,6 +826,14 @@ export function useChat(
     // to land on it) suppress the cache warning in a conversation it was never given for. Resume and rewind
     // come through here too and inherit the same reset.
     cacheMissAckedAtOutputTokens.current = undefined;
+    // WAVE C T14 REVIEW, THE SAME BOUNDARY AND THE SAME CLASS AGAIN: the `token-warning` row is a five-hour
+    // queue entry (`TOKEN_WARNING_TIMEOUT_MS`) that describes ONE conversation's context. Cleared, resumed and
+    // rewound all arrive here having swapped that conversation out, so a row left standing says
+    // `Context low (0% remaining) · Run /compact…` about a transcript that is gone — until the next COMPLETED
+    // turn happens to re-measure and re-post. Down with `ctxPct`, for the identical reason.
+    // NOT the plan-usage warning: that one is an account-level fact about the rate-limit window, and clearing
+    // the screen does not refill your quota.
+    notifications.remove(TOKEN_WARNING_KEY);
     // WAVE C T12, THE SAME BOUNDARY AGAIN and the same principle: everything the suggester knows was measured
     // against a conversation that no longer exists. `/clear`, a resume and a rewind all land here, and all
     // three must (a) drop whatever suggestion is pending — it answers a question the user can no longer see
@@ -1183,10 +1191,17 @@ export function useChat(
    *  fact as one `token-warning` queue entry and nothing else.
    *
    *  A re-post FOLDS on the key (`notifications.ts`: same-key replace, timer restarted), so a session that
-   *  keeps filling up updates the row in place instead of stacking rows. The REMOVE arm is the half upstream
-   *  does not need and this port does: its entry is re-derived every render off live token counts, ours is a
-   *  five-hour queue entry, so a `/compact` that empties the context would otherwise leave `Context low` on
-   *  screen for the rest of the afternoon describing a conversation that no longer exists. */
+   *  keeps filling up updates the row in place instead of stacking rows. The REMOVE arm is upstream's too, not
+   *  an invention of this port: its effect posts in one branch and calls `Tjt("token-warning")`
+   *  (`removeNotification`, `L489326`) in the other — the same callback the external-editor hint removes
+   *  itself with at `L489315`. What differs is only the trigger. Upstream re-runs that effect whenever its
+   *  token counts change; ccx re-runs it at the turn-end refresh, so a `/compact` that empties the context
+   *  takes the row down at the next measurement rather than immediately. The document-swap paths (`/clear`,
+   *  resume, rewind) don't wait for that at all — `replaceDocument` removes the key directly.
+   *
+   *  UPSTREAM'S `fold: GLb` IS DELIBERATELY OMITTED. `GLb` (`L489273`) is literally `(_, arrival) => arrival`
+   *  — take the newcomer whole — and this port's same-key `add` already replaces rather than merges
+   *  (`notifications.ts` divergence 4). Carrying the field would encode the default as if it were a choice. */
   function postTokenWarning(used: number | undefined, window: number | undefined) {
     const w = tokenWarning(used, window);
     if (!w) { notifications.remove(TOKEN_WARNING_KEY); return; }
@@ -1209,12 +1224,27 @@ export function useChat(
   }
   /** WAVE C TASK 14 (spec D-C3): `usageWarning()`'s text, on the queue instead of on the retired bar. ONLY ON
    *  CHANGE — see `usageWarnRef`. `undefined` means the warning stopped applying (a rolled-over window), and
-   *  that has to take the entry down rather than leave a stale percentage sitting in the slot. */
+   *  that has to take the entry down rather than leave a stale percentage sitting in the slot.
+   *
+   *  THE LONG TIMEOUT IS LOAD-BEARING (T14 review, finding 3). This is a STANDING condition — "you are 91%
+   *  through your five-hour window" stays true for hours — and the post is change-gated, so the queue's 8 s
+   *  default would show it once and never again while the percentage held: a permanent fact rendered as a
+   *  blink, which is strictly less than the always-on bar chip it replaced. Five hours is upstream's own
+   *  "until something replaces or removes it" (`L489324`), and removal here is the rollover branch above.
+   *  Unlike the context warning this one does NOT come down at a document swap: it describes the account, not
+   *  the conversation.
+   *
+   *  RECORDED INTERACTION, not resolved here: the slot holds ONE entry, and both five-hour rows sit at
+   *  `priority:"medium"`, so whichever of `token-warning` / `usage-warning` lands first owns the slot for up
+   *  to five hours and the other waits behind it (only `priority:"immediate"` preempts). Both are standing
+   *  conditions, so neither is wrong to hold — but a user near both limits sees only one of them. Whether the
+   *  pair should alternate, coexist as `pinned`, or rank against each other is an owner-taste call. */
   function postUsageWarning(text: string | undefined) {
     if (text === usageWarnRef.current) return;
     usageWarnRef.current = text;
     if (text === undefined) { notifications.remove(USAGE_WARNING_KEY); return; }
-    notifications.add({ key: USAGE_WARNING_KEY, text, color: role("warning"), priority: "medium" });
+    // Same constant as the context row on purpose: upstream has one "until replaced" value, not one per row.
+    notifications.add({ key: USAGE_WARNING_KEY, text, color: role("warning"), priority: "medium", timeoutMs: TOKEN_WARNING_TIMEOUT_MS });
   }
 
   function append(ls: RenderLine[]) { if (ls.length) appendNewLocal({ kind: "visual", lines: ls }); }
