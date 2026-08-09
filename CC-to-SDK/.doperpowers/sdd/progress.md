@@ -799,3 +799,20 @@ guarded by its own red-observed test. Also: vacuous pager test repointed to spin
 hint list (canon on both surfaces per review adjudication; rebind-aware spelling is an improvement).
 Suites: 1745 unit / 3049 tui. Lesson (×2 this wave): documented-claims-about-upstream are testimony,
 not canon — the bundle settles, and stale comments propagate through grounding into pinned tests.
+
+## 2026-08-10 — Wave C Task 7 complete (9659db3786 + 4388c830fe, review approved)
+
+Duration row + chip pins. Row shape byte-equivalent to the shipped component (verb once per row,
+stored RenderLine so re-renders can't re-roll; spaced formatDuration per Task 6's correction). The
+review read the 2.1.226 binary and overturned BOTH of the implementer's inferred-from-silence
+claims: upstream ships a "Show turn duration" config row UNGATED (the repo's own qa4 frames had it
+— frames-qa4/qa4-settings-cc.txt:24), and upstream's emission is a finally gated only on
+!signal.aborted so an API-failure turn still prints ✻ Crunched for 0s under the red row. Both fixed;
+the false divergence notes deleted. Also fixed: mid-turn joiners no longer fabricate durations (the
+replay-marked turn:start clears the clock — the host.ts:501 rule honored); interrupt suppression
+validated and kept. Chip work: all six renders were already pinned by Task 2; the two REAL gaps
+(dontAsk color, rendered-chip-wears-its-color ANSI-aware pin) closed and sabotage-verified.
+Fold-run-breaker adjudicated coherent with upstream's structure (visible row breaks, hidden row is
+neutral — both pinned). Suites: 1758 unit / 3062 tui (one known pre-existing /copy flake, clean on
+isolated rerun). Lesson (×3 now): inferred-from-annex-silence claims about upstream are testimony —
+the binary settles; and the QA corpus already held the answer both times.
