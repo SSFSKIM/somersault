@@ -1,6 +1,6 @@
 // test/tui/resize-midturn.test.tsx — Wave R task 6, acceptance A3 (qa2-09): resizing DURING a streaming turn
 // must leave exactly ONE elapsed-time spinner row and ONE `esc to interrupt`, and the interrupt that ends the
-// turn must leave neither behind. The QA finding saw up to four `esc to interrupt` rows carrying three
+// turn must leave neither behind. The QA finding saw up to four spinner rows carrying three
 // different elapsed times in a single frame, and its claim that this self-heals at end of turn was REFUTED by
 // measurement (spec §12 item 14): every stale row survived the interrupt verbatim.
 //
@@ -23,6 +23,7 @@ import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
+import { spinnerRows } from "./helpers/spinnerRow.js";
 
 // The composer seeds and appends prompt history under `fleetRoot()`; without this it would touch the real
 // ~/.claude (a defect regardless of whether the test passes).
@@ -44,22 +45,28 @@ function fakeResize() {
   return { onResize: (cb: () => void) => { cbs.add(cb); return () => { cbs.delete(cb); }; }, fire: () => { for (const cb of [...cbs]) cb(); } };
 }
 
-// The needles are read off the code, not guessed: `spinnerStatus` (spinner.ts:66) builds
-// `(3s · 142 tokens · esc to interrupt)` with the token clause present only once tokens > 0, and `formatElapsed`
-// switches to `1m 05s` past a minute. Counting is done over the WHOLE stripped frame rather than per line: a
-// duplicate spinner is a duplicate row, and a per-line filter would also silently pass a frame whose rows had
-// been concatenated. Every width used below keeps the row under ink-testing-library's fixed 100-column stdout
-// (longest possible: glyph + the 18-char `Flibbertigibbeting…` + the 36-char tail ≈ 58), so no assertion here
-// depends on where the fake terminal happens to wrap.
-const ELAPSED_TAIL = /\(((?:\d+m )?\d+s)(?: · \d+ tokens)? · esc to interrupt\)/g;
+// The needles are read off the code, not guessed: `spinnerStatus` (spinner.ts) builds
+// `(3s · ↓ 142 tokens)` with the token clause present only once the eased estimate is > 0, and
+// `formatElapsed` switches to `1m05s` past a minute. Counting is done over the WHOLE stripped frame rather
+// than per line: a duplicate spinner is a duplicate row, and a per-line filter would also silently pass a
+// frame whose rows had been concatenated. Every width used below keeps the row under ink-testing-library's
+// fixed 100-column stdout (longest possible: glyph + the 18-char `Flibbertigibbeting…` + the tail ≈ 50), so
+// no assertion here depends on where the fake terminal happens to wrap.
+//
+// WAVE C TASK 6 REPOINTED THE SECOND NEEDLE AND KEPT THE RULE. This file used to count `esc to interrupt`
+// occurrences as its spinner-row census. That copy is not spinner copy any more — the tail lost it and the
+// footer hint list carries it on every busy frame — so counting it would now return 1 no matter how many
+// spinners the tree held, and the whole file would pass vacuously. The census is the ELAPSED TAIL, which
+// only a mounted spinner can print, plus `spinnerRows` for the gerund itself.
+const ELAPSED_TAIL = /\((\d+m\d{2}s|\d+s)(?: · [↓↑] [\d.]+k? tokens)?\)/g;
 const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
-const escRows = (f: () => string | undefined) => count(strip(frame(f)), /esc to interrupt/g);
+const gerundRows = (f: () => string | undefined) => spinnerRows(strip(frame(f)));
 /** Every elapsed tail in the frame, as its clock READING — `["1s"]`, or `["0s","2s","3s"]` on the frame QA
  *  photographed. Counting alone cannot tell one clock from three frozen ones that all read `0s`, which is
  *  what the first version of this file asserted (fix round 1, finding F6). */
 const elapsedValues = (f: () => string | undefined) => [...strip(frame(f)).matchAll(ELAPSED_TAIL)].map((m) => m[1]);
 const elapsedRows = (f: () => string | undefined) => elapsedValues(f).length;
-const secs = (v: string) => { const m = /^(?:(\d+)m )?(\d+)s$/.exec(v); if (!m) throw new Error(`unparseable elapsed: ${v}`); return Number(m[1] ?? 0) * 60 + Number(m[2]); };
+const secs = (v: string) => { const m = /^(?:(\d+)m)?(\d+)s$/.exec(v); if (!m) throw new Error(`unparseable elapsed: ${v}`); return Number(m[1] ?? 0) * 60 + Number(m[2]); };
 /** Wait for the live clock to actually MOVE, and return the reading it moved off. There is no clock seam at
  *  this level and this deliberately does not add one: `TurnSpinner`'s `now` prop IS injectable, but ChatApp
  *  never passes it (ChatApp.tsx's `<TurnSpinner startedAt tokens />`), and threading one through production
@@ -104,8 +111,8 @@ describe("a mid-turn resize leaves one spinner, and the interrupt clears it (A3)
     fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     fake.pushEvent(streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: LONG_PARA } }));
     fake.pushEvent(streamEvent({ type: "message_delta", usage: { output_tokens: 142 } }));
-    await waitFor(() => escRows(r.lastFrame) > 0);
-    expect(escRows(r.lastFrame)).toBe(1);
+    await waitFor(() => elapsedRows(r.lastFrame) > 0);   // the tail only opens once the eased estimate clears zero
+    expect(gerundRows(r.lastFrame)).toBe(1);
     expect(elapsedRows(r.lastFrame)).toBe(1);
     // …and the over-wide content really is on screen, or the shrink below is not the filed repro.
     expect(strip(frame(r.lastFrame)).split("\n").some((l) => l.trimEnd().length > 70)).toBe(true);
@@ -116,25 +123,25 @@ describe("a mid-turn resize leaves one spinner, and the interrupt clears it (A3)
     // `0s`, which one clock and three stopped ones satisfy equally).
     const t0 = await elapsedMoves(r.lastFrame);
     cols = 70; resize.fire(); await tick();                         // the shrink, mid-stream
-    expect(escRows(r.lastFrame)).toBe(1);
+    expect(gerundRows(r.lastFrame)).toBe(1);
     expect(elapsedValues(r.lastFrame)).toHaveLength(1);
     expect(secs(elapsedValues(r.lastFrame)[0])).toBeGreaterThan(secs(t0));
     // A delta arriving AFTER the resize re-snapshots the live region at the new width — the second half of a
     // mid-turn resize, and the moment a width-keyed spinner would mint its twin.
     fake.pushEvent(streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " Still streaming after the shrink." } }));
     await waitFor(() => strip(frame(r.lastFrame)).includes("Still streaming"));
-    expect(escRows(r.lastFrame)).toBe(1);
+    expect(gerundRows(r.lastFrame)).toBe(1);
     expect(elapsedRows(r.lastFrame)).toBe(1);
 
     const t1 = await elapsedMoves(r.lastFrame);
     cols = 110; resize.fire(); await tick();                        // …and back out again
-    expect(escRows(r.lastFrame)).toBe(1);
+    expect(gerundRows(r.lastFrame)).toBe(1);
     expect(elapsedValues(r.lastFrame)).toHaveLength(1);
     expect(secs(elapsedValues(r.lastFrame)[0])).toBeGreaterThan(secs(t1));
 
     r.stdin.write("\x1b");                                          // Esc on a busy turn is always interrupt
-    await waitFor(() => escRows(r.lastFrame) === 0);
-    expect(escRows(r.lastFrame)).toBe(0);                           // no stale spinner survives the interrupt
+    await waitFor(() => gerundRows(r.lastFrame) === 0);
+    expect(gerundRows(r.lastFrame)).toBe(0);                           // no stale spinner survives the interrupt
     expect(elapsedRows(r.lastFrame)).toBe(0);
     expect(strip(frame(r.lastFrame))).not.toContain("Still streaming");   // …nor the live region it sat under
     r.unmount();
@@ -154,7 +161,7 @@ describe("a mid-turn resize leaves one spinner, and the interrupt clears it (A3)
     fake.pushEvent(streamEvent({ type: "message_start", message: { id: "msg_a3b" } }));
     fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     fake.pushEvent(streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: LONG_PARA } }));
-    await waitFor(() => escRows(r.lastFrame) > 0);
+    await waitFor(() => elapsedRows(r.lastFrame) > 0);   // the tail only opens once the eased estimate clears zero
     // The clock moves across the run (it is let tick before the 2nd and 4th shrinks — two waits, not four,
     // because each costs up to a real second and two are enough to make the reading change twice). THIS is
     // the case qa2-09's frame belongs to: three elapsed times coexisting after successive mid-turn shrinks.
@@ -163,12 +170,12 @@ describe("a mid-turn resize leaves one spinner, and the interrupt clears it (A3)
     for (const w of [100, 90, 80, 70]) {
       if (w === 90 || w === 70) prev = await elapsedMoves(r.lastFrame);
       cols = w; resize.fire(); await tick();
-      expect(escRows(r.lastFrame)).toBe(1);
+      expect(gerundRows(r.lastFrame)).toBe(1);
       expect(elapsedValues(r.lastFrame)).toHaveLength(1);            // …exactly one clock, not one per width
       expect(secs(elapsedValues(r.lastFrame)[0])).toBeGreaterThanOrEqual(secs(prev));   // …and it is the LATEST reading
     }
     r.stdin.write("\x1b");
-    await waitFor(() => escRows(r.lastFrame) === 0);
+    await waitFor(() => gerundRows(r.lastFrame) === 0);
     expect(elapsedRows(r.lastFrame)).toBe(0);
     r.unmount();
   });

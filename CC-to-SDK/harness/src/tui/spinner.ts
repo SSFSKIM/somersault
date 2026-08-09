@@ -1,7 +1,21 @@
-// tui/src/spinner.ts — pure spinner vocabulary + formatters for the live-turn indicator. CC fidelity:
-// the asterisk-pulse frames (components/Spinner/utils.ts getDefaultCharacters, darwin variant) animated
-// out-and-back, and the 187 random thinking verbs verbatim from constants/spinnerVerbs.ts. The status tail
-// mirrors SpinnerAnimationRow.tsx's "(elapsed · esc to interrupt)" affordance. No React/Ink — view layer is Spinner.tsx.
+// tui/src/spinner.ts — pure spinner vocabulary + formatters + the whole parenthetical anatomy for the
+// live-turn indicator. CC fidelity: the asterisk-pulse frames (components/Spinner/utils.ts
+// getDefaultCharacters, darwin variant) animated out-and-back, and the 187 random thinking verbs verbatim
+// from constants/spinnerVerbs.ts. No React/Ink — the view layer is TurnSpinner.tsx.
+//
+// WAVE C TASK 6 rewrote the tail. It used to read `(3s · 142 tokens · esc to interrupt)`; canon's `C0p`
+// (bundle L407892, assembled L407982) reads `({elapsed} · {↓|↑} {N} tokens · {phase})` and carries no
+// interrupt offer at all — that affordance is a footer hint-list member upstream (`footerModel`'s
+// `interrupt` rung), and Footer.tsx stopped filtering it out in the same change. Four things moved with it:
+//   1. the token figure is an EASED ESTIMATE of `streamedChars / 4` (D-C6), not the per-message usage
+//      counter — upstream's own mechanism, reconciled to the real usage figure by `LiveTurn.meter()`;
+//   2. every segment is behind a WIDTH GATE, and behind a 16 s quiet threshold when nothing else is
+//      happening, so a short quiet turn shows a bare `✻ Baking…` and nothing else;
+//   3. the phase ladder (`thinking` → … → `almost done thinking`, `running tool for {t}`) joins as the
+//      last segment; and
+//   4. the elapsed formatter is finally the WHOLE `$st`, hour and day rollover included.
+import stringWidth from "string-width";
+import { formatCompactNumber, formatDuration } from "./format.js";
 
 /** The darwin asterisk-pulse base chars; the live cycle pulses out then back (CC: [...chars, ...reversed]). */
 export const SPINNER_BASE = ["·", "✢", "✳", "✶", "✻", "✽"] as const;
@@ -55,29 +69,226 @@ export function pickVerb(rand: number = Math.random()): string {
   return SPINNER_VERBS[i];
 }
 
-/** "3s" under a minute, else "1m 05s".
+/** Upstream `$st` (L107079, export map L107029 `formatBarElapsed`), PORTED WHOLE — the debt the previous
+ *  header comment recorded and told the next reader to pay. Two units at a time, largest pair first, the
+ *  smaller one zero-padded and NO space between them: `4s`, `1m05s`, `1h02m`, `2d03h`.
  *
- *  KNOWN DEFECT, recorded W-S t7 (correction pass) and deliberately NOT fixed there — it is out of that
- *  task's scope, and it is a shipped surface, so it is written down rather than left to be rediscovered.
- *  This is our port of upstream `$st` (`cli.pretty.js` L107079, exported as `formatBarElapsed` at L107029),
- *  and it diverges in two ways:
- *    1. Separator. Upstream emits `1m05s` — no space. We emit `1m 05s`. (Do not "fix" this by pointing at
- *       `format.ts`'s `formatDuration`: that is a port of a DIFFERENT function, `ra`, which spells the same
- *       duration `1m 5s` — unpadded and spaced. Three spellings exist upstream; this one owes `$st`.)
- *    2. Missing units. Upstream rolls over at an hour (`1h05m`) and a day (`2d03h`); we stop at minutes, so
- *       a session running 25 hours and 1 second reads `1500m 01s` instead of `1d01h`. (The `1501m 01s` this
- *       example said until the W-S t7 review is 25h **1m** 1s — a figure carried over from an earlier
- *       report's `90061000` ms row that lost its minute in the rewrite. Both inputs give `1d01h` upstream,
- *       so only our side of the comparison was wrong; both figures were re-run before this was corrected.)
- *  Whoever next touches the spinner tail should port `$st` whole rather than patching one branch. */
+ *  This is not `format.ts`'s `formatDuration`, and the difference is deliberate on upstream's part: that
+ *  one is `ra`, which spells the same 65 s as `1m 5s` (spaced, unpadded, seconds kept) and which the tool
+ *  fold rows and the Bash timeout suffix call. Three spellings of a duration exist in the bundle; the
+ *  spinner tail — and, from Wave C Task 7, the end-of-turn duration row that reuses this export — owe
+ *  `$st`. Keep them pointed at this function, not at the other one. */
 export function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return s + "s";
-  return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h${String(minutes % 60).padStart(2, "0")}m`;
+  return `${Math.floor(hours / 24)}d${String(hours % 24).padStart(2, "0")}h`;
 }
 
-/** The dim status tail: "(3s · 142 tokens · esc to interrupt)" — tokens shown only once > 0. */
-export function spinnerStatus(elapsedMs: number, tokens = 0): string {
-  const parts = [formatElapsed(elapsedMs), ...(tokens > 0 ? [`${tokens} tokens`] : []), "esc to interrupt"];
-  return "(" + parts.join(" · ") + ")";
+// ── The token estimate (spec decision D-C6) ──────────────────────────────────────────────────────────
+// The figure in the tail is NOT the usage counter. Upstream animates a character count toward the real
+// streamed length and divides by four (`te`/`de`, L407919–407947): the number climbs smoothly through a
+// burst instead of stepping once per `message_delta`, which is the only moment real usage arrives (probe
+// (c)). `LiveTurn.meter().chars` is the target; this is the easing, lifted step for step.
+
+/** Upstream's animation step: the count advances once per 50 ms of animation time. */
+export const EASE_STEP_MS = 50;
+
+/** Advance the animated character count `steps` frames toward `target`. Three rates, upstream's: a gap
+ *  under 70 chars crawls at +3 (so the last few characters are visibly typed), a gap under 200 closes at
+ *  15% (min 8), and anything larger sprints at +50. Monotone — a target that shrinks (a new message with
+ *  fewer characters than the last) leaves the count where it is rather than counting backwards. */
+export function easeChars(animated: number, target: number, steps: number): number {
+  let n = animated;
+  for (let i = 0; i < steps; i++) {
+    const gap = target - n;
+    if (gap <= 0) break;
+    n = Math.min(n + (gap < 70 ? 3 : gap < 200 ? Math.max(8, Math.ceil(gap * 0.15)) : 50), target);
+  }
+  return n;
+}
+
+/** `Math.round(te / 4)` (L407947) — four characters to the token, which is the estimate upstream shows. */
+export const estimateTokens = (animatedChars: number): number => Math.round(animatedChars / 4);
+
+// ── Mode, phase, and the thinking ladder ─────────────────────────────────────────────────────────────
+
+/** Upstream's stream mode (`onSetStreamMode`, L374662–374703). `stream_mode` frames are stripped from the
+ *  SDK stream (L557805 `continue`), so ccx derives it from the same wire events upstream's handler reads. */
+export type SpinnerMode = "requesting" | "responding" | "thinking" | "tool-input" | "tool-use";
+
+/** `I0p` (L408033): a width-2 box holding `↓` while output is arriving and `↑` while a request is in
+ *  flight; nothing at all for any other mode. */
+export function modeArrow(mode?: SpinnerMode): string {
+  switch (mode) {
+    case "tool-input": case "tool-use": case "responding": case "thinking": return "↓";
+    case "requesting": return "↑";
+    default: return "";
+  }
+}
+
+/** `GtH` (L407874) with its four thresholds verbatim. */
+export function thinkingWord(ms: number): string {
+  if (ms >= 45000) return "almost done thinking";
+  if (ms >= 30000) return "thinking some more";
+  if (ms >= 20000) return "thinking more";
+  if (ms >= 10000) return "still thinking";
+  return "thinking";
+}
+
+export type SpinnerPhase =
+  | { kind: "tool-running"; toolMs: number }
+  | { kind: "tool-done"; toolMs: number }
+  | { kind: "thinking"; thinkingMs: number }
+  | { kind: "thought-for"; thoughtMs: number }
+  | { kind: "none" };
+
+/** `x` in `q0p` (L408127–408146): `"thinking"` while the burst runs, then the burst's duration for a short
+ *  window, then nothing. */
+export type ThinkingStatus = "thinking" | number | null;
+
+/** Upstream's `N` table (L407959) verbatim. The effort suffix rides the thinking rung only. */
+export function phaseLabel(phase: SpinnerPhase, effortSuffix = ""): string | null {
+  switch (phase.kind) {
+    case "tool-running": return `running tool for ${formatDuration(phase.toolMs)}`;
+    case "tool-done": return `ran tool for ${formatDuration(phase.toolMs)}`;
+    case "thinking": return `${thinkingWord(phase.thinkingMs)}${effortSuffix}`;
+    case "thought-for": return `thought for ${Math.max(1, Math.round(phase.thoughtMs / 1000))}s`;
+    case "none": return null;
+  }
+}
+
+export interface PhaseState { toolWindowStart: number | null; toolWindowEnd: number | null; thinkingBurstStart: number | null; wasThinking: boolean }
+export interface PhaseInput {
+  now: number; isThinking: boolean; hasActiveTools: boolean; thinkingStatus: ThinkingStatus;
+  /** Upstream gates the two tool rungs on `tengu_shining_fractals` (L407892's `showToolCallTimer`), a
+   *  feature flag whose call-site default is FALSE — so a stock 2.1.220 never prints `running tool for 4s`.
+   *  RECORDED DIVERGENCE (constraint 12): ccx passes `true` from TurnSpinner, because the Wave C spec's
+   *  EP-C4 decision lists both tool rungs as shipped copy. The flag stays an input so the machine itself
+   *  is a faithful port and the divergence is one boolean at one call site. */
+  showToolTimer: boolean;
+}
+
+export const initPhaseState = (): PhaseState => ({ toolWindowStart: null, toolWindowEnd: null, thinkingBurstStart: null, wasThinking: false });
+
+/** `m0p` (L407796) — the window bookkeeping, called once per frame BEFORE `phaseFor`. */
+export function advancePhase(state: PhaseState, input: PhaseInput): PhaseState {
+  let { toolWindowStart: start, toolWindowEnd: end, thinkingBurstStart: burst } = state;
+  if (input.hasActiveTools) { if (start === null || end !== null) start = input.now; end = null; }
+  else if (start !== null && end === null) end = input.now;
+  if (!input.hasActiveTools && input.thinkingStatus !== null) { start = null; end = null; }
+  if (input.isThinking) { if (!state.wasThinking) burst = input.now; } else burst = null;
+  return { toolWindowStart: start, toolWindowEnd: end, thinkingBurstStart: burst, wasThinking: input.isThinking };
+}
+
+/** `h0p` (L407813) — the state plus this frame's inputs, read out as the rung to print. Both tool rungs
+ *  need a two-second window before they say anything, so a fast tool never flickers a timer. */
+export function phaseFor(state: PhaseState, input: PhaseInput): SpinnerPhase {
+  if (input.showToolTimer && input.hasActiveTools && state.toolWindowStart !== null) {
+    const ms = input.now - state.toolWindowStart;
+    if (ms >= 2000) return { kind: "tool-running", toolMs: ms };
+  }
+  if (input.showToolTimer && !input.hasActiveTools && input.thinkingStatus === null && state.toolWindowStart !== null && state.toolWindowEnd !== null) {
+    const ms = state.toolWindowEnd - state.toolWindowStart;
+    if (ms >= 2000) return { kind: "tool-done", toolMs: ms };
+  }
+  if (input.thinkingStatus === "thinking" && !input.hasActiveTools)
+    return { kind: "thinking", thinkingMs: state.thinkingBurstStart !== null ? input.now - state.thinkingBurstStart : 0 };
+  if (typeof input.thinkingStatus === "number") return { kind: "thought-for", thoughtMs: input.thinkingStatus };
+  return { kind: "none" };
+}
+
+/** The last thinking burst on the wire, as `LiveTurn` measures it. */
+export interface ThinkingBurst { startedAt: number; endedAt?: number; ms?: number }
+
+/** Upstream keeps `x` on two `setTimeout`s (L408129–408141): leaving the thinking mode schedules the
+ *  `thought for Ns` readout for `max(0, 2000 - burstLength)` ms later — so a burst shorter than two
+ *  seconds still reads `thinking` for the full two — and clears it two seconds after that. Ported as a
+ *  PURE function of the burst and the clock instead: the spinner already repaints every frame, so the same
+ *  window falls out of arithmetic with no timers to leak (constraint 15). */
+export function thinkingStatusOf(burst: ThinkingBurst | undefined, isThinking: boolean, now: number): ThinkingStatus {
+  if (isThinking) return "thinking";
+  if (burst?.endedAt === undefined) return null;
+  const appearsAt = Math.max(burst.endedAt, burst.startedAt + 2000);
+  return now >= appearsAt && now < appearsAt + 2000 ? (burst.ms ?? 0) : null;
+}
+
+/** The mid-turn gerund rotation QA-6 saw. Upstream re-picks the store's `defaultVerb` on every
+ *  `resetOverrides()` (L407338), which its engine calls BETWEEN PHASES; ccx has no such store, so the
+ *  phase transition itself is the seam. Pure so the pick is injectable. */
+export function rotateVerb(current: string, previousKind: SpinnerPhase["kind"], kind: SpinnerPhase["kind"], pick: () => string): string {
+  return kind === previousKind ? current : pick();
+}
+
+// ── The parenthetical ────────────────────────────────────────────────────────────────────────────────
+
+/** `xtH` (L408075): below this, a turn with no phase and no tokens says nothing at all. */
+export const QUIET_MS = 16000;
+const NO_PHASE: SpinnerPhase = { kind: "none" };
+const JOINER = " · ";
+const JOINER_W = stringWidth(JOINER);          // `ItH`
+const THINKING_W = stringWidth("thinking");    // `v0p`
+const dw = (s: string) => stringWidth(s);      // `Ut`
+
+export interface SpinnerTail {
+  /** Wall-clock ms since the turn started (upstream nets out paused time; ccx never pauses). */
+  elapsedMs: number;
+  /** The EASED estimate, already `round(chars / 4)` — see `estimateTokens`. */
+  tokens?: number;
+  mode?: SpinnerMode;
+  phase?: SpinnerPhase;
+  /** Terminal width. */
+  columns?: number;
+  /** Display width of the gerund row to the left of the parenthetical (`Ut(message)`). */
+  messageWidth?: number;
+  verbose?: boolean;
+  /** `spinnerSuffix` — an unconditional leading segment; nothing in ccx sets one yet. */
+  suffix?: string;
+  effortSuffix?: string;
+}
+
+/** `C0p`'s `_r`/`Wr` (L407971–407982), as a string. Segments appear left to right — suffix, elapsed,
+ *  arrowed token count, phase — and each is gated on the room left after the ones before it, which is why
+ *  QA-6 watched the tail materialise a piece at a time as a turn warmed up.
+ *
+ *  Returns `""` when every gate is shut; the caller renders no tail at all rather than empty parens.
+ *
+ *  RECORDED DIVERGENCE (constraint 12): upstream paints the thinking rung in a pulsing shimmer colour
+ *  (`fr`/`Rt`, L407969) while everything else is dim. ccx renders the whole tail dim — the shimmer is a
+ *  per-frame RGB interpolation this port has no equivalent of, and a static colour would read as a state
+ *  change that never resolves. Upstream's `lr` case (phase-only, thinking, nothing else visible) also
+ *  moves the parens INSIDE the coloured span; since both spellings produce the same characters, it shows
+ *  up here only as the `(thinking)` output it is named for. */
+export function spinnerStatus(tail: SpinnerTail): string {
+  const { elapsedMs, tokens = 0, mode, phase = NO_PHASE, columns = 80, messageWidth = 0, verbose = false, suffix = "", effortSuffix = "" } = tail;
+  let label = phaseLabel(phase, effortSuffix);
+  const hasPhase = label !== null;
+  const elapsed = formatElapsed(elapsedMs);
+  const arrow = modeArrow(mode);
+  const count = formatCompactNumber(tokens);
+  // `gt`: the quiet gate. Something must be worth saying — a phase, a token count, verbose mode, or a turn
+  // that has already run long enough that silence would read as a hang.
+  const loud = verbose || hasPhase || tokens > 0 || elapsedMs > QUIET_MS;
+  const room = columns - (messageWidth + 2) - 5;                                     // `Lt`
+  let phaseW = label === null ? 0 : dw(label);
+  let showPhase = hasPhase && room > phaseW;                                         // `At`
+  // L407974: a thinking rung that does not fit degrades to the bare word before it is dropped, so a narrow
+  // terminal still says the turn is thinking rather than going silent mid-ladder.
+  if (!showPhase && hasPhase && phase.kind === "thinking" && (effortSuffix !== "" || thinkingWord(phase.thinkingMs) !== "thinking") && room > THINKING_W) {
+    label = "thinking"; phaseW = THINKING_W; showPhase = true;
+  }
+  const phaseCost = showPhase ? phaseW + JOINER_W : 0;                               // `Ft`
+  const showElapsed = loud && room > phaseCost + dw(elapsed);                        // `Dt`
+  const spent = phaseCost + (showElapsed ? dw(elapsed) + JOINER_W : 0);              // `mt`
+  const showTokens = loud && tokens > 0 && room > spent + dw(`↓ ${count} tokens`);   // `gr` (measured with ↓, as upstream does)
+  const parts = [
+    ...(suffix ? [suffix] : []),
+    ...(showElapsed ? [elapsed] : []),
+    ...(showTokens ? [`${arrow ? `${arrow} ` : ""}${count} tokens`] : []),
+    ...(showPhase && label !== null ? [label] : []),
+  ];
+  return parts.length === 0 ? "" : `(${parts.join(JOINER)})`;
 }

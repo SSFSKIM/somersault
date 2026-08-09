@@ -8,6 +8,8 @@ import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { CompactionRow } from "../../src/tui/CompactionRow.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
+// Wave C Task 6: the interrupt offer is a footer hint now, not spinner copy — helpers/spinnerRow.ts.
+import { spinnerUp } from "./helpers/spinnerRow.js";
 
 const plain = (s: string | undefined) => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 const line = (f: () => string | undefined) => plain(f()).replace(/\n/g, " ").replace(/\s+/g, " ").trim();
@@ -47,13 +49,13 @@ describe("ChatApp: compaction owns the live-turn slot", () => {
     const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
     await tick();
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    await waitFor(() => line(lastFrame).includes("esc to interrupt"));          // the ordinary spinner first
+    await waitFor(() => spinnerUp(line(lastFrame)));          // the ordinary spinner first
     fake.pushEvent({ kind: "message", data: { type: "system", subtype: "status", status: "compacting" } });
     await waitFor(() => line(lastFrame).includes("Compacting conversation…"));
-    expect(line(lastFrame)).not.toContain("esc to interrupt");                  // replaced, not stacked beside it
+    expect(spinnerUp(line(lastFrame))).toBe(false);                  // replaced, not stacked beside it
     fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", uuid: "cb-1" } });
     await waitFor(() => !line(lastFrame).includes("Compacting conversation…"));
-    expect(line(lastFrame)).toContain("esc to interrupt");                      // the turn is still running
+    expect(spinnerUp(line(lastFrame))).toBe(true);                      // the turn is still running
     unmount();
   });
 
@@ -84,7 +86,7 @@ describe("ChatApp: compaction owns the live-turn slot", () => {
     stdin.write("/compact"); await tick();
     stdin.write("\r");
     await waitFor(() => line(lastFrame).includes("Compacting conversation…"));
-    expect(line(lastFrame)).not.toContain("esc to interrupt");
+    expect(spinnerUp(line(lastFrame))).toBe(false);
     release();
     await waitFor(() => line(lastFrame).includes("compacted 9k → 2k"));
     expect(line(lastFrame)).not.toContain("Compacting conversation…");          // ephemeral: only the result row persists

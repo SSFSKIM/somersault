@@ -125,6 +125,15 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
       </Text>
     );
     const interruptKeys = bindings("chat:cancel");
+    // WAVE C TASK 6 MOVED THE AFFORDANCE BACK, and this is where it landed. Task 2 shipped a `.filter` below
+    // this list that built the `interrupt` hint and then dropped it, because ccx's spinner tail carried the
+    // same offer (`(3s · 142 tokens · esc to interrupt)`) and printing both would have put it on two
+    // adjacent rows. The spinner tail is canon's `C0p` parenthetical now, and that carries no interrupt
+    // offer at all — so the footer is once again the only place it appears, exactly as upstream's own footer
+    // has it (`⏸ manual mode on · esc to interrupt · ← for agents`, annex §C4.c). The hint was always BUILT,
+    // because it is what crowds `? for shortcuts` out while a turn runs (annex §C1.3 #3); only the filter is
+    // gone. NB it spells whatever chord is bound, so a rebound `chat:cancel` reads `alt+c to interrupt` —
+    // which the old spinner literal could not do, and which a test needle must not assume away.
     const hints = (composerOwnsKeys
       ? buildHintList({
           showHint: !(draftNonEmpty || searching || statusLineConfigured),
@@ -132,15 +141,7 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
           interruptChord: formatBindingLower(interruptKeys.find((k) => !k.includes(" ")) ?? interruptKeys[0]),
           agents, now: now ? now() : Date.now(),
         })
-      : []
-    // RECORDED DIVERGENCE (plan constraint 12) — THE INTERRUPT HINT IS BUILT AND THEN NOT DRAWN, on purpose.
-    // ccx's spinner tail already reads `(3s · 142 tokens · esc to interrupt)` (`spinner.ts:81`, mirroring
-    // upstream's own `SpinnerAnimationRow`), and it is on screen for exactly the frames `busy` is true — so
-    // rendering `ctl`'s copy as well would print the same offer twice, on adjacent rows. It is still BUILT
-    // because it is what crowds `? for shortcuts` out while a turn runs (annex §C1.3 #3, `G2.length === 0`),
-    // and dropping it from the model would silently restore a hint upstream hides. Wave C Task 6 owns the
-    // spinner's anatomy; if the affordance moves off the spinner, this one `filter` is what moves it back.
-    ).filter((h) => h.key !== "interrupt");
+      : []);
     return (
       <Box height={1} overflow="hidden">
         <Text wrap="truncate">

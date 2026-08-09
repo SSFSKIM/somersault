@@ -7,6 +7,20 @@ import type { RenderLine } from "./render.js";
 import { withAssistantBullet, THINKING_PLACEHOLDER } from "./render.js";
 import { renderMarkdown } from "./markdown.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
+import type { SpinnerMode, ThinkingBurst } from "./spinner.js";
+
+/** Wave C Task 6: everything the live-turn spinner's parenthetical needs, read off the SAME frames this
+ *  class already consumes rather than by a second subscriber to the wire. `chars` is upstream's
+ *  `responseLength`; the other three feed the phase ladder. */
+export interface SpinnerMeter {
+  /** Target for the eased token estimate — streamed characters, floored by the real usage figure (D-C6). */
+  chars: number;
+  mode: SpinnerMode;
+  hasActiveTools: boolean;
+  isThinking: boolean;
+  lastBurst?: ThinkingBurst;
+}
+export const IDLE_METER: SpinnerMeter = { chars: 0, mode: "requesting", hasActiveTools: false, isThinking: false };
 
 // F1 Task 2 role map: a failed turn's line is `error`. Read per snapshot (never cached) so a mid-session
 // /theme change repaints the in-flight turn on the next frame.
@@ -33,6 +47,18 @@ export class LiveTurn {
   private msgId?: string;                                 // id of the API message currently streaming (message_start)
   private openThinking = new Map<string, number>();       // `${msgId}:${index}` → local arrival of its content_block_start
   private thoughtMs = new Map<string, number>();          // message id → summed ms of its STOPPED thinking blocks
+  // ── Wave C Task 6: the spinner meter ─────────────────────────────────────────────────────────────
+  // Four cheap counters over frames already being read. `rawChars` is upstream's `responseLength`
+  // (L374708–374720): text deltas AND tool-input JSON, never thinking deltas — upstream feeds those to a
+  // token counter instead, and the F4 t9 note above records why. `openTools` is the tool WINDOW the phase
+  // ladder times; it is keyed on complete messages because that is where ids and results both arrive.
+  // The burst is INDEPENDENT of `thoughtMs` above on purpose: that map is keyed by message id and gives up
+  // when a `message_start` carries none, whereas the spinner still has to say "thinking".
+  private rawChars = 0;
+  private mode: SpinnerMode = "requesting";
+  private openTools = new Set<string>();
+  private openThinkingIdx = new Set<number>();            // indices of the CURRENT contiguous thinking window
+  private burst?: ThinkingBurst;
   private clock: () => number;
   private columns: () => number;
   private platform: NodeJS.Platform;
@@ -58,6 +84,21 @@ export class LiveTurn {
   }
   /** Real running output-token count for the WHOLE turn (committed messages + the in-flight one). */
   get outputTokens(): number { return this.committedTokens + this.currentMsgTokens; }
+
+  /** The spinner's whole input, as of the last frame. `chars` RECONCILES the estimate to the truth (D-C6):
+   *  the raw streamed length undercounts (thinking tokens and structured tool input are billed but only
+   *  partly typed), so the moment a `message_delta` reports real usage the target jumps to four characters
+   *  a token and the easing walks up to it. Raw characters take back over as soon as they exceed it, which
+   *  keeps the number climbing between the once-per-message usage frames. */
+  meter(): SpinnerMeter {
+    return {
+      chars: Math.max(this.rawChars, this.outputTokens * 4),
+      mode: this.mode,
+      hasActiveTools: this.openTools.size > 0,
+      isThinking: this.openThinkingIdx.size > 0,
+      ...(this.burst && { lastBurst: this.burst }),
+    };
+  }
 
   /** Assistant `message.id` → total thinking ms observed on THIS turn's wire. A stopped block is frozen at
    *  its `content_block_stop` arrival; a block still open reports elapsed-so-far against `now`, so a caller
@@ -89,6 +130,7 @@ export class LiveTurn {
     // here, so it must neither wipe the partials the parent is still streaming nor claim the turn's model.
     if (typeof mm.parent_tool_use_id === "string" && mm.parent_tool_use_id) return;
     if (mm.type === "assistant" && !this.model && mm.message?.model) this.model = String(mm.message.model);
+    this.trackTools(mm);
     // The document owns this message from here on — drop the partials it supersedes, or the same text
     // renders twice (once transient, once published).
     this.current = [];
@@ -105,6 +147,19 @@ export class LiveTurn {
 
   private find(index: number): Block | undefined { return this.current.find((b) => b.index === index); }
 
+  /** The tool window the phase ladder times. A call opens when the assistant message carrying it lands and
+   *  closes when its result comes back on a user message — the same pair `syncLiveOpen` uses for the
+   *  blinking active-group row, read here off frames this class is handed anyway. Delivering a result also
+   *  means a NEW request is going out, which is upstream's `stream_request_start` → `"requesting"`. */
+  private trackTools(mm: any): void {
+    const content = mm.message?.content;
+    if (!Array.isArray(content)) return;
+    if (mm.type === "assistant") { for (const b of content) if (b?.type === "tool_use" && typeof b.id === "string") this.openTools.add(b.id); return; }
+    let closed = false;
+    for (const b of content) if (b?.type === "tool_result" && typeof b.tool_use_id === "string") closed = this.openTools.delete(b.tool_use_id) || closed;
+    if (closed) this.mode = "requesting";
+  }
+
   private onStreamEvent(e: any): void {
     if (e.type === "message_start") {
       this.committedTokens += this.currentMsgTokens; this.currentMsgTokens = 0; this.current = [];
@@ -118,15 +173,22 @@ export class LiveTurn {
       // finds no latched start is simply not a thinking block.
       if (cb.type === "thinking") {
         const key = this.blockKey(i); if (key !== undefined) this.openThinking.set(key, this.clock());
+        if (this.openThinkingIdx.size === 0) this.burst = { startedAt: this.clock() };
+        this.openThinkingIdx.add(i); this.mode = "thinking";
         this.current.push({ kind: "thinking", index: i, text: "", collapsed: false });
       }
-      else if (cb.type === "text") this.current.push({ kind: "text", index: i, text: "" });
+      else if (cb.type === "text") { this.mode = "responding"; this.current.push({ kind: "text", index: i, text: "" }); }
+      else if (cb.type === "tool_use") this.mode = "tool-input";
       // tool_use partials are NOT tracked: the open call reaches the screen through projectPending, off the
       // retained document, the moment the complete assistant message lands.
       return;
     }
     if (e.type === "content_block_delta") {
       const b = this.find(e.index), d = e.delta ?? {};
+      // The spinner's char count runs BEFORE the block lookup: a tool_use block is not tracked as a Block
+      // at all (its row belongs to projectPending), but its streaming JSON is half of what upstream counts.
+      if (d.type === "text_delta" && typeof d.text === "string") this.rawChars += d.text.length;
+      else if (d.type === "input_json_delta" && typeof d.partial_json === "string") this.rawChars += d.partial_json.length;
       if (!b) return;
       if (b.kind === "text" && d.type === "text_delta") b.text += d.text ?? "";
       else if (b.kind === "thinking" && d.type === "thinking_delta") b.text += d.thinking ?? "";
@@ -134,6 +196,10 @@ export class LiveTurn {
       return;
     }
     if (e.type === "content_block_stop") {
+      // The burst closes on the LAST open thinking block, so several thinking blocks in one message read as
+      // one window — which is what upstream's mode-based burst measures.
+      if (this.openThinkingIdx.delete(e.index) && this.openThinkingIdx.size === 0 && this.burst)
+        this.burst = { startedAt: this.burst.startedAt, endedAt: this.clock(), ms: Math.max(0, this.clock() - this.burst.startedAt) };
       const key = this.blockKey(e.index), startedAt = key === undefined ? undefined : this.openThinking.get(key);
       if (key !== undefined && startedAt !== undefined) {
         this.openThinking.delete(key);
@@ -142,8 +208,12 @@ export class LiveTurn {
       }
       return;
     }
-    if (e.type === "message_delta" && e.usage && typeof e.usage.output_tokens === "number") this.currentMsgTokens = e.usage.output_tokens;
-    // message_stop → no-op
+    if (e.type === "message_delta") {
+      this.mode = "responding";
+      if (e.usage && typeof e.usage.output_tokens === "number") this.currentMsgTokens = e.usage.output_tokens;
+      return;
+    }
+    if (e.type === "message_stop") this.mode = "tool-use";   // L374680: the message is done; whatever it asked for runs next
   }
 
   private renderBlock(b: Block): RenderLine[] {

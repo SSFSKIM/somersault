@@ -28,7 +28,7 @@ import { userEchoLines, type RenderLine } from "./render.js";
 import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
-import { LiveTurn } from "./liveTurn.js";
+import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
@@ -90,7 +90,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnTokens: number; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
+  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
   /** The session's working directories — the cwd plus every `/add-dir` grant (`listDirs()`). The FILE
    *  permission dialog's in-directory test runs over this set; nothing else reads it. */
   workDirs: readonly string[];
@@ -365,7 +365,10 @@ export function useChat(
   useEffect(() => notifications.subscribe(() => { if (!disposed.current) setNotification(notifications.state().current); }), [notifications]);
   const notify = (n: CcxNotification) => { notifications.add(n); };
   const dismissNotification = (key: string) => { notifications.remove(key); };
-  const [turnTokens, setTurnTokens] = useState(0);    // live output-token count for the in-flight turn (spinner)
+  // Wave C Task 6: the spinner reads a METER, not a token count — the parenthetical needs the streamed
+  // character target (for the eased estimate), the stream mode (for the arrow) and the tool/thinking
+  // windows (for the phase ladder). All four come off the one `LiveTurn` that already consumes the frames.
+  const [turnMeter, setTurnMeter] = useState<SpinnerMeter>(IDLE_METER);
   // Prompts/turns submitted while busy; drained FIFO on turn end, or ALL AT ONCE back into the composer on
   // Up/ctrl+p (F5 task 8, CM48). `QueueEntry` (queue.ts) is upstream's own record shape — the raw text with
   // its prefix, the mode that text implies, the priority rung, and the paste map an entry was composed with.
@@ -627,7 +630,7 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
-        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnTokens(0); setStreaming([]); clearRetry(); armStall();
+        liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnMeter(IDLE_METER); setStreaming([]); clearRetry(); armStall();
       }
       else if (ev.kind === "message") {
         const data = ev.data as any;
@@ -660,7 +663,7 @@ export function useChat(
         // deltas × history. The live region is the only thing a delta may touch.
         if (data?.type === "stream_event") {
           const partial = liveTurnRef.current;
-          if (partial) { partial.ingest(data); setStreaming(partial.snapshot()); setTurnTokens(partial.outputTokens); if (partial.model) setModel(partial.model); }
+          if (partial) { partial.ingest(data); setStreaming(partial.snapshot()); setTurnMeter(partial.meter()); if (partial.model) setModel(partial.model); }
           return;
         }
         // Harvest bg-task metadata (command/output-file) first: a reconnect-buffer replay carries no live
@@ -746,7 +749,7 @@ export function useChat(
           if (t.trim()) lastAssistant.current = t;
         }
         const l = liveTurnRef.current;
-        if (l) { l.ingest(ev.data); setStreaming(l.snapshot()); setTurnTokens(l.outputTokens); if (l.model) setModel(l.model); }
+        if (l) { l.ingest(ev.data); setStreaming(l.snapshot()); setTurnMeter(l.meter()); if (l.model) setModel(l.model); }
         syncLiveOpen(data);   // AFTER the append: a result delivered in this very frame has already attached
         reconcile();
       }
@@ -1248,7 +1251,7 @@ export function useChat(
   async function openModelPicker() {
     try {
       // WAVE S T12: the switch confirm's gate needs the session's CUMULATIVE output tokens, and this is the
-      // one moment it can be read — `turnTokens` is the spinner's per-turn count and resets every turn.
+      // one moment it can be read — the spinner's own meter is per-turn and resets every turn.
       // Fetched alongside the catalog, not after it, so the picker still opens in one round-trip.
       // A FAILED usage read degrades to 0, which by gate condition 1 means NO confirm — i.e. it degrades to
       // exactly the behavior this surface had before T12, never to a dialog raised on a number we do not
@@ -1842,5 +1845,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus, compacting, notification } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus, compacting, notification } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

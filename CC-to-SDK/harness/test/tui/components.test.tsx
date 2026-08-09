@@ -15,8 +15,11 @@ import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { modeColor } from "../../src/tui/modeTable.js";
 import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { TurnSpinner } from "../../src/tui/TurnSpinner.js";
+import { IDLE_METER, type SpinnerMeter } from "../../src/tui/liveTurn.js";
 import type { PermissionDecision } from "../../src/index.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
+
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");   // ShortcutsOverlay.test.tsx's own idiom
 
 const tok = (name: "success" | "warning" | "error" | "permission" | "inactive" | "planMode" | "autoAccept") => resolveThemeColor(themeTokens()[name]);
 
@@ -173,27 +176,63 @@ describe("TurnSpinner", () => {
   // NB: startedAt is a real epoch stamp in production, so these fakes use one too. They previously
   // passed startedAt={0}, which is exactly the unset value the guard below now treats as "just
   // started" — written that way they were asserting the buggy contract.
-  it("shows the asterisk glyph, the verb, and the esc-to-interrupt status", () => {
+  //
+  // WAVE C TASK 6 rewrote the tail. `esc to interrupt` left it (canon's `C0p` parenthetical has no such
+  // segment; the offer is a footer hint again), the token count became an eased estimate off the meter's
+  // character target, and every segment sits behind a width gate plus a 16 s quiet threshold — which is
+  // why the first case below now asserts that a short quiet turn says NOTHING after the gerund.
+  const meter = (over: Partial<SpinnerMeter> = {}): SpinnerMeter => ({ ...IDLE_METER, ...over });
+
+  it("shows the asterisk glyph and the verb, and stays quiet for the first sixteen seconds", () => {
     const { lastFrame } = render(<TurnSpinner startedAt={1000} verb="Cogitating" now={() => 4000} />);
     const f = lastFrame() ?? "";
     expect(f).toContain("Cogitating…");
-    expect(f).toContain("3s");
-    expect(f).toContain("esc to interrupt");
+    expect(f).not.toContain("3s");
+    expect(f).not.toContain("(");
     // one of the asterisk-pulse frames must be present
     expect(/[·✢✳✶✻✽]/.test(f)).toBe(true);
   });
-  it("shows the live token count once > 0", () => {
-    const f = render(<TurnSpinner startedAt={1000} verb="Cogitating" tokens={142} now={() => 4000} />).lastFrame() ?? "";
-    expect(f).toContain("142 tokens");
+  it("opens the parenthetical once the turn has run past the quiet threshold", () => {
+    const f = render(<TurnSpinner startedAt={1000} verb="Cogitating" now={() => 21000} />).lastFrame() ?? "";
+    expect(f).toContain("(20s)");
+  });
+  it("carries the phase and the arrow the moment the wire says the model is thinking", () => {
+    const f = render(<TurnSpinner startedAt={1000} verb="Cogitating" now={() => 4000}
+      meter={meter({ mode: "thinking", isThinking: true, lastBurst: { startedAt: 4000 } })} />).lastFrame() ?? "";
+    expect(f).toContain("(3s · thinking)");
+  });
+  it("eases the token estimate up to the meter's character target instead of stepping to it", async () => {
+    // The count starts at zero and walks: upstream animates `responseLength` toward the real figure and
+    // divides by four, so the first painted frame of a 4000-char message reads no tokens at all.
+    const { lastFrame } = render(<TurnSpinner startedAt={1000} verb="Cogitating" meter={meter({ mode: "responding", chars: 4000 })} />);
+    expect(lastFrame() ?? "").not.toContain("tokens");
+    await waitFor(() => (lastFrame() ?? "").includes("tokens"));
+    const f = stripAnsi(lastFrame() ?? "");
+    expect(f).toMatch(/↓ \d+ tokens/);                       // the arrow rides the token segment
+    const shown = Number(/↓ (\d+) tokens/.exec(f)![1]);
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThan(1000);                        // still climbing toward 4000/4
+  });
+  it("re-picks the gerund on a phase transition and holds it inside one phase", () => {
+    const picks = ["Baking", "Herding", "Noodling"]; let i = 0;
+    const pick = () => picks[Math.min(i++, picks.length - 1)]!;
+    const spinner = (m: SpinnerMeter) => <TurnSpinner startedAt={1000} now={() => 4000} pick={pick} meter={m} />;
+    const { lastFrame, rerender } = render(spinner(meter()));
+    expect(lastFrame() ?? "").toContain("Baking…");
+    rerender(spinner(meter({ mode: "thinking", isThinking: true, lastBurst: { startedAt: 4000 } })));
+    expect(lastFrame() ?? "").toContain("Herding…");         // none → thinking re-picks
+    rerender(spinner(meter({ mode: "thinking", isThinking: true, lastBurst: { startedAt: 3000 } })));
+    expect(lastFrame() ?? "").toContain("Herding…");          // still thinking → held
   });
   // Regression, found ONLY in the real binary (pty acceptance, w3.9): useChat sets busy and the start
   // stamp in two setState calls that do not commit together, so the first painted frame of a turn has
   // busy=true and startedAt=0. Unguarded, `now() - 0` is ms since 1970 and the tail read
   // "(29758130m 59s · esc to interrupt)" for one frame before settling to 0s.
   it("treats an unset (0) start stamp as just-started instead of measuring from the epoch", () => {
-    const f = render(<TurnSpinner startedAt={0} verb="Cogitating" now={() => 1.7845e12} />).lastFrame() ?? "";
+    const f = render(<TurnSpinner startedAt={0} verb="Cogitating" now={() => 1.7845e12}
+      meter={{ ...IDLE_METER, mode: "responding", isThinking: true, lastBurst: { startedAt: 1.7845e12 } }} />).lastFrame() ?? "";
     expect(f).toContain("0s");
-    expect(f).not.toMatch(/\d{4,}m/);        // no "29758130m" — the epoch-elapsed signature
+    expect(f).not.toMatch(/\d{4,}[mdh]/);    // no "29758130m" / "20655d" — the epoch-elapsed signatures
   });
 });
 

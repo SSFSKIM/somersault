@@ -14,6 +14,7 @@ import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
+import { spinnerUp } from "./helpers/spinnerRow.js";
 import { UNDO_COALESCE_MS } from "../../src/tui/editor.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
@@ -259,7 +260,9 @@ describe("F2 task 6 — root migration (ChatApp + ChatComposer on the keymap)", 
     );
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("go"); await waitFor(() => frame(lastFrame).includes("go"));
-    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
+    // NOT `esc to interrupt`: this case REBINDS `chat:cancel` off Escape, and since Wave C Task 6 that copy
+    // comes from the footer hint, which spells whatever chord is actually bound (`alt+c to interrupt` here).
+    stdin.write("\r"); await waitFor(() => spinnerUp(frame(lastFrame)));
     stdin.write("\x1bc"); await waitFor(() => interrupted === 1);
   });
 

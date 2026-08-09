@@ -362,10 +362,12 @@ it("the footer and the composer's contextual hints only advertise chords that RO
   const FOOTER_TOKEN_TO_ROW: Record<string, string> = {
     "? for shortcuts": "?", "! for shell mode": "!", "(shift+tab to cycle)": "⇧Tab",
   };
-  // `esc to interrupt` is NOT here on purpose: `footerModel.buildHintList` builds it (it is what crowds
-  // `? for shortcuts` out while a turn runs) and `Footer.tsx` filters it back out, because ccx's spinner tail
-  // already carries the same offer — see that filter's comment. Its honesty is audited where it is printed:
-  // the `Esc` row's own proof above drives a real interrupt.
+  // `esc to interrupt` is NOT here on purpose, and the reason CHANGED with Wave C Task 6: the footer used to
+  // build it and filter it back out (the spinner tail carried the same offer), and now the footer is the only
+  // place it appears — the tail is canon's `C0p` parenthetical, which has no interrupt segment. It still does
+  // not belong in the map, because the map's job is chords the `?` grid can prove and the hint spells
+  // whatever `chat:cancel` happens to be bound to. Its honesty is audited where it is printed: the `Esc`
+  // row's own proof above drives a real interrupt.
   // ONE LIVE AFFORDANCE IS DELIBERATELY NOT IN THAT MAP, and this is the record of it rather than a hole:
   // `← for agents` (annex §C1.4).
   //   WAVE C TASK 4 CLOSED THE GAP THIS COMMENT USED TO DESCRIBE. It said the glyph was "a shape borrowed from

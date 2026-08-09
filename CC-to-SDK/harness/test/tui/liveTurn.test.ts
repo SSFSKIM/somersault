@@ -253,6 +253,91 @@ describe("LiveTurn thinking clock (P82 local arrival stamps)", () => {
   });
 });
 
+// ── Wave C Task 6: the spinner meter ──────────────────────────────────────────────────────────────────
+// The spinner's parenthetical is fed from HERE, not from a second reader of the same wire: the eased token
+// estimate needs a streamed-character count (upstream's `responseLength`, fed by text deltas AND tool-input
+// JSON deltas — L374708–374720 — and never by thinking deltas), and the phase ladder needs the mode, the
+// open-tool window and the thinking burst. All four already exist in the frames this class consumes.
+describe("LiveTurn spinner meter (Wave C Task 6)", () => {
+  const clocked = () => { let t = 0; return { lt: new LiveTurn({ now: () => t }), at: (ms: number) => { t = ms; } }; };
+
+  it("counts text deltas and tool-input JSON, and never thinking prose", () => {
+    const lt = new LiveTurn();
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
+    lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "0123456789" } }));
+    expect(lt.meter().chars).toBe(0);                       // thinking feeds a token counter upstream, not the length
+    lt.ingest(se({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }));
+    lt.ingest(se({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "hello" } }));
+    expect(lt.meter().chars).toBe(5);
+    lt.ingest(se({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "t1", name: "Read", input: {} } }));
+    lt.ingest(se({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: "{\"a\":1}" } }));
+    expect(lt.meter().chars).toBe(12);
+  });
+
+  it("RECONCILES the estimate to the real usage figure when a message_delta lands (D-C6)", () => {
+    const lt = new LiveTurn();
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+    lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x".repeat(40) } }));
+    expect(lt.meter().chars).toBe(40);                      // estimate → 10 tokens
+    lt.ingest(se({ type: "message_delta", delta: {}, usage: { output_tokens: 64 } }));
+    expect(lt.meter().chars).toBe(256);                     // the truth (64 tokens) becomes the target
+    lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "y".repeat(400) } }));
+    expect(lt.meter().chars).toBe(440);                     // and raw chars take over again once they exceed it
+  });
+
+  it("tracks the mode across a tool round-trip", () => {
+    const lt = new LiveTurn();
+    expect(lt.meter().mode).toBe("requesting");
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
+    expect(lt.meter().mode).toBe("thinking");
+    lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    lt.ingest(se({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }));
+    expect(lt.meter().mode).toBe("responding");
+    lt.ingest(se({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "t1", name: "Read", input: {} } }));
+    expect(lt.meter().mode).toBe("tool-input");
+    lt.ingest(se({ type: "message_stop" }));
+    expect(lt.meter().mode).toBe("tool-use");
+    lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] } });
+    expect(lt.meter().hasActiveTools).toBe(true);
+    lt.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } });
+    expect(lt.meter().hasActiveTools).toBe(false);
+    expect(lt.meter().mode).toBe("requesting");             // a tool result opens a NEW request
+  });
+
+  it("does not let a SUBAGENT's tool round-trip move the parent's tool window", () => {
+    const lt = new LiveTurn();
+    lt.ingest({ type: "assistant", parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_use", id: "nested", name: "Read", input: {} }] } });
+    expect(lt.meter().hasActiveTools).toBe(false);
+  });
+
+  it("reports the thinking burst: open while it streams, then its span", () => {
+    const { lt, at } = clocked();
+    at(1000);
+    lt.ingest(se({ type: "message_start", message: { id: "m1" } }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
+    expect(lt.meter().isThinking).toBe(true);
+    expect(lt.meter().lastBurst).toEqual({ startedAt: 1000 });
+    at(4200);
+    lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    expect(lt.meter().isThinking).toBe(false);
+    expect(lt.meter().lastBurst).toEqual({ startedAt: 1000, endedAt: 4200, ms: 3200 });
+  });
+
+  it("clocks a burst even when the message carried no id (the thinking clock cannot, and says so)", () => {
+    const { lt, at } = clocked();
+    at(0);
+    lt.ingest(se({ type: "message_start" }));
+    lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
+    at(3000);
+    lt.ingest(se({ type: "content_block_stop", index: 0 }));
+    expect(lt.thinkingDurations(3000).size).toBe(0);        // unchanged: nothing to attribute it TO
+    expect(lt.meter().lastBurst).toEqual({ startedAt: 0, endedAt: 3000, ms: 3000 });
+  });
+});
+
 describe("live and replay share ONE tool grammar", () => {
   afterEach(() => setTheme("auto"));
   // The cutover's whole point: the same fixture, ingested live off the host event stream or read back off

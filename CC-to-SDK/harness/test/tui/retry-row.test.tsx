@@ -15,6 +15,9 @@ import { RetryRow, retryCountdown } from "../../src/tui/RetryRow.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { setTheme } from "../../src/tui/theme.js";
+// Wave C Task 6: the interrupt offer left the spinner tail for the footer hint list, so that copy can no
+// longer tell "the spinner is up" from "a turn is running" — see helpers/spinnerRow.ts for the needle.
+import { spinnerUp } from "./helpers/spinnerRow.js";
 
 afterEach(() => { setTheme("auto"); vi.useRealTimers(); });
 
@@ -95,13 +98,13 @@ describe("ChatApp: the row replaces the spinner", () => {
     const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
     await tick();
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    await waitFor(() => line(lastFrame).includes("esc to interrupt"));   // the spinner is up first
+    await waitFor(() => spinnerUp(line(lastFrame)));   // the spinner is up first
     fake.pushEvent({ kind: "message", data: retryFrame({ attempt: 4, error_status: 529, error: "overloaded", retry_delay_ms: 5000 }) });
     await waitFor(() => line(lastFrame).includes("Retrying in"));
     const f = line(lastFrame);
     expect(f).toContain("✻ API overloaded · Retrying in");                  // canon `rZp` prose, not the wire slug
     expect(f).toContain("· attempt 4/10");
-    expect(f).not.toContain("esc to interrupt");                          // …and the spinner is GONE, not beside it
+    expect(spinnerUp(f)).toBe(false);                          // …and the spinner is GONE, not beside it
     unmount();
   });
 
@@ -112,12 +115,12 @@ describe("ChatApp: the row replaces the spinner", () => {
     vi.useFakeTimers();
     try {
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
-      await waitForFakeTimers(() => line(lastFrame).includes("esc to interrupt"));
+      await waitForFakeTimers(() => spinnerUp(line(lastFrame)));
       expect(line(lastFrame)).not.toContain("Waiting for API response");
       await waitForFakeTimers(() => line(lastFrame).includes("Waiting for API response"), 15_000);
       const f = line(lastFrame);
       expect(f).toContain("✻ Waiting for API response · check your network");
-      expect(f).not.toContain("esc to interrupt");
+      expect(spinnerUp(f)).toBe(false);
     } finally { unmount(); }
   });
 
@@ -139,7 +142,7 @@ describe("ChatApp: the row replaces the spinner", () => {
       });
       await act(async () => { await vi.advanceTimersByTimeAsync(12_000); });   // `npm test` is simply running
       expect(line(lastFrame)).not.toContain("Waiting for API response");
-      expect(line(lastFrame)).toContain("esc to interrupt");                   // the spinner, unchanged
+      expect(spinnerUp(line(lastFrame))).toBe(true);                   // the spinner, unchanged
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });   // …and it stays retired, no oscillation
       expect(line(lastFrame)).not.toContain("Waiting for API response");
     } finally { unmount(); }
@@ -160,7 +163,7 @@ describe("ChatApp: the row replaces the spinner", () => {
     vi.useFakeTimers();
     try {
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
-      await waitForFakeTimers(() => line(lastFrame).includes("esc to interrupt"));
+      await waitForFakeTimers(() => spinnerUp(line(lastFrame)));
       await act(async () => { await vi.advanceTimersByTimeAsync(3_300); });      // probe 99's arrival time
       await act(async () => {
         fake.pushEvent({ kind: "message", data: { type: "system", subtype: "init", session_id: "s", uuid: "u1", permissionMode: "default", model: "claude-sonnet-4-5" } });
@@ -168,7 +171,7 @@ describe("ChatApp: the row replaces the spinner", () => {
       expect(line(lastFrame)).not.toContain("Waiting for API response");        // not yet — the timer is still armed
       await act(async () => { await vi.advanceTimersByTimeAsync(12_000); });     // …and nothing else ever arrives
       expect(line(lastFrame)).toContain("✻ Waiting for API response · check your network");
-      expect(line(lastFrame)).not.toContain("esc to interrupt");
+      expect(spinnerUp(line(lastFrame))).toBe(false);
     } finally { unmount(); }
   });
 
@@ -181,7 +184,7 @@ describe("ChatApp: the row replaces the spinner", () => {
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
       await waitForFakeTimers(() => line(lastFrame).includes("Waiting for API response"), 15_000);
       await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "recovered" }] } } }); });
-      await waitForFakeTimers(() => line(lastFrame).includes("esc to interrupt"));
+      await waitForFakeTimers(() => spinnerUp(line(lastFrame)));
       expect(line(lastFrame)).not.toContain("Waiting for API response");
     } finally { unmount(); }
   });
