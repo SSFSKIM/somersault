@@ -393,3 +393,31 @@ usage call counts and post_tokens doesn't — two different numerators, which is
 re-measures instead of deriving from the outcome (the comment in useChat.ts already said so; the probe
 now proves the half that was inference). Marked verified in the code comment. Probe-82's cell in
 Task 13's live matrix flips from "blocked" to "settled"; the remaining keyed cells stay queued for T13.
+
+## 2026-08-09 — Task 9 built (b74eca92e8); review + Task 10 pipelined
+
+Task 9 (`--continue` + the short-id-tolerant `--resume` resolver, W-S6) came back green on all three
+gates: new `cli/resolveResume.ts` with the four-stage resolution order and the three-outcome union
+(session/pending/unknown), the `-c/--continue` flag top-level on CcxInvocation, and three main-level
+refusals — the two briefed (with --resume, with a prompt) plus one the implementer argued for and I
+endorsed: `--continue` outside a plain foreground run, because `-p`/`--bg`/`--detachable` never reach
+the foreground path, so `ccx -c --bg task` would have silently started a FRESH session and reported
+success — the exact silent-drop class the task exists to remove. Pre-dispatch verification caught five
+plan drifts; the biggest two: there is NO help printer anywhere in src/cli (plan Step 7 had no target;
+confirmed harness/README documents the other CLI only), and `resolveTarget` is synchronous+throwing.
+Review dispatched (angles: sabotage-check, nonexistent-full-UUID leak, prefix-match vs the limit-30
+cwd-scoped listing, refusal reachability vs spawn.ts forwarding, pending reachability, TUI wiring).
+Task 10 impl pipelined in parallel — disjoint file sets (cli/ vs tui/), reviewer is read-only.
+
+Task 10 pre-grounding (controller, today): recovered upstream's widen semantics from the bundle —
+Ctrl+W gates on `git worktree list --porcelain` counting >1 (L35980/L476411), worktree axis starts
+narrowed, all-projects bypasses worktree narrowing (`R && !L && !u`); and a keyless probe proved the
+SDK's `includeWorktrees:false` really excludes worktree rows (default true). Both toggles have real
+backing; Ctrl+B stays a recorded divergence (CTRL-B-1). Also found: SessionPicker takes sessions as a
+prop — the zero-arg deps.listSessions loader in useChat must widen to carry scope; noted in dispatch.
+
+Task 11/12 pre-verification also done: T11's line drifts noted (host compact op :329, boundary branch
+:586, permanent append :825, spinner ChatApp:567); T12 has a real plan defect — the `sum()` helper it
+says to reuse at commands.ts:130 does not exist (aggregation is an inline loop in the /cost formatter),
+and useChat holds no cumulative output-token counter (turnTokens is per-turn) — the gate will need a
+`totalOutputTokens(usage)` export and a usage() fetch at picker-open. Corrections staged for dispatch.
