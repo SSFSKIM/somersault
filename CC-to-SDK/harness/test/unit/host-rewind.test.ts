@@ -40,6 +40,74 @@ describe("rewindAnchors", () => {
   });
 });
 
+/** W-S13. A session resumed from the REPL presents as empty to every id-shaped surface until its first
+ *  live turn completes: the engine reports no session id until that turn's init frame, and `sessionId`
+ *  was read off the engine alone. Live-reproduced twice — Esc-Esc rendering "Nothing to rewind to yet."
+ *  over a transcript showing three replayed turns, and /stats reading zeros next to it. The host is the
+ *  one layer that KNOWS (it is what accepted the resume op), so the repair lives here and reaches the
+ *  client over `status()`, the frame the adapter already caches its id from. `sessionId: undefined` on
+ *  the fake is the whole fixture: it is exactly the pre-first-turn engine. */
+describe("a resumed session knows its own id before its first turn (W-S13)", () => {
+  it("rewindAnchors reads the transcript through the RESUME TARGET while the engine has no id yet", async () => {
+    const { host, getMessages } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    const anchors = await host.rewindAnchors();
+    expect(anchors.map((a) => a.uuid)).toEqual(["uB", "uA"]);
+    expect(getMessages).toHaveBeenCalledWith("sid-resumed", { cwd: "/tmp" });
+  });
+
+  it("the ENGINE's id wins the moment it mints one", async () => {
+    // A plain resume keeps the same session_id (probe 23), so these agree in practice — but a forking
+    // resume does not, and the engine's own report must always outrank what we asked to resume.
+    const { host, session, getMessages } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    (session as { sessionId?: string }).sessionId = "sid-engine";
+    await host.rewindAnchors();
+    expect(getMessages).toHaveBeenLastCalledWith("sid-engine", { cwd: "/tmp" });
+  });
+
+  it("a FRESH session invents nothing: no anchors, and disk is never read", async () => {
+    const { host, getMessages } = makeHost({ sessionId: undefined });
+    expect(await host.rewindAnchors()).toEqual([]);
+    expect(getMessages).not.toHaveBeenCalled();
+    expect(host.status().sessionId).toBeUndefined();
+  });
+
+  it("status() publishes the resumed id — the ONE channel the client's cached id comes from", async () => {
+    // /status's session row, /export, /files, /session, /rename, /tag, /stats and the Settings Stats tab
+    // all read the adapter's cached id, and chatAdapter populates it from `state` frames alone. This is
+    // why the client needs no fallback of its own.
+    const { host } = makeHost({ sessionId: undefined });
+    expect(host.status().sessionId).toBeUndefined();
+    await host.resumeSession("sid-resumed");
+    expect(host.status().sessionId).toBe("sid-resumed");
+  });
+
+  it("/clear FORGETS it — a discarded conversation's id must never keep being published", async () => {
+    const { host, getMessages } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    await host.clearSession();
+    expect(host.status().sessionId).toBeUndefined();
+    expect(await host.rewindAnchors()).toEqual([]);
+    expect(getMessages).not.toHaveBeenCalled();
+  });
+
+  it("rewind forks the conversation from the resume target before the first turn (it used to throw)", async () => {
+    const { host, opened } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    opened.length = 0;                                   // drop the resume's own open — assert on the rewind's
+    await host.rewind({ uuid: "uB", prevUuid: "aA" }, "conversation");
+    expect(opened[0]).toMatchObject({ resume: "sid-resumed", resumeAt: "aA" });
+  });
+
+  it("a first-message restore forgets it too — that arm swaps to a fresh, EMPTY conversation", async () => {
+    const { host } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    await host.rewind({ uuid: "uA", prevUuid: null }, "conversation");
+    expect(host.status().sessionId).toBeUndefined();
+  });
+});
+
 describe("rewindDryRun", () => {
   it("returns the shape, and normalizes a THROW into {canRewind:false,error}", async () => {
     const { host } = makeHost();

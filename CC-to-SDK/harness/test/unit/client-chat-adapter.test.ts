@@ -70,12 +70,12 @@ function bgSession(sessionId = "sid-bg") {
   };
 }
 
-async function startHost(session: HostSession = drivable(), opts: { kind?: "bg" | "interactive"; detached?: boolean } = {}) {
+async function startHost(session: HostSession = drivable(), opts: { kind?: "bg" | "interactive"; detached?: boolean; getMessages?: (id: string, o: { cwd?: string }) => Promise<any[]> } = {}) {
   const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
   const kind = opts.kind ?? "bg";
   const host = new SessionHost(
     { short: "ffffffff", name: "adapter", cwd: process.cwd(), kind, detached: opts.detached ?? true, config: {} as never, env },
-    { openSession: () => session, procStartOf: async () => "start" });
+    { openSession: () => session, procStartOf: async () => "start", ...(opts.getMessages ? { getMessages: opts.getMessages } : {}) });
   await host.start();
   return { host, session, env, path: hostSocketPath(process.pid, env) };
 }
@@ -484,5 +484,34 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
       adapter.detach();
       srv.close();
     }
+  });
+
+  // W-S13, over the REAL socket. The client half of the resumed-idle lie: `session.sessionId` is what
+  // fetchSettingsStats, /status's session row, /export, /files, /session, /rename and /tag all read, and
+  // in a session resumed with `--continue`/`--resume` it stayed undefined until the first live turn
+  // ended. The host now answers with the conversation it resumed, and the adapter learns it from the
+  // `state` frame follow() replays — no client-side fallback, one source of truth. `sessionId: undefined`
+  // on the fake session IS the pre-first-turn engine.
+  it("16. a resumed session's id reaches the client BEFORE any turn — and a fresh one still has none", async () => {
+    const engine = { ...syncSession("unused", []), sessionId: undefined } as unknown as HostSession;
+    const rows = [{ type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+                  { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "yo" }] } }];
+    const { host, path } = await startHost(engine, { kind: "interactive", getMessages: async () => rows });
+    const resumed = remoteChatSession(path, { resume: "sid-resumed" });
+    try {
+      await resumed.whenReady();
+      expect(resumed.sessionId).toBe("sid-resumed");                 // what /stats reads — was undefined
+      const anchors = await resumed.rewindAnchors();                 // what Esc-Esc reads — was []
+      expect(anchors.map((a) => a.uuid)).toEqual(["u1"]);
+    } finally { resumed.detach(); }
+    // Regression: nothing was resumed here, so the very same host must still report no id at all rather
+    // than a phantom one carried over from the client that left.
+    await host.clearSession();
+    const fresh = remoteChatSession(path);
+    try {
+      await fresh.whenReady();
+      expect(fresh.sessionId).toBeUndefined();
+      expect(await fresh.rewindAnchors()).toEqual([]);
+    } finally { fresh.detach(); await stopQuietly(host); }
   });
 });

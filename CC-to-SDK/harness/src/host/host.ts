@@ -143,6 +143,24 @@ export class SessionHost {
   // Unsubscribe from the CURRENT session's onFrame — re-pointed at the fresh session on resumeSession
   // (see there for why: the swap replaces `this.session` with a subscriber set of zero).
   private offFrame?: () => void;
+  // The conversation this host RESUMED into — swapEngine's single write, `undefined` whenever the swap
+  // opened a FRESH conversation instead. The engine mints no id of its own until its first turn's init
+  // frame, so between the resume op and that frame `this.session?.sessionId` is unset and every id-shaped
+  // answer the host gave read as "there is no session" — over a transcript the client had just replayed
+  // three turns of (W-S13). Two readers: `rewindAnchors`/`rewind` (Esc-Esc said "Nothing to rewind to yet."
+  // above those three turns) and `status()`, which is the ONE frame that populates the client adapter's
+  // cached id and through it /status's session row, /export, /files, /session, /rename, /tag, /stats and
+  // the Settings Stats tab — all nine of which read zeros or "no session yet" on a resumed-idle session.
+  // The client needs no fallback of its own precisely because this one publishes: one source of truth, the
+  // host, over the channel the client already mirrors (chatAdapter's `state` arm).
+  // This is the engine's own id EARLY, not a guess: a plain resume keeps the SAME session_id (probe 23
+  // finding 3). The engine still WINS the moment it reports one — both readers are `this.session?.sessionId
+  // ?? this.resumedFrom` — so even a config that forks on resume (hostMain's `--bg --resume` arm) corrects
+  // itself at the init frame. Deliberately NOT seeded from `opts.config.resume` in start(): that path IS
+  // the forking one, and it names the SOURCE conversation rather than the fork the engine will mint.
+  private resumedFrom?: string;
+  /** The conversation this host is on, as truthfully as it can be known right now (see `resumedFrom`). */
+  private currentSessionId(): string | undefined { return this.session?.sessionId ?? this.resumedFrom; }
   // W3 T1: the host OWNS the dynamic flag-settings state. applyFlagSettings replaces whole top-level
   // keys per call (probe 75), and a resumed session is a NEW CLI process with an empty flag layer —
   // both make a client-side "just call the engine" design wrong. Single accumulator, always sent whole.
@@ -358,6 +376,12 @@ export class SessionHost {
 
   private async swapEngine(extra: Partial<HarnessConfig>): Promise<void> {
     const old = this.session;
+    // ONE writer for `resumedFrom`, covering all four callers (resumeSession, clearSession and both rewind
+    // arms): `extra.resume` IS the conversation the new engine opens on. `undefined` — /clear and the
+    // first-message restore — must CLEAR it, not leave the previous value standing: publishing a discarded
+    // conversation's id is how /export comes to write the transcript the user just threw away (the trap
+    // chatAdapter's own clearSession comment records).
+    this.resumedFrom = extra.resume;
     // Open the resumed engine at the CURRENT runtime mode (`this.mode`), not the launch config's. `this.mode`
     // is the one field every writer (status-frame intercept, set_permission_mode, plan-upgrade) keeps
     // truthful for exactly this purpose — a Tab-laddered or plan-earned mode is live user intent, and
@@ -592,7 +616,7 @@ export class SessionHost {
   /** User-prompt rewind anchors from the persisted transcript — always re-read, never cached (probe
    *  68 Q4: post-rewind row counts defy local arithmetic; the transcript is the truth). */
   async rewindAnchors(): Promise<RewindAnchor[]> {
-    const sid = this.session?.sessionId;
+    const sid = this.currentSessionId();
     if (!sid) return [];
     const rows = await (this.deps.getMessages ?? realGetMessages)(sid, { cwd: this.opts.cwd });
     return rewindAnchorsFrom(rows);
@@ -621,7 +645,11 @@ export class SessionHost {
   async rewind(anchor: { uuid: string; prevUuid: string | null }, scope: RewindScope): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
     if (this.parked.list().length) throw new Error("a decision is pending — answer it first");
-    const sid = this.session?.sessionId;
+    // The READ/resume target only — the id the conversation swap below forks from. The two ENGINE calls
+    // this method makes (the dry run and the real file restore) go through `this.session` regardless: they
+    // need the live transport, not an id (probe 68d), and they are unaffected by which id names the
+    // conversation. So the fallback belongs here and nowhere else in this method.
+    const sid = this.currentSessionId();
     if (!sid) throw new Error("no session to rewind");
     // A null-prevUuid CONVERSATION restore is no longer a refusal (W-S8). `resumeSessionAt` takes a message
     // UUID and has no value meaning "before the first" (sdk.d.ts:1815), so the fork primitive genuinely
@@ -739,8 +767,11 @@ export class SessionHost {
    *  first-terminal-wins finalize must never freeze on it. */
   status(): HostStatus {
     const first = this.parked.list()[0];
-    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, permissionMode: this.mode, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
-    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", permissionMode: this.mode, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
+    // currentSessionId(), not `this.session?.sessionId`: a resumed session HAS an id from the moment the
+    // resume is accepted, and this frame is the only channel that tells a client so (see `resumedFrom`).
+    const sid = this.currentSessionId();
+    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, permissionMode: this.mode, ...(sid ? { sessionId: sid } : {}) };
+    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", permissionMode: this.mode, ...(sid ? { sessionId: sid } : {}) };
   }
 
   /** The host's OWN truthful busy signal, wired to the socket's `prompt` gate (see server.ts). Unlike
