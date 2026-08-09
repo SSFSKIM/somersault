@@ -285,3 +285,18 @@ Not done, per the brief: `.doperpowers/sdd/progress.md` untouched, nothing commi
 `~/.claude` (the `~/.claude/statsig`, `~/.claude/settings.json` and session-JSONL inspections were all
 reads). No secrets appear in this file or in any probe output. Total live spend across all three probes was
 roughly $0.09.
+
+---
+
+## (e) Probe 101 — accountInfo field inventory (added at spec-review time, 2026-08-09)
+
+**VERDICT: `accountInfo()` headlessly returns EXACTLY TWO fields under the OAuth token —
+`apiProvider: "firstParty"` and `tokenSource: "CLAUDE_CODE_OAUTH_TOKEN"` — both before and after the
+first turn. `subscriptionType` is declared in sdk.d.ts but never arrives, so upstream's tier labels
+(`Claude Max` / `Claude Pro`) are unreachable; EP-C8's banner billing label must map from
+`tokenSource`/`apiProvider` alone (OAuth → `Claude subscription`, API key → `API Usage Billing`,
+non-firstParty → provider display names, unknown → omit).**
+
+Found because the spec review flagged the spec's citation of probe 28 as evidence-overreach (28
+verified only first-party auth). Probe file: `probes/probes/101-accountinfo-field-inventory.ts`.
+Values above are enums, not secrets; nothing sensitive appears in the probe output.

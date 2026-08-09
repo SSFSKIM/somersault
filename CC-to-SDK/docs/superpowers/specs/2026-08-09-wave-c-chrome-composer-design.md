@@ -14,7 +14,14 @@ Sibling waves T (trust & safety), R (repaint & geometry), S (session truth) are 
 — `waveC-grounding-bundle.md` (the full upstream transcription, ~397 citations; **the canon reference
 for every verbatim string, timing constant and layout rule in this wave — implementers read it, not
 the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdicts),
-`waveC-grounding-probes.md` (live SDK verdicts; probes 100/100b/100c).
+`waveC-grounding-probes.md` (live SDK verdicts; probes 100/100b/100c; probe 101 — accountInfo field
+inventory — added at spec-review time).
+
+**Tracking reconciliation vs the umbrella** (spec-review finding #15): the qa6-14 rider (version in
+the box header, `What's new`) was umbrella-assigned to "EP-C4's chrome batch" but lands here in
+EP-C8, where the banner work lives; and qa6-13 appears both in umbrella §16's deferred panel-wave
+bucket AND as a keep-or-drop parked to this review — this spec resolves it (remove-with-owner-
+override) and §16's listing should be read as superseded.
 
 ## What the grounding round overturned (write the spec against THIS, not the QA text)
 
@@ -69,11 +76,18 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
   entry affordance goes. *Owner may override to keep; nothing else in the wave depends on the choice.*
 - **Inline context %% + `⚠ auto-compact soon` chip (qa6-13): REMOVE from the always-on footer; keep
   the information.** Upstream exposes context only through statusLine / slash commands / the
-  `token-warning` notification (`{N}% until auto-compact` / `{N}% context used`, `priority: medium`,
-  L489324/L488940). ccx keeps every consumer: `/status`, `/cost`, `/context`, the statusLine payload's
-  `context_window` block, and gains upstream's token-warning notification in the new queue. The same
-  applies to the ccx-extra `usageWarn` and `⚙ N bg` chips — `usageWarn` folds into the notification
-  queue; `⚙ N bg` maps to upstream's `← for agents` slot semantics (EP-C1). *Owner may override.*
+  `token-warning` notification. ccx keeps every consumer: `/status`, `/cost`, `/context`, the
+  statusLine payload's `context_window` block, and gains upstream's token-warning notification in the
+  new queue **with upstream's posting semantics, now pinned** (spec-review finding #5): post
+  `{key:"token-warning", priority:"medium", timeoutMs:18000000, fold, exemptFromDiffPanelHold}`
+  (L489324) whenever the warning level ≠ ok, where the level ladder (`uOu`, L163990) is: **warn**
+  when used tokens ≥ (auto-compact ceiling − 20 000); **compact** at the ceiling; **blocked** at
+  (window − 3 000); ceiling = window minus a 0.2 buffer fraction by default (L164111-27). Text
+  (L488940): `{N}% until auto-compact` (N = percent of the ceiling remaining) in the warn zone,
+  escalating to the error-colored `Context low ({N}% remaining) · Run /compact to compact & continue`
+  at compact/blocked. ccx computes the ladder from `getContextUsage()`. The same applies to the
+  ccx-extra `usageWarn` and `⚙ N bg` chips — `usageWarn` folds into the notification queue; `⚙ N bg`
+  maps to upstream's `← for agents` slot semantics (EP-C1). *Owner may override.*
 
 ---
 
@@ -92,6 +106,12 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
      priorities `immediate:0 > high:1 > medium:2 > low:3`; default `timeoutMs` 8000; `immediate`
      preempts synchronously; `fold` merges same-key; `invalidates` drops keys; renderer = single-line,
      `wrap:"truncate"`, dim when no color (`$Rr`, L488834).
+   - `[DECIDED-AUTO]` **Notification placement matches the live build, not the non-`ds()` fallback**:
+     the ephemeral-notification slot renders as an absolutely-positioned one-row overlay ABOVE the
+     composer's top rule, flush right (`position:"absolute", marginTop:-1`, L496241 — this is where
+     QA-6 photographed `● high · /effort`). The footer row's right region (`marginLeft:"auto"`,
+     L494681) carries only the persistent chips. A plan that puts ephemeral hints in the footer-row
+     right column fails the A1 fixtures.
    - `[DECIDED-AUTO]` Footer row contract (`Wci`/`ctl`): four early-return states (exit-armed ·
      pasting · paste-expand-hint · bash-mode `! for shell mode`) **replace the whole row** — and the
      statusLine row hides with the exit-arm state (L494626). Otherwise:
@@ -109,13 +129,18 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
      always-on row; token/usage warnings re-enter as queued notifications.
 3. **Current state.** DIVERGENT (shape) + ABSENT (queue, right region) + PARTIAL (collapse trims two
    suffixes only). Full pins in `waveC-grounding-ccx.md` §EP-C1.
-4. **Work items.** (new) `notifications.ts` queue + right-aligned slot component; (rewrite) the
-   below-composer block into the one-row two-region layout; (migrate) the nine hand-rolled transient
-   rows onto the queue; (modify) draft-signal plumbing so the footer owner sees `suppressHint`;
-   (delete) `ChatStatusBar` fields per the owner-decision section; (keep) `model`/`think` values —
-   they move into the footer row's chip cluster only if upstream has an equivalent slot, else they
-   live in `/status` (upstream's footer has NO model chip: fidelity says drop it from the footer;
-   `/status`, the banner and the statusLine payload carry model identity).
+4. **Work items.** (new) `notifications.ts` queue + the right-aligned overlay slot component;
+   (rewrite) the below-composer block into the one-row two-region layout; (migrate) the nine
+   hand-rolled transient rows **by destination, matching upstream's placement**: queue notifications
+   (`esc again to clear`, `Ctrl+Y to paste deleted text`, `(ctrl+r to search history)` → upstream has
+   no such hint — retire it or queue it, implementer picks queue) · footer early-return states
+   (pasting, paste-expand, bash-mode `! for shell mode`, Ctrl-C/Ctrl-D exit arms) · in-row elements
+   (the history-search box renders ON the footer row, `gap:1`); (modify) draft-signal plumbing so the
+   footer owner sees `suppressHint`; (delete) `ChatStatusBar` entirely — `model`, `think`, and the
+   `⟳ streaming` chips all leave the footer (upstream's footer has none of them): model identity
+   lives in the banner, `/status` and the statusLine payload; thinking state lives in `/status`, the
+   statusLine payload's `thinking.enabled`, and the thinking-toggle notifications; streaming state is
+   what the spinner is for.
 5. **Acceptance.** Footer geometry matches `frames-qa6/cc-idle.txt` on the fixture terminal size
    (one row, left segments dim-grey, right region flush-right on the row above the composer rule);
    composer block height does not change while typing (hints suppress, chip survives, no row count
@@ -146,18 +171,21 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
    - `[DECIDED-AUTO]` Failures are **silent** (undefined result leaves the previous text in place;
      stderr to ccx's debug channel only). Timeout 600 s default. stdout normalization: trim, split,
      per-line trim, drop blanks, rejoin.
-   - `[DECIDED-AUTO]` Render: own row above the footer row, `paddingX = padding ?? 0`, per-line
-     `wrap:"truncate"`, script ANSI preserved **with dim forced onto every span**, SGR carry-forward
-     across lines (the `m3f` rule); hidden while exit-armed, while pasting, and in panes < 15 rows.
-     A configured statusLine sets `suppressHint` (EP-C1's flag) — `? for shortcuts` disappears.
+   - `[DECIDED-AUTO]` Render: own row above the footer row (slot Box `gap:2`), `paddingX = padding
+     ?? 0`, per-line `wrap:"truncate"`, script ANSI preserved **with dim forced onto every span**,
+     SGR carry-forward across lines (the `m3f` rule); shown only under the FULL upstream guard
+     (L494626): prompt mode only (hidden in bash mode), not exit-armed, not pasting, pane ≥ 15 rows,
+     statusLine configured. A configured statusLine sets `suppressHint` (EP-C1's flag) —
+     `? for shortcuts` disappears.
 3. **Current state.** ABSENT entirely.
 4. **Work items.** (new) settings read path; (new) payload builder; (new) debounced runner with
    abort + timeout; (new) render row wired into EP-C1's left column; (new) `CLAUDE_PROJECT_DIR`,
    `COLUMNS`, `LINES` in the child env.
 5. **Acceptance.** A configured command receives the documented JSON on stdin and renders dim in the
    slot with upstream truncation; a failing/slow command changes nothing on screen; the
-   `? for shortcuts` segment is absent while configured; re-runs observed on turn end and mode/model
-   changes, none while idle without `refreshInterval`.
+   `? for shortcuts` segment is absent while configured; re-runs observed on mode/model changes
+   (keyless-observable deltas) and none while idle without `refreshInterval`; the turn-end re-run
+   rides the keyed A6 live turn rather than A3.
 
 ## EP-C3 · CLI surface (qa6-12) — P1
 
@@ -167,10 +195,12 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
    `0.1.0 (cc-harness)` reading `package.json` (single line, exit 0); `ccx --help` → commander-shaped
    `Usage: ccx [options] [command] [prompt]` + description + sorted Options + Commands (the real
    subcommand registry: `agents attach stop rm serve fleet`); unknown flag → stderr
-   `error: unknown option '--x'` + `(Did you mean --y?)` when edit-distance ≥ 0.4 relative, **exit 1**
-   (a deliberate exit-code change from 2 → 1, matching upstream; `KNOWN_UNSUPPORTED` flags keep their
-   distinct refusal); `ccx doctor` → identity block (version, commit if known, platform, invoked
-   path, node version, SDK version) + `No installation issues found.`, exit 0 unconditionally.
+   `error: unknown option '--x'`, and the `(Did you mean --y?)` tail only for `--`-prefixed tokens
+   passing commander's strict similarity gate `(maxLen − distance) / maxLen > 0.4` (L391971,
+   L392704 — verbatim rule so the test pins the right boundary), **exit 1** (a deliberate exit-code
+   change from 2 → 1, matching upstream; `KNOWN_UNSUPPORTED` flags keep their distinct refusal);
+   `ccx doctor` → identity block (version, commit if known, platform, invoked path, node version,
+   SDK version) + `No installation issues found.`, exit 0 unconditionally.
 3. **Current state.** ABSENT; clean insertion points pinned (`args.ts:97` switch, `main.ts:107`).
 4. **Work items.** (new) pre-parse intercepts for `--version`/`-v`/`--help`/`-h`; (new) help
    printer; (new) `doctor` subcommand; (modify) unknown-flag error shape + suggestion + exit code
@@ -189,6 +219,9 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
      `getSessionInfo()` after the first turn completes) ?? `--name` ?? literal fallback; honored
      kill switch `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`; cleared to empty (`\x1b]0;\x07`) on exit;
      title persists after turn end (only the prefix reverts). Direct stdout write, bypassing Ink.
+     Two canon details recorded as **deliberate skips**: the `terminalTitleFromRename` setting (ccx's
+     rename always wins over the ai-title, unconditionally) and the kitty ST-terminator OSC variant
+     (BEL everywhere).
    - **Spinner** `[DECIDED-AUTO]`: token count becomes upstream's animated estimate — eased
      `streamedChars / 4` — reconciled to the real usage figure when each message's `message_delta`
      lands (this supersedes the per-message step counter; probe (c) proved real usage arrives only
@@ -238,7 +271,18 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
      probe-measured quality at haiku was acceptable).
    - `[DECIDED-AUTO]` Port the post-filter and state machine as data (twelve rules, four states,
      transitions per the annex table); accept keys Tab/Right gated on empty buffer + no completion
-     popup; placeholder render reuses the existing `PlaceholderCursor` path.
+     popup; placeholder render reuses the existing `PlaceholderCursor` path. The eligibility chain
+     ports WITHOUT the `cache_cold` rule — its rationale (the fork piggybacks on the main thread's
+     prompt cache) does not exist for the divergent warm suggester (spec-review finding #7).
+   - `[DECIDED-AUTO]` **Suggester lifecycle** (spec-review finding #6): spawned lazily on the first
+     eligible turn-end with the setting on — never at REPL boot; ONE suggester per REPL session,
+     reused across turns (probe 100c: no cost creep over consecutive requests); any conversation
+     replacement (`/clear`, `/resume`, rewind — the `replaceDocument` boundary, the wave-S principle)
+     aborts any in-flight generation, discards the pending suggestion, and RETIRES the suggester —
+     the next eligible turn spawns a fresh one so no stale cross-conversation context leaks into
+     suggestions; torn down on REPL exit. Its ~$0.0045/turn is NOT folded into `/cost` (which reads
+     the main engine's usage) — matching upstream, whose fork is likewise invisible
+     (`skipTranscript`); recorded as an accepted accounting gap.
    - `[DECIDED-AUTO]` The fresh-session `Try "<template>"` static placeholder is also gated on
      `promptSuggestionEnabled` (upstream L1542 rule) — with the setting off-by-default this changes
      the first-run look; acceptable, recorded.
@@ -265,8 +309,9 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
      supported levels, selection applies with the model choice.
    - `[DECIDED-AUTO]` `/effort` becomes real: the standalone dialog (`←/→ to adjust · Enter to
      confirm · Esc to cancel`) calling the SDK runtime setter; the `CLIENT_SIDE_NOTES` redirect is
-     deleted. The status-bar `think` chip is unaffected (different knob; the conflation is resolved
-     by `/effort` existing).
+     deleted. The `think` state is a different knob and keeps its own `/think` command; its footer
+     chip is gone with `ChatStatusBar` (EP-C1) — thinking visibility lives in `/status`, the
+     statusLine payload, and the thinking-toggle notifications.
    - `[DECIDED-AUTO]` The ephemeral hint `● high · /effort` (glyph per level, raw lowercase level,
      10 000 ms) posts to EP-C1's queue with `key:"effort-level", priority:"high"` at session start
      and re-posts (restarting the clock) on every effort change; absent when the model does not
@@ -303,7 +348,10 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
 3. **Current state.** DIVERGENT ×3, ABSENT ×2 (all pinned).
 4. **Work items.** (new) `doublePress.ts`; (modify) `ChatApp` interrupt handler + composer clear
    channel; (modify) `editorAdapter`/`editor` for home/end/ctrl-arrows/word boundary; (modify)
-   footer copy per EP-C1; (delete) the four hand-rolled arm implementations.
+   footer copy per EP-C1; (delete) the four hand-rolled arm implementations — including the
+   ccx-only `Press Esc again to rewind` arm (`ChatApp.tsx:759`), which keeps its semantics and
+   1500 ms window (no upstream grounding exists for it) but migrates onto the shared `doublePress`
+   helper with its hint posted to the queue instead of rendering as its own row.
 5. **Acceptance.** The QA-1 repro sequences replay correctly under the pty driver: Ctrl-C on a
    draft clears it and flashes the arm ≤ 800 ms; Esc-Esc clears with the 1000 ms hint visible after
    the first Esc; Home/End/ctrl+arrows move as upstream; alt+f lands at next-word-start.
@@ -321,10 +369,15 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
      version, offset 3; compact <70 cols drops the version) — ccx keeps its own product name; we do
      not impersonate the upstream binary in identity strings (F0 honesty rule).
    - `[DECIDED-AUTO]` The model/auth line: `<model display name>[ with <Effort> effort] ·
-     <billing label>` where the billing label uses upstream's exact set (`Claude Max`, `Claude Pro`,
-     `Claude API`, …) resolved from `accountInfo()` (already verified live, probe 28); banner is
-     handed the RESOLVED model (display name via the session catalog when available, else the
-     resolved id) — the one-expression fix.
+     <billing label>`. **Probe 101 (run at spec-review time) settled what `accountInfo()` actually
+     delivers headlessly: exactly two fields — `apiProvider` ("firstParty") and `tokenSource`
+     ("CLAUDE_CODE_OAUTH_TOKEN") — no `subscriptionType`, despite its declaration in sdk.d.ts.** So
+     upstream's tier labels (`Claude Max` / `Claude Pro`) are unreachable; ccx's honest mapping:
+     `tokenSource === "CLAUDE_CODE_OAUTH_TOKEN"` → `Claude subscription`; API-key auth → upstream's
+     `API Usage Billing`; non-firstParty providers → upstream's provider name set (`Amazon Bedrock`,
+     `Google Vertex AI`, …); anything unknown → omit the label rather than guess. Recorded
+     divergence: tier granularity lost headlessly. Banner is handed the RESOLVED model (display name
+     via the session catalog when available, else the resolved id) — the one-expression fix.
    - `[DECIDED-AUTO]` The banner stays a `<Static>` seed (re-architecture refused: Ink Static is
      append-only and the banner scrolls away in upstream too). Recorded divergence: after a
      mid-session `/model` change the seeded banner is stale scrollback; the footer, `/status` and
@@ -352,8 +405,12 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
 
 - P0: EP-C1 (prerequisite — merged before C2/C4/C6/C8 stack on it), EP-C7.
 - All epics after C1 parallelize per SDD except: EP-C2, EP-C4(chip), EP-C6(hint), EP-C8 consume
-  C1's queue/footer contracts. EP-C7's footer-copy items land with C1's rewrite; its key items are
-  independent. EP-C2's split-out pre-authorization (umbrella §14) is NOT exercised — it stays here.
+  C1's queue/footer contracts. **EP-C7 splits along the same line** (spec-review finding #2): the
+  editor/key-motion items (Home/End, ctrl-arrows, word boundary, the `doublePress` helper itself)
+  are independent and may run before or parallel to C1; the arm/hint RENDERING items (the
+  footer-replacing exit-arm state, `Esc again to clear` on the queue, deleting the persistent
+  `esc clear` copy) are gated on C1's queue + footer contract. EP-C2's split-out pre-authorization
+  (umbrella §14) is NOT exercised — it stays here.
 - EP-C5 is the only keyed-live-heavy epic; its default-off state keeps every other epic's tests
   keyless.
 
@@ -372,9 +429,9 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
 | A9 | Suggestion: on → generated/shown/accepted/dismissed paths; off → zero traffic | keyed live + unit |
 | A10 | Effort: picker row stepping, `/effort` dialog, 10 s hint decay | pty keyed |
 | A11 | Ctrl-C clear+arm, Esc-Esc + hint, Home/End, ctrl+arrows, word boundary | pty keyless |
-| A12 | Banner/footer/picker model agreement + billing label | keyed (accountInfo) |
-| A13 | `#` memory mode removed: composer, hints, help grid, tests updated | unit, keyless |
-| A14 | ctx%% chip removed; token-warning notification appears at threshold | unit + pty |
+| A12 | Banner/picker model agreement + `Claude subscription` billing label (probe-101 mapping) | keyed (accountInfo) |
+| A13 | `#` memory mode removed: composer, hints, help grid, tests updated — *contingent on D-C2 standing; owner override voids the cell* | unit, keyless |
+| A14 | ctx%% chip removed; token-warning posts at (ceiling − 20k) with `{N}% until auto-compact` — *contingent on D-C3 standing* | unit + pty |
 | A15 | Full suite green (`npm run typecheck`, `test:unit`, `test:tui`, build) | keyless |
 
 ## Decision Log
@@ -407,6 +464,10 @@ the bundle**), `waveC-grounding-ccx.md` (current-state pins, per-finding verdict
 ## Surprises & Discoveries *(living — seeded from grounding)*
 
 - The twelve overturns listed at the top; the corrections table in the annex is the full record.
+- **A thirteenth, found by the spec review itself**: `accountInfo()` headlessly returns ONLY
+  `{apiProvider, tokenSource}` — `subscriptionType` is declared in sdk.d.ts but never arrives
+  (probe 101). The reviewer flagged the spec's own citation of probe 28 as overreach; the fresh
+  probe proved the overreach real. Declared ≠ reachable applies to spec REVIEWS too.
 - The installed CLI (2.1.226) resolves feature flags via GrowthBook at runtime — no on-disk flag
   cache exists anymore; the repo's statsig-cache grounding recipe is obsolete.
 - The engine auto-titles every session headlessly (`ai-title` JSONL row, first turn, disk-read via
@@ -419,3 +480,15 @@ Pending — written at finish.
 ## Revision Notes
 
 - v1 2026-08-09 — authored from the three-worker grounding round (D9 pattern), born landed.
+- v2 2026-08-09 — spec-review round (fable reviewer, 6 Important + 9 Minor, 0 Critical; all
+  adopted): notification placement corrected to the overlay row (the live build's `ds()` branch);
+  EP-C7 dependency line split editor-vs-rendering; `think`/`⟳ streaming` chips explicitly
+  dispositioned; billing label re-grounded by NEW probe 101 (accountInfo delivers only
+  apiProvider+tokenSource headlessly — tier labels unreachable, honest mapping specified);
+  token-warning posting semantics transcribed from L163990/L488940/L489324 (warn at ceiling−20k,
+  ceiling = window×0.8 default); suggester lifecycle pinned (lazy spawn, retire at the
+  replaceDocument boundary, no /cost folding); `cache_cold` gate dropped; migration items split by
+  destination; statusLine render guard cited whole; A3 made honestly keyless; Esc-rewind arm given
+  migrated semantics; commander suggestion rule quoted verbatim; title setting + kitty variant
+  recorded as skips; A13/A14 marked contingent on the owner-overridable decisions; umbrella
+  tracking reconciled (qa6-14 rider → EP-C8; qa6-13 double-listing superseded).

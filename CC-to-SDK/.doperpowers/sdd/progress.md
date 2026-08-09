@@ -663,3 +663,15 @@ The two owner questions parked to this review land as overridable recommendation
 `#` memory mode; REMOVE the inline ctx%%/auto-compact/usageWarn/bg chips (info survives via
 statusLine payload, slash commands, and upstream's token-warning notification). Umbrella §9 ticked
 for T/R/S, §12 seeded. Spec-review round next, then the plan.
+
+## 2026-08-09 — Wave C spec review round (v2)
+
+Fable reviewer: 6 Important + 9 Minor, 0 Critical, all adopted. The two that mattered most: (1) the
+spec had put the ephemeral-notification slot in the footer row's right column where the live build
+renders it as an absolute overlay row above the composer — a plan built from v1 would have failed the
+A1 fixtures; (2) the billing-label claim overreached probe 28's evidence, and NEW probe 101 proved the
+overreach real — accountInfo() delivers only {apiProvider, tokenSource} headlessly, subscriptionType
+is declared-but-absent, tier labels unreachable. The wave's thirteenth declared≠reachable overturn,
+this one caught in review rather than grounding. Also pinned from the bundle at review time: the
+token-warning posting ladder (warn at auto-compact-ceiling − 20k tokens; ceiling = window × 0.8
+default; uOu L163990). Spec v2 committed; plan next.
