@@ -33,7 +33,14 @@ import { THEMES, type ThemeId } from "./theme.js";
  *  the row, which is what `durationRow.ts`'s `turnDurationEnabled` encodes. Upstream keeps it in the settings
  *  FILE (`~/.claude/settings.json`) and surfaces it as the `Show turn duration` `/config` row; ours lives
  *  here, the client-side seam this module already owns, behind that same row and label. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean }
+/** `promptSuggestionEnabled` is Wave-C T12's ghost-text follow-up suggestion (EP-C5), and upstream's own
+ *  setting name (bundle L42035 schema, L235104 read, L315485 the `/config` row). THE POLARITY IS FLIPPED,
+ *  deliberately: upstream's schema says "when absent or true, prompt suggestions are enabled", ours ships OFF
+ *  and only an explicit `true` turns it on — the feature costs ~$0.0045 and ~5 s per turn on our warm
+ *  suggester session (probe 100c), and upstream's own two feature-flag call sites default it off too. That
+ *  reading lives in `suggester.ts`'s `promptSuggestionEnabled`, and it is why the `/config` row writes BOTH
+ *  polarities explicitly where upstream deletes the key to mean "on". */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 

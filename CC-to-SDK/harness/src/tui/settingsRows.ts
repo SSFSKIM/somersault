@@ -9,10 +9,10 @@ import type { ThemeId } from "./theme.js";
 /** Everything a row's display value is computed from — a snapshot, not a live subscription. useChat takes
  *  one snapshot when /config opens (the baseline) and another when it closes (current), diffing the two
  *  `buildRows()` outputs row-by-row to decide what changed. */
-export interface SettingsRowCtx { theme: ThemeId; model?: string; outputStyle: string; mode: string; thinkLevel: string; showTurnDuration: boolean }
+export interface SettingsRowCtx { theme: ThemeId; model?: string; outputStyle: string; mode: string; thinkLevel: string; showTurnDuration: boolean; promptSuggestionEnabled: boolean }
 
 export interface SettingsRow {
-  id: "theme" | "model" | "outputStyle" | "permissionMode" | "thinking" | "showTurnDuration";
+  id: "theme" | "model" | "outputStyle" | "permissionMode" | "thinking" | "showTurnDuration" | "promptSuggestionEnabled";
   label: string;
   type: "boolean" | "enum" | "managedEnum";
   value: string;                       // display value ("Default (recommended)" for unset model, "true"/"false" for booleans)
@@ -28,12 +28,18 @@ export const PERMISSION_MODE_OPTIONS = ["default", "acceptEdits", "plan", "auto"
 const MODEL_UNSET = "Default (recommended)";
 export const THINKING_WARNING = "Changing thinking mode mid-conversation will increase latency and may reduce quality.";
 
-/** ctx → the 6 Config rows, in the pinned display order (Global Constraints line 29).
+/** ctx → the 7 Config rows, in the pinned display order (Global Constraints line 29).
  *
  *  `showTurnDuration` carries UPSTREAM'S OWN LABEL, `Show turn duration` — it is a real `/config` row there,
  *  ungated, captured in this repo's QA corpus of the shipped client
  *  (`docs/parity/qa-findings/frames-qa4/qa4-settings-cc.txt:24`). It is a boolean and it rides the `thinking`
- *  row's exact shape; only the storage differs (upstream's settings file vs. ccx's prefs file). */
+ *  row's exact shape; only the storage differs (upstream's settings file vs. ccx's prefs file).
+ *
+ *  `promptSuggestionEnabled` is the same story one wave later (W-C T12, annex §C5.1 L315485): upstream's own
+ *  id and its own label, `Prompt suggestions`, with NO description and no help text — the row is label-only
+ *  there and label-only here. Upstream gates it behind the `tengu_chomp_inflection` feature flag (off at both
+ *  of its two call sites) and files it under the `Input & controls` category; ccx has one flat Config list and
+ *  no flag system, so the row is unconditional and simply sits last. */
 export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
   return [
     { id: "theme", label: "Theme", type: "managedEnum", value: ctx.theme, hint: "For custom themes, use /theme." },
@@ -42,6 +48,7 @@ export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
     { id: "permissionMode", label: "Default permission mode", type: "enum", value: ctx.mode, options: [...PERMISSION_MODE_OPTIONS] },
     { id: "thinking", label: "Thinking mode", type: "boolean", value: String(ctx.thinkLevel !== "off") },
     { id: "showTurnDuration", label: "Show turn duration", type: "boolean", value: String(ctx.showTurnDuration) },
+    { id: "promptSuggestionEnabled", label: "Prompt suggestions", type: "boolean", value: String(ctx.promptSuggestionEnabled) },
   ];
 }
 

@@ -28,7 +28,7 @@ const props = () => ({
   tab: "Config", onTabChange: () => {}, mode: "default", thinkLevel: "default", outputStyle: "default",
   onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
   fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
-  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {},
+  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {}, promptSuggestionEnabled: false, setPromptSuggestionEnabled: () => {},
 });
 
 /** The label on the row carrying the `❯` gutter — f6-acceptance.test.tsx's `focusedRow`, which is not exported
@@ -37,10 +37,10 @@ const focusedRowLabel = (f: () => string | undefined): string => {
   const line = plain(frame(f)).split("\n").find((l) => l.includes(POINTER));
   return line === undefined ? "" : line.slice(line.indexOf(POINTER) + POINTER.length).trim();
 };
-/** How many of the six Config rows the frame is currently painting. Matched on the row's GUTTER + label, not
+/** How many of the seven Config rows the frame is currently painting. Matched on the row's GUTTER + label, not
  *  on the bare label: the gutter is `❯` on the focused row, `↑`/`↓` on a window edge that has more beyond it
  *  (Select.tsx:282-284) and a space otherwise, and a bare-label match would also count the `/` query's echo. */
-const ROW_LABELS = ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode", "Show turn duration"];
+const ROW_LABELS = ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode", "Show turn duration", "Prompt suggestions"];
 const shownRows = (f: () => string | undefined): number =>
   ROW_LABELS.filter((label) => new RegExp(`[${POINTER}↑↓ ] ${label}\\b`).test(plain(frame(f)))).length;
 
@@ -48,16 +48,16 @@ describe("SettingsDialog — the Config list windows from the height it is given
   it("windows the Config list and reports what it clipped", async () => {
     const r = render(<SettingsDialog {...props()} rows={11} columns={80} />);
     await waitFor(() => frame(r.lastFrame).includes("Theme"));
-    // The 6 Config rows cannot all fit under a frame this short.
+    // The 7 Config rows cannot all fit under a frame this short.
     expect(plain(frame(r.lastFrame))).toMatch(/↓ \d+ more below/);
-    expect(shownRows(r.lastFrame)).toBeLessThan(6);
+    expect(shownRows(r.lastFrame)).toBeLessThan(7);
     r.unmount();
   });
 
   it("shows every row and neither indicator when the pane is tall enough", async () => {
     const r = render(<SettingsDialog {...props()} rows={40} columns={80} />);
     await waitFor(() => frame(r.lastFrame).includes("Theme"));
-    expect(shownRows(r.lastFrame)).toBe(6);
+    expect(shownRows(r.lastFrame)).toBe(7);
     expect(plain(frame(r.lastFrame))).not.toMatch(/more below/);
     expect(plain(frame(r.lastFrame))).not.toMatch(/more above/);
     r.unmount();
@@ -69,13 +69,13 @@ describe("SettingsDialog — the Config list windows from the height it is given
     const a = render(<SettingsDialog {...props()} rows={14} columns={80} />);
     await waitFor(() => frame(a.lastFrame).includes("Theme"));
     expect(shownRows(a.lastFrame)).toBe(settingsVisibleRows(14));
-    expect(plain(frame(a.lastFrame))).toContain(`↓ ${6 - settingsVisibleRows(14)} more below`);
+    expect(plain(frame(a.lastFrame))).toContain(`↓ ${7 - settingsVisibleRows(14)} more below`);
     a.unmount();
     const b = render(<SettingsDialog {...props()} rows={15} columns={80} />);
     await waitFor(() => frame(b.lastFrame).includes("Theme"));
     expect(shownRows(b.lastFrame)).toBe(settingsVisibleRows(15));
     expect(settingsVisibleRows(15)).toBe(settingsVisibleRows(14) + 1);
-    expect(plain(frame(b.lastFrame))).toContain(`↓ ${6 - settingsVisibleRows(15)} more below`);
+    expect(plain(frame(b.lastFrame))).toContain(`↓ ${7 - settingsVisibleRows(15)} more below`);
     b.unmount();
   });
 
@@ -83,7 +83,7 @@ describe("SettingsDialog — the Config list windows from the height it is given
     const r = render(<SettingsDialog {...props()} rows={13} columns={80} />);
     await waitFor(() => frame(r.lastFrame).includes("Theme"));
     r.stdin.write("\x1b[F");                                     // end — the last row, window at the bottom
-    await waitFor(() => focusedRowLabel(r.lastFrame).startsWith("Show turn duration"));
+    await waitFor(() => focusedRowLabel(r.lastFrame).startsWith("Prompt suggestions"));
     expect(plain(frame(r.lastFrame))).toMatch(/↑ \d+ more above/);
     expect(plain(frame(r.lastFrame))).not.toMatch(/more below/);
     r.unmount();
@@ -101,10 +101,10 @@ describe("SettingsDialog — the Config list windows from the height it is given
     expect(focusedRowLabel(r.lastFrame).startsWith("Theme")).toBe(true);
     r.stdin.write("\x1b[F");                                     // end
     await tick();
-    expect(focusedRowLabel(r.lastFrame).startsWith("Show turn duration")).toBe(true);
+    expect(focusedRowLabel(r.lastFrame).startsWith("Prompt suggestions")).toBe(true);
     r.stdin.write("\x1b[5~");                                    // pageup
     await tick();
-    expect(focusedRowLabel(r.lastFrame).startsWith("Show turn duration")).toBe(false);
+    expect(focusedRowLabel(r.lastFrame).startsWith("Prompt suggestions")).toBe(false);
     r.unmount();
   });
 
@@ -266,17 +266,17 @@ describe("SettingsDialog — the Thinking warning is charged to the window's bud
   });
 
   /** The rendered half — the term has to reach `visibleOptionCount`, not just be exported. `end` focuses the
-   *  last row and steps ONE UP onto `Thinking mode` (W-C T7 put `Show turn duration` below it), and Enter
-   *  toggles it; `thinkLevel` stays "default" throughout, so what flips is `thinkingTouched` and not the
-   *  row's value.
+   *  last row and steps TWO UP onto `Thinking mode` (W-C T7 put `Show turn duration` below it and W-C T12
+   *  `Prompt suggestions` below that), and Enter toggles it; `thinkLevel` stays "default" throughout, so what
+   *  flips is `thinkingTouched` and not the row's value.
    *    THE NEEDLE IS THE BARE WORD `Changing`, deliberately. Ink WORD-wraps, so any assertion on a phrase that
    *  spans a potential wrap point can be satisfied by a wrapped row — the trap that let the row-clip round's
    *  first assertion pass against sabotaged code. A single token cannot straddle a break. */
   const at = (cols: number, rows: number) => <Box width={cols}><SettingsDialog {...props()} rows={rows} columns={cols} /></Box>;
   const toggleThinking = async (r: ReturnType<typeof render>) => {
-    r.stdin.write("\x1b[F");                                     // end → Show turn duration, window at the bottom
-    await waitFor(() => focusedRowLabel(r.lastFrame).startsWith("Show turn duration"));
-    r.stdin.write("\x1b[A");                                     // …up one → Thinking mode, window unmoved
+    r.stdin.write("\x1b[F");                                     // end → Prompt suggestions, window at the bottom
+    await waitFor(() => focusedRowLabel(r.lastFrame).startsWith("Prompt suggestions"));
+    r.stdin.write("\x1b[A"); r.stdin.write("\x1b[A");             // …up two → Thinking mode, window unmoved
     await waitFor(() => focusedRowLabel(r.lastFrame).startsWith("Thinking mode"));
     r.stdin.write("\r");
     await waitFor(() => plain(frame(r.lastFrame)).includes("Changing"));

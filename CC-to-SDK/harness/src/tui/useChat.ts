@@ -17,6 +17,7 @@ import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsMo
 import type { CcxPrefs } from "./prefs.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
 import { isInterruptSentinelFrame, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
+import { createSuggester as realCreateSuggester, formatTranscriptTail, markSuggestionAccepted, suggestionRenderStep, suggestionSuppression, EMPTY_SUGGESTION, TAIL_MESSAGE_CHARS, type PromptSuggestion, type Suggester, type TailMessage } from "./suggester.js";
 import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, shouldShowAutoModeNotice } from "./autoModeNotice.js";
 import { hasAcceptedBypass } from "./bypassConsent.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
@@ -93,7 +94,12 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
+  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean;
+  /** W-C T12 (EP-C5): the follow-up suggestion's four-state slice (`suggester.ts`). It lives HERE and not in
+   *  the composer for two reasons that are the same reason: the composer is unmounted behind every dialog,
+   *  and Ctrl-C clears its buffer — a suggestion owned there would die of both, where upstream's survives
+   *  both because it is app state rendered as a placeholder. */
+  promptSuggestion: PromptSuggestion; promptSuggestionEnabled: boolean; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
   /** The session's working directories — the cwd plus every `/add-dir` grant (`listDirs()`). The FILE
    *  permission dialog's in-directory test runs over this set; nothing else reads it. */
   workDirs: readonly string[];
@@ -124,7 +130,11 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean;
+    /** W-C T12: the `promptSuggestionEnabled` pref, resolved by the caller (`chatMain.tsx`) exactly as
+     *  `initialShowTurnDuration` is. DEFAULT FALSE — see `suggester.promptSuggestionEnabled` for the
+     *  deliberate polarity flip away from upstream's absent-means-on. */
+    initialPromptSuggestionEnabled?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
     /** WAVE C TASK 10: the resolved `statusLine` setting, or undefined for "not configured". RESOLVED BY THE
      *  CALLER (`chatMain.tsx`, exactly as `initialOutputStyle` is seeded from `loadPrefs()`), and for a
      *  reason beyond symmetry: canon L154558 honours only the USER settings file, so resolving it here would
@@ -141,6 +151,10 @@ export function useChat(
     /** Wave C Task 7: the duration row's verb. Upstream picks it uniformly at random (`SvH`), which would
      *  make every expected string in a test a regex — so the pick is a seam, exactly like `now`. */
     pickTurnVerb?: () => string;
+    /** Wave C Task 12: how the follow-up suggester is built. Injected so a unit/tui test drives the whole
+     *  turn-end trigger, the eligibility chain and the retire/respawn lifecycle without ever spawning an
+     *  engine — the real factory (default) opens a warm Haiku-class session on first use. */
+    createSuggester?: (o: { cwd: string }) => Suggester;
     /** WAVE C TASK 10: the statusLine driver's own seams — a fake runner (so a test never forks a shell) and
      *  the two timers its 300 ms debounce and its `refreshInterval` poll run on. Supplying `runStatusLine`
      *  REPLACES the wrapper below that carries cwd/env/COLUMNS/LINES, which is the point: the wrapper is the
@@ -514,6 +528,38 @@ export function useChat(
   // `undefined` start = no turn is being clocked, which is what the bare-truncated idle follow tail leaves.
   const turnStartRef = useRef<number | undefined>(undefined);
   const turnDisqualifiedRef = useRef(false);
+  // ── Wave C Task 12 (EP-C5): the follow-up suggestion ─────────────────────────────────────────────────
+  // Seeded by the caller for the same reason `showTurnDuration` above is, and OFF unless the caller says
+  // otherwise (`suggester.promptSuggestionEnabled` owns the polarity). Everything else here is a ref, because
+  // every reader is inside the `onSessionEvent` closure — created once per session, so a state read there
+  // would be one render stale, which for the eligibility chain would mean generating against the setting the
+  // session was mounted with rather than the one the user just toggled.
+  const [promptSuggestionEnabled, setPromptSuggestionEnabledState] = useState<boolean>(opts.initialPromptSuggestionEnabled ?? false);
+  const promptSuggestionEnabledRef = useRef(promptSuggestionEnabled); promptSuggestionEnabledRef.current = promptSuggestionEnabled;
+  const [promptSuggestion, setPromptSuggestion] = useState<PromptSuggestion>(EMPTY_SUGGESTION);
+  const promptSuggestionRef = useRef(promptSuggestion); promptSuggestionRef.current = promptSuggestion;
+  /** ONE suggester per REPL session, built lazily on the first eligible turn end and retired at every
+   *  conversation boundary — never at boot, so a session that never earns a suggestion never opens an
+   *  engine (and with the setting off, `maybeRequestSuggestion` returns before this is ever called). */
+  const suggesterRef = useRef<Suggester | null>(null);
+  const makeSuggester = deps.createSuggester ?? ((o: { cwd: string }) => realCreateSuggester({ cwd: o.cwd }));
+  /** What the request carries. Grown as this CLIENT sees the conversation — its own submitted prompts and the
+   *  assistant text that came back — rather than harvested from the retained document, which would mean
+   *  re-deriving roles out of raw SDK frames on a path that already has both facts in hand.
+   *  RECORDED CONSEQUENCE: on a resumed or attached session the ring starts empty, so `assistantSeen` below
+   *  counts from zero and the first suggestion waits for two fresh assistant turns. That is the honest
+   *  reading — the tail we could send is likewise empty, and a suggestion generated from nothing is worse
+   *  than none. */
+  const suggestionTailRef = useRef<TailMessage[]>([]);
+  const assistantSeenRef = useRef(0);
+  function noteTail(role: TailMessage["role"], text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (role === "assistant") assistantSeenRef.current++;
+    // Capped at the source: the ring is trimmed to the formatter's own per-message budget so a 200 KB pasted
+    // prompt cannot sit in memory for the rest of the session waiting to be truncated at format time.
+    suggestionTailRef.current = [...suggestionTailRef.current, { role, text: trimmed.slice(0, TAIL_MESSAGE_CHARS) }].slice(-12);
+  }
   const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
   const writeFile = deps.writeFile ?? ((p: string, t: string) => realWriteFileSync(p, t));
@@ -775,6 +821,16 @@ export function useChat(
     // to land on it) suppress the cache warning in a conversation it was never given for. Resume and rewind
     // come through here too and inherit the same reset.
     cacheMissAckedAtOutputTokens.current = undefined;
+    // WAVE C T12, THE SAME BOUNDARY AGAIN and the same principle: everything the suggester knows was measured
+    // against a conversation that no longer exists. `/clear`, a resume and a rewind all land here, and all
+    // three must (a) drop whatever suggestion is pending — it answers a question the user can no longer see
+    // — (b) empty the tail and its assistant count, and (c) RETIRE the suggester itself, because its warm
+    // session is warm with the OLD conversation: reusing it would leak the cleared context into the next
+    // suggestion, which is precisely what `/clear` was asked to prevent. The next eligible turn end spawns a
+    // fresh one (`ensureSuggester`).
+    setPromptSuggestion(EMPTY_SUGGESTION);
+    suggestionTailRef.current = []; assistantSeenRef.current = 0;
+    retireSuggester();
 
     setStaticItems([]); setPendingItems([]);
     setStaticEpoch((e) => e + 1);
@@ -788,7 +844,7 @@ export function useChat(
   // Unmount-only sentinel: mark disposed. A parked remote permission is NOT resolved here — detach ≠
   // deny (spec A2b §5): the entry stays parked on the host for another client (or the same one, re-attached)
   // to answer. Never on a session swap.
-  useEffect(() => () => { disposed.current = true; }, []);
+  useEffect(() => () => { disposed.current = true; retireSuggester(); }, []);
   // The live repaint epoch: one interval while at least one top-level call is LIVE-open, cleared the moment
   // they all settle — and by turn end, an idle host, every session swap, resume/rewind reset and unmount
   // (the cleanup below). Keyed on the live set, never on the document's own open calls: an orphaned or
@@ -971,6 +1027,9 @@ export function useChat(
         if (appended && data?.type === "assistant" && data.parent_tool_use_id === undefined) {
           const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
           if (t.trim()) lastAssistant.current = t;
+          // W-C T12: the same text, into the suggester's tail — behind the `appended` guard, so a redelivered
+          // or replayed frame neither doubles the tail nor inflates the `early_conversation` count.
+          noteTail("assistant", t);
         }
         const l = liveTurnRef.current;
         if (l) { l.ingest(ev.data); setStreaming(l.snapshot()); setTurnMeter(l.meter()); if (l.model) setModel(l.model); }
@@ -1013,6 +1072,10 @@ export function useChat(
         // (the model may have changed under it, `session_name` may have just been minted). The 300 ms
         // debounce coalesces this with whichever of the two lands first, so it costs no extra run.
         pokeStatusLine("turn-end");
+        // W-C T12 (EP-C5), annex §C5.2: `acd(d, c?.lastResult)` — FIRE AND FORGET, at the end of an assistant
+        // turn, after the last tool round-trip. Not a `useEffect`, not idle-based, no debounce and no
+        // cooldown; the eligibility chain inside is the only thing that declines.
+        maybeRequestSuggestion(!!ev.error);
         // W-C T8: and the one read of the engine's ai-title. Here rather than at `turn:start` because the row
         // it reads is written mid-turn (probe (d) saw it land at row 6 of 20, before the first assistant
         // frame) — a fetch at start would race the engine's own write. Latched, so this is a no-op from the
@@ -1413,6 +1476,7 @@ export function useChat(
             // Boolean row vocabulary ("true"/"false") → setThink's own off/default vocabulary (its doc comment).
             case "thinking": await setThink(result.value === "false" ? "off" : "default"); break;
             case "showTurnDuration": setShowTurnDuration(result.value !== "false"); break;
+            case "promptSuggestionEnabled": setPromptSuggestionEnabled(result.value !== "false"); break;
           }
           if (!disposed.current) append(result.lines);
           break;
@@ -1705,7 +1769,7 @@ export function useChat(
   // never cache it) alongside whatever this hook's own state currently holds for model/outputStyle/mode/
   // thinkLevel, so both the open-time baseline and the close-time snapshot are always accurate regardless
   // of how many times the Model/Theme/Output-style sub-flows ran in between.
-  function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration }; }
+  function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, promptSuggestionEnabled }; }
   function openSettings() {
     if (disposed.current) return;
     settingsBaselineRef.current = currentSettingsCtx();
@@ -1747,6 +1811,61 @@ export function useChat(
     setShowTurnDurationState(next);
     try { savePrefsFn({ showTurnDuration: next }, historyEnv); } catch { /* best-effort */ }
   }
+  // ── W-C T12 (EP-C5): the suggestion's five operations ────────────────────────────────────────────────
+  /** The `Prompt suggestions` row's toggle — `setShowTurnDuration`'s shape exactly (client-side, commit then
+   *  persist, write swallowed). BOTH polarities are written explicitly, where upstream deletes the key to
+   *  mean "on": with absent meaning OFF here (`suggester.promptSuggestionEnabled`), a `void 0` write would
+   *  silently turn the feature back off. Turning it OFF also drops whatever is on screen and retires the
+   *  session — "off" must mean no engine and no ghost text, not "off from the next turn". */
+  function setPromptSuggestionEnabled(next: boolean): void {
+    if (disposed.current) return;
+    setPromptSuggestionEnabledState(next);
+    if (!next) { setPromptSuggestion(EMPTY_SUGGESTION); retireSuggester(); }
+    try { savePrefsFn({ promptSuggestionEnabled: next }, historyEnv); } catch { /* best-effort */ }
+  }
+  function retireSuggester(): void { const s = suggesterRef.current; suggesterRef.current = null; s?.retire(); }
+  /** `acd` (L235165) minus its focus/attachment arms, which have no ccx equivalent (this client is either
+   *  attached and rendering or it is not running at all). Fire-and-forget by construction: nothing awaits it,
+   *  a rejection cannot happen (`request` resolves null on every failure), and a suggestion that lands after
+   *  the user has moved on is dropped by the render step rather than by anything here. */
+  function maybeRequestSuggestion(turnErrored: boolean): void {
+    const reason = suggestionSuppression({
+      assistantMessages: assistantSeenRef.current,
+      lastTurnError: turnErrored,
+      enabled: promptSuggestionEnabledRef.current,
+      // ccx has ONE decision queue where upstream has two gates (`pendingWorkerRequest`/`pendingSandboxRequest`
+      // and `elicitation.queue`): a parked permission and a parked question are both `pendingRef`. So
+      // `elicitation_active` is transcribed in the chain but is never the reason reported here.
+      pendingPermission: pendingRef.current !== null,
+      mode: modeRef.current,
+      // `rate_limit` (`Vie().status !== "allowed"`) has NO ccx equivalent to wire: the harness surfaces plan
+      // usage as a WARNING (`usageWarn`), which is not the same fact as "this account may not spend right
+      // now". Left unwired rather than approximated with a warning that would suppress suggestions while
+      // spending is in fact still allowed.
+    });
+    if (reason !== null) return;
+    if (suggesterRef.current === null) suggesterRef.current = makeSuggester({ cwd });
+    const suggester = suggesterRef.current;
+    void suggester.request({ transcriptTail: formatTranscriptTail(suggestionTailRef.current) }).then((text) => {
+      // The suggester may have been retired between the request and its answer — `request` already resolves
+      // null in that case, so a landed suggestion belongs to the conversation that is still on screen.
+      if (!disposed.current && text) setPromptSuggestion({ status: "generated", text });
+    });
+  }
+  /** The composer's slot report (annex §C5.4's `b9` / the `timing` reset). Runs the pure step; the state is
+   *  identity-stable when nothing changes, so this can be called on every composer render without churn. */
+  function noteSuggestionSlot(canShow: boolean): void {
+    if (disposed.current) return;
+    setPromptSuggestion((s) => suggestionRenderStep(s, { canShow, now: nowFn() }).next);
+  }
+  /** Tab/Right accepted it — the buffer write already happened in the composer, this is only the stamp. */
+  function acceptSuggestion(): void {
+    if (disposed.current) return;
+    setPromptSuggestion((s) => markSuggestionAccepted(s, nowFn()));
+  }
+  /** `scd()` (L235125), which upstream's composer calls on EVERY keystroke: kill the in-flight generation so
+   *  nothing generated before the user started typing can land after it. */
+  function abortSuggestion(): void { suggesterRef.current?.abort(); }
   // The Output-style row: apply the live engine style (best-effort, like every other flag-state op — a
   // session without SettingsOps just skips this leg), remember it in ccx's own prefs (the seed for next
   // boot's SettingsRowCtx.outputStyle), and write it into Claude Code's OWN local settings file so the
@@ -1939,6 +2058,7 @@ export function useChat(
     // wears cannot depend on which surface minted it. Baked at the width of the moment: a local entry's lines
     // project verbatim (`projectLocalEvent`), so an already-echoed prompt keeps its band across a resize.
     appendNewLocal({ kind: "user-echo", lines: userEchoLines(prompt, { width: columnsFn() }) });
+    noteTail("user", prompt);        // W-C T12: the user half of the suggester's tail (the assistant half rides the message arm)
     session.submit(prompt, () => {}).catch((e) => {
       append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]);
       // Only reclaim busy/drain when no turn is event-owned (liveTurnRef null): a live turn — another
@@ -2003,6 +2123,10 @@ export function useChat(
   function submit(prompt: string) {
     if (disposed.current || !prompt.trim()) return;
     setSubmitCount((n) => n + 1);
+    // W-C T12: `logOutcomeAtSubmission`'s reset (L489800/L495609) — every submit clears the slice, whether the
+    // suggestion was accepted, ignored or never shown. Here rather than in `runTurn` because upstream resets
+    // at the SUBMIT, and a `/help` or a queued prompt is still the user answering the composer.
+    setPromptSuggestion(EMPTY_SUGGESTION);
     if (!busy) { dispatch(prompt); return; }
     if (prompt.startsWith("!") || prompt.startsWith("#")) { dispatch(prompt); return; }
     const cmd = parseCommand(prompt);
@@ -2193,5 +2317,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

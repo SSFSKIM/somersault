@@ -137,17 +137,26 @@ export function examplePool(files: readonly string[], rand: () => number = Math.
 
 /** `NVf` (L495107). First match wins; no match is no placeholder at all.
  *
+ *   0. (W-C T12) the model's follow-up suggestion, when there is one to show
  *   1. a non-empty input has nothing to hint at
  *   2. (upstream: the agent-view `Message @name…` — divergence 3, not reachable here)
  *   3. some queued entry is EDITABLE and the hint has not used up its sessions
  *   4. a session that has submitted nothing, holds no messages, and has suggestions on
- */
+ *
+ *  RULE 0 IS UPSTREAM'S OWN PRECEDENCE, just expressed one level down. Upstream never puts the suggestion
+ *  into `NVf` at all: the composer picks `b9 && as ? as : Wge ?? iH` (L496158) — model suggestion, then the
+ *  diff-comment hint, then whatever this ladder returned. ccx has no diff-comment surface, so folding rule 0
+ *  into the ladder yields the identical order with one decision site instead of two. The CALLER still owns
+ *  whether a suggestion is showable at all (annex §C5.4's `b9`: prompt mode, empty buffer, not responding);
+ *  what arrives here is already that answer. */
 export function pickPlaceholder(i: {
   inputEmpty: boolean; queueHasEditable: boolean; upHintSessions: number;
   submitCount: number; hasMessages: boolean; suggestionEnabled: boolean;
+  suggestion?: string | null;
   pool: readonly string[]; rand: () => number;
 }): string | undefined {
   if (!i.inputEmpty) return undefined;
+  if (i.suggestion) return i.suggestion;
   if (i.queueHasEditable && i.upHintSessions < QUEUED_UP_HINT_LIMIT) return QUEUED_UP_HINT;
   if (i.submitCount < 1 && !i.hasMessages && i.suggestionEnabled) {
     if (i.pool.length === 0) return undefined;                        // `N1([])` is undefined; never `Try "undefined"`

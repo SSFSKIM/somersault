@@ -4,12 +4,12 @@
 import { describe, it, expect } from "vitest";
 import { buildRows, filterRows, cycleEnum, summarizeChanges, THINKING_WARNING, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
 
-const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true };
+const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true, promptSuggestionEnabled: false };
 
 describe("settingsRows.ts", () => {
-  it("buildRows returns the 6 rows in the pinned order: theme, model, outputStyle, permissionMode, thinking, showTurnDuration", () => {
+  it("buildRows returns the 7 rows in the pinned order, ending with showTurnDuration then promptSuggestionEnabled", () => {
     const rows = buildRows(BASE_CTX);
-    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration"]);
+    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration", "promptSuggestionEnabled"]);
   });
 
   it("row labels + hints match the Global Constraints table (theme/model carry a hint, the rest don't)", () => {
@@ -27,6 +27,8 @@ describe("settingsRows.ts", () => {
     expect(byId.thinking.hint).toBeUndefined();
     expect(byId.showTurnDuration.label).toBe("Show turn duration");
     expect(byId.showTurnDuration.hint).toBeUndefined();
+    expect(byId.promptSuggestionEnabled.label).toBe("Prompt suggestions");
+    expect(byId.promptSuggestionEnabled.hint).toBeUndefined();
   });
 
   it("display values: theme/outputStyle/permissionMode echo ctx verbatim, model shows the live id when set", () => {
@@ -55,6 +57,14 @@ describe("settingsRows.ts", () => {
     expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.type).toBe("boolean");
     expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.value).toBe("true");
     expect(buildRows({ ...BASE_CTX, showTurnDuration: false }).find((r) => r.id === "showTurnDuration")!.value).toBe("false");
+  });
+
+  // WAVE C TASK 12 (EP-C5). Upstream's own id and label (bundle L315485), label-only there and here — but
+  // ccx's DEFAULT is the opposite one: upstream's schema is absent-means-on, ours is explicit-true-means-on.
+  it("promptSuggestionEnabled is a label-only boolean row echoing the pref, which defaults FALSE", () => {
+    expect(buildRows(BASE_CTX).find((r) => r.id === "promptSuggestionEnabled")!.type).toBe("boolean");
+    expect(buildRows(BASE_CTX).find((r) => r.id === "promptSuggestionEnabled")!.value).toBe("false");
+    expect(buildRows({ ...BASE_CTX, promptSuggestionEnabled: true }).find((r) => r.id === "promptSuggestionEnabled")!.value).toBe("true");
   });
 
   it("permissionMode is an enum row with exactly the 4 pinned options (bypassPermissions excluded)", () => {

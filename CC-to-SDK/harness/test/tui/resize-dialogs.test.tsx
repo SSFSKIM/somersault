@@ -108,7 +108,7 @@ const settingsProps = {
   tab: "Config", onTabChange: () => {}, model: "opus", mode: "default", thinkLevel: "off", outputStyle: "default",
   onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
   fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
-  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {},
+  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {}, promptSuggestionEnabled: false, setPromptSuggestionEnabled: () => {},
 };
 
 describe("SettingsDialog re-derives its geometry from the size it is given", () => {

@@ -80,6 +80,7 @@ import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 import { resolveTerminalTitle, type TerminalTitle } from "./terminalTitle.js";
+import { suggestionText } from "./suggester.js";
 import type { RenderItem } from "./toolRenderer.js";
 import type { RenderLine } from "./render.js";
 
@@ -146,7 +147,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
    *  users already rely on. */
   initialTodosOpen?: boolean;
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -195,7 +196,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
   // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
@@ -314,6 +315,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // This callback runs from the composer's own `commitState`, i.e. inside the same stdin handler, so React
     // batches it with the composer's own setState and the collapse lands in the SAME frame as the character.
     // The effect still reports the whole state; it agrees with this by the time it runs.
+    // WAVE C TASK 12 — upstream's `scd()`, which rides this exact callback: its composer's onChange is
+    // `Oe(!1), on(), scd()` (L495482), so an in-flight suggestion dies on the same text change that reports
+    // the draft. Ours is one call earlier in the same handler, which is the same tick.
+    abortSuggestion();
     if (typingTimer.current) { clearTimeout(typingTimer.current); typingTimer.current = null; }
     setDraftNonEmpty(nonEmpty);
     setTypingActive(nonEmpty);
@@ -831,6 +836,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                 ? <SettingsDialog tab={state.settings.tab ?? "Config"} onTabChange={setSettingsTab}
                     model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
                     showTurnDuration={state.showTurnDuration} setShowTurnDuration={setShowTurnDuration}
+                    promptSuggestionEnabled={state.promptSuggestionEnabled} setPromptSuggestionEnabled={setPromptSuggestionEnabled}
                     onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
                     fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
                     // WAVE S t5: the Config list is windowed now, so this dialog joins the set that is handed
@@ -889,7 +895,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
                       // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
                       // arm clock every double-press in this tree shares.
-                      clearDraftToken={clearDraftToken} onOpenAgents={openBgPanel} doublePressDeps={doublePressDeps} />}
+                      clearDraftToken={clearDraftToken} onOpenAgents={openBgPanel} doublePressDeps={doublePressDeps}
+                      // WAVE C TASK 12 (EP-C5): the suggestion's text down, and the composer's two facts back
+                      // up — whether it could paint one right now, and that a key accepted it. The SLICE stays
+                      // in useChat (it has to survive this component's remounts and Ctrl-C's buffer clear).
+                      // `suggestionEnabled` is the SAME setting one rung down: it also gates the first-run
+                      // `Try "…"` template (upstream's L1542 rule), so with suggestions off by default a fresh
+                      // ccx session shows no template either — recorded in the spec as an accepted change.
+                      suggestion={suggestionText(state.promptSuggestion)} suggestionEnabled={state.promptSuggestionEnabled}
+                      onSuggestionSlot={noteSuggestionSlot} onSuggestionAccept={acceptSuggestion} />}
       {/* WAVE C TASK 2 (EP-C1b) — ONE FOOTER ROW, where `ChatStatusBar` and two armed-hint rows used to be.
           It stays UNCONDITIONAL, exactly as the status bar was, because three dialog height budgets count it
           as their one unconditional sibling (`rewindModel.REWIND_CHROME_ROWS` and the two dialog constants

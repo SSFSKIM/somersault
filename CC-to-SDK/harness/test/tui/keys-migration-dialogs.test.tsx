@@ -539,7 +539,7 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
     tab: "Config", onTabChange: () => {}, mode: "default", thinkLevel: "default", outputStyle: "default",
     onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
     fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
-    onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {},
+    onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {}, promptSuggestionEnabled: false, setPromptSuggestionEnabled: () => {},
   });
   const permProps = () => ({
     tab: "Allow", onTabChange: () => {}, denials: [], cwd: "/tmp",
@@ -642,7 +642,7 @@ describe("F6 task 2 — Settings/Permissions adopt <Tabs> with no behavioural ch
     return <SettingsDialog tab={tab} onTabChange={setTab} mode="default" thinkLevel="default" outputStyle="default"
       onDone={() => {}} applyMode={async () => {}} setThink={async () => {}} applyOutputStyle={async () => {}}
       fetchStatus={async () => [{ text: "status-row" }]} fetchUsage={async () => []} fetchStats={async () => []}
-      onOpenModelPicker={() => {}} savePrefs={() => {}} showTurnDuration setShowTurnDuration={() => {}} />;
+      onOpenModelPicker={() => {}} savePrefs={() => {}} showTurnDuration setShowTurnDuration={() => {}} promptSuggestionEnabled={false} setPromptSuggestionEnabled={() => {}} />;
   }
   function PermissionsHost() {
     const [tab, setTab] = React.useState("Allow");

@@ -13,6 +13,7 @@ import { loadPrefs } from "./prefs.js";
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import { turnDurationEnabled } from "./durationRow.js";
+import { promptSuggestionEnabled } from "./suggester.js";
 import { refreshExampleFiles } from "./placeholder.js";
 import { createCursorReports, probeReflow } from "./reflowOracle.js";
 import { createResizeRepaint, frameWriteCorrection, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
@@ -30,7 +31,7 @@ export interface ChatClientOpts {
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; statusLine?: StatusLineConfig };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -347,6 +348,10 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     ...(opts.hookOpts ?? {}),
     initialOutputStyle: opts.hookOpts?.initialOutputStyle ?? prefs.outputStyle ?? "default",
     initialShowTurnDuration: opts.hookOpts?.initialShowTurnDuration ?? turnDurationEnabled(prefs),
+    // W-C T12: and the `Prompt suggestions` row from the same read — but DEFAULT FALSE (spec D-C4), so an
+    // install that has never touched the setting neither generates suggestions nor shows the first-run
+    // `Try "…"` template that upstream gates on the same key.
+    initialPromptSuggestionEnabled: opts.hookOpts?.initialPromptSuggestionEnabled ?? promptSuggestionEnabled(prefs),
     // W-C T10 (EP-C2): the ONE place ccx reads a settings file for its own UI, and the one place it can be:
     // canon L154558 honours `statusLine` from the USER file only (a checked-out project may not install a
     // command on the machine that checks it out), and every layer below this is a pure function or a hook a

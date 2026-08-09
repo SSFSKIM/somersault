@@ -271,7 +271,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, clearDraftToken, onOpenAgents, doublePressDeps }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, clearDraftToken, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -352,7 +352,15 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   onOpenAgents?: () => void;
   /** WAVE C TASK 4 — the `deps` seam of this component's three double-press arms (esc-clear, ctrl+d exit, ←
    *  agents), threaded down from `ChatApp` so one injected clock drives every arm in the tree. */
-  doublePressDeps?: DoublePressDeps }) {
+  doublePressDeps?: DoublePressDeps;
+  /** WAVE C TASK 12 (EP-C5) — the model's follow-up suggestion, or null when there is none. The four-state
+   *  slice lives in `useChat` (it must outlive this component's remounts and survive Ctrl-C); what arrives
+   *  here is just its text, and the two callbacks below are how this component's two facts get back up:
+   *  whether the suggestion COULD be painted right now (`b9`, L495702 — prompt mode, empty buffer, no turn
+   *  running) and that a key accepted it. */
+  suggestion?: string | null;
+  onSuggestionSlot?: (canShow: boolean) => void;
+  onSuggestionAccept?: (text: string) => void }) {
   const historyProject = project ?? cwd;
   const historyEnvRef = useRef(historyEnv ?? process.env); historyEnvRef.current = historyEnv ?? process.env;
   const historyProjectRef = useRef(historyProject); historyProjectRef.current = historyProject;
@@ -451,6 +459,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const onInputActivityRef = useRef(onInputActivity); onInputActivityRef.current = onInputActivity;
   const onKillAgentsRef = useRef(onKillAgents); onKillAgentsRef.current = onKillAgents;
   const onOpenAgentsRef = useRef(onOpenAgents); onOpenAgentsRef.current = onOpenAgents;
+  // W-C T12: both read from `handleKey`, which runs off the keymap's passive listener — the standing ref rule.
+  const suggestionRef = useRef(suggestion); suggestionRef.current = suggestion;
+  const onSuggestionAcceptRef = useRef(onSuggestionAccept); onSuggestionAcceptRef.current = onSuggestionAccept;
   const editExternalRef = useRef(editExternal); editExternalRef.current = editExternal;
   const providerSuspend = useSuspendInput();
   const suspendInputRef = useRef<SuspendInput | null>(null); suspendInputRef.current = suspendInput ?? providerSuspend;
@@ -723,6 +734,27 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (!key.escape) disarmClear();
     if (!leftAgentsGesture) leftAgentsArmRef.current!.disarm();
     if (leftAgentsGesture) { endInterceptedEditorAction(s); leftAgentsArmRef.current!.press(); return; }
+    // WAVE C TASK 12, annex §C5.5 (`F9f`'s handleKeyDown, L491084) — THE TWO ACCEPT KEYS, decided here rather
+    // than through the binding table for the reason `?` above is physical: neither key is bound to an action
+    // in the Chat context (Tab belongs to `Autocomplete`, Right belongs to the editor's cursor), so this is
+    // an interception of what would otherwise fall through, not a competing registration.
+    //   The gates are upstream's, in upstream's own order: the buffer must be EMPTY (a Right on text is a
+    // cursor move and a Tab on text is the popup's), no autocomplete popup may be live (upstream: "only when
+    // there are no autocomplete suggestions"), and no inline ghost text may be offering its own completion —
+    // that one is belt-and-braces here, since a ghost needs typed text to match against and this branch has
+    // already required none. Shift+Tab is excluded because it is `chat:cycleMode`; a modified Right is a word
+    // motion. `endInterceptedEditorAction` first, exactly like every other interception in this body.
+    const acceptsSuggestion = (!!key.tab || !!key.rightArrow) && !key.shift && !key.ctrl && !key.meta;
+    if (acceptsSuggestion && suggestionRef.current && isEmptyBuffer(s) && !completionActive(s) && !ghostText(s)?.visible) {
+      const text = suggestionRef.current;
+      const ended = endInterceptedEditorAction(s);
+      // `replaceBufferFromOutside` is upstream's `Ft(text)`: whole buffer, cursor at the end — and the mode
+      // switch upstream spells out for a `/` or `!` opener comes free, because `inputMode` derives the mode
+      // from the buffer's first line rather than holding it as separate state.
+      commitState(replaceBufferFromOutside(ended, text));
+      onSuggestionAcceptRef.current?.(text);
+      return;
+    }
     // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
     // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'. This one stays
     // physical on purpose: `?` is a CHARACTER, bound by no context, and `help:show` — the action a user can
@@ -983,11 +1015,27 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // consulting it inside the ladder meant a disk read on every keystroke. The value only has to be right for
   // the session anyway — the increment below is what the NEXT session reads.
   const [upHintSessions] = useState(() => loadPrefs(historyEnvRef.current).queuedUpHintSessions ?? 0);
+  // W-C T12, annex §C5.4's `b9` (L495702): `_ === "prompt" && j4.length === 0 && as && !er` — prompt mode, an
+  // empty buffer, a suggestion to show, and no turn running. The `as` term is the caller's (`suggestion`
+  // non-null); this component owns the other three. Upstream's `"prompt"` is `normal` in this port's own
+  // three-valued vocabulary (`promptMode.ts`: bash | memory | normal, where upstream has only prompt | bash);
+  // on an empty buffer it can be nothing else, so the term is transcription rather than a live gate. Computed
+  // through `inputMode(state)` and not the `mode` const below only because that one is declared further down.
+  const canShowSuggestion = isEmptyNow && !busy && inputMode(state) === "normal";
   const placeholder = pickPlaceholder({
     inputEmpty: isEmptyNow, queueHasEditable: !!queueHasEditable, upHintSessions,
     submitCount, hasMessages, suggestionEnabled,
+    suggestion: canShowSuggestion ? suggestion : null,
     pool: examplePool(memo.current.files ?? [], stableRand), rand: stableRand,
   });
+  // …and the same fact REPORTED UP, because the two transitions it drives (`generated` → `shown`, and the
+  // `timing` discard of a suggestion that arrived too late) belong to the slice, which lives one level up.
+  // In an effect — a parent setState during render is illegal — and keyed on the SUGGESTION as well as on the
+  // slot: a suggestion landing while the buffer is already non-empty never changes `canShowSuggestion`, and
+  // without that dependency it would sit in `generated` forever instead of being discarded on arrival, which
+  // is what upstream's per-render check does (L495704).
+  const onSuggestionSlotRef = useRef(onSuggestionSlot); onSuggestionSlotRef.current = onSuggestionSlot;
+  useEffect(() => { onSuggestionSlotRef.current?.(canShowSuggestion); }, [canShowSuggestion, suggestion]);
   // Divergence 2 (placeholder.ts): upstream never writes `queuedCommandUpHintCount`, so its own `< 3` gate
   // can never close. Ours counts a SESSION that showed the hint, once, which is the reading that makes `LNb`
   // mean something. In an effect, not in render: it is a disk write.
