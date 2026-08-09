@@ -610,3 +610,18 @@ sessionId (feeds Task 9's sealed pending/live/unknown semantics — wants its ow
 
 Spec Outcomes & Retrospective written; coverage.md gained the combined Wave R + S entry (R's absence
 was a standing omission, noted as such). External whole-branch review launching against f099baf4fb.
+
+## 2026-08-09 — external whole-branch review returned three real findings; closing fix round dispatched
+
+codex (gpt-5.6-sol, xhigh, base f099baf4fb) found: (P1) a UUID/prefix naming a LIVE session's
+transcript matches the listing before the roster branch and boots a SECOND ENGINE over the live
+transcript — the exact residual rolled forward twice, now with a concrete fix shape (cross-check the
+resolved full id against the roster, return live for non-terminal rows); (P2) the widened picker's
+preview/resume/rename still act through the launch cwd, so an all-projects row from another project
+previews empty and resumes into "no history found" — a cross-task interaction (T10's widen × the
+cwd-scoped readers) that neither task's own review could see alone; (P2) a foreign-project roster
+short id resolves and then dies quietly in a fresh REPL — the quiet-failure class the resolver exists
+to remove, reachable through the one branch that skipped the cwd-scoped cross-check. All three
+verified real by the controller against the code; one fix round dispatched covering all three.
+Also: two background runs (the full suite, the first review attempt) were killed externally mid-run —
+the review rerun went through nohup-detached and completed; noting the pattern for future long runs.
