@@ -10,6 +10,12 @@
 // Geometry is upstream's (L407977-978, L408060): the verb line, then the bar indented `marginLeft: 2` with a
 // one-column gap before a dim `NN%`. Under 8 usable cells the BAR is suppressed and the verb line stays —
 // a narrow terminal loses the decoration, not the news that something is running.
+//
+// ONE DELIBERATE COLOUR DIVERGENCE, recorded rather than silent: upstream passes no `fillColor` at :407978,
+// so its pill renders the FILLED run in the default foreground and dims only the empty run. We paint the
+// fill `ACCENT` — the house colour every other live-turn glyph in this REPL already uses (TurnSpinner's
+// pulse, the banner), so a default-foreground fill would read as the odd one out here. Geometry is canon;
+// this one colour is ours.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { ACCENT } from "./banner.js";
@@ -23,8 +29,10 @@ export function CompactionRow({ startedAt, now = Date.now, columns }: { startedA
   const [tick, setTick] = useState(0);
   const ratioRef = useRef(0);                                  // monotonic: the bar may never walk backwards
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 120); return () => clearInterval(t); }, []);
-  // A non-positive stamp is "just started", the same defensive read TurnSpinner makes: state and stamp reach
-  // this component through two setStates that need not commit together.
+  // A non-positive stamp reads as "just started". NOT TurnSpinner's race — that one exists because `busy` and
+  // `turnStartedAt` are two separate setStates, so a frame can legally have busy=true and startedAt=0; here
+  // the flag and the stamp are ONE object written in ONE setState, so a mounted row always has a real stamp.
+  // The guard is kept only as a cheap floor against a caller passing 0 directly (the pure tests do).
   const ratio = ratioRef.current = compactionRatio(startedAt > 0 ? now() - startedAt : 0, ratioRef.current);
   const width = barWidth(columns);
   const { fill, empty } = barCells(ratio, width);

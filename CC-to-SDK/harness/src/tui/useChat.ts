@@ -630,7 +630,16 @@ export function useChat(
         // any non-string `content`, so this structured frame reaches the transcript as nothing at all — and
         // it is the only announcement mid-turn compaction makes before its boundary. It sets the busy state
         // and is deliberately NOT returned from: the branches below still get to run (they no-op on it).
-        if (data?.type === "system" && data.subtype === "status" && data.status === "compacting") startCompacting();
+        //
+        // NOT ON REPLAY, for the same reason `ingestTaskFrame` above guards: `follow()` (host.ts:465-496)
+        // drains the last COMPLETED turn's buffer as `message` frames with `replay:true` and delivers no
+        // turn events at all on an idle attach. A turn interrupted mid-auto-compaction leaves a buffered
+        // `status:"compacting"` with no boundary behind it, so an unguarded arm would paint
+        // `Compacting conversation… 0%` on the attaching client FOREVER: the turn-end belt is waiting for a
+        // turn event that never comes, and the idle `state` arm clears retryStatus but not this (and would
+        // not fire anyway — an interactive host reports "working"). A replayed compaction is history; the
+        // live one, if there is one, announces itself on a fresh non-replay frame.
+        if (!ev.replay && data?.type === "system" && data.subtype === "status" && data.status === "compacting") startCompacting();
         if (data?.type === "system" && data.subtype === "compact_boundary") {
           clearCompacting();   // W-S7: the boundary IS compact_end — the bar dies here, the summary row below persists
           // F4 Task 10b: upstream `XWo` shape B (L422282–422305) replaces the hand-rolled rule — a `⏺` bullet,
@@ -698,10 +707,14 @@ export function useChat(
         // A call still open at turn end is an ORPHAN (interrupted, denied, or a result that never came):
         // the turn is over, so nothing is running — end the blink epoch instead of leaving a "running" row.
         clearLiveOpen();
-        // W-S7 belt: the wire path's ONLY other terminator. An automatic compaction that dies without ever
+        // W-S7 belt: the WIRE path's only other terminator. An automatic compaction that dies without ever
         // emitting its boundary — an interrupt, a turn that errors out mid-pass — would otherwise leave the
-        // bar up forever, because nothing else on that path ever clears it. Cheap (ref-guarded) and it
-        // cannot fire early: the boundary always arrives inside the turn that compacted.
+        // bar up forever, because nothing else on that path ever clears it. Cheap (ref-guarded), and on that
+        // path it cannot fire early: the boundary always arrives inside the turn that compacted.
+        // ACCEPTED EDGE, on the LOCAL path only: a prompt submitted while a typed `/compact` is still running
+        // ends a turn of its own, and that turn end takes the bar down before `session.compact()` returns.
+        // Narrow (it needs a submit during the pass), harmless (the `finally` then no-ops on an already-clear
+        // state, and the `✦ compacted N → M` row still lands), and not worth a second flag to prevent.
         setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);

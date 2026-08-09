@@ -90,4 +90,39 @@ describe("ChatApp: compaction owns the live-turn slot", () => {
     expect(line(lastFrame)).not.toContain("Compacting conversation…");          // ephemeral: only the result row persists
     unmount();
   });
+
+  // T11 REVIEW pin (a). The widened gate is `(busy || compacting) && !paneOwned`, and nothing pinned the
+  // second half — rewriting it as `(busy && !paneOwned) || compacting` left the whole suite green while
+  // painting the row straight through an open dialog. A pane-owning dialog owns the pane.
+  it("a pane-owning dialog takes the slot back even mid-compaction", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const fake = fakeRemote({ compact: async () => { await gate; return { ok: true, preTokens: 9000, postTokens: 2000 }; }, getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }) });
+    const { lastFrame, stdin, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await tick();
+    stdin.write("/compact"); await tick(); stdin.write("\r");
+    await waitFor(() => line(lastFrame).includes("Compacting conversation…"));
+    stdin.write("/help"); await tick(); stdin.write("\r");                      // `/help` sets helpOpen → paneOwned
+    await waitFor(() => !line(lastFrame).includes("Compacting conversation…"));
+    release();
+    unmount();
+  });
+
+  // T11 REVIEW pin (b). The clock SEAM, end to end through ChatApp: useChat must stamp `startedAt` from the
+  // injected `deps.now` and ChatApp must thread that same function into the row. Both sabotages die here —
+  // stamping with raw `Date.now()` makes the elapsed negative (0%), and dropping the `now` prop makes the row
+  // read `Date.now()` against an injected stamp, i.e. ~56 years of elapsed (95%). Only one wiring gives 63%.
+  // This is the exact seam that produced TurnSpinner's "(29758130m 59s)" epoch bug in the real binary.
+  it("stamps and reads the compaction clock through ONE injected `now`", async () => {
+    let clock = 1_000;
+    const fake = fakeRemote();
+    const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" deps={{ now: () => clock, columns: () => 100 }} />);
+    await tick();
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "status", status: "compacting" } });
+    await waitFor(() => line(lastFrame).includes("Compacting conversation…"));
+    expect(line(lastFrame)).toContain(" 0%");                                   // stamped at the injected instant
+    clock = 91_000;                                                             // ninety seconds by that same clock
+    await waitFor(() => line(lastFrame).includes(" 63%"));
+    unmount();
+  });
 });

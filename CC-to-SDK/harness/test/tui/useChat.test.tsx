@@ -2576,4 +2576,36 @@ describe("W-S7: compaction is a real busy state with an ephemeral progress affor
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => frame(lastFrame).includes("c:no"));
   });
+
+  // T11 REVIEW, the strand. `follow()` (host.ts:465-496) drains the last COMPLETED turn's buffer with
+  // `replay: true` and sends NO turn events on an idle attach — so a turn interrupted mid-auto-compaction
+  // leaves a buffered `status:"compacting"` with no boundary after it, and an unguarded arm would paint
+  // `Compacting conversation… 0%` on the attaching client forever: the turn-end belt waits on a turn event
+  // that never arrives, and the idle `state` arm clears retryStatus but not this. Same guard, same reason,
+  // as `ingestTaskFrame`'s a few lines above it.
+  it("a REPLAYED compacting frame is history, not a live pass — it can never strand the bar", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>c:{c.state.compacting ? "YES" : "no"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "message", replay: true, data: { type: "system", subtype: "status", status: "compacting" } });
+    await new Promise((r) => setTimeout(r, 30));                        // long enough for a stray set to land
+    expect(frame(lastFrame)).toContain("c:no");
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "status", status: "compacting" } });
+    await waitFor(() => frame(lastFrame).includes("c:YES"));            // …and a LIVE one still arms it
+  });
+
+  // T11 REVIEW: the `finally` had no pin — every failure fake in this file RETURNS `{ok:false}`, so
+  // replacing try/finally with sequential statements kept the whole suite green. A compaction that THROWS
+  // is the case that separates them: the outcome append never runs, and only a `finally` takes the bar down.
+  it("clears the busy state when the compaction THROWS, and still reports the error", async () => {
+    const fake = fakeRemote({ compact: async () => { throw new Error("boom"); } });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>c:{c.state.compacting ? "YES" : "no"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/compact");
+    await waitFor(() => frame(lastFrame).includes("✗ boom"));           // the dispatch catch reports it
+    expect(frame(lastFrame)).toContain("c:no");                         // …and the affordance is gone with it
+  });
 });
