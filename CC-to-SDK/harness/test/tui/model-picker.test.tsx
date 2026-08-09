@@ -18,6 +18,8 @@ const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const flat = (s: string) => plain(s).replace(/\s*\n\s*/g, " ");
 const REMEMBER = "\x1b[38;2;177;185;249m";                   // dark theme `remember` (theme.ts)
 const SUCCESS = "\x1b[38;2;78;186;101m";                     // dark theme `success`
+const WARNING = "\x1b[38;2;255;193;7m";                      // dark theme `warning` — the T12 confirm's frame
+const PERMISSION = "\x1b[38;2;177;185;249m";                 // dark theme `permission` — the picker's own frame
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
@@ -40,6 +42,7 @@ function mount(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
       models={props.models ?? MODELS}
       {...(props.current !== undefined ? { current: props.current } : {})}
       {...(props.sessionModel !== undefined ? { sessionModel: props.sessionModel } : {})}
+      {...(props.activeModel !== undefined ? { activeModel: props.activeModel } : {})}
       {...(props.outputTokens !== undefined ? { outputTokens: props.outputTokens } : {})}
       {...(props.ackedAt !== undefined ? { ackedAt: props.ackedAt } : {})}
       onPick={(m, o) => picked.push({ model: m.value, saveDefault: o.saveDefault, ...(o.confirmed ? { confirmed: true } : {}) })}
@@ -317,6 +320,31 @@ describe("ModelPicker — the mid-conversation switch confirm (EP-S8)", () => {
     expect(r.saved).toEqual([]);                                          // `s` never writes the default, confirmed or not
   });
 
+  // RENDER PINS (review finding: deleting the whole body Box left 2967 tests green, and flipping the frame
+  // role to `permission` left 36 green). The copy constants are pinned in the unit file; these two pin that
+  // the component actually PUTS them on screen, and in the right colour.
+  it("renders the cache sentence itself, with the target bold inside it", async () => {
+    const r = mount({ current: "sonnet", outputTokens: 500 });
+    await pickOpusFromSonnet(r);
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    expect(flat(frame(r.lastFrame))).toContain(
+      "This conversation is cached for the current model. Switching to Opus 5 means the full history gets re-read on your next message.",
+    );
+    expect(frame(r.lastFrame)).toContain("\x1b[1mOpus 5\x1b[22m");        // the target, BOLD, inside the sentence
+  });
+
+  it("wears the `warning` role on the frame and the title, not the picker's `permission`", async () => {
+    const r = mount({ current: "sonnet", outputTokens: 500 });
+    await pickOpusFromSonnet(r);
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    const f = frame(r.lastFrame);
+    expect(f).toContain(`${WARNING}${CONFIRM_TITLE}`);                    // the title
+    const rule = f.split("\n").find((l) => l.includes("─"))!;             // DialogFrame's one horizontal rule
+    expect(rule).toContain(WARNING);
+    expect(rule).not.toContain(PERMISSION);                               // NOT the picker's own frame role
+    // (`permission` is only absent from the FRAME here — `Select`'s focused row legitimately still wears it.)
+  });
+
   it("compares against a session-only override when one is in force, not against the ticked row", async () => {
     // `s`-picked Opus is running; the ticked row still reads Sonnet. Re-picking Opus is not a switch.
     const r = mount({ current: "sonnet", sessionModel: "opus", outputTokens: 500 });
@@ -324,6 +352,16 @@ describe("ModelPicker — the mid-conversation switch confirm (EP-S8)", () => {
     await waitFor(() => r.picked.length > 0);
     expect(flat(frame(r.lastFrame))).not.toContain(CONFIRM_TITLE);
     expect(r.picked).toEqual([{ model: "opus", saveDefault: true }]);
+  });
+
+  // Review finding 3: a session pinned to an explicit id no catalog row carries leaves `current` undefined,
+  // and the gate has to fall back to the model in force instead of switching itself off.
+  it("still confirms when no catalog row matched, comparing against the model in force", async () => {
+    const r = mount({ activeModel: "claude-sonnet-5", outputTokens: 500 });   // NO `current` at all
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    r.stdin.write("\r");                                                      // the cursor opens on row 1, Opus
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    expect(r.saved).toEqual([]); expect(r.picked).toEqual([]);
   });
 });
 

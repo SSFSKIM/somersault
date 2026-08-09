@@ -43,6 +43,8 @@ export function needsModelConfirm(a: {
   /** A session-only (`s`) override, which outranks `current`: it is what is actually running, and so it is
    *  what the cache belongs to. */
   sessionModel?: string;
+  /** The model in force when no catalog row matched `current` at all — useChat's own resolved `model`. */
+  fallbackModel?: string;
   /** Session-CUMULATIVE output tokens (`totalOutputTokens(session.usage())`), not the per-turn count. */
   outputTokens: number;
   /** The output count at which this warning was last accepted. */
@@ -50,12 +52,22 @@ export function needsModelConfirm(a: {
 }): boolean {
   // 1. Mid-conversation only.
   if (!(a.outputTokens > 0)) return false;
-  // 2. Not already acknowledged at this output count — accepting stamps the count, and the user is not
-  //    asked again until the model has produced more output (i.e. a new cache worth losing).
-  if (a.ackedAt !== undefined && a.ackedAt >= a.outputTokens) return false;
+  // 2. Not already acknowledged at THIS EXACT output count. STRICT equality, which is upstream's own
+  //    (`o === n`, L315222-3) and not the `>=` this started as. The difference is not academic: the count
+  //    can go DOWN — `/clear` swaps the engine and `usage()` restarts at zero (host.ts `swapEngine`) — and
+  //    under `>=` an ack stamped at 500 in the previous conversation would suppress the warning for the
+  //    whole of the next one, up to its first 500 output tokens. The ack is also reset at that boundary
+  //    (useChat's `replaceDocument`); strict equality is the second half of the same fix, and the half that
+  //    holds for any other way the count can shrink.
+  if (a.ackedAt !== undefined && a.ackedAt === a.outputTokens) return false;
   // 3/4. A model we cannot name is a model we cannot say differs. Staying silent is the conservative side
   //      here: a spurious confirm costs the user the switch they asked for if they decline it.
-  const from = a.sessionModel ?? a.current;
+  //      The precedence is upstream's call site: `XMo(…, mainLoopModel, mainLoopModelForSession, ack)`
+  //      compares `r ?? t`, i.e. the session-only override first. `fallbackModel` is the third rung and
+  //      matches upstream's `YMo(r ?? t)` → `ZN()` configured-model fallback: `current` is a CATALOG ROW and
+  //      a session pinned to an explicit id outside the alias set matches none, which would otherwise leave
+  //      the gate permanently off.
+  const from = a.sessionModel ?? a.current ?? a.fallbackModel;
   if (from === undefined) return false;
   return norm(a.next) !== norm(from);
 }

@@ -30,7 +30,7 @@ import {
 
 export interface ModelInfo { value: string; displayName?: string; description?: string }
 
-export function ModelPicker({ models, current, sessionModel, outputTokens = 0, ackedAt, onPick, onCancel, savePrefs = realSavePrefs, rows, columns }: {
+export function ModelPicker({ models, current, sessionModel, activeModel, outputTokens = 0, ackedAt, onPick, onCancel, savePrefs = realSavePrefs, rows, columns }: {
   models: ModelInfo[];
   /** The row that reads as the model in force — `success` + a trailing tick, and where the cursor opens
    *  (upstream's `initial`/`defaultValue` + `defaultFocusValue`, L441127). */
@@ -44,6 +44,11 @@ export function ModelPicker({ models, current, sessionModel, outputTokens = 0, a
    *  immediately. `useChat` owns the ack and threads it back in (see `pickModel`). */
   outputTokens?: number;
   ackedAt?: number;
+  /** The RESOLVED model actually in force (`useChat`'s `model`). The gate's third comparison rung, for the
+   *  case `current` cannot cover: `current` is a catalog ROW, and a session pinned to an explicit id that no
+   *  row carries matches nothing, which without this would leave the warning permanently off (upstream's own
+   *  `YMo(r ?? t)` → `ZN()` configured-model fallback). */
+  activeModel?: string;
   /** `saveDefault` is the Enter/`s` split. The prefs write has already happened when it is true — the caller
    *  gets it so the confirmation notice can say which of the two sentences applies. `confirmed` is set only
    *  when this pick passed the T12 switch confirm, and it is what tells `useChat` to stamp the ack — a pick
@@ -89,7 +94,7 @@ export function ModelPicker({ models, current, sessionModel, outputTokens = 0, a
     // written to prefs, i.e. the switch the user refused would silently become their default for every new
     // session. Declining from here writes nothing, picks nothing and stamps nothing, so the same switch
     // asks again.
-    if (needsModelConfirm({ next: m.value, current, sessionModel, outputTokens, ackedAt })) { setConfirm({ m, saveDefault }); return; }
+    if (needsModelConfirm({ next: m.value, current, sessionModel, fallbackModel: activeModel, outputTokens, ackedAt })) { setConfirm({ m, saveDefault }); return; }
     commit(m, saveDefault, false);
   };
 
@@ -100,8 +105,11 @@ export function ModelPicker({ models, current, sessionModel, outputTokens = 0, a
   // second pick queued behind an unanswered warning is exactly what the warning is there to prevent.
   useKeyActions({ "modelPicker:thisSessionOnly": () => { if (confirmRef.current) return; choose(focusRef.current, false); } });
 
-  // The confirm REPLACES the list, as upstream's own confirm screen does — and returning to the list on a
-  // decline is what "No, go back" means, so the picker stays mounted with its focus and window intact.
+  // The confirm REPLACES the list, as upstream's own confirm screen does, and a decline returns to it —
+  // which is what "No, go back" means. NB the list REMOUNTS on that return: `Select` is unmounted while the
+  // confirm is up, so it comes back on `defaultFocusValue={current}` and the cursor sits on the model in
+  // force, not on the row that was just declined. That is upstream's behavior too (its confirm is a separate
+  // screen over a freshly mounted list), so it is recorded here rather than worked around.
   if (confirm) {
     return (
       <ModelSwitchConfirm

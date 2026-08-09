@@ -79,7 +79,7 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -286,7 +286,7 @@ export function useChat(
   // F6 T11: `current` is the row the picker opens on and marks as the value in force (the catalog VALUE, not
   // the resolved id — `openModelPicker` maps between them); `sessionModel` is set only by the `s` path and is
   // the sole thing that renders the picker's third header line.
-  const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; outputTokens?: number; ackedAt?: number }>({ open: false, models: [] });
+  const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }>({ open: false, models: [] });
   const sessionModelRef = useRef<string | undefined>(undefined);
   /** WAVE S T12 (EP-S8): the cumulative output count at which the model-switch cache warning was last
    *  ACCEPTED. It lives here and not in `ModelPicker` for a structural reason — the picker unmounts on every
@@ -294,6 +294,19 @@ export function useChat(
    *  model has produced more output" would be unimplementable. `openModelPicker` threads it in as a prop and
    *  `pickModel` stamps it back, on an ACCEPTED pick only. */
   const cacheMissAckedAtOutputTokens = useRef<number | undefined>(undefined);
+  /** WAVE S T12: compaction RE-STAMPS the ack rather than resetting it, which is upstream's own rule —
+   *  `$$e` (L232096-232112) is fired at every conversation boundary, and the compaction ones (L232164,
+   *  L308436) keep the session and its growing output count. The reasoning is the warning's own: the prompt
+   *  cache is already gone after a compaction, so switching models right then costs nothing extra and there
+   *  is nothing to warn about. (`/clear`, resume and rewind reach the same net effect by RESET, in
+   *  `replaceDocument` — a fresh conversation counts from zero and warns correctly.)
+   *  FAILURE-TOLERANT: an unreadable `usage()` leaves the ack exactly as it was. Stamping a guessed count
+   *  would either silence a real warning or raise a spurious one, and both are worse than the status quo. */
+  async function stampAckAfterCompaction(): Promise<void> {
+    const u = await session.usage().catch(() => undefined);
+    if (disposed.current || u === undefined) return;
+    cacheMissAckedAtOutputTokens.current = totalOutputTokens(u as SessionUsage);
+  }
   const [rewindPicker, setRewindPicker] = useState<{ open: boolean; anchors: RewindAnchor[] }>({ open: false, anchors: [] });
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null>(null);
   const [rewinding, setRewinding] = useState(false);
@@ -513,6 +526,13 @@ export function useChat(
     // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
     pendingStateRef.current!.reset();
     setCtxPct(undefined);               // W-S5, see above: measured against a conversation that is gone
+    // WAVE S T12, THE SAME BOUNDARY AND THE SAME CLASS AS W-S5/Task 8: the ack is a number measured against
+    // a conversation that no longer exists. `/clear` swaps the ENGINE (host `clear` op), so `usage()`
+    // restarts at zero — an ack of 500 carried across would sit above every count the new conversation
+    // produces for a long while, and (before the strict-equality fix, and still for any count that happens
+    // to land on it) suppress the cache warning in a conversation it was never given for. Resume and rewind
+    // come through here too and inherit the same reset.
+    cacheMissAckedAtOutputTokens.current = undefined;
 
     setStaticItems([]); setPendingItems([]);
     setStaticEpoch((e) => e + 1);
@@ -642,6 +662,12 @@ export function useChat(
         if (!ev.replay && data?.type === "system" && data.subtype === "status" && data.status === "compacting") startCompacting();
         if (data?.type === "system" && data.subtype === "compact_boundary") {
           clearCompacting();   // W-S7: the boundary IS compact_end — the bar dies here, the summary row below persists
+          // WAVE S T12: AUTOMATIC (mid-turn) compaction reaches us only here, and upstream's `$$e` re-stamp
+          // fires on it too (L232164). `void` because this arm is a synchronous event handler and nothing
+          // downstream depends on the stamp landing; guarded on `!ev.replay` for the same reason
+          // `startCompacting` above is — a replayed boundary is history, and re-stamping off it would
+          // suppress a warning for a compaction that happened before this client attached.
+          if (!ev.replay) void stampAckAfterCompaction();
           // F4 Task 10b: upstream `XWo` shape B (L422282–422305) replaces the hand-rolled rule — a `⏺` bullet,
           // a bold `Compact summary`, and the LIVE expand hint. Shape A ("Summarized N messages …") needs
           // `summarizeMetadata`, which P81 read the wire frame key-by-key and did not find, so it is recorded
@@ -905,7 +931,7 @@ export function useChat(
           startCompacting();
           let outcome; try { outcome = await session.compact(); } finally { clearCompacting(); }
           append(formatCompact(outcome));
-          if (outcome.ok) { setCtxPct(undefined); await refreshCtx(); }
+          if (outcome.ok) { setCtxPct(undefined); await refreshCtx(); await stampAckAfterCompaction(); }
           break;
         }
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
@@ -1201,7 +1227,10 @@ export function useChat(
       const current = models.find((m) => m.value === model || resolveModelAlias(m.value) === model)?.value;
       // `ackedAt` is snapshotted onto the state rather than read from the ref at render time so ChatApp keeps
       // reading state only, and so the pick that stamps it can stamp the SAME count the gate was asked about.
-      setModelPicker({ open: true, models, outputTokens, ...(cacheMissAckedAtOutputTokens.current !== undefined ? { ackedAt: cacheMissAckedAtOutputTokens.current } : {}), ...(current ? { current } : {}), ...(sessionModelRef.current ? { sessionModel: sessionModelRef.current } : {}) });
+      // `activeModel` is the gate's THIRD comparison rung and the reason review finding 3 is closed: `current`
+      // is undefined whenever no catalog row matches (a session pinned to an explicit id outside the alias
+      // set), and without a fallback the gate would then be off for the whole session.
+      setModelPicker({ open: true, models, outputTokens, ...(cacheMissAckedAtOutputTokens.current !== undefined ? { ackedAt: cacheMissAckedAtOutputTokens.current } : {}), ...(current ? { current } : {}), ...(model ? { activeModel: model } : {}), ...(sessionModelRef.current ? { sessionModel: sessionModelRef.current } : {}) });
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeModelPicker() { if (!disposed.current) setModelPicker({ open: false, models: [] }); }
@@ -1213,9 +1242,12 @@ export function useChat(
     const saveDefault = opts.saveDefault !== false;
     sessionModelRef.current = saveDefault ? undefined : m.value;
     // WAVE S T12: stamp the ack ONLY when this pick passed the switch confirm, and stamp the very count the
-    // gate was asked about (the one `openModelPicker` put on the picker state) — not a freshly read one,
-    // which could have moved and would then suppress a warning the user has not seen. A pick that never
-    // raised the dialog stamps nothing: it must not silence the NEXT switch, which may be a real one.
+    // gate was asked about (the one `openModelPicker` put on the picker state). A DECLARED DIVERGENCE:
+    // upstream's `_4H` stamps a FRESH `$S()` read at accept time (L447011); we snapshot deliberately,
+    // because between the picker opening and the accept the count can only have GROWN, and stamping the
+    // larger number would leave the ack sitting above a warning the user was never shown — silently
+    // suppressing it. Snapshotting means the ack names exactly the state the user agreed to.
+    // A pick that never raised the dialog stamps nothing: it must not silence the NEXT switch.
     if (opts.confirmed) cacheMissAckedAtOutputTokens.current = modelPicker.outputTokens ?? 0;
     setModelPicker({ open: false, models: [] });
     // The picker's rows come straight from supportedModels(), whose values are TIER ALIASES ("opus"), so the

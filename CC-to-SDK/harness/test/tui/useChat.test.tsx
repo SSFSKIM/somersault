@@ -7,6 +7,7 @@ import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
+import { needsModelConfirm } from "../../src/tui/modelConfirmModel.js";
 import type { PermissionDecision } from "../../src/index.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { DecisionOutcome } from "../../src/permissions/types.js";
@@ -1140,6 +1141,90 @@ describe("model picker", () => {
     api.run!("/model");
     await waitFor(() => api.state.modelPicker.open);
     expect(api.state.modelPicker.ackedAt).toBe(500);       // the count the gate was asked about, not a re-read
+  });
+
+  // THE FIX ROUND'S REAL DEFECT. `/clear` swaps the ENGINE, so `usage()` restarts at zero — an ack carried
+  // across sits above every count the new conversation produces for a long while. Same boundary and same
+  // class as W-S5/Task 8's context percentage: a number measured against a conversation that is gone.
+  it("drops the ack at a conversation boundary, so the fresh conversation warns again (/clear)", async () => {
+    let out = 500;
+    const fake = fakeRemote({ capabilities: () => CAPS, usage: () => ({ session: { model_usage: { m: { outputTokens: out } } } }), clearSession: () => {} });
+    const api: { run?: (p: string) => void; pick?: (m: any, o?: any) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.pick = c.pickModel; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    api.pick!({ value: "opus", displayName: "Opus" }, { saveDefault: true, confirmed: true });   // ack at 500
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/clear");
+    await new Promise((r) => setTimeout(r, 10));
+    out = 200;                                                    // the new conversation's own output, from zero
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.ackedAt).toBeUndefined();
+    expect(api.state.modelPicker.outputTokens).toBe(200);
+    // the gate itself, on exactly the inputs the picker now holds
+    expect(needsModelConfirm({ next: "sonnet", current: "opus", outputTokens: api.state.modelPicker.outputTokens, ackedAt: api.state.modelPicker.ackedAt })).toBe(true);
+  });
+
+  // Compaction is the OTHER kind of boundary: the session and its count survive, so upstream RE-STAMPS
+  // rather than resets (`$$e`, L232096-232112, fired at L232164/L308436). The cache is already lost, so a
+  // switch right after a compaction costs nothing extra and there is nothing to warn about.
+  it("re-stamps the ack after a typed /compact, at the post-compaction count", async () => {
+    const fake = fakeRemote({ capabilities: () => CAPS, usage: () => ({ session: { model_usage: { m: { outputTokens: 800 } } } }) });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/compact");
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.ackedAt).toBe(800);
+    expect(needsModelConfirm({ next: "sonnet", current: "opus", outputTokens: 800, ackedAt: api.state.modelPicker.ackedAt })).toBe(false);
+  });
+
+  it("leaves the ack alone when the post-compaction usage read fails", async () => {
+    let usable = true;
+    const fake = fakeRemote({
+      capabilities: () => CAPS,
+      usage: () => { if (!usable) throw new Error("no usage"); return { session: { model_usage: { m: { outputTokens: 500 } } } }; },
+    });
+    const api: { run?: (p: string) => void; pick?: (m: any, o?: any) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.pick = c.pickModel; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    api.pick!({ value: "opus", displayName: "Opus" }, { saveDefault: true, confirmed: true });   // ack at 500
+    await new Promise((r) => setTimeout(r, 0));
+    usable = false;
+    api.run!("/compact");
+    await new Promise((r) => setTimeout(r, 20));
+    usable = true;
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.ackedAt).toBe(500);              // unchanged, not zeroed by a failed read
+  });
+
+  it("re-stamps off an AUTOMATIC compaction's wire boundary, but never off a replayed one", async () => {
+    const fake = fakeRemote({ capabilities: () => CAPS, usage: () => ({ session: { model_usage: { m: { outputTokens: 900 } } } }) });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", uuid: "b1" }, replay: true } as any);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.ackedAt).toBeUndefined();        // a replayed boundary is history
+    api.run!("/model");                                           // close/reopen is not needed; the next open re-reads
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", uuid: "b2" } } as any);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.ackedAt !== undefined);
+    expect(api.state.modelPicker.ackedAt).toBe(900);
   });
 
   it("stamps NOTHING when the pick never raised the confirm — the next switch must still be able to warn", async () => {

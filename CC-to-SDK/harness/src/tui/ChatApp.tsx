@@ -678,7 +678,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               // to `paneOwned` above: `state.modelPicker.open` already covers the whole surface, and a
               // fixed-height dialog does not belong in that set anyway.
               ? <ModelPicker models={state.modelPicker.models} current={state.modelPicker.current} sessionModel={state.modelPicker.sessionModel}
-                  outputTokens={state.modelPicker.outputTokens} ackedAt={state.modelPicker.ackedAt}
+                  outputTokens={state.modelPicker.outputTokens} ackedAt={state.modelPicker.ackedAt} activeModel={state.modelPicker.activeModel}
                   onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
               // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
               // in the order settings → permissions → theme → addDir (plan Global Constraints line 38);

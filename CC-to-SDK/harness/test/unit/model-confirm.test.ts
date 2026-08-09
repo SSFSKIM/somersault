@@ -17,6 +17,13 @@ describe("needsModelConfirm — the four conditions (XMo, L315221)", () => {
     expect(needsModelConfirm({ ...base, ackedAt: 500 })).toBe(false);
     expect(needsModelConfirm({ ...base, ackedAt: 400 })).toBe(true);
   });
+  // STRICT equality, upstream's `o === n` (L315222-3). `>=` reads as the same rule only while the count
+  // rises — but `/clear` swaps the engine and `usage()` restarts at zero, so an ack from the previous
+  // conversation sits ABOVE the new one's counts and would blanket-suppress the warning until it caught up.
+  it("prompts again once the output count has moved BELOW the ack (a new conversation counts from zero)", () => {
+    expect(needsModelConfirm({ ...base, ackedAt: 600 })).toBe(true);
+    expect(needsModelConfirm({ ...base, ackedAt: 501 })).toBe(true);
+  });
   it("does not prompt when the alias resolves to the same model", () => {
     expect(needsModelConfirm({ ...base, next: "sonnet", current: "claude-sonnet-5" })).toBe(false);
   });
@@ -37,6 +44,16 @@ describe("needsModelConfirm — the four conditions (XMo, L315221)", () => {
   // decline costs the user their switch is worse than a silent one.
   it("does not prompt when there is no model in force to compare against", () => {
     expect(needsModelConfirm({ next: "claude-opus-5", outputTokens: 500 })).toBe(false);
+  });
+  // Review finding 3 / upstream's `YMo(r ?? t)` → `ZN()`: `current` is a CATALOG ROW, so a session pinned to
+  // an explicit id no row carries leaves it undefined — and the gate must fall back to the model in force
+  // rather than switch itself off for the rest of the session.
+  it("falls back to the model in force when no catalog row matched", () => {
+    expect(needsModelConfirm({ next: "opus", outputTokens: 500, fallbackModel: "claude-sonnet-5" })).toBe(true);
+    expect(needsModelConfirm({ next: "opus", outputTokens: 500, fallbackModel: "claude-opus-5" })).toBe(false);
+    // …and it is the LAST rung: a matched row and a session-only override both outrank it.
+    expect(needsModelConfirm({ next: "opus", current: "opus", outputTokens: 500, fallbackModel: "claude-sonnet-5" })).toBe(false);
+    expect(needsModelConfirm({ next: "opus", sessionModel: "opus", outputTokens: 500, fallbackModel: "claude-sonnet-5" })).toBe(false);
   });
 });
 
