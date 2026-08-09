@@ -39,6 +39,8 @@ import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
 import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useSwallowKeys } from "./keys/KeymapProvider.js";
+import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
+import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
@@ -88,11 +90,18 @@ import type { RenderLine } from "./render.js";
  *  scope and its ctrl+x ctrl+b chord would survive the hold. */
 /** `$jp = 2` (bundle L426022) — the `paddingX` `wqo` puts around a queued prompt in normal layout. */
 const QUEUE_PAD = 2;
-/** WAVE C TASK 2 — the Esc-Esc rewind arm's queue entry. The KEY is upstream's own (`escape-again-to-clear`,
- *  annex §C1.6); the TEXT is ccx's, because the gesture is ccx's (upstream's second Esc clears the draft, and
- *  EP-C7 / Task 4 is what reconciles the two). `ESC_ARM_MS` is the arm window itself, so the entry and the
- *  arm it advertises expire together — one number, not a hint outliving what it promises. */
-const ESC_REWIND_KEY = "escape-again-to-clear";
+/** WAVE C TASK 2 — the Esc-Esc rewind arm's queue entry. Both halves are ccx's, because the gesture is ccx's
+ *  (upstream's second Esc clears the draft; the composer owns that arm and upstream's own
+ *  `escape-again-to-clear` key with it). `ESC_ARM_MS` is the arm window itself, so the entry and the arm it
+ *  advertises expire together — one number, not a hint outliving what it promises.
+ *
+ *  WAVE C TASK 4 (from Task 2's review) — THE KEY IS ITS OWN. It was `escape-again-to-clear`, shared with the
+ *  composer's Esc-clear arm, and sharing it is a live defect rather than a tidiness question: the composer
+ *  REMOVES that key unconditionally whenever its arm is not up (ChatComposer's `clearVisible` effect, which
+ *  runs on mount), and the composer remounts behind every dialog. A rewind arm taken while any dialog closed
+ *  would have its hint pulled out from under it by a component that never knew it existed. Distinct keys are
+ *  what make the two arms independent; the queue folds and invalidates BY KEY and nothing else. */
+const ESC_REWIND_KEY = "escape-again-to-rewind";
 const ESC_REWIND_TEXT = "Press Esc again to rewind";
 const ESC_ARM_MS = 1500;
 /** `fs = 1500` (bundle L547654, the local const beside `Qo = mMr()`): how long after the LAST keystroke the
@@ -122,7 +131,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize = DEFAULT_ON_RESIZE }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize = DEFAULT_ON_RESIZE, doublePressDeps }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -164,6 +173,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  subscribing effect lists it as its only dependency, so a fresh closure per frame would unsubscribe and
    *  re-subscribe the terminal listener on every render. */
   onResize?: (cb: () => void) => () => void;
+  /** WAVE C TASK 4 — the `deps` seam of every `createDoublePress` arm in this tree (the app's two, and the
+   *  composer's three, which this component threads down). Injected for the reason plan constraint 15 gives:
+   *  the arms are the one piece of this UI whose whole contract is a DURATION, and a test that waited out a
+   *  real 800 ms window would be timing-dependent in exactly the place fidelity is being asserted. */
+  doublePressDeps?: DoublePressDeps;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
   // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
@@ -199,6 +213,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const terminalRows = () => size.rows;
   const queueWidth = Math.max(8, terminalColumns() - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
+  /** WAVE C TASK 4 (EP-C7b) — THE CLEAR CHANNEL, and it is a TOKEN for the reason `prefill` is one. Ctrl-C's
+   *  first press has to reach into the composer's buffer (annex §C7.2), and ChatApp cannot: the composer owns
+   *  its `EditorState` and writes the durable ref itself, so a parent that mutated `editorStateRef` behind a
+   *  mounted composer would be overwritten by its next commit. `prefill` solved the same problem the same way
+   *  — a monotonic counter the child watches and consumes — and reusing that shape means one pattern to
+   *  understand instead of two. What differs is the CONSUMED marker: `prefill`'s lives in an app-scoped ref
+   *  (`consumedPrefillTokenRef`) because a rewind prefill must survive a composer remount and land, while a
+   *  clear must NOT — a Ctrl-C pressed while a dialog owned the screen has no draft to clear, and applying it
+   *  on the way back would wipe a buffer the user typed in between. So the composer seeds its marker from the
+   *  live token at mount and only ever acts on a LATER bump. */
+  const [clearDraftToken, setClearDraftToken] = useState(0);
   // WAVE C TASK 2 — the composer's half of the footer (the four early-return states plus the draft signal).
   // It lives up here rather than in the composer for the same reason the typing debounce does: the composer
   // is unmounted by every dialog, and its own cleanup reports IDLE so nothing stale survives the unmount.
@@ -208,9 +233,22 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const [draftNonEmpty, setDraftNonEmpty] = useState(false);
   // Every chord the footer prints is DERIVED from the live table through this, never typed in `Footer.tsx`.
   const bindings = useBindingLookup();
-  /** ChatApp's own ctrl+c arm, in upstream's own hyphenated spelling (`Ctrl-C`, plan constraint 11). It is a
-   *  VALUE here rather than a literal in the footer for the reason `Footer.tsx`'s header gives. */
-  const EXIT_ARM_CTRL_C = { key: "Ctrl-C", verb: "exit" };
+  /** ChatApp's own ctrl+c arm. It is a VALUE here rather than a literal in the footer for the reason
+   *  `Footer.tsx`'s header gives (upstream passes `Dci.key` into `exitMessage`, L493757).
+   *
+   *  WAVE C TASK 4 (from Task 2's review) — DERIVED FROM THE LIVE TABLE, not typed. `Ctrl-C` was a literal
+   *  here, which made this the one arm in the tree whose hint could lie: a user who moved `app:interrupt` to
+   *  `alt+c` got a key that worked and a footer that named a different one. The composer's ctrl+d arm has read
+   *  its chord through `formatBindings` since F2 task 10; this is the same derivation, and it produces the same
+   *  `Ctrl-C` under the defaults — `formatBinding("ctrl+c")` IS upstream's hyphenated spelling, so constraint
+   *  11 is satisfied BY the derivation rather than in spite of it.
+   *    THE FALLBACK IS CANON, NOT `(unbound)`. `formatBindings` answers `(unbound)` for an action nothing
+   *  binds, which is right for a hint that ADVERTISES a key and wrong for this one: the arm can only be on
+   *  screen because the key was just pressed, so `Press (unbound) again to exit` would be false on its face.
+   *  It is unreachable through the table (an unbound `app:interrupt` never dispatches here) and reachable only
+   *  through a caller that arms this some other way, so the fallback prints the canon spelling. */
+  const interruptChord = formatBindings(bindings("app:interrupt"));
+  const EXIT_ARM_CTRL_C = { key: interruptChord === UNBOUND ? "Ctrl-C" : interruptChord, verb: "exit" };
   const [todosOpen, setTodosOpen] = useState(initialTodosOpen);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   // Durable per-app editor state survives a temporary composer unmount; autocomplete is normalized by the
@@ -302,7 +340,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // with the old `useInput` — a key can arrive after a newer render has already painted. Keep every
   // state/callback value these handlers consume current synchronously.
   const rootStateRef = useRef(state); rootStateRef.current = state;
-  const exitArmedRef = useRef(exitArmed); exitArmedRef.current = exitArmed;
   const todosOpenRef = useRef(todosOpen); todosOpenRef.current = todosOpen;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
   const resumeOutputRef = useRef(resumeOutput); resumeOutputRef.current = resumeOutput;
@@ -313,26 +350,49 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const openModelPickerRef = useRef(openModelPicker); openModelPickerRef.current = openModelPicker;
   const openShortcutsRef = useRef(openShortcuts); openShortcutsRef.current = openShortcuts;
   const setThinkRef = useRef(setThink); setThinkRef.current = setThink;
-  const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const disarm = () => { setExitArmed(false); if (disarmTimer.current) { clearTimeout(disarmTimer.current); disarmTimer.current = null; } };
-  useEffect(() => () => { if (disarmTimer.current) clearTimeout(disarmTimer.current); }, []);
-  // Esc-Esc rewind arming (mirrors the Ctrl-C double-press pattern above): busy Esc always interrupts and
-  // never arms; an idle Esc arms for 1.5s, and a second Esc within the window opens the rewind picker.
+  const openRewindRef = useRef(openRewind); openRewindRef.current = openRewind;
+  // ── WAVE C TASK 4 (EP-C7b) — BOTH OF THIS COMPONENT'S ARMS ARE `keys/doublePress.ts` NOW. What used to be
+  // here was two hand-rolled `useState` + `useRef(timestamp)` + `setTimeout` triples that had drifted apart
+  // from each other and from upstream: the ctrl+c one ran a 2000 ms window (upstream's `Pee` default is
+  // `fpy = 800`, and only the `/clear` chord passes 2000) and cleared nothing on its first press. The
+  // primitive owns the state machine; what stays here is the ROUTING — which press reaches it at all.
+  //
+  //  · `onFirstPress` on the ctrl+c arm is upstream's `if (e) t(""), B(0), c?.()` (annex §C7.2), reaching the
+  //    composer through the clear channel below. The clear and the arm are ONE press, not alternatives.
+  //  · The handlers close over refs, not render values: the primitive is built once (lazy `useRef` init, the
+  //    same idiom `useChat` uses for its notification store) so a closure capture here would freeze the first
+  //    render's `state`/callbacks forever.
+  //  · `dispose()` on unmount, and nothing else: it deliberately does NOT notify (`doublePress.ts`), so it is
+  //    only ever safe where the mirrored `useState` is going away with it. Every mid-life cancellation goes
+  //    through `disarm()`, which does notify and is silent when nothing is armed.
+  const ctrlCArmRef = useRef<DoublePress | null>(null);
+  if (ctrlCArmRef.current === null) ctrlCArmRef.current = createDoublePress({
+    onArmChange: (armed) => { setExitArmed(armed); },
+    onSecondPress: () => { exitRef.current(); },
+    onFirstPress: () => { setClearDraftToken((n) => n + 1); },
+  }, DOUBLE_PRESS_WINDOW_MS, doublePressDeps);
+  const disarm = () => { ctrlCArmRef.current!.disarm(); };
+  useEffect(() => () => { ctrlCArmRef.current!.dispose(); }, []);
+  // Esc-Esc rewind arming: busy Esc always interrupts and never arms; an idle Esc arms for 1.5s, and a second
+  // Esc within the window opens the rewind picker. `ESC_ARM_MS` is a CALL-SITE argument, which is exactly how
+  // upstream varies its own windows (the `/clear` chord passes 2000 to the same primitive, annex §C7.2) — the
+  // 1500 ms here is ccx's, because the gesture is.
   const [escArmed, setEscArmed] = useState(false);
-  const escTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const disarmEsc = () => { setEscArmed(false); if (escTimer.current) { clearTimeout(escTimer.current); escTimer.current = null; } };
-  useEffect(() => () => { if (escTimer.current) clearTimeout(escTimer.current); }, []);
+  const escArmRef = useRef<DoublePress | null>(null);
+  if (escArmRef.current === null) escArmRef.current = createDoublePress({
+    onArmChange: (armed) => { setEscArmed(armed); },
+    onSecondPress: () => { void openRewindRef.current(); },
+  }, ESC_ARM_MS, doublePressDeps);
+  const disarmEsc = () => { escArmRef.current!.disarm(); };
+  useEffect(() => () => { escArmRef.current!.dispose(); }, []);
   // A turn start revokes the arm: otherwise the "Press Esc again" hint outlives the idle moment it was
   // armed in and renders during a busy turn. Keyed on state.busy (not on onSubmit) so a turn started by
   // ANOTHER attached client revokes it too.
   useEffect(() => { if (state.busy) disarmEsc(); }, [state.busy]);   // eslint-disable-line react-hooks/exhaustive-deps
   const onInterrupt = () => {
     disarm();
-    if (state.busy) { interrupt(); disarmEsc(); return; }              // busy: Esc stays interrupt, never arms
-    if (escArmed) { disarmEsc(); void openRewind(); return; }
-    setEscArmed(true);
-    if (escTimer.current) clearTimeout(escTimer.current);
-    escTimer.current = setTimeout(() => setEscArmed(false), ESC_ARM_MS);
+    if (rootStateRef.current.busy) { interruptRef.current(); disarmEsc(); return; }   // busy: Esc stays interrupt, never arms
+    escArmRef.current!.press();
   };
   const onCycleMode = () => { cycleMode(); disarm(); };   // Shift+Tab cycles the permission ladder (default → acceptEdits → plan → auto)
   // Ctrl-Z is process-level for EVERY visible owner: the provider intercepts it before context dispatch,
@@ -430,10 +490,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       try { (deps?.savePrefs ?? realSavePrefs)({ showExpandedTodos: next }, deps?.env); } catch { /* prefs are best-effort */ }
       disarm();
     },
-    "app:interrupt": () => {                                    // interrupt a turn, else arm/confirm exit (CC)
+    // WAVE C TASK 4, annex §C7.2 — interrupt a turn, else CLEAR THE DRAFT AND ARM EXIT in one press. The
+    // busy branch is the one that does neither: upstream's `V` is not even reached while a turn runs (the
+    // interrupt owns the key), so a running turn's Ctrl-C leaves the buffer exactly as it found it.
+    "app:interrupt": () => {
       if (rootStateRef.current.busy) { interruptRef.current(); disarm(); return; }
-      if (exitArmedRef.current) { exitRef.current(); return; }
-      setExitArmed(true); if (disarmTimer.current) clearTimeout(disarmTimer.current); disarmTimer.current = setTimeout(() => setExitArmed(false), 2000);
+      ctrlCArmRef.current!.press();
     },
     "task:background": () => { rootStateRef.current.busy ? backgroundNowRef.current() : openBgPanelRef.current(); disarm(); },
     // `help:show` is bound to NOTHING by default — the `?` that opens this overlay is composer-local, gated on
@@ -589,8 +651,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // upstream's placement for every "press it again" message (annex §C1.6's `escape-again-to-clear` and
   // `left-arrow-again-for-agents` are both `immediate` feedback entries, not permanent lines). Same string,
   // same window, same `!paneOwned` gate — only the slot changed, to the one-row overlay above the composer.
-  // Declared HERE, below `paneOwned`, because it reads it. EP-C7 (Wave C Task 4) rebuilds the arm itself on
-  // `keys/doublePress.ts`; the destination does not change again.
+  // Declared HERE, below `paneOwned`, because it reads it. WAVE C TASK 4 rebuilt the arm itself on
+  // `keys/doublePress.ts` and gave the entry its own key (`ESC_REWIND_KEY`); the destination did not move.
   const escArmVisible = escArmed && !paneOwned;
   useEffect(() => {
     if (escArmVisible) notify({ key: ESC_REWIND_KEY, text: ESC_REWIND_TEXT, priority: "immediate", timeoutMs: ESC_ARM_MS });
@@ -786,7 +848,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // WAVE C TASK 2: one queue for the whole app (useChat owns it), and the composer's
                       // footer-state channel. Both are how the one-row footer and the one-row overlay stay
                       // in sync with a component that unmounts behind every dialog.
-                      notifications={notifications} onFooterState={setFooterState} />}
+                      notifications={notifications} onFooterState={setFooterState}
+                      // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
+                      // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
+                      // arm clock every double-press in this tree shares.
+                      clearDraftToken={clearDraftToken} onOpenAgents={openBgPanel} doublePressDeps={doublePressDeps} />}
       {/* WAVE C TASK 2 (EP-C1b) — ONE FOOTER ROW, where `ChatStatusBar` and two armed-hint rows used to be.
           It stays UNCONDITIONAL, exactly as the status bar was, because three dialog height budgets count it
           as their one unconditional sibling (`rewindModel.REWIND_CHROME_ROWS` and the two dialog constants
@@ -802,10 +868,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           own ctrl+c arm, and the composer's ctrl+d arm arriving through `footerState`. Ctrl-C wins when both
           are up, because it is the one that ends the process rather than the session.
 
-          `Press Esc again to rewind` HAS NO ROW HERE ANY MORE, deliberately (plan constraint 12): upstream
-          carries that affordance as a QUEUE entry, not a persistent line (`escape-again-to-clear`, immediate,
-          1000 ms — annex §C1.6), and EP-C7 / Wave C Task 4 owns posting it. No esc hint renders between this
-          task and that one; the gesture itself is untouched. */}
+          `Press Esc again to rewind` HAS NO ROW HERE, deliberately (plan constraint 12): upstream carries that
+          class of affordance as a QUEUE entry, not a persistent line (annex §C1.6), and since Wave C Task 4
+          both esc arms post there — this one on `escape-again-to-rewind`, the composer's clear arm on
+          upstream's own `escape-again-to-clear`. */}
       <Footer
         mode={state.mode} busy={state.busy}
         draftNonEmpty={draftNonEmpty} isInputEmpty={!draftNonEmpty}

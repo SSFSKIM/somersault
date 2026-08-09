@@ -58,13 +58,14 @@ export interface AgentsState {
  *  `done` outranks `awaiting` when both are live: finishing is the newer news and upstream posts it second.
  *
  *  RECORDED DIVERGENCE (plan constraint 12), the one that decides the `null`: upstream renders the idle
- *  `← for agents` unconditionally, because `←` is a live gesture there (it detaches to the agents view,
- *  with a double-press disambiguation against cursor motion). **ccx has no `←` binding** — the background
- *  pane opens on `task:background` — so an unconditional `← for agents` would be F0's exact failure mode: a
- *  string advertising a chord that does nothing. Gating on `count > 0` keeps the affordance where it is
- *  honest as a STATUS (it is what replaced the old `⚙ N bg` chip) and keeps the home state free of a
- *  promise ccx cannot keep. Wiring the gesture needs `keys/doublePress.ts` (Wave C Task 3) plus a
- *  composer-empty key scope, and belongs with that primitive rather than here. */
+ *  `← for agents` unconditionally, and ccx gates it on `count > 0`.
+ *    THE REASON CHANGED IN WAVE C TASK 4 AND THE GATE DID NOT. It used to be an honesty gate — ccx bound `←`
+ *  to nothing, so an unconditional string would have advertised a chord that did nothing. The gesture is live
+ *  now (ChatComposer's `leftAgentsArmRef`: `←` `←` on an empty composer opens the background pane, annex
+ *  §C7.8), so the string is backed at every count. What keeps the gate is what it says: this affordance
+ *  replaced the old `⚙ N bg` chip and reads as a STATUS — `← for agents` with no agents is an offer to look at
+ *  an empty room. Upstream can afford it because its `←` detaches to a persistent agents VIEW; ours opens a
+ *  pane whose whole content is the list. Deliberate, and one term to remove if that ever stops being true. */
 export function agentsAffordance(agents: AgentsState, now: number = 0): HintSegment | null {
   const live = (f: { since: number } | undefined): boolean => f !== undefined && now - f.since < AGENTS_FLASH_MS;
   const arrow: HintSpan = { text: "←", dim: true };                 // `L8` (L41482)

@@ -1,7 +1,7 @@
 // tui/test/editor.test.ts — pure editor-reducer units. Probe 17d7116: a paste arrives as one `input` with
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
-import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, clearToHistory, UNDO_CAP, UNDO_COALESCE_MS, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
+import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, clearToHistory, clearForInterrupt, UNDO_CAP, UNDO_COALESCE_MS, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
 import { toKeyFlags } from "../../src/tui/keys/editorAdapter.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 
@@ -685,5 +685,39 @@ describe("Escape semantics — clearToHistory (CM15)", () => {
     expect(blankLines.lines).toEqual([""]);
     expect(blankLines.history).toEqual([{ display: "old" }]);
     expect(press(blankLines, { upArrow: true }).lines).toEqual(["old"]);
+  });
+});
+
+// WAVE C TASK 4 (EP-C7b), annex §C7.2 — Ctrl-C's first press is a DIFFERENT clear from Esc-Esc's, and the two
+// tests sit together so the difference is readable: `clearToHistory` stashes the draft to history on its way
+// out (upstream's `cgr`), `clearForInterrupt` does not (upstream's `V` calls no such thing) and keeps the undo
+// stack instead, which is the only way back from a Ctrl-C.
+describe("Ctrl-C semantics — clearForInterrupt (annex §C7.2)", () => {
+  it("clears the buffer, puts the cursor at 0 and resets the history walk, without touching history itself", () => {
+    let s = initialEditorState([{ display: "old" }, { display: "older" }]);
+    s = press(s, { upArrow: true });                                   // a live history walk…
+    expect(s.histIndex).not.toBe(null);
+    s = type(s, "!");                                                  // …edited, so `histEdits` is populated too
+    const c = clearForInterrupt(s);
+    expect(c.lines).toEqual([""]);
+    expect(c.cursor).toEqual({ row: 0, col: 0 });
+    expect(c.histIndex).toBe(null);
+    expect(c.histEdits.size).toBe(0);
+    expect(c.histRecalled).toBe(null);
+    expect(c.history).toEqual([{ display: "old" }, { display: "older" }]);   // no `cgr`: the draft is NOT stashed
+  });
+
+  it("keeps the undo stack (the only way back), the ctrl+s stash and the kill ring", () => {
+    let s = initialEditorState();
+    s = { ...s, stashed: { display: "parked", cursor: { row: 0, col: 6 }, pastedContents: {} }, killRing: ["killed"] };
+    s = [..."a draft"].reduce((st, ch, i) => applyKey(st, ch, {}, i * (UNDO_COALESCE_MS + 1)).state, s);
+    const c = clearForInterrupt(s);
+    expect(c.undo).toEqual(s.undo);
+    expect(c.stashed?.display).toBe("parked");
+    expect(c.killRing).toEqual(["killed"]);
+    // ctrl+_ brings the draft back — the undo stack's newest entry is the state before the LAST keystroke,
+    // so it is "a draf" and not the whole string; what matters is that the text is recoverable at all.
+    expect(applyKey(c, "\x1f", {}).state.lines.join("")).toBe("a draf");
+    expect(withBufferText(s, "").undo).toEqual([]);                          // …which the wholesale reset is not
   });
 });

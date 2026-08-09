@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdir } from "node:fs/promises";
-import { applyKey, bufferText, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
@@ -21,6 +21,7 @@ import { createNotificationStore, type CcxNotification, type NotificationStore }
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
 import { expandHintText, formatBindings } from "./keys/hints.js";
+import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
 
@@ -54,8 +55,34 @@ export const SEARCH_HINT_KEY = "search-history-hint";
 export const YANK_HINT_KEY = "kill-paste-hint";
 /** `escape-again-to-clear` (annex §C1.6, L395624) — upstream's own key for the Esc-Esc arm's feedback. */
 export const ESC_CLEAR_KEY = "escape-again-to-clear";
+/** L395624's own `timeoutMs`, and it is NOT `escClearMs`. Upstream's hint outlives its 800 ms arm by 200 ms
+ *  because `K`'s `onArmChange(false)` does nothing at all — only the SECOND press removes the entry
+ *  (`j("escape-again-to-clear")`), and an expired arm simply leaves the notification to time out on its own.
+ *  RECORDED DIVERGENCE (plan constraint 12): ccx removes the entry on any disarm, so this 1000 is a CEILING the
+ *  queue enforces rather than the number that usually ends the hint. Tying the hint to the arm is the same
+ *  choice `ESC_ARM_MS` records on the rewind side — a hint that outlives what it promises is the failure mode
+ *  this port cares about more than the 200 ms. */
+const ESC_CLEAR_HINT_MS = 1000;
 /** L395652, verbatim. */
 export const YANK_HINT_TEXT = "Ctrl+Y to paste deleted text";
+/** WAVE C TASK 4 — the ← agents gesture (annex §C1.6's `left-arrow-again-for-agents` at L395758, the outcome
+ *  list at annex §C7.8/L395750). Upstream's `Press ← again`, verbatim.
+ *
+ *  TWO RECORDED DIVERGENCES (plan constraint 12), both about what ccx does NOT have:
+ *   1. NO ATTACH-AMBIGUITY DANCE. Upstream's second shape is `Ambiguous ←, press again to detach` (L395762),
+ *      for a session that is attached to a remote and where `←` therefore means two things. ccx detaches
+ *      through `/detach`, a normal command, so the ambiguity never arises and the second copy has no producer.
+ *   2. NO `reject` OUTCOME. Upstream's decision function has six (`fire`, `arm`, `absorb`, `attach-arm`,
+ *      `attach-absorb`, `reject`) and the annex records the names without the body, so what distinguishes
+ *      `reject` from `arm` is not transcribable. This port arms on every ← that reaches an empty composer,
+ *      which is `arm` unconditionally. The footer's `← for agents` still renders only while background tasks
+ *      exist (`footerModel.agentsAffordance`), so a user who never runs one is never told about the gesture —
+ *      but pressing it twice opens the same (empty) pane ctrl+b opens, which is honest either way.
+ *  `LEFT_AGENTS_MS` is the arm window AND the hint's `timeoutMs`: upstream's is `OXs`, whose value the annex
+ *  does not carry, so the entry and the arm it advertises expire together on the primitive's own default. */
+export const LEFT_AGENTS_KEY = "left-arrow-again-for-agents";
+export const LEFT_AGENTS_TEXT = "Press ← again";
+const LEFT_AGENTS_MS = DOUBLE_PRESS_WINDOW_MS;
 
 /** How long the external-edit chord waits for Ink to actually WRITE the in-flight row before the sync editor
  *  freezes the loop. One Ink throttle window (32ms, ink/build/ink.js:39) plus a little — see the deferral in
@@ -244,7 +271,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, clearDraftToken, onOpenAgents, doublePressDeps }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -313,7 +340,19 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  unconditional sibling), so the four early-return states and the draft signal have to travel up. Fired
    *  from an effect on change, and once more with the idle value on unmount, so a dialog that replaces this
    *  component cannot leave a stale `Pasting…` on the footer row. */
-  onFooterState?: (s: ComposerFooterState) => void }) {
+  onFooterState?: (s: ComposerFooterState) => void;
+  /** WAVE C TASK 4 (EP-C7b) — Ctrl-C's clear channel, a monotonic token from `ChatApp` (see `clearDraftToken`
+   *  there for why a token and not a callback). Every BUMP past the one this component was mounted with runs
+   *  upstream's `t(""), B(0), c?.()` over the live buffer; the value it mounted with is already consumed, so a
+   *  Ctrl-C pressed while a dialog owned the screen cannot clear a draft typed after it. */
+  clearDraftToken?: number;
+  /** WAVE C TASK 4 — where the ← agents gesture goes on its second press: `ChatApp`'s background pane, the
+   *  same surface `task:background` opens while idle. Absent in a bare mount, where the gesture still arms and
+   *  simply has nowhere to go. */
+  onOpenAgents?: () => void;
+  /** WAVE C TASK 4 — the `deps` seam of this component's three double-press arms (esc-clear, ctrl+d exit, ←
+   *  agents), threaded down from `ChatApp` so one injected clock drives every arm in the tree. */
+  doublePressDeps?: DoublePressDeps }) {
   const historyProject = project ?? cwd;
   const historyEnvRef = useRef(historyEnv ?? process.env); historyEnvRef.current = historyEnv ?? process.env;
   const historyProjectRef = useRef(historyProject); historyProjectRef.current = historyProject;
@@ -411,6 +450,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // `onDraftStartRef` is: nothing calls it during render.)
   const onInputActivityRef = useRef(onInputActivity); onInputActivityRef.current = onInputActivity;
   const onKillAgentsRef = useRef(onKillAgents); onKillAgentsRef.current = onKillAgents;
+  const onOpenAgentsRef = useRef(onOpenAgents); onOpenAgentsRef.current = onOpenAgents;
   const editExternalRef = useRef(editExternal); editExternalRef.current = editExternal;
   const providerSuspend = useSuspendInput();
   const suspendInputRef = useRef<SuspendInput | null>(null); suspendInputRef.current = suspendInput ?? providerSuspend;
@@ -422,31 +462,61 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // reason `stateRef` exists: a closure capture lags one render behind the live prop.
   const storeRef = useRef(store); storeRef.current = store;
   const searchHintRowRef = useRef("");                      // written during render, below — the DERIVED chord row
-  const escClearMsRef = useRef(escClearMs); escClearMsRef.current = escClearMs;
-  const exitArmMsRef = useRef(exitArmMs); exitArmMsRef.current = exitArmMs;
   // Read through a ref for the same reason as stateRef/busyRef: `handleKey` runs from the keymap's passive-
   // effect listener, so a closure read of `rows` lags a render — and after a resize the stale value is exactly
   // the one that decides wrong.
   const rowsRef = useRef(rows); rowsRef.current = rows;
+  // ── WAVE C TASK 4 (EP-C7b) — ALL THREE OF THIS COMPONENT'S ARMS ARE `keys/doublePress.ts` NOW (the app's
+  // two are, too). Three hand-rolled `useState` + `useRef(timestamp)` + `setTimeout` triples went here; each
+  // had to re-derive `elapsed <= window && armed`, and the ctrl+d one carried a paragraph explaining that it
+  // deliberately did NOT disarm on other keys because upstream's `Pee` does not. That asymmetry is now a
+  // property of the shared primitive rather than a comment each site repeats.
+  //
+  // `disarm()` is the mid-life cancel and notifies; `dispose()` (unmount only) does NOT, which is why every
+  // one of them is disposed from a cleanup whose mirrored `useState` is being torn down in the same breath.
   const [clearArmed, setClearArmed] = useState(false);
-  const clearArm = useRef(0);
-  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const disarmClear = () => { clearArm.current = 0; setClearArmed(false); if (clearTimer.current) { clearTimeout(clearTimer.current); clearTimer.current = null; } };
-  // Invalidate the ref/timer during the first busy render so the old hint cannot paint for one frame while
-  // the passive cleanup effect is still pending. This mutates only refs during render; state cleanup stays in the effect.
-  if (busy && (clearArm.current || clearTimer.current)) {
-    clearArm.current = 0;
-    if (clearTimer.current) { clearTimeout(clearTimer.current); clearTimer.current = null; }
-  }
-  useEffect(() => () => { if (clearTimer.current) clearTimeout(clearTimer.current); }, []);
+  const escClearArmRef = useRef<DoublePress | null>(null);
+  if (escClearArmRef.current === null) escClearArmRef.current = createDoublePress({
+    onArmChange: (armed) => { setClearArmed(armed); },
+    // Upstream's second-press body (`K`, L395621): stash the discarded draft to history, then clear. The
+    // hint's removal is the `clearVisible` effect below, which sees `onArmChange(false)` fire first.
+    onSecondPress: () => {
+      const ended = endInterceptedEditorAction(stateRef.current);
+      // Upstream L395632: `if (e.trim() !== "") cgr(e)` — the bare TEXT, which `uu_` widens to
+      // `{ display: e, pastedContents: {} }`. So an Esc-Esc'd draft persists WITHOUT its pastes; see
+      // `clearToHistory`'s note for why that omission is worth transcribing rather than "fixing".
+      const cleared = ended.lines.join("\n");
+      if (cleared.trim() !== "") persistHistory({ display: cleared });
+      commitState(clearToHistory(ended));
+    },
+  }, escClearMs, doublePressDeps);
+  const disarmClear = () => { escClearArmRef.current!.disarm(); };
+  useEffect(() => () => { escClearArmRef.current!.dispose(); }, []);
   useEffect(() => { if (busy) disarmClear(); }, [busy]);
-  // KB3: Ctrl-D on an empty composer needs two presses (mirrors the Esc-Esc clear arm above) — a first
-  // press within exitArmMs just hints, a second exits; letting the arm expire re-arms rather than exiting.
-  // exitArmMs default is 800, not a round 2000: upstream's double-press helper (Pee, cli.pretty.js:183445)
-  // defaults its window to `fpy = 800` when the caller passes no override, and the Ctrl-D exit chord's
-  // caller (cli.pretty.js:183476) is exactly that two-arg no-override call — so 800ms is the SAME constant
-  // this file already uses for the Esc-Esc clear arm above (escClearMs), not a coincidence.
+  // KB3: Ctrl-D on an empty composer needs two presses — a first press within exitArmMs just hints, a second
+  // exits; letting the arm expire re-arms rather than exiting. exitArmMs default is 800, not a round 2000:
+  // upstream's `Pee` defaults its window to `fpy = 800` when the caller passes no override, and the Ctrl-D
+  // exit chord's caller (cli.pretty.js:183476) is exactly that two-arg no-override call.
   const [dArmed, setDArmed] = useState(false);
+  const exitArmRef = useRef<DoublePress | null>(null);
+  if (exitArmRef.current === null) exitArmRef.current = createDoublePress({
+    onArmChange: (armed) => { setDArmed(armed); },
+    onSecondPress: () => { onExitRef.current?.(); },
+  }, exitArmMs, doublePressDeps);
+  useEffect(() => () => { exitArmRef.current!.dispose(); }, []);
+  // WAVE C TASK 4 — the ← agents gesture (see `LEFT_AGENTS_KEY`). Its hint is posted and pulled from HERE
+  // rather than from an effect on a mirrored `useState`, because nothing else in this component renders off
+  // the arm: one boolean of React state for a queue entry nobody reads back would be a state variable whose
+  // only job is to be an effect trigger. Upstream's `K` posts from its own `onArmChange` for the same reason.
+  const leftAgentsArmRef = useRef<DoublePress | null>(null);
+  if (leftAgentsArmRef.current === null) leftAgentsArmRef.current = createDoublePress({
+    onArmChange: (armed) => {
+      if (armed) storeRef.current.add({ key: LEFT_AGENTS_KEY, text: LEFT_AGENTS_TEXT, priority: "immediate", timeoutMs: LEFT_AGENTS_MS });
+      else storeRef.current.remove(LEFT_AGENTS_KEY);
+    },
+    onSecondPress: () => { onOpenAgentsRef.current?.(); },
+  }, LEFT_AGENTS_MS, doublePressDeps);
+  useEffect(() => () => { leftAgentsArmRef.current!.dispose(); storeRef.current.remove(LEFT_AGENTS_KEY); }, []);
   // CM8: true from the moment the external-edit chord fires until the editor's promise settles. The ref is
   // the one the key path reads (the action fires from a passive-effect listener, so the state is one
   // render stale there — the same reason `stateRef`/`busyRef` exist above); the state drives the render.
@@ -456,10 +526,23 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // away inside the window never spawns an editor onto a terminal it no longer draws.
   const editorPaintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (editorPaintTimer.current) clearTimeout(editorPaintTimer.current); }, []);
-  const dArm = useRef(0);
-  const dTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (dTimer.current) clearTimeout(dTimer.current); }, []);
   const isEmptyNow = state.lines.length === 1 && state.lines[0] === "";
+
+  // WAVE C TASK 4 (EP-C7b), annex §C7.2 — CTRL-C'S CLEAR, arriving from `ChatApp` as a token bump. Upstream's
+  // `V` runs `if (e) t(""), B(0), c?.()` on its FIRST press (`clearForInterrupt` is those three calls), and
+  // the arm that press also raised lives in `ChatApp` — the two halves are one gesture split across the two
+  // components that own the two pieces of state.
+  //   The consumed marker SEEDS FROM THE LIVE TOKEN and is a plain ref: unlike `prefill`, a clear must not
+  // survive a remount (see `clearDraftToken`'s docblock in ChatApp). The empty-buffer no-op is upstream's own
+  // `if (e)` guard, and it is what makes a Ctrl-C at the home state cost nothing but the arm.
+  const consumedClearTokenRef = useRef(clearDraftToken);
+  useEffect(() => {
+    if (clearDraftToken === undefined || clearDraftToken === consumedClearTokenRef.current) return;
+    consumedClearTokenRef.current = clearDraftToken;
+    const s = stateRef.current;
+    if (isEmptyBuffer(s)) return;
+    commitState(clearForInterrupt(endKillAndYank(s)));
+  }, [clearDraftToken]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Rewind's edit-and-resend: a NEW prefill token replaces the buffer wholesale; a re-render with the same
   // token is a no-op. The ChatApp-owned consumed token ref survives every composer replacement, preventing
@@ -551,19 +634,14 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // passive effect that flushes after commit, so a closure read lags one render and would submit stale text.
   // The ref updates every render.
   const isEmptyBuffer = (s: EditorState) => s.lines.length === 1 && s.lines[0] === "";
-  // KB3: EOF needs two presses. Unlike the Esc-Esc clearArm, NO other keystroke disarms this one —
-  // that asymmetry is deliberate, not an oversight: upstream's Pee (cli.pretty.js:183445) clears its
-  // armed state ONLY on timeout or on the second press; reading an intervening key never resets it. Since
-  // upstream wins on fidelity questions, this stays un-disarmed on other input even though it reads as
-  // inconsistent with the Esc arm below.
+  // KB3: EOF needs two presses. Unlike the Esc-Esc clear arm, NO other keystroke disarms this one — that
+  // asymmetry is upstream's (`Pee` clears its armed state only on timeout or on the second press) and since
+  // Wave C Task 4 it is a property of the shared primitive rather than a rule this site re-states: the ONLY
+  // caller of `exitArmRef.current.disarm()` is nobody, and that is the whole point.
   const exitArm = () => {
     if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
-    const s = stateRef.current;
-    endInterceptedEditorAction(s);
-    if (dArm.current && Date.now() - dArm.current < exitArmMsRef.current) { onExitRef.current?.(); return; }
-    dArm.current = Date.now(); setDArmed(true);
-    if (dTimer.current) clearTimeout(dTimer.current);
-    dTimer.current = setTimeout(() => { dArm.current = 0; setDArmed(false); }, exitArmMsRef.current);
+    endInterceptedEditorAction(stateRef.current);
+    exitArmRef.current!.press();
   };
   // CC's Esc-Esc semantics (CM15): busy always interrupts (buffer untouched); idle with text arms a local
   // double-press clear (pushing the buffer to history on the second press); idle on an EMPTY buffer is
@@ -591,21 +669,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     const s = stateRef.current;
     if (busyRef.current) { endInterceptedEditorAction(s); disarmClear(); onInterruptRef.current?.(); return; }   // running turn: interrupt; buffer untouched
     if (!isEmptyBuffer(s)) {                                            // idle + text: CC's double-press clear (CM15)
-      if (clearArm.current && Date.now() - clearArm.current < escClearMsRef.current) {
-        const ended = endInterceptedEditorAction(s);
-        clearArm.current = 0; setClearArmed(false);
-        if (clearTimer.current) clearTimeout(clearTimer.current);
-        // Upstream L395632: `if (e.trim() !== "") cgr(e)` — the bare TEXT, which `uu_` widens to
-        // `{ display: e, pastedContents: {} }`. So an Esc-Esc'd draft persists WITHOUT its pastes; see
-        // `clearToHistory`'s note for why that omission is worth transcribing rather than "fixing".
-        const cleared = ended.lines.join("\n");
-        if (cleared.trim() !== "") persistHistory({ display: cleared });
-        commitState(clearToHistory(ended)); return;
-      }
+      // WAVE C TASK 4: both branches of the old hand-rolled arm collapsed into one `press()` — the primitive
+      // decides which one this is. `endInterceptedEditorAction` still runs FIRST, on both, because a kill/yank
+      // run ends on any Escape whether it arms or clears.
       endInterceptedEditorAction(s);
-      clearArm.current = Date.now(); setClearArmed(true);
-      if (clearTimer.current) clearTimeout(clearTimer.current);
-      clearTimer.current = setTimeout(() => { clearArm.current = 0; setClearArmed(false); }, escClearMsRef.current);
+      escClearArmRef.current!.press();
       return;
     }
     endInterceptedEditorAction(s); onInterruptRef.current?.();          // idle + empty: ChatApp owns rewind arming
@@ -646,7 +714,15 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     if (search.searchingRef.current) { search.handleKey(e); return; }
     const { input, key } = toKeyFlags(e);
     const s = stateRef.current;
-    if (!key.escape && clearArm.current) disarmClear();
+    // WAVE C TASK 4, annex §C7.8 (L395750) — THE ← AGENTS GESTURE, decided before anything else touches the
+    // key because it is the one arm whose own key must not disarm it. Bare `←` only: a modified arrow is a
+    // word/line motion, and a live popup owns its own navigation. On a non-empty buffer this is a cursor move
+    // and falls straight through, which is also what retires the arm — the `disarm` below fires on every key
+    // that is not the gesture itself, so typing one character ends it.
+    const leftAgentsGesture = !!key.leftArrow && !key.ctrl && !key.meta && !key.shift && !completionActive(s) && isEmptyBuffer(s);
+    if (!key.escape) disarmClear();
+    if (!leftAgentsGesture) leftAgentsArmRef.current!.disarm();
+    if (leftAgentsGesture) { endInterceptedEditorAction(s); leftAgentsArmRef.current!.press(); return; }
     // '?' on a genuinely empty composer (no buffer text, no open '/' or '@' popup) opens the shortcuts
     // overlay; typed anywhere else it must fall through to applyKey and insert a literal '?'. This one stays
     // physical on purpose: `?` is a CHARACTER, bound by no context, and `help:show` — the action a user can
@@ -664,7 +740,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // what keeps that case correct (the scope ordering above is belt-and-braces). With no popup live, an
     // Escape that resolved as the popup's dismissal is the cancel.
     if (!completionActive(s) && key.escape) { cancel(); return; }
-    if (clearArm.current) disarmClear();
+    disarmClear();                                                    // silent when nothing is armed (Task 4)
     // CM48: the queue is asked BEFORE the editor sees the key, so a pending queue always wins Up/ctrl+p over
     // the history walk (upstream's `Uge` reaches `Z2()` only when the queue declined). Both keys route here
     // — ctrl+p is `onUp`'s body in the reducer, so intercepting one and not the other would split them.
@@ -730,7 +806,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const interceptChord = (): EditorState | null => {
     if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return null;
     const s = stateRef.current;
-    if (clearArm.current) disarmClear();
+    disarmClear();                                                    // silent when nothing is armed (Task 4)
     return endInterceptedEditorAction(s);
   };
   useKeyActions({
@@ -753,7 +829,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       // Ownership FIRST (final-fix re-review): a non-owning composer must not disarm its Esc-clear or
       // setState at all — reachable only via a user rebind of app:exit to a key no overlay context nulls.
       if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
-      if (clearArm.current) disarmClear();
+      disarmClear();                                                    // silent when nothing is armed (Task 4)
       exitArm();
     },
     // Fires on the RESOLVED action, not on a re-read of the key's flags — so `alt+m` in a user's
@@ -959,8 +1035,8 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   //    the double-press arm above it (`esc again to clear`). Upstream carries none of them as a persistent
   //    row: `esc to interrupt` is a HINT-LIST member while a turn runs (`footerModel.buildHintList`, which
   //    does render it), and `Esc again to clear` is a QUEUE entry (`escape-again-to-clear`, immediate/1000 ms,
-  //    annex §C1.6). EP-C7 (Wave C Task 4) owns posting it. **Until that task lands no esc hint renders at
-  //    all** — an accepted intermediate state, named here so the gap reads as a scheduled handoff.
+  //    annex §C1.6) — which Wave C Task 4 wired: the `clearVisible` effect below posts it, and ChatApp's
+  //    rewind arm posts its own on `escape-again-to-rewind`. Neither is a persistent row any more.
   //
   // A third row went with them and is NOT deleted work: `# memory — appends a note to CLAUDE.md`. Memory mode
   // is a ccx extra with no upstream counterpart at 2.1.220 and the Wave C spec removes it outright (Task 14);
@@ -975,15 +1051,22 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const escKey = formatBindings(bindings("chat:cancel"));
   // WAVE C TASK 2 — the Esc-Esc arm's feedback moved from a hint ROW to the QUEUE, which is upstream's own
   // placement for it (`escape-again-to-clear`, `immediate`, annex §C1.6). Not a deletion and not an
-  // invention: the string is the same derived one the row printed, and the arm's own window (`escClearMs`)
-  // is its `timeoutMs`, so it appears and expires exactly when it did. EP-C7 (Task 4) rebuilds the arm on
-  // the `Pee` double-press primitive and owns upstream's 1000 ms; the destination does not change again.
-  const clearVisible = clearArmed && clearArm.current !== 0 && !busy;
+  // invention: the string is the same derived one the row printed, so it appears and expires exactly when it
+  // did.
+  //   WAVE C TASK 4 rebuilt the arm on `keys/doublePress.ts` and put upstream's own `timeoutMs` on the entry
+  // (`ESC_CLEAR_HINT_MS`, which is NOT the arm window — see that constant for the 200 ms divergence). The
+  // `clearArm.current !== 0` term went with the hand-rolled timestamp ref; `!busy` stays, and it is what
+  // covers the first busy render on its own now that there is no ref to invalidate during it.
+  //   THE UNMOUNT REMOVAL IS NOT BELT-AND-BRACES. This component is unmounted by every dialog, and the store
+  // it posts to is the APP's, so an arm live at that moment would leave its hint on screen over the dialog for
+  // up to a second with nothing left to retract it.
+  const clearVisible = clearArmed && !busy;
   useEffect(() => {
-    if (clearVisible) storeRef.current.add({ key: ESC_CLEAR_KEY, text: `${escKey} again to clear`, priority: "immediate", timeoutMs: escClearMsRef.current });
+    if (clearVisible) storeRef.current.add({ key: ESC_CLEAR_KEY, text: `${escKey} again to clear`, priority: "immediate", timeoutMs: ESC_CLEAR_HINT_MS });
     else storeRef.current.remove(ESC_CLEAR_KEY);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearVisible, escKey]);
+  useEffect(() => () => { storeRef.current.remove(ESC_CLEAR_KEY); }, []);
   // CM56's chord, DERIVED — `(ctrl+r to search history)` under the defaults, `` when `history:search` is
   // unbound (`expandHintText`'s own three-state contract), never a literal. Read by `handleKey` through
   // `searchHintRowRef` when it posts the hint to the queue.

@@ -17,6 +17,7 @@ import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/
 import { currentTheme, setTheme } from "../../src/tui/theme.js";
 import { createNoticeBridge } from "../../src/tui/chatMain.js";
 import { appendHistory, readHistory } from "../../src/tui/promptHistory.js";
+import { createNotificationStore } from "../../src/tui/notifications.js";
 
 // W3 T4: theme.ts's ACCENT/current live binding is module-scoped and vitest isolates per FILE, not per
 // test, so a /theme test that previews or persists a theme must not leak it into a later test in this
@@ -62,6 +63,30 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 /** A frame as ONE line: Ink wraps the picker's long sentences, so a literal that spans a wrap has to be
  *  matched against the joined text (F6 T11). */
 const oneLine = (f: string) => f.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s*\n\s*/g, " ");
+/** WAVE C TASK 4 — the double-press arms' `deps` seam driven synthetically (plan constraint 15), copied from
+ *  `test/unit/doublePress.test.ts`'s own `fakeClock` rather than imported: that helper is file-local by the
+ *  same convention every other helper in this suite follows. `advance` fires due timers before it returns. */
+function fakeClock() {
+  let now = 0, seq = 0;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  return {
+    deps: {
+      now: (): number => now,
+      setTimeout: (fn: () => void, ms: number): unknown => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
+      clearTimeout: (h: unknown): void => { timers.delete(h as number); },
+    },
+    advance(ms: number): void {
+      const target = now + ms;
+      for (;;) {
+        let id = -1, at = Infinity;
+        for (const [k, t] of timers) if (t.at <= target && t.at < at) { id = k; at = t.at; }
+        if (id < 0) break;
+        const t = timers.get(id)!; timers.delete(id); now = t.at; t.fn();
+      }
+      now = target;
+    },
+  };
+}
 async function pressUntil(stdin: { write: (s: string) => void }, key: string, cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { stdin.write(key); if (cond()) return; if (Date.now() - start > timeout) throw new Error(`pressUntil(${JSON.stringify(key)}) timeout`); await new Promise((r) => setTimeout(r, 5)); }
@@ -306,6 +331,132 @@ describe("<ChatApp>", () => {
     await waitFor(() => interrupts === 1);
     release();
     expect(interrupts).toBe(1);
+  });
+
+  // ── WAVE C TASK 4 (EP-C7b), annex §C7.2 — CTRL-C DOES BOTH THINGS ON THE FIRST PRESS. Upstream's `V`
+  // (bundle L395616) is one `Pee` whose `onFirstPress` is `if (e) t(""), B(0), c?.()` — clear the buffer, put
+  // the cursor at 0, reset the history walk — while the SAME press arms exit and paints
+  // `Press Ctrl-C again to exit`. ccx armed without clearing, which is the defect these three pin.
+  it("Ctrl-C on a non-empty draft clears the draft AND arms exit in the same press (annex §C7.2)", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("half a thought");
+    await waitFor(() => composerLine(lastFrame).includes("half a thought"));
+    stdin.write("\x03");                                                     // ONE press: clears AND arms
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
+    expect(composerLine(lastFrame)).not.toContain("half a thought");
+    stdin.write("\x03");                                                     // second press inside the window → exit
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("zzz");                                                      // a live composer would show this
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("zzz");
+  });
+
+  it("Ctrl-C while busy interrupts and leaves the draft standing (no clear, no arm)", async () => {
+    let release = () => {}; let interrupts = 0;
+    let fake: ReturnType<typeof fakeRemote>;
+    fake = fakeRemote({
+      interrupt: () => { interrupts++; },
+      submit: async (_p, onMessage) => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        onMessage(m); fake.pushEvent({ kind: "message", data: m });
+        await new Promise<void>((res) => { release = res; });
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+    });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("go"); stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("ok"));                    // turn started, hanging
+    stdin.write("next thought");
+    await waitFor(() => composerLine(lastFrame).includes("next thought"));
+    stdin.write("\x03");
+    await waitFor(() => interrupts === 1);
+    expect(composerLine(lastFrame)).toContain("next thought");               // the busy branch never clears
+    expect(frame(lastFrame)).not.toContain("Press Ctrl-C again to exit");    // …and never arms
+    release();
+  });
+
+  it("the Ctrl-C exit arm expires at the 800 ms window and the footer row comes back", async () => {
+    const clock = fakeClock();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} doublePressDeps={clock.deps} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("\x03");
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
+    await act(async () => { clock.advance(800); });                          // `fpy` (L183463), driven synthetically
+    // 300 ms, not the 2 s default: the window under test is the INJECTED one, so a poll long enough for a real
+    // wall-clock timer to fire would pass on an unmigrated arm and prove nothing.
+    await waitFor(() => !frame(lastFrame).includes("Press Ctrl-C again to exit"), 300);
+    expect(frame(lastFrame)).toContain("? for shortcuts");                   // the footer's own row is back
+  });
+
+  it("the Ctrl-C arm's key is DERIVED from app:interrupt, so a rebind moves it", async () => {
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />,
+      { userLayers: [{ context: "Global", bindings: { "ctrl+c": null, "alt+c": "app:interrupt" } }] },
+    );
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("\x1bc");                                                    // alt+c now IS app:interrupt
+    await waitFor(() => frame(lastFrame).includes("Press Alt-C again to exit"));
+    expect(frame(lastFrame)).not.toContain("Press Ctrl-C again to exit");
+  });
+
+  // ── WAVE C TASK 4, from Task 2's review: the rewind arm shared `escape-again-to-clear` with the composer's
+  // Esc-clear arm, and the composer removes that key unconditionally on every mount — so a composer remount
+  // while a rewind arm was live silently pulled the hint out from under it. Its own key is the fix.
+  it("the rewind arm posts on its own notification key, so the composer's clear-key removal cannot pull it", async () => {
+    const store = createNotificationStore();
+    const fake = fakeRewindRemote({ rewindAnchors: async () => [] });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ notifications: store }} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Press Esc again to rewind"));
+    expect(store.state().current?.key).toBe("escape-again-to-rewind");
+    store.remove("escape-again-to-clear");                                   // exactly what a composer mount does
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("Press Esc again to rewind");
+  });
+
+  it("the first Esc on a draft posts `Esc again to clear` to the queue at upstream's own 1000 ms (annex §C7.3)", async () => {
+    const store = createNotificationStore();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ notifications: store }} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("aa"); await waitFor(() => composerLine(lastFrame).includes("aa"));
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("Esc again to clear"));
+    expect(store.state().current).toMatchObject({ key: "escape-again-to-clear", text: "Esc again to clear", priority: "immediate", timeoutMs: 1000 });
+    stdin.write("\x1b");                                                     // second press inside the window clears
+    await waitFor(() => !composerLine(lastFrame).includes("aa"));
+    expect(store.state().current).toBe(null);                                // upstream's `j("escape-again-to-clear")`
+  });
+
+  // ── WAVE C TASK 4, from Task 2's review: `← for agents` rendered while `←` was bound to nothing. The
+  // gesture is upstream's left-arrow-on-empty (annex §C7.8, L395750) on the shared double-press primitive.
+  it("← on an empty composer arms the agents gesture; a second ← opens the background pane", async () => {
+    const store = createNotificationStore();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ notifications: store }} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("\x1b[D");
+    await waitFor(() => frame(lastFrame).includes("Press ← again"));
+    expect(store.state().current?.key).toBe("left-arrow-again-for-agents");
+    stdin.write("\x1b[D");
+    await waitFor(() => frame(lastFrame).includes("Background"));
+    expect(frame(lastFrame)).toContain("No tasks currently running");
+  });
+
+  it("typing disarms the ← agents gesture", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("\x1b[D");
+    await waitFor(() => frame(lastFrame).includes("Press ← again"));
+    stdin.write("a");
+    await waitFor(() => !frame(lastFrame).includes("Press ← again"));
+    stdin.write("\x1b[D");                                                   // a cursor motion now, not the gesture
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("Press ← again");
+    expect(frame(lastFrame)).not.toContain("No tasks currently running");
   });
 
   it("Shift+Tab cycles the permission ladder default → acceptEdits → plan → auto; bare Tab does not", async () => {

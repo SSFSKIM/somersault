@@ -330,6 +330,20 @@ export function clearToHistory(s: EditorState): EditorState {
   return { ...initialEditorState(history), ...durable(s) };
 }
 
+/** WAVE C TASK 4 (EP-C7b), annex §C7.2 — Ctrl-C's FIRST press, which is `V`'s `onFirstPress` and nothing more:
+ *  `if (e) t(""), B(0), c?.()` (bundle L395616) — clear the buffer, cursor to 0, reset the history walk. Three
+ *  calls, transcribed as three effects and no fourth:
+ *   · `t("")` + `B(0)` are `clearInput`'s `lines`/`cursor` (its `pastedContents`/popup wipe rides along, exactly
+ *     as it does for ctrl+l — the chips are placeholders in a buffer that just left);
+ *   · `c?.()` is the history-nav reset, which `clearInput` alone does NOT do — the five `hist*` fields.
+ *  WHAT IT DELIBERATELY KEEPS, against `replaceBufferFromOutside`'s wholesale reset: the UNDO stack, so ctrl+_
+ *  brings a Ctrl-C'd draft back. Upstream's Ctrl-C runs no `cgr` (unlike Esc-Esc's `clearToHistory`), so undo is
+ *  the only way back and dropping it would make the gesture lossy in a way upstream's is not. `durable`'s four
+ *  fields (stash, kill ring, history list, backslash flag) are untouched for the same reason. */
+export function clearForInterrupt(s: EditorState): EditorState {
+  return { ...clearInput(s), histIndex: null, stash: null, histEdits: new Map(), histMode: undefined, histRecalled: null };
+}
+
 /** Replace the buffer text, cursor at the end. Exported for editorHistory.ts (see `bufferText`). */
 export function setBuffer(s: EditorState, t: string): EditorState {
   const lines = splitLines(t); const r = lines.length - 1;

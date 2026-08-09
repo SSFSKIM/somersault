@@ -367,13 +367,17 @@ it("the footer and the composer's contextual hints only advertise chords that RO
   // already carries the same offer — see that filter's comment. Its honesty is audited where it is printed:
   // the `Esc` row's own proof above drives a real interrupt.
   // ONE LIVE AFFORDANCE IS DELIBERATELY NOT IN THAT MAP, and this is the record of it rather than a hole:
-  // `← for agents` (annex §C1.4). Upstream's `←` detaches to the agents view; **ccx has no `←` binding** —
-  // the background pane opens on `task:background` — so the glyph is a shape borrowed from upstream, not a
-  // chord this table can prove, and putting it in the map above would fail this test by design. It renders
-  // only when background agents actually exist (`footerModel.agentsAffordance` returns null otherwise), so
-  // the home state carries no unbacked promise. Wiring the gesture needs `keys/doublePress.ts` (Wave C Task
-  // 3) plus a composer-empty key scope; until then this comment is the honest statement of the gap. The
-  // assertion below pins the gate, so a change that started rendering it unconditionally fails here.
+  // `← for agents` (annex §C1.4).
+  //   WAVE C TASK 4 CLOSED THE GAP THIS COMMENT USED TO DESCRIBE. It said the glyph was "a shape borrowed from
+  // upstream, not a chord this table can prove", because ccx bound `←` to nothing. It is a chord now: `←` `←`
+  // on an empty composer opens the background pane (ChatComposer's `leftAgentsArmRef`, annex §C7.8), on the
+  // same double-press primitive every other armed gesture in the port uses, and chat.test.tsx drives it
+  // end-to-end in "← on an empty composer arms the agents gesture; a second ← opens the background pane".
+  //   IT STILL DOES NOT BELONG IN THE MAP ABOVE, for a different reason: that map's values are `ShortcutsOverlay`
+  // ROWS keys, and ROWS is `shortcutRows(defaultLookup)` — upstream's own grid, which carries no `←` row. The
+  // honest move is to leave the audit's corpus matching upstream's rather than to invent a row so a token has
+  // somewhere to point. The two assertions below still pin the RENDER gate (`agentsAffordance` returns null at
+  // count 0), so a change that started printing it unconditionally fails here.
   const rowKeys = new Set(ROWS.map(([k]) => k));
   const foot = (over: Partial<React.ComponentProps<typeof Footer>>) => stripAnsi(frame(render(
     <Footer mode="default" busy={false} draftNonEmpty={false} isInputEmpty searching={false}
