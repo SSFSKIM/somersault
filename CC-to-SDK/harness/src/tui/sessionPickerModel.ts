@@ -62,10 +62,16 @@ export const REFRESHING = " · Refreshing…";
 export const SEARCH_PREFIX = "⌕";
 export const SEARCH_PLACEHOLDER = "Search…";
 
-/** L476609's two empty states. Upstream's second one has a project-scoped variant
- *  (`No conversations found in this project.`) chosen by the Ctrl-A toggle we do not ship. */
+/** L476609's empty states. The second one is SCOPE-AWARE upstream and is here too now that Ctrl-A exists
+ *  (t10 review, note 6): while the list is narrowed to this project the wording says so, and widening to all
+ *  projects drops the qualifier — because at that point an empty list really does mean there is nothing
+ *  anywhere. Upstream hangs a `Ctrl+A → show all projects` hint off the narrowed one; ours is already in the
+ *  footer (`resumeFooter`), which is where every other chord in this picker is advertised. */
 export const noSessionsMatch = (query: string): string => `No sessions match "${query}".`;
 export const NO_CONVERSATIONS = "No conversations found.";
+export const NO_CONVERSATIONS_IN_PROJECT = "No conversations found in this project.";
+export const noConversations = (scope: ResumeScope): string =>
+  scope.allProjects ? NO_CONVERSATIONS : NO_CONVERSATIONS_IN_PROJECT;
 
 /** L476609's rename stage. The placeholder is `mKt(Ft, "Enter new session name")` — the session's CURRENT
  *  title when it has one, the literal only when it does not. */

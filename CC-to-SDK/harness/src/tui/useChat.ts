@@ -56,7 +56,7 @@ import { NARROWED_SCOPE, RESUME_CANCELLED, type ResumeScope } from "./sessionPic
 import { hasWorktrees as realHasWorktrees } from "./worktrees.js";
 import { clearViewport } from "./clearViewport.js";
 import { summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
-import type { RawContextUsage } from "../index.js";
+import type { RawContextUsage, ListSessionsOpts } from "../index.js";
 import { type HistEntry, type HistoryScope } from "./historySearch.js";
 import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { substituteChips } from "./pasteChips.js";
@@ -106,7 +106,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -312,8 +312,13 @@ export function useChat(
   // explicitly even when false because the SDK's own default is `true`: upstream STARTS narrowed on both axes
   // (that is what makes its opening footer offer to widen), and inheriting the SDK default would start us
   // half-widened with a footer offering a widening that had already happened.
+  // TWO SEAMS, deliberately. `deps.listSessions` replaces the whole scope-aware loader (what most tests want);
+  // `deps.readSessions` replaces only the READER underneath it, which is the only way to assert that the
+  // mapping itself is right — an inverted mapping is invisible to a test that stubs the loader wholesale
+  // (t10 review, finding 1: the inversion passed 4561 tests).
+  const readSessions = deps.readSessions ?? ((o: ListSessionsOpts) => realListSessions(o) as Promise<SessionInfo[]>);
   const listSessions = deps.listSessions ?? ((scope: ResumeScope = NARROWED_SCOPE) =>
-    realListSessions({ ...(scope.allProjects ? {} : { cwd: opts.cwd }), includeWorktrees: scope.allWorktrees, limit: 30 }) as Promise<SessionInfo[]>);
+    readSessions({ ...(scope.allProjects ? {} : { cwd: opts.cwd }), includeWorktrees: scope.allWorktrees, limit: 30 }));
   const hasWorktreesFn = deps.hasWorktrees ?? ((dir: string) => realHasWorktrees(dir));
   const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
   // GONE with F5 task 12: `getSessionMessagesIn` and `listHistorySessions`, the two readers that existed
@@ -1058,7 +1063,11 @@ export function useChat(
     void hasWorktreesFn(cwd).then((yes) => { if (yes && !disposed.current) setPicker((p) => (p.open ? { ...p, hasWorktree: true } : p)); }, () => {});
   }
   /** Wave S T10 (A11): the CANCEL path, and only it. A successful pick closes the same overlay through
-   *  `pickSession` below, which sets the state directly — so the outcome line cannot follow a resume. */
+   *  `pickSession` below, which sets the state directly — so the outcome line cannot follow a resume.
+   *  Upstream prints this from a SECOND place too: cancelling its `Loading conversations…` / `Resuming
+   *  conversation…` spinner (L476807, `isActive: s && !l`). ccx has no such surface — `openPicker` awaits
+   *  `listSessions` with nothing on screen and `resumeInto` swaps synchronously — so there is no spinner to
+   *  cancel and no second call site. Recorded, not missing (t10 review, note 5). */
   function closePicker() { if (!disposed.current) { setPicker({ open: false, sessions: [], hasWorktree: false }); notice(RESUME_CANCELLED); } }
   /** The picker's widen re-query (Wave S T10). Same reader the open used, under the scope the picker holds. */
   const reloadSessions = (scope: ResumeScope) => listSessions(scope);

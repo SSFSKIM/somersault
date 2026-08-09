@@ -84,10 +84,10 @@ describe("F2 task 8 — Select family: KB15 paging (SessionPicker is the represe
 
   it("paging an EMPTY list is inert (no crash, no selection)", async () => {
     const { stdin, lastFrame } = render(<SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} {...PICKER_SIZE} />);
-    await waitFor(() => frame(lastFrame).includes("No conversations found."));
+    await waitFor(() => frame(lastFrame).includes("No conversations found in this project."));
     for (const k of [PAGEDOWN, PAGEUP, HOME, END, "\r"]) stdin.write(k);
     await tick();
-    expect(frame(lastFrame)).toContain("No conversations found.");
+    expect(frame(lastFrame)).toContain("No conversations found in this project.");
   });
 });
 

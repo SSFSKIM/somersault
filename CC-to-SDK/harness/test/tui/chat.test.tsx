@@ -764,7 +764,7 @@ describe("<ChatApp>", () => {
         open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model")); },
       },
       {
-        name: "Resume session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] },
+        name: "Resume session", session: () => fakeRemote(), deps: { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] },
         open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Resume session")); },
       },
     ];
@@ -787,7 +787,7 @@ describe("<ChatApp>", () => {
       { name: "Search prompts", session: () => fakeRemote(), deps: historyDeps, closesOnCtrlC: true, open: openHistoryPicker },
       { name: "Settings", session: () => fakeRemote(), open: async (stdin, lastFrame) => { stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Settings")); } },
       { name: "Select model", session: () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) }), open: async (stdin, lastFrame) => { stdin.write("/model"); await waitFor(() => frame(lastFrame).includes("/model")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Select model")); } },
-      { name: "Resume session", session: () => fakeRemote(), deps: { listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] }, open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Resume session")); } },
+      { name: "Resume session", session: () => fakeRemote(), deps: { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "prior", summary: "saved", lastModified: 1 }] }, open: async (stdin, lastFrame) => { stdin.write("/resume"); await waitFor(() => frame(lastFrame).includes("/resume")); stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Resume session")); } },
     ];
     for (const testCase of cases) {
       const fake = testCase.session();
@@ -2357,7 +2357,7 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
   });
 
   it("/resume — the task panel unmounts while the session picker is up and comes back when it closes", async () => {
-    await gateCycle("/resume", {}, { listSessions: async () => SESSIONS, getSessionMessages: async () => [] },
+    await gateCycle("/resume", {}, { hasWorktrees: async () => false, listSessions: async () => SESSIONS, getSessionMessages: async () => [] },
       async (r) => { r.stdin.write("/resume"); await waitFor(() => frame(r.lastFrame).includes("/resume")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Resume session")); },
       async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Resume session")); });
   });

@@ -281,7 +281,7 @@ describe("useChat", () => {
     const welcome = [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: banner } }];
     function BannerHost({ resume }: { resume?: boolean }) {
       const c = useChat(() => fakeRemote(), { initialEntries: welcome, ...(resume ? { initialResume: { kind: "continue" } as const } : {}) },
-        { listSessions: async () => [], getSessionMessages: async () => [] });
+        { hasWorktrees: async () => false, listSessions: async () => [], getSessionMessages: async () => [] });
       return <Text>{allText(c)}</Text>;
     }
     const fresh = render(<BannerHost />);
@@ -297,7 +297,7 @@ describe("useChat", () => {
     const newSession = fakeRemote();
     const makeSession = (resume?: string) => { calls++; return resume ? newSession : oldSession; };
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
     let pick: ((s: any) => void) | undefined;
     function ResumeHost() {
       const c = useChat(makeSession, {}, deps);
@@ -317,15 +317,48 @@ describe("useChat", () => {
     expect(calls).toBe(2);                    // initial makeSession() + resumeInto's makeSession(id)
   });
 
+  // Wave S T10 (t10 review, finding 1). The picker's SCOPE has to become `ListSessionsOpts`, and the mapping
+  // is the whole feature: `allProjects` DROPS the cwd key (it must be absent, not undefined — `toEqual` treats
+  // an undefined-valued key as absent, so the key set is asserted separately) and `allWorktrees` lands on
+  // `includeWorktrees` UNFLIPPED. Every other test in this file stubs `deps.listSessions`, which replaces the
+  // mapping wholesale and can therefore never see it invert; this one stubs only the READER underneath it.
+  it("maps the picker's scope onto listSessions options — cwd dropped, includeWorktrees unflipped", async () => {
+    const seen: any[] = [];
+    const deps = { readSessions: async (o: any) => { seen.push(o); return []; }, getSessionMessages: async () => [], hasWorktrees: async () => false };
+    const api: { run?: (s: string) => void; reload?: (s: any) => Promise<unknown> } = {};
+    function H() {
+      const c = useChat(() => fakeRemote(), { cwd: "/repo/a" }, deps);
+      api.run = c.submit; api.reload = (c as any).reloadSessions;
+      return <Text>{c.state.picker.open ? "PICKER" : "NOPICK"}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    api.run!("/resume");
+    await waitFor(() => seen.length === 1);
+    expect(seen[0]).toEqual({ cwd: "/repo/a", includeWorktrees: false, limit: 30 });   // the narrowed OPEN
+    await api.reload!({ allProjects: true, allWorktrees: false });
+    expect(Object.keys(seen[1]).sort()).toEqual(["includeWorktrees", "limit"]);        // no cwd KEY at all
+    expect(seen[1]).toEqual({ includeWorktrees: false, limit: 30 });
+    await api.reload!({ allProjects: false, allWorktrees: true });
+    expect(seen[2]).toEqual({ cwd: "/repo/a", includeWorktrees: true, limit: 30 });
+    await api.reload!({ allProjects: true, allWorktrees: true });
+    expect(seen[3]).toEqual({ includeWorktrees: true, limit: 30 });
+  });
+
   // Wave S T10 (A11). Every sibling dialog prints an outcome when it is dismissed; `/resume` printed nothing.
   // Upstream's copy is `Resume cancelled` (L476806), and it is a CANCEL line — the successful pick closes the
   // same overlay and must stay silent, which is why the two paths cannot share one close function.
+  // The pick resumes the CURRENT session id on purpose (t10 review, finding 3). A pick onto a DIFFERENT
+  // session ends in `replaceDocument`, which wipes the transcript — including a wrongly-printed cancel notice
+  // — before the assertion can read it, so the "never on a pick" half was vacuous. The same-session branch
+  // APPENDS instead, so anything `pickSession` printed survives to be caught here.
   it("prints `Resume cancelled` when the picker is dismissed, and never on a successful pick (A11)", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs, hasWorktrees: async () => false };
+    const row = { sessionId: "sess-1", summary: "prior", lastModified: 1 };            // fakeRemote's own id
+    const deps = { listSessions: async () => [row], getSessionMessages: async () => msgs, hasWorktrees: async () => false };
     const api: { run?: (s: string) => void; pick?: (s: any) => void; close?: () => void } = {};
     function H() {
-      const c = useChat((resume?: string) => fakeRemote(resume ? { sessionId: resume } : {}), {}, deps);
+      const c = useChat(() => fakeRemote(), {}, deps);
       api.run = c.submit; api.pick = (c as any).pickSession; api.close = c.closePicker;
       return <Text>{c.state.picker.open ? "PICKER" : "NOPICK"} {allText(c)}</Text>;
     }
@@ -333,7 +366,7 @@ describe("useChat", () => {
     await waitFor(() => frame(lastFrame).includes("NOPICK"));
     api.run!("/resume");
     await waitFor(() => frame(lastFrame).includes("PICKER"));
-    api.pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
+    api.pick!(row);
     await waitFor(() => flat(lastFrame).includes("prior prompt"));
     expect(frame(lastFrame)).not.toContain("Resume cancelled");       // a pick is not a cancel
     api.run!("/resume");
@@ -352,7 +385,7 @@ describe("useChat", () => {
     let calls = 0;
     const makeSession = (resume?: string) => { calls++; return resume ? newFake : oldFake; };
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
     let pick: ((s: any) => void) | undefined;
     const api: { run?: (s: string) => void } = {};
     function H() {
@@ -387,7 +420,7 @@ describe("useChat", () => {
 
   it("initialResume {kind:'id'} replays the session on mount", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "launch prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [], getSessionMessages: async () => msgs };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [], getSessionMessages: async () => msgs };
     function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "abc12345" } }, deps); return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await waitFor(() => (lastFrame() ?? "").includes("launch prompt"));
@@ -395,7 +428,7 @@ describe("useChat", () => {
   });
   it("/continue resumes the most-recent session", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "recent work" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [{ sessionId: "s-old", summary: "", lastModified: 1 }, { sessionId: "s-new", summary: "", lastModified: 9 }], getSessionMessages: async (id: string) => (id === "s-new" ? msgs : []) };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "s-old", summary: "", lastModified: 1 }, { sessionId: "s-new", summary: "", lastModified: 9 }], getSessionMessages: async (id: string) => (id === "s-new" ? msgs : []) };
     let api: { run?: (s: string) => void } = {};
     function H() { const c = useChat((_r?: string) => fakeRemote(), {}, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -404,7 +437,7 @@ describe("useChat", () => {
     await waitFor(() => (lastFrame() ?? "").includes("recent work"));
   });
   it("/continue with no sessions shows a notice", async () => {
-    const deps = { listSessions: async () => [], getSessionMessages: async () => [] };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [], getSessionMessages: async () => [] };
     let api: { run?: (s: string) => void } = {};
     function H() { const c = useChat((_r?: string) => fakeRemote(), {}, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -578,7 +611,7 @@ describe("useChat", () => {
   it("resuming a DIFFERENT session bumps staticEpoch (so a fresh <Static> mounts and shows the full replay)", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     let token = -1;
-    function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "sess-9" } }, { getSessionMessages: async () => msgs, listSessions: async () => [] }); token = c.state.staticEpoch; return <Text>tok:{c.state.staticEpoch} {allText(c)}</Text>; }
+    function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "sess-9" } }, { getSessionMessages: async () => msgs, hasWorktrees: async () => false, listSessions: async () => [] }); token = c.state.staticEpoch; return <Text>tok:{c.state.staticEpoch} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("prior"));   // replay landed
     expect(token).toBeGreaterThanOrEqual(1);                   // staticEpoch bumped by resumeInto's terminal boundary
@@ -593,7 +626,7 @@ describe("useChat", () => {
     const newSession = fakeRemote();
     const makeSession = (resume?: string) => (resume ? newSession : oldSession);
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
     let pick: ((s: any) => void) | undefined;
     const api: { run?: (s: string) => void } = {};
     function H() {
@@ -1700,7 +1733,7 @@ describe("useChat: one retained document behind every surface", () => {
     const api: { run?: (s: string) => void; pick?: (s: any) => void; detail?: (p: "detail-all" | "detail-collapsed") => readonly RenderItem[] } = {};
     let epoch = -1, published: string[] = [];
     function H() {
-      const c = useChat(() => fake, {}, { listSessions: async () => [{ sessionId: "same-1", summary: "s", lastModified: 1 }], getSessionMessages: async () => msgs });
+      const c = useChat(() => fake, {}, { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "same-1", summary: "s", lastModified: 1 }], getSessionMessages: async () => msgs });
       api.run = c.submit; api.pick = (c as any).pickSession; api.detail = c.detailItems;
       epoch = c.state.staticEpoch; published = [...c.state.staticItems].map((i) => i.id);
       return <Text>{allText(c)}</Text>;
@@ -1723,7 +1756,7 @@ describe("useChat: one retained document behind every surface", () => {
     const fake = fakeRemote({ sessionId: "old-1" });
     const api: { run?: (s: string) => void; clear?: () => void } = {};
     function H() {
-      const c = useChat(() => fake, { clearStaticTranscript: () => order.push(`clear@${c.state.staticEpoch}`) }, { listSessions: async () => [], getSessionMessages: async () => msgs });
+      const c = useChat(() => fake, { clearStaticTranscript: () => order.push(`clear@${c.state.staticEpoch}`) }, { hasWorktrees: async () => false, listSessions: async () => [], getSessionMessages: async () => msgs });
       api.run = c.submit; api.clear = c.clear;
       return <Text>epoch:{c.state.staticEpoch} {allText(c)}</Text>;
     }
@@ -1743,7 +1776,7 @@ describe("useChat: one retained document behind every surface", () => {
     const msgs = [{ type: "user", uuid: "u-s", message: { content: [{ type: "text", text: "swapped" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     const api: { pick?: (s: any) => void } = {};
     function H({ session }: { session: FakeRemote }) {
-      const c = useChat(() => session, {}, { scheduleRepaint: scheduler.schedule, listSessions: async () => [], getSessionMessages: async () => msgs });
+      const c = useChat(() => session, {}, { scheduleRepaint: scheduler.schedule, hasWorktrees: async () => false, listSessions: async () => [], getSessionMessages: async () => msgs });
       api.pick = (c as any).pickSession;
       return <Text>{allText(c)}</Text>;
     }
@@ -2309,7 +2342,7 @@ describe("W-S5: the context percentage never outlives the conversation it measur
     const newSession = fakeRemote({ sessionId: "old1234567890", getContextUsage: async () => ({ totalTokens: 42, maxTokens: 100 }), submitMessages: reply });
     const makeSession = (resume?: string) => (resume ? newSession : oldSession);
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
     let pick: ((s: any) => void) | undefined;
     const api: { run?: (s: string) => void } = {};
     function H() {
@@ -2340,7 +2373,7 @@ describe("W-S5: the context percentage never outlives the conversation it measur
   it("/resume onto the SAME session KEEPS its percentage — nothing about that conversation changed (A8)", async () => {
     const fake = fakeRemote({ getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }), submitMessages: reply });
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
-    const deps = { listSessions: async () => [{ sessionId: "sess-1", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "sess-1", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs };
     let pick: ((s: any) => void) | undefined;
     const api: { run?: (s: string) => void } = {};
     function H() {

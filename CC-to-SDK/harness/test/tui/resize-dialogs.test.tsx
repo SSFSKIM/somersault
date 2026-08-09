@@ -278,7 +278,7 @@ describe("a dialog on screen when the terminal resizes follows the new size", ()
     let rows = 40;
     const resize = fakeResize();
     const sessions = Array.from({ length: 12 }, (_, i) => ({ sessionId: `s${i}`, summary: `saved session ${i}`, lastModified: i }));
-    const deps = { columns: () => 200, listSessions: async () => sessions, getSessionMessages: async () => [] as any[] };
+    const deps = { columns: () => 200, hasWorktrees: async () => false, listSessions: async () => sessions, getSessionMessages: async () => [] as any[] };
     const session = fakeRemote();
     const r = renderWithKeymap(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} onResize={resize.onResize} />);
     Object.defineProperty(r.stdout, "rows", { configurable: true, get: () => rows });
@@ -370,7 +370,7 @@ describe("a dialog on screen when the terminal resizes follows the new size", ()
     const resize = fakeResize();
     const LONG_TITLE = "a saved conversation with a deliberately long summary line for the clip";
     const sessions = [{ sessionId: "s0", summary: LONG_TITLE, lastModified: 1 }];
-    const deps = { columns: () => cols, listSessions: async () => sessions, getSessionMessages: async () => [] as any[] };
+    const deps = { columns: () => cols, hasWorktrees: async () => false, listSessions: async () => sessions, getSessionMessages: async () => [] as any[] };
     const session = fakeRemote();
     const r = renderWithKeymap(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} onResize={resize.onResize} />);
     await waitFor(() => frame(r.lastFrame).includes("❯\u00a0"));

@@ -27,7 +27,7 @@ import { InputText, Select } from "./select/Select.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import type { SessionInfo } from "./useChat.js";
 import {
-  filterSessions, NARROWED_SCOPE, NO_CONVERSATIONS, noSessionsMatch, PREVIEW_EMPTY, PREVIEW_FOOTER,
+  filterSessions, NARROWED_SCOPE, noConversations, noSessionsMatch, PREVIEW_EMPTY, PREVIEW_FOOTER,
   PREVIEW_LOADING, previewLines, previewMessageCount, previewMeta, REFRESHING, RENAME_FOOTER, RENAME_TITLE,
   renamePlaceholder, RESUME_FOOTER, resumeFooter, resumeHeader, resumeVisibleRows, SEARCH_PLACEHOLDER,
   SEARCH_PREFIX, sessionMeta, sessionTitle, type ResumeScope,
@@ -261,7 +261,7 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
         <InputText text={query} cursor={query.length} placeholder={SEARCH_PLACEHOLDER} />
       </Box>
       {rowsOf().length === 0
-        ? <Box paddingLeft={1}><Text dimColor>{NO_CONVERSATIONS}</Text></Box>
+        ? <Box paddingLeft={1}><Text dimColor>{noConversations(scope)}</Text></Box>
         : filtered.length === 0
           ? <Box paddingLeft={1}><Text dimColor>{noSessionsMatch(query)}</Text></Box>
           : null}

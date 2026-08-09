@@ -9,9 +9,10 @@ import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import type { SessionInfo } from "../../src/tui/useChat.js";
 import {
-  filterSessions, isPreviewMessage, NARROWED_SCOPE, NO_CONVERSATIONS, noSessionsMatch, PREVIEW_ROWS,
-  previewLines, previewMessageCount, previewMeta, RENAME_FALLBACK, renamePlaceholder, RESUME_CANCELLED,
-  resumeFooter, resumeHeader, resumeVisibleRows, sessionMeta, sessionTitle, widenHints,
+  filterSessions, isPreviewMessage, NARROWED_SCOPE, NO_CONVERSATIONS, NO_CONVERSATIONS_IN_PROJECT,
+  noConversations, noSessionsMatch, PREVIEW_ATTACHMENT, PREVIEW_ROWS, previewLines, previewMessageCount,
+  previewMeta, RENAME_FALLBACK, renamePlaceholder, RESUME_CANCELLED, resumeFooter, resumeHeader,
+  resumeVisibleRows, sessionMeta, sessionTitle, widenHints,
 } from "../../src/tui/sessionPickerModel.js";
 import type { ResumeScope } from "../../src/tui/sessionPickerModel.js";
 
@@ -96,9 +97,18 @@ const userPrompt = (text: string) => ({ type: "user", message: { content: text }
 const assistantText = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
 const toolResultOnly = () => ({ type: "user", message: { content: [{ type: "tool_result", content: "x" }] } });
 const toolUseOnly = () => ({ type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } });
+// THE TWO SHAPES THE OLD AND NEW PREDICATES DISAGREE ON (t10 review, finding 2). Without these in the fixture
+// the "same predicate" pin is decorative: every other row shape is classified identically by the pane's old
+// private text-emptiness test and by upstream's `$$_`/`B$_`, so reverting `previewLines` stayed green.
+//  · an image-only user turn — upstream COUNTS it, the old pane dropped it (no text to print);
+//  · a meta user turn carrying text — upstream EXCLUDES it, the old pane drew it.
+const imageOnly = () => ({ type: "user", message: { content: [{ type: "image", source: { type: "base64", data: "x" } }] } });
+const metaText = () => ({ type: "user", isMeta: true, message: { content: "<system-reminder>caveat</system-reminder>" } });
+// Eight-row cycle, and deliberately NOT symmetric between the two predicates: two image rows against one meta
+// row, so a revert shifts the pane's row count instead of trading one drop for one addition.
 const manyMixedRows = (n: number) =>
   Array.from({ length: n }, (_, i) => [userPrompt(`ask ${i}`), toolResultOnly(), assistantText(`say ${i}`), toolUseOnly(),
-                                       { type: "system", subtype: "init" }][i % 5]!);
+                                       { type: "system", subtype: "init" }, imageOnly(), metaText(), imageOnly()][i % 8]!);
 
 describe("sessionPickerModel — the resume outcome line and the widen controls (Wave S T10)", () => {
   it("prints upstream's cancel copy, exactly (A11, L476806)", () => {
@@ -114,6 +124,15 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
       .toEqual({ chord: "Ctrl+A", action: "only show current repo" });
     expect(widenHints({ allProjects: false, allWorktrees: true }, true)[1])
       .toEqual({ chord: "Ctrl+W", action: "only show current worktree" });
+  });
+
+  it("qualifies the empty state by scope, dropping the qualifier once the list is all-projects (L476609)", () => {
+    expect(noConversations(NARROWED_SCOPE)).toBe(NO_CONVERSATIONS_IN_PROJECT);
+    expect(NO_CONVERSATIONS_IN_PROJECT).toBe("No conversations found in this project.");
+    expect(noConversations({ allProjects: true, allWorktrees: false })).toBe(NO_CONVERSATIONS);
+    expect(NO_CONVERSATIONS).toBe("No conversations found.");
+    // the worktree axis says nothing about which PROJECTS were searched, so it must not move this copy
+    expect(noConversations({ allProjects: false, allWorktrees: true })).toBe(NO_CONVERSATIONS_IN_PROJECT);
   });
 
   it("hides Ctrl+W when no worktree is detected (upstream's `R` gate)", () => {
@@ -145,13 +164,22 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
   it("count and pane apply the SAME predicate", () => {
     // NOT "the count equals the pane's row count" — `previewLines` ends `return out.slice(-PREVIEW_ROWS)`,
     // so for any transcript longer than the window the total and the windowed tail MUST differ. What has to
-    // be shared is the predicate.
+    // be shared is the predicate, and the way to pin THAT is to assert the pane's rows one for one against
+    // the rows the count admitted — a length check alone can be satisfied by one wrong drop plus one wrong
+    // addition, which is exactly how the first version of this test failed to notice a reverted pane.
+    const disagree = [userPrompt("plain ask"), imageOnly(), metaText(), assistantText("reply")];
+    expect(previewMessageCount(disagree)).toBe(3);                     // the meta row is out, the image row in
+    expect(previewLines(disagree)).toEqual([
+      { role: "user", text: "plain ask" },
+      { role: "user", text: PREVIEW_ATTACHMENT },                      // counted, so it is DRAWN, never dropped
+      { role: "assistant", text: "reply" },
+    ]);
     const rows = manyMixedRows(40);
     expect(previewMessageCount(rows)).toBe(rows.filter(isPreviewMessage).length);
     expect(previewMessageCount(rows)).toBeGreaterThan(PREVIEW_ROWS);
     expect(previewLines(rows).length).toBeLessThanOrEqual(PREVIEW_ROWS);
     // …and no row the count admits is silently dropped by the pane: on a short transcript they agree exactly.
-    const short = manyMixedRows(10);
+    const short = manyMixedRows(16);
     expect(previewLines(short).length).toBe(previewMessageCount(short));
   });
 });
@@ -219,9 +247,11 @@ describe("SessionPicker — the list stage (L476609)", () => {
     expect(noSessionsMatch("zzz")).toBe('No sessions match "zzz".');
   });
 
-  it("says `No conversations found.` when the store is empty, and Esc still closes", async () => {
+  // The wording is SCOPE-AWARE (t10 review, note 6): narrowed — which is how the picker opens — says "in this
+  // project", because that is the only reason the list could be empty while sessions exist elsewhere.
+  it("says `No conversations found in this project.` when the store is empty, and Esc still closes", async () => {
     const r = mount({ sessions: [] });
-    await waitFor(() => frame(r.lastFrame).includes(NO_CONVERSATIONS));
+    await waitFor(() => frame(r.lastFrame).includes(NO_CONVERSATIONS_IN_PROJECT));
     r.stdin.write("\x1b");
     await waitFor(() => r.wasCancelled());
   });
@@ -438,6 +468,16 @@ describe("SessionPicker — the widen controls (Wave S T10, A12)", () => {
     await tick();
     expect(r.calls).toEqual([]);
     expect(flat(frame(r.lastFrame))).toContain("refactor the parser");      // and it did NOT type into the query
+  });
+
+  it("re-words the empty state when Ctrl+A widens past this project (t10 review, note 6)", async () => {
+    const r = render(
+      <SessionPicker sessions={[]} onPick={() => {}} onCancel={() => {}} reload={async () => []} rows={40} columns={100} />,
+    );
+    await waitFor(() => frame(r.lastFrame).includes(NO_CONVERSATIONS_IN_PROJECT));
+    r.stdin.write("\x01");                                                  // Ctrl+A
+    await waitFor(() => flat(frame(r.lastFrame)).includes(NO_CONVERSATIONS));
+    expect(flat(frame(r.lastFrame))).not.toContain("in this project");      // nothing anywhere, so no qualifier
   });
 
   it("with no reload seam wired, neither chord is offered (upstream gates Ctrl+A on the callback existing)", async () => {
