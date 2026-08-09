@@ -201,6 +201,30 @@
 >   whether a one-off model call is reachable from this harness at all, and **99** corrected a standing
 >   premise — see the domain-3 and domain-10 notes below. Spec
 >   `docs/superpowers/specs/2026-08-06-wave-t-trust-safety-design.md`.
+> - **Waves R + S (2026-08-08/09)** — the QA sprint's second and third waves. **Wave R (repaint &
+>   geometry, 13 tasks — its omission from this list until now was an oversight; the retrospective lives in
+>   the spec)** made the frame the unit of truth: one repaint primitive owns every full-screen reset, the
+>   resize matrix runs as CI (`npm run test:resize-matrix`), and four QA premises fell to measurement.
+>   **Wave S (session truth, 13 tasks, spec `2026-08-07-wave-s-session-truth-design.md`) closed the gap
+>   between what the session IS and what the REPL says it is**: the rewind rebuild reads the SDK reader's
+>   already-resolved branch (W-S1 inverted at spec time — no `parentUuid` walking); every
+>   dialog whose height derives from `rows` sits behind one `paneOwned` gate with a derivation-based
+>   membership rule; `/cost`, `/context` and the token surfaces are transcriptions of upstream's two
+>   compact formatters routed per-surface (my one-formatter collapse was itself the wave's lesson);
+>   the context percentage dies with the conversation it measured (`replaceDocument` is the boundary;
+>   `/compact` re-measures on the spot — premise live-verified by probe 82 on the compact_boundary frame);
+>   `ccx --continue` ships and `--resume` resolves every id form ccx itself prints (full UUID validated
+>   against the directory's listing, `/status`'s 8-char prefix, the fleet banner's short id — five loud
+>   outcomes, none a fresh REPL; a deliberate, recorded extension, W-S6); `/resume` gains its cancel line,
+>   two backed widen controls (Ctrl+A/Ctrl+W — `includeWorktrees:false` proven live; Ctrl+B stays
+>   CTRL-B-1) and a preview count sharing the pane's predicate; `/compact` gets a real busy state with
+>   upstream's fake saturating curve labelled as theatre; and mid-conversation model switches confirm
+>   before the prefs write, with the ack dying at the same conversation boundary as every other
+>   measurement. Verification (Task 13) executed every acceptance cell as written — full suite + build,
+>   eight keyless cells, nine keyed live cells under an isolated pty (evidence in the spec's Outcomes) —
+>   and its own yield was a live-only defect fixed same-day: a resumed session presented as EMPTY to
+>   rewind/stats until its first turn. TUI/UX parity: see `tui-ux.md`. **No domain score below moves** —
+>   like Wave T this consumes no new SDK surface; probe 82 is the one new probe.
 
 > - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36

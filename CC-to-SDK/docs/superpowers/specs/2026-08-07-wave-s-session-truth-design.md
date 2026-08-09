@@ -409,7 +409,89 @@ Seeded from the grounding round; parent §12 item 20 carries the full evidence.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Wave S shipped complete: 13/13 tasks, every acceptance criterion executed as written (2026-08-09).**
+Tasks 1–8 landed 2026-08-07/08 (see the ledger); Tasks 9–12 landed 2026-08-09, each with an opus review
+round whose findings were fixed with observed reds before the next dispatch. Task 13 was executed by the
+controller: full suite (typecheck clean · 1654 unit · 2962 TUI, 9 keyless live skips · `npm run build`
+green), all eight keyless cells (A2:6 · A4:57 · A5:27 · A6:40 · A7:6 · A11/A12:36 · A13:6 · A14:14 —
+note the plan's A7 filter `-t "cache tokens"` names no real test; the `cost:` family is the coverage),
+and every keyed live cell under an isolated `/tmp` HOME driven through the real pty.
+
+### The live cells, with their evidence (captures in `$CLAUDE_JOB_DIR/tmp/L*.txt`, session ids cited)
+
+- **A1 ✓** (session 756c4a46): three codeword prompts, Esc-Esc, restore to before the second — settled
+  frame shows `⏪ rewound · 1 turn`, codeword ONE's turn and nothing after; the recall answer contained
+  ONE and TWO but **never THREE** — TWO only because the rewind (correctly, canon) prefilled the composer
+  with the rewound prompt and the driver's typed question concatenated onto it, so TWO was *re-stated in
+  the prompt itself*; THREE existed only pre-rewind and did not leak. Memory matches transcript.
+- **A2 ✓** (session fc6342d9): on a compacted session, restore-to-before-the-post-boundary-prompt
+  replays `─── context compacted earlier ───` plus the preserved tail only; the compacted-away turns
+  (RED/BLUE) never appear. The picker offered only post-boundary anchors — ANCHORS-1's honesty, observed.
+- **A3 ✓** (sessions b85ec44b, 69af9702): after one completed turn — /status prints `session b85ec44b`;
+  `✓ renamed`, `✓ tagged`, `✓ exported to …/conversation-b85ec44b.md`; /files and /stats session-scoped;
+  Settings→Stats (Tab×3) shows the full persisted history (prompts 2 · replies 3) after a live turn.
+- **A4b ✓**: restore to the session's first message offered `Restore conversation` ("The conversation
+  will be forked."), and taking it yielded an empty conversation — no rows, ctx chip gone (Task 8's
+  `replaceDocument` reset firing on the rewind path), rewound prompt back in the composer.
+- **A8 ✓** (both halves, one capture): after /clear the status bar drops `ctx 2%` entirely and /status
+  prints no context line; after the first post-clear turn both return freshly measured.
+- **A9 ✓**: `--resume b85ec44b` (the /status prefix) resumed that exact session; `--resume 9a259b2b`
+  (a roster short id) resumed its session 69af9702; `--resume zzzzzzzz` → exit 1
+  `No conversation found with session ID`; a stopped never-turned banner session → exit 1 pending copy;
+  and the post-Task-9 **live** outcome fired for the same session while it ran (`still running — attach
+  to it instead`). All five outcomes loud, none opened a fresh REPL.
+- **A10 ✓**: `ccx --continue` printed `─── resumed: 69af9702 · 1 turn ───` — the directory's most recent.
+- **A13 ✓**: `/compact` on a real conversation entered the busy state (animated verb + `▰▱` bar at 2%
+  after ~20s — the curve's own value for e^(-20/90)), and settled to `✦ compacted 22.6k → 2.1k` with the
+  bar torn down; the failure shape (`compact: Not enough messages to compact.`) was also observed on a
+  too-small session, with the same teardown.
+- **Probe 82 ✓** (2026-08-09, quota restored): `getContextUsage()` read ON the compact_boundary frame
+  already reports the shrunken context (17852 → 16970 across the boundary; boundary metadata pre 17894 →
+  post 1410; the ~15.5k floor is fixed system/tool overhead the usage call counts and post_tokens
+  doesn't). Task 8's `/compact` re-measure premise is verified, not inferred.
+- **Keyed /cost ✓**: per-model rows fold under canonical names (`claude-opus-5`, `claude-haiku-4-5`),
+  formatted by the per-surface formatters Task 7 pinned.
+
+### ANCHORS-1
+
+Measured and closed at plan time (probe 68e, SDK 0.3.220); SDK unchanged at verification time, so the
+re-run gate did not fire. A2's live capture independently re-confirmed the behavior at the TUI layer.
+
+### Found by verification (the pass's own yield)
+
+1. **The resumed-idle emptiness defect** — a session resumed via `--continue`/`--resume` presents as
+   empty to every surface keyed off the engine-minted session id until its first live turn: Esc-Esc says
+   `Nothing to rewind to yet.` over three visibly replayed turns (`host.rewindAnchors` returns [] on
+   unset `session.sessionId`), and Stats/stats read zeros. After one turn all surfaces are correct.
+   A session-truth lie of exactly this wave's class — fix dispatched same day
+   (`f5(waveS-t13-fix)`), see below.
+2. **Crashed hosts leave `working` roster rows** (Task 9's recorded residual, live-confirmed): a
+   SIGKILLed pty host's row resolves to the `live` outcome and points at attach, which then fails with
+   "no host listening"; `fleet gc` heals, the full UUID resumes regardless.
+3. **`--detachable` under the pty driver raced its own attach** (`no session matches "<short>"`
+   immediately after spawn — the parent attached before the child registered; outside the pty the same
+   spawn works). Recorded; a bounded attach retry is the likely shape if it ever bites a real terminal.
+4. **Resumed-engine usage() counts live turns only** (tokens `2 in · 8 out` after one post-resume turn
+   in a session with prior history) — engine-scoped accounting, matching /cost's semantics; observation,
+   not a defect.
+
+### Residuals carried out of the wave (none blocking, all named elsewhere too)
+
+Owner decisions parked: SLASH-PERSIST-1, CTRL-B-1 (recorded in code by Task 10), APPLE-TERM-1, MOUSE-1(b).
+Deferred by design: FOLLOWER-CLEAR-1, NARROW-CHROME-1, STREAM-OVERFLOW-1 (above), upstream's
+`compactingHintText` (T11 review note), the `/resume` loading-spinner cancel path (no such surface in
+ccx — recorded in `closePicker`). Rolled to the external whole-branch review: Task 1's M4, Task 2's M2,
+the `paneOwned` exhaustive-partition claim being mechanically unenforced, the `expect.poll`-vs-`waitFor`
+idiom split, and Task 9's full-UUID-of-a-live-session resolving to resume rather than `live`.
+
+### What the wave taught (the compressed version)
+
+The measurement-must-die-with-its-conversation principle earned its fourth and fifth appearances (Task 12's
+ack ref; the resumed-idle defect is its mirror — a session that HAS truth presenting none). Reviews found
+implementation faithful but guards vacuous three tasks running — the sabotage-check discipline is now
+load-bearing, not ceremonial. And twice more, "defects" were divergences being removed or canon being
+transcribed wrong-way-round (the `>=` ack comparison; my own formatter collapse in Task 7): the bundle,
+not reasoning about the diff, settles these.
 
 ## Revision Notes
 
