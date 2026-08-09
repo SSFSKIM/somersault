@@ -570,3 +570,16 @@ and warning role (both deletable today with a green suite), gate fallback to the
 model when no catalog row matches, two comment corrections (snapshot-vs-fresh divergence named;
 the false "focus intact" claim). Clean angles included six proof-carrying sabotage reds and the
 sessionModel-first comparison being confirmed CANON, not an invention.
+
+## 2026-08-09 — Task 12 COMPLETE (4abcedd023 + aef08741e7); all 12 build tasks closed
+
+Fix round landed with observed reds throughout: strict equality (new unit case pins the
+count-moved-BELOW-ack direction), ack reset in replaceDocument beside the ctxPct reset (the same
+boundary, the same class — W-S5/Task 8 cited), stampAckAfterCompaction() on both compaction paths
+(fresh usage read; failed read leaves the ack alone — a guessed count either silences a real warning
+or raises a spurious one; wire path replay-guarded; three tests incl. replayed-boundary-stamps-nothing),
+render pins for the body sentence (real bold SGR asserted) and warning role (scoped to the rule line —
+Select's focused row legitimately wears permission, and dark-theme permission == remember by RGB),
+and the fallback rung `sessionModel ?? current ?? fallbackModel` restoring the gate for sessions
+pinned outside the alias catalog (fallback pinned as genuinely last). The implementer corrected its
+own earlier "focus intact" claim in the report. Wave S: 12/12 build tasks closed. Task 13 begins.
