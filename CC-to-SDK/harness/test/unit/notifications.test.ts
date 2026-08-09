@@ -104,6 +104,29 @@ describe("notification queue: immediate preemption", () => {
     store.add({ key: "b", priority: "high" });
     expect(key(store.state().current)).toBe("a");                        // "high" beats "medium" in the QUEUE only
   });
+
+  it("re-queues the preempted entry at the HEAD, so an equal-priority tie promotes IT first (L394001)", () => {
+    const clock = fakeClock();
+    const store = createNotificationStore(clock.deps);
+    store.add({ key: "cur", priority: "medium" });
+    store.add({ key: "waiting", priority: "medium" });                   // already in line, same rank
+    store.add({ key: "flash", priority: "immediate", timeoutMs: 1000 });
+    expect(key(store.state().current)).toBe("flash");
+    clock.advance(1000);
+    expect(key(store.state().current)).toBe("cur");                      // `[current, ...queue]`, and Iq_ keeps the first
+    clock.advance(NOTIFICATION_DEFAULT_TIMEOUT_MS);
+    expect(key(store.state().current)).toBe("waiting");
+  });
+
+  it("preempts even when the arriving key is already QUEUED (the immediate branch runs FIRST, L393987)", () => {
+    const clock = fakeClock();
+    const store = createNotificationStore(clock.deps);
+    store.add({ key: "cur", priority: "medium" });
+    store.add({ key: "x", text: "queued", priority: "medium" });
+    store.add({ key: "x", text: "now", priority: "immediate", timeoutMs: 1000 });
+    expect(key(store.state().current)).toBe("x");                        // NOT folded/replaced in place behind "cur"
+    expect(store.state().current?.text).toBe("now");
+  });
 });
 
 describe("notification queue: timeouts", () => {
@@ -161,15 +184,21 @@ describe("notification queue: fold", () => {
     expect(store.state().current?.text).toBe("one+two");
   });
 
-  it("does NOT restart the timer on a fold — only a replace does", () => {
+  it("RESTARTS the timer on a fold, off the FOLDED entry's own `timeoutMs ?? 8000` (L394010)", () => {
     const clock = fakeClock();
     const store = createNotificationStore(clock.deps);
-    const fold = (prev: CcxNotification, next: CcxNotification): CcxNotification => ({ ...next, text: `${prev.text}+${next.text}` });
+    // The fold result deliberately drops `timeoutMs`, so the restarted deadline is the 8s DEFAULT: a store that
+    // kept the arrival's 5s (or the original deadline) fails here rather than quietly reading the wrong entry.
+    const fold = (prev: CcxNotification, next: CcxNotification): CcxNotification => ({ key: next.key, text: `${prev.text}+${next.text}` });
     store.add({ key: "env-hook", text: "one", timeoutMs: 5_000 });
     clock.advance(4_000);
     store.add({ key: "env-hook", text: "two", timeoutMs: 5_000, fold });
-    clock.advance(1_000);
-    expect(store.state().current).toBeNull();                            // the ORIGINAL 5s deadline still ruled
+    clock.advance(1_000);                                                // t=5s — the ORIGINAL deadline no longer rules
+    expect(store.state().current?.text).toBe("one+two");
+    clock.advance(NOTIFICATION_DEFAULT_TIMEOUT_MS - 1_000 - 1);          // t=11_999
+    expect(key(store.state().current)).toBe("env-hook");
+    clock.advance(1);                                                    // t=12_000 = fold instant + 8s
+    expect(store.state().current).toBeNull();
   });
 });
 
@@ -187,6 +216,19 @@ describe("notification queue: invalidates", () => {
     expect(key(store.state().current)).toBe("arrival");
     clock.advance(NOTIFICATION_DEFAULT_TIMEOUT_MS);
     expect(store.state().current).toBeNull();                            // "doomed" never surfaced
+  });
+
+  it("CLEARS a matching current too, then promotes the best of what is left (L394027)", () => {
+    const clock = fakeClock();
+    const store = createNotificationStore(clock.deps);
+    store.add({ key: "X" });                                             // current, "low"
+    store.add({ key: "Z", priority: "high" });                           // queued behind it
+    store.add({ key: "Y", priority: "medium", invalidates: ["X"] });     // non-immediate: no preemption, but X dies
+    expect(key(store.state().current)).toBe("Z");                        // processQueue promoted the BEST, not the arrival
+    clock.advance(NOTIFICATION_DEFAULT_TIMEOUT_MS);
+    expect(key(store.state().current)).toBe("Y");
+    clock.advance(NOTIFICATION_DEFAULT_TIMEOUT_MS);
+    expect(store.state().current).toBeNull();                            // "X" never came back
   });
 });
 
@@ -212,12 +254,17 @@ describe("notification queue: remove", () => {
     expect(clock.pending()).toBe(1);                                     // the old timer was cancelled, one new one runs
   });
 
-  it("removing an unknown key is a no-op", () => {
+  it("removing an unknown key is a no-op — and fires NO subscriber (upstream returns the same object)", () => {
     const clock = fakeClock();
     const store = createNotificationStore(clock.deps);
     store.add({ key: "cur" });
+    let calls = 0;
+    store.subscribe(() => { calls++; });
     store.remove("nope");
     expect(key(store.state().current)).toBe("cur");
+    expect(calls).toBe(0);                                               // nothing changed, so nothing re-rendered
+    store.remove("cur");
+    expect(calls).toBe(1);                                               // …but a real removal does notify
   });
 });
 
@@ -234,15 +281,16 @@ describe("notification queue: pinned", () => {
     expect(store.state().pinned.map((p) => p.key)).toEqual(["p1", "p2"]);   // no timer ever touches a pinned entry
   });
 
-  it("re-adding a pinned key replaces it in place, and remove() drops it", () => {
+  it("IGNORES a duplicate pinned key — never replaces, never folds (L393977) — and remove() drops it", () => {
     const clock = fakeClock();
     const store = createNotificationStore(clock.deps);
+    const fold = (prev: CcxNotification, next: CcxNotification): CcxNotification => ({ ...next, text: `${prev.text}+${next.text}` });
     store.add({ key: "p1", text: "one", pinned: true });
     store.add({ key: "p2", text: "two", pinned: true });
-    store.add({ key: "p1", text: "ONE", pinned: true });
-    expect(store.state().pinned.map((p) => p.text)).toEqual(["ONE", "two"]);
+    store.add({ key: "p1", text: "ONE", pinned: true, fold });
+    expect(store.state().pinned.map((p) => p.text)).toEqual(["one", "two"]);   // the second p1 never landed
     store.remove("p1");
-    expect(store.state().pinned.map((p) => p.key)).toEqual(["p2"]);
+    expect(store.state().pinned.map((p) => p.key)).toEqual(["p2"]);            // a pinned entry only ever leaves via remove
   });
 });
 

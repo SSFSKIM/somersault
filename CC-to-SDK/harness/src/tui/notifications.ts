@@ -10,12 +10,18 @@
 //  · `mXs(e, t)`                                         (L394050)  whether a PREEMPTED entry goes back on the queue
 //
 // The rules this file owes upstream, in one place because four later tasks post to it and none of them should
-// have to re-derive them: one `current` at a time; `priority:"immediate"` preempts `current` SYNCHRONOUSLY;
-// the timeout clears `current` and pulls the next; a same-key `add` folds when the arrival carries a `fold`
-// and otherwise REPLACES and restarts the timer; `invalidates` drops matching queue entries; `pinned:true`
-// bypasses the queue entirely and accumulates.
+// have to re-derive them: one `current` at a time; `priority:"immediate"` preempts `current` SYNCHRONOUSLY and
+// the entry it displaces goes back on the HEAD of the queue (`[current, ...queue]`, L394001), so an equal-rank
+// tie promotes it ahead of whatever was already waiting; the immediate branch runs BEFORE any same-key handling
+// (L393987), so an immediate arrival preempts even when its key is already queued; the timeout clears `current`
+// and pulls the next; a same-key `add` into `current` folds when the arrival carries a `fold` and otherwise
+// REPLACES — either way the timer RESTARTS, off the resulting entry's own `timeoutMs ?? 8000` (L394010);
+// `invalidates` drops matching queue entries AND clears a matching `current`, after which `processQueue`
+// promotes the best of what is left rather than the arrival (L394027); `pinned:true` bypasses the queue
+// entirely, accumulates, IGNORES a duplicate key outright (L393977) and only ever leaves via `remove`; and a
+// `remove` of a key that is nowhere does not notify (upstream returns the same state object, L394040).
 //
-// THREE recorded divergences (plan constraint 12):
+// FOUR recorded divergences (plan constraint 12):
 //
 //  1. `mXs`'s SECOND AND THIRD DISJUNCTS ARE DROPPED. Upstream re-queues a preempted entry when
 //     `(e.priority !== "immediate" || e.requeueOnPreempt === true || e.heldDuringDiffPanel === true)
@@ -31,6 +37,15 @@
 //  3. NO `segments` ARM. Upstream's renderer (`$Rr`, L488834) has three arms — `jsx`, `segments`, plain text.
 //     This port carries `jsx` and text; nothing in the Wave C inventory mints a `segments` entry, and a
 //     pre-built node covers the one case that needs structure (`token-warning`). See NotificationSlot.tsx.
+//
+//  4. A SAME-KEY RE-ADD REPLACES; UPSTREAM DROPS IT. Upstream's non-immediate path dedups by key — past the
+//     `fold` arms it returns the state untouched when the key is already `current` or already queued
+//     (L394022), so a plain re-add of a live key changes nothing. Restarting the clock is achieved at the
+//     PRODUCER instead: the effort hint calls `hp("effort-level")` (`removeNotification`) and only then
+//     `Nd({key:"effort-level", …})` (L496132), and that remove-then-add is what makes every `/effort` press
+//     restart the 10s deadline. This port keeps replace-and-restart as a deliberate SUPERSET: a producer that
+//     does the upstream remove-then-add dance still gets upstream's behaviour, and one that just re-adds gets
+//     the same visible result instead of a silently swallowed hint. Nothing here depends on the swallow.
 //
 // Entries are stored BY IDENTITY, never normalized into a copy: `state().current` is the very object that was
 // added, so `useChat` can mirror it into React state and a consumer can compare by reference. Defaults are
@@ -83,9 +98,11 @@ export function priorityRank(n: CcxNotification): number { return NOTIFICATION_P
 
 function timeoutOf(n: CcxNotification): number { return n.timeoutMs ?? NOTIFICATION_DEFAULT_TIMEOUT_MS; }
 
-/** `mXs` (L394050), minus the two fields this port has no producer for — divergence 1 in the header. */
-function requeueOnPreempt(prev: CcxNotification, next: CcxNotification): boolean {
-  return prev.priority !== "immediate" && !next.invalidates?.includes(prev.key);
+/** `mXs` (L394050), minus the two fields this port has no producer for — divergence 1 in the header. Upstream
+ *  applies it as a FILTER over `[current, ...queue]` when an immediate arrives, which is how the preempted
+ *  entry lands at the head; `invalidated` is the arrival's `invalidates` set. */
+function survivesPreempt(e: CcxNotification, invalidated: Set<string> | null): boolean {
+  return e.priority !== "immediate" && !invalidated?.has(e.key);
 }
 
 export function createNotificationStore(deps: NotificationDeps = {}): NotificationStore {
@@ -104,8 +121,9 @@ export function createNotificationStore(deps: NotificationDeps = {}): Notificati
 
   const stopTimer = (): void => { if (handle !== null) { cancel(handle); handle = null; } };
 
-  /** (Re)arm the expiry for whatever `current` is now. Always stops the old one first — this is what makes a
-   *  same-key REPLACE restart the clock, which the `effort-level` hint's repeated `/effort` presses rely on. */
+  /** (Re)arm the expiry for whatever `current` is now, off THAT entry's `timeoutMs ?? 8000`. Always stops the
+   *  old one first — this is what makes a same-key fold or replace restart the clock, which the `effort-level`
+   *  hint's repeated `/effort` presses rely on. */
   const startTimer = (): void => {
     stopTimer();
     const n = current;
@@ -125,29 +143,29 @@ export function createNotificationStore(deps: NotificationDeps = {}): Notificati
 
   function add(n: CcxNotification): void {
     if (n.pinned) {                                                     // bypasses the queue entirely
-      const at = pinned.findIndex((p) => p.key === n.key);
-      pinned = at >= 0 ? pinned.map((p, i) => (i === at ? (n.fold ? n.fold!(p, n) : n) : p)) : [...pinned, n];
-      emit(); return;
+      if (pinned.some((p) => p.key === n.key)) return;                  // a duplicate pinned key is ignored outright
+      pinned = [...pinned, n]; emit(); return;
     }
-    if (n.invalidates?.length) { const drop = new Set(n.invalidates); queue = queue.filter((q) => !drop.has(q.key)); }
+    const invalidated = n.invalidates?.length ? new Set(n.invalidates) : null;
+    if ((n.priority ?? "low") === "immediate") {                        // FIRST — before any same-key handling
+      queue = (current ? [current, ...queue] : queue).filter((q) => survivesPreempt(q, invalidated));
+      current = n; startTimer(); emit(); return;                        // synchronous preemption, displaced entry at the head
+    }
     if (current && current.key === n.key) {
-      if (n.fold) current = n.fold(current, n);                         // a fold MERGES: the deadline keeps running
-      else { current = n; startTimer(); }                               // a replace RESTARTS it
-      emit(); return;
+      current = n.fold ? n.fold(current, n) : n;                        // a fold MERGES, a plain re-add REPLACES…
+      startTimer(); emit(); return;                                     // …and either way the deadline restarts
     }
     const at = queue.findIndex((q) => q.key === n.key);
-    if (at >= 0) { queue = queue.map((q, i) => (i === at ? (n.fold ? n.fold!(q, n) : n) : q)); emit(); return; }
-    if (!current) { current = n; startTimer(); emit(); return; }
-    if ((n.priority ?? "low") === "immediate") {
-      const prev = current;
-      current = n;                                                      // synchronous preemption
-      if (requeueOnPreempt(prev, n)) queue = [...queue, prev];
-      startTimer(); emit(); return;
+    if (at >= 0) { queue = queue.map((q, i) => (i === at ? (n.fold ? n.fold(q, n) : n) : q)); emit(); return; }
+    if (invalidated) {
+      queue = queue.filter((q) => !invalidated.has(q.key));
+      if (current && invalidated.has(current.key)) { stopTimer(); current = null; }   // the current one dies too
     }
-    queue = [...queue, n]; emit();
+    queue = [...queue, n]; processQueue(); emit();                      // promotes the BEST entry, not necessarily `n`
   }
 
   function remove(key: string): void {
+    if (current?.key !== key && !queue.some((q) => q.key === key) && !pinned.some((p) => p.key === key)) return;
     pinned = pinned.filter((p) => p.key !== key);
     queue = queue.filter((q) => q.key !== key);
     if (current && current.key === key) { stopTimer(); current = null; processQueue(); }

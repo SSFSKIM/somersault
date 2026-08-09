@@ -26,7 +26,7 @@ export function NotificationSlot({ notification }: { notification: CcxNotificati
     ? <Text wrap="truncate">{notification.jsx as React.ReactNode}</Text>
     : <Text color={notification.color} dimColor={!notification.color} wrap="truncate">{notification.text}</Text>;
   return (
-    <Box flexDirection="row" justifyContent="flex-end" alignItems="flex-end" flexShrink={0}>
+    <Box flexDirection="row" justifyContent="flex-end" alignItems="flex-end" flexShrink={0} overflowX="hidden">
       {body}
     </Box>
   );
