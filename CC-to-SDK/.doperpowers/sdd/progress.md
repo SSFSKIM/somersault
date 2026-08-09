@@ -464,3 +464,21 @@ ambiguity rethrown; the subcommand guard arm pinned; dead parseResumeIntent dele
 Rolled to final review, none blocking: a full UUID naming a LIVE session still resolves to `session`
 (liveness is only checked in the roster branch); a crashed host's row reads `working` so its short id
 is pointed at attach, which fails with "no host listening" (fleet gc heals it; the full UUID resumes).
+
+## 2026-08-09 — Task 10 review: implementation faithful, three guards proven unable to fail
+
+The reviewer's verdict is the wave's recurring lesson in its purest form yet: every behavior the
+commit claims was verified correct (predicate port line-by-line faithful; the all-projects bypass
+confirmed against the SDK's own source — includeWorktrees is ignored when dir is absent, exactly
+upstream's `R && !L && !u`; /continue narrowing verified CORRECT against upstream's alias-file
+resolution, which never sweeps worktrees), but three of four guard tests were sabotage-proven vacuous:
+(1) the scope→options mapping had zero coverage — a fully INVERTED mapping passed 4561 tests;
+(2) the shared-predicate pin's fixture only held rows the old and new predicates agree on;
+(3) the A11 "never on a pick" half asserted on a transcript that replaceDocument had already wiped.
+Plus: test/tui now spawns real git (observed via PATH shim; no assertion flips today, but live and
+undefended), and the empty-state copy became wrong the moment Ctrl+A shipped (upstream splits
+narrowed/widened wording at L476609; our comment still claims the toggle doesn't exist).
+Fix round dispatched: four test repairs + the scope-aware empty state; spinner-cancel absence recorded
+as a comment. Notes ridden along for the divergence file at T13: scope-in-picker vs upstream's
+parent-held state; modeless search keeps Ctrl+A live while typing; [attachment] literal is ours
+(faithful decision, blank-text edge noted); worktrees.ts timeout pinned as constant not behavior.
