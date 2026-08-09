@@ -708,3 +708,24 @@ fixes individually (each kills exactly one test) plus a 400-op mixed sweep for t
 Two unpinned lines noted, neither load-bearing (overflowX unobservable via lastFrame; stopTimer
 defensive). Annex lesson: §C1.6's "drops matching entries" was ambiguous about WHICH collection —
 the reviewer resolving it against the shipped binary is the round's yield.
+
+## 2026-08-09 — Wave C Task 2 complete (ec31362afa, review approved)
+
+The footer rewrite — the wave's widest diff (28 new footer tests; suites 1693/2989 green). The
+plan's mandated geometry measurement CHANGED THE DESIGN: Ink 5.2.1 silently DROPS an absolute row
+whose -1 offset falls above the dynamic frame's first line — which is ccx's home state — so every
+hint would have vanished; the sanctioned in-flow fallback shipped (reviewer reproduced the
+measurement independently). qa6-01's core defect confirmed fixed live: composer block height
+constant across home/typing/busy/pasting/bash/plan/exit-armed at widths down to 12 columns. Six-mode
+chip table exact per §C4.c incl. three color corrections. Exit-arm keys are props; Footer.tsx joined
+the banned-chord sweep (sabotage-verified). Implementer deviations all endorsed by review: esc arms
+went to the queue NOW (the annex's own destination; the "no hint" intermediate would have deleted
+~40 observables), Task 1's useChat wiring built here (plan ambiguity), draft signal on the sync
+channel (fixed a one-frame stale-hint defect the effect channel caused). Six Minors, none blocking:
+(M1) report's concern #4 was FALSE — busy footer correctly shows chip-only, ledger notes so nobody
+"fixes" it; (M2) rewind arm shares the clear arm's notification key — split to escape-again-to-rewind
+in Task 4; (M3) ChatApp's Ctrl-C arm key is a literal, derive via formatBindings in Task 4; (M4)
+only the exit verb wired (detach wording for attached sessions — follow-up); (M5) double
+subscription useChat+composer — later consumer task collapses it; (M6) two overlong comment lines +
+a stale aria-hidden claim in modeTable. OWNERLESS ITEM ASSIGNED: the ← gesture wiring (open agents
+pane + ambiguity dance) → Task 4.
