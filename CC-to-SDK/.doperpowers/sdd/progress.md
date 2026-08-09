@@ -482,3 +482,16 @@ Fix round dispatched: four test repairs + the scope-aware empty state; spinner-c
 as a comment. Notes ridden along for the divergence file at T13: scope-in-picker vs upstream's
 parent-held state; modeless search keeps Ctrl+A live while typing; [attachment] literal is ours
 (faithful decision, blank-text edge noted); worktrees.ts timeout pinned as constant not behavior.
+
+## 2026-08-09 — Task 10 COMPLETE (3d965000db + 9fb3f7f6ab)
+
+Fix round landed with per-item sabotage evidence: the inverted loader mapping now fails (a new
+`readSessions` seam sits UNDER the scope mapping — the structural reason nothing could see it before
+is that every test stubbed deps.listSessions, which replaces the mapping wholesale); the predicate pin
+carries the two disagreement shapes (image-only counted/dropped, meta-with-text drawn/excluded) and
+asserts rows one-for-one with an asymmetric fixture so wrong-drop-plus-wrong-add cannot cancel; the
+A11 pick test resumes the CURRENT session so the append branch preserves any wrongly-printed notice;
+18 call sites stub the worktree detector and an instrumented runner proved zero real git spawns across
+the whole TUI suite; the empty state is scope-aware per L476609 (worktree axis deliberately does not
+move the copy — it says nothing about which projects were searched) with the Ctrl+A hint recorded as
+living in our footer. keys-migration-dialogs pinned the old wording — updated as intended fallout.
