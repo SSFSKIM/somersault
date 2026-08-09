@@ -205,7 +205,10 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
   { key: "!", label: "bash", col: 0, cell: "! for shell mode" },
   { key: "/", label: "commands", col: 0, cell: "/ for commands" },
   { key: "@", label: "files", col: 0, cell: "@ for file paths" },
-  { key: "#", label: "memory", col: 0, cell: "# for memory" },
+  // WAVE C TASK 14: `# for memory` stood here. The mode it advertised was a ccx extra with no upstream
+  // counterpart at 2.1.220, and the spec's owner-decision section removed it — so the cell had to go too,
+  // or this grid would promise a key that now types an ordinary `#` into the prompt. That is the honesty
+  // contract running the other way: it forbids dropping an IMPLEMENTED row, not keeping a dead one.
   { key: "?", label: "this help", col: 0, cell: "? for this help" },
   // ── column 1: the composer and the running turn (`width: 35`) ──────────────────────────────────────────
   // Upstream's cell is the LITERAL `double tap esc to clear input`; ours resolves the chord, so an `escape`

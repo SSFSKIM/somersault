@@ -43,7 +43,9 @@ describe("the entry-set merge (DG63)", () => {
 
   it("keeps OUR extra honest rows, after upstream's", () => {
     const [one, two, three] = grid();
-    expect(one!.slice(3)).toEqual(["# for memory", "? for this help"]);
+    // WAVE C TASK 14: `# for memory` left this column with the mode itself (spec owner-decision) — the row
+    // is not "dropped to match upstream", the FEATURE is gone, which is the honesty contract's own test.
+    expect(one!.slice(3)).toEqual(["? for this help"]);
     expect(two!.slice(5)).toContain("⏎ to send");
     expect(two!.slice(5)).toContain("ctrl + r to search history");
     expect(three!.slice(6)).toContain("ctrl + b to run in background");

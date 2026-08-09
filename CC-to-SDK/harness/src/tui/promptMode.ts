@@ -15,35 +15,33 @@
 //
 // Bundle provenance (2.1.220): `hon` L236123 · `mP` L236131 · `LV` L236136 — the mode ⇄ prefix trio the
 // submit site (L548774) and every reader (L489529/L489691) go through.
+//
+// WAVE C TASK 14 COLLAPSED THIS FILE FROM THREE MODES TO TWO. `#` (memory) was ccx's own third mode, recorded
+// as CM65; the spec's owner-decision section removed it, because upstream's composer resolver at 2.1.220 (and
+// 2.1.222) answers `prompt | bash` and nothing else. That removal also took the file's SECOND derivation with
+// it: `modeOfDisplay` (`mP`) existed only because our three-valued read and upstream's two-valued one were
+// genuinely different answers to the same question, and a two-valued union makes them the same answer under
+// two spellings (plan-review #23). One reading survives — `composerMode` — and the two sites that need
+// upstream's own word for the non-bash case (`useChat`'s queue entry, `editorHistory.historyEntryIsBash`)
+// spell the rename at their own call, where the wire format that demands it is visible.
 
-/** The composer's three input modes. Declared HERE rather than in editor.ts so that a module which only
- *  needs to name a mode does not have to import the reducer; `editor.ts` re-exports it, so every existing
- *  `import type { InputMode } from "./editor.js"` keeps working. `memory` (`#`) is ours — recorded as CM65,
- *  upstream 2.1.220 has no `#` composer mode — which is exactly why the two-valued `mP` below cannot be the
- *  only derivation we own. */
-export type InputMode = "bash" | "memory" | "normal";
+/** The composer's two input modes — upstream's `prompt | bash` under this port's own names (`normal` is its
+ *  `prompt`). Declared HERE rather than in editor.ts so that a module which only needs to name a mode does not
+ *  have to import the reducer; `editor.ts` re-exports it, so every existing
+ *  `import type { InputMode } from "./editor.js"` keeps working. */
+export type InputMode = "bash" | "normal";
 
-/** THE derivation. One function, three callers that used to disagree (t7 review, M1): the submit path wrote
- *  `inputMode(state)` (three-valued, so a `#` prompt recorded `"memory"`) while the disk seed wrote a
- *  two-valued `bash | normal`, and the same prompt therefore carried a different `mode` in-session than it
- *  did after a reseed. Everything now derives from the DISPLAY, which is the only thing that survives a
- *  round trip through the file.
+/** THE derivation, and now the only one — upstream's `mP` (L236131) with `normal` where it says `prompt`.
+ *  Everything derives from the DISPLAY, which is the only thing that survives a round trip through
+ *  `history.jsonl`: before this was shared (t7 review, M1) the submit path and the disk seed each read the
+ *  buffer their own way, and the same prompt carried a different `mode` in-session than it did after a reseed.
  *
- *  Prefixes are upstream's `hon`/`mP` for `!`; `#` is the ccx memory mode. */
-export function composerMode(display: string): InputMode {
-  if (display.startsWith("!")) return "bash";
-  if (display.startsWith("#")) return "memory";
-  return "normal";
-}
+ *  The prefix is upstream's `hon`/`mP` `!` and only `!`. */
+export function composerMode(display: string): InputMode { return display.startsWith("!") ? "bash" : "normal"; }
 
 /** `hon` (L236123). The submit site's `display` builder: bash prompts persist with their `!`. */
 export function displayForMode(text: string, mode: "prompt" | "bash"): string { return mode === "bash" ? `!${text}` : text; }
 
-/** `mP` (L236131). Upstream's TWO-valued read — it has no memory mode, so `#` is an ordinary prompt to it.
- *  Expressed as a projection of `composerMode` rather than a second `startsWith`, so the filter that history
- *  navigation runs (bundle L489547) and the mode the composer lands in can never disagree. */
-export function modeOfDisplay(display: string): "prompt" | "bash" { return composerMode(display) === "bash" ? "bash" : "prompt"; }
-
 /** `LV` (L236136). Strips ONE `!` and only from a bash display, so a prompt that legitimately begins `!!`
  *  keeps its second bang when it comes back. */
-export function stripModePrefix(display: string): string { return modeOfDisplay(display) === "bash" ? display.slice(1) : display; }
+export function stripModePrefix(display: string): string { return composerMode(display) === "bash" ? display.slice(1) : display; }

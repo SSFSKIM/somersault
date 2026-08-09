@@ -333,8 +333,10 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     expect(opened[0]).toBe(join(home, ".claude", "keybindings.json"));
   },
 
+  // WAVE C TASK 14 retired the `#` proof WITH its row: the spec's owner-decision section removed the memory
+  // mode, so the grid no longer advertises `#` and there is nothing left to prove. The suite's own
+  // every-row-has-a-proof / every-proof-has-a-row pair is what keeps that pair honest in both directions.
   "!": () => { expect(inputMode(typed("!ls"))).toBe("bash"); },
-  "#": () => { expect(inputMode(typed("#note"))).toBe("memory"); },
   "@": () => { expect(typed("@").mention).not.toBeNull(); },
   "/": () => { expect(typed("/").command).not.toBeNull(); },
 

@@ -55,13 +55,13 @@
 // `editor.ts` pulls in reaches a `node:` builtin, so the reducer graph is filesystem-free and the disk lives
 // only in ChatComposer. Keep it that way — see promptMode.ts's header.
 import { chipLabel, chipSpans, newlineCount } from "./pasteChips.js";
-import { modeOfDisplay } from "./promptMode.js";
+import { composerMode } from "./promptMode.js";
 import { bufferText, setBuffer, type EditorState, type InputMode, type PastedEntry, type PastedMap } from "./editor.js";
 
 /** One entry of the composer's history list, OLDEST-FIRST in `EditorState.history` (see divergence 2).
  *
  *  `display` is canonical for the mode — it carries the `!` a bash prompt was submitted with (`hon`,
- *  L548774), which is what `modeOfDisplay` (`mP`) reads and what every persisted line stores. `mode` is
+ *  L548774), which is what `composerMode` (`mP`) reads and what every persisted line stores. `mode` is
  *  upstream's own in-memory record field (L489583) and is carried here for the same reason it carries the
  *  paste map: it is what the record IS. In this port it is redundant with the prefix by construction — we
  *  only ever write `inputMode(state)`, which is itself derived from that text — so nothing reads it as an
@@ -84,8 +84,9 @@ export interface HistEdit { display: string; pastedContents: PastedMap; mode?: I
 /** CM55's latch value. `"bash"` filters the walk to bash entries; `undefined` is unfiltered. */
 export type HistFilter = "bash" | undefined;
 
-/** `mP(ae.display)`. The filter reads the DISPLAY, never the record's `mode` (L489547). */
-export function historyEntryIsBash(e: HistNavEntry): boolean { return modeOfDisplay(e.display) === "bash"; }
+/** `mP(ae.display)`. The filter reads the DISPLAY, never the record's `mode` (L489547). Wave C Task 14 folded
+ *  `modeOfDisplay` into `composerMode` — same reading, one function — so the `=== "bash"` is spelled here. */
+export function historyEntryIsBash(e: HistNavEntry): boolean { return composerMode(e.display) === "bash"; }
 
 /** The list the walk actually moves through: everything, or bash-only under the latch. Recomputed on every
  *  step rather than cached in state (upstream caches it in `_.current` only because it is paging it in). */

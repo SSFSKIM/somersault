@@ -119,13 +119,14 @@ export function durable(s: EditorState) { return { historySeeded: s.historySeede
 export const UNDO_CAP = 50;
 export const UNDO_COALESCE_MS = 1000;
 
-/** The composer's current input mode, derived purely from the buffer: a leading `!` = bash, `#` = memory
- *  (CC's prefix modes). The `/` and `@` popups own their own state, so they suppress this.
+/** The composer's current input mode, derived purely from the buffer: a leading `!` = bash, everything else
+ *  normal (CC's one prefix mode). The `/` and `@` popups own their own state, so they suppress this.
  *
  *  The prefix reading itself is `composerMode` in promptMode.ts, shared with the history seed (t7 review,
  *  M1): before that, this function's three-valued answer went onto a submitted entry while the disk seed
  *  wrote a two-valued one, so the same `#note` prompt carried `"memory"` in-session and `"normal"` after a
- *  restart. One derivation, one answer, whichever side of the file you are on. */
+ *  restart. Wave C Task 14 removed the memory mode entirely (spec owner-decision), which retires the drift
+ *  as well as the shared reading that fixed it — the union this returns is now upstream's own two. */
 export function inputMode(s: EditorState): InputMode {
   if (s.command || s.mention) return "normal";
   return composerMode(s.lines[0] ?? "");

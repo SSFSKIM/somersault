@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pastePath, pasteHash } from "../../src/tui/pasteCache.js";
 import {
-  HISTORY_CAP, PASTE_INLINE_MAX, appendHistory, displayForMode, historyPath, modeOfDisplay,
+  HISTORY_CAP, PASTE_INLINE_MAX, appendHistory, composerMode, displayForMode, historyPath,
   readHistory, resolvePastedContent, stripModePrefix, type HistoryEntry,
 } from "../../src/tui/promptHistory.js";
 
@@ -253,10 +253,13 @@ describe("mode ⇄ display — hon / mP / LV", () => {
     expect(displayForMode("ls -la", "prompt")).toBe("ls -la");
   });
 
+  // WAVE C TASK 14 folded `mP` (`modeOfDisplay`) into `composerMode`: with the `#` memory mode gone the two
+  // were one rename apart — the same reading under `normal` instead of upstream's `prompt` — and a second
+  // function spelling it was the duplication plan-review #23 named. Same three cases, one derivation.
   it("reads the mode back off the stored display", () => {
-    expect(modeOfDisplay("!ls")).toBe("bash");
-    expect(modeOfDisplay("ls")).toBe("prompt");
-    expect(modeOfDisplay("")).toBe("prompt");
+    expect(composerMode("!ls")).toBe("bash");
+    expect(composerMode("ls")).toBe("normal");
+    expect(composerMode("")).toBe("normal");
   });
 
   it("strips only the bash marker", () => {
@@ -269,7 +272,7 @@ describe("mode ⇄ display — hon / mP / LV", () => {
     appendHistory({ display: displayForMode("git status", "bash"), project: PROJ }, env);
     const e: HistoryEntry = readHistory({ scope: "everywhere" }, env)[0];
     expect(e.display).toBe("!git status");
-    expect(modeOfDisplay(e.display)).toBe("bash");
+    expect(composerMode(e.display)).toBe("bash");
     expect(stripModePrefix(e.display)).toBe("git status");
     expect("mode" in e).toBe(false);
   });

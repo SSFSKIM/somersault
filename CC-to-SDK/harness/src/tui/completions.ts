@@ -78,8 +78,9 @@ export function syncCompletions(s: EditorState): EditorState {
   }
   const { text, cursor, pad } = rowScan(s);
   // Both of upstream's command arms are gated on `s === "prompt"` (bundle L490617 and L490747) — the mid-text
-  // one especially, or `!ls /tmp` would fling the command catalog open over a bash line and `#note the /plan`
-  // over a memory one. The `@` scan is deliberately NOT gated: upstream runs it in bash mode too (`oQa` has a
+  // one especially, or `!ls /tmp` would fling the command catalog open over a bash line. That is the WHOLE
+  // gate now: Wave C Task 14 removed ccx's `#` mode, so `#note the /plan` DOES open the catalog, exactly as
+  // it does upstream. The `@` scan is deliberately NOT gated: upstream runs it in bash mode too (`oQa` has a
   // `mode === "bash"` arm that inserts the bare path), and ours has always been mode-blind.
   const cmd = composerMode(s.lines[0] ?? "") === "normal" ? scanCommand(text, cursor, buffer) : null;
   if (cmd) return withCommand(s, cmd, pad);

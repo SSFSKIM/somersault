@@ -47,11 +47,13 @@ describe("<ShortcutsOverlay>", () => {
     expect(f).toContain("/keybindings to customize");
     // …and OURS, retained after them (the F2 honesty contract: an implemented row is not dropped to match
     // upstream's list exactly).
-    expect(f).toContain("# for memory");
     expect(f).toContain("? for this help");
     expect(f).toContain("ctrl + r to search history");
     expect(f).toContain("ctrl + b to run in background");
-    // Upstream entries whose FEATURE does not exist here must not be advertised.
+    // Upstream entries whose FEATURE does not exist here must not be advertised — and as of Wave C Task 14
+    // the `#` memory mode is one of those: the spec's owner-decision section removed the mode, so the cell
+    // that advertised it had to go with it or the overlay would promise a key that does nothing.
+    expect(f).not.toContain("# for memory");
     expect(f).not.toContain("paste images");
     expect(f).not.toContain("/btw");
     expect(f).not.toContain("fast mode");

@@ -121,8 +121,9 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
   // and then draws in the space that frees.
   //   · `mode === "prompt"` IS `!bashMode` HERE. Upstream's `mode` on this line is the COMPOSER's input mode
   //     (`mP`, the two-valued `prompt | bash` read — promptMode.ts), and ccx already carries that half of it
-  //     as the `bashMode` prop the row-replacement branch below reads. ccx's third mode (`#` memory, CM65)
-  //     has no upstream counterpart and does not reach this component at all.
+  //     as the `bashMode` prop the row-replacement branch below reads. ccx used to carry a THIRD mode here
+  //     (`#` memory, CM65) with no upstream counterpart; Wave C Task 14 removed it, so the two-valued read is
+  //     now literally upstream's and there is no third case for this component to have ignored.
   //   · The 15-row floor is upstream's protection for a pane too short to spare a line, and it is a real
   //     risk here for the same reason: three dialog height budgets already count the footer's one row
   //     (`rewindModel.REWIND_CHROME_ROWS` and friends), and this is a SECOND one they do not know about.

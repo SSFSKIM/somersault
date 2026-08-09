@@ -189,10 +189,14 @@ describe("/help drives the dialog end to end", () => {
     const b = render(<HelpDialog commands={[]} onClose={() => {}} rows={40} columns={100} />);
     await waitFor(() => flat(b.lastFrame).includes(HELP_INTRO));
     const dialog = flat(b.lastFrame);
-    for (const cell of ["! for shell mode", "double tap esc to clear input", "ctrl + t to toggle tasks", "/keybindings to customize", "# for memory"]) {
+    // WAVE C TASK 14 removed `# for memory` from this list with the mode itself; `? for this help` takes its
+    // place as the ccx-extra cell that proves the two surfaces share one table rather than two literals.
+    for (const cell of ["! for shell mode", "double tap esc to clear input", "ctrl + t to toggle tasks", "/keybindings to customize", "? for this help"]) {
       expect(overlay, `the ? overlay lost "${cell}"`).toContain(cell);
       expect(dialog, `the /help grid lost "${cell}"`).toContain(cell);
     }
+    expect(overlay).not.toContain("# for memory");
+    expect(dialog).not.toContain("# for memory");
     b.unmount();
   });
 });

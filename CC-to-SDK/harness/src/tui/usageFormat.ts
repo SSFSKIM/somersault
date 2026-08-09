@@ -54,7 +54,12 @@ export function formatUsage(u: unknown): RenderLine[] {
   return out;
 }
 
-/** Status-bar warning: the max utilization across windows once it reaches 80%, else undefined. */
+/** The notification-queue key the warning below posts under. Wave C Task 14 (spec D-C3) moved the CONSUMER —
+ *  this text was a chip on the status bar Wave C Task 2 retired, and is now a queued notification `useChat`
+ *  posts when it CHANGES. The formatter did not move; it lives here with the rest of the usage vocabulary. */
+export const USAGE_WARNING_KEY = "usage-warning";
+
+/** Plan-usage warning: the max utilization across windows once it reaches 80%, else undefined. */
 export function usageWarning(u: unknown): string | undefined {
   const windows = presentWindows(u);
   if (!windows.length) return undefined;

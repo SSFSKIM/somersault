@@ -740,13 +740,13 @@ describe("useChat", () => {
     expect(submitted).toBe(0);
   });
 
-  it("! runs bash locally (injected) and # appends to memory — neither reaches the model", async () => {
-    let submitted = 0, bashCmd = "", memNote = "", memCwd = "";
-    const fake = fakeRemote({ submit: async () => { submitted++; return { result: "x" }; } });
-    const deps = {
-      runBash: async (cmd: string) => { bashCmd = cmd; return { code: 0, output: "file1\nfile2" }; },
-      appendMemory: (note: string, cwd: string) => { memNote = note; memCwd = cwd; return "/proj/CLAUDE.md"; },
-    };
+  // WAVE C TASK 14 halved this test. `#` was ccx's own memory mode — no upstream counterpart at 2.1.220 —
+  // and the spec's owner-decision section removed it, so the `appendMemory` half is gone and the prompt it
+  // used to swallow now goes to the model like any other. `!` is untouched: it IS upstream's escape.
+  it("! runs bash locally (injected) and never reaches the model — but # is an ordinary prompt now", async () => {
+    let submitted = 0, bashCmd = "", lastPrompt = "";
+    const fake = fakeRemote({ submit: async (p: string) => { submitted++; lastPrompt = p; return { result: "x" }; } });
+    const deps = { runBash: async (cmd: string) => { bashCmd = cmd; return { code: 0, output: "file1\nfile2" }; } };
     const api: { run?: (s: string) => void } = {};
     function H() { const c = useChat(() => fake, { cwd: "/proj" }, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -754,10 +754,11 @@ describe("useChat", () => {
     api.run!("!ls -a");   await waitFor(() => frame(lastFrame).includes("file1"));
     expect(bashCmd).toBe("ls -a");
     expect(frame(lastFrame)).toContain("! ls -a");
-    api.run!("#the parser lives in cli.ts");   await waitFor(() => frame(lastFrame).includes("noted in"));
-    expect(memNote).toBe("the parser lives in cli.ts");
-    expect(memCwd).toBe("/proj");
-    expect(submitted).toBe(0);   // neither ! nor # ever reached the model
+    expect(submitted).toBe(0);   // `!` still never reaches the model
+    api.run!("#the parser lives in cli.ts");
+    await waitFor(() => submitted === 1);
+    expect(lastPrompt).toBe("#the parser lives in cli.ts");   // verbatim, `#` and all — no note, no file write
+    expect(frame(lastFrame)).not.toContain("noted in");
   });
 
   it("dispatches /cost (session.usage) and /status (local state) locally", async () => {
@@ -2755,5 +2756,85 @@ describe("W-S7: compaction is a real busy state with an ephemeral progress affor
     api.run!("/compact");
     await waitFor(() => frame(lastFrame).includes("✗ boom"));           // the dispatch catch reports it
     expect(frame(lastFrame)).toContain("c:no");                         // …and the affordance is gone with it
+  });
+});
+
+// ─── WAVE C TASK 14: the two warnings that used to be always-on chips ────────────────────────────────────
+// Both left the retired status bar (spec D-C3) and re-enter as QUEUE entries. The pins here are about the
+// PLUMBING — that the ladder is computed at the turn-end refresh, that it carries the spec's key/priority/
+// timeout, that the error rung is coloured, and that a refresh which finds nothing to say takes the entry
+// back down. The ladder's own arithmetic is pinned in `test/unit/token-warning.test.ts`.
+describe("the token-warning and usage-warning notifications", () => {
+  // `18_000_000` is five hours: an entry that is never re-posted and never removed would outlive the
+  // conversation that earned it, which is exactly why the "falls back to ok → remove" case below exists.
+  const WINDOW = 200_000, CEILING = 160_000;
+  function NotifHost({ makeSession }: { makeSession: () => ChatSession }) {
+    const c = useChat(makeSession);
+    const n = c.state.notification;
+    return <Text>n:{n ? `${n.key}|${n.text}|${n.color ?? "-"}|${n.priority}|${n.timeoutMs}` : "none"}</Text>;
+  }
+
+  it("posts nothing while the context is comfortably under the warn threshold", async () => {
+    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: CEILING - 21_000, maxTokens: WINDOW }) });
+    const { lastFrame } = render(<NotifHost makeSession={() => fake} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await new Promise((r) => setTimeout(r, 40));                        // long enough for the refresh to land
+    expect(frame(lastFrame)).toContain("n:none");
+  });
+
+  it("posts the warn rung at the turn-end refresh, with the spec's key, priority and timeout", async () => {
+    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: CEILING - 19_000, maxTokens: WINDOW }) });
+    const { lastFrame } = render(<NotifHost makeSession={() => fake} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("token-warning"));
+    // no colour of its own → the slot renders it dim, which is upstream's own auto-compact-enabled arm
+    expect(frame(lastFrame)).toContain("n:token-warning|12% until auto-compact|-|medium|18000000");
+  });
+
+  it("escalates past the ceiling to the error-coloured Context low text", async () => {
+    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: CEILING + 5_000, maxTokens: WINDOW }) });
+    const { lastFrame } = render(<NotifHost makeSession={() => fake} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("token-warning"));
+    expect(frame(lastFrame)).toContain("Context low (0% remaining) · Run /compact to compact & continue");
+    expect(frame(lastFrame)).toContain(`|${resolveThemeColor(themeTokens().error)}|medium|`);
+  });
+
+  it("takes the entry back down once a later refresh finds the context healthy again", async () => {
+    let used = CEILING + 5_000;
+    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: used, maxTokens: WINDOW }) });
+    const { lastFrame } = render(<NotifHost makeSession={() => fake} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("token-warning"));
+    used = 1_000;                                                       // …as a /compact would leave it
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+    await waitFor(() => frame(lastFrame).includes("n:none"));
+  });
+
+  it("the plan-usage warning posts as a queued notification too, and only when it CHANGES", async () => {
+    let util = 91;
+    const fake = fakeRemote({
+      getContextUsage: () => ({ totalTokens: 1_000, maxTokens: WINDOW }),
+      usage: () => ({ rate_limits_available: true, rate_limits: { five_hour: { utilization: util } } }),
+    });
+    const { lastFrame } = render(<NotifHost makeSession={() => fake} />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("⚠ 5h 91%"));
+    expect(frame(lastFrame)).toContain("n:usage-warning|");
+    util = 40;                                                          // the window rolled over
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+    await waitFor(() => frame(lastFrame).includes("n:none"));
   });
 });

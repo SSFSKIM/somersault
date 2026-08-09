@@ -443,13 +443,17 @@ describe("<ChatComposer> — the persisted history it seeds from and appends to"
     await waitFor(() => strip(frame(first.lastFrame)).includes("#remember this"));
     first.stdin.write("\r");
     await waitFor(() => editorStateRef.current.history.length === 1);
-    expect(editorStateRef.current.history[0].mode).toBe("memory");
+    // WAVE C TASK 14: `#remember this` used to record `"memory"` here and `"normal"` after a reseed — the
+    // very drift M1 fixed by putting both sides on one derivation. With the memory mode removed the answer
+    // is `"normal"` on both sides, and the fixture is kept precisely BECAUSE it is the line that used to
+    // disagree: if a second reading of `#` ever comes back, this is where it shows up first.
+    expect(editorStateRef.current.history[0].mode).toBe("normal");
     first.unmount();
     // A brand-new app: fresh durable ref, so this one really does seed off the file.
     const reseeded = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
     mount({ editorStateRef: reseeded });
     await settle();
-    expect(reseeded.current.history.map((e) => [e.display, e.mode])).toEqual([["#remember this", "memory"]]);
+    expect(reseeded.current.history.map((e) => [e.display, e.mode])).toEqual([["#remember this", "normal"]]);
   });
 
   it("M2: CM56's once-only guard survives a remount (the dialog cycle must not re-arm it)", async () => {

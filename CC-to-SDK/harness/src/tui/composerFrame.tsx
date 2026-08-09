@@ -39,19 +39,19 @@ const LABEL_OFFSET = 2;                                  // the `offset: 2` of t
 /** L496237, verbatim — three full stops, not U+2026. */
 export const EDITOR_IN_FLIGHT_TEXT = "Save and close editor to continue...";
 
-/** The three border tokens this frame can wear. `promptBorder`/`bashBorder` are upstream's own two
- *  (L496228–496235: `{ bash: "bashBorder" }`, everything else `promptBorder`); `remember` is the ccx
- *  memory-mode addition recorded as CM65 — upstream 2.1.220 has no `#` composer mode at all. */
-export type ComposerBorderToken = "promptBorder" | "bashBorder" | "remember";
+/** The two border tokens this frame can wear — upstream's own (L496228–496235: `{ bash: "bashBorder" }`,
+ *  everything else `promptBorder`). A third, `remember`, painted the ccx memory mode (CM65) until Wave C
+ *  Task 14 removed that mode per the spec's owner-decision section; upstream 2.1.220 never had it, so the
+ *  arm went with the feature rather than being re-pointed at something else. */
+export type ComposerBorderToken = "promptBorder" | "bashBorder";
 
 export function borderTokenFor(mode: InputMode): ComposerBorderToken {
-  return mode === "bash" ? "bashBorder" : mode === "memory" ? "remember" : "promptBorder";
+  return mode === "bash" ? "bashBorder" : "promptBorder";
 }
 
 /** CM2 (`rui`, bundle L494733/L494745 via `RRn` L494720): the prompt glyph and how it is painted.
  *  `dimColor` is upstream's `isLoading` — the glyph dims for the whole time a turn runs, in BOTH modes.
- *  Bash is the one mode with its own glyph and its own colour; memory (ours) falls through to the
- *  pointer with no colour, because upstream's `rui` branches on `"bash"` alone.
+ *  Bash is the one mode with its own glyph and its own colour, which is why `rui` branches on `"bash"` alone.
  *  Returns the string plus its paint so a caller can assert the metadata without rendering. */
 export function promptGlyph(mode: InputMode, busy?: boolean): { text: string; color?: string; dim: boolean } {
   if (mode === "bash") return { text: "!" + NBSP, color: resolveThemeColor(themeTokens().bashBorder), dim: !!busy };

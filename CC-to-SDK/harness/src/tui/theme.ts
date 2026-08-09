@@ -16,8 +16,8 @@
 // (the resolver is idempotent on hex/plain names, so double application is safe).
 //
 // Fixed role mapping used by the consumers: syntax/inline code `suggestion` · literal strings `success` ·
-// numbers `warning` · comments and unknown code `inactive` · bash composer `bashBorder` · memory composer
-// `remember` · status default `success` · status auto/permission `permission` · warnings `warning` ·
+// numbers `warning` · comments and unknown code `inactive` · bash composer `bashBorder` · status default
+// `success` · status auto/permission `permission` · warnings `warning` ·
 // failures `error` · hierarchy `text`/`subtle`/`inactive` · pending tool + spinner `inactive`.
 //
 // ACCENT stays a live ESM binding (`export let`, mutated by setTheme) so its 24 importers keep reading the

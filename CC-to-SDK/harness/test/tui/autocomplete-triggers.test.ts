@@ -102,9 +102,12 @@ describe("editor triggers — the scan runs per edit AND per motion", () => {
     s = applyKey(s, "e", { ctrl: true }).state;               // Ctrl-E → back to the token end
     expect(s.command?.query).toBe("he");
   });
-  it("the command scan is prompt-mode only — a bash or memory line never opens it", () => {
+  // WAVE C TASK 14: the gate is `!` and only `!` now. `#` used to be a third mode here and the spec's
+  // owner-decision section removed it, so `#note the /pla` opens the catalog — which is what upstream does
+  // with the same line, its resolver knowing only `prompt | bash`.
+  it("the command scan is prompt-mode only — a bash line never opens it, a `#` line does", () => {
     expect(withCatalog("!ls /tm").command).toBeNull();
-    expect(withCatalog("#note the /pla").command).toBeNull();
+    expect(withCatalog("#note the /pla").command?.query).toBe("pla");
     expect(withCatalog("note the /pla").command?.query).toBe("pla");
   });
   it("…but the @ scan is not mode-gated", () => {

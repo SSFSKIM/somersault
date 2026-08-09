@@ -524,9 +524,12 @@ describe("Wave-1 keymap: clear input, newline, undo, stash", () => {
 });
 
 describe("inputMode", () => {
-  it("a leading ! = bash, # = memory, else normal", () => {
+  // WAVE C TASK 14: the union is TWO-valued now. `#` was ccx's own third mode and the spec's
+  // owner-decision section removed it, so a leading `#` is an ordinary prompt — which is what upstream's
+  // own composer resolver has always answered (it returns `prompt | bash` and nothing else).
+  it("a leading ! = bash, everything else — INCLUDING a leading # — is normal", () => {
     expect(inputMode(type(initialEditorState(), "!ls -a"))).toBe("bash");
-    expect(inputMode(type(initialEditorState(), "#remember this"))).toBe("memory");
+    expect(inputMode(type(initialEditorState(), "#remember this"))).toBe("normal");
     expect(inputMode(type(initialEditorState(), "hello"))).toBe("normal");
     expect(inputMode(initialEditorState())).toBe("normal");
   });

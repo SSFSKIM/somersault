@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { ComposerWithFooter } from "./helpers/composerFooter.js";
-import { ComposerFrame, PlaceholderCursor, promptGlyph, newlineHint, EDITOR_IN_FLIGHT_TEXT, NBSP, POINTER } from "../../src/tui/composerFrame.js";
+import { ComposerFrame, PlaceholderCursor, promptGlyph, borderTokenFor, newlineHint, EDITOR_IN_FLIGHT_TEXT, NBSP, POINTER } from "../../src/tui/composerFrame.js";
 import { setTheme, themeTokens, resolveThemeColor } from "../../src/tui/theme.js";
 
 // F5 Task 5 gave ChatComposer a real side effect on a chip: it writes the payload to the 0600 paste cache
@@ -110,13 +110,18 @@ describe("ComposerFrame label (borderText offset 2 → THREE lead dashes)", () =
 });
 
 describe("promptGlyph (CM2)", () => {
-  it("is `❯` + NBSP in normal and memory mode, `!` + NBSP coloured bashBorder in bash", () => {
+  // WAVE C TASK 14: the `memory` arm went with the mode (spec owner-decision), which leaves upstream's own
+  // two-valued split exactly as `rui` states it — bash gets the `!` glyph, everything else the pointer.
+  it("is `❯` + NBSP in normal mode, `!` + NBSP coloured bashBorder in bash", () => {
     setTheme("dark");
     expect(NBSP.charCodeAt(0)).toBe(0xa0);                            // the glyph's trailing char is NOT a space
     expect(POINTER.codePointAt(0)).toBe(0x276f);                      // U+276F, not the U+203A we shipped
     expect(promptGlyph("normal")).toEqual({ text: POINTER + NBSP, color: undefined, dim: false });
-    expect(promptGlyph("memory")).toEqual({ text: POINTER + NBSP, color: undefined, dim: false });
     expect(promptGlyph("bash")).toEqual({ text: "!" + NBSP, color: resolveThemeColor(themeTokens().bashBorder), dim: false });
+  });
+  it("the border token is upstream's two — a `#` line wears the ordinary promptBorder", () => {
+    expect(borderTokenFor("bash")).toBe("bashBorder");
+    expect(borderTokenFor("normal")).toBe("promptBorder");
   });
   it("dims in every mode while a turn runs", () => {
     expect(promptGlyph("normal", true).dim).toBe(true);

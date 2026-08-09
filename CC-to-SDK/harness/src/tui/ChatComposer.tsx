@@ -18,19 +18,16 @@ import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, 
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
 import { NotificationSlot } from "./NotificationSlot.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
-import { resolveThemeColor, themeTokens } from "./theme.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
 import { expandHintText, formatBindings } from "./keys/hints.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
 
-// F1 Task 2 role map: the bash-mode composer takes `bashBorder`, the memory-mode composer `remember`.
-// Read per render so a mid-session /theme change repaints the border and its hint on the next frame.
-// F5 Task 2 moved the BORDER's own read into composerFrame.tsx — same grammar, same per-render discipline,
-// one token wider (`promptBorder` is now a real colour instead of Ink's default). This stays for the two
-// mode-hint rows below the frame, which are the only other consumers left here.
-const role = (name: "bashBorder" | "remember") => resolveThemeColor(themeTokens()[name]);
+// F1 Task 2's role map STOOD HERE and is gone with its last consumer. It fed the two mode-hint rows below
+// the frame; Wave C Task 2 deleted those rows (the footer owns that space now) and Wave C Task 14 removed the
+// `#` memory mode whose `remember` token was the second half of it. The BORDER's own read moved to
+// composerFrame.tsx back at F5 Task 2 and is where the per-render /theme discipline now lives.
 
 const DEFAULT_COLUMNS = 80;
 /** The popup's height is a function of the terminal's, so an unthreaded `rows` needs a stand-in for the same
@@ -163,7 +160,7 @@ function seedHistory(project: string, env: NodeJS.ProcessEnv): HistNavEntry[] {
 const CTRL_L: KeyEvent = { kind: "key", name: "l", ctrl: true, alt: false, shift: false, super: false, raw: "\x0c" };
 /** …and the event a real Return produces. CM58's `historySearch:execute` re-enters the key path on THIS
  *  rather than calling `onSubmit` itself, for the same reason `chat:clearInput` re-enters on CTRL_L: the
- *  submit that matters is `applyKey`'s (chip expansion, the history append, the bash/memory prefix arms),
+ *  submit that matters is `applyKey`'s (chip expansion, the history append, the bash prefix arm),
  *  and a second copy of it in the search hook is the definition guaranteed to drift. */
 const ENTER: KeyEvent = { kind: "key", name: "enter", ctrl: false, alt: false, shift: false, super: false, raw: "\r" };
 
@@ -1023,7 +1020,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // W-C T12, annex §C5.4's `b9` (L495702): `_ === "prompt" && j4.length === 0 && as && !er` — prompt mode, an
   // empty buffer, a suggestion to show, and no turn running. The `as` term is the caller's (`suggestion`
   // non-null); this component owns the other three. Upstream's `"prompt"` is `normal` in this port's own
-  // three-valued vocabulary (`promptMode.ts`: bash | memory | normal, where upstream has only prompt | bash);
+  // vocabulary (`promptMode.ts`: bash | normal — the same two upstream has, `normal` being its `prompt`);
   // on an empty buffer it can be nothing else, so the term is transcription rather than a live gate. Computed
   // through `inputMode(state)` and not the `mode` const below only because that one is declared further down.
   const canShowSuggestion = isEmptyNow && !busy && inputMode(state) === "normal";
@@ -1091,10 +1088,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   //    annex §C1.6) — which Wave C Task 4 wired: the `clearVisible` effect below posts it, and ChatApp's
   //    rewind arm posts its own on `escape-again-to-rewind`. Neither is a persistent row any more.
   //
-  // A third row went with them and is NOT deleted work: `# memory — appends a note to CLAUDE.md`. Memory mode
-  // is a ccx extra with no upstream counterpart at 2.1.220 and the Wave C spec removes it outright (Task 14);
-  // there is no upstream footer state to migrate it into, so the `remember`-coloured frame is its only
-  // affordance in the meantime.
+  //  · HINT ROW 3 — `# memory — appends a note to CLAUDE.md`. It went with rows 1 and 2 above, and Wave C
+  //    Task 14 then removed the MODE it advertised (spec owner-decision): a ccx extra with no upstream
+  //    counterpart at 2.1.220 or 2.1.222, whose whole cost was a special case in every keymap, footer and
+  //    hint decision. There was never an upstream footer state to migrate it into, and now there is nothing
+  //    left to migrate — a `#` line is an ordinary prompt.
   //
   // `owns` is still read below, for the ownership half of the same honesty rule: it is what tells `ChatApp`
   // whether the footer may advertise a Chat-context chord.

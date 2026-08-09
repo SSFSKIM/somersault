@@ -27,7 +27,7 @@
 //     and every reader derives the mode back off the `!` prefix (`mP`, e.g. L489529/L489691). The task-6
 //     brief sketched a `mode` field; a second source of truth for the same bit is exactly how a recalled
 //     "!git status" ends up in prompt mode, so the prefix stays canonical and `displayForMode` /
-//     `modeOfDisplay` / `stripModePrefix` below are what task 7 composes with.
+//     `composerMode` / `stripModePrefix` below are what task 7 composes with.
 //  5. NO `cu_` WRITE SUPPRESSOR. Upstream skips the append when the immediately preceding entry has the
 //     same display/project/session and neither carries pastes (L317587–595). Ours writes the duplicate
 //     line; `readHistory`'s dedup hides it from every reader, so the only cost is file growth.
@@ -76,7 +76,7 @@ function envTruthy(v: string | undefined): boolean {
  *  module reaches `node:fs`, `node:crypto` and `node:os`, and `editorHistory.ts` needed one `startsWith("!")`
  *  test from here — which pulled that entire graph into the pure reducer's runtime closure. Re-exported so
  *  every existing `from "./promptHistory.js"` import keeps resolving; new callers should take the leaf. */
-export { composerMode, displayForMode, modeOfDisplay, stripModePrefix } from "./promptMode.js";
+export { composerMode, displayForMode, stripModePrefix } from "./promptMode.js";
 
 /** `cgr` + `uu_`. Silent on every failure: the caller is the submit path, and a read-only home must cost
  *  the user their history, not their prompt.

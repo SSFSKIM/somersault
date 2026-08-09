@@ -143,9 +143,10 @@ describe("<PermissionDialog>", () => {
 //     (`⏸ manual mode on`, `(shift+tab to cycle)`, `← for agents` — the last is what `⚙ N bg` became);
 //   · the `model` / `think` segments → they have NO upstream footer counterpart and left the always-on row
 //     with the bar (spec EP-C1, the owner-decision list). `/status` and `/model` still report both;
-//   · `ctx N%`, `⚠ auto-compact soon` and `usageWarn` → the SAME decision, but they come BACK as queued
-//     notifications (upstream's `token-warning`, annex §C1.6) in Wave C Task 14, which owns their removal
-//     suite. `ctxColor` died with the chip and its two cases go there with it — deliberately not re-pinned
+//   · `ctx N%`, `⚠ auto-compact soon` and `usageWarn` → the SAME decision, and Wave C Task 14 landed the
+//     other half: they are queued notifications now (upstream's `token-warning` at medium/18000000, plus a
+//     `usage-warning` entry for the plan-usage text), pinned by `test/unit/token-warning.test.ts` and the
+//     `useChat.test.tsx` block of the same name. `ctxColor` died with the chip — deliberately not re-pinned
 //     here against a component that no longer exists.
 
 // The SessionPicker and ModelPicker blocks that stood here retired with F6 T11: both pickers were rebuilt on
@@ -511,11 +512,10 @@ describe("ChatComposer", () => {
     // `bashBorder`, drawn by `<Footer>` as one of `Wci`'s four early-return states — so this renders the
     // composed pair and asserts the string upstream prints, not the invented
     // `! bash mode — runs locally in cwd (Enter to run)` row that used to sit under the frame.
-    //   THE `#` MEMORY HALF IS GONE WITH ITS ROW, and that is a scheduled removal, not a regression: memory
-    // mode is a ccx extra with no upstream counterpart at 2.1.220, the Wave C spec removes it outright, and
-    // Task 14 owns the removal (`src/tui/memory.ts` is on that task's delete list). There is no upstream
-    // footer state to migrate the row into, so until then the `remember`-coloured frame is its indicator —
-    // which `composer-frame.test.tsx` pins directly.
+    //   THE `#` MEMORY HALF IS GONE WITH ITS ROW, and Wave C Task 14 then removed the MODE: a ccx extra with
+    // no upstream counterpart at 2.1.220, deleted by the spec's owner-decision section along with
+    // `src/tui/memory.ts`, its border token and its `?`-grid cell. A `#` line is an ordinary prompt now, so
+    // there is no indicator to look for and nothing left to migrate.
     const bash = render(<ComposerWithFooter onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));
     bash.stdin.write("!");

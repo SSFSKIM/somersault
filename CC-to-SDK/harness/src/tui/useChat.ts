@@ -41,7 +41,8 @@ import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isE
 import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
-import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
+import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
+import { tokenWarning, TOKEN_WARNING_KEY, TOKEN_WARNING_TIMEOUT_MS } from "./tokenWarning.js";
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
@@ -50,12 +51,10 @@ import type { ModelInfo } from "./ModelPicker.js";
 import { replayDocument } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
 import { copyToClipboard as realCopyToClipboard } from "./copy.js";
-import { appendMemory as realAppendMemory } from "./memory.js";
 import { openInEditor } from "./externalEditor.js";
 import { STARTER_KEYBINDINGS, userBindingsPath } from "./keys/userBindings.js";
 import { useBindingLookup } from "./keys/KeymapProvider.js";
 import { backgroundHintText, expandHintText } from "./keys/hints.js";
-import { shortCwd } from "./banner.js";
 import { NARROWED_SCOPE, RESUME_CANCELLED, type ResumeScope } from "./sessionPickerModel.js";
 import { hasWorktrees as realHasWorktrees } from "./worktrees.js";
 import { clearViewport } from "./clearViewport.js";
@@ -70,8 +69,10 @@ import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRu
 import type { PastedMap } from "./editor.js";
 
 // F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
-// echo `bashBorder`. Read per emission so a mid-session /theme change colors the next line correctly.
-const role = (name: "error" | "bashBorder") => resolveThemeColor(themeTokens()[name]);
+// echo `bashBorder`, and (W-C T14) the two queue warnings: the context escalation is `error`, the plan-usage
+// one `warning` — running out of context IS a failure of the turn, running low on plan quota is not.
+// Read per emission so a mid-session /theme change colors the next line correctly.
+const role = (name: "error" | "bashBorder" | "warning") => resolveThemeColor(themeTokens()[name]);
 const nonEmptyString = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 /** Wave T Task 13: silence, in a live turn, after which the indicator says so (see the watchdog below). */
 const STALL_MS = 10_000;
@@ -94,7 +95,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean;
+  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean;
   /** W-C T12 (EP-C5): the follow-up suggestion's four-state slice (`suggester.ts`). It lives HERE and not in
    *  the composer for two reasons that are the same reason: the composer is unmounted behind every dialog,
    *  and Ctrl-C clears its buffer — a suggestion owned there would die of both, where upstream's survives
@@ -145,7 +146,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
     /** Wave C Task 1/2: the notification queue. Injected so a test can drive its timers synthetically. */
     notifications?: NotificationStore;
     /** Wave C Task 7: the duration row's verb. Upstream picks it uniformly at random (`SvH`), which would
@@ -334,7 +335,12 @@ export function useChat(
   const aiTitleFetched = useRef(false);
   const [turnStartedAt, setTurnStartedAt] = useState(0);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
-  const [usageWarn, setUsageWarn] = useState<string | undefined>(undefined);
+  // WAVE C TASK 14 (spec D-C3): the plan-usage warning is a QUEUE entry now, not a status-bar chip — the bar
+  // it lived on retired with Task 2. `usageFormat.usageWarning()` still mints the text; only the consumer
+  // moved. A REF, not state: nothing renders it any more, and the only question at each refresh is whether
+  // the text CHANGED — re-posting an unchanged warning every turn would restart its timer forever and pin
+  // the slot against every other hint that wants it.
+  const usageWarnRef = useRef<string | undefined>(undefined);
   // Seeded from the launch config, NOT left undefined until the first turn ends: the Tab ladder's `auto`
   // rung consults this to decide whether the live model supports auto, and an unknown model there used to
   // resolve to the DEFAULT and silently downgrade a `--model opus` session to sonnet before the user had
@@ -560,7 +566,6 @@ export function useChat(
     // prompt cannot sit in memory for the rest of the session waiting to be truncated at format time.
     suggestionTailRef.current = [...suggestionTailRef.current, { role, text: trimmed.slice(0, TAIL_MESSAGE_CHARS) }].slice(-12);
   }
-  const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
   const writeFile = deps.writeFile ?? ((p: string, t: string) => realWriteFileSync(p, t));
   // null means "nothing there, safe to create". ENOENT is the ONLY error that earns it: a target we
@@ -1169,17 +1174,47 @@ export function useChat(
       // W-C T10: the same reading is the status line's `context_window`, and the poke is upstream's
       // `tokenUsage` delta by another name — this is the moment the number ccx reports actually moved.
       if (u) { statusCtxRef.current = { totalTokens: u.totalTokens, maxTokens: u.maxTokens }; pokeStatusLine("context"); }
+      postTokenWarning(u?.totalTokens, u?.maxTokens);
     } catch { /* best-effort */ }
   }
-  // Fire-and-forget at turn-end only — never poll (spec's no-polling rule). Drives the status-bar warning;
+  /** WAVE C TASK 14 (spec D-C3): the context-pressure ladder, posted HERE because this is the one place the
+   *  number is re-measured — turn end, and the `/compact` arm which awaits this same function. `ctx N%` and
+   *  `⚠ auto-compact soon` used to be always-on chips on the bar Task 2 retired; upstream carries the same
+   *  fact as one `token-warning` queue entry and nothing else.
+   *
+   *  A re-post FOLDS on the key (`notifications.ts`: same-key replace, timer restarted), so a session that
+   *  keeps filling up updates the row in place instead of stacking rows. The REMOVE arm is the half upstream
+   *  does not need and this port does: its entry is re-derived every render off live token counts, ours is a
+   *  five-hour queue entry, so a `/compact` that empties the context would otherwise leave `Context low` on
+   *  screen for the rest of the afternoon describing a conversation that no longer exists. */
+  function postTokenWarning(used: number | undefined, window: number | undefined) {
+    const w = tokenWarning(used, window);
+    if (!w) { notifications.remove(TOKEN_WARNING_KEY); return; }
+    notifications.add({
+      key: TOKEN_WARNING_KEY, text: w.text, priority: "medium", timeoutMs: TOKEN_WARNING_TIMEOUT_MS,
+      // No colour on the warn rung ON PURPOSE: `$Rr` renders a colourless entry dim, which is the paint
+      // upstream's own auto-compact-enabled arm uses. Only the escalation earns `error`.
+      ...(w.error ? { color: role("error") } : {}),
+    });
+  }
+  // Fire-and-forget at turn-end only — never poll (spec's no-polling rule). Drives the plan-usage warning;
   // /status and /usage fetch usage() directly themselves and don't route through this.
   async function refreshUsage() {
     try {
       const u = await session.usage();
-      if (!disposed.current) { setUsageWarn(usageWarning(u)); statusUsageRef.current = u as StatusLineUsage; pokeStatusLine("usage"); }   // W-C T10: `cost` + `current_usage`
+      if (!disposed.current) { postUsageWarning(usageWarning(u)); statusUsageRef.current = u as StatusLineUsage; pokeStatusLine("usage"); }   // W-C T10: `cost` + `current_usage`
       return u;
     }
     catch { return undefined; }
+  }
+  /** WAVE C TASK 14 (spec D-C3): `usageWarning()`'s text, on the queue instead of on the retired bar. ONLY ON
+   *  CHANGE — see `usageWarnRef`. `undefined` means the warning stopped applying (a rolled-over window), and
+   *  that has to take the entry down rather than leave a stale percentage sitting in the slot. */
+  function postUsageWarning(text: string | undefined) {
+    if (text === usageWarnRef.current) return;
+    usageWarnRef.current = text;
+    if (text === undefined) { notifications.remove(USAGE_WARNING_KEY); return; }
+    notifications.add({ key: USAGE_WARNING_KEY, text, color: role("warning"), priority: "medium" });
   }
 
   function append(ls: RenderLine[]) { if (ls.length) appendNewLocal({ kind: "visual", lines: ls }); }
@@ -1842,8 +1877,8 @@ export function useChat(
       pendingPermission: pendingRef.current !== null,
       mode: modeRef.current,
       // `rate_limit` (`Vie().status !== "allowed"`) has NO ccx equivalent to wire: the harness surfaces plan
-      // usage as a WARNING (`usageWarn`), which is not the same fact as "this account may not spend right
-      // now". Left unwired rather than approximated with a warning that would suppress suggestions while
+      // usage as a WARNING (the `usage-warning` queue entry), which is not the same fact as "this account may
+      // not spend right now". Left unwired rather than approximated with a warning that would suppress while
       // spending is in fact still allowed.
     });
     if (reason !== null) return;
@@ -2099,17 +2134,16 @@ export function useChat(
     try { const r = await runBash(command, cwd); if (!disposed.current) append(formatBashOutput(r)); }
     catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
-  // # memory mode — append the note to the project CLAUDE.md (CC's `#` adds to a memory file).
-  function memoryMode(note: string) {
-    if (disposed.current || !note) return;
-    try { const path = appendMemory(note, cwd); append([{ text: `✓ noted in ${shortCwd(path)}`, dim: true }]); }
-    catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
-  }
-  /** Route one prompt: ! bash · # memory · /local-command · /catalog-or-prompt turn. Returns true iff it
-   *  started a turn (whose finally re-drains the queue); false for non-turn ops (drainNext must re-drain). */
+  /** Route one prompt: ! bash · /local-command · /catalog-or-prompt turn. Returns true iff it started a turn
+   *  (whose finally re-drains the queue); false for non-turn ops (drainNext must re-drain).
+   *
+   *  WAVE C TASK 14: a `#` arm stood beside the `!` one and appended the rest of the line to the project
+   *  CLAUDE.md (`memoryMode`, `src/tui/memory.ts`). Both are gone — the spec's owner-decision section removed
+   *  the mode, upstream's resolver knows only `prompt | bash`, and a `#` line is now an ordinary prompt that
+   *  reaches the model verbatim. The `## Memories` sections users already accumulated stay on disk untouched;
+   *  only the entry affordance went. */
   function dispatch(prompt: string): boolean {
     if (prompt.startsWith("!")) { void runBashMode(prompt.slice(1).trim()); return false; }
-    if (prompt.startsWith("#")) { void memoryMode(prompt.slice(1).trim()); return false; }
     const cmd = parseCommand(prompt);
     if (cmd) {
       if (LOCAL_NAMES.has(cmd.name)) { void handleCommand(cmd); return false; }   // local → engine switch
@@ -2122,7 +2156,9 @@ export function useChat(
     runTurn(prompt); return true;
   }
   // While a turn runs, regular prompts + catalog commands QUEUE (drained FIFO on turn end); local commands and
-  // !/# run immediately (control-channel / local — safe mid-turn). Type-ahead while Claude works (CC parity).
+  // `!` run immediately (control-channel / local — safe mid-turn). Type-ahead while Claude works (CC parity).
+  // Wave C Task 14 took `#` out of that exemption with the memory mode: a `#` line is a model turn now, so it
+  // queues like any other prompt instead of jumping the running turn.
   function submit(prompt: string) {
     if (disposed.current || !prompt.trim()) return;
     setSubmitCount((n) => n + 1);
@@ -2131,15 +2167,18 @@ export function useChat(
     // at the SUBMIT, and a `/help` or a queued prompt is still the user answering the composer.
     setPromptSuggestion(EMPTY_SUGGESTION);
     if (!busy) { dispatch(prompt); return; }
-    if (prompt.startsWith("!") || prompt.startsWith("#")) { dispatch(prompt); return; }
+    if (prompt.startsWith("!")) { dispatch(prompt); return; }
     const cmd = parseCommand(prompt);
     if (cmd && LOCAL_NAMES.has(cmd.name)) { dispatch(prompt); return; }
     setQueue((q) => [...q, makeQueueEntry(prompt)]);                            // turn while busy → enqueue
   }
   /** CM51. The mode is DERIVED from the text's own prefix, the one derivation `composerMode` owns for the
    *  whole port — so a queued `!git status` re-enters the composer in bash mode when the drain hands it back
-   *  (queue.ts's divergence 1). Nothing reaching this line today can be bash (`submit` dispatches `!`/`#`
-   *  immediately, above), which is why the mapping is written out rather than hardcoded to `"prompt"`. */
+   *  (queue.ts's divergence 1). Nothing reaching this line today can be bash (`submit` dispatches `!`
+   *  immediately, above), which is why the mapping is written out rather than hardcoded to `"prompt"`.
+   *  The `=== "bash"` ternary IS the rename Wave C Task 14 folded `modeOfDisplay` down to: the queue entry
+   *  carries upstream's `prompt | bash` wire spelling, the reducer carries `normal | bash`, and this is the
+   *  one site where the two vocabularies meet. */
   function makeQueueEntry(prompt: string): QueueEntry {
     return { value: prompt, mode: composerMode(prompt) === "bash" ? "bash" : "prompt", priority: "now", origin: "user" };
   }
@@ -2320,5 +2359,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

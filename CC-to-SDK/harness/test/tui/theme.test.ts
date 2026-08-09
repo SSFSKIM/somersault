@@ -83,7 +83,8 @@ describe("theme.ts", () => {
     // the sixteen bare-colour sites in these files are indirected and would escape an attribute-anchored
     // pattern: the mode chip's `modeColor()` RETURNED "red"|"cyan"|"yellow"|"green" (it lived in
     // ChatStatusBar.tsx until Wave C Task 2 retired that file; `modeTable.ts` owns it now), and
-    // ChatComposer has `const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined`.
+    // ChatComposer had `const border = mode === "bash" ? "magenta" : mode === "memory" ? "blue" : undefined`
+    // (the `memory` arm went with the mode itself in Wave C Task 14; the border read lives in composerFrame).
     // Those are the permission-mode chip and the composer border — two of the roles §2.2 names — so an
     // attribute-anchored guard would go green with the requirement unmet. Safe once migration is complete.
     for (const file of ["render.ts", "markdown.ts", "Footer.tsx", "modeTable.ts", "ChatComposer.tsx"]) {
