@@ -86,7 +86,7 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -289,6 +289,17 @@ export function useChat(
   const [mode, setMode] = useState(opts.initialMode ?? "default");
   const modeRef = useRef(mode); modeRef.current = mode;    // read inside the event effect without re-subscribing on every mode change
   const [busy, setBusy] = useState(false);
+  // WAVE C TASK 8 (EP-C4a) — the two title rungs the terminal title reads (ChatApp owns the writer; these
+  // are the only state it needs). They are SEPARATE because they have different lifetimes and different
+  // owners: `aiTitle` is fetched from disk exactly once, `renameTitle` is published by a user action and
+  // outranks it forever after (see terminalTitle.ts's recorded skip on `terminalTitleFromRename`).
+  const [aiTitle, setAiTitle] = useState<string | undefined>(undefined);
+  const [renameTitle, setRenameTitle] = useState<string | undefined>(undefined);
+  // Probe (d): the engine writes an `ai-title` row into the session JSONL DURING the first turn, and the SDK
+  // surfaces it as `getSessionInfo().customTitle ?? .summary`. It is a DISK READ, not a wire event, so it has
+  // to be fetched — and fetched once: the engine writes one title per session and never refreshes it as the
+  // topic drifts, so a per-turn re-read would be a file open per turn for a value that cannot have changed.
+  const aiTitleFetched = useRef(false);
   const [turnStartedAt, setTurnStartedAt] = useState(0);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
   const [usageWarn, setUsageWarn] = useState<string | undefined>(undefined);
@@ -441,6 +452,19 @@ export function useChat(
   const renameSessionFn = deps.renameSession ?? ((id: string, t: string, dir?: string) => realRenameSession(id, t, { cwd: dir ?? opts.cwd }));
   const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
   const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
+  /** WAVE C TASK 8 — the once-per-session read of the engine's ai-title, called from the first `turn:end`.
+   *  Silent on failure by design: an unreadable session file must cost the terminal title nothing (and must
+   *  certainly not become a transcript notice), so the tab simply keeps whatever it already said. The
+   *  `fetched` latch is set BEFORE the await so two turn ends racing on the same tick cannot both read. */
+  const adoptAiTitle = (): void => {
+    const id = session.sessionId;
+    if (aiTitleFetched.current || !id) return;
+    aiTitleFetched.current = true;
+    void getSessionInfoFn(id).then(
+      (info) => { if (disposed.current) return; const t = (info as any)?.customTitle ?? (info as any)?.summary; if (typeof t === "string" && t.trim()) setAiTitle(t.trim()); },
+      () => {},
+    );
+  };
   const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
@@ -818,6 +842,11 @@ export function useChat(
         // Narrow (it needs a submit during the pass), harmless (the `finally` then no-ops on an already-clear
         // state, and the `✦ compacted N → M` row still lands), and not worth a second flag to prevent.
         setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
+        // W-C T8: and the one read of the engine's ai-title. Here rather than at `turn:start` because the row
+        // it reads is written mid-turn (probe (d) saw it land at row 6 of 20, before the first assistant
+        // frame) — a fetch at start would race the engine's own write. Latched, so this is a no-op from the
+        // second turn on.
+        adoptAiTitle();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
@@ -1118,6 +1147,10 @@ export function useChat(
           if (!id) { notice("no session yet — send a first prompt"); break; }
           if (!cmd.args) { const i = await getSessionInfoFn(id).catch(() => undefined); notice(`title: ${(i as any)?.customTitle ?? "(auto)"} — /rename <new title> to change`); break; }
           await renameSessionFn(id, cmd.args);
+          // W-C T8: the top rung of the terminal-title ladder, published only AFTER the write succeeded — a
+          // rename that threw must leave the tab saying what the session is still called. Unconditional over
+          // the ai-title (the `terminalTitleFromRename` setting is a recorded skip).
+          setRenameTitle(cmd.args);
           notice(`✓ renamed to "${cmd.args}"`);
           break;
         }
@@ -1290,7 +1323,10 @@ export function useChat(
   // directory (finding 2 again) — the pane and the rename field must not act on a different project than
   // the one the highlighted row names.
   const previewSession = (id: string, dir?: string) => getSessionMessages(id, dir).catch(() => [] as any[]);
-  const renamePickedSession = (id: string, title: string, dir?: string) => renameSessionFn(id, title, dir);
+  // W-C T8 rides here too, and it is `id`-gated for the reason the picker exists: this verb renames ANY row
+  // in the list, and renaming some other project's session must not retitle this terminal.
+  const renamePickedSession = (id: string, title: string, dir?: string) =>
+    renameSessionFn(id, title, dir).then(() => { if (id === session.sessionId) setRenameTitle(title); });
 
   async function openModelPicker() {
     try {
@@ -1898,5 +1934,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

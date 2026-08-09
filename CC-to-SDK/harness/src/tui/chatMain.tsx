@@ -15,6 +15,7 @@ import { refreshExampleFiles } from "./placeholder.js";
 import { createCursorReports, probeReflow } from "./reflowOracle.js";
 import { createResizeRepaint, frameWriteCorrection, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
 import { setTheme } from "./theme.js";
+import { createTerminalTitle } from "./terminalTitle.js";
 
 export interface ChatClientOpts {
   socketPath: string;
@@ -31,6 +32,9 @@ export interface ChatClientOpts {
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
+  /** WAVE C TASK 8 (EP-C4a) — `--name`, so the terminal title can say what this session is before the engine
+   *  has generated an ai-title for it. Only the foreground launch has one; `ccx attach` does not. */
+  name?: string;
 }
 
 // Ink owns a stable stdout identity from initial render. On resume it clears based on stale terminal-relative
@@ -388,6 +392,13 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument.
   output.setFrameCorrector((info) => frameWriteCorrection(info, resize.verdict()));
   process.stdout.on("resize", resize.onResize);
+  // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
+  // reasons: it is a process-level concern with a teardown obligation (the `finally` below clears the title
+  // before the shell gets the terminal back), and its writes must bypass Ink entirely — a title escape that
+  // went through `output.stdout` would be recorded as frame content and the resize corrector would reason
+  // about it. THIS IS ALSO THE CONTAINMENT: only the REPL builds one, so a daemon/HOST session — which never
+  // calls `runChatClient` — cannot retitle a terminal it does not own.
+  const title = createTerminalTitle({ write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); } });
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
@@ -395,7 +406,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
         initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
         hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output}
-        initialTodosOpen={prefs.showExpandedTodos ?? true} />
+        initialTodosOpen={prefs.showExpandedTodos ?? true}
+        {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
     </UserKeymap>,
     { exitOnCtrlC: false, stdout: output.stdout },
   );
@@ -403,6 +415,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   try { await app.waitUntilExit(); }
   finally {
     process.stdout.off("resize", resize.onResize);
+    title.clear();                       // `a0u` (L148428) — hand the terminal back with an empty title
     // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our spaces.
     if (process.stdout.isTTY && output.parkedColumn() > 0) process.stdout.write("\x1b[2K\x1b[G");
   }

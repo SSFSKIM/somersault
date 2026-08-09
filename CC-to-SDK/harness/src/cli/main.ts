@@ -378,6 +378,10 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
     await deps.runChatClient({
       socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
       ...(inv.prompt ? { initialPrompt: inv.prompt } : {}),
+      // W-C T8 (EP-C4a): the terminal-title ladder's `--name` rung. `inv.name`, NOT the `name` local above —
+      // that one falls back to the minted short id so the fleet roster always has a handle, and putting a
+      // random `k3x9` in the tab would be worse than the literal `ccx` the writer falls through to.
+      ...(inv.name ? { name: inv.name } : {}),
       // The welcome banner travels as the identified LOCAL entry it is — the same envelope every other
       // notice uses — so it can never masquerade as a persisted SDK row (F1 Task 4).
       // `{kind:"continue"}` is handed to the REPL as an INTENT, not an id: useChat's mount effect routes it

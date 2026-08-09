@@ -77,6 +77,7 @@ import { BypassConsent } from "./bypassConsent.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
+import { resolveTerminalTitle, type TerminalTitle } from "./terminalTitle.js";
 import type { RenderItem } from "./toolRenderer.js";
 import type { RenderLine } from "./render.js";
 
@@ -131,7 +132,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize = DEFAULT_ON_RESIZE, doublePressDeps }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize = DEFAULT_ON_RESIZE, doublePressDeps, name, terminalTitle }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -178,6 +179,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  the arms are the one piece of this UI whose whole contract is a DURATION, and a test that waited out a
    *  real 800 ms window would be timing-dependent in exactly the place fidelity is being asserted. */
   doublePressDeps?: DoublePressDeps;
+  /** WAVE C TASK 8 (EP-C4a) — the launch identity (`--name`), the third rung of the terminal-title ladder.
+   *  Absent for `ccx attach` (that client joins a host whose name it never saw) and for a bare `ccx`, both of
+   *  which fall through to the literal `ccx`. */
+  name?: string;
+  /** WAVE C TASK 8 — the OSC 0 writer, created by `chatMain` (a process-level concern, alongside the resize
+   *  listener) and merely DRIVEN here. Absent in component tests, and absent by construction in every
+   *  non-REPL surface: a daemon/HOST session never renders this tree, so it can never emit a title. */
+  terminalTitle?: TerminalTitle;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
   // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
@@ -207,6 +216,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     const sample = () => setSize((prev) => nextSize(prev, readSizeRef.current()));
     const off = onResize(sample); sample(); return off;
   }, [onResize]);
+  // WAVE C TASK 8 (EP-C4a) — THE TERMINAL TITLE'S MOUNT SITE. Two effects, because the title text and the
+  // busy prefix change on completely different cadences and upstream re-emits on either (`CVe`'s deps are
+  // the composed string). The writer dedupes, so the first pass here is the launch emission (`✳ ccx`, or
+  // `✳ <--name>`) and every later pass is a no-op until something actually moves.
+  //   The LADDER is resolved here rather than in `useChat` because `name` is a launch fact the hook never
+  // sees, and it belongs beside the writer it feeds.
+  const titleText = resolveTerminalTitle({ renameTitle: state.renameTitle, aiTitle: state.aiTitle, name });
+  useEffect(() => { terminalTitle?.setTitle(titleText); }, [terminalTitle, titleText]);
+  useEffect(() => { terminalTitle?.setBusy(state.busy); }, [terminalTitle, state.busy]);
   // BOTH STAY FUNCTION-VALUED. `ChatComposer` calls `columns()` per render on purpose (ChatComposer.tsx:252):
   // a plain number would be a prop identity that only changes when the parent re-renders for another reason.
   const terminalColumns = () => size.columns;
