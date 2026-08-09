@@ -693,3 +693,18 @@ DISK in its banned-chord sweep. Probe 102's own v1 bug recorded: an exhausted in
 the transport write side — setModel "failing" identically is what proved it was the probe, not the
 setter. Reviewer's meta-note worth keeping: where plan and annex disagreed, the annex was right
 every time.
+
+## 2026-08-09 — Wave C Task 1 complete (18617c4acf + 2772c33575, re-review approved)
+
+The notification queue + slot. Implementer clean first pass (21+6 tests, six sabotage runs); review
+went past the annex to the shipped 2.1.226 binary and caught two Important canon divergences the
+annex was silent on — invalidates must clear a matching CURRENT (not just queue entries), and a
+fold into current RESTARTS the timer (the port had pinned the opposite WITH a test). Both fixed with
+inverted-and-hardened tests (the fold fixture drops timeoutMs so restarting off the wrong entry
+still fails); head requeue, immediate-first branch order, pinned no-op dedup, silent no-op remove
+all aligned to upstream; replace-and-restart on same-key re-add kept as recorded divergence 4
+(upstream does it at the producer — remove-then-add, L496126-134). Re-review sabotaged all eight
+fixes individually (each kills exactly one test) plus a 400-op mixed sweep for timer/entry leaks.
+Two unpinned lines noted, neither load-bearing (overflowX unobservable via lastFrame; stopTimer
+defensive). Annex lesson: §C1.6's "drops matching entries" was ambiguous about WHICH collection —
+the reviewer resolving it against the shipped binary is the round's yield.
