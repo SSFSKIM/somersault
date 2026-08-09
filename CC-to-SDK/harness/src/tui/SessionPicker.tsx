@@ -64,10 +64,13 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
    *  caller (useChat) so the picker never waits on a child process to open. */
   hasWorktree?: boolean;
   /** The preview fetch (`getSessionMessages`). Absent → Space is inert, which is what an unwired caller
-   *  should get rather than a pane that can never fill. */
-  loadMessages?: (id: string) => Promise<unknown[]>;
-  /** `renameSession`. Absent → Ctrl-R is inert, same reasoning. */
-  renameSession?: (id: string, title: string) => Promise<void>;
+   *  should get rather than a pane that can never fill. `dir` is the HIGHLIGHTED ROW's own directory: once
+   *  Ctrl+A widens the list past this project, reading through the caller's launch cwd previews an empty
+   *  pane for every foreign row (external review, finding 2). */
+  loadMessages?: (id: string, dir?: string) => Promise<unknown[]>;
+  /** `renameSession`. Absent → Ctrl-R is inert, same reasoning; `dir` as above — a widened row must be
+   *  renamed in the project that holds it, not in the one the REPL was launched from. */
+  renameSession?: (id: string, title: string, dir?: string) => Promise<void>;
   /** Upstream's `isLoading` — the dim `· Refreshing…` clause on the header. */
   refreshing?: boolean;
   rows?: number; columns?: number;
@@ -121,7 +124,7 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     const id = target.sessionId, token = ++previewToken.current;
     setPreview({ lines: null, count: 0 });
     setStage("preview");
-    void loadMessages(id).then((msgs) => {
+    void loadMessages(id, target.cwd).then((msgs) => {
       if (!mounted.current || previewToken.current !== token) return;
       // ONE PREDICATE (sessionPickerModel.ts): the `N messages` line counts exactly the rows the pane draws,
       // windowing aside. `msgs.length` counted tool traffic the pane had already dropped (qa4-07 ii).
@@ -149,7 +152,7 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     const target = liveFocused(), title = renameTextRef.current.trim();
     if (!target || !renameSession || !title) { backToList(); return; }
     setRenames((m) => ({ ...m, [target.sessionId]: title }));
-    void renameSession(target.sessionId, title).catch(() => {});
+    void renameSession(target.sessionId, title, target.cwd).catch(() => {});
     backToList();
   };
 

@@ -318,6 +318,40 @@ describe("useChat", () => {
     expect(calls).toBe(2);                    // initial makeSession() + resumeInto's makeSession(id)
   });
 
+  // EXTERNAL REVIEW, FINDING 2. Ctrl+A widened the LIST and nothing else: preview, resume and rename all
+  // read through `opts.cwd`, so a row from another project previewed empty, refused to resume with "no
+  // history found", and renamed under the wrong project. Each verb takes the ROW's own directory now
+  // (`cwd` on `SDKSessionInfo`; there is no `projectPath` field on it — verified against sdk.d.ts).
+  it("previews, resumes and renames a foreign-project row through THAT row's directory", async () => {
+    const reads: [string, string | undefined][] = [];
+    const renames: [string, string, string | undefined][] = [];
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+    const foreign = { sessionId: "old1234567890", summary: "prior", lastModified: 1, cwd: "/elsewhere" };
+    const deps = {
+      hasWorktrees: async () => false, listSessions: async () => [foreign],
+      getSessionMessages: async (id: string, dir?: string) => { reads.push([id, dir]); return msgs; },
+      renameSession: async (id: string, t: string, dir?: string) => { renames.push([id, t, dir]); },
+    };
+    const api: { run?: (s: string) => void; pick?: (s: any) => void; preview?: (id: string, dir?: string) => Promise<any[]>; rename?: (id: string, t: string, dir?: string) => Promise<void> } = {};
+    function H() {
+      const c = useChat(() => fakeRemote(), { cwd: "/repo" }, deps);
+      api.run = c.submit; api.pick = (c as any).pickSession;
+      api.preview = (c as any).previewSession; api.rename = (c as any).renamePickedSession;
+      return <Text>{c.state.picker.open ? "PICKER" : "NOPICK"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    await api.preview!(foreign.sessionId, foreign.cwd);
+    expect(reads).toEqual([["old1234567890", "/elsewhere"]]);
+    await api.rename!(foreign.sessionId, "over there", foreign.cwd);
+    expect(renames).toEqual([["old1234567890", "over there", "/elsewhere"]]);
+    api.run!("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER"));
+    api.pick!(foreign);
+    await waitFor(() => flat(lastFrame).includes("❯ prior prompt"));   // it RESUMED — the transcript is on screen
+    expect(reads.at(-1)).toEqual(["old1234567890", "/elsewhere"]);     // …read through the row's project, not /repo
+  });
+
   // Wave S T10 (t10 review, finding 1). The picker's SCOPE has to become `ListSessionsOpts`, and the mapping
   // is the whole feature: `allProjects` DROPS the cwd key (it must be absent, not undefined — `toEqual` treats
   // an undefined-valued key as absent, so the key set is asserted separately) and `allWorktrees` lands on

@@ -475,6 +475,13 @@ describe("main — run: foreground (Task 7)", () => {
     expect(value).toBe(1);
     expect(err.join("\n")).toContain("Session k3f9 is still running — attach to it instead: ccx attach k3f9");
   });
+  it("names the project a foreign roster id belongs to instead of resuming nothing (external review, finding 3)", async () => {
+    const { err, value } = await captureLog(() => main(["--resume", "k3f9"], deps({
+      isTTY: () => true, resolveResume: async () => ({ kind: "foreign", short: "k3f9", path: "/elsewhere" }),
+    })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("Session k3f9 belongs to another project: /elsewhere — resume it from there");
+  });
   it("reports an ambiguous id by its own message, not as 'no conversation found' (Task 9)", async () => {
     const { err, value } = await captureLog(() => main(["--resume", "0d7a"], deps({
       isTTY: () => true, resolveResume: async () => { throw new Error('ambiguous session id "0d7a" — matches: a, b'); },

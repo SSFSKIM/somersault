@@ -201,6 +201,10 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
         if (r.kind === "unknown") return fail(`No conversation found with session ID: ${r.arg}`, 1);
         if (r.kind === "pending") return fail(`Session ${r.short} has not started a conversation yet — nothing to resume`, 1);
         if (r.kind === "live") return fail(`Session ${r.short} is still running — attach to it instead: ccx attach ${r.short}`, 1);
+        // The fleet row exists — `ccx agents` lists it — but its transcript is under another project, and the
+        // resumed REPL reads only this one. Naming the directory is the whole point of the outcome: it turns
+        // "that id is wrong" into "run it over there" (external review, finding 3).
+        if (r.kind === "foreign") return fail(`Session ${r.short} belongs to another project: ${r.path} — resume it from there`, 1);
         inv.config.resume = r.id;
       }
       // Wave-T T15 (qa3-14): bypass permissions is the one mode that stops asking before it acts, and until

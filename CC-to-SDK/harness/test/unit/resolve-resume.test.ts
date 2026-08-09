@@ -9,9 +9,12 @@ const CWD = "/repo";
 const row = (o: Partial<RosterRow> & { short: string }): RosterRow =>
   ({ pid: 1, cwd: CWD, kind: "interactive", name: o.short, state: "done", startedAt: 0, ...o });
 
-/** Fakes for the two readers the resolver consults. `resolveTarget` is SYNCHRONOUS and THROWS on a miss
- *  (lifecycle.ts:23) — the fake must miss the same way, or the resolver's catch is never exercised. */
-function deps(o: { sessions?: { sessionId: string }[]; roster?: RosterRow; ambiguous?: boolean; seen?: { cwd?: string; opts?: unknown } }): ResolveResumeDeps {
+/** Fakes for the three readers the resolver consults. `resolveTarget` is SYNCHRONOUS and THROWS on a miss
+ *  (lifecycle.ts:23) — the fake must miss the same way, or the resolver's catch is never exercised.
+ *  `fleet` is the WHOLE roster (listRoster), which the id branches cross-check for liveness; `roster` is
+ *  the single row `resolveTarget` resolves a short id to, and joins the fleet listing automatically so a
+ *  test never has to state the same row twice. */
+function deps(o: { sessions?: { sessionId: string }[]; roster?: RosterRow; fleet?: RosterRow[]; ambiguous?: boolean; seen?: { cwd?: string; opts?: unknown } }): ResolveResumeDeps {
   return {
     listSessions: async (opts?: any) => { if (o.seen) o.seen.opts = opts; return (o.sessions ?? []) as any; },
     resolveTarget: (target: string) => {
@@ -19,6 +22,7 @@ function deps(o: { sessions?: { sessionId: string }[]; roster?: RosterRow; ambig
       if (o.roster?.short === target) return o.roster;
       throw new Error(`no session matches ${JSON.stringify(target)}`);
     },
+    listRoster: () => [...(o.fleet ?? []), ...(o.roster ? [o.roster] : [])],
   };
 }
 
@@ -34,7 +38,8 @@ describe("resolveResumeArg (W-S6)", () => {
   });
 
   it("accepts the fleet roster short id the detachable banner prints (W-S6)", async () => {
-    expect(await resolveResumeArg("k3f9", CWD, deps({ roster: row({ short: "k3f9", sessionId: FULL }) })))
+    // The row's session must ALSO be one this directory holds — see the foreign-roster test below.
+    expect(await resolveResumeArg("k3f9", CWD, deps({ sessions: [{ sessionId: FULL }], roster: row({ short: "k3f9", sessionId: FULL }) })))
       .toEqual({ kind: "session", id: FULL });
   });
 
@@ -79,5 +84,51 @@ describe("resolveResumeArg (W-S6)", () => {
 
   it("rethrows roster AMBIGUITY instead of reporting a false 'no conversation found'", async () => {
     await expect(resolveResumeArg("w1", CWD, deps({ ambiguous: true }))).rejects.toThrow(/ambiguous target/i);
+  });
+
+  // ── External review, finding 1 ──────────────────────────────────────────────────────────────────
+  // Liveness was checked in the ROSTER branch only, so the very ids ccx prints for a running session —
+  // /status's 8-char UUID prefix and the full UUID — matched the transcript listing FIRST and came back
+  // `session`. main then booted a SECOND engine over a live transcript, which is precisely what the
+  // `live` outcome exists to prevent; the short id for the same session was already refused.
+  it("sends a LIVE session named by its full UUID to attach, not to a second engine", async () => {
+    expect(await resolveResumeArg(FULL, CWD, deps({
+      sessions: [{ sessionId: FULL }], fleet: [row({ short: "k3f9", sessionId: FULL, state: "working" })],
+    }))).toEqual({ kind: "live", short: "k3f9" });
+  });
+
+  it("sends a LIVE session named by its 8-char /status prefix to attach too", async () => {
+    expect(await resolveResumeArg("0d7a7a9d", CWD, deps({
+      sessions: [{ sessionId: FULL }], fleet: [row({ short: "k3f9", sessionId: FULL, state: "blocked" })],
+    }))).toEqual({ kind: "live", short: "k3f9" });
+  });
+
+  it("still resumes an id whose fleet row has FINISHED — a terminal row is not a live one", async () => {
+    expect(await resolveResumeArg(FULL, CWD, deps({
+      sessions: [{ sessionId: FULL }], fleet: [row({ short: "k3f9", sessionId: FULL, state: "done" })],
+    }))).toEqual({ kind: "session", id: FULL });
+  });
+
+  it("resumes an id with no fleet row at all — most transcripts were never fleet sessions", async () => {
+    expect(await resolveResumeArg(FULL, CWD, deps({
+      sessions: [{ sessionId: FULL }], fleet: [row({ short: "k3f9", sessionId: "other-id", state: "working" })],
+    }))).toEqual({ kind: "session", id: FULL });
+  });
+
+  // ── External review, finding 3 ──────────────────────────────────────────────────────────────────
+  // The roster is FLEET-WIDE; the transcript reader the REPL resumes through is cwd-scoped. A terminal row
+  // from another project therefore resolved to an id this directory cannot read, and the user landed in a
+  // fresh REPL behind one dim line — the quiet failure the whole resolver exists to remove.
+  it("refuses a roster row whose session belongs to ANOTHER project, naming that project", async () => {
+    expect(await resolveResumeArg("k3f9", CWD, deps({
+      sessions: [{ sessionId: "aaaaaaaa-1111-2222-3333-444455556666" }],
+      roster: row({ short: "k3f9", sessionId: FULL, cwd: "/elsewhere" }),
+    }))).toEqual({ kind: "foreign", short: "k3f9", path: "/elsewhere" });
+  });
+
+  it("names the WORKTREE a foreign row actually ran in, not the repo it was launched from", async () => {
+    expect(await resolveResumeArg("k3f9", CWD, deps({
+      roster: row({ short: "k3f9", sessionId: FULL, cwd: "/elsewhere", worktree: "/elsewhere/.wt/x" }),
+    }))).toEqual({ kind: "foreign", short: "k3f9", path: "/elsewhere/.wt/x" });
   });
 });

@@ -488,4 +488,30 @@ describe("SessionPicker — the widen controls (Wave S T10, A12)", () => {
     expect(f).not.toContain("Ctrl+W");
     expect(f).toContain("space to preview");
   });
+
+  // EXTERNAL REVIEW, FINDING 2. Widening the LIST was only half of Ctrl+A: preview and rename still read
+  // through the caller's launch directory, so a row from another project previewed empty and renamed the
+  // wrong project's store. Every row carries the directory it belongs to (`cwd` on `SDKSessionInfo` — there
+  // is no `projectPath` field on it, verified against the installed sdk.d.ts), and both verbs pass it.
+  it("previews and renames a widened row through THAT row's own directory, not the launch cwd", async () => {
+    const foreign: SessionInfo = { sessionId: "4444dddd-0004", summary: "a session from another repo", lastModified: NOW, cwd: "/elsewhere" };
+    const loads: [string, string | undefined][] = [];
+    const renames: [string, string, string | undefined][] = [];
+    const r = render(
+      <SessionPicker sessions={[foreign]} onPick={() => {}} onCancel={() => {}} rows={40} columns={100}
+                     loadMessages={async (id, dir) => { loads.push([id, dir]); return [{ type: "user", message: { content: "over there" } }]; }}
+                     renameSession={async (id, t, dir) => { renames.push([id, t, dir]); }} />,
+    );
+    await waitFor(() => frame(r.lastFrame).includes("a session from another repo"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("over there"));
+    expect(loads).toEqual([["4444dddd-0004", "/elsewhere"]]);
+    r.stdin.write("\x1b");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("space to preview"));
+    r.stdin.write("\x12");                                                  // ctrl+r
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Rename session:"));
+    r.stdin.write("renamed there\r");
+    await waitFor(() => renames.length > 0);
+    expect(renames).toEqual([["4444dddd-0004", "renamed there", "/elsewhere"]]);
+  });
 });

@@ -74,7 +74,12 @@ const STALL_MS = 10_000;
 // ChatSession is promoted to ../session/chatSession.ts (spec A2b §2) so the lib Session and the remote
 // adapter satisfy ONE interface; re-exported here so this package's other modules' imports keep working.
 export type { ChatSession };
-export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number }
+/** `cwd` is `SDKSessionInfo`'s own field — the directory the transcript belongs to, which the SDK fills from
+ *  the row's `relocatedCwd`, its head `cwd`, or the project directory it was found under. It is what the
+ *  picker's three actions scope themselves by once Ctrl+A has widened the list past this project (external
+ *  review, finding 2). NB there is no `projectPath` on `SDKSessionInfo` — checked against the installed
+ *  sdk.d.ts; `projectPath` is an SDK-internal name that never reaches this shape. */
+export interface SessionInfo { sessionId: string; summary: string; firstPrompt?: string; lastModified: number; cwd?: string }
 /** The Ctrl-O detail route (Task 5 wires the pager onto it): `useChat` owns `documentRef`, ChatApp sees only
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
@@ -111,7 +116,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number } } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -362,7 +367,11 @@ export function useChat(
   const listSessions = deps.listSessions ?? ((scope: ResumeScope = NARROWED_SCOPE) =>
     readSessions({ ...(scope.allProjects ? {} : { cwd: opts.cwd }), includeWorktrees: scope.allWorktrees, limit: 30 }));
   const hasWorktreesFn = deps.hasWorktrees ?? ((dir: string) => realHasWorktrees(dir));
-  const getSessionMessages = deps.getSessionMessages ?? ((id: string) => realGetSessionMessages(id, { cwd: opts.cwd }) as Promise<any[]>);
+  // `dir` is the DIRECTORY THAT SESSION BELONGS TO, and it exists for one caller: the /resume picker after
+  // Ctrl+A has widened the list past this project (external review, finding 2). Absent — which is every
+  // caller that reads the CURRENT conversation, `/continue` included — it falls back to `opts.cwd`, so those
+  // paths issue byte-identical reads to the ones they issued before.
+  const getSessionMessages = deps.getSessionMessages ?? ((id: string, dir?: string) => realGetSessionMessages(id, { cwd: dir ?? opts.cwd }) as Promise<any[]>);
   // GONE with F5 task 12: `getSessionMessagesIn` and `listHistorySessions`, the two readers that existed
   // solely to reconstruct prompt history out of persisted TRANSCRIPTS. `loadHistory` reads `history.jsonl`
   // now (see there), so neither has a caller left and neither is a dep any more.
@@ -386,7 +395,7 @@ export function useChat(
   // /keybindings' file opener. One seam, not two: `prepare` runs inside it, so "no editor configured" never
   // creates the starter file for an editor that was never going to open.
   const openEditor = deps.openEditor ?? ((file: string, prepare: () => void) => openInEditor(file, { prepare }));
-  const renameSessionFn = deps.renameSession ?? ((id: string, t: string) => realRenameSession(id, t, { cwd: opts.cwd }));
+  const renameSessionFn = deps.renameSession ?? ((id: string, t: string, dir?: string) => realRenameSession(id, t, { cwd: dir ?? opts.cwd }));
   const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
   const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
   const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
@@ -1164,11 +1173,11 @@ export function useChat(
   // since busy is now cleared only by that event (no `.finally()` safety net post-refactor), busy would stay
   // stuck true forever and drainNext would never fire. We never auto-interrupt the old turn — that's the
   // human's call (Esc).
-  async function resumeInto(id: string) {
+  async function resumeInto(id: string, dir?: string) {
     if (disposed.current) return;
     if (busy) { notice("cannot resume mid-turn — wait for the turn to finish or press Esc to interrupt"); return; }
     let msgs: any[] = [];
-    try { msgs = await getSessionMessages(id); } catch { msgs = []; }
+    try { msgs = await getSessionMessages(id, dir); } catch { msgs = []; }
     if (disposed.current) return;
     if (!msgs.length) { append([{ text: `⚠ couldn't resume ${id.slice(0, 8)} — no history found`, dim: true }]); return; }
     const sameSession = session.sessionId === id;
@@ -1199,14 +1208,21 @@ export function useChat(
   function pickSession(info: SessionInfo) {
     if (disposed.current) return;
     setPicker({ open: false, sessions: [], hasWorktree: false });   // NOT closePicker: a pick is not a cancel
-    void resumeInto(info.sessionId);
+    // The row's OWN directory, not this REPL's: after Ctrl+A the list spans every project, and reading the
+    // chosen transcript under `opts.cwd` found nothing and refused with `no history found` (external review,
+    // finding 2). A narrowed row carries this very cwd, so the ordinary path is unchanged. What is NOT
+    // changed is the engine: `makeSession` resumes in the host's own directory, so a cross-project resume
+    // replays that transcript here rather than moving the working directory to it.
+    void resumeInto(info.sessionId, info.cwd);
   }
   // F6 T11: the resume picker's two extra verbs. They are the SAME two session calls `/resume` and `/rename`
   // already use — routed out to the picker rather than duplicated in it, so the reader stays the one in
   // `deps` (a test swaps it once and both surfaces follow). A preview that cannot be read is an EMPTY
-  // transcript, never a throw: the pane's job is to show what is there.
-  const previewSession = (id: string) => getSessionMessages(id).catch(() => [] as any[]);
-  const renamePickedSession = (id: string, title: string) => renameSessionFn(id, title);
+  // transcript, never a throw: the pane's job is to show what is there. `dir` is the picker's row's own
+  // directory (finding 2 again) — the pane and the rename field must not act on a different project than
+  // the one the highlighted row names.
+  const previewSession = (id: string, dir?: string) => getSessionMessages(id, dir).catch(() => [] as any[]);
+  const renamePickedSession = (id: string, title: string, dir?: string) => renameSessionFn(id, title, dir);
 
   async function openModelPicker() {
     try {
