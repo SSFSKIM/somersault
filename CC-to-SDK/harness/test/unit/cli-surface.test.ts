@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { versionLine, helpText, doctorReport, doctorFacts, unknownOptionMessage, suggestSimilar, CCX_OPTIONS } from "../../src/cli/help.js";
+import { versionLine, helpText, doctorReport, doctorFacts, unknownOptionMessage, suggestSimilar, formatItems, CCX_OPTIONS } from "../../src/cli/help.js";
 import { parseCcx, UnknownFlagError } from "../../src/cli/args.js";
 
 // An INDEPENDENT read of the same file help.ts reads — the point of the pin is that the printed version
@@ -44,19 +44,28 @@ describe("helpText — C3.2", () => {
     expect(description.join(" ")).toBe("cc-harness (ccx) - starts an interactive session by default, use -p/--print for non-interactive output");
     expect(lines[2 + description.length]).toBe("");
   });
-  it("has both sections, Options before Commands", () => {
-    expect(text.indexOf("Options:")).toBeGreaterThan(-1);
+  it("has all three sections, Arguments then Options then Commands", () => {
+    expect(text.indexOf("Arguments:")).toBeGreaterThan(-1);
+    expect(text.indexOf("Options:")).toBeGreaterThan(text.indexOf("Arguments:"));
     expect(text.indexOf("Commands:")).toBeGreaterThan(text.indexOf("Options:"));
   });
-  it("sorts options by commander's key — the short letter when there is one, else the long name", () => {
-    // compareOptions (L392992): `short ?? long`, dashes stripped. That is why `-p, --print` sorts under
-    // "p" and lands BEFORE `--permission-mode`, and `-v, --version` sits between token-file and worktree.
+  it("emits the Arguments section commander puts first, with the one positional", () => {
+    // `formatHelp` (L392989) pushes "Arguments:" from `visibleArguments` BEFORE "Options:", and
+    // `argumentTerm` (L391720) is the bare `e.name()` — so `.argument("[prompt]", "Your prompt")`
+    // renders as `prompt`, without the brackets. Real `claude --help` shows exactly that row.
+    expect(section(text, "Arguments:").map(term)).toEqual(["prompt"]);
+    expect(section(text, "Arguments:")[0]).toContain("Your prompt");
+  });
+  it("sorts options by commander's key — the LONG name when there is one, else the short letter", () => {
+    // compareOptions (L392993): `let e = (t) => t.long?.replace(/^--/, "") ?? t.short?.replace(/^-/, "") ?? ""`
+    // — long FIRST, short only as the fallback. That is why `--permission-mode` sorts under "permission-"
+    // and lands BEFORE `-p, --print`, and `-v, --version` sits between token-file and worktree.
     const terms = section(text, "Options:").map(term).filter((t): t is string => t !== undefined);
     expect(terms).toEqual([
       "--all", "--allow-origin <origin>", "--bg, --background", "-c, --continue", "--cwd <dir>",
       "--dangerously-skip-permissions", "--detachable", "--effort <level>", "-h, --help",
       "--idle-timeout <seconds>", "--json", "--listen <url>", "--model <model>", "-n, --name <name>",
-      "-p, --print", "--permission-mode <mode>", "-r, --resume <value>", "--settings <file-or-json>",
+      "--permission-mode <mode>", "-p, --print", "-r, --resume <value>", "--settings <file-or-json>",
       "--think <level>", "--token-file <path>", "-v, --version", "--worktree <name>",
     ]);
   });
@@ -65,7 +74,9 @@ describe("helpText — C3.2", () => {
     expect(terms).toEqual(["agents", "attach <session>", "doctor", "fleet gc", "rm <session>", "serve", "stop <session>"]);
   });
   it("indents 2 and aligns every description into one column", () => {
-    const rows = [...section(text, "Options:"), ...section(text, "Commands:")].filter((r) => term(r) !== undefined);
+    // ONE pad across all three sections, as commander's `padWidth` (L391813) maxes over arguments,
+    // options and subcommands together — so the `prompt` row lines up with the flag rows.
+    const rows = [...section(text, "Arguments:"), ...section(text, "Options:"), ...section(text, "Commands:")].filter((r) => term(r) !== undefined);
     const columns = new Set(rows.map((r) => r.length - r.replace(/^ {2}\S.*? {2,}/, "").length));
     expect(columns.size).toBe(1);
     for (const r of rows) expect(r.startsWith("  ")).toBe(true);
@@ -82,6 +93,37 @@ describe("helpText — C3.2", () => {
         try { parseCcx(argv); } catch (e) { expect(e, `${long} is unknown to parseCcx`).not.toBeInstanceOf(UnknownFlagError); }
       }
     }
+  });
+  it("advertises every flag args.ts's switch actually accepts — the drift guard's other direction", () => {
+    // The guard above catches a flag help.ts documents and the parser rejects; this one catches the
+    // silent inverse — a flag the parser accepts that the help page never mentions, which no user can
+    // discover and no typo suggestion will ever offer.
+    const src = readFileSync(fileURLToPath(new URL("../../src/cli/args.ts", import.meta.url)), "utf8");
+    const advertised = CCX_OPTIONS.flatMap((o) => [...o.longs, ...(o.short ? [o.short] : [])]);
+    for (const [, flag] of src.matchAll(/case "(-{1,2}[^"]+)":/g)) expect(advertised, `${flag} is parsed but undocumented`).toContain(flag);
+  });
+});
+
+describe("formatItems — the term-overflow arm", () => {
+  it("aligns into the pad column while the term fits", () => {
+    expect(formatItems([{ term: "--x", description: "d" }], 36)).toEqual([`  --x${" ".repeat(35)}d`]);
+  });
+  it("drops the description to its own line at a 4-space hanging indent once the term outgrows the pad", () => {
+    // commander's `I4o` (L392968-976): the aligned arm needs `termWidth <= pad`; otherwise it emits the
+    // term alone, then the description indented `Hhn + Egp` (2 + 4 = 6) and wrapped to
+    // `helpWidth - Hhn - Egp` (80 - 2 - 4 = 74). `padEnd` cannot express this — past the pad it is a
+    // no-op, which glued the description to the term with no gap at all.
+    const long = `--${"x".repeat(40)}`;
+    const description = Array.from({ length: 30 }, () => "word").join(" ");
+    const rows = formatItems([{ term: long, description }], 36);
+    expect(rows[0]).toBe(`  ${long}`);
+    expect(rows.length).toBeGreaterThan(1);
+    for (const r of rows.slice(1)) {
+      expect(r.startsWith("      ")).toBe(true);
+      expect(r[6]).not.toBe(" ");
+      expect(r.length).toBeLessThanOrEqual(80);
+    }
+    expect(rows.slice(1).map((r) => r.trim()).join(" ")).toBe(description);
   });
 });
 

@@ -771,6 +771,31 @@ describe("main — the CLI surface (Wave-C T5)", () => {
     expect(out[0]).toContain("ccx doctor");
     expect(out[0]).toContain("No installation issues found.");
   });
+  it("prints help rather than the unknown-option error when both are in the argv", async () => {
+    // Verified against the real CLI at 2.1.226: `claude --nope --help` prints the help page and exits 0,
+    // because commander's `_outputHelpIfRequested` runs before `unknownOption` ever reports.
+    const { out, err, value } = await captureLog(() => main(["--nope", "--help"], deps()));
+    expect(value).toBe(0);
+    expect(err).toEqual([]);
+    expect(out[0]).toContain("Usage: ccx");
+  });
+  it("prints the version whichever side of the unknown option it lands on", async () => {
+    for (const argv of [["--version", "--nope"], ["--nope", "--version"]]) {
+      const { out, value } = await captureLog(() => main(argv, deps()));
+      expect(value).toBe(0);
+      expect(out).toEqual([versionLine()]);
+    }
+  });
+  it("keeps the unknown option at exit 1 when no printer was asked for", async () => {
+    const { err, value } = await captureLog(() => main(["--nope"], deps()));
+    expect(value).toBe(1);
+    expect(err).toEqual(["error: unknown option '--nope'\n(Did you mean --name?)"]);
+  });
+  it("lets --help outrank a recognized-but-unsupported flag as well", async () => {
+    const { out, value } = await captureLog(() => main(["--help", "--chrome"], deps()));
+    expect(value).toBe(0);
+    expect(out[0]).toContain("Usage: ccx");
+  });
   it("short-circuits ABOVE every cross-flag refusal — `ccx -c --resume x --help` still prints help", async () => {
     // --continue + --resume is an exit-2 refusal at main.ts's top. Help must outrank it, the way
     // commander's own help intercept runs before any action does.

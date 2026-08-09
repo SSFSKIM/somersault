@@ -33,7 +33,8 @@ export interface CcxInvocation {
   /** The two printer intercepts (Wave-C T5). Parsed as ORDINARY flags rather than scanned for ahead of
    *  time, which is what makes `ccx --model -v` a model literally named `-v`: a value-taking flag consumes
    *  its argument before the loop can read it as an option, exactly as commander does. main() acts on them
-   *  before every other check, so `--help` outranks even a cross-flag refusal. */
+   *  before every other check, so `--help` outranks even a cross-flag refusal — and inside this parser
+   *  they outrank the two parse-time refusals as well (see `refusal` in parseCcx). */
   version: boolean; help: boolean;
   /** `-c`/`--continue`: resume the most recent session in this directory. TOP-LEVEL, not `config`, unlike
    *  `--resume` (which lands at `config.resume`) — there is no id to carry, only the intent, and the REPL
@@ -104,9 +105,23 @@ export function parseCcx(argv: string[]): CcxInvocation {
     return v;
   };
 
+  /** The first token the loop refused — REMEMBERED, not thrown on sight. commander runs its help/version
+   *  intercept (`_outputHelpIfRequested`) before `unknownOption` ever reports, so both printers answer for
+   *  an argv the parser could not otherwise accept: verified against the real CLI at 2.1.226 that
+   *  `claude --nope --help` prints the help page at exit 0 and that both orders of `--nope`/`--version`
+   *  print the version. KNOWN_UNSUPPORTED defers too — upstream refuses those at parse time exactly as it
+   *  refuses an unknown flag, so it loses to the printers on the same rule. FIRST offender wins: a later
+   *  bad token is not the one the operator needs to hear about. */
+  let refusal: { token: string; unknown: boolean } | undefined;
+  /** The excess-operand throw, deferred for the same reason and reported AFTER `refusal` — commander's
+   *  `_parseCommand` runs `checkForUnknownOptions()` before `_processArguments()` reaches
+   *  `_excessArguments`. Thrown on sight, `ccx --nope 0a1b2c3d --kind bg task` blamed the stray operand
+   *  for a line whose real fault was the flag three tokens earlier. */
+  let excess: Error | undefined;
+
   for (; i < argv.length; i++) {
     const t = argv[i];
-    if (KNOWN_UNSUPPORTED.has(t)) throw new Error(`${t} is not supported by ccx (recognized, deliberately unimplemented)`);
+    if (KNOWN_UNSUPPORTED.has(t)) { refusal ??= { token: t, unknown: false }; continue; }
     switch (t) {
       case "--bg": case "--background": a.bg = true; break;
       case "--detachable": a.detachable = true; break;
@@ -160,13 +175,19 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "--allow-origin": a.allowOrigins.push(val(t)); break;
       default:
         // Commander's shape and commander's exit code (1, not the operator-error 2) — see UnknownFlagError.
-        if (t.startsWith("-")) throw new UnknownFlagError(t);
+        // Deferred to the end of the loop so a `--help`/`--version` further along still wins (see `refusal`).
+        if (t.startsWith("-")) { refusal ??= { token: t, unknown: true }; break; }
         if (a.command === "run" && a.prompt === undefined) a.prompt = t;
-        else if (a.command === "serve") throw new Error(`unexpected argument ${JSON.stringify(t)} — serve takes no positional target`);
+        else if (a.command === "serve") excess ??= new Error(`unexpected argument ${JSON.stringify(t)} — serve takes no positional target`);
         else if (a.command !== "run" && a.target === undefined) a.target = t;
         // Silently dropping it is how `ccx fix the bug` (unquoted) runs an agent on the prompt "fix".
-        else throw new Error(`unexpected argument ${JSON.stringify(t)} — quote the prompt as one argument`);
+        else excess ??= new Error(`unexpected argument ${JSON.stringify(t)} — quote the prompt as one argument`);
     }
+  }
+  if (!a.version && !a.help) {
+    if (refusal?.unknown) throw new UnknownFlagError(refusal.token);
+    if (refusal) throw new Error(`${refusal.token} is not supported by ccx (recognized, deliberately unimplemented)`);
+    if (excess) throw excess;
   }
   return a;
 }

@@ -684,6 +684,16 @@ Object.assign({ sortSubcommands: !0, sortOptions: !0, formatHelp: YW_ },
               { compareOptions: (t, r) => e(t).localeCompare(e(r)) })
 ```
 
+**The key function `e` itself** (`L392993`, the line immediately above that `Object.assign`) — verbatim:
+```js
+let e = (t) => t.long?.replace(/^--/, "") ?? t.short?.replace(/^-/, "") ?? "";
+```
+**LONG first, short only as the fallback** for an option that has no long spelling. This annex originally
+quoted the `Object.assign` without `e`, and the omission cost a wrong guess: Task 5 read the key as
+`short ?? long`, which sorts `-p, --print` *before* `--permission-mode`. The real key sorts them the other
+way round (`"permission-mode"` < `"print"`). Anywhere the option order matters, this line is the rule —
+not the intuition that a short letter, being shorter, must sort first.
+
 Root definition (`L563608`):
 - `.name("claude")`
 - `.description("Claude Code - starts an interactive session by default, use -p/--print for non-interactive output")`

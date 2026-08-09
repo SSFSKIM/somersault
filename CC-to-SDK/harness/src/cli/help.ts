@@ -77,7 +77,13 @@ export function unknownOptionMessage(token: string, candidates: string[] = longF
 // ---------------------------------------------------------------------------------------------
 // The help page — commander's custom `formatHelp` (`YW_`, L392983) with its layout constants (L392997).
 
-const INDENT = 2, GAP = 2, MAX_TERM_PAD = 36, HELP_WIDTH = 80;
+// `Hhn = 2`, `bhn = 2`, `zW_ = 36`, `Egp = 4` (the hanging indent of the overflow arm). HELP_WIDTH is a
+// DELIBERATE DIVERGENCE: upstream reads `t.helpWidth || 80`, which commander fills from the terminal's
+// column count when stdout is a TTY, so a wide terminal gets a wide help page. ccx pins 80 so the page is
+// one fixed artifact — reproducible in a pipe, a CI log and a test alike, where a width-sensitive page
+// would render differently in each. (`KW_ = 30`, commander's minimum description width, has no constant
+// here: with the pad capped at 36 the remaining width is never below 76 − 36 = 40, so its arm is dead.)
+const INDENT = 2, GAP = 2, HANG = 4, MAX_TERM_PAD = 36, HELP_WIDTH = 80;
 
 export interface CcxOption {
   /** Long spellings, in the order they print. `--bg, --background` is one option with two longs. */
@@ -130,13 +136,22 @@ const CCX_COMMANDS: { term: string; description: string }[] = [
   { term: "stop <session>", description: "Stop a running session" },
 ];
 
+/** The positional registry. Upstream declares `.argument("[prompt]", "Your prompt", String)` and
+ *  `argumentTerm` (L391720) renders `e.name()` — the bare name, brackets stripped — so the row reads
+ *  `prompt  Your prompt`, exactly as real `claude --help` prints it. */
+const CCX_ARGUMENTS: { term: string; description: string }[] = [
+  { term: "prompt", description: "Your prompt" },
+];
+
 function longFlags(): string[] { return CCX_OPTIONS.flatMap((o) => o.longs); }
 function optionTerm(o: CcxOption): string {
   return [...(o.short ? [o.short] : []), ...o.longs].join(", ") + (o.value ? ` ${o.value}` : "");
 }
-/** commander's `compareOptions`: the SHORT letter when there is one, else the long name, dashes stripped.
- *  That is why `-p, --print` sorts under "p" and lands before `--permission-mode`. */
-function optionSortKey(o: CcxOption): string { return (o.short ?? o.longs[0]!).replace(/^-+/, ""); }
+/** commander's `compareOptions` key (L392993, verbatim):
+ *    `let e = (t) => t.long?.replace(/^--/, "") ?? t.short?.replace(/^-/, "") ?? "";`
+ *  LONG first, the short letter only as a fallback for an option that has no long spelling. That is why
+ *  `--permission-mode` sorts under "permission-mode" and lands BEFORE `-p, --print`, not after it. */
+function optionSortKey(o: CcxOption): string { return (o.longs[0] ?? o.short!).replace(/^-+/, ""); }
 
 function wrap(text: string, width: number): string[] {
   const out: string[] = [];
@@ -149,22 +164,38 @@ function wrap(text: string, width: number): string[] {
   return out;
 }
 
-function formatItems(items: { term: string; description: string }[], pad: number): string[] {
+/** commander's `I4o` (L392956): term at indent 2, description aligned into the pad column — UNLESS the
+ *  term is wider than the pad (L392972-976), where there is no column left to align into and the
+ *  description moves to its own line at a hanging indent of `INDENT + HANG`, wrapped that much narrower.
+ *  `padEnd` alone cannot express the second arm: past the pad it is a no-op, which would butt the
+ *  description straight against the term with no gap. Exported for the test that drives it — the pad is
+ *  the max real term length (capped at 36) and no ccx term reaches the cap, so the arm is unreachable
+ *  from `helpText()` and would otherwise stay unproven until the first 37-character flag. */
+export function formatItems(items: { term: string; description: string }[], pad: number): string[] {
   const lead = " ".repeat(INDENT + pad + GAP);
+  const hang = " ".repeat(INDENT + HANG);
   return items.flatMap(({ term, description }) =>
-    wrap(description, HELP_WIDTH - lead.length).map((part, k) =>
-      k === 0 ? " ".repeat(INDENT) + term.padEnd(pad + GAP) + part : lead + part));
+    term.length > pad
+      ? [" ".repeat(INDENT) + term, ...wrap(description, HELP_WIDTH - hang.length).map((part) => hang + part)]
+      : wrap(description, HELP_WIDTH - lead.length).map((part, k) =>
+        k === 0 ? " ".repeat(INDENT) + term.padEnd(pad + GAP) + part : lead + part));
 }
 
 export function helpText(): string {
   const options = [...CCX_OPTIONS].sort((a, b) => optionSortKey(a).localeCompare(optionSortKey(b)))
     .map((o) => ({ term: optionTerm(o), description: o.description }));
-  // ONE pad across every section, like commander's `padWidth(e, t)`, capped at `zW_ = 36`.
-  const pad = Math.min(MAX_TERM_PAD, Math.max(...[...options, ...CCX_COMMANDS].map((i) => i.term.length)));
+  // ONE pad across every section, like commander's `padWidth(e, t)` (L391813) — which maxes over the
+  // argument, option AND subcommand terms together — capped at `zW_ = 36`.
+  const pad = Math.min(MAX_TERM_PAD, Math.max(...[...CCX_ARGUMENTS, ...options, ...CCX_COMMANDS].map((i) => i.term.length)));
   return [
     "Usage: ccx [options] [command] [prompt]",
     "",
     "cc-harness (ccx) - starts an interactive session by default, use -p/--print for non-interactive output",
+    "",
+    // `formatHelp` pushes the sections in this order (L392989): Arguments, Options, [Global Options],
+    // Commands. ccx has no global-options layer (one flat command), so that section never appears.
+    "Arguments:",
+    ...formatItems(CCX_ARGUMENTS, pad),
     "",
     "Options:",
     ...formatItems(options, pad),
