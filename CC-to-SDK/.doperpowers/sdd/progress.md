@@ -832,3 +832,27 @@ ai-title is a disk read), with the same-session-resume guard test pinning the re
 Divergences authorized under D-C9 (ccx identity strings); SIGTERM whole-restore (raw mode + cursor
 + park + title) recorded as one follow-up ticket — patching the title alone at the signal would be
 the wrong seam. Suites: 1779 unit / 3076 tui.
+
+## 2026-08-10 — Wave C Task 9 complete (ca5b791c04 + 59ace50a8f, review approved)
+
+statusLine runner: resolveStatusLineConfig (field-drop .catch(void 0) on refreshInterval vs
+whole-object rejection on command/type — both directions pinned; a `timeout: 30` key is STRIPPED,
+pinning the no-invention adjudication the reviewer affirmed: §C2.1's schema has no timeout field,
+the 600s default lives in the generic hook runner), runStatusLine (all failure modes → silent
+undefined — the promise never binds reject; EPIPE-on-stdin guard; /bin/sh -c + stdin payload +
+SIGTERM on timeout/abort), createStatusLineDriver (mount undebounced, 300ms trailing-only debounce,
+poll ticks the DEBOUNCED fn per upstream Lc(B,…) — implementer's concern verified upstream-faithful
+against §C2.4's code quote, abort-previous, total dispose). Review Medium: driver had NO error
+boundary around the three caller-supplied closures — a buildPayload throw via the debounce timer
+and an onText throw both reproduced as process kills (the recurring bare-timer defect class,
+useChat.ts:941 comment). Fixed: try/catch both + rejection handler on the run chain, buildPayload
+moved BEFORE inflight.abort (ordering pinned). Lows fixed same commit: setTimeout overflow clamp
+(Infinity refreshInterval was a 1ms hot loop that also restarted the debounce forever) and the
+§C2.5 disableAllHooks guard ("Disable all hooks and statusLine execution") at
+resolveStatusLineConfig, === true strict. Recorded for final review: shellArgv reads
+process.platform directly (nit, win32 branch untestable from macOS); real-spawn test reports pass
+not skip on win32. THE FLAKE IS NAMED: useChat.test.tsx's OWN waitFor(cond, timeout=2000) at line
+35 (274 call sites) expires under machine load — /copy:1330 and the two /compact re-measure tests
+:2609/:2630 failed at 2034–2053ms in 2 of 4 back-to-back tui runs, all wall-clock budget not
+assertions; pre-existing, statusLine.ts unreachable from that suite. Cleanup ticket candidate:
+raise/make injectable that 2s budget. Suites: 1821 unit / 3081 tui.
