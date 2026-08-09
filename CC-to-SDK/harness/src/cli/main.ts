@@ -338,10 +338,15 @@ export async function attachToImpl(target: string, o: { initialPrompt?: string; 
 }
 
 /** How long the launch will wait for the banner's billing label before printing without it (t13 review
- *  finding 1). Sized against the measured warm handshake (~450 ms): deliberately SHORTER, because the
- *  segment is worth having only when it is already there. Exported so the test pins the number the code
- *  actually uses rather than a copy of it. */
-export const ACCOUNT_LABEL_BUDGET_MS = 300;
+ *  finding 1; RESIZED by the t15 acceptance run). Sized to be WON, not lost: A12 pins a truthful billing
+ *  label and the banner is Static-seeded (D-C8) — there is no late fill, so a label that misses first paint
+ *  is gone for the session. The measured handshake this races is ~450 ms warm / ~1152 ms cold, so 1500 ms
+ *  clears both while still capping an engine that is alive but never completes it (the wedge the t13 review
+ *  actually cared about was the UNBOUNDED await; its 300 ms suggestion lost to its own measurements, and
+ *  three keyed pty runs printed no billing segment at all). The typical real cost is the handshake itself
+ *  (~0.5–1.2 s) — which upstream's banner also pays in substance: its account segments come from the same
+ *  init payload. Exported so the test pins the number the code actually uses rather than a copy of it. */
+export const ACCOUNT_LABEL_BUDGET_MS = 1500;
 
 /** Foreground ccx: an IN-PROCESS host + a loopback client over its own socket — exactly one ChatSession
  *  code path, so the daily REPL continuously exercises the attach protocol (spec A2b §3). */

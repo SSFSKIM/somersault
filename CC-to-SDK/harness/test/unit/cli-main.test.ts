@@ -517,7 +517,8 @@ describe("main — run: foreground (Task 7)", () => {
   // SDK answers it out of the memoized init payload (`(await this.initialization).account`), so awaiting it
   // bare parks the whole launch on the `claude` CLI's boot + handshake (measured 1152 ms cold, ~450 ms warm)
   // — and an engine that is alive but never completes that handshake would hold the banner FOREVER. Bounded
-  // by a raced timer on the injected clock; the segment is chrome and losing it costs nothing.
+  // by a raced timer on the injected clock. What the bound is for is the WEDGE; on a healthy engine the
+  // label is meant to WIN the race (see the budget assertion below and the fast-double test after it).
   it("a WEDGED accountInfo cannot hold first paint: past the budget the banner seeds without the segment", async () => {
     const clientCalls: any[] = [];
     const clock = fakeClock();
@@ -527,11 +528,14 @@ describe("main — run: foreground (Task 7)", () => {
       isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
       delay: clock.delay,
     })));
-    await clock.advance();                                   // the wall clock passes 300 ms
+    await clock.advance();                                   // the wall clock passes 1500 ms
     const { value } = await run;
     expect(value).toBe(0);
     expect(clock.asked).toEqual([ACCOUNT_LABEL_BUDGET_MS]);   // one timer, for the budget the module names
-    expect(ACCOUNT_LABEL_BUDGET_MS).toBe(300);
+    // The VALUE, not just the wiring: t15's keyed acceptance run found A12's label never rendered because
+    // 300 ms lost to the ~450 ms warm handshake on every real boot. The budget must clear the cold measure
+    // (~1152 ms) or the segment is dead chrome.
+    expect(ACCOUNT_LABEL_BUDGET_MS).toBe(1500);
     // The whole line, so "no billing segment" is pinned as the ABSENCE of the ` · X` tail rather than as the
     // absence of one particular label: the model segment runs straight into the mode tail.
     expect(bannerText(clientCalls[0])).toContain("model  claude-opus-5   ·   mode");
