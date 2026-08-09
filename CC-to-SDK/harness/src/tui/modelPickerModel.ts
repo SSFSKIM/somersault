@@ -6,6 +6,9 @@
 // L440969) and prints the remainder BELOW the list as its own counter row (`rva`, rendered through `bM` at
 // L441132) — the `Select` primitive never prints a counter of its own, so the caller owns that line.
 
+import { resolveModelAlias } from "../config/models.js";
+import { DEFAULTS } from "../config/types.js";
+
 /** `hOH` L441096: bold, colour `remember`. */
 export const MODEL_TITLE = "Select model";
 /** `Trf` L441099 — the default `headerText`. Verbatim, `--model` and all. */
@@ -137,3 +140,38 @@ export const modelLabel = (m: ModelRow | undefined, fallback = ""): string => m?
 /** The display name for a VALUE, when all we have is the id — a session-only override outliving its row. */
 export const modelName = (models: readonly ModelRow[], value: string): string =>
   modelLabel(models.find((m) => m.value === value), value);
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// WAVE C TASK 13 (EP-C8 §C8.6) — the `default` row's description, `AJn` (L76856).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Upstream's row NAMES THE MODEL IT CURRENTLY RESOLVES TO: `Use the default model (currently Sonnet 5)`.
+// Ours arrives from `supportedModels()` carrying the SDK's own sentence, which names the SDK's default —
+// and ccx's `default` alias does not resolve there (`config/models.ts`: `default → claude-opus-5`, an owner
+// decision taken deliberately AGAINST the SDK's moving recommendation). So the row as shipped tells the user
+// a model they will not get. Rewritten here, from the same resolver every other surface asks.
+//
+// Importing the config layer from `src/tui/` is the established pattern for exactly this — `modelConfirmModel.ts`
+// pulls `resolveModelAlias` and `PlanDialog.tsx` pulls `isAutoSupportedModel`. (The `EFFORT_LEVELS` comment
+// above is about `cli/args.ts` and `config/validate.ts`, which are a different boundary.)
+
+/** The catalog value that IS the default row.
+ *  DIVERGENCE (§C8.6 `value: null`): ours stays the catalog's alias STRING. Upstream's `null` means "clear the
+ *  explicit model"; ccx has no such cleared state on this path — a pick flows through `resolveModelAlias` and
+ *  is written to prefs, and a `null` there would be a second, unwritten way to mean the same model. Only the
+ *  DESCRIPTION is rewritten below, which is the honesty defect §C8.6 was cited for. */
+export const DEFAULT_ROW_VALUE = "default";
+/** What ccx's default alias actually resolves to — the same expression `resolveOptions.ts:48` runs. */
+export const ccxDefaultModel = (): string => resolveModelAlias(DEFAULT_ROW_VALUE) ?? DEFAULTS.model;
+/** `Use the default model (currently ${x9r(t)})`, verbatim minus the pricing/attribution suffixes (`i`/`xug`)
+ *  — ccx has neither a promo price nor an org-attributed setting to append. */
+export const defaultRowDescription = (name: string): string => `Use the default model (currently ${name})`;
+/** Rewrite the default row in place in a catalog, naming the DISPLAY name of the sibling row that resolves to
+ *  the same id (`Opus 5`, upstream's `x9r`) and falling back to the bare id when the catalog has no such row.
+ *  Every other row is returned untouched — the SDK's descriptions are its own to write. */
+export function withDefaultRowDescription<T extends ModelRow>(rows: readonly T[]): T[] {
+  const target = ccxDefaultModel();
+  const named = rows.find((r) => r.value !== DEFAULT_ROW_VALUE && resolveModelAlias(r.value) === target);
+  const name = named ? modelLabel(named, target) : target;
+  return rows.map((r) => (r.value === DEFAULT_ROW_VALUE ? { ...r, description: defaultRowDescription(name) } : r));
+}

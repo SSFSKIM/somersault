@@ -12,6 +12,7 @@ import { SessionHost } from "../host/host.js";
 import type { SessionHostOpts } from "../host/host.js";
 import { mintShortId, hostSocketPath } from "../fleet/paths.js";
 import { welcomeBanner } from "../tui/banner.js";
+import type { AccountFacts } from "../tui/banner.js";
 import { resolveModelAlias } from "../config/models.js";
 import { DEFAULTS } from "../config/types.js";
 import { resolvedPermissionMode } from "../config/resolveOptions.js";
@@ -374,6 +375,13 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // session's life IS its terminal's. stop() is memoized+bounded, so double signals are safe.
   const onSignal = () => { void host.stop("done").finally(() => process.exit(0)); };
   process.on("SIGHUP", onSignal); process.on("SIGTERM", onSignal);
+  // W-C T13 (EP-C8 §C8.3): the banner's billing label. Asked HERE because here is where the banner seeds —
+  // the engine is open and the first turn has not run, which is exactly the window probe 101 proved
+  // `accountInfo()` answers in. Skipped entirely on a resume/continue launch, which prints no banner at all.
+  // A failure is SILENCE (`.catch`): the label is chrome, and a launch that stalls or shouts because a
+  // credential probe went wrong is strictly worse than one that prints the model and says nothing about
+  // billing. `?.` covers a host that does not implement it at all.
+  const account = (resume || inv.continue ? undefined : await host.accountInfo?.().catch(() => undefined)) as AccountFacts | undefined;
   try {
     await deps.runChatClient({
       socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
@@ -392,7 +400,12 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
         ? { initialResume: { kind: "id" as const, id: resume } }
         : inv.continue
         ? { initialResume: { kind: "continue" as const } }
-        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model, mode: resolvedPermissionMode(foregroundConfig) }) } }] }),
+        // W-C T13 (EP-C8, qa6-14): the banner is handed the SAME resolution `hookOpts.initialModel` gets
+        // three lines below — `welcomeBanner` only ever renders what it is given, and what it was given was
+        // the raw setting (an alias, or nothing at all → the literal `(default)`) while the status bar
+        // showed the resolved id. §C8.7: one resolution, two surfaces, so they cannot disagree. Effort and
+        // the account facts ride along for the same reason: everything on this line is the launch truth.
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), effort: foregroundConfig.effort ?? DEFAULTS.effort, ...(account ? { account } : {}) }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has

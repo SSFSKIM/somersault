@@ -25,7 +25,7 @@ import { savePrefs as realSavePrefs, type CcxPrefs } from "./prefs.js";
 import { EffortRow } from "./EffortRow.js";
 import {
   EFFORT_LEVELS, MODEL_FOOTER, MODEL_SUBTITLE, MODEL_TITLE, MODEL_UNIT, modelLabel, modelName,
-  modelOverflowCount, modelVisibleCount, sessionOnlyLine, stepEffort, type EffortLevel,
+  modelOverflowCount, modelVisibleCount, sessionOnlyLine, stepEffort, withDefaultRowDescription, type EffortLevel,
 } from "./modelPickerModel.js";
 
 
@@ -184,8 +184,10 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
       }
     >
       <Box flexDirection="column" marginTop={1} marginBottom={1}>
+        {/* §C8.6 (W-C T13): the catalog's `default` row arrives describing the SDK's default, which is not
+            ccx's — rewritten on the way in, so every caller of this picker gets the honest sentence. */}
         <Select
-          options={models.map((m) => ({ value: m.value, label: modelLabel(m), ...(m.description ? { description: m.description } : {}) }))}
+          options={withDefaultRowDescription(models).map((m) => ({ value: m.value, label: modelLabel(m), ...(m.description ? { description: m.description } : {}) }))}
           visibleOptionCount={visible} defaultValue={current} defaultFocusValue={current}
           {...(rows !== undefined ? { rows } : {})} {...(columns !== undefined ? { columns } : {})}
           onFocus={setFocus}

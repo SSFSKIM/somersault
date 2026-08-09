@@ -69,6 +69,9 @@ export interface HostSession {
   // (probe 75) — the host never sends a partial object. getSettings is the untyped get_settings door.
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
   getSettings?(): Promise<unknown>;
+  // W-C T13 (EP-C8): the launch banner's billing label. Optional like everything else here, so every
+  // existing HostSession fake stays valid — and an engine that cannot answer simply gets no auth segment.
+  accountInfo?(): Promise<unknown>;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -267,6 +270,12 @@ export class SessionHost {
     }
     this.armIdle();
   }
+
+  /** W-C T13 (EP-C8): the account facts the LAUNCH BANNER's billing label maps from. Deliberately a plain
+   *  method rather than a control op — the one caller is the foreground launch in `cli/main.ts`, which holds
+   *  this object directly and asks BEFORE the first turn (probe 101 proved pre-turn reachability). Resolves
+   *  `undefined` on a session that does not offer it; the caller treats that as "omit the segment". */
+  async accountInfo(): Promise<unknown> { return this.session?.accountInfo?.(); }
 
   /** A second call while a turn is already running MUST be refused here, not merely by the socket's own
    *  gate: this method is public and reachable directly (RemoteChatSession.prompt() is one caller, not

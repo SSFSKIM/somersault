@@ -5,7 +5,7 @@ import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { ModelPicker, type ModelInfo } from "../../src/tui/ModelPicker.js";
-import { MAX_EFFORT_CAVEAT, MODEL_FOOTER, MODEL_SUBTITLE, MODEL_TITLE, effortRowText, effortUnsupportedText, modelOverflowCount, modelVisibleCount, sessionOnlyLine } from "../../src/tui/modelPickerModel.js";
+import { MAX_EFFORT_CAVEAT, MODEL_FOOTER, MODEL_SUBTITLE, MODEL_TITLE, ccxDefaultModel, defaultRowDescription, effortRowText, effortUnsupportedText, modelOverflowCount, modelVisibleCount, sessionOnlyLine, withDefaultRowDescription } from "../../src/tui/modelPickerModel.js";
 import { CONFIRM_CANCEL, CONFIRM_SUBTITLE, CONFIRM_TITLE, confirmAccept } from "../../src/tui/modelConfirmModel.js";
 import { formatModelSet } from "../../src/tui/commands.js";
 import { formatOverflowCount } from "../../src/tui/format.js";
@@ -134,6 +134,35 @@ describe("ModelPicker — the list (L441127-441132)", () => {
     const r = mount();
     await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
     expect(plain(frame(r.lastFrame))).not.toContain("… +");
+  });
+});
+
+// WAVE C TASK 13 (EP-C8 §C8.6, `AJn` L76856). The catalog's `default` row arrives with the SDK's OWN
+// description, which names the SDK's default (Sonnet 5) — a sentence that is simply false in ccx, whose
+// `default` alias resolves to the opus tier (config/models.ts). Upstream's row names the model it
+// CURRENTLY RESOLVES TO, so ours must name OURS.
+describe("ModelPicker — the `default` row's description (§C8.6)", () => {
+  const withDefault: ModelInfo[] = [
+    { value: "default", displayName: "Default (recommended)", description: "Use the default model (currently Sonnet 5)" },
+    ...MODELS,
+  ];
+  it("rewrites it to name ccx's own resolved default, not the SDK's", async () => {
+    const r = mount({ models: withDefault });
+    await waitFor(() => frame(r.lastFrame).includes("Default"));
+    const f = flat(frame(r.lastFrame));
+    expect(f).toContain(defaultRowDescription("Opus 5"));                 // the sibling row's DISPLAY name
+    expect(defaultRowDescription("Opus 5")).toBe("Use the default model (currently Opus 5)");
+    expect(f).not.toContain("currently Sonnet 5");                        // the SDK's stale sentence is gone
+  });
+  it("falls back to the resolved id when the catalog carries no row for it", async () => {
+    const r = mount({ models: [withDefault[0], { value: "haiku", displayName: "Haiku 4.5" }] });
+    await waitFor(() => frame(r.lastFrame).includes("Default"));
+    expect(flat(frame(r.lastFrame))).toContain(defaultRowDescription(ccxDefaultModel()));
+    expect(ccxDefaultModel()).toBe("claude-opus-5");
+  });
+  it("leaves every other row's description alone", () => {
+    const rows = withDefaultRowDescription(withDefault);
+    expect(rows.slice(1)).toEqual(MODELS);
   });
 });
 

@@ -412,6 +412,77 @@ describe("main — run: foreground (Task 7)", () => {
     expect(lines).toContain("mode  auto");
   });
 
+  // ═══════════════════════════════════════════════════════════════════════════════════════════════
+  // WAVE C TASK 13 (EP-C8) — qa6-14: the banner said `(default)` while the status bar said
+  // `claude-opus-5`. `welcomeBanner` was never the bug — it renders what it is handed (banner.ts:28);
+  // the CALL SITE handed it the raw setting, which is why this gate lives here and not in
+  // test/tui/banner.test.ts. §C8.7: banner and footer read the SAME resolution, so they cannot disagree.
+  // ═══════════════════════════════════════════════════════════════════════════════════════════════
+  const bannerText = (call: any): string => (call.initialEntries[0].event.lines as { text: string }[]).map((l) => l.text).join("\n");
+
+  it("the banner names the model the ENGINE resolved, never the raw setting or `(default)`", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, loadPrefs: () => ({ model: "opus" }),
+      makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    const text = bannerText(clientCalls[0]);
+    expect(text).toContain("claude-opus-5");                             // what hookOpts.initialModel already said
+    expect(text).not.toContain("model  opus");                           // …not the alias the user typed
+    expect(text).not.toContain("(default)");
+    expect(clientCalls[0].hookOpts.initialModel).toBe("claude-opus-5");  // §C8.7: one resolution, two surfaces
+  });
+  it("with no --model and no saved default the banner still names the harness default, not `(default)`", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(bannerText(clientCalls[0])).toContain("claude-opus-5");
+    expect(bannerText(clientCalls[0])).not.toContain("(default)");
+  });
+  it("the banner names the effort level the launch resolved (§C8.3 `ait`)", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(bannerText(clientCalls[0])).toContain("with xHigh effort");   // DEFAULTS.effort, same as hookOpts
+    expect(clientCalls[0].hookOpts.initialEffort).toBe("xhigh");
+  });
+  // The auth segment's four branches are pinned as a pure mapping in test/tui/banner.test.ts; what this
+  // file owns is the WIRING — that the fetch happens where the banner seeds, pre-turn, and that a failing
+  // fetch costs the banner nothing.
+  it("an injected accountInfo double reaches the banner's billing label", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {}, accountInfo: async () => ({ apiProvider: "firstParty", tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }) } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(bannerText(clientCalls[0])).toContain("Claude subscription");
+  });
+  it("a non-firstParty provider prints its own name", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {}, accountInfo: async () => ({ apiProvider: "bedrock" }) } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(bannerText(clientCalls[0])).toContain("Amazon Bedrock");
+  });
+  it("a REJECTING accountInfo omits the segment and still launches — the banner never blocks on it", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {}, accountInfo: async () => { throw new Error("no credentials"); } } as any;
+    const { value } = await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(0);
+    const text = bannerText(clientCalls[0]);
+    expect(text).toContain("claude-opus-5");
+    expect(text).not.toContain("no credentials");
+    expect(text).not.toContain("undefined");
+  });
+
   it("refuses --resume together with a prompt (foreground only), touching neither makeHost nor runChatClient", async () => {
     // A launch --resume + a prompt would set BOTH initialResume and initialPrompt on the client opts;
     // the submitted prompt then starts a turn, and useChat's busy-guard (Task 6) blocks the resume with
