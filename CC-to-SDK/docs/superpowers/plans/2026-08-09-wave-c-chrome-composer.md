@@ -98,25 +98,32 @@ reviewer dispatch.
 **Deleted files**: `harness/src/tui/ChatStatusBar.tsx` (Task 2), `harness/src/tui/memory.ts` (Task 14).
 
 **Modified files** (each named in its task): `ChatComposer.tsx` · `ChatApp.tsx` · `useChat.ts` ·
-`composerFrame.tsx` · `promptMode.ts` · `keys/editorAdapter.ts` · `keys/editor.ts` (editor reducer
-file — the ccx pins name it `editor.ts`) · `keys/bindings.ts` · `keys/hints.ts` · `spinner.ts` ·
-`TurnSpinner.tsx` · `commands.ts` · `ModelPicker.tsx` · `modelPickerModel.ts` · `settingsRows.ts` ·
-`prefs.ts` · `placeholder.ts` · `completions.ts` · `banner.ts` · `cli/args.ts` · `cli/main.ts` ·
-`config/settings.ts` · `index.ts` (exports).
+`composerFrame.tsx` · `promptMode.ts` · `keys/editorAdapter.ts` · `src/tui/editor.ts` (the editor
+reducer — it lives in `src/tui/`, NOT under `keys/`) · `keys/bindings.ts` · `keys/hints.ts` ·
+`spinner.ts` · `TurnSpinner.tsx` · `commands.ts` · `ModelPicker.tsx` · `modelPickerModel.ts` ·
+`settingsRows.ts` · `prefs.ts` · `placeholder.ts` · `completions.ts` · `banner.ts` ·
+`rewindModel.ts` · `SettingsDialog.tsx` · `PermissionsDialog.tsx` (chrome-row budgets) ·
+`cli/args.ts` · `cli/main.ts` · `settingsFile.ts` · `session/chatSession.ts` · `client/remote.ts` ·
+`client/chatAdapter.ts` · `host/host.ts` (the effort wire op).
 
-**Task order and gating:** 1 → 2 gate {4, 7, 9-10(render), 11(hint), 15}; 3, 5, 6, 8 independent
-(may run any time); 12 after 2 (placeholder precedence touches the composer); 13 independent;
-14 after 2 (the chip removals land with the footer rewrite; this task carries the token-warning
-posting + `#` removal). Single-owner surfaces: `ChatComposer.tsx` and `ChatApp.tsx` are touched by
-Tasks 2, 4, 12, 14 — those tasks are SEQUENCED, never parallel.
+**Task order and gating:** **Tasks execute strictly sequentially, in numeric order — one
+implementer at a time, always** (SDD's own rule; it also dissolves every file-collision risk:
+`useChat.ts` is touched by eight tasks, `ChatComposer.tsx`/`ChatApp.tsx` by five incl. Task 11's
+dialog mount, `Footer.tsx`/`footerModel.ts`/`test/tui/footer.test.tsx` by Tasks 2/4/7/10/11, and
+`settingsRows.ts`+`prefs.ts` by Tasks 7 and 12 — the numeric order sequences all of them). The
+order also encodes the real dependencies: 1 (queue) → 2 (footer) gate everything chrome-shaped;
+Task 7 additionally consumes Task 6's elapsed formatter; Task 10 ships its payload WITHOUT the
+`effort` field (the `...x && {}` idiom) and Task 11 adds it (plus the `formatStatus` effort field)
+when the effort state exists; Task 13 reads the launch-resolved effort for the banner segment.
 
 ---
 
 ## Task 1: EP-C1a — the notification queue (P0, the wave's spine)
 
 **Files:** Create `src/tui/notifications.ts`, `src/tui/NotificationSlot.tsx`; Test
-`test/unit/notifications.test.ts`, `test/tui/notification-slot.test.tsx`. Export both from
-`src/index.ts` (pin in `test/unit/index.test.ts`).
+`test/unit/notifications.test.ts`, `test/tui/notification-slot.test.tsx`. **Do NOT export either
+from `src/index.ts`** — the library entry deliberately exports no TUI module (the REPL is
+dynamic-imported); the modules are pinned by their own tests.
 
 **Annex:** §C1.6 (queue semantics, the full hint inventory table, renderer), §C1.1 (the overlay-row
 placement — `position:"absolute", marginTop:-1`, flush right, height collapses to 0 when hidden).
@@ -142,8 +149,19 @@ export interface NotificationStore {
   state(): { current: CcxNotification | null; pinned: CcxNotification[] };
   subscribe(fn: () => void): () => void;
 }
-export function createNotificationStore(deps?: { setTimeout?; clearTimeout? }): NotificationStore;
+export function createNotificationStore(deps?: {
+  setTimeout?: (fn: () => void, ms: number) => unknown;
+  clearTimeout?: (h: unknown) => void;
+}): NotificationStore;
 ```
+
+**Ownership and reach (plan-review finding #6):** `useChat` owns the single store instance —
+created via its `deps` seam (default `createNotificationStore()`), exposed to consumers as
+`notify(n: CcxNotification)` / `dismissNotification(key)` actions and a `state.notification`
+(the store's `current`) that `useChat` mirrors into its own state on `subscribe` (the repo has no
+`useSyncExternalStore` idiom — mirror into `useChat` state like every other live field).
+`ChatApp` passes `state.notification` to the `NotificationSlot` mount; Tasks 4/11/14 reach the
+queue exclusively through `notify`/`dismissNotification`.
 
 Semantics transcribed from annex §C1.6: lowest priority number wins from the queue; `immediate`
 preempts the current synchronously (preempted entry re-queued only per the `mXs` rule); timer clears
@@ -168,12 +186,23 @@ timer (the effort hint depends on restart-on-re-add); `invalidates` drops matchi
 ## Task 2: EP-C1b — the footer rewrite (P0, gates the chrome tasks)
 
 **Files:** Create `src/tui/Footer.tsx`, `src/tui/footerModel.ts`, `src/tui/modeTable.ts`; Delete
-`src/tui/ChatStatusBar.tsx`; Modify `ChatComposer.tsx` (remove the hint stack :936-973 region, mount
-the notification overlay + pass draft signal up), `ChatApp.tsx` (:758-764 — remove the arm rows and
-`ChatStatusBar` mount, mount `Footer`), `keys/hints.ts` (chord formatting reuse); Test
-`test/tui/footer.test.tsx` (new), plus updating every test that pins the old rows (grep
-`test/` for `mode auto`, `Esc rewind`, `⚙`, `ctx `, `think ` needles first and list them in your
-report).
+`src/tui/ChatStatusBar.tsx`; Modify `ChatComposer.tsx` (remove the hint-stack rows **:953-970
+only** — `:936` opens the composer column, `:941`/`:945-952` are the permission row and
+ComposerFrame/PromptGlyph/PlaceholderCursor and stay; `:960`'s `InlineSearchRow` STAYS but moves
+onto the footer row per the annex; mount the notification overlay + pass draft signal up),
+`ChatApp.tsx` (:758-764 — remove the arm rows and `ChatStatusBar` mount, mount `Footer`),
+`keys/hints.ts` (chord formatting reuse), **and the three dialog chrome budgets that count
+ChatStatusBar as their one unconditional sibling** (plan-review Critical #2):
+`rewindModel.ts:122` `REWIND_CHROME_ROWS = 12`, `SettingsDialog.tsx:218`
+`SETTINGS_CHROME_ROWS = 11`, `PermissionsDialog.tsx` `PERMISSIONS_CHROME_ROWS = 13` — each
+docblock names the "+1 ChatStatusBar" term; Test `test/tui/footer.test.tsx` (new), plus updating
+every test that pins the old rows. **The inventory greps, all mandatory before writing code:**
+`grep -rn "mode auto\|Esc rewind\|⚙\|ctx \|think " test/` AND `grep -rln ChatStatusBar test/` —
+the second catches what the needles miss: `test/tui/keys-acceptance.test.tsx:502` reads
+`ChatStatusBar.tsx` OFF DISK in its banned-chord sweep (ENOENT after deletion — substitute
+`Footer.tsx` in the swept file set), `test/tui/components.test.tsx:15,196,205` imports
+`modeColor`/`ctxColor` from it (`modeColor` moves to `modeTable.ts`; `ctxColor` dies with the chip
+— its tests move to Task 14's removal suite), `test/tui/honesty.test.tsx:401` renders it directly.
 
 **Annex:** §C1.1-C1.5 (layout, row builder states, hint list order + crowd-out, `← for agents`
 shapes, collapse rule), §C4.c (mode table). ccx pins: `waveC-grounding-ccx.md` §EP-C1.
@@ -189,7 +218,14 @@ shapes, collapse rule), §C4.c (mode table). ccx pins: `waveC-grounding-ccx.md` 
 - `Footer.tsx` props: `{ mode, busy, draftNonEmpty, isInputEmpty, searching, statusLineText?,
   statusLineConfigured, exitArm?: {key: string, verb: string}, pasting, pasteExpandHint, bashMode,
   agents: {count, awaiting, done}, bindings }` — one component owns everything below the composer
-  rule except the notification overlay.
+  rule except the notification overlay. **The exit-arm `key` string (`"Ctrl-C"` / `"Ctrl-D"`,
+  hyphenated) is a PROP originating at the arm site in `ChatApp`, never a literal inside
+  `Footer.tsx`** — that mirrors upstream (the input hook passes `Dci.key`) and it is what lets
+  `Footer.tsx` join `keys-acceptance.test.tsx`'s banned-chord sweep without failing it
+  (plan-review finding #14). Record the arrangement in a code comment.
+- `agentsAffordance` also carries upstream's **2500 ms awaiting/done flash** (annex §C1.4,
+  `Lci = 2500`) — a timestamp-in/state-out pure function with the clock injected, no timer of its
+  own.
 
 Behavior contract (all from the annex, cites there): four early-return states replace the WHOLE row
 (exit arm `Press {key} again to {verb}` dim, hyphenated key literal; `Pasting…`; `paste again to
@@ -207,17 +243,32 @@ transient content lives in the overlay row (height-0-when-empty) and the footer 
   RED.
 - [ ] **Step 2: implement** `modeTable.ts` + `footerModel.ts` (pure, unit-testable) then
   `Footer.tsx`.
-- [ ] **Step 3: rewire** `ChatApp.tsx`/`ChatComposer.tsx`: delete the old rows/ChatStatusBar, mount
-  `Footer` + the `NotificationSlot` overlay (absolute, `marginTop:-1`, above the composer's top
-  rule per annex §C1.1), thread the draft-non-empty signal from the composer to the footer owner.
-  Migrate by destination (spec EP-C1 §4): `(ctrl+r to search history)`, `Ctrl+Y to paste deleted
-  text` → queue; pasting/paste-expand/bash-hint/exit-arms → footer states; search box stays in-row.
-  The `esc rewind`/`esc clear` persistent hint row is DELETED (EP-C7 owns the replacement
-  semantics; until Task 4 lands, no esc hint renders — acceptable intermediate state, note it).
-- [ ] **Step 4: update the pinned tests** you inventoried; every change must be a needle update,
+- [ ] **Step 3: MEASURE the overlay geometry before building on it** (plan-review finding #25 —
+  the Wave R lesson: geometry claims are settled by measurement, not by reading Ink's docs). Ink 5
+  declares `position:"absolute"` support but `src/tui/` has zero existing uses. Render a minimal
+  absolute `marginTop:-1` row above a box through `ink-testing-library` AND once through the real
+  pty (`drive-repl.py` against a scratch mount) and confirm: right-flush, does not displace flow,
+  contributes no height when empty. **If absolute positioning misbehaves in either instrument, the
+  sanctioned fallback is a normal in-flow row that renders empty (height preserved at 1 only while
+  a notification is live)** — record whichever way it lands as a code comment and in your report.
+- [ ] **Step 4: rewire** `ChatApp.tsx`/`ChatComposer.tsx`: delete the old rows/ChatStatusBar, mount
+  `Footer` + the `NotificationSlot` overlay per Step 3's measured shape, thread the
+  draft-non-empty signal from the composer to the footer owner. Migrate by destination (spec EP-C1
+  §4): `(ctrl+r to search history)`, `Ctrl+Y to paste deleted text` → queue;
+  pasting/paste-expand/bash-hint/exit-arms → footer states; search box stays in-row. **Two
+  deliberate deletions, each recorded as a code comment per Global Constraint 12:** the
+  `esc rewind`/`esc clear` persistent hint row (EP-C7 owns the replacement; until Task 4 lands no
+  esc hint renders — acceptable intermediate state, note it) **and hint row 1
+  (`⏎ send · … · @ files · / commands · …`, `ChatComposer.tsx:969`) — upstream's home-state footer
+  has no such row; its affordances live in `? for shortcuts`** (plan-review finding #24).
+- [ ] **Step 5: re-measure and re-pin the three `*_CHROME_ROWS` constants** — the footer stack's
+  row count changed under the dialogs; measure each dialog in the pty at a pinned terminal size
+  (the Wave S measurement scripts are the precedent), update the constants AND their docblocks to
+  name the new sibling set (footer row + optional statusLine row + overlay row).
+- [ ] **Step 6: update the pinned tests** you inventoried; every change must be a needle update,
   not an assertion deletion — if a behavior genuinely no longer exists (ctx chip), move the test to
   Task 14's removal suite rather than deleting silently.
-- [ ] **Step 5: gates, commit** `feat(waveC-t2): one-row footer + right-region overlay; ChatStatusBar retired`.
+- [ ] **Step 7: gates, commit** `feat(waveC-t2): one-row footer + right-region overlay; ChatStatusBar retired`.
 
 ## Task 3: EP-C7a — editor keys: Home/End, ctrl+arrows, word boundary (P0, independent)
 
@@ -232,8 +283,11 @@ next word), §C7.9 (these keys are input-layer, not keymap — mirror that archi
 `editorAdapter`/`editor`, do NOT add Chat-context keymap rows).
 
 **Interfaces:** `createDoublePress(handlers: {onArmChange(armed: boolean): void; onSecondPress():
-void; onFirstPress?(): void}, windowMs = 800, deps?: {now?; setTimeout?; clearTimeout?}): () => void`
-— returns the press function. Consumed by Task 4.
+void; onFirstPress?(): void}, windowMs = 800, deps?: {now?: () => number; setTimeout?: (fn: () =>
+void, ms: number) => unknown; clearTimeout?: (h: unknown) => void}): { press(): void; disarm():
+void; dispose(): void }` — `disarm` because the busy-interrupt path must cancel a pending arm
+(today's `cancel()` → `disarmClear()` at `ChatComposer.tsx:555`), `dispose` because an armed timer
+firing `setState` after unmount is a defect (plan-review finding #7). Consumed by Task 4.
 
 - [ ] **Step 1: failing tests**: doublePress (first press arms + fires onFirstPress; second within
   window fires action + disarms; expiry disarms via injected clock); home/end move to line start/end;
@@ -275,11 +329,17 @@ queue).
 ## Task 5: EP-C3 — CLI surface (P1, independent)
 
 **Files:** Create `src/cli/help.ts`; Modify `src/cli/args.ts` (unknown-flag throw :145 region,
-version/help interception), `src/cli/main.ts` (dispatch), `src/cli/bin.ts` if the exit path needs
-it; Test `test/unit/args.test.ts` (existing — extend), `test/unit/cli-surface.test.ts` (new,
-subprocess-level via the built CLI if an existing harness for that exists — check
-`test/unit/` for prior art first; otherwise unit-test the printers + exit codes through the
-in-process seam).
+version/help interception), `src/cli/main.ts` (dispatch + the exit-code discrimination), `src/cli/bin.ts`
+if the exit path needs it; Test `test/unit/cli-args.test.ts` (existing — the `unknown flag` pin is
+at :103) and `test/unit/cli-main.test.ts` (existing — :76, :549), `test/unit/cli-surface.test.ts`
+(new for the printers). **`test/unit/cliArgs.test.ts` covers a DIFFERENT module (`src/cliArgs.ts`)
+— do not touch it** (plan-review finding #10).
+
+**Exit-code discrimination (plan-review finding #30):** every `parseCcx` throw funnels through ONE
+catch (`main.ts:109` → `fail(msg, 2)`). Unknown flags move to exit 1 via a typed error
+(`class UnknownFlagError extends Error` thrown at `args.ts:145`, discriminated at the catch);
+`KNOWN_UNSUPPORTED` refusals (`args.ts:96`) and value-domain errors (`args.ts:52`) KEEP exit 2 —
+pin all three codes in the tests.
 
 **Annex:** §C3.1-C3.4 (version format, help layout constants + sorted sections, doctor block,
 commander's exact unknown-flag/`Did you mean` rule: only `--`-prefixed tokens, similarity
@@ -304,7 +364,7 @@ message (assert unchanged).
 
 **Files:** Modify `src/tui/spinner.ts` (status builder :80-83, elapsed formatter :58-77, verb pick),
 `src/tui/TurnSpinner.tsx` (:10-26), `useChat.ts`/`liveTurn.ts` (streamed-char feed for the
-estimate); Test `test/unit/spinner.test.ts` (existing — extend), `test/tui/` spinner assertions.
+estimate); Test `test/tui/spinner.test.ts` (existing — extend; there is NO `test/unit/spinner.test.ts`).
 
 **Annex:** §C4.b — the full anatomy: parenthetical `({elapsed} · {↓|↑} {N} tokens · {phase})`,
 segments materialize progressively under width gates (quiet threshold 16 s for elapsed/tokens
@@ -324,13 +384,16 @@ turn, not per-tick); elapsed formatter ported whole (`1m05s`, hour rollover — 
   already distinguishable from the wire frames ccx consumes — check `liveTurn.ts` before inventing).
 - [ ] **Step 3: gates, commit** `feat(waveC-t6): spinner anatomy — estimate, arrow, phase ladder, formatter port`.
 
-## Task 7: EP-C4c/d — mode chip verbatim renders + duration row (P1, after Task 2)
+## Task 7: EP-C4c/d — mode chip verbatim renders + duration row (P1, after Tasks 2 AND 6 — the
+duration format reuses Task 6's ported elapsed formatter; today's emits `1m 05s` with a space)
 
 **Files:** Create `src/tui/durationRow.ts`; Modify `footerModel.ts`/`Footer.tsx` (chip already
 table-driven from Task 2 — this task pins all six renders + colors), `useChat.ts` (turn-end row
-emission), transcript renderer mount (the species router — see `waveC-grounding-ccx.md` for the
-transcript entry point); Test `test/unit/duration-row.test.ts`, `test/tui/footer.test.tsx` +
-transcript test extensions.
+emission **via the existing local-entry append path — the same seam local notices ride; there is
+no "species router" entry to find**, plan-review finding #29); Test
+`test/unit/duration-row.test.ts`, `test/tui/footer.test.tsx` + transcript test extensions. This
+task also widens the `settingsRows.ts:15` closed id union and `prefs.ts:31` — Task 12 widens the
+same two; sequential order makes that safe, but keep the additions adjacent so 12's diff is clean.
 
 **Annex:** §C4.c (six chips verbatim: `⏸ manual mode on`, `⏸ plan mode on`, `⏵⏵ accept edits on`,
 `⏵⏵ auto mode on`, `⏵⏵ bypass permissions on`, `⏵⏵ don't ask on`; colors per table), §C4.d
@@ -373,9 +436,11 @@ it. Writes bypass Ink (direct `process.stdout.write`).
 
 ## Task 9: EP-C2a — statusLine runner (P1, after Task 2 for the render slot; runner itself is pure)
 
-**Files:** Create `src/tui/statusLine.ts`; Modify `src/config/settings.ts` (user-source settings
-read — note: **user-level only**, project/local sources are refused per canon L154558); Test
-`test/unit/statusline.test.ts`.
+**Files:** Create `src/tui/statusLine.ts`; Modify `src/tui/settingsFile.ts` — **NOT
+`src/config/settings.ts`**, which only resolves `settingSources` for handoff INTO the SDK and
+never reads a file; `settingsFile.ts` already owns `settingsPath("userSettings")` and gains the
+read side (plan-review finding #9). The read is **user-level only** — project/local sources are
+refused per canon L154558. Test `test/unit/statusline.test.ts`.
 
 **Annex:** §C2.1 (settings shape: `{type:"command", command, padding?, refreshInterval?(min 1),
 hideVimModeIndicator?}` — the last is accepted-but-ignored, no vim mode exists; record in code),
@@ -406,7 +471,9 @@ turn end/usage/mode/model/effort/thinking deltas; state field `statusLineText`),
 suppression).
 
 **Annex:** §C2.2-C2.3 (the payload: build ONLY the fields the spec's EP-C2 decision names, omitting
-the rest with the `...x && {}` idiom; `context_window` from `getContextUsage()` with
+the rest with the `...x && {}` idiom; **the `effort {level}` block is OMITTED in this task —
+`state.effort` does not exist until Task 11, which adds the block**, plan-review finding #18;
+`context_window` from `getContextUsage()` with
 `current_usage: null` pre-first-turn; `version` = ccx's own), §C2.6 (render: dim forced onto every
 span over the script's own ANSI, per-line truncate, SGR carry-forward across lines, `gap:2`,
 padding, the full visibility guard: prompt-mode only, not exit-armed, not pasting, ≥15 rows).
@@ -424,11 +491,26 @@ padding, the full visibility guard: prompt-mode only, not exit-armed, not pastin
 
 **Files:** Modify `ModelPicker.tsx` (:123-150 — effort row between list and footer),
 `modelPickerModel.ts` (effort state + stepping + labels), `commands.ts` (DELETE the `/effort`
-redirect at :264; `/effort` becomes a real command opening the dialog), `useChat.ts` (runtime
-setter + `state.effort`; hint post at session start + on change), new `src/tui/EffortDialog.tsx`
-(or fold into an existing dialog pattern — read `dialogs/` first and match); Test
-`test/tui/model-picker.test.tsx` (existing — extend), `test/tui/effort.test.tsx` (new),
-`test/unit/commands.test.ts` (redirect gone).
+redirect at :264; `/effort` becomes a real command opening the dialog; **`formatStatus` at :238
+gains the effort field** — EP-C6's acceptance reads it there), `useChat.ts` (`state.effort`,
+dialog open-state, hint post at session start + on change), `ChatApp.tsx` (the dialog MOUNT —
+every dialog mounts there; this makes Task 11 a toucher of the sequenced surface, which numeric
+order already handles), new `src/tui/EffortDialog.tsx` (read `dialogs/` first and match the house
+pattern), **and the whole wire layer the plan v1 missed (plan-review Critical #1)**:
+`src/session/chatSession.ts` (`SettingsOps` at :75-83 gains an effort member),
+`src/client/remote.ts` (:171-173 region — new `set_effort` op beside `set_model`/`set_thinking`),
+`src/client/chatAdapter.ts`, `src/host/host.ts` (op handling), `src/tui/statusLine.ts` (ADD the
+`effort {level}` payload block Task 10 omitted); Test `test/tui/model-picker.test.tsx` (existing —
+extend), `test/tui/effort.test.tsx` (new), `test/tui/commands.test.ts` (existing — the redirect
+pin lives THERE, not in a `test/unit/commands.test.ts`, which does not exist).
+
+**The mechanism, live-verified (probe 102, `waveC-grounding-probes.md` §(f)):** the SDK has NO
+`setEffort` — the runtime hook is `Query.applyFlagSettings({ effortLevel })` (sdk.d.ts:2373,
+streaming-input only), which resolves mid-session with later turns unaffected. **It performs NO
+validation — a bogus level resolves silently — so ccx validates the level against its own domain
+(`args.ts:46`) BEFORE the wire op fires**, and the wire op carries only validated values.
+`effortLevel` accepts `'max'` session-scoped (never persisted); the persisted settings type
+excludes it.
 
 **Annex:** §C6.1 (glyphs ○◐●◉◈, color `claude` set / `subtle` unsupported), §C6.3 (row verbatim:
 `● High effort (default) ←/→ to adjust`, `xHigh` special-case, unsupported branch
@@ -437,16 +519,15 @@ setter + `state.effort`; hint post at session start + on change), new `src/tui/E
 `{glyph} {level} · /effort` — raw lowercase level — 10 000 ms, `priority:"high"`,
 `key:"effort-level"`, re-add restarts clock; absent when model lacks effort support).
 
-The runtime setter: the SDK's effort setter is live-verified (turn-controls probes; see
-`sdk-query-control-surface` memory pattern — the session object carries the setter; grep
-`src/session/session.ts` for the existing setter pass-throughs and mirror them).
-
 - [ ] **Step 1: failing tests**: picker row renders per level incl. `(default)` marker + `xHigh` +
   unsupported branch; ←/→ steps and wraps; `/effort` opens the dialog (and the redirect note is
-  gone); confirming calls the setter (assert via injected session double); the hint posts at mount
-  with the launch effort and re-posts on change. Observed RED.
-- [ ] **Step 2: implement.**
-- [ ] **Step 3: gates, commit** `feat(waveC-t11): effort row, /effort dialog, runtime setter, decaying hint`.
+  gone); confirming fires the `set_effort` wire op (assert via injected chat-adapter double, the
+  same seam the `set_model` tests use — find them first); an out-of-domain level is rejected
+  client-side and NO wire op fires; `formatStatus` renders the effort field; the hint posts at
+  mount with the launch effort and re-posts on change. Observed RED.
+- [ ] **Step 2: implement** — wire op end to end (chatSession → remote → adapter → host →
+  `applyFlagSettings({effortLevel})`), then the surfaces.
+- [ ] **Step 3: gates, commit** `feat(waveC-t11): effort row, /effort dialog, set_effort wire op, decaying hint`.
 
 ## Task 12: EP-C5 — the follow-up suggestion (P1, after Task 2; the only keyed-heavy task)
 
@@ -486,9 +567,17 @@ reason: string}` exported pure for unit tests.
 
 ## Task 13: EP-C8 — banner truth (P1, independent)
 
-**Files:** Modify `src/tui/banner.ts` (header + model/auth line), `src/cli/main.ts` (:338/:372 —
-hand the banner the RESOLVED model), `modelPickerModel.ts` (default-row description rewrite);
-Test `test/unit/banner.test.ts` (existing — check name first), `test/tui/model-picker.test.tsx`.
+**Files:** Modify `src/tui/banner.ts` (header + model/auth line + optional effort segment from the
+launch-resolved effort — Task 11's state exists by now but the banner seeds in `main.ts` before the
+REPL, so it reads `config.effort ?? DEFAULTS.effort`), `src/cli/main.ts` (**:339** computes
+`model = inv.config.model ?? deps.loadPrefs().model`, the banner call at **:372** receives it raw
+while **:377** resolves it — hand :372 the same `resolveModelAlias(model) ?? DEFAULTS.model`);
+`modelPickerModel.ts` (default-row description rewrite); Test: **the resolved-model red gate lives
+in `test/unit/cli-main.test.ts`** — `welcomeBanner` itself is correct (`banner.ts:28` renders what
+it is handed), so a banner-level test cannot go red for this defect (plan-review finding #11);
+banner shape tests extend `test/tui/banner.test.ts` (there is NO `test/unit/banner.test.ts`;
+`test/unit/cli-banner.test.ts` covers the unrelated `src/cli/banner.ts`);
+`test/tui/model-picker.test.tsx`.
 
 **Annex:** §C8.2 (border-text header shape — ccx renders ` ccx v{version} ` per D-C9, offset 3,
 compact <70 cols drops version), §C8.3 (model/auth line `{display} · {billing}`; billing mapping
@@ -509,12 +598,19 @@ seeded VALUES, not liveness.
 
 ## Task 14: The removals + token-warning (P1, after Task 2; contingent cells A13/A14)
 
-**Files:** Delete `src/tui/memory.ts`; Modify `promptMode.ts` (drop the `memory` mode + `#` arm),
-`useChat.ts` (memory dispatch + deps slot), `ChatComposer.tsx` (hint row), `composerFrame.tsx`
-(border color token), `keys/hints.ts` (`# for memory` grid cell), `editor.ts` (comment), plus the
-~7 test files the ccx grounding inventoried (`waveC-grounding-ccx.md` §qa1-10 lists every touch
-point — use it as the checklist); ADD the token-warning post: `useChat.ts` (compute the ladder from
-`getContextUsage()` at the existing refresh points), notification via Task 1's queue; Test
+**Files:** Delete `src/tui/memory.ts`; Modify `promptMode.ts` (drop the `memory` mode + `#` arm —
+**and collapse the now-duplicated derivations**: with a two-valued union, `composerMode` and
+`modeOfDisplay` become one rename apart; merge them and rewrite the :19-32 header + :42-45
+docblock that justify a three-way split, plan-review finding #23), `useChat.ts` (memory dispatch +
+deps slot), `ChatComposer.tsx` (hint row), `composerFrame.tsx` (border color token),
+`keys/hints.ts` (`# for memory` grid cell), `editor.ts` (**not comment-only**: `inputMode()` at
+:119-128 narrows when `"memory"` leaves the `InputMode` union; its callers type-check against it),
+plus the ~7 test files the ccx grounding inventoried (`waveC-grounding-ccx.md` §qa1-10 is the
+checklist); ADD the token-warning post: `useChat.ts` (compute the ladder from `getContextUsage()`
+at the existing refresh points), notification via Task 1's queue; **ADD the `usageWarn` → queue
+migration the spec's D-C3 mandates** (plan-review finding #8): the `usageWarning()` text posts as
+a queued notification when it changes, `state.usageWarn` and its render die with the old bar —
+`usageFormat.ts` keeps its formatter + tests (the consumer moves, the module lives); Test
 `test/tui/` updates + `test/unit/token-warning.test.ts` (new).
 
 **Spec:** owner-decision section (both recommendations standing unless overridden), the pinned
@@ -542,7 +638,9 @@ task runs the keyless ones and prepares the pty scripts.**
   stated instrument (pty runs via `harness/scripts/drive-repl.py` under an isolated `/tmp` HOME per
   Global Constraint 2; the scratch `CCX_DRIVE_ARGS` copy pattern from Wave S for flag-bearing
   launches). Keyless cells: A1, A2, A3, A4, A7, A11, A13, A14, A15. Keyed cells (controller):
-  A5, A6, A8, A9, A10, A12.
+  A5, A6, A8, A9, A10, A12. **A12's third surface is `/status`, not the footer** — the footer
+  carries no model chip after Task 2 (the spec was amended in v3 to match; plan-review finding
+  #12).
 - [ ] **Step 3:** Evidence bundle to `$CLAUDE_JOB_DIR/tmp/waveC-A*.txt`; each cell's verdict quoted
   in the task report with its needle lines.
 - [ ] **Step 4:** Any cell that cannot run as written is a FINDING (spec drift or defect), not a
@@ -552,11 +650,14 @@ task runs the keyless ones and prepares the pty scripts.**
 
 ## Self-review notes (author, pre-dispatch)
 
-- Task 2 is the widest diff of the wave and carries the highest pinned-test churn; its Step 4
+- Task 2 is the widest diff of the wave and carries the highest pinned-test churn; its
   inventory-first rule is load-bearing. If it balloons, the fallback split is footer-component vs
   call-site-rewiring — but the intermediate state must still render exactly one footer.
-- Tasks 2/4/12/14 all touch `ChatComposer.tsx`/`ChatApp.tsx` — sequenced, never parallel (also in
-  the task-order note above).
+- Execution is strictly sequential in numeric order (see the task-order note) — that is the
+  collision guard for every shared file, not a per-pair sequencing list.
+- v2 (post plan-review): 31 findings adopted — see the spec's Revision Notes v3 and the ledger for
+  the round's record; probe 102 (run at review time) settled the effort mechanism the plan v1 had
+  wrong.
 - The annex is normative for verbatim strings; this plan deliberately repeats only the load-bearing
   ones. Task briefs must name the annex sections (done per task).
 - Snippet honesty: Global Constraint 13 applies to every code block above.

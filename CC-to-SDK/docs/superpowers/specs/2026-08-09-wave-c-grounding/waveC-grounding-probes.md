@@ -300,3 +300,21 @@ non-firstParty → provider display names, unknown → omit).**
 Found because the spec review flagged the spec's citation of probe 28 as evidence-overreach (28
 verified only first-party auth). Probe file: `probes/probes/101-accountinfo-field-inventory.ts`.
 Values above are enums, not secrets; nothing sensitive appears in the probe output.
+
+---
+
+## (f) Probe 102 — runtime effort setter (added at plan-review time, 2026-08-09)
+
+**VERDICT: the SDK has NO `setEffort`; the runtime hook is `Query.applyFlagSettings({ effortLevel })`
+(sdk.d.ts:2373, streaming-input only), and it is LIVE headlessly — resolves mid-session between
+turns, later turns unaffected. It performs NO VALIDATION: `{effortLevel: "bogus"}` resolves silently,
+so the harness must validate against its own domain before the call. `effortLevel` accepts `'max'`
+session-scoped (never persisted).**
+
+Probe-harness lesson (v1 of this probe): releasing every input gate upfront exhausts the streaming
+input generator, which closes the transport's write side — every control call then throws
+("Query closed before response received" / "ProcessTransport is not ready for writing") while
+already-queued turns still complete. `setModel` "failed" identically, which is what exposed the
+harness bug rather than a dead setter. Control-channel probes must keep the input generator pending.
+
+Probe file: `probes/probes/102-effort-runtime-setter.ts`.

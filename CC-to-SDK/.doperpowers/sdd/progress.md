@@ -675,3 +675,21 @@ is declared-but-absent, tier labels unreachable. The wave's thirteenth declared�
 this one caught in review rather than grounding. Also pinned from the bundle at review time: the
 token-warning posting ladder (warn at auto-compact-ceiling − 20k tokens; ceiling = window × 0.8
 default; uOu L163990). Spec v2 committed; plan next.
+
+## 2026-08-09 — Wave C plan review round (plan v2, spec v3)
+
+Opus plan reviewer: 4 Critical + 14 Important + 13 Minor, all adopted. The Criticals: (1) plan v1's
+Task 11 assumed a setEffort that does not exist — NEW probe 102 settled the real mechanism,
+applyFlagSettings({effortLevel}), live mid-session, NO validation (ccx validates client-side), and
+the task now names the whole wire layer (chatSession/remote/chatAdapter/host) it must add; (2)
+deleting ChatStatusBar breaks three measured dialog chrome-row budgets (REWIND/SETTINGS/PERMISSIONS
+_CHROME_ROWS) that each count it as their one unconditional sibling — re-measure step added; (3+4)
+the single-owner rule was too narrow (useChat has EIGHT touchers, Task 11 mounts a dialog in
+ChatApp) — resolved by pinning strictly sequential numeric execution. Also: index.ts must NOT export
+TUI modules; four "existing" test paths didn't exist; Task 13's red gate was at the wrong layer
+(banner.ts renders what it's handed — the defect is main.ts:339/:372); A12's footer surface was
+unrunnable post-Task-2 (spec v3 repoints it to /status); keys-acceptance reads ChatStatusBar.tsx OFF
+DISK in its banned-chord sweep. Probe 102's own v1 bug recorded: an exhausted input generator closes
+the transport write side — setModel "failing" identically is what proved it was the probe, not the
+setter. Reviewer's meta-note worth keeping: where plan and annex disagreed, the annex was right
+every time.

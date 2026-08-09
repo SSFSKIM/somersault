@@ -360,7 +360,8 @@ override) and §16's listing should be read as superseded.
 
 1. **Context.** qa3-02 shipped with Wave T — out of scope. The remaining defects: the banner prints
    the *unresolved* model (`(default)`) while the footer prints the resolved one (cause: one raw
-   expression at `main.ts:338/372` vs `:377`); no version in the box header; no auth-provider line;
+   expression at `main.ts:339/372` vs `:377` — cite repinned in v3); no version in the box header;
+   no auth-provider line;
    the SDK-authored `Default (recommended)` row describes the SDK's default (Sonnet) while ccx's
    `DEFAULTS.model` is claude-opus-5.
 2. **Decisions.**
@@ -395,9 +396,10 @@ override) and §16's listing should be read as superseded.
 4. **Work items.** (modify) `banner.ts` header/model/auth lines + resolved-model handoff in
    `main.ts`; (modify) `modelPickerModel` default-row description; (tests) banner/picker/footer
    agreement at launch.
-5. **Acceptance.** At launch, banner · footer · `/model` picker name the same resolved model and the
-   auth line shows the correct billing label under the OAuth token; the default row's description
-   names ccx's actual default.
+5. **Acceptance.** At launch, banner · `/status` · `/model` picker name the same resolved model
+   (the footer carries no model chip after EP-C1 — v3 amendment) and the auth line shows the
+   correct billing label under the OAuth token; the default row's description names ccx's actual
+   default.
 
 ---
 
@@ -429,7 +431,7 @@ override) and §16's listing should be read as superseded.
 | A9 | Suggestion: on → generated/shown/accepted/dismissed paths; off → zero traffic | keyed live + unit |
 | A10 | Effort: picker row stepping, `/effort` dialog, 10 s hint decay | pty keyed |
 | A11 | Ctrl-C clear+arm, Esc-Esc + hint, Home/End, ctrl+arrows, word boundary | pty keyless |
-| A12 | Banner/picker model agreement + `Claude subscription` billing label (probe-101 mapping) | keyed (accountInfo) |
+| A12 | Banner//status/picker model agreement + `Claude subscription` billing label (probe-101 mapping) | keyed (accountInfo) |
 | A13 | `#` memory mode removed: composer, hints, help grid, tests updated — *contingent on D-C2 standing; owner override voids the cell* | unit, keyless |
 | A14 | ctx%% chip removed; token-warning posts at (ceiling − 20k) with `{N}% until auto-compact` — *contingent on D-C3 standing* | unit + pty |
 | A15 | Full suite green (`npm run typecheck`, `test:unit`, `test:tui`, build) | keyless |
@@ -480,6 +482,16 @@ Pending — written at finish.
 ## Revision Notes
 
 - v1 2026-08-09 — authored from the three-worker grounding round (D9 pattern), born landed.
+- v3 2026-08-09 — plan-review fallout (opus plan reviewer, 4 Critical + 14 Important + 13 Minor
+  against the PLAN; three touched the spec): A12's third agreement surface repointed from the
+  footer to `/status` (EP-C1 removes the footer's model chip — the spec's own decision, missed in
+  its own acceptance cell); the `main.ts:338` cite repinned to `:339`; and NEW probe 102 settled
+  EP-C6's mechanism — the SDK has no `setEffort`; the runtime hook is
+  `Query.applyFlagSettings({effortLevel})`, live-verified mid-session, WITH NO VALIDATION (bogus
+  values resolve silently — ccx validates client-side). Probe 102's v1 harness bug is its own
+  lesson: an exhausted streaming-input generator closes the transport's write side, making every
+  control call throw — `setModel` "failed" identically, which exposed the probe rather than the
+  setter.
 - v2 2026-08-09 — spec-review round (fable reviewer, 6 Important + 9 Minor, 0 Critical; all
   adopted): notification placement corrected to the overlay row (the live build's `ds()` branch);
   EP-C7 dependency line split editor-vs-rendering; `think`/`⟳ streaming` chips explicitly
