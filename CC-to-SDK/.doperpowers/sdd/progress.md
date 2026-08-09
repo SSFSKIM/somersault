@@ -856,3 +856,28 @@ not skip on win32. THE FLAKE IS NAMED: useChat.test.tsx's OWN waitFor(cond, time
 :2609/:2630 failed at 2034–2053ms in 2 of 4 back-to-back tui runs, all wall-clock budget not
 assertions; pre-existing, statusLine.ts unreachable from that suite. Cleanup ticket candidate:
 raise/make injectable that 2s budget. Suites: 1821 unit / 3081 tui.
+
+## 2026-08-10 — Wave C Task 10 complete (c2bf60e0ec, review approved, no fix round)
+
+statusLine payload + render. Payload key-list pinned exactly (11 keys; ten upstream keys incl.
+effort asserted ABSENT via `in` — Task 11 adds effort); `...x && {}` omission idiom;
+current_usage:null pre-first-turn. Render: dim forced in raw SGR bytes over the script's own ANSI
+(reviewer verified §C2.6's real mechanism — upstream PARSES spans and sets dim per span so the
+script's \x1b[0m never reaches the terminal; Ink dimColor can't reach that painted result, byte
+transform can; reuses the Line.tsx preStyled seam), per-line truncate at width−padding, SGR
+carry-forward, gap 2, all four visibility-guard branches pinned (bash mode, exit-armed, pasting,
+14-vs-15 boundary). suppressHint: `? for shortcuts` gone while configured. Wiring: settings read in
+chatMain.tsx NOT useChat (adjudicated correct — hook tests would read real ~/.claude otherwise;
+grep clean); four poke sites (delta effect, turn-end, refreshCtx, refreshUsage), no effort poke;
+mountRun once, unmount→dispose→abort→SIGTERM chain verified. Reviewer re-ran an ISOLATED sabotage
+(row-floor term alone) — one named test failed. Recorded for final review: Minor 1 —
+total_input_tokens and current_usage come from different sources (getContextUsage vs cumulative
+session.usage fold) so upstream's cross-field identity input==sum(current_usage inputs) is FALSE
+and the divergence note doesn't say so (fix: extend the note, or current_usage:null); Minor 2 —
+context_window_size is 0 for the whole first turn (refreshCtx only fires at turn end; upstream's is
+a static per-model lookup, never zero; capabilities().models at mount could close it); nits:
+DIVERGENCE label missing on 2 of 6 recorded divergences, thinkLevel rung-change spawns script on
+byte-identical payload, statusLineRows unmemoized, suppressHint formula inlined vs footerModel
+export (pre-existing Task 2), no test pins useChat-unmount→dispose edge, output-token fold
+duplicates commands.ts totalOutputTokens (leaf-module tradeoff, commented). Suites: 1833 unit /
+3092 tui, no flake hit.
