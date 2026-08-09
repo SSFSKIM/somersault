@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { ModelPicker, type ModelInfo } from "../../src/tui/ModelPicker.js";
 import { MODEL_SUBTITLE, MODEL_TITLE, modelOverflowCount, modelVisibleCount, sessionOnlyLine } from "../../src/tui/modelPickerModel.js";
+import { CONFIRM_CANCEL, CONFIRM_SUBTITLE, CONFIRM_TITLE, confirmAccept } from "../../src/tui/modelConfirmModel.js";
 import { formatModelSet } from "../../src/tui/commands.js";
 import { formatOverflowCount } from "../../src/tui/format.js";
 import type { CcxPrefs } from "../../src/tui/prefs.js";
@@ -31,7 +32,7 @@ const MODELS: ModelInfo[] = [
 const many: ModelInfo[] = Array.from({ length: 14 }, (_, i) => ({ value: `m${i}`, displayName: `Model ${i}` }));
 
 function mount(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
-  const picked: { model: string; saveDefault: boolean }[] = [];
+  const picked: { model: string; saveDefault: boolean; confirmed?: boolean }[] = [];
   const saved: Partial<CcxPrefs>[] = [];
   let cancelled = false;
   const r = render(
@@ -39,7 +40,9 @@ function mount(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
       models={props.models ?? MODELS}
       {...(props.current !== undefined ? { current: props.current } : {})}
       {...(props.sessionModel !== undefined ? { sessionModel: props.sessionModel } : {})}
-      onPick={(m, o) => picked.push({ model: m.value, saveDefault: o.saveDefault })}
+      {...(props.outputTokens !== undefined ? { outputTokens: props.outputTokens } : {})}
+      {...(props.ackedAt !== undefined ? { ackedAt: props.ackedAt } : {})}
+      onPick={(m, o) => picked.push({ model: m.value, saveDefault: o.saveDefault, ...(o.confirmed ? { confirmed: true } : {}) })}
       onCancel={() => { cancelled = true; }}
       savePrefs={(patch) => saved.push(patch)}
       rows={40} columns={100}
@@ -217,6 +220,110 @@ describe("ModelPicker — Enter vs `s`, the whole point of the surface (DG46)", 
     await tick();
     expect(r.picked).toEqual([]);
     expect(r.saved).toEqual([]);
+  });
+});
+
+// WAVE S T12 (EP-S8) — the mid-conversation cache warning, and the ORDERING it exists to fix (W-S9).
+// TWO FIXTURE TRAPS this block is written around (plan review), both of which make the obvious version of
+// these tests pass or fail for the wrong reason:
+//  · `MODELS` above are TIER ALIASES (`opus`/`sonnet`/`haiku`), not resolved ids. `current="claude-sonnet-5"`
+//    plus picking `sonnet` resolves to the SAME model, so the gate says no-confirm and the assertion tests
+//    nothing. `current` here is therefore an alias the fixture actually contains, and the pick is a
+//    genuinely different tier.
+//  · the picker writes `savePrefs({ model: m.value })` — the RAW alias. Alias resolution happens downstream
+//    in `useChat.pickModel`, so `{ model: "claude-opus-5" }` can never be the assertion; `{ model: "opus" }`
+//    is.
+describe("ModelPicker — the mid-conversation switch confirm (EP-S8)", () => {
+  /** Open on Sonnet, move to Opus, Enter. A genuine tier change, mid-conversation. */
+  async function pickOpusFromSonnet(r: ReturnType<typeof mount>) {
+    await waitFor(() => frame(r.lastFrame).includes("Sonnet 4.7"));
+    r.stdin.write("\x1b[A");                                              // ↑ to Opus
+    await waitFor(() => plain(frame(r.lastFrame)).includes("❯ 1. Opus 5") || plain(frame(r.lastFrame)).includes("❯ Opus 5"));
+    r.stdin.write("\r");
+  }
+
+  it("does not write the default-model pref when the confirm is declined (W-S9)", async () => {
+    const r = mount({ current: "sonnet", outputTokens: 500 });
+    await pickOpusFromSonnet(r);
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    expect(flat(frame(r.lastFrame))).toContain(CONFIRM_SUBTITLE);
+    expect(plain(frame(r.lastFrame))).toContain(confirmAccept("Opus 5"));  // the DISPLAY name, not the alias
+    expect(plain(frame(r.lastFrame))).toContain(CONFIRM_CANCEL);
+    expect(r.saved).toEqual([]);                                          // the pref must not be written BEFORE the confirm
+    expect(r.picked).toEqual([]);
+    r.stdin.write("\x1b");                                                // decline (Esc)
+    await waitFor(() => plain(frame(r.lastFrame)).includes("most capable"));   // back to the LIST
+    expect(r.saved).toEqual([]);
+    expect(r.picked).toEqual([]);
+    expect(r.wasCancelled()).toBe(false);                                 // declining the confirm is not cancelling the picker
+  });
+
+  it("declining via the `No, go back` row is the same path as Esc, and the SAME switch prompts again", async () => {
+    const r = mount({ current: "sonnet", outputTokens: 500 });
+    await pickOpusFromSonnet(r);
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    r.stdin.write("\x1b[B");                                              // ↓ to `No, go back`
+    await waitFor(() => plain(frame(r.lastFrame)).includes(`❯ 2. ${CONFIRM_CANCEL}`) || plain(frame(r.lastFrame)).includes(`❯ ${CONFIRM_CANCEL}`));
+    r.stdin.write("\r");
+    await waitFor(() => plain(frame(r.lastFrame)).includes("most capable"));
+    expect(r.saved).toEqual([]); expect(r.picked).toEqual([]);
+    // Nothing was stamped, so the identical pick asks again — that is condition 2 read from the other side.
+    await pickOpusFromSonnet(r);
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    expect(r.saved).toEqual([]);
+  });
+
+  it("switches and writes the pref when the confirm is accepted", async () => {
+    const r = mount({ current: "sonnet", outputTokens: 500 });
+    await pickOpusFromSonnet(r);
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    r.stdin.write("\r");                                                  // the accept row is focused
+    await waitFor(() => r.picked.length > 0);
+    expect(r.picked).toEqual([{ model: "opus", saveDefault: true, confirmed: true }]);
+    expect(r.saved).toEqual([{ model: "opus" }]);                         // the RAW alias, resolved downstream
+  });
+
+  it("does not prompt at all once the ack is stamped at this output count", async () => {
+    const r = mount({ current: "sonnet", outputTokens: 500, ackedAt: 500 });
+    await pickOpusFromSonnet(r);
+    await waitFor(() => r.picked.length > 0);
+    expect(flat(frame(r.lastFrame))).not.toContain(CONFIRM_TITLE);
+    expect(r.picked).toEqual([{ model: "opus", saveDefault: true }]);      // no confirm ⇒ no stamp
+    expect(r.saved).toEqual([{ model: "opus" }]);
+  });
+
+  it("does not prompt before the model has produced output — the default path is unchanged", async () => {
+    const r = mount({ current: "sonnet" });                               // no outputTokens at all
+    await pickOpusFromSonnet(r);
+    await waitFor(() => r.picked.length > 0);
+    expect(r.picked).toEqual([{ model: "opus", saveDefault: true }]);
+    expect(r.saved).toEqual([{ model: "opus" }]);
+  });
+
+  it("gates the `s` (session-only) path too, and `s` is inert while the confirm is up", async () => {
+    const r = mount({ current: "sonnet", outputTokens: 500 });
+    await waitFor(() => frame(r.lastFrame).includes("Sonnet 4.7"));
+    r.stdin.write("\x1b[A");                                              // ↑ to Opus
+    await waitFor(() => plain(frame(r.lastFrame)).includes("❯ 1. Opus 5") || plain(frame(r.lastFrame)).includes("❯ Opus 5"));
+    r.stdin.write("s");
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    expect(r.picked).toEqual([]); expect(r.saved).toEqual([]);
+    r.stdin.write("s");                                                   // the picker's own key must not re-pick behind the confirm
+    await tick();
+    expect(r.picked).toEqual([]);
+    r.stdin.write("\r");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.picked).toEqual([{ model: "opus", saveDefault: false, confirmed: true }]);
+    expect(r.saved).toEqual([]);                                          // `s` never writes the default, confirmed or not
+  });
+
+  it("compares against a session-only override when one is in force, not against the ticked row", async () => {
+    // `s`-picked Opus is running; the ticked row still reads Sonnet. Re-picking Opus is not a switch.
+    const r = mount({ current: "sonnet", sessionModel: "opus", outputTokens: 500 });
+    await pickOpusFromSonnet(r);
+    await waitFor(() => r.picked.length > 0);
+    expect(flat(frame(r.lastFrame))).not.toContain(CONFIRM_TITLE);
+    expect(r.picked).toEqual([{ model: "opus", saveDefault: true }]);
   });
 });
 

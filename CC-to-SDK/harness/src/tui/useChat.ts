@@ -34,7 +34,7 @@ import { FoldPendingState } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine } from "./usageFormat.js";
@@ -79,7 +79,7 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -286,8 +286,14 @@ export function useChat(
   // F6 T11: `current` is the row the picker opens on and marks as the value in force (the catalog VALUE, not
   // the resolved id — `openModelPicker` maps between them); `sessionModel` is set only by the `s` path and is
   // the sole thing that renders the picker's third header line.
-  const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string }>({ open: false, models: [] });
+  const [modelPicker, setModelPicker] = useState<{ open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; outputTokens?: number; ackedAt?: number }>({ open: false, models: [] });
   const sessionModelRef = useRef<string | undefined>(undefined);
+  /** WAVE S T12 (EP-S8): the cumulative output count at which the model-switch cache warning was last
+   *  ACCEPTED. It lives here and not in `ModelPicker` for a structural reason — the picker unmounts on every
+   *  pick, so an ack it owned would be forgotten the instant it was given, and "not asked again until the
+   *  model has produced more output" would be unimplementable. `openModelPicker` threads it in as a prop and
+   *  `pickModel` stamps it back, on an ACCEPTED pick only. */
+  const cacheMissAckedAtOutputTokens = useRef<number | undefined>(undefined);
   const [rewindPicker, setRewindPicker] = useState<{ open: boolean; anchors: RewindAnchor[] }>({ open: false, anchors: [] });
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null>(null);
   const [rewinding, setRewinding] = useState(false);
@@ -1165,25 +1171,39 @@ export function useChat(
 
   async function openModelPicker() {
     try {
-      const caps = await session.capabilities();
+      // WAVE S T12: the switch confirm's gate needs the session's CUMULATIVE output tokens, and this is the
+      // one moment it can be read — `turnTokens` is the spinner's per-turn count and resets every turn.
+      // Fetched alongside the catalog, not after it, so the picker still opens in one round-trip.
+      // A FAILED usage read degrades to 0, which by gate condition 1 means NO confirm — i.e. it degrades to
+      // exactly the behavior this surface had before T12, never to a dialog raised on a number we do not
+      // have. The picker itself must never fail to open because a usage read did.
+      const [caps, usage] = await Promise.all([session.capabilities(), session.usage().catch(() => undefined)]);
       if (disposed.current) return;
+      const outputTokens = totalOutputTokens(usage as SessionUsage | undefined);
       const models: ModelInfo[] = (caps.models as any[]).map((m) => ({ value: String(m?.value ?? m), displayName: m?.displayName, description: m?.description }));
       if (!models.length) { append([{ text: "no models available", dim: true }]); return; }
       // Which ROW is the model in force. `model` is a resolved id ("claude-opus-5") and the rows are tier
       // aliases ("opus"), so the match runs through the same resolver `pickModel` writes with — a bare
       // `model` would tick no row at all on every alias-driven session, which is most of them.
       const current = models.find((m) => m.value === model || resolveModelAlias(m.value) === model)?.value;
-      setModelPicker({ open: true, models, ...(current ? { current } : {}), ...(sessionModelRef.current ? { sessionModel: sessionModelRef.current } : {}) });
+      // `ackedAt` is snapshotted onto the state rather than read from the ref at render time so ChatApp keeps
+      // reading state only, and so the pick that stamps it can stamp the SAME count the gate was asked about.
+      setModelPicker({ open: true, models, outputTokens, ...(cacheMissAckedAtOutputTokens.current !== undefined ? { ackedAt: cacheMissAckedAtOutputTokens.current } : {}), ...(current ? { current } : {}), ...(sessionModelRef.current ? { sessionModel: sessionModelRef.current } : {}) });
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeModelPicker() { if (!disposed.current) setModelPicker({ open: false, models: [] }); }
   /** `saveDefault` is the picker's Enter-vs-`s` split (DG46). The prefs write itself already happened inside
    *  the picker (it owns the `s` key, so it is the only place that knows); what reaches here is which of the
    *  two confirmation sentences is true, and whether a session-only override is now in force. */
-  function pickModel(m: ModelInfo, opts: { saveDefault?: boolean } = {}) {
+  function pickModel(m: ModelInfo, opts: { saveDefault?: boolean; confirmed?: boolean } = {}) {
     if (disposed.current) return;
     const saveDefault = opts.saveDefault !== false;
     sessionModelRef.current = saveDefault ? undefined : m.value;
+    // WAVE S T12: stamp the ack ONLY when this pick passed the switch confirm, and stamp the very count the
+    // gate was asked about (the one `openModelPicker` put on the picker state) — not a freshly read one,
+    // which could have moved and would then suppress a warning the user has not seen. A pick that never
+    // raised the dialog stamps nothing: it must not silence the NEXT switch, which may be a real one.
+    if (opts.confirmed) cacheMissAckedAtOutputTokens.current = modelPicker.outputTokens ?? 0;
     setModelPicker({ open: false, models: [] });
     // The picker's rows come straight from supportedModels(), whose values are TIER ALIASES ("opus"), so the
     // same translation the /model command does applies here — otherwise picking "Opus" selects Opus 4.8.

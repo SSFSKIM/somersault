@@ -1094,6 +1094,68 @@ describe("model picker", () => {
     expect(api.state.modelPicker.open).toBe(true);
     expect(api.state.modelPicker.sessionModel).toBeUndefined();
   });
+
+  // WAVE S T12 (EP-S8) — the half of the switch confirm the PICKER cannot hold. It unmounts on every pick,
+  // so the ack ("do not ask again until the model has produced more output") has to live here and be threaded
+  // back in on the next open.
+  const CAPS = { models: [{ value: "opus", displayName: "Opus" }, { value: "sonnet", displayName: "Sonnet" }], commands: [], mcpServers: [] };
+  const USAGE = { session: { model_usage: { "claude-sonnet-5": { outputTokens: 300 }, "claude-opus-5": { outputTokens: 200 } } } };
+
+  it("opens the picker with the session's CUMULATIVE output tokens, summed across models", async () => {
+    const fake = fakeRemote({ capabilities: () => CAPS, usage: () => USAGE });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.outputTokens).toBe(500);
+    expect(api.state.modelPicker.ackedAt).toBeUndefined();
+  });
+
+  // A broken usage read degrades to UPSTREAM-ABSENT behavior (0 output tokens ⇒ gate condition 1 ⇒ no
+  // confirm), never to a dialog raised on a number we do not have — and never to a picker that fails to open.
+  it("still opens the picker when usage() rejects, with a zero output count", async () => {
+    const fake = fakeRemote({ capabilities: () => CAPS, usage: () => { throw new Error("no usage"); } });
+    const api: { run?: (p: string) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.models.length).toBe(2);
+    expect(api.state.modelPicker.outputTokens).toBe(0);
+  });
+
+  it("stamps the ack at the confirmed count, and hands it back on the NEXT open", async () => {
+    const fake = fakeRemote({ capabilities: () => CAPS, usage: () => USAGE });
+    const api: { run?: (p: string) => void; pick?: (m: any, o?: any) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.pick = c.pickModel; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    api.pick!({ value: "opus", displayName: "Opus" }, { saveDefault: true, confirmed: true });
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.ackedAt).toBe(500);       // the count the gate was asked about, not a re-read
+  });
+
+  it("stamps NOTHING when the pick never raised the confirm — the next switch must still be able to warn", async () => {
+    const fake = fakeRemote({ capabilities: () => CAPS, usage: () => USAGE });
+    const api: { run?: (p: string) => void; pick?: (m: any, o?: any) => void; state?: any } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.pick = c.pickModel; api.state = c.state; return <Text>x</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    api.pick!({ value: "opus", displayName: "Opus" }, { saveDefault: true });   // no confirm was shown
+    await new Promise((r) => setTimeout(r, 0));
+    api.run!("/model");
+    await waitFor(() => api.state.modelPicker.open);
+    expect(api.state.modelPicker.ackedAt).toBeUndefined();
+  });
 });
 
 describe("useChat: compact divider + /copy (Task 9)", () => {

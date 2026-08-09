@@ -671,7 +671,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               // silently ignores that pin — under `ink-testing-library` the fake stdout reports the runner's
               // own geometry (and no `rows` at all), so the dialog and the composer disagree about the size of
               // the same terminal. Threading the state is the whole fix: one size for the whole tree.
+              // WAVE S T12: `outputTokens`/`ackedAt` are the switch-confirm's gate inputs, both owned by
+              // useChat (`openModelPicker` reads the usage, `pickModel` stamps the ack) and threaded through
+              // here as plain state. The confirm itself is a STAGE OF THE PICKER, not a new arm in this
+              // chain — see ModelSwitchConfirm.tsx's header for why, and note that it therefore adds nothing
+              // to `paneOwned` above: `state.modelPicker.open` already covers the whole surface, and a
+              // fixed-height dialog does not belong in that set anyway.
               ? <ModelPicker models={state.modelPicker.models} current={state.modelPicker.current} sessionModel={state.modelPicker.sessionModel}
+                  outputTokens={state.modelPicker.outputTokens} ackedAt={state.modelPicker.ackedAt}
                   onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
               // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
               // in the order settings → permissions → theme → addDir (plan Global Constraints line 38);

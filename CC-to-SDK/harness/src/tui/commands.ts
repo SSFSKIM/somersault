@@ -166,6 +166,16 @@ export interface SessionUsage {
   };
   subscription_type?: string | null;
 }
+/** Session-CUMULATIVE output tokens, across every model the session has used — the model-switch confirm's
+ *  gate reads it (Wave S T12, `modelConfirmModel.ts`) and there is nowhere else in the package that already
+ *  holds it (`useChat`'s `turnTokens` is per-turn and resets). Deliberately NOT folded by `canonicalModel`
+ *  like `/cost`'s rows are: a total does not care which rows merged, and folding first would only add a Map.
+ *  Tolerant of a partial payload for the same reason `SessionUsage` is optional throughout. */
+export function totalOutputTokens(u?: SessionUsage): number {
+  let n = 0;
+  for (const m of Object.values(u?.session?.model_usage ?? {})) n += m.outputTokens ?? 0;
+  return n;
+}
 type ModelRow = { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; webSearchRequests: number; costUSD: number };
 /** Upstream's `E0y` folds `model_usage` by CANONICAL model (`lo(rawKey)`) before rendering, so two raw ids
  *  that price as one model print one row rather than two. The SDK hands that canonical id back on the entry
