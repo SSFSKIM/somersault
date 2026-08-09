@@ -729,3 +729,18 @@ only the exit verb wired (detach wording for attached sessions — follow-up); (
 subscription useChat+composer — later consumer task collapses it; (M6) two overlong comment lines +
 a stale aria-hidden claim in modeTable. OWNERLESS ITEM ASSIGNED: the ← gesture wiring (open agents
 pane + ambiguity dance) → Task 4.
+
+## 2026-08-09 — Wave C Task 3 complete (64e8599b70 + b6aa20fc9c, review approved)
+
+Editor keys + the doublePress primitive. Home/End and ctrl-arrows wired at the INPUT layer (never
+the keymap — upstream's own architecture; reviewer verified no shadowing of the Transcript/Select
+home/end bindings via the useKeyFallback layering); word-forward now lands at next-word START with
+the alt+d/alt+f blast radius updated deliberately (10 observed reds incl. expected-3-to-be-4).
+Review found one behavioral Minor: forward motion parked on a paste-chip's opening bracket where
+upstream jumps the whole chip — the fix needed BOTH of upstream's nextWord chip clauses (the
+reviewer's one-liner satisfied only one acceptance case; the fixer caught that and said so). The
+undiscriminated 800ms window boundary got a fakeClock.jump helper (advance fires due timers first,
+making the boundary unreachable — instrument lesson). Remainders recorded in-code: cmd/super+arrow
+(parser decodes it; only KeyFlags projection missing), pageup/pagedown (need the popup guard).
+Task 4 caveats from review: dispose() deliberately does NOT notify onArmChange — callers that
+dispose while mounted own their own state; the 2000ms /clear window is a CALL-SITE argument.
