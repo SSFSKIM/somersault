@@ -1625,6 +1625,9 @@ export function useChat(
       // row (§C6.3's `tvn`/`nva`) and the catalog is the only place that knows.
       const models: ModelInfo[] = (caps.models as any[]).map((m) => ({
         value: String(m?.value ?? m), displayName: m?.displayName, description: m?.description,
+        // W-C T13 (review finding 3): the row's own target id rides along so §C8.6's default-row rewrite can
+        // name the sibling the CATALOG points at rather than the one our alias table would derive.
+        ...(typeof m?.resolvedModel === "string" ? { resolvedModel: m.resolvedModel } : {}),
         ...(typeof m?.supportsEffort === "boolean" ? { supportsEffort: m.supportsEffort } : {}),
         ...(Array.isArray(m?.supportedEffortLevels) ? { supportedEffortLevels: (m.supportedEffortLevels as unknown[]).filter(isEffortLevel) } : {}),
       }));

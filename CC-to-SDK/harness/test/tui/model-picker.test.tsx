@@ -142,27 +142,47 @@ describe("ModelPicker — the list (L441127-441132)", () => {
 // `default` alias resolves to the opus tier (config/models.ts). Upstream's row names the model it
 // CURRENTLY RESOLVES TO, so ours must name OURS.
 describe("ModelPicker — the `default` row's description (§C8.6)", () => {
-  const withDefault: ModelInfo[] = [
-    { value: "default", displayName: "Default (recommended)", description: "Use the default model (currently Sonnet 5)" },
-    ...MODELS,
+  // THE REAL CATALOG (t13 review finding 3), transcribed from a live `supportedModels()` run — display names,
+  // descriptions and the `resolvedModel` field verbatim. The rest of this file keeps its synthetic `MODELS`
+  // fixture on purpose: those tests are about geometry, focus and key handling, where a display name is an
+  // arbitrary string. HERE the strings ARE the assertion — this block pins a sentence ccx renders to the user
+  // — so it must be pinned against rows the engine can actually hand us. (The `sonnet` row's description is
+  // the one field the review did not quote; it resolves to the same model as `default`, whose description is
+  // reproduced. Nothing below reads it.)
+  const LIVE: ModelInfo[] = [
+    { value: "default", resolvedModel: "claude-sonnet-5", displayName: "Default (recommended)", description: "Sonnet 5 · Efficient for routine tasks" },
+    { value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus", description: "Opus 5 · Best for everyday, complex tasks" },
+    { value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet", description: "Sonnet 5 · Efficient for routine tasks" },
   ];
   it("rewrites it to name ccx's own resolved default, not the SDK's", async () => {
-    const r = mount({ models: withDefault });
+    const r = mount({ models: LIVE });
     await waitFor(() => frame(r.lastFrame).includes("Default"));
-    const f = flat(frame(r.lastFrame));
-    expect(f).toContain(defaultRowDescription("Opus 5"));                 // the sibling row's DISPLAY name
-    expect(defaultRowDescription("Opus 5")).toBe("Use the default model (currently Opus 5)");
-    expect(f).not.toContain("currently Sonnet 5");                        // the SDK's stale sentence is gone
+    // `Opus`, not `Opus 5`: the live row's display name is the tier word, and this is the string production
+    // puts on screen. Asserted on the returned row too, because the SDK's own sentence for the default row
+    // is shared with the `sonnet` row — a frame-level `not.toContain` would be pinning the wrong row.
+    expect(flat(frame(r.lastFrame))).toContain(defaultRowDescription("Opus"));
+    expect(defaultRowDescription("Opus")).toBe("Use the default model (currently Opus)");
+    expect(withDefaultRowDescription(LIVE)[0].description).toBe("Use the default model (currently Opus)");
+  });
+  it("keys the sibling match off the catalog's own `resolvedModel`, not our alias table", () => {
+    // A row whose VALUE our `MODEL_ALIASES` has never heard of, but which states where it points. Before the
+    // fix the match ran `resolveModelAlias("opus-latest")` → the string itself → no sibling → the bare id.
+    const rows = withDefaultRowDescription([LIVE[0], { value: "opus-latest", resolvedModel: "claude-opus-5", displayName: "Opus" }]);
+    expect(rows[0].description).toBe(defaultRowDescription("Opus"));
+  });
+  it("falls back to the alias resolver for a catalog row carrying no `resolvedModel`", () => {
+    const rows = withDefaultRowDescription([{ value: "default", description: "x" }, { value: "opus", displayName: "Opus 5" }]);
+    expect(rows[0].description).toBe(defaultRowDescription("Opus 5"));
   });
   it("falls back to the resolved id when the catalog carries no row for it", async () => {
-    const r = mount({ models: [withDefault[0], { value: "haiku", displayName: "Haiku 4.5" }] });
+    const r = mount({ models: [LIVE[0], { value: "haiku", resolvedModel: "claude-haiku-4-5", displayName: "Haiku" }] });
     await waitFor(() => frame(r.lastFrame).includes("Default"));
     expect(flat(frame(r.lastFrame))).toContain(defaultRowDescription(ccxDefaultModel()));
     expect(ccxDefaultModel()).toBe("claude-opus-5");
   });
   it("leaves every other row's description alone", () => {
-    const rows = withDefaultRowDescription(withDefault);
-    expect(rows.slice(1)).toEqual(MODELS);
+    const rows = withDefaultRowDescription(LIVE);
+    expect(rows.slice(1)).toEqual(LIVE.slice(1));
   });
 });
 

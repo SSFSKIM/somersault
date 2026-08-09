@@ -31,6 +31,10 @@ import {
 
 export interface ModelInfo {
   value: string; displayName?: string; description?: string;
+  /** WAVE C TASK 13 (t13 review finding 3): the catalog row's own target id (`opus` → `claude-opus-5`).
+   *  Read by `withDefaultRowDescription` alone — see `ModelRow.resolvedModel` for why it outranks our
+   *  alias table. */
+  resolvedModel?: string;
   /** WAVE C TASK 11 (EP-C6): the catalog's own two effort fields (`sdk.d.ts` ModelInfo). They come off
    *  `capabilities().models` — the SAME source the picker's rows already come from, which is why the effort
    *  row needs no second capability lookup and why "does this model support effort" is answered per ROW

@@ -38,11 +38,16 @@ export function bannerHeaderOffset(columns?: number): number {
   return cols(columns) >= BANNER_COMPACT_COLUMNS ? 3 : 1;
 }
 
-/** What `accountInfo()` ACTUALLY delivers headlessly — probe 101, not `sdk.d.ts`. Two fields arrive
- *  (`apiProvider`, and one credential-source field); `subscriptionType` is declared but NEVER present, which
- *  is why upstream's tier labels (`Claude Max` / `Claude Pro`) have no ccx counterpart below. `tokenSource`
- *  and `apiKeySource` are BOTH declared and the probe's own verdict names them inconsistently, so both are
- *  read and the first one present wins — the alternative is a label that vanishes on a field rename. */
+/** What `accountInfo()` ACTUALLY delivers headlessly — probe 101, not `sdk.d.ts`. Under OAuth exactly two
+ *  fields arrive, `apiProvider` and `tokenSource`; `subscriptionType` is declared but NEVER present, which
+ *  is why upstream's tier labels (`Claude Max` / `Claude Pro`) have no ccx counterpart below.
+ *
+ *  On the SECOND field, corrected in t13 review: the probes-doc verdict was right all along — the live field
+ *  is `tokenSource`. What was stale was the PROBE SCRIPT's own summary line, which printed `apiKeySource`
+ *  (a field that never arrives) and so read as a contradiction; that line is fixed in probe 101. The
+ *  `?? apiKeySource` fallback below stays anyway: `apiKeySource` is declared in `sdk.d.ts` and the API-KEY
+ *  arm has never been observed at all (every run to date was OAuth), so reading both costs one `??` and
+ *  covers the one credential path we have no evidence about. */
 export interface AccountFacts { apiProvider?: string; tokenSource?: string; apiKeySource?: string }
 /** §C8.3's `r7` (L64248), verbatim — the complete non-firstParty display-name set. */
 export const AUTH_PROVIDER_NAMES: Record<string, string> = {
@@ -70,8 +75,10 @@ export function billingLabel(account?: AccountFacts | null): string | undefined 
 
 export interface BannerInfo {
   cwd: string; model?: string; mode?: string;
-  /** The LAUNCH-RESOLVED effort (§C8.3 `ait`), not a setting — `main.ts` reads `config.effort ?? DEFAULTS.effort`
-   *  because the banner seeds before the REPL owns any effort state. Absent = no clause at all. */
+  /** The effort the launch NAMED (§C8.3 `ait`) — `main.ts` passes `config.effort` and nothing else, NOT
+   *  `?? DEFAULTS.effort` (t13 review finding 4): a defaulted launch has no business asserting an axis the
+   *  model may not have (`--model haiku` has none), and at seed time there is no catalog to ask. Absent =
+   *  no clause at all, which is the honest rendering of "the user did not say". */
   effort?: EffortLevel;
   /** Absent (or unmappable) = no billing segment; see `billingLabel`. */
   account?: AccountFacts;

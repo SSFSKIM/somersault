@@ -7,7 +7,11 @@
 import { openSession } from "../../harness/dist/index.js";
 
 const MODEL = "claude-haiku-4-5-20251001";
-const SAFE_KEYS = new Set(["apiKeySource", "apiProvider", "subscriptionType", "hasClaudeMax", "hasClaudePro", "tier", "plan", "billingType"]);
+// `tokenSource` is SAFE to print and must be: its value is the NAME of the env var the credential came from
+// ("CLAUDE_CODE_OAUTH_TOKEN"), never the token itself, and it is the single field the banner's billing label
+// keys off. Without it here the `/token/i` redactor below masks it, which is how the first run of this probe
+// reported an ambiguity that was never real (t13 review finding 2).
+const SAFE_KEYS = new Set(["apiKeySource", "tokenSource", "apiProvider", "subscriptionType", "hasClaudeMax", "hasClaudePro", "tier", "plan", "billingType"]);
 
 function redact(obj: any, depth = 0): any {
   if (obj === null || obj === undefined) return obj;
@@ -49,9 +53,14 @@ function redact(obj: any, depth = 0): any {
     console.log("post-turn key list:", post && !post.threw ? Object.keys(post).sort().join(", ") : "(n/a)");
 
     const sub = post?.subscriptionType ?? pre?.subscriptionType;
+    // `tokenSource` is the field that ACTUALLY arrives under OAuth; the first cut of this line named
+    // `apiKeySource`, which is declared in sdk.d.ts but never present, so the verdict printed `undefined`
+    // and made the shape look ambiguous. Both are printed now — the never-arriving one last, and clearly
+    // labelled, so a rerun records which credential path this run took instead of implying a rename.
     console.log("\nVERDICT: subscriptionType =", JSON.stringify(sub),
                 "| apiProvider =", JSON.stringify(post?.apiProvider ?? pre?.apiProvider),
-                "| apiKeySource =", JSON.stringify(post?.apiKeySource ?? pre?.apiKeySource));
+                "| tokenSource =", JSON.stringify(post?.tokenSource ?? pre?.tokenSource),
+                "| apiKeySource (declared; expected undefined under OAuth) =", JSON.stringify(post?.apiKeySource ?? pre?.apiKeySource));
   } finally {
     await session.close?.().catch?.(() => {});
     process.exit(0);

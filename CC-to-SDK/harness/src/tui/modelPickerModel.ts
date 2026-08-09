@@ -134,7 +134,15 @@ export const EFFORT_HINT_TIMEOUT_MS = 10_000;
 /** §C6.4's `w` useMemo (L447278), composed from the same `kUe` chord formatter as the adjust hint above. */
 export const EFFORT_DIALOG_FOOTER = "←/→ to adjust · Enter to confirm · Esc to cancel";
 
-export interface ModelRow { value: string; displayName?: string; description?: string }
+export interface ModelRow {
+  value: string; displayName?: string; description?: string;
+  /** The id the CATALOG says this row resolves to (`claude-opus-5`) — a real field of the live
+   *  `supportedModels()` row, not an invention. Only §C8.6's sibling match reads it, and only as the
+   *  authoritative answer to "which row IS ccx's default model": `resolveModelAlias` is OUR table, and the
+   *  engine's alias→id mapping is the engine's to change. Absent on older catalogs, which is why the match
+   *  still falls back to the alias resolver. */
+  resolvedModel?: string;
+}
 /** The row label, and the name every notice/`sessionOnlyLine` prints (upstream's `eq()`/`option.label`). */
 export const modelLabel = (m: ModelRow | undefined, fallback = ""): string => m?.displayName ?? m?.value ?? fallback;
 /** The display name for a VALUE, when all we have is the id — a session-only override outliving its row. */
@@ -171,7 +179,11 @@ export const defaultRowDescription = (name: string): string => `Use the default 
  *  Every other row is returned untouched — the SDK's descriptions are its own to write. */
 export function withDefaultRowDescription<T extends ModelRow>(rows: readonly T[]): T[] {
   const target = ccxDefaultModel();
-  const named = rows.find((r) => r.value !== DEFAULT_ROW_VALUE && resolveModelAlias(r.value) === target);
+  // `resolvedModel` FIRST (t13 review finding 3): the live catalog row states its own target id, and that
+  // beats re-deriving one through our alias table — a row whose `value` our table has never heard of still
+  // matches, and a row the engine has re-pointed matches where it actually points. `resolveModelAlias` stays
+  // as the fallback for rows (and fixtures) that carry no such field.
+  const named = rows.find((r) => r.value !== DEFAULT_ROW_VALUE && (r.resolvedModel ?? resolveModelAlias(r.value)) === target);
   const name = named ? modelLabel(named, target) : target;
   return rows.map((r) => (r.value === DEFAULT_ROW_VALUE ? { ...r, description: defaultRowDescription(name) } : r));
 }

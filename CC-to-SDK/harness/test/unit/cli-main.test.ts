@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { main, attachToImpl } from "../../src/cli/main.js";
+import { main, attachToImpl, ACCOUNT_LABEL_BUDGET_MS } from "../../src/cli/main.js";
 import type { MainDeps } from "../../src/cli/main.js";
 import { parseCcx } from "../../src/cli/args.js";
 import { versionLine } from "../../src/cli/help.js";
@@ -45,8 +45,24 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     // Wave-T T15: a bypass launch is the ONLY thing that reaches it, and no test here launches one — a call
     // from anywhere else is the gate firing where it should not, and must fail by name.
     showBypassConsent: async () => { throw new Error("showBypassConsent must not run"); },
+    // The launch clock (t13 review finding 1). NEVER FIRES by default, and that is the point: the suite runs
+    // on no real timer at all, and every test that does not care about the account race gets the arm where
+    // `accountInfo()` (or its absence) decides. A test that wants the deadline injects `fakeClock().delay`.
+    delay: () => new Promise<void>(() => {}),
     ...over,
   };
+}
+/** The injected launch clock. `delay` PARKS and records the budget it was asked for; `advance()` waits until
+ *  the code under test has actually parked its timer, then fires it — the fake-clock equivalent of the wall
+ *  clock passing the deadline, with no real `setTimeout` anywhere in the path. */
+function fakeClock() {
+  const asked: number[] = []; const parked: (() => void)[] = [];
+  return { asked,
+    delay: (ms: number) => new Promise<void>((go) => { asked.push(ms); parked.push(go); }),
+    async advance(): Promise<void> {
+      for (let i = 0; i < 500 && parked.length === 0; i++) await new Promise((r) => setImmediate(r));
+      parked.splice(0).forEach((go) => go());
+    } };
 }
 const banner = { short: "00000000", banner: "backgrounded · 00000000" };
 const FULL = "0d7a7a9d-1111-2222-3333-444455556666";      // what the W-S6 resolver hands back (Task 9)
@@ -442,13 +458,28 @@ describe("main — run: foreground (Task 7)", () => {
     expect(bannerText(clientCalls[0])).toContain("claude-opus-5");
     expect(bannerText(clientCalls[0])).not.toContain("(default)");
   });
-  it("the banner names the effort level the launch resolved (§C8.3 `ait`)", async () => {
+  // t13 review finding 4 — the banner must not ASSERT an effort the model may not even have. The clause used
+  // to render `config.effort ?? DEFAULTS.effort`, so `ccx --model haiku` printed ` with xHigh effort` about a
+  // catalog row that carries no effort axis at all. The banner cannot know support at seed time (no catalog
+  // yet), but it can know whether the USER named a level — so that, and only that, is what it claims.
+  it("the banner names the effort level only when the launch NAMED one (§C8.3 `ait`)", async () => {
     const clientCalls: any[] = [];
     const fakeHost = { start: async () => {}, stop: async () => {} } as any;
-    await captureLog(() => main(["task"], deps({
+    await captureLog(() => main(["--effort", "low", "task"], deps({
       isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
     })));
-    expect(bannerText(clientCalls[0])).toContain("with xHigh effort");   // DEFAULTS.effort, same as hookOpts
+    expect(bannerText(clientCalls[0])).toContain("with Low effort");
+    expect(clientCalls[0].hookOpts.initialEffort).toBe("low");
+  });
+  it("a DEFAULTED launch prints no effort clause at all — `--model haiku` has no effort axis to name", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["--model", "haiku", "task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(bannerText(clientCalls[0])).not.toContain("effort");
+    // hookOpts still carries DEFAULTS.effort — the §C6.2 hint names what the ENGINE runs, which is a
+    // different question from what the banner is entitled to CLAIM about a model it has no catalog for.
     expect(clientCalls[0].hookOpts.initialEffort).toBe("xhigh");
   });
   // The auth segment's four branches are pinned as a pure mapping in test/tui/banner.test.ts; what this
@@ -481,6 +512,38 @@ describe("main — run: foreground (Task 7)", () => {
     expect(text).toContain("claude-opus-5");
     expect(text).not.toContain("no credentials");
     expect(text).not.toContain("undefined");
+  });
+  // t13 review finding 1 — THE ONE THAT COSTS FIRST PAINT. `accountInfo()` is not a control round-trip: the
+  // SDK answers it out of the memoized init payload (`(await this.initialization).account`), so awaiting it
+  // bare parks the whole launch on the `claude` CLI's boot + handshake (measured 1152 ms cold, ~450 ms warm)
+  // — and an engine that is alive but never completes that handshake would hold the banner FOREVER. Bounded
+  // by a raced timer on the injected clock; the segment is chrome and losing it costs nothing.
+  it("a WEDGED accountInfo cannot hold first paint: past the budget the banner seeds without the segment", async () => {
+    const clientCalls: any[] = [];
+    const clock = fakeClock();
+    // Never settles, and never rejects — the mute-engine shape, which `.catch` alone cannot rescue.
+    const fakeHost = { start: async () => {}, stop: async () => {}, accountInfo: () => new Promise(() => {}) } as any;
+    const run = captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+      delay: clock.delay,
+    })));
+    await clock.advance();                                   // the wall clock passes 300 ms
+    const { value } = await run;
+    expect(value).toBe(0);
+    expect(clock.asked).toEqual([ACCOUNT_LABEL_BUDGET_MS]);   // one timer, for the budget the module names
+    expect(ACCOUNT_LABEL_BUDGET_MS).toBe(300);
+    // The whole line, so "no billing segment" is pinned as the ABSENCE of the ` · X` tail rather than as the
+    // absence of one particular label: the model segment runs straight into the mode tail.
+    expect(bannerText(clientCalls[0])).toContain("model  claude-opus-5   ·   mode");
+  });
+  it("a FAST accountInfo still wins the race — the budget bounds the wedge, it does not gate the label", async () => {
+    const clientCalls: any[] = [];
+    // deps()'s default clock never fires at all, so this label can only have come from the account arm.
+    const fakeHost = { start: async () => {}, stop: async () => {}, accountInfo: async () => ({ apiProvider: "firstParty", tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }) } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(bannerText(clientCalls[0])).toContain("· Claude subscription");
   });
 
   it("refuses --resume together with a prompt (foreground only), touching neither makeHost nor runChatClient", async () => {

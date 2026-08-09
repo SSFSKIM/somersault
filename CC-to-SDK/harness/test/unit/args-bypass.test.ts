@@ -49,6 +49,9 @@ function gateDeps(over: Partial<MainDeps> & { prefs?: CcxPrefs } = {}): MainDeps
     // NEVER the real file: a unit test may not read ~/.claude/ccx/prefs.json.
     loadPrefs: () => prefs ?? {},
     showBypassConsent: async () => { shown.push(1); },
+    // W-C T13's launch clock. Never fires: these launches carry no `accountInfo`, so the banner's account
+    // race settles on the absent-method arm and no timer of any kind may run in this file.
+    delay: () => new Promise<void>(() => {}),
     ...rest, shown,
   };
 }

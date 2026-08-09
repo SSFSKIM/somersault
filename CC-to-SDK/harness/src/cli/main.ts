@@ -61,6 +61,10 @@ export interface MainDeps {
    *  ink/React into every `-p` and `--bg` invocation. Resolves only when the warning is accepted; every
    *  other outcome exits the process from inside (decline 1, Escape 0). */
   showBypassConsent: () => Promise<void>;
+  /** W-C T13 (review finding 1) — the launch clock, injected for the same reason every reader here is: the
+   *  banner's account race has a DEADLINE, and a test that could not drive it would either sleep for real or
+   *  pin nothing. One caller today (`ACCOUNT_LABEL_BUDGET_MS`). */
+  delay: (ms: number) => Promise<void>;
 }
 const defaults: MainDeps = {
   runHostMain: realRunHostMain, collectFleet: realCollectFleet, spawnDetached: realSpawnDetached,
@@ -93,6 +97,9 @@ const defaults: MainDeps = {
   // The React-free-equivalent guarantee for the WebSocket stack: `ws` and the whole appserver module tree
   // load only when a `serve` invocation actually reaches this dispatch, never for `-p`/`--bg`/foreground.
   runServe: async (inv) => { const { runServe } = await import("./serveMain.js"); await runServe(inv); },
+  // `unref` so a race the OTHER arm already won cannot keep the event loop alive for the rest of the budget:
+  // this timer exists to bound a wedge, never to delay an exit.
+  delay: (ms) => new Promise<void>((r) => { setTimeout(r, ms).unref?.(); }),
 };
 
 const msg = (e: unknown): string => (e as Error)?.message ?? String(e);
@@ -330,6 +337,12 @@ export async function attachToImpl(target: string, o: { initialPrompt?: string; 
   return 0;
 }
 
+/** How long the launch will wait for the banner's billing label before printing without it (t13 review
+ *  finding 1). Sized against the measured warm handshake (~450 ms): deliberately SHORTER, because the
+ *  segment is worth having only when it is already there. Exported so the test pins the number the code
+ *  actually uses rather than a copy of it. */
+export const ACCOUNT_LABEL_BUDGET_MS = 300;
+
 /** Foreground ccx: an IN-PROCESS host + a loopback client over its own socket — exactly one ChatSession
  *  code path, so the daily REPL continuously exercises the attach protocol (spec A2b §3). */
 export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Promise<number> {
@@ -375,13 +388,24 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // session's life IS its terminal's. stop() is memoized+bounded, so double signals are safe.
   const onSignal = () => { void host.stop("done").finally(() => process.exit(0)); };
   process.on("SIGHUP", onSignal); process.on("SIGTERM", onSignal);
-  // W-C T13 (EP-C8 §C8.3): the banner's billing label. Asked HERE because here is where the banner seeds —
-  // the engine is open and the first turn has not run, which is exactly the window probe 101 proved
-  // `accountInfo()` answers in. Skipped entirely on a resume/continue launch, which prints no banner at all.
-  // A failure is SILENCE (`.catch`): the label is chrome, and a launch that stalls or shouts because a
-  // credential probe went wrong is strictly worse than one that prints the model and says nothing about
-  // billing. `?.` covers a host that does not implement it at all.
-  const account = (resume || inv.continue ? undefined : await host.accountInfo?.().catch(() => undefined)) as AccountFacts | undefined;
+  // W-C T13 (EP-C8 §C8.3): the banner's billing label. Asked HERE because here is where the banner seeds.
+  //
+  // What it actually costs (t13 review finding 1, correcting this block's first draft): `accountInfo()` is
+  // NOT a pre-turn control round-trip. The SDK answers it out of the memoized init payload —
+  // `(await this.initialization).account` — so awaiting it bare means awaiting the `claude` CLI's boot and
+  // handshake before first paint (measured 1152 ms cold, ~450 ms warm), and an engine that is alive but
+  // never completes that handshake never settles it at all, which `.catch` cannot rescue. The SDK bounds
+  // this same promise in its own warm-pool path; so do we.
+  //
+  // Hence the race: whichever of the answer and the deadline lands first. BOTH arms yield `undefined` on
+  // anything but a real answer, and `undefined` simply OMITS the segment — the label is chrome, and chrome
+  // never gets to cost the user their first paint. Skipped entirely on a resume/continue launch, which
+  // prints no banner at all. `?.` covers a host that does not implement it (a non-promise loses the race
+  // instantly, which is the right answer: there is nothing to wait for).
+  const account = (resume || inv.continue ? undefined : await Promise.race([
+    host.accountInfo?.().catch(() => undefined),
+    deps.delay(ACCOUNT_LABEL_BUDGET_MS).then(() => undefined),
+  ])) as AccountFacts | undefined;
   try {
     await deps.runChatClient({
       socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
@@ -405,7 +429,14 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
         // the raw setting (an alias, or nothing at all → the literal `(default)`) while the status bar
         // showed the resolved id. §C8.7: one resolution, two surfaces, so they cannot disagree. Effort and
         // the account facts ride along for the same reason: everything on this line is the launch truth.
-        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), effort: foregroundConfig.effort ?? DEFAULTS.effort, ...(account ? { account } : {}) }) } }] }),
+        //
+        // EFFORT IS THE FLAG ALONE, not `?? DEFAULTS.effort` (t13 review finding 4). This task is named
+        // banner truth, and ` with xHigh effort` on a bare `ccx --model haiku` is not true: haiku's catalog
+        // row has no effort axis at all. The banner cannot know that at seed time — the catalog is a
+        // `capabilities()` round-trip nobody has made yet — but it can know whether the USER named a level,
+        // and a level they named is a fact about the launch either way. `hookOpts.initialEffort` below keeps
+        // the default: naming what the ENGINE runs is a different claim from asserting the model has the axis.
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}) }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has
