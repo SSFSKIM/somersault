@@ -63,7 +63,9 @@ export const MODEL_FOOTER = "enter to set as default · s to use this session on
  *  to `cli/args.ts`'s `EFFORT_LEVELS` domain and to `config/validate.ts`'s enum; those two guard the launch
  *  flag and the config file, this one guards the running session. Kept as three literals rather than one
  *  shared constant because the two live on opposite sides of the tui/config boundary and neither package
- *  may import the other — `test/tui/effort.test.tsx` pins them equal instead. */
+ *  may import the other — `test/tui/effort.test.tsx`'s "across all three of its spellings" case pins them
+ *  equal instead: it imports all three (a TEST is not bound by that runtime boundary) and compares this
+ *  array against `args.ts`'s domain KEYS and `validate.ts`'s zod enum OPTIONS, as sets. */
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export const EFFORT_LEVELS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 const EFFORT_SET = new Set<string>(EFFORT_LEVELS);

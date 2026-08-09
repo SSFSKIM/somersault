@@ -39,12 +39,30 @@ export const COMMANDS: CommandRow[] = [
   { name: "continue", summary: "resume the most-recent session" },
   { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
-  // DIVERGENCE: upstream's `/effort` is `local-jsx` — a DIALOG and nothing else, with no argument form at
-  // all (its effort axis cannot be driven from the prompt line). Ours takes an OPTIONAL level argument as
-  // well. Two reasons, and both are ccx-specific: it is the house shape `/think <level>` and `/model <name>`
-  // already set, and it is the only thing that makes the client-side domain gate reachable from a keyboard —
-  // the dialog can only ever produce a valid level, so without the argument form nothing could exercise the
-  // guard probe 102 says has to exist (`applyFlagSettings` accepts a bogus level in silence).
+  // The optional level argument is UPSTREAM'S OWN SHAPE, not a house invention — an earlier note here claimed
+  // upstream's `/effort` was a dialog and nothing else, and the 2.1.220 bundle says otherwise on four counts.
+  // The descriptor (L354232) is `local-jsx` with an `argumentHint` of `[low|medium|high|xhigh|max|ultracode
+  // |auto]` (built by `NZd`, L354228), and its entry point `t5H` (L447308-447319) is a four-way router:
+  // `help|-h|--help` prints the usage block, `current|status` prints the level in force, EMPTY opens the
+  // slider dialog, and anything else is parsed as a level and applied without a dialog. There is a headless
+  // twin too (`Ojs`, L354237, `type:"local"`, `supportsNonInteractive`) reaching the same parser, `iD_`
+  // (L354205-354215). So ccx's `/effort [level]` matches upstream; what diverges is that ccx ships a SUBSET
+  // of it, and the three missing pieces are named here rather than left to look like parity:
+  //   * `auto` and `ultracode`. `Mjs` (L354079-354089) accepts `auto`/`unset` (clear the pin, fall back to
+  //     the model's own default) and `ultracode` (xhigh PLUS dynamic workflow orchestration, L354162). ccx
+  //     has neither: no per-model default table to fall back TO (see `modelPickerModel`'s DEFAULT_EFFORT),
+  //     and no workflow-orchestration flag to raise. The domain stays the five levels, in all three of its
+  //     spellings — `test/tui/effort.test.tsx` pins them equal.
+  //   * PERSISTENCE. Upstream's interactive arm SAVES: L354112 picks ` (saved as your default for new
+  //     sessions)` over ` (this session only)` whenever the level is settable and the session is local.
+  //     Every ccx `/effort` is session-only; the `s`-key session/default split the /model picker has was not
+  //     built for this axis.
+  //   * The `help` and `current|status` sub-verbs, with them the `Effort levels:` description block
+  //     (`I$o`, L354063-354071). ccx's non-level argument is an error line, not a usage print.
+  // All three are out of scope for T11 and none is blocked by the SDK; they are unbuilt, not unreachable.
+  // Independently of upstream, the argument form is also what makes the client-side domain gate reachable
+  // from a keyboard at all — the dialog can only ever produce a valid level, so nothing else could exercise
+  // the guard probe 102 says has to exist (`applyFlagSettings` accepts a bogus level in silence).
   { name: "effort", summary: "[low|medium|high|xhigh|max] — set reasoning effort (no arg opens the picker)" },
   { name: "mcp", summary: "[reconnect <name> | toggle <name> on|off] — MCP server status / controls" },
   // F6 T13 (DG61). Upstream's row is `{name:"tasks", aliases:["bashes"], description:"View and manage

@@ -19,6 +19,11 @@ import {
   stepEffort, type EffortLevel,
 } from "../../src/tui/modelPickerModel.js";
 import { formatStatus } from "../../src/tui/commands.js";
+// The other two spellings of the same domain. `modelPickerModel.ts` says this file pins all three equal, so
+// this file has to actually SEE all three: the tui may not import config at runtime (that boundary is the
+// whole reason the literal is written out three times), but a test is not bound by it.
+import { EFFORT_LEVELS as ARGS_EFFORT_LEVELS } from "../../src/cli/args.js";
+import { harnessConfigSchema } from "../../src/config/validate.js";
 
 /** Ink paints the row's colours INSIDE the text, so a substring assertion has to strip SGR first (the
  *  §C6.3 row is glyph/level/hint in three different colours — see `EffortRow.tsx`). `flat` additionally
@@ -31,6 +36,11 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
+/** A bounded quiet period for the ABSENCE assertions below. `waitFor` can only prove something happened;
+ *  proving nothing did needs a window generous enough for the thing to have happened — the hint's own path
+ *  is a resolved promise plus a state commit plus an effect, which is microtasks, so ~20 macrotask turns is
+ *  orders of magnitude of headroom and still costs a few milliseconds. */
+async function settle(turns = 20) { for (let i = 0; i < turns; i++) await new Promise((r) => setTimeout(r, 1)); }
 /** Type a slash command, WAIT for the composer to echo it, then submit — the same two-step every
  *  command-driving test in `chat.test.tsx` uses. One `write("/effort\r")` races the composer's own
  *  keystroke handling and the Return can land before the text does. */
@@ -50,6 +60,27 @@ async function runCommand(r: { stdin: { write(s: string): void }; lastFrame: () 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════
 // §C6.1 / §C6.2 / §C6.3 / §C6.4 — the pure literals
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// THE CROSS-BOUNDARY PIN `modelPickerModel.ts` promises. The five levels are written out three times — the
+// tui's ordered array (which the picker steps through), `cli/args.ts`'s object domain (which `--effort`
+// checks with `Object.hasOwn`) and `config/validate.ts`'s zod enum (which the config file is parsed against)
+// — because the tui and config halves may not import one another. Nothing in the type system connects them,
+// so a level added to one and forgotten in the other two would ship: `--effort ultracode` accepted at launch
+// and refused by `/effort`, or the reverse. This is the only thing that notices.
+describe("the effort domain, across all three of its spellings", () => {
+  it("the tui array, the `--effort` flag domain and the config enum are the same five levels", () => {
+    const configLevels = harnessConfigSchema.shape.effort.unwrap().options;
+    expect([...EFFORT_LEVELS]).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // Sets, not arrays, for the two that carry no order: only the tui's copy is ordered (the picker steps
+    // through it left-to-right), and asserting order on the others would pin something they don't mean.
+    expect(new Set(Object.keys(ARGS_EFFORT_LEVELS))).toEqual(new Set(EFFORT_LEVELS));
+    expect(new Set(configLevels)).toEqual(new Set(EFFORT_LEVELS));
+    // …and the tui's runtime gate agrees with all three, in both directions.
+    for (const l of [...Object.keys(ARGS_EFFORT_LEVELS), ...configLevels]) expect(isEffortLevel(l)).toBe(true);
+    expect(isEffortLevel("ultracode")).toBe(false);      // upstream has it; ccx does not — see `commands.ts`
+    expect(isEffortLevel("auto")).toBe(false);
+  });
+});
 
 describe("effort glyphs — `F7o` (L440864)", () => {
   it("is the five-glyph table, with `●` as the default arm", () => {
@@ -246,11 +277,13 @@ const EFFORT_CAPS = [
   { value: "haiku", displayName: "Haiku 4.5", description: "fastest", supportsEffort: false },
 ];
 
-function mountApp(opts: { effortCalls: string[]; store?: ReturnType<typeof createNotificationStore>; initialEffort?: string; initialModel?: string; capsGate?: Promise<void> }) {
-  // `capsGate` HOLDS the catalog response open. It is the only way to observe the pre-catalog window at all:
-  // `capabilities()` otherwise settles in a microtask, so the optimistic hint and its withdrawal both land
-  // before a poll loop's first tick and the two halves of the documented divergence are indistinguishable.
-  const fake = fakeEffortRemote(opts.effortCalls, { capabilities: async () => { await opts.capsGate; return { models: EFFORT_CAPS, commands: [], mcpServers: [] }; } });
+function mountApp(opts: { effortCalls: string[]; store?: ReturnType<typeof createNotificationStore>; initialEffort?: string; initialModel?: string; capsGate?: Promise<void>; capsFail?: boolean }) {
+  // `capsGate` HOLDS the catalog response open. It is the only way to observe the PRE-catalog window at all:
+  // `capabilities()` otherwise settles in a microtask, so "no hint yet" and "hint posted" both land before a
+  // poll loop's first tick and the gate the hint waits on would be indistinguishable from no gate.
+  // `capsFail` makes the same call REJECT, which is the other half of the settled latch — a session whose
+  // catalog never answers still gets its hint, because unknown-support is not the same as no-support.
+  const fake = fakeEffortRemote(opts.effortCalls, { capabilities: async () => { await opts.capsGate; if (opts.capsFail) throw new Error("catalog unavailable"); return { models: EFFORT_CAPS, commands: [], mcpServers: [] }; } });
   const r = renderWithKeymap(
     <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
       hookOpts={{ initialModel: opts.initialModel ?? "claude-opus-5", ...(opts.initialEffort ? { initialEffort: opts.initialEffort } : {}) }}
@@ -288,19 +321,45 @@ describe("the decaying hint (§C6.2)", () => {
     expect(store.state().current?.timeoutMs).toBe(EFFORT_HINT_TIMEOUT_MS);
   });
 
-  // DIVERGENCE, pinned in both halves (useChat's `effortSupported` says why): upstream answers "does this
-  // model have an effort axis" from a SYNCHRONOUS local registry (`Fk`, L76243) and so never posts the hint
-  // for a model without one. ccx's only authority is the catalog, one round-trip away, so it posts
-  // optimistically and WITHDRAWS. Both halves are asserted here rather than only the end state — the end
-  // state alone would also pass if the hint had never been implemented at all.
-  it("posts optimistically pre-catalog, then WITHDRAWS once the catalog says the model has no effort axis", async () => {
+  // ── THE CATALOG GATE. Upstream answers "does this model have an effort axis" from a SYNCHRONOUS local
+  // registry (`Fk`, L76243), so it never posts the hint for a model without one — not for a single frame.
+  // ccx's only authority is `capabilities()`, one round-trip away, so it WAITS for that call to settle
+  // before posting anything. Three branches, and all three are pinned because each one alone would pass
+  // against a wrong implementation: post-when-supported alone passes if the gate were missing entirely,
+  // never-post-when-unsupported alone passes if the hint were never built, and post-when-the-catalog-fails
+  // is the branch that keeps the gate from turning a broken catalog into a permanently silent hint.
+  it("posts NOTHING until the catalog settles, then posts once it says the model HAS an effort axis", async () => {
     const store = createNotificationStore();
     let release!: () => void;
     const capsGate = new Promise<void>((r) => { release = r; });
-    mountApp({ effortCalls: [], store, initialEffort: "high", initialModel: "haiku", capsGate });
-    await waitFor(() => store.state().current?.key === EFFORT_HINT_KEY);   // optimistic, pre-catalog
+    mountApp({ effortCalls: [], store, initialEffort: "high", initialModel: "claude-opus-5", capsGate });
+    await settle();
+    expect(store.state().current).toBeNull();                              // gated: the catalog has not answered
     release();
-    await waitFor(() => store.state().current === null);                   // …and withdrawn once it lands
+    await waitFor(() => store.state().current?.key === EFFORT_HINT_KEY);   // …and posts when it does
+    expect(store.state().current?.text).toBe("● high · /effort");
+  });
+
+  it("NEVER posts on a model the catalog says has no effort axis — no wrong-hint frame at all", async () => {
+    const store = createNotificationStore();
+    const seen: (string | null)[] = [];
+    store.subscribe(() => { seen.push(store.state().current?.text ?? null); });
+    let release!: () => void;
+    const capsGate = new Promise<void>((r) => { release = r; });
+    mountApp({ effortCalls: [], store, initialEffort: "high", initialModel: "haiku", capsGate });
+    await settle();
+    release();
+    await settle();
+    // Not just "null at the end" — nothing was ever pushed. A post-then-withdraw would leave its text here.
+    expect(seen.filter((t) => t !== null)).toEqual([]);
+    expect(store.state().current).toBeNull();
+  });
+
+  it("posts when the catalog FAILS — an unanswerable capability is unknown support, not absent support", async () => {
+    const store = createNotificationStore();
+    mountApp({ effortCalls: [], store, initialEffort: "high", initialModel: "claude-opus-5", capsFail: true });
+    await waitFor(() => store.state().current?.key === EFFORT_HINT_KEY);
+    expect(store.state().current?.text).toBe("● high · /effort");
   });
 });
 
@@ -309,7 +368,7 @@ describe("/effort", () => {
     const r = mountApp({ effortCalls: [], initialEffort: "high" });
     await waitFor(() => frame(r.lastFrame).includes("❯"));
     await runCommand(r, "/effort");
-    try { await waitFor(() => frame(r.lastFrame).includes(EFFORT_DIALOG_FOOTER)); } catch (e) { console.log("DBG-F2", JSON.stringify(r.lastFrame())); throw e; }
+    await waitFor(() => frame(r.lastFrame).includes(EFFORT_DIALOG_FOOTER));
     expect(frame(r.lastFrame)).not.toContain("effort maps to the thinking budget");
   });
 

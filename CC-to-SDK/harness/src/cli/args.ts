@@ -57,7 +57,11 @@ const KNOWN_UNSUPPORTED = new Set(["--remote-control", "--chrome", "--ide", "--t
 // The two value domains, checked against HarnessConfig's own unions via `satisfies`: a member added to
 // (or dropped from) the union breaks this literal at compile time instead of letting a stale value pass.
 const PERMISSION_MODES = { default: true, acceptEdits: true, bypassPermissions: true, plan: true, dontAsk: true, auto: true } satisfies Record<NonNullable<HarnessConfig["permissionMode"]>, true>;
-const EFFORT_LEVELS = { low: true, medium: true, high: true, xhigh: true, max: true } satisfies Record<NonNullable<HarnessConfig["effort"]>, true>;
+// Exported for ONE reason: `test/tui/effort.test.tsx` pins this domain equal to the tui's `EFFORT_LEVELS`
+// and to `config/validate.ts`'s zod enum. The three literals stay three (the tui may not import config, and
+// this flag domain must stay an object for `oneOf`'s `Object.hasOwn` check), so a test is the only thing
+// that can notice them drifting apart — and it can only do that if it can see this one.
+export const EFFORT_LEVELS = { low: true, medium: true, high: true, xhigh: true, max: true } satisfies Record<NonNullable<HarnessConfig["effort"]>, true>;
 
 /** `argv[++i] as any` used to put any string into these unions; resolveOptions forwards the value as-is
  *  and its `=== "auto"` guard means a near-miss like `Auto` also skips the auto-model repair. */

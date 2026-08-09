@@ -342,15 +342,21 @@ export function useChat(
   // `openModelPicker` does inline. State and not a ref: the hint's effect has to re-run when it lands.
   const [effortCaps, setEffortCaps] = useState<ReadonlyMap<string, { supportsEffort?: boolean; levels?: EffortLevel[] }>>(new Map());
   const effortCap = model ? effortCaps.get(model) : undefined;
+  //   …and whether that ONE call has come back AT ALL, either way. A latch and not `effortCaps.size > 0`,
+  // because a catalog that answered with no models and a catalog that has not answered yet are both an empty
+  // map and they mean opposite things. Set in BOTH arms of the fetch (see the effect): success settles it,
+  // and so does failure — an unanswerable capability is UNKNOWN support, never absent support.
+  const [effortCapsSettled, setEffortCapsSettled] = useState(false);
   //   Tri-state ON PURPOSE. `false` only once the catalog has SAID so; `undefined` means "not known yet",
   //   which every consumer treats as "assume it has one".
-  //   DIVERGENCE: upstream answers this synchronously — `Fk(model)` (L76243) is a local model registry, so a
-  // model without an effort axis never shows the hint for even one frame. ccx has no such registry; the only
-  // authority is `capabilities().models[].supportsEffort`, which arrives one round-trip after mount. So on an
-  // effort-less model ccx posts the hint optimistically and WITHDRAWS it when the catalog lands, where
-  // upstream would never have posted it. Withdrawing is the honest half of the trade; the alternative —
-  // suppressing the hint until the catalog answers — would delay it on every session to spare a flicker on
-  // the rare one, and would show nothing at all if the fetch failed.
+  //   DIVERGENCE, timing only: upstream answers this synchronously — `Fk(model)` (L76243) is a local model
+  // registry, so a model without an effort axis never shows the hint for even one frame. ccx has no such
+  // registry; the only authority is `capabilities().models[].supportsEffort`, one round-trip after mount.
+  // ccx reaches upstream's OUTCOME by waiting for that round-trip (`effortCapsSettled` gates the hint's
+  // effect) rather than by posting optimistically and withdrawing, which would have flashed a wrong hint for
+  // a second or three on exactly the models upstream never hints on. The wait costs nothing on supported
+  // models — the hint's ten-second clock is restarted by the catalog-landing render either way — and costs
+  // nothing on a FAILED fetch either, because failure settles the latch too.
   const effortSupported: boolean | undefined = effortCap === undefined ? undefined : effortCap.supportsEffort !== false;
   const effortLevels: readonly EffortLevel[] = effortCap?.levels ?? EFFORT_LEVELS;
   /** DIVERGENCE: upstream's `(default)` clause compares the level against the MODEL's default — `I5t`, off
@@ -444,11 +450,14 @@ export function useChat(
   // a repeated `/effort` re-display. Doing it here means ccx behaves identically on either store.
   //   The `!tue` arm is the two absences folded into one: no level at all (`ccx attach`), or a model whose
   // catalog row says it has no effort axis. Both mean "remove and post nothing".
+  //   The third guard is ccx's, and it is the timing divergence `effortSupported` describes: upstream knows
+  // the answer synchronously, ccx has to ask, so it says nothing until the asking is over. `effortCapsSettled`
+  // is a one-way latch, so this delays only the FIRST post of a session — a later `/effort` re-posts at once.
   useEffect(() => {
     notifications.remove(EFFORT_HINT_KEY);
-    if (!effort || effortSupported === false) return;
+    if (!effortCapsSettled || !effort || effortSupported === false) return;
     notifications.add({ key: EFFORT_HINT_KEY, text: effortHint(effort), priority: "high", timeoutMs: EFFORT_HINT_TIMEOUT_MS });
-  }, [effort, effortSupported, notifications]);
+  }, [effort, effortSupported, effortCapsSettled, notifications]);
   // Wave C Task 6: the spinner reads a METER, not a token count — the parenthetical needs the streamed
   // character target (for the eased estimate), the stream mode (for the arrow) and the tool/thinking
   // windows (for the phase ladder). All four come off the one `LiveTurn` that already consumes the frames.
@@ -1071,10 +1080,20 @@ export function useChat(
           if (resolved && resolved !== m.value) caps2.set(resolved, entry);
         }
         setEffortCaps(caps2);
+        // W-C T11 rev: the latch settles AFTER the rows it is a latch for, and the order is load-bearing
+        // rather than tidy. These two commits are batched into one render today, but if they ever aren't,
+        // settling first would give the hint's effect exactly the frame it is meant to prevent — settled,
+        // caps still empty, support reading "unknown", hint posted on a model that has no effort axis.
+        // This way round the intermediate render is the harmless one (caps known, latch still shut).
+        setEffortCapsSettled(true);
         const catalog = (caps.commands as unknown[]).map(toCatalogEntry).filter((e): e is CommandEntry => !!e);
         catalogNames.current = new Set(catalog.map((c) => c.name));
         setCommandCatalog(mergeCommands(LOCAL_COMMAND_ENTRIES, catalog));
-      } catch { /* keep the local-only catalog */ }
+      } catch {
+        // Keep the local-only catalog — and settle the effort latch anyway. A capability call that never
+        // answers leaves support UNKNOWN, and unknown support is the case the hint is supposed to show on.
+        if (!cancelled && !disposed.current) setEffortCapsSettled(true);
+      }
     })();
     return () => { cancelled = true; };
   }, [session]);
