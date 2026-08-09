@@ -47,7 +47,8 @@ function fakeResize() {
 
 // The needles are read off the code, not guessed: `spinnerStatus` (spinner.ts) builds
 // `(3s · ↓ 142 tokens)` with the token clause present only once the eased estimate is > 0, and
-// `formatElapsed` switches to `1m05s` past a minute. Counting is done over the WHOLE stripped frame rather
+// the elapsed segment is `format.ts`'s `formatDuration` (upstream `ra`), which switches to `1m 5s` — SPACED
+// and unpadded — past a minute. Counting is done over the WHOLE stripped frame rather
 // than per line: a duplicate spinner is a duplicate row, and a per-line filter would also silently pass a
 // frame whose rows had been concatenated. Every width used below keeps the row under ink-testing-library's
 // fixed 100-column stdout (longest possible: glyph + the 18-char `Flibbertigibbeting…` + the tail ≈ 50), so
@@ -58,7 +59,7 @@ function fakeResize() {
 // footer hint list carries it on every busy frame — so counting it would now return 1 no matter how many
 // spinners the tree held, and the whole file would pass vacuously. The census is the ELAPSED TAIL, which
 // only a mounted spinner can print, plus `spinnerRows` for the gerund itself.
-const ELAPSED_TAIL = /\((\d+m\d{2}s|\d+s)(?: · [↓↑] [\d.]+k? tokens)?\)/g;
+const ELAPSED_TAIL = /\((\d+m \d+s|\d+s)(?: · [↓↑] [\d.]+k? tokens)?\)/g;
 const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 const gerundRows = (f: () => string | undefined) => spinnerRows(strip(frame(f)));
 /** Every elapsed tail in the frame, as its clock READING — `["1s"]`, or `["0s","2s","3s"]` on the frame QA
@@ -66,7 +67,7 @@ const gerundRows = (f: () => string | undefined) => spinnerRows(strip(frame(f)))
  *  what the first version of this file asserted (fix round 1, finding F6). */
 const elapsedValues = (f: () => string | undefined) => [...strip(frame(f)).matchAll(ELAPSED_TAIL)].map((m) => m[1]);
 const elapsedRows = (f: () => string | undefined) => elapsedValues(f).length;
-const secs = (v: string) => { const m = /^(?:(\d+)m)?(\d+)s$/.exec(v); if (!m) throw new Error(`unparseable elapsed: ${v}`); return Number(m[1] ?? 0) * 60 + Number(m[2]); };
+const secs = (v: string) => { const m = /^(?:(\d+)m )?(\d+)s$/.exec(v); if (!m) throw new Error(`unparseable elapsed: ${v}`); return Number(m[1] ?? 0) * 60 + Number(m[2]); };
 /** Wait for the live clock to actually MOVE, and return the reading it moved off. There is no clock seam at
  *  this level and this deliberately does not add one: `TurnSpinner`'s `now` prop IS injectable, but ChatApp
  *  never passes it (ChatApp.tsx's `<TurnSpinner startedAt tokens />`), and threading one through production

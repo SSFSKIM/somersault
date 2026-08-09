@@ -1,14 +1,19 @@
 import { describe, it, expect } from "vitest";
 import {
-  SPINNER_VERBS, SPINNER_FRAMES, glyphFrame, pickVerb, formatElapsed, spinnerStatus,
+  SPINNER_VERBS, SPINNER_FRAMES, glyphFrame, pickVerb, spinnerStatus,
   thinkingWord, modeArrow, easeChars, estimateTokens, EASE_STEP_MS, QUIET_MS,
   initPhaseState, advancePhase, phaseFor, phaseLabel, thinkingStatusOf, rotateVerb,
   type PhaseInput,
 } from "../../src/tui/spinner.js";
+import { spinnerRows, spinnerUp } from "./helpers/spinnerRow.js";
+import { THINKING_PLACEHOLDER } from "../../src/tui/render.js";
 
 describe("spinner verbs", () => {
-  it("carries the full 187-verb CC vocabulary including signature verbs", () => {
-    expect(SPINNER_VERBS.length).toBe(187);
+  it("carries the full 186-verb CC vocabulary including signature verbs", () => {
+    // Upstream's `$ta` (L406847) holds exactly 186. The port carried a 187th, `Evaporating`, that is in no
+    // upstream list — invented, and removed in the Task 6 review round.
+    expect(SPINNER_VERBS.length).toBe(186);
+    expect(SPINNER_VERBS).not.toContain("Evaporating");
     for (const v of ["Cogitating", "Noodling", "Clauding", "Schlepping", "Herding"]) expect(SPINNER_VERBS).toContain(v);
   });
   it("pickVerb maps [0,1) deterministically and never goes out of bounds", () => {
@@ -28,33 +33,37 @@ describe("spinner glyph", () => {
   });
 });
 
-// ── Wave C Task 6: the elapsed formatter, ported WHOLE ────────────────────────────────────────────────
-// `$st` (bundle L107079, export map L107029 `formatBarElapsed`). The pre-Wave-C port carried a header
-// comment naming its own two defects (a space in `1m 05s`, and no rollover past minutes) and told whoever
-// touched the spinner next to port the function whole. This is that port; these are its golden cases.
-describe("formatElapsed — upstream `$st` in full", () => {
-  it("spells seconds under a minute", () => {
-    expect(formatElapsed(0)).toBe("0s");
-    expect(formatElapsed(4000)).toBe("4s");
-    expect(formatElapsed(4999)).toBe("4s");        // floor, not round
-    expect(formatElapsed(59000)).toBe("59s");
-    expect(formatElapsed(-100)).toBe("0s");        // clamped
+// ── Wave C Task 6 (review round): the elapsed segment is `ra`, NOT `$st` ──────────────────────────────
+// The spinner's own clock is `he = ra(R)` — bundle L407947, inside `C0p` — and `ra` is the export map's
+// `formatDuration` (L107029/L107033), which `format.ts` already ports for the `running tool for {t}` rung.
+// It spells a minute-and-change SPACED and UNPADDED (`1m 5s`) and keeps rolling into hours and days as
+// `1h 2m 3s`. `$st`/`formatBarElapsed` (L107079) — the `1m05s` spelling — is a real upstream function, but
+// it belongs to the agent/session/workflow rows (L430339, L430517, L480289), not to this tail. Task 6 first
+// shipped the `$st` spelling here on the strength of a stale pre-Wave-C header comment; these goldens are
+// the correction, asserted through `spinnerStatus` because that is the surface the spelling reaches.
+const clock = (elapsedMs: number) => spinnerStatus({ elapsedMs, verbose: true });
+describe("the elapsed segment — upstream `ra`/formatDuration", () => {
+  it("spells seconds under a minute, floored", () => {
+    expect(clock(0)).toBe("(0s)");
+    expect(clock(4000)).toBe("(4s)");
+    expect(clock(4999)).toBe("(4s)");              // floor below a minute, not round
+    expect(clock(59000)).toBe("(59s)");
   });
-  it("spells minutes with NO space and a zero-padded second", () => {
-    expect(formatElapsed(60000)).toBe("1m00s");
-    expect(formatElapsed(65000)).toBe("1m05s");
-    expect(formatElapsed(3599000)).toBe("59m59s");
+  it("spells minutes WITH a space and no zero padding", () => {
+    expect(clock(60000)).toBe("(1m 0s)");
+    expect(clock(65000)).toBe("(1m 5s)");
+    expect(clock(3599000)).toBe("(59m 59s)");
   });
-  it("rolls over at the hour into `NhMMm`, dropping seconds", () => {
-    expect(formatElapsed(3600000)).toBe("1h00m");
-    expect(formatElapsed(3720000)).toBe("1h02m");
-    expect(formatElapsed(86399000)).toBe("23h59m");
+  it("keeps seconds through the hour rollover", () => {
+    expect(clock(3600000)).toBe("(1h 0m 0s)");
+    expect(clock(3723000)).toBe("(1h 2m 3s)");
   });
-  it("rolls over at the day into `NdHHh`, dropping minutes", () => {
-    expect(formatElapsed(86400000)).toBe("1d00h");
-    expect(formatElapsed(183600000)).toBe("2d03h");
-    // The defect the old header used as its own example: 25 h 1 m 1 s read `1500m 01s`.
-    expect(formatElapsed(90061000)).toBe("1d01h");
+  it("keeps minutes through the day rollover", () => {
+    expect(clock(86400000)).toBe("(1d 0h 0m)");
+    expect(clock(90061000)).toBe("(1d 1h 1m)");    // 25 h 1 m 1 s
+  });
+  it("carries `ra`'s carry rules: a rounded 60th second promotes the minute", () => {
+    expect(clock(119600)).toBe("(2m 0s)");         // 1 m 59.6 s → seconds round to 60 → 2m 0s
   });
 });
 
@@ -228,11 +237,27 @@ describe("spinnerStatus — the width-adaptive parenthetical", () => {
     expect(spinnerStatus({ ...full, columns: 20 })).toBe("");
   });
   it("puts an override suffix ahead of everything and keeps the real parens", () => {
-    expect(spinnerStatus({ elapsedMs: 2000, tokens: 84, mode: "responding", suffix: "esc to interrupt" }))
-      .toBe("(esc to interrupt · 2s · ↓ 84 tokens)");
+    // The example string is deliberately NOT `esc to interrupt`: that copy is the footer's now, and using it
+    // here would suggest the tail still carries it. `spinnerSuffix` is an unconditional caller-supplied
+    // segment and nothing in ccx sets one.
+    expect(spinnerStatus({ elapsedMs: 2000, tokens: 84, mode: "responding", suffix: "offline" }))
+      .toBe("(offline · 2s · ↓ 84 tokens)");
   });
   it("forces every segment on in verbose mode", () => {
     expect(spinnerStatus({ elapsedMs: 1000, verbose: true })).toBe("(1s)");
+  });
+});
+
+// ── The census helper's own guard (Task 6 review, MEDIUM-2) ───────────────────────────────────────────
+describe("spinnerRow helper — the `✻ Thinking…` placeholder is not a spinner", () => {
+  it("does not count render.ts's collapsed thinking row", () => {
+    expect(spinnerRows(THINKING_PLACEHOLDER.text)).toBe(0);
+    expect(spinnerUp(`some transcript\n${THINKING_PLACEHOLDER.text}\nmore transcript`)).toBe(false);
+  });
+  it("still counts a real spinner, including one that drew the `Thinking` verb", () => {
+    expect(spinnerRows("✻ Baking… (2s)")).toBe(1);
+    expect(spinnerRows("✽ Thinking… (2s)")).toBe(1);        // any glyph but the placeholder's own
+    expect(spinnerRows("· Herding…\n✳ Herding…")).toBe(2);   // counts, not just detects
   });
 });
 

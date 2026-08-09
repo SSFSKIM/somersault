@@ -194,7 +194,7 @@ a second missing piece, not just a missing escape sequence.
 - Component: **`src/tui/TurnSpinner.tsx:10–26`**, mounted at **`ChatApp.tsx:577`** inside a
   three-way slot (`RetryRow` > `CompactionRow` > `TurnSpinner`, `ChatApp.tsx:574–578`).
 - Glyph cycle: `spinner.ts:7–14` (`· ✢ ✳ ✶ ✻ ✽` out-and-back, 120 ms tick at `TurnSpinner.tsx:13`).
-- Gerund: `spinner.ts:53–56` `pickVerb()` from the 187-verb list at `spinner.ts:17–50`. Picked
+- Gerund: `spinner.ts:53–56` `pickVerb()` from the (then) 187-verb list at `spinner.ts:17–50` — 186 upstream plus the invented `Evaporating`, deleted in the Task 6 review round. Picked
   **once on mount** (`TurnSpinner.tsx:12`, `useRef(verb ?? pickVerb())`) — hence fixed for the whole
   turn. Upstream rotates mid-turn.
 - Parenthetical: **`spinner.ts:80–83`** `spinnerStatus(elapsedMs, tokens)` →
@@ -207,6 +207,17 @@ a second missing piece, not just a missing escape sequence.
 - Elapsed formatter: `spinner.ts:73–77` with a **documented known defect** in its own header
   (`spinner.ts:58–72`): separator `1m 05s` vs upstream `1m05s`, and no hour/day rollover. Whoever
   touches the tail is told to port upstream `$st` whole.
+
+  > **CORRECTION (2026-08-10, Task 6 review).** The `1m05s` half of this row is WRONG, and this
+  > grounding note is where the error propagated from: it repeated the claim in ccx's own stale
+  > pre-Wave-C `spinner.ts` header instead of reading the bundle. The spinner's clock is
+  > `he = ra(R)` (`C0p`, L407947), and `ra` is the export map's `formatDuration` (L107029 →
+  > L107033) — **spaced and unpadded**, `1m 5s` for 65 s, `1h 2m 3s` for 3723 s. `$st`
+  > (`formatBarElapsed`, L107079) is the `1m05s` spelling and is real, but its call sites are the
+  > agent progress row (L430339), the workflow stats line (L430517) and the teammate/model rows
+  > (L480289) — not the spinner, and not EP-C4's duration row, which is `ra` too. What survives
+  > from this row: the **rollover** gap was genuine (ccx stopped at minutes; `ra` keeps going), and
+  > the separator delta is the reverse of what is written above (ccx already had the space right).
 - Phase word (`thinking`): **absent** — nothing in `spinner.ts` or `TurnSpinner.tsx` has a phase
   concept.
 

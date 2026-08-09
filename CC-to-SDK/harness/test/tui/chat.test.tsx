@@ -18,6 +18,7 @@ import { currentTheme, setTheme } from "../../src/tui/theme.js";
 import { createNoticeBridge } from "../../src/tui/chatMain.js";
 import { appendHistory, readHistory } from "../../src/tui/promptHistory.js";
 import { createNotificationStore } from "../../src/tui/notifications.js";
+import { spinnerUp } from "./helpers/spinnerRow.js";
 
 // W3 T4: theme.ts's ACCENT/current live binding is module-scoped and vitest isolates per FILE, not per
 // test, so a /theme test that previews or persists a theme must not leak it into a later test in this
@@ -1220,7 +1221,11 @@ describe("<ChatApp>", () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯ "));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });                    // live turn → spinner
-    await waitFor(() => plain(frame(lastFrame)).includes("esc to interrupt"));
+    // Task 6 review, MEDIUM-3: this test used to watch `esc to interrupt`, which since Task 6 is FOOTER copy
+    // and stays on screen for every busy frame — so the "spinner hidden" assertion below passed whether the
+    // spinner was mounted over the pager or not (proved by sabotage). `spinnerUp` is the glyph-and-gerund
+    // needle, which only a mounted TurnSpinner can print.
+    await waitFor(() => spinnerUp(frame(lastFrame)));
     stdin.write("queued while busy");                                            // typed mid-turn…
     await waitFor(() => plain(frame(lastFrame)).includes("queued while busy"));
     stdin.write("\r");                                                            // …and submitted busy → the queue echo row
@@ -1229,11 +1234,11 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Transcript"));
     // The two load-bearing absences. "queued while busy" covers the queue echo AND any composer remnant at
     // once — whichever surface held the text, neither may add rows beside the pager.
-    expect(plain(frame(lastFrame))).not.toContain("esc to interrupt");            // spinner hidden (turn still live)
+    expect(spinnerUp(frame(lastFrame))).toBe(false);                              // spinner hidden (turn still live)
     expect(plain(frame(lastFrame))).not.toContain("queued while busy");           // queue echo hidden
     stdin.write("\x0f");                                                          // Ctrl-O closes
     await waitFor(() => !frame(lastFrame).includes("Transcript"));
-    await waitFor(() => plain(frame(lastFrame)).includes("esc to interrupt"));    // spinner restored — turn never stopped
+    await waitFor(() => spinnerUp(frame(lastFrame)));                             // spinner restored — turn never stopped
     expect(plain(frame(lastFrame))).toContain("queued while busy");               // queue echo restored
   });
 

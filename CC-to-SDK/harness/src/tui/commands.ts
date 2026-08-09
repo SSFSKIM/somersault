@@ -168,7 +168,7 @@ export interface SessionUsage {
 }
 /** Session-CUMULATIVE output tokens, across every model the session has used — the model-switch confirm's
  *  gate reads it (Wave S T12, `modelConfirmModel.ts`) and there is nowhere else in the package that already
- *  holds it (`useChat`'s `turnTokens` is per-turn and resets). Deliberately NOT folded by `canonicalModel`
+ *  holds it (`useChat`'s `turnMeter` is per-turn and resets). Deliberately NOT folded by `canonicalModel`
  *  like `/cost`'s rows are: a total does not care which rows merged, and folding first would only add a Map.
  *  Tolerant of a partial payload for the same reason `SessionUsage` is optional throughout. */
 export function totalOutputTokens(u?: SessionUsage): number {

@@ -229,8 +229,12 @@ override) and §16's listing should be read as superseded.
      ladder `thinking → still thinking (10s) → thinking more (20s) → thinking some more (30s) →
      almost done thinking (45s)`, `running tool for Ns`, `thought for Ns`; gerund re-picked between
      phases (upstream's `resetOverrides` semantics) instead of fixed per turn; elapsed formatter
-     ported whole (the `1m05s` no-space form — the self-documented defect at `spinner.ts:58-72`
-     finally pays its debt); width-adaptive visibility gates (elapsed → tokens → phase in upstream's
+     ported whole — upstream's `ra`/`formatDuration` (L107033), the **spaced, unpadded** `1m 5s` /
+     `1h 2m 3s` form the spinner actually calls at `C0p` L407947 (corrected 2026-08-10 in the Task 6
+     review: this line originally said the `1m05s` no-space form, which is `$st`/`formatBarElapsed`
+     — a real upstream function, but one belonging to the agent and session rows, not this tail; the
+     claim came from a stale pre-Wave-C `spinner.ts` header comment that the grounding repeated);
+     width-adaptive visibility gates (elapsed → tokens → phase in upstream's
      precedence, 16 s quiet threshold).
    - **Mode chip** `[DECIDED-AUTO]`: adopt the six-mode table verbatim (L41556) — glyph `⏸` for
      default/plan, `⏵⏵` for acceptEdits/auto/bypassPermissions/dontAsk; text
@@ -481,6 +485,9 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- v4 2026-08-10 — Task 6 review: upstream's spinner elapsed is `ra`/formatDuration (`1m 5s` spaced),
+  not `$st` (`1m05s`); the no-space claim traced to a stale pre-Wave-C ccx comment that the grounding
+  repeated. EP-C4's duration row uses the same `ra`.
 - v1 2026-08-09 — authored from the three-worker grounding round (D9 pattern), born landed.
 - v3 2026-08-09 — plan-review fallout (opus plan reviewer, 4 Critical + 14 Important + 13 Minor
   against the PLAN; three touched the spec): A12's third agreement surface repointed from the

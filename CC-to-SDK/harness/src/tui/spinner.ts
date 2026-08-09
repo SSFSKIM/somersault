@@ -1,7 +1,7 @@
 // tui/src/spinner.ts — pure spinner vocabulary + formatters + the whole parenthetical anatomy for the
 // live-turn indicator. CC fidelity: the asterisk-pulse frames (components/Spinner/utils.ts
-// getDefaultCharacters, darwin variant) animated out-and-back, and the 187 random thinking verbs verbatim
-// from constants/spinnerVerbs.ts. No React/Ink — the view layer is TurnSpinner.tsx.
+// getDefaultCharacters, darwin variant) animated out-and-back, and the 186 random thinking verbs verbatim
+// from `$ta` (bundle L406847). No React/Ink — the view layer is TurnSpinner.tsx.
 //
 // WAVE C TASK 6 rewrote the tail. It used to read `(3s · 142 tokens · esc to interrupt)`; canon's `C0p`
 // (bundle L407892, assembled L407982) reads `({elapsed} · {↓|↑} {N} tokens · {phase})` and carries no
@@ -13,7 +13,18 @@
 //      happening, so a short quiet turn shows a bare `✻ Baking…` and nothing else;
 //   3. the phase ladder (`thinking` → … → `almost done thinking`, `running tool for {t}`) joins as the
 //      last segment; and
-//   4. the elapsed formatter is finally the WHOLE `$st`, hour and day rollover included.
+//   4. the elapsed segment is `format.ts`'s `formatDuration`, hour and day rollover included.
+//
+// ON THE ELAPSED FORMATTER, because this file's header is where the error started. The pre-Wave-C comment
+// here asserted that upstream spells the spinner's clock `1m05s`; it does not, and every later reader
+// (Task 6's own port, the Wave C grounding note, the spec's EP-C4 text) inherited the claim without going
+// back to the bundle. What the bundle says: `C0p` computes `he = ra(R)` (L407947), and `ra` is the export
+// map's `formatDuration` (L107029 → L107033) — SPACED and UNPADDED, `1m 5s` for 65 s and `1h 2m 3s` for
+// 3723 s. `ra` is also what the two tool rungs below call, so the whole tail speaks one dialect. The
+// `1m05s` spelling IS real — it is `$st`/`formatBarElapsed` (L107079) — but its call sites are the agent
+// progress row (L430339), the workflow stats line (L430517) and the teammate/model rows (L480289), none of
+// which is this. EP-C4's end-of-turn duration row is `ra` too. Nothing in ccx needs `$st`, so no port of it
+// lives here; if a surface ever does, port it then and name its call site.
 import stringWidth from "string-width";
 import { formatCompactNumber, formatDuration } from "./format.js";
 
@@ -27,7 +38,7 @@ export function glyphFrame(tick: number): string {
   return SPINNER_FRAMES[(((tick % n) + n) % n)];
 }
 
-/** The 187 CC thinking verbs (verbatim). */
+/** The 186 CC thinking verbs, verbatim from `$ta` (L406847) — count included. */
 export const SPINNER_VERBS: readonly string[] = [
   "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking", "Beaming",
   "Beboppin'", "Befuddling", "Billowing", "Blanching", "Bloviating", "Boogieing",
@@ -38,7 +49,7 @@ export const SPINNER_VERBS: readonly string[] = [
   "Contemplating", "Cooking", "Crafting", "Creating", "Crunching", "Crystallizing",
   "Cultivating", "Deciphering", "Deliberating", "Determining", "Dilly-dallying", "Discombobulating",
   "Doing", "Doodling", "Drizzling", "Ebbing", "Effecting", "Elucidating",
-  "Embellishing", "Enchanting", "Envisioning", "Evaporating", "Fermenting", "Fiddle-faddling",
+  "Embellishing", "Enchanting", "Envisioning", "Fermenting", "Fiddle-faddling",
   "Finagling", "Flambéing", "Flibbertigibbeting", "Flowing", "Flummoxing", "Fluttering",
   "Forging", "Forming", "Frolicking", "Frosting", "Gallivanting", "Galloping",
   "Garnishing", "Generating", "Gesticulating", "Germinating", "Gitifying", "Grooving",
@@ -67,25 +78,6 @@ export const SPINNER_VERBS: readonly string[] = [
 export function pickVerb(rand: number = Math.random()): string {
   const i = Math.min(SPINNER_VERBS.length - 1, Math.max(0, Math.floor(rand * SPINNER_VERBS.length)));
   return SPINNER_VERBS[i];
-}
-
-/** Upstream `$st` (L107079, export map L107029 `formatBarElapsed`), PORTED WHOLE — the debt the previous
- *  header comment recorded and told the next reader to pay. Two units at a time, largest pair first, the
- *  smaller one zero-padded and NO space between them: `4s`, `1m05s`, `1h02m`, `2d03h`.
- *
- *  This is not `format.ts`'s `formatDuration`, and the difference is deliberate on upstream's part: that
- *  one is `ra`, which spells the same 65 s as `1m 5s` (spaced, unpadded, seconds kept) and which the tool
- *  fold rows and the Bash timeout suffix call. Three spellings of a duration exist in the bundle; the
- *  spinner tail — and, from Wave C Task 7, the end-of-turn duration row that reuses this export — owe
- *  `$st`. Keep them pointed at this function, not at the other one. */
-export function formatElapsed(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h${String(minutes % 60).padStart(2, "0")}m`;
-  return `${Math.floor(hours / 24)}d${String(hours % 24).padStart(2, "0")}h`;
 }
 
 // ── The token estimate (spec decision D-C6) ──────────────────────────────────────────────────────────
@@ -266,7 +258,7 @@ export function spinnerStatus(tail: SpinnerTail): string {
   const { elapsedMs, tokens = 0, mode, phase = NO_PHASE, columns = 80, messageWidth = 0, verbose = false, suffix = "", effortSuffix = "" } = tail;
   let label = phaseLabel(phase, effortSuffix);
   const hasPhase = label !== null;
-  const elapsed = formatElapsed(elapsedMs);
+  const elapsed = formatDuration(elapsedMs);   // `he = ra(R)` (L407947) — no options, so no trailing-zero elision
   const arrow = modeArrow(mode);
   const count = formatCompactNumber(tokens);
   // `gt`: the quiet gate. Something must be worth saying — a phase, a token count, verbose mode, or a turn
