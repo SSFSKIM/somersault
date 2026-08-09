@@ -447,3 +447,20 @@ materialize). Implementer's honest flags now with the reviewer: the `[attachment
 turns (invention vs faithful reading), the /continue side effect (narrowed default now governs it),
 and the machine-dependent hazard — ChatApp tests run the REAL git detector against this repo's two
 worktrees. Review dispatched with those three as named angles.
+
+## 2026-08-09 — Task 9 COMPLETE (b74eca92e8 + edd7081833)
+
+All nine fix items landed, each load-bearing rule mutation-tested by the fixer (delete → intended test
+fails). The fixes that mattered: the resolver is a MainDeps seam with the unknown/pending arms pinned
+hermetically; full UUIDs validate against the cwd-scoped listing (an unknown one now exits 1 instead of
+opening a fresh REPL at exit 0); resolution runs for ALL run paths and writes the full id back into
+config.resume (spawn/-p now forward the resolved id); prompt refusals fire before the worktree is cut,
+gated on a new foregroundRun predicate (the fixer correctly narrowed my "move up unconditionally" —
+`--bg --resume <id> "task"` is the resume-fork the suite pins and `-p --resume` is legitimate);
+a non-TERMINAL roster row returns the new `live` outcome pointing at ccx attach (exact mirror of
+prepareAttach's inverse rule — the two surfaces now cover every row with no overlap or gap); roster
+ambiguity rethrown; the subcommand guard arm pinned; dead parseResumeIntent deleted.
+
+Rolled to final review, none blocking: a full UUID naming a LIVE session still resolves to `session`
+(liveness is only checked in the roster branch); a crashed host's row reads `working` so its short id
+is pointed at attach, which fails with "no host listening" (fleet gc heals it; the full UUID resumes).
