@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseCcx } from "../../src/cli/args.js";
+import { parseCcx, UnknownFlagError } from "../../src/cli/args.js";
 
 describe("parseCcx", () => {
   it("parses doperpowers' exact spawn line", () => {
@@ -100,8 +100,29 @@ describe("parseCcx", () => {
     // A silently ignored --permission-mode in a background worker is a safety bug, not a UX wart.
     expect(() => parseCcx(["--bg", "--remote-control", "x"])).toThrow(/--remote-control/);
   });
-  it("fails on an unknown flag rather than treating it as the prompt", () => {
-    expect(() => parseCcx(["--nope"])).toThrow(/--nope/);
+  it("keeps the KNOWN_UNSUPPORTED refusal a PLAIN error — it is not the commander unknown-option shape", () => {
+    // Wave-C T5 draws the exit-code line here: UnknownFlagError is the only throw that exits 1.
+    expect(() => parseCcx(["--bg", "--chrome", "x"])).toThrow(/is not supported by ccx/);
+    try { parseCcx(["--bg", "--chrome", "x"]); } catch (e) { expect(e).not.toBeInstanceOf(UnknownFlagError); }
+  });
+  it("fails on an unknown flag rather than treating it as the prompt, in commander's shape", () => {
+    expect(() => parseCcx(["--nope"])).toThrow(UnknownFlagError);
+    expect(() => parseCcx(["--nope"])).toThrow("error: unknown option '--nope'\n(Did you mean --name?)");
+  });
+  it("parses --version/-v and --help/-h as intercepts rather than rejecting them", () => {
+    expect(parseCcx(["--version"])).toMatchObject({ version: true });
+    expect(parseCcx(["-v"])).toMatchObject({ version: true });
+    expect(parseCcx(["--help"])).toMatchObject({ help: true });
+    expect(parseCcx(["-h"])).toMatchObject({ help: true });
+    expect(parseCcx([])).toMatchObject({ version: false, help: false });
+  });
+  it("leaves a value-taking flag's value alone — commander consumes it before it can read as an option", () => {
+    // `--model -v` is a model literally named "-v", not a version request: val() takes the next token
+    // whatever it is, exactly as commander's option-argument consumption does.
+    expect(parseCcx(["--model", "-v", "x"])).toMatchObject({ version: false, config: { model: "-v" } });
+  });
+  it("parses the doctor subcommand", () => {
+    expect(parseCcx(["doctor"])).toMatchObject({ command: "doctor" });
   });
   it("parses --think with a level name or a raw token count", () => {
     expect(parseCcx(["--think", "high", "x"])).toMatchObject({ think: "high" });

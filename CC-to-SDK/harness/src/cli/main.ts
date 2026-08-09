@@ -1,5 +1,6 @@
-import { parseCcx, nonLocalWithoutToken } from "./args.js";
+import { parseCcx, nonLocalWithoutToken, UnknownFlagError } from "./args.js";
 import type { CcxInvocation } from "./args.js";
+import { versionLine, helpText, doctorReport } from "./help.js";
 import { spawnDetached as realSpawnDetached } from "./spawn.js";
 import { runHostMain as realRunHostMain } from "./hostMain.js";
 import { collectFleet as realCollectFleet } from "../fleet/index.js";
@@ -106,7 +107,19 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
   // word — was routed to the child entry point, where it throws because the marker is not first.
   if (argv[0] === "--__host") { await deps.runHostMain(argv); return 0; }
   let inv: CcxInvocation;
-  try { inv = parseCcx(argv); } catch (e) { return fail(msg(e), 2); }
+  try { inv = parseCcx(argv); }
+  catch (e) {
+    // The ONE parse throw that is not an operator error in ccx's voice: commander writes the unknown-option
+    // line raw (no `ccx: ` prefix, no usage block) and exits 1 (annex §C3.4). Everything else — the
+    // KNOWN_UNSUPPORTED refusals, the value-domain rejections, the dangling-value throws — keeps exit 2.
+    if (e instanceof UnknownFlagError) { console.error(e.message); return 1; }
+    return fail(msg(e), 2);
+  }
+  // BEFORE every cross-flag refusal, the TTY gate and any host: the two printers answer about the program,
+  // not about this invocation, so `ccx -c --resume x --help` prints help rather than the refusal it would
+  // otherwise earn — commander's help/version intercepts run ahead of any action too.
+  if (inv.version) { console.log(versionLine()); return 0; }
+  if (inv.help) { console.log(helpText()); return 0; }
 
   // Main-level, NOT parseCcx: the detached child re-parses its own argv WITHOUT --detachable but WITH
   // this forwarded flag (spawn.ts's configFlags), so a grammar-level rule would kill every detachable
@@ -151,6 +164,12 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
     }
     case "gc":
       for (const p of await deps.fleetGc()) console.log(`removed ${p}`);
+      return 0;
+    // Pure reporting on the installation: it reads package manifests and this process, never the fleet,
+    // and (like upstream, L411337) exits 0 whatever it finds — a doctor that failed would be one more
+    // thing to diagnose.
+    case "doctor":
+      console.log(doctorReport());
       return 0;
     case "serve": {
       // Pure, checked before any listener binds (spec §11 last rule): a non-loopback --listen with no

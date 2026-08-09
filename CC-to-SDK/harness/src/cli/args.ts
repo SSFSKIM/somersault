@@ -1,12 +1,20 @@
 import { readFileSync } from "node:fs";
 import type { HarnessConfig } from "../config/types.js";
 import { parseThinkArg } from "../tui/thinkLevels.js";
+import { unknownOptionMessage } from "./help.js";
 
 // NB: `src/cliArgs.ts` is a DIFFERENT parser (the one-shot `cc-harness` grammar) that shares flag names
 // with this one (--model/--permission-mode/--cwd/--resume) — check which grammar you are editing.
 
+/** The ONE throw that exits 1 instead of 2 (Wave-C T5). Every other parse failure is an operator error in
+ *  ccx's own voice (`ccx: …`, exit 2); an unknown option is commander's, printed verbatim and unprefixed,
+ *  so the discriminator has to be the error's TYPE — the message is upstream's and carries no marker. */
+export class UnknownFlagError extends Error {
+  constructor(readonly token: string) { super(unknownOptionMessage(token)); this.name = "UnknownFlagError"; }
+}
+
 export interface CcxInvocation {
-  command: "run" | "agents" | "attach" | "stop" | "rm" | "gc" | "serve";
+  command: "run" | "agents" | "attach" | "stop" | "rm" | "gc" | "serve" | "doctor";
   prompt?: string; target?: string;
   bg: boolean; detachable: boolean; print: boolean;
   name?: string; worktree?: string;
@@ -22,6 +30,11 @@ export interface CcxInvocation {
    *  and rmSession acts only on an absolute path. */
   worktreePath?: string;
   json: boolean; all: boolean; cwdFilter?: string;
+  /** The two printer intercepts (Wave-C T5). Parsed as ORDINARY flags rather than scanned for ahead of
+   *  time, which is what makes `ccx --model -v` a model literally named `-v`: a value-taking flag consumes
+   *  its argument before the loop can read it as an option, exactly as commander does. main() acts on them
+   *  before every other check, so `--help` outranks even a cross-flag refusal. */
+  version: boolean; help: boolean;
   /** `-c`/`--continue`: resume the most recent session in this directory. TOP-LEVEL, not `config`, unlike
    *  `--resume` (which lands at `config.resume`) — there is no id to carry, only the intent, and the REPL
    *  resolves "most recent" itself at launch. `continue` is a reserved word as an identifier, not as a
@@ -75,10 +88,10 @@ function parseSettings(v: string): Record<string, unknown> {
 }
 
 export function parseCcx(argv: string[]): CcxInvocation {
-  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, continue: false, config: {}, listen: { host: "127.0.0.1", port: 0 }, allowOrigins: [] };
+  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, continue: false, version: false, help: false, config: {}, listen: { host: "127.0.0.1", port: 0 }, allowOrigins: [] };
   let i = 0;
   const sub = argv[0];
-  if (sub === "agents" || sub === "attach" || sub === "stop" || sub === "rm") { a.command = sub; i = 1; }
+  if (sub === "agents" || sub === "attach" || sub === "stop" || sub === "rm" || sub === "doctor") { a.command = sub; i = 1; }
   else if (sub === "serve") { a.command = "serve"; i = 1; }
   else if (sub === "fleet" && argv[1] === "gc") { a.command = "gc"; i = 2; }
 
@@ -118,6 +131,10 @@ export function parseCcx(argv: string[]): CcxInvocation {
       // Upstream's own flag and letter (`-c, --continue`, L563626). Valueless; it resolves at launch to
       // the most recent session for this directory, which is exactly what the REPL's own /continue does.
       case "-c": case "--continue": a.continue = true; break;
+      // Upstream's own letters (`-v, --version`, `-h, --help`, L563608/L563645). Valueless; main() prints
+      // and exits before anything else runs, so the rest of the invocation is never validated.
+      case "-v": case "--version": a.version = true; break;
+      case "-h": case "--help": a.help = true; break;
       case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); break;
       // The real CLI's own spelling for the same mode (Wave-T T15). It lands on the SAME field rather than a
       // flag of its own, so the consent gate in main.ts keys on ONE resolved mode and can never cover one
@@ -142,7 +159,8 @@ export function parseCcx(argv: string[]): CcxInvocation {
       // transport fails closed, so this list is the ONLY way a browser client ever gets in at all).
       case "--allow-origin": a.allowOrigins.push(val(t)); break;
       default:
-        if (t.startsWith("-")) throw new Error(`unknown flag ${t}`);
+        // Commander's shape and commander's exit code (1, not the operator-error 2) — see UnknownFlagError.
+        if (t.startsWith("-")) throw new UnknownFlagError(t);
         if (a.command === "run" && a.prompt === undefined) a.prompt = t;
         else if (a.command === "serve") throw new Error(`unexpected argument ${JSON.stringify(t)} — serve takes no positional target`);
         else if (a.command !== "run" && a.target === undefined) a.target = t;

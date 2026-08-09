@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { main, attachToImpl } from "../../src/cli/main.js";
 import type { MainDeps } from "../../src/cli/main.js";
 import { parseCcx } from "../../src/cli/args.js";
+import { versionLine } from "../../src/cli/help.js";
 import type { CcxInvocation } from "../../src/cli/args.js";
 import { spawnDetached } from "../../src/cli/spawn.js";
 import { parseHostArgv, hostOptsFrom, runHostMain } from "../../src/cli/hostMain.js";
@@ -73,7 +74,7 @@ describe("main — the internal host route", () => {
   });
   it("keeps the markers away from parseCcx, which would reject them as unknown flags", () => {
     // The proof that routing must happen BEFORE parsing: this is the argv every detached child boots on.
-    expect(() => parseCcx(["--__host", "0a1b2c3d", "--__kind", "bg", "task"])).toThrow(/unknown flag --__host/);
+    expect(() => parseCcx(["--__host", "0a1b2c3d", "--__kind", "bg", "task"])).toThrow(/unknown option '--__host'/);
   });
   it("does NOT route a run whose --model value happens to repeat the marker word", async () => {
     // `argv.includes("--__host")` sent this down the host path, where parseHostArgv throws because the
@@ -544,9 +545,22 @@ describe("main — run: foreground (Task 7)", () => {
 
 describe("main — lifecycle and failures", () => {
   it("returns 2 on a parse error rather than throwing out of the process", async () => {
-    const { err, value } = await captureLog(() => main(["--nope"], deps()));
+    // A value-domain error — one of the two throws that KEEP exit 2 (see the unknown-option test below).
+    const { err, value } = await captureLog(() => main(["--effort", "extreme", "x"], deps()));
     expect(value).toBe(2);
-    expect(err.join("\n")).toContain("unknown flag --nope");
+    expect(err.join("\n")).toContain("ccx: --effort must be one of");
+  });
+  it("prints an unknown option in commander's shape and exits 1, unprefixed", async () => {
+    // Wave-C T5: exit 2 → 1, and NOT through fail() — upstream writes `error: unknown option '--x'`
+    // with no program prefix and no usage block (L392704/L392647).
+    const { err, value } = await captureLog(() => main(["--nope"], deps()));
+    expect(value).toBe(1);
+    expect(err).toEqual(["error: unknown option '--nope'\n(Did you mean --name?)"]);
+  });
+  it("keeps a recognized-but-unsupported flag at exit 2 with its own refusal", async () => {
+    const { err, value } = await captureLog(() => main(["--bg", "--chrome", "x"], deps()));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("ccx: --chrome is not supported by ccx");
   });
   it("refuses a targetless stop/rm, which would otherwise exit 0 having done nothing", async () => {
     // rmSession is silent on "no such session" by design, so `ccx rm` with a missing argument used to
@@ -735,5 +749,33 @@ describe("main — --detachable + --idle-timeout validation and auto-attach (Tas
     expect(value).toBe(0);
     expect(calls).toBe(2);                               // the auto-attach path DID retry past the race
     expect(clientCalls[0]).toMatchObject({ client: { kind: "attached", short: "12345678" } });
+  });
+});
+
+describe("main — the CLI surface (Wave-C T5)", () => {
+  it("prints the version and exits 0 without touching the TTY gate or a host", async () => {
+    // Every other dep throws, and isTTY is false — the short circuit is what keeps this at 0 instead of
+    // the "foreground ccx needs a terminal" refusal.
+    const { out, value } = await captureLog(() => main(["--version"], deps()));
+    expect(value).toBe(0);
+    expect(out).toEqual([versionLine()]);
+  });
+  it("prints the help page and exits 0", async () => {
+    const { out, value } = await captureLog(() => main(["--help"], deps()));
+    expect(value).toBe(0);
+    expect(out[0]!.split("\n")[0]).toBe("Usage: ccx [options] [command] [prompt]");
+  });
+  it("runs doctor as a subcommand and exits 0", async () => {
+    const { out, value } = await captureLog(() => main(["doctor"], deps()));
+    expect(value).toBe(0);
+    expect(out[0]).toContain("ccx doctor");
+    expect(out[0]).toContain("No installation issues found.");
+  });
+  it("short-circuits ABOVE every cross-flag refusal — `ccx -c --resume x --help` still prints help", async () => {
+    // --continue + --resume is an exit-2 refusal at main.ts's top. Help must outrank it, the way
+    // commander's own help intercept runs before any action does.
+    const { out, value } = await captureLog(() => main(["-c", "--resume", "u1", "--help"], deps()));
+    expect(value).toBe(0);
+    expect(out[0]).toContain("Usage: ccx");
   });
 });
