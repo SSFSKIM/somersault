@@ -881,3 +881,32 @@ byte-identical payload, statusLineRows unmemoized, suppressHint formula inlined 
 export (pre-existing Task 2), no test pins useChat-unmount→dispose edge, output-token fold
 duplicates commands.ts totalOutputTokens (leaf-module tradeoff, commented). Suites: 1833 unit /
 3092 tui, no flake hit.
+
+## 2026-08-10 — Wave C Task 11 complete (1ebe348c0b + ff5b55ba32, review approved)
+
+Effort surfaces + set_effort wire op end to end. Glyphs/copy byte-verified against §C6.1-C6.4
+(U+25CB/25D0/25CF/25C9/25C8, U+00B7 separators, xHigh casing, unsupported branch, max caveat,
+stepping wraps modulo SUPPORTED list). Wire: SettingsOps.setEffort → adapter → remote set_effort →
+host zod-enum op (only enum-payload op in the union — probe 102: SDK validates NOTHING) →
+applyFlagSettings({effortLevel}), committed to flagEffort only after engine accepts; REPLAYED on
+engine swap so resume doesn't silently revert effort (pinned in host-settings-ops resume test).
+/effort bogus → client gate, spy asserts NO frame built. 'max' session-scoped, nowhere to persist.
+statusLine payload gains effort in upstream's slot (between exceeds_200k_tokens and thinking —
+reviewer checked upstream's builder order); only Task 10 pin touched was the intended absence flip.
+Review Medium: divergence (a) comment INVENTED a departure — claimed upstream /effort is
+dialog-only; the 2.1.220 bundle itself has the four-way router (L447308-19: help/current/empty→
+dialog/level→apply) + arg grammar (L354228 argumentHint) + persistence (L354112). Fifth
+bundle-settles-testimony instance. Comment rewritten with six citations; real gaps named: ccx lacks
+auto/ultracode, persistence ("saved as your default"), help/current sub-verbs — candidate follow-up
+scope. Also fixed: hint mount post now gated on effortCapsSettled one-way latch (both fetch arms;
+set-AFTER-setEffortCaps ordering load-bearing) killing the 1-3s wrong-hint flash on effort-less
+models — reviewer proved optimism bought nothing (catalog transition restarted the 10s clock
+anyway); catalog-fails → hint still posts. Cross-pin test now real (tui array == args.ts domain ==
+validate.ts zod options; sabotage: adding auto to args failed only that). DBG-F2 scaffolding
+removed. Nits recorded for final review: dead `?? "high"` fallback in ChatApp effort dialog mount
+(disagrees with real default xhigh if ever reached); picker effort row has a third rendering state
+(vanishes when attached client knows no level — commented but not in divergence list); same-chunk
+stepping test is two writes with tick between (name overpromises; regression still pinned —
+sabotage verified). Implementer self-review caught ref-backed stepping defect pre-review. Suites:
+1837 unit / 3134 tui. Test-harness trap for later tasks: bare render() gives ChatApp NO input path
+(stdin.write silently dropped) — use renderWithKeymap(); composer caret is ❯+U+00A0 not ❯+space.
