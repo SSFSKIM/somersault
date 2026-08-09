@@ -33,6 +33,9 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     runOnce: async () => { throw new Error("runOnce must not run"); },
     isTTY: () => false,
     prepareAttach: async () => { throw new Error("prepareAttach must not run"); },
+    // W-S6: it lists this directory's transcripts and reads the fleet roster. Throwing by default keeps
+    // the suite off the machine's real sessions AND makes "main resolved when it should not have" audible.
+    resolveResume: async () => { throw new Error("resolveResume must not run"); },
     probeSocket: async () => { throw new Error("probeSocket must not run"); },
     runServe: async () => { throw new Error("runServe must not run"); },
     // Empty by default: no test may read the real ~/.claude/ccx/prefs.json, and a launch with no saved
@@ -45,6 +48,7 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
   };
 }
 const banner = { short: "00000000", banner: "backgrounded · 00000000" };
+const FULL = "0d7a7a9d-1111-2222-3333-444455556666";      // what the W-S6 resolver hands back (Task 9)
 function fakeSpawner() {
   const calls: any[] = [];
   return { calls, spawn: (cmd: string, args: string[], opts: any) => {
@@ -436,15 +440,66 @@ describe("main — run: foreground (Task 7)", () => {
     expect(clientCalls[0].initialResume).toEqual({ kind: "continue" });
     expect(clientCalls[0].initialEntries).toBeUndefined();     // the welcome banner gives way to the resume
   });
-  it("--resume travels through the W-S6 resolver — a full UUID lands unchanged (Task 9)", async () => {
-    const FULL = "0d7a7a9d-1111-2222-3333-444455556666";
+  it("hands the REPL the id the RESOLVER returned, not the one the user typed (Task 9)", async () => {
+    // The seam returns an id that differs from the argument on purpose: an assertion on a full UUID would
+    // pass with the resolver deleted, and this is the only shape that proves main actually consults it.
     const clientCalls: any[] = [];
+    const seen: any[] = [];
     const fakeHost = { start: async () => {}, stop: async () => {} } as any;
-    const { value } = await captureLog(() => main(["--resume", FULL], deps({
+    const { value } = await captureLog(() => main(["--resume", "0d7a7a9d"], deps({
       isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+      resolveResume: async (arg, cwd) => { seen.push({ arg, cwd }); return { kind: "session", id: FULL }; },
     })));
     expect(value).toBe(0);
+    expect(seen).toEqual([{ arg: "0d7a7a9d", cwd: process.cwd() }]);
     expect(clientCalls[0].initialResume).toEqual({ kind: "id", id: FULL });
+  });
+  it("fails the launch on an id that names nothing instead of opening a fresh session (Task 9)", async () => {
+    const { err, value } = await captureLog(() => main(["--resume", "zzzz"], deps({
+      isTTY: () => true, resolveResume: async (arg) => ({ kind: "unknown", arg }),
+    })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("No conversation found with session ID: zzzz");
+  });
+  it("fails on a roster row that has minted no session id yet, naming that as the reason (Task 9)", async () => {
+    const { err, value } = await captureLog(() => main(["--resume", "k3f9"], deps({
+      isTTY: () => true, resolveResume: async () => ({ kind: "pending", short: "k3f9" }),
+    })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("Session k3f9 has not started a conversation yet");
+  });
+  it("points a STILL-RUNNING session at attach rather than resuming it twice (Task 9)", async () => {
+    const { err, value } = await captureLog(() => main(["--resume", "k3f9"], deps({
+      isTTY: () => true, resolveResume: async () => ({ kind: "live", short: "k3f9" }),
+    })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("Session k3f9 is still running — attach to it instead: ccx attach k3f9");
+  });
+  it("reports an ambiguous id by its own message, not as 'no conversation found' (Task 9)", async () => {
+    const { err, value } = await captureLog(() => main(["--resume", "0d7a"], deps({
+      isTTY: () => true, resolveResume: async () => { throw new Error('ambiguous session id "0d7a" — matches: a, b'); },
+    })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("ambiguous session id");
+  });
+  it("resolves --resume for --bg too, so the detached child is spawned with the FULL id (Task 9)", async () => {
+    // spawn.ts's configFlags forwards config.resume verbatim; unresolved, the child would re-parse an
+    // 8-char id the SDK cannot resume at all.
+    const spawned: any[] = [];
+    const { value } = await captureLog(() => main(["--bg", "--resume", "0d7a7a9d", "task"], deps({
+      resolveResume: async () => ({ kind: "session", id: FULL }),
+      spawnDetached: (inv) => { spawned.push(inv); return banner; },
+    })));
+    expect(value).toBe(0);
+    expect(spawned[0].config.resume).toBe(FULL);
+  });
+  it("refuses a bad --resume BEFORE cutting a worktree, so nothing is left to unwind (Task 9)", async () => {
+    const { err, value } = await captureLog(() => main(["--resume", "zzzz", "--worktree", "wt"], deps({
+      isTTY: () => true, resolveResume: async (arg) => ({ kind: "unknown", arg }),
+      ensureWorktree: async () => { throw new Error("ensureWorktree must not run"); },
+    })));
+    expect(value).toBe(1);
+    expect(err.join("\n")).toContain("No conversation found with session ID");
   });
   it("refuses --continue together with a prompt, for the same busy-guard reason --resume is refused", async () => {
     const clientCalls: any[] = [];
@@ -459,6 +514,11 @@ describe("main — run: foreground (Task 7)", () => {
     const { err, value } = await captureLog(() => main(["--continue", "--resume", "abc"], deps({ isTTY: () => true })));
     expect(value).toBe(2);
     expect(err.join("\n")).toContain("--continue and --resume are mutually exclusive");
+  });
+  it("refuses --continue on a SUBCOMMAND, which has no session to continue at all", async () => {
+    const { err, value } = await captureLog(() => main(["attach", "abc", "-c"], deps({ isTTY: () => true })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("--continue only applies to a foreground session");
   });
   it("refuses --continue on -p/--bg/--detachable, which have no launch-resume channel at all", async () => {
     // Accepting it there would start a FRESH session and report success — the silent drop, not a refusal.

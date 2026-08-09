@@ -294,14 +294,6 @@ export function pickMostRecent(sessions: { sessionId: string; lastModified: numb
   return best?.sessionId;
 }
 
-/** CLI args → an initial-resume intent: `--resume <id>` / `--continue` / `-c`. */
-export function parseResumeIntent(args: string[]): InitialResume | undefined {
-  const ri = args.indexOf("--resume");
-  if (ri >= 0 && args[ri + 1]) return { kind: "id", id: args[ri + 1] };
-  if (args.includes("--continue") || args.includes("-c")) return { kind: "continue" };
-  return undefined;
-}
-
 export const PERMISSION_MODES = ["default", "acceptEdits", "auto", "bypassPermissions", "plan", "dontAsk"] as const;
 export type LaunchMode = typeof PERMISSION_MODES[number];
 

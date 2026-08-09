@@ -1,6 +1,6 @@
 // tui/test/commands.test.ts — pure parser + formatters.
 import { describe, it, expect } from "vitest";
-import { parseCommand, COMMANDS, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseResumeIntent, parseLaunchMode, parseLaunchThink, LOCAL_NAMES, LOCAL_COMMAND_ENTRIES } from "../../src/tui/commands.js";
+import { parseCommand, COMMANDS, formatModel, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, parseLaunchMode, parseLaunchThink, LOCAL_NAMES, LOCAL_COMMAND_ENTRIES } from "../../src/tui/commands.js";
 import { CLIENT_SIDE_NOTES, formatClientSide } from "../../src/tui/commands.js";
 import { parseConfigArg } from "../../src/tui/commands.js";
 import { buildRows, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
@@ -141,12 +141,6 @@ describe("resume helpers", () => {
   it("pickMostRecent returns the max-lastModified session id", () => {
     expect(pickMostRecent([{ sessionId: "a", lastModified: 5 }, { sessionId: "b", lastModified: 9 }, { sessionId: "c", lastModified: 2 }])).toBe("b");
     expect(pickMostRecent([])).toBeUndefined();
-  });
-  it("parseResumeIntent reads --resume <id>, --continue, -c", () => {
-    expect(parseResumeIntent(["--resume", "sess-1"])).toEqual({ kind: "id", id: "sess-1" });
-    expect(parseResumeIntent(["--continue"])).toEqual({ kind: "continue" });
-    expect(parseResumeIntent(["-c"])).toEqual({ kind: "continue" });
-    expect(parseResumeIntent(["--model", "x"])).toBeUndefined();
   });
 });
 

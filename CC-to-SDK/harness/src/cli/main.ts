@@ -23,8 +23,7 @@ import type { CcxPrefs } from "../tui/prefs.js";
 // `.tsx` dialog and shared with this file instead of re-implemented here as a raw prefs read.
 import { hasAcceptedBypass } from "../tui/bypassAccepted.js";
 import { prepareAttach as realPrepareAttach } from "./attach.js";
-import { resolveResumeArg } from "./resolveResume.js";
-import type { ResumeResolution } from "./resolveResume.js";
+import { resolveResumeArg as realResolveResume } from "./resolveResume.js";
 import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
 // type-only: main.ts stays React-free. The ink import happens only inside the DEFAULT runChatClient,
 // via a dynamic import — an interactive path that never runs (e.g. every non-TTY/-p/--bg invocation)
@@ -46,6 +45,10 @@ export interface MainDeps {
   runOnce: (inv: CcxInvocation) => Promise<string>;
   isTTY: () => boolean;
   prepareAttach: typeof realPrepareAttach;
+  /** W-S6's `--resume <arg>` resolver. A SEAM like every other reader here: it lists this directory's
+   *  transcripts and reads the fleet roster, so a routing test that did not inject it would depend on
+   *  whatever sessions the machine running the suite happens to hold. */
+  resolveResume: typeof realResolveResume;
   probeSocket: (path: string) => Promise<void>;
   runServe: (inv: CcxInvocation) => Promise<void>;
   /** The ccx client prefs (F6 T11). Injected for the same reason every other seam here is: a test must be
@@ -64,6 +67,7 @@ const defaults: MainDeps = {
   // The React-free guarantee: the import happens only when an interactive path actually calls it.
   runChatClient: async (o) => (await import("../tui/chatMain.js")).runChatClient(o),
   prepareAttach: realPrepareAttach,
+  resolveResume: realResolveResume,
   loadPrefs: () => realLoadPrefs(),
   // The React-free guarantee again: the ink/React module tree loads only when a bypass launch actually
   // reaches the gate.
@@ -113,10 +117,23 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
   // arm rather than in the grammar. `--continue` is never forwarded to a detached child (spawn.ts's
   // configFlags carries config fields only), so no re-parsing child can trip on it.
   if (inv.continue && inv.config.resume) return fail("--continue and --resume are mutually exclusive — --continue takes the most recent session, --resume takes the one you name", 2);
+  // THE in-process REPL launch, and the condition both prompt refusals below key on. `--detachable` is
+  // deliberately NOT one: its prompt travels with the client we attach with while its `--resume` travels
+  // to the spawned child's own config, so the two never meet and there is nothing to refuse.
+  const foregroundRun = inv.command === "run" && !inv.bg && !inv.print && !inv.detachable;
   // Only the foreground REPL has a launch-resume channel (initialResume → the client). `-p`, `--bg` and
   // `--detachable` all hand their work to a host that never sees this flag, so accepting it there would
   // start a FRESH session while reporting success — the silent-drop class this file refuses by name.
-  if (inv.continue && (inv.command !== "run" || inv.bg || inv.print || inv.detachable)) return fail("--continue only applies to a foreground session (not -p, --bg or --detachable)", 2);
+  if (inv.continue && !foregroundRun) return fail("--continue only applies to a foreground session (not -p, --bg or --detachable)", 2);
+  // BOTH prompt refusals live up here, above the `run` arm's own side effects, for the reason :189-193
+  // already gives about the consent gate: `ccx -c --worktree x "hi"` used to CUT the worktree and then
+  // refuse, leaving a directory and a branch the operator had to unwind by hand. Refused before any of it.
+  // The reason itself is the busy-guard: a launch resume together with a prompt sets BOTH initialResume and
+  // initialPrompt on one ChatClientOpts, the submitted prompt starts a turn first, and resumeInto (Task 6)
+  // then blocks the resume with "cannot resume mid-turn" — the resume never actually happens. Headless is
+  // untouched: `-p --resume <id> "prompt"` and `--bg --resume <id> "task"` are the ordinary resume-fork.
+  if (foregroundRun && inv.config.resume && inv.prompt) return fail("--resume with a prompt is not supported — resume, then type your prompt", 2);
+  if (inv.continue && inv.prompt) return fail("--continue with a prompt is not supported — continue, then type your prompt", 2);
 
   switch (inv.command) {
     case "agents":
@@ -166,6 +183,26 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
       // is an argument error and stays with the others, above the consent gate; the worktree itself is
       // created below it (see there).
       if (inv.worktree !== undefined && !inv.worktree.trim()) return fail("--worktree requires a name", 2);
+      // W-S6: resolve `--resume` for EVERY run path, not just the foreground one, and write the full id
+      // back into the config the rest of the arm reads. spawn.ts's configFlags forwards `config.resume`
+      // verbatim, and the -p path hands it to createHarness (runOnce) — so resolving here is what lets a
+      // detached child and a headless run take the 8-char ids ccx prints, instead of only the REPL.
+      // The child re-enters at `--__host` (line 101) long before this, so it never re-resolves.
+      // ABOVE the consent dialog and the worktree cut, deliberately: an unresolvable id must not first ask
+      // the operator to accept a disclaimer, nor leave a worktree behind for a run that never starts. The
+      // cwd is the PRE-worktree one on purpose — it is the directory whose /status printed the id.
+      if (inv.config.resume) {
+        const arg = inv.config.resume;
+        let r;
+        try { r = await deps.resolveResume(arg, inv.config.cwd ?? process.cwd()); }
+        catch (e) { return fail(msg(e), 1); }                  // an ambiguous prefix or roster target
+        // `unknown`/`pending`/`live` all FAIL rather than dropping into a fresh session: silently opening
+        // an empty one when the user asked for a specific conversation is the failure W-S6 exists to remove.
+        if (r.kind === "unknown") return fail(`No conversation found with session ID: ${r.arg}`, 1);
+        if (r.kind === "pending") return fail(`Session ${r.short} has not started a conversation yet — nothing to resume`, 1);
+        if (r.kind === "live") return fail(`Session ${r.short} is still running — attach to it instead: ccx attach ${r.short}`, 1);
+        inv.config.resume = r.id;
+      }
       // Wave-T T15 (qa3-14): bypass permissions is the one mode that stops asking before it acts, and until
       // now ccx entered it with no warning at all. Placed HERE — after the argument checks, before the spawn
       // and before any session exists — so a refusal costs nothing that has to be unwound. The gate keys on
@@ -272,15 +309,9 @@ export async function attachToImpl(target: string, o: { initialPrompt?: string; 
 /** Foreground ccx: an IN-PROCESS host + a loopback client over its own socket — exactly one ChatSession
  *  code path, so the daily REPL continuously exercises the attach protocol (spec A2b §3). */
 export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Promise<number> {
-  // Refused BEFORE any side effect (no env var mutated, no host built): a launch --resume together with
-  // a prompt would set BOTH initialResume and initialPrompt on the same ChatClientOpts, and the REPL's
-  // busy-guard (Task 6's resumeInto) then blocks the resume with a "cannot resume mid-turn" notice once
-  // the submitted initialPrompt starts a turn first — the resume never actually happens. Foreground-only:
-  // -p and --bg never reach runForegroundImpl at all.
-  if (inv.config.resume && inv.prompt) return fail("--resume with a prompt is not supported — resume, then type your prompt", 2);
-  // Identical mechanism, identical refusal: --continue rides the SAME initialResume → resumeInto path, so
-  // a prompt alongside it loses to the busy-guard in exactly the same way.
-  if (inv.continue && inv.prompt) return fail("--continue with a prompt is not supported — continue, then type your prompt", 2);
+  // The `--resume`/`--continue` + prompt refusals used to live here and now sit at main()'s :117-125,
+  // above the worktree cut — a refusal must cost nothing that has to be unwound (review, t9). Nothing
+  // reaches this function with that combination.
   const short = mintShortId(Math.random);
   const name = inv.name ?? short;
   const cwd = inv.config.cwd ?? process.cwd();
@@ -292,18 +323,9 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   const thinking = thinkingConfigFrom(inv.think);
   // Launch resume goes to the CLIENT (initialResume → resumeInto → the adapter's resume op), NOT into
   // the host's config: one resume code path, and the incr-9 replay behavior survives the cutover.
+  // Already the FULL id: main()'s run arm resolved it (and failed the launch outright if it named
+  // nothing), for every path rather than this one, so what arrives here is a session that exists.
   const { resume, ...hostConfig } = inv.config;
-  // `unknown` and `pending` FAIL rather than dropping into a fresh REPL: silently opening an empty session
-  // when the user asked for a specific one is the failure W-S6 exists to remove. The resolver is what
-  // accepts the two 8-char ids ccx itself prints (see resolveResume.ts's header) — upstream takes neither.
-  let resolvedResume: string | undefined;
-  if (resume) {
-    let r: ResumeResolution;
-    try { r = await resolveResumeArg(resume); } catch (e) { return fail(msg(e), 1); }   // ambiguous prefix
-    if (r.kind === "unknown") return fail(`No conversation found with session ID: ${r.arg}`, 1);
-    if (r.kind === "pending") return fail(`Session ${r.short} has not started a conversation yet — nothing to resume`, 1);
-    resolvedResume = r.id;
-  }
   // F6 T11-fix — THE READER for the /model picker's "set as default" write. The picker persists
   // `prefs.model`; this is the one place a foreground launch decides what model the session starts on, so
   // this is where the default belongs. `--model` still wins: a flag the user typed for THIS run outranks a
@@ -339,8 +361,8 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // to doContinue(), which picks the most recent session for this directory itself. Its empty-list copy
       // ("No sessions to continue here") deliberately stays ours rather than upstream's "No conversation
       // found to continue" — the REPL's /continue already says it, and one surface must not say two things.
-      ...(resolvedResume
-        ? { initialResume: { kind: "id" as const, id: resolvedResume } }
+      ...(resume
+        ? { initialResume: { kind: "id" as const, id: resume } }
         : inv.continue
         ? { initialResume: { kind: "continue" as const } }
         : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model, mode: resolvedPermissionMode(foregroundConfig) }) } }] }),

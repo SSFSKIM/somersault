@@ -43,6 +43,7 @@ function gateDeps(over: Partial<MainDeps> & { prefs?: CcxPrefs } = {}): MainDeps
     runOnce: async () => { throw new Error("runOnce must not run"); },
     isTTY: () => true,
     prepareAttach: async () => { throw new Error("prepareAttach must not run"); },
+    resolveResume: async () => { throw new Error("resolveResume must not run"); },
     probeSocket: async () => { throw new Error("probeSocket must not run"); },
     runServe: async () => { throw new Error("runServe must not run"); },
     // NEVER the real file: a unit test may not read ~/.claude/ccx/prefs.json.
