@@ -2453,3 +2453,65 @@ describe("W-S5: the context percentage never outlives the conversation it measur
     expect(frame(lastFrame)).toContain("ctx:90");
   });
 });
+
+// W-S7 (Wave S task 11). Compaction had no busy STATE at all: the only in-progress affordance was a
+// permanent `append()` in the `/compact` arm, so the transcript kept `✻ compacting…` forever beside the
+// `✦ compacted N → M` result. Upstream discards its spinner/hint/bar together at compact_end (`a()`,
+// L407334) and persists only the `Compacted …` message — ephemeral render state, not a transient row.
+// Both entry paths are covered here because they are genuinely different mechanisms: the AUTOMATIC one
+// arrives on the wire as a `system/status` frame, the `/compact` one never reaches the wire at all (the
+// host calls `session.compact()` directly, and that method's frames die in its own private onMessage).
+describe("W-S7: compaction is a real busy state with an ephemeral progress affordance", () => {
+  it("enters a busy state while compaction runs and leaves it at the boundary (A13)", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>c:{c.state.compacting ? "YES" : "no"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "status", status: "compacting" } });
+    await waitFor(() => frame(lastFrame).includes("c:YES"));
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", compact_metadata: { pre_tokens: 100, post_tokens: 20 } } });
+    await waitFor(() => frame(lastFrame).includes("c:no"));
+  });
+
+  it("tears the in-progress affordance down, leaving only the result row (A13)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const fake = fakeRemote({ compact: async () => { await gate; return { ok: true, preTokens: 9000, postTokens: 2000 }; }, getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }) });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>c:{c.state.compacting ? "YES" : "no"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/compact");
+    await waitFor(() => frame(lastFrame).includes("c:YES"));            // busy WHILE the pass runs — the affordance is state
+    release();
+    await waitFor(() => frame(lastFrame).includes("✦ compacted 9k → 2k"));
+    await expect.poll(() => frame(lastFrame)).toContain("c:no");        // …and gone when it resolves
+    expect(frame(lastFrame)).not.toContain("compacting…");              // the permanent append is what this replaces
+  });
+
+  it("clears the busy state when the compaction FAILS, not only when it succeeds", async () => {
+    const fake = fakeRemote({ compact: async () => ({ ok: false, result: "failed", error: "nope" }) });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>c:{c.state.compacting ? "YES" : "no"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/compact");
+    await waitFor(() => frame(lastFrame).includes("compact: nope"));
+    expect(frame(lastFrame)).toContain("c:no");
+  });
+
+  // The belt: an automatic compaction that dies without ever emitting its boundary (an interrupt, a turn
+  // that errors out mid-pass) would otherwise leave the bar up forever, because the wire path has no other
+  // terminator. Turn end clears it unconditionally.
+  it("turn end clears a compaction that never reached its boundary", async () => {
+    const fake = fakeRemote();
+    function H() { const c = useChat(() => fake); return <Text>c:{c.state.compacting ? "YES" : "no"} {allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "status", status: "compacting" } });
+    await waitFor(() => frame(lastFrame).includes("c:YES"));
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("c:no"));
+  });
+});

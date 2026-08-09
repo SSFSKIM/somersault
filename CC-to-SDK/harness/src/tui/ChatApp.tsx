@@ -60,6 +60,7 @@ import { ModelPicker } from "./ModelPicker.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { TurnSpinner } from "./TurnSpinner.js";
 import { RetryRow } from "./RetryRow.js";
+import { CompactionRow } from "./CompactionRow.js";
 import { BgTasksPanel } from "./BgTasksPanel.js";
 import { RewindPicker } from "./RewindPicker.js";
 import { ShortcutsOverlay } from "./ShortcutsOverlay.js";
@@ -563,8 +564,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           takes the whole slot over while a retry status exists, so the row REPLACES the spinner rather than
           sitting beside it: a spinner still pulsing next to "Retrying in 4s" is exactly the "nothing is
           wrong" reading the QA fleet's 72-second outage produced. */}
-      {state.busy && !paneOwned
-        ? (state.retryStatus ? <RetryRow status={state.retryStatus} /> : <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} />)
+      {/* W-S7 (Wave S t11) — compaction joins that one slot, and it widens the gate: a typed `/compact` runs
+          NO turn, so `state.busy` is false for the whole 30–120 s pass and the slot would have stayed empty.
+          PRECEDENCE, retry over compacting over the spinner: RetryRow already owns the whole slot for the
+          reason above (a pulsing anything beside "Retrying in 4s" reads as "nothing is wrong"), and that
+          argument does not weaken because the thing being retried is a compaction — the API not answering is
+          the more urgent news and the rarer state. Compacting then beats the ordinary spinner because it is
+          strictly more specific: it names the pass that is running instead of a random thinking verb. */}
+      {(state.busy || state.compacting) && !paneOwned
+        ? (state.retryStatus ? <RetryRow status={state.retryStatus} />
+          : state.compacting ? <CompactionRow startedAt={state.compacting.startedAt} columns={terminalColumns()} {...(deps?.now ? { now: deps.now } : {})} />
+          : <TurnSpinner startedAt={state.turnStartedAt} tokens={state.turnTokens} />)
         : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
           prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no

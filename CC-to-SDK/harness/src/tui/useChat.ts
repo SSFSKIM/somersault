@@ -90,7 +90,12 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
   workDirs: readonly string[];
   /** Wave T Task 12: the live turn's API-retry state, driven by the SDK's `system/api_retry` frames. Set
    *  means the API is not answering; the row that replaces the spinner while it is set is Task 13's. */
-  retryStatus?: RetryStatus; }
+  retryStatus?: RetryStatus;
+  /** W-S7 (Wave S task 11): a compaction pass is in flight. EPHEMERAL render state — upstream discards its
+   *  spinner, hint and bar together at compact_end (`a()`, L407334) and persists only the `Compacted …`
+   *  message, so this is deliberately NOT a transcript row. `startedAt` is the only thing the bar has to
+   *  work with: the SDK reports no compaction progress, so the bar is a wall-clock curve (compactionBar.ts). */
+  compacting?: { startedAt: number }; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
 // permissionMode row (review finding 3) — importing it here instead of a second literal array means the
@@ -195,6 +200,24 @@ export function useChat(
   const [retryStatus, setRetryStatus] = useState<RetryStatus | undefined>(undefined);
   const retryRef = useRef<RetryStatus | undefined>(undefined);
   const clearRetry = () => { if (retryRef.current) { retryRef.current = undefined; setRetryStatus(undefined); } };
+  // W-S7 (Wave S task 11): the compaction busy state, ref-mirrored for exactly the reason `retryRef` is —
+  // its clear runs from the message arm and from turn end, both of which are hot, and an unguarded setState
+  // there would queue one per frame. Two writers, because compaction reaches this client TWO ways and only
+  // one of them is a wire path:
+  //   · AUTOMATIC mid-turn compaction flows through `submit` → `runTask` → `message` events, so its
+  //     `system/status status:"compacting"` frame arrives in the system-frame arm below and its
+  //     `compact_boundary` frame ends it there too.
+  //   · A TYPED `/compact` never reaches the wire at all: `session.compact()` installs its OWN private
+  //     onMessage (session.ts:146-153) that swallows the status and boundary frames, the host's compact op
+  //     calls it directly rather than through `runTask` (host.ts:329), and the host's always-on frame tap
+  //     (host.ts:505-535) emits only for background_tasks_changed, the task_* family and a `status` frame
+  //     carrying a permissionMode string — a bare `status:"compacting"` matches no branch. So the `/compact`
+  //     arm sets and clears this state LOCALLY, where the client already knows a compaction started because
+  //     it started it. Routing those frames out of the host is a wire change this P2 does not justify.
+  const [compacting, setCompacting] = useState<{ startedAt: number } | undefined>(undefined);
+  const compactingRef = useRef<{ startedAt: number } | undefined>(undefined);
+  const startCompacting = () => { const c = { startedAt: nowFn() }; compactingRef.current = c; setCompacting(c); };
+  const clearCompacting = () => { if (compactingRef.current) { compactingRef.current = undefined; setCompacting(undefined); } };
   // Wave T Task 13: the STALLED watchdog — the half of the outage surface no frame can announce. Probe 96
   // measured ~75 s of silence on a blackholed endpoint BEFORE the first api_retry frame exists (vs ~20 ms on
   // a refused one), so without this the first 75 s of a real outage still look like a healthy turn.
@@ -597,7 +620,13 @@ export function useChat(
         // A compact boundary is a SYSTEM frame — appendSdk retains none of those, so document dedup can
         // never suppress a redelivered one. Its identity therefore comes from the boundary itself; only a
         // uuid-less frame (nothing stable to dedup on) falls back to a fresh monotonic identity.
+        // W-S7: the AUTOMATIC path's opening frame. Nothing paints it today — `systemNoticeLines` exits on
+        // any non-string `content`, so this structured frame reaches the transcript as nothing at all — and
+        // it is the only announcement mid-turn compaction makes before its boundary. It sets the busy state
+        // and is deliberately NOT returned from: the branches below still get to run (they no-op on it).
+        if (data?.type === "system" && data.subtype === "status" && data.status === "compacting") startCompacting();
         if (data?.type === "system" && data.subtype === "compact_boundary") {
+          clearCompacting();   // W-S7: the boundary IS compact_end — the bar dies here, the summary row below persists
           // F4 Task 10b: upstream `XWo` shape B (L422282–422305) replaces the hand-rolled rule — a `⏺` bullet,
           // a bold `Compact summary`, and the LIVE expand hint. Shape A ("Summarized N messages …") needs
           // `summarizeMetadata`, which P81 read the wire frame key-by-key and did not find, so it is recorded
@@ -663,7 +692,11 @@ export function useChat(
         // A call still open at turn end is an ORPHAN (interrupted, denied, or a result that never came):
         // the turn is over, so nothing is running — end the blink epoch instead of leaving a "running" row.
         clearLiveOpen();
-        setStreaming([]); setBusy(false); clearRetry(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
+        // W-S7 belt: the wire path's ONLY other terminator. An automatic compaction that dies without ever
+        // emitting its boundary — an interrupt, a turn that errors out mid-pass — would otherwise leave the
+        // bar up forever, because nothing else on that path ever clears it. Cheap (ref-guarded) and it
+        // cannot fire early: the boundary always arrives inside the turn that compacted.
+        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
@@ -823,8 +856,16 @@ export function useChat(
           if (cmd.args) { const m = resolveModelAlias(cmd.args)!; sessionModelRef.current = undefined; await session.setModel(m); if (!disposed.current) setModel(m); append(formatModel(m)); }
           else { await openModelPicker(); }
           break;
-        // The pre-notice is not decoration: compact is a full engine summarization pass (30–120s live), and
-        // the await below is silent for all of it — without a line landing first, /compact reads as a hang.
+        // The in-progress affordance is not decoration: compact is a full engine summarization pass (30–120s
+        // live), and the await below is silent for all of it — with nothing on screen, /compact reads as a hang.
+        //
+        // W-S7 (Wave S task 11): it used to be a permanent `append()` of `✻ compacting…`, which nothing ever
+        // removed — the transcript kept it forever beside the `✦ compacted N → M` result. It is a BUSY STATE
+        // now (A13): upstream clears its spinner, hint and bar together at compact_end and persists only the
+        // `Compacted …` message, so the in-progress half is ephemeral render state and only the outcome is a
+        // row. Set here rather than off the wire because /compact's frames never leave `session.compact()`
+        // (the split is documented at `startCompacting`), and cleared in a `finally` so a compaction that
+        // FAILS or throws takes the affordance down with it — the outcome line is the user's answer either way.
         //
         // W-S5 (task 8 review): a SUCCEEDED compaction is the one boundary that leaves the percentage
         // describing this same conversation and still wrong — the context shrank under it, and `refreshCtx`'s
@@ -842,8 +883,9 @@ export function useChat(
         // while the boundary's own metadata claimed pre 17894 → post 1410 (the ~15.5k floor is fixed
         // system/tool overhead the usage call always counts and post_tokens doesn't).
         case "compact": {
-          append([{ text: "✻ compacting… (a summarization pass over the whole context — this can take a minute or two)", dim: true }]);
-          const outcome = await session.compact(); append(formatCompact(outcome));
+          startCompacting();
+          let outcome; try { outcome = await session.compact(); } finally { clearCompacting(); }
+          append(formatCompact(outcome));
           if (outcome.ok) { setCtxPct(undefined); await refreshCtx(); }
           break;
         }
@@ -1698,5 +1740,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnTokens, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus, compacting } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir };
 }
