@@ -621,10 +621,10 @@ which are opportunistic.
 
 ## §9 Progress *(living)*
 
-- [ ] Wave T — spec → plan → execution → close pass → re-score
-- [ ] Wave R (incl. EP-R0 verdict)
-- [ ] Wave S
-- [ ] Wave C
+- [x] Wave T — shipped 2026-08-07 (spec `2026-08-06-wave-t-trust-safety-design.md`)
+- [x] Wave R (incl. EP-R0 verdict) — shipped 2026-08-07 (spec `2026-08-06-wave-r-repaint-geometry-design.md`)
+- [x] Wave S — shipped 2026-08-09 (spec `2026-08-07-wave-s-session-truth-design.md`)
+- [ ] Wave C — grounding round + spec done 2026-08-09 (`2026-08-09-wave-c-chrome-composer-design.md`); plan/execution in flight
 - [ ] Recurring sweep #2 run against a shipped wave, delta triaged
 
 ## §10 Decision Log *(living)*
@@ -1003,6 +1003,18 @@ surface under test. Probes needing a clean session must set `settingSources: []`
     and the failed `/export` looked exactly like `qa5-03`'s session-handle defect. **Every ccx TUI repro
     must assert on dialog-scoped needles and verify state after each keystroke**; a run that "reproduces"
     on the first try deserves the same suspicion as one that fails.
+
+**Wave C grounding round (2026-08-09) — twelve QA premises overturned or materially sharpened before a
+line was written; the largest overturn count of the four waves.** Highlights: Ctrl-C clears AND arms in
+one press; Esc-Esc-clear is upstream canon *with its own ephemeral hint* (qa1-05 asserted the inverse);
+Home/End/ctrl-arrows are input-layer, not keymap, on both sides; the follow-up suggestion is a
+main-model forked query rendered as the composer *placeholder* (Tab/Right accept), its SDK channel is
+declared-but-dead headlessly (probes 100/100b), and its feature flag now resolves via GrowthBook at
+runtime — no on-disk flag cache exists to pin against anymore, so the F6 "cached flags" recipe is
+obsolete; upstream's spinner token count is an eased chars/4 *estimate*, not the usage field; the
+engine auto-titles every session headlessly (`ai-title` JSONL row, `getSessionInfo()`), found while
+grounding the terminal title. Full evidence committed as a durable annex at
+`docs/superpowers/specs/2026-08-09-wave-c-grounding/`; the corrections table is its appendix.
 
 ## §13 Tracking map
 

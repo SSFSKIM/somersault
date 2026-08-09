@@ -642,3 +642,24 @@ keyless; upstream ships the same widening).
 Wave S final: 13/13 tasks + the verification's own find + the external round. Spec Outcomes complete,
 coverage.md updated, memory written. main is ~120 commits ahead, unpushed (no push without explicit
 request). Wave C is the sprint's remaining wave.
+
+## 2026-08-09 — WAVE C OPENED: grounding round + spec
+
+Grounding per D9 (three parallel opus workers): bundle transcription (2,210 lines, ~397 citations,
+committed as a durable annex under docs/superpowers/specs/2026-08-09-wave-c-grounding/ — the job tmp
+dir is ephemeral and this wave's verbatim contracts are too large for the spec to carry), ccx pinning
+(two triage citation drifts corrected: args.ts:145 not :133; qa3-02 ALREADY FIXED by Wave T EP-T1 —
+do not re-spec), live probes 100/100b/100c (~$0.09). Twelve premises overturned before a line was
+written — the sprint's largest overturn count: Ctrl-C clears AND arms in one press; Esc-Esc clear is
+upstream canon WITH its own hint; Home/End/ctrl-arrows are input-layer not keymap on both sides; the
+follow-up suggestion is a main-model forked query rendered as the composer placeholder, SDK channel
+declared-but-dead headlessly, flag now GrowthBook-live (no disk cache exists — F6 recipe obsolete),
+adjudicated OFF by default; spinner tokens are an eased chars/4 estimate upstream; the engine
+auto-titles sessions headlessly (ai-title JSONL row via getSessionInfo).
+
+Spec authored born-landed: docs/superpowers/specs/2026-08-09-wave-c-chrome-composer-design.md —
+EP-C1 (footer + notification queue, P0 prerequisite) .. EP-C8, 15 acceptance cells, ten decisions.
+The two owner questions parked to this review land as overridable recommendations: REMOVE the ccx-only
+`#` memory mode; REMOVE the inline ctx%%/auto-compact/usageWarn/bg chips (info survives via
+statusLine payload, slash commands, and upstream's token-warning notification). Umbrella §9 ticked
+for T/R/S, §12 seeded. Spec-review round next, then the plan.
