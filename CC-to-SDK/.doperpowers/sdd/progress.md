@@ -421,3 +421,29 @@ Task 11/12 pre-verification also done: T11's line drifts noted (host compact op 
 says to reuse at commands.ts:130 does not exist (aggregation is an inline loop in the /cost formatter),
 and useChat holds no cumulative output-token counter (turnTokens is per-turn) — the gate will need a
 `totalOutputTokens(usage)` export and a usage() fetch at picker-open. Corrections staged for dispatch.
+
+## 2026-08-09 — Task 10 built (3d965000db); Task 9 verdict FIX-FIRST, fix round dispatched
+
+Task 9's review was the strongest of the wave so far. Ten findings, three should-fix at the core:
+(1) the one "resolver" test passed with the resolver deleted — nothing pinned the unknown/pending arms;
+(2) resolveResumeArg was a static import while every sibling I/O seam rides MainDeps, making those arms
+untestable hermetically (reviewer measured 3.09s against the real ~/.claude); (3) the full-UUID
+pass-through's justifying comment was disproved on both halves — the real listing is GLOBAL not
+directory-scoped (4405 vs 671 rows), a foreign id does NOT resume (cwd-scoped reader returns 0
+messages), and an unknown full UUID lands in a fresh REPL at exit 0 behind one dim line — the quiet
+failure the task exists to remove. Plus: --resume unresolved on -p/--bg/--detachable (spawn forwards
+the raw short id to the engine); prompt-refusals fire AFTER the worktree is cut; a LIVE roster short id
+resolves into a second engine instead of pointing at attach; roster ambiguity reported as "not found".
+Fix round sent to the original implementer with decisions: seam + arm tests; full UUID validated
+against the CWD-scOPED listing (exit 1 on miss); prefix scan cwd-scoped, no limit; central resolution
+for all run paths writing the full id back into config.resume; refusals moved above ensureWorktree;
+new `live` outcome pointing at ccx attach; ambiguity rethrown; dead parseResumeIntent deleted if
+truly uncalled.
+
+Task 10 landed green (3d965000db): labels/footer per L476627, worktrees.ts with upstream's exact argv
+DI'd, scope in SessionPicker + widened loader in useChat, shared isPreviewMessage predicate, cancel
+line only on the Esc path (pickSession never routed through closePicker — my pre-dispatch worry didn't
+materialize). Implementer's honest flags now with the reviewer: the `[attachment]` row for image-only
+turns (invention vs faithful reading), the /continue side effect (narrowed default now governs it),
+and the machine-dependent hazard — ChatApp tests run the REAL git detector against this repo's two
+worktrees. Review dispatched with those three as named angles.
