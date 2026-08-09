@@ -779,3 +779,23 @@ verified against installed 2.1.226), the term-overflow hanging-indent arm, the A
 and the reviewer's 4-line bidirectional drift guard (every parser case literal must be advertised in
 CCX_OPTIONS — passes with zero exceptions). Deferring the unknown-throw exposed a wrong-token blame
 in the excess-operand path; fixed to commander's check order. Suites: 1745 unit / 3009 tui.
+
+## 2026-08-10 — Wave C Task 6 complete (b9dffa463e + b11f1e858d, review approved)
+
+Spinner anatomy: eased chars/4 estimate (upstream's three easing rates ported, reconciled via
+meter() max-floor), ↓/↑ arrow by mode from liveTurn's wire-derived mode signal, phase ladder with
+exact thresholds, gerund re-pick on phase transitions, width-adaptive gates (16s quiet threshold —
+a quiet turn shows a bare gerund for 16s, canon but startling; pty cell in Task 15 will show it).
+Review found a MAJOR with the wave's best error chain: the elapsed segment ported $st (1m05s)
+because a STALE PRE-WAVE-C ccx HEADER COMMENT claimed that was upstream's spinner spelling — the
+grounding repeated it, the spec and plan mandated it, the implementer shipped it; the bundle says
+the spinner calls ra/formatDuration (1m 5s SPACED, L407895/L107029). Fixed: elapsed now calls
+format.ts formatDuration (verified line-by-line == ra), formatElapsed DELETED, goldens flipped,
+header rewritten, spec v4 + ccx-grounding + tui-ux.md all corrected (two more carriers found by
+grep). Fixer deviated from the reviewer's helper fix for good reason: excluding "Thinking" outright
+= ~5% flake (1-in-186 verb pick); excluded only the frozen-glyph `✻ Thinking…` combination instead,
+guarded by its own red-observed test. Also: vacuous pager test repointed to spinnerUp
+(sabotage-proven), invented 187th verb "Evaporating" removed, esc-to-interrupt moved to the footer
+hint list (canon on both surfaces per review adjudication; rebind-aware spelling is an improvement).
+Suites: 1745 unit / 3049 tui. Lesson (×2 this wave): documented-claims-about-upstream are testimony,
+not canon — the bundle settles, and stale comments propagate through grounding into pinned tests.
