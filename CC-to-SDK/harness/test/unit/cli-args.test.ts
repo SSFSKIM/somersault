@@ -79,6 +79,11 @@ describe("parseCcx", () => {
     const a = parseCcx(["--bg", "--resume", "uuid-1", "-n", "w", "next"]);
     expect(a.config.resume).toBe("uuid-1"); expect(a.bg).toBe(true);
   });
+  it("parses -c / --continue (A10)", () => {
+    expect(parseCcx(["-c"]).continue).toBe(true);
+    expect(parseCcx(["--continue"]).continue).toBe(true);
+    expect(parseCcx([]).continue).toBe(false);
+  });
   it("parses subcommands with their flags", () => {
     expect(parseCcx(["agents", "--json", "--all"])).toMatchObject({ command: "agents", json: true, all: true });
     expect(parseCcx(["agents", "--cwd", "/repo"])).toMatchObject({ command: "agents", cwdFilter: "/repo" });

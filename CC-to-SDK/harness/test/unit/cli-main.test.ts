@@ -424,6 +424,50 @@ describe("main — run: foreground (Task 7)", () => {
     expect(hostCalls).toEqual([]);
     expect(clientCalls).toEqual([]);
   });
+  it("--continue hands the REPL the continue INTENT, not an id (Task 9)", async () => {
+    // `{kind:"continue"}` is what useChat's mount effect routes to doContinue() — main never resolves the
+    // "most recent" session itself, so there is exactly one place that decision is made.
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    const { value } = await captureLog(() => main(["--continue"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(0);
+    expect(clientCalls[0].initialResume).toEqual({ kind: "continue" });
+    expect(clientCalls[0].initialEntries).toBeUndefined();     // the welcome banner gives way to the resume
+  });
+  it("--resume travels through the W-S6 resolver — a full UUID lands unchanged (Task 9)", async () => {
+    const FULL = "0d7a7a9d-1111-2222-3333-444455556666";
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    const { value } = await captureLog(() => main(["--resume", FULL], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(0);
+    expect(clientCalls[0].initialResume).toEqual({ kind: "id", id: FULL });
+  });
+  it("refuses --continue together with a prompt, for the same busy-guard reason --resume is refused", async () => {
+    const clientCalls: any[] = [];
+    const { err, value } = await captureLog(() => main(["--continue", "hi"], deps({
+      isTTY: () => true, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("--continue with a prompt is not supported");
+    expect(clientCalls).toEqual([]);
+  });
+  it("refuses --continue together with --resume rather than silently preferring one", async () => {
+    const { err, value } = await captureLog(() => main(["--continue", "--resume", "abc"], deps({ isTTY: () => true })));
+    expect(value).toBe(2);
+    expect(err.join("\n")).toContain("--continue and --resume are mutually exclusive");
+  });
+  it("refuses --continue on -p/--bg/--detachable, which have no launch-resume channel at all", async () => {
+    // Accepting it there would start a FRESH session and report success — the silent drop, not a refusal.
+    for (const argv of [["-c", "-p", "hi"], ["-c", "--bg", "task"], ["-c", "--detachable"]]) {
+      const { err, value } = await captureLog(() => main(argv, deps({ isTTY: () => true })));
+      expect(value).toBe(2);
+      expect(err.join("\n")).toContain("--continue only applies to a foreground session");
+    }
+  });
   it("--bg still spawns instead of reaching the foreground path, even with isTTY() true", async () => {
     const { out, value } = await captureLog(() => main(["--bg", "task"], deps({ isTTY: () => true, spawnDetached: () => banner })));
     expect(value).toBe(0);

@@ -22,6 +22,11 @@ export interface CcxInvocation {
    *  and rmSession acts only on an absolute path. */
   worktreePath?: string;
   json: boolean; all: boolean; cwdFilter?: string;
+  /** `-c`/`--continue`: resume the most recent session in this directory. TOP-LEVEL, not `config`, unlike
+   *  `--resume` (which lands at `config.resume`) — there is no id to carry, only the intent, and the REPL
+   *  resolves "most recent" itself at launch. `continue` is a reserved word as an identifier, not as a
+   *  property, so `inv.continue` is legal. */
+  continue: boolean;
   // Field only for now — the --idle-timeout flag arm below stays the loud rejection until Task 8
   // rewires it to set this (seconds, a human CLI unit; hostOptsFrom converts to ms for SessionHostOpts).
   idleTimeoutSec?: number;
@@ -70,7 +75,7 @@ function parseSettings(v: string): Record<string, unknown> {
 }
 
 export function parseCcx(argv: string[]): CcxInvocation {
-  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, config: {}, listen: { host: "127.0.0.1", port: 0 }, allowOrigins: [] };
+  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, continue: false, config: {}, listen: { host: "127.0.0.1", port: 0 }, allowOrigins: [] };
   let i = 0;
   const sub = argv[0];
   if (sub === "agents" || sub === "attach" || sub === "stop" || sub === "rm") { a.command = sub; i = 1; }
@@ -110,6 +115,9 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "--model": a.config.model = val(t); break;
       case "--effort": a.config.effort = oneOf("--effort", val(t), EFFORT_LEVELS); break;
       case "-r": case "--resume": a.config.resume = val(t); break;
+      // Upstream's own flag and letter (`-c, --continue`, L563626). Valueless; it resolves at launch to
+      // the most recent session for this directory, which is exactly what the REPL's own /continue does.
+      case "-c": case "--continue": a.continue = true; break;
       case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); break;
       // The real CLI's own spelling for the same mode (Wave-T T15). It lands on the SAME field rather than a
       // flag of its own, so the consent gate in main.ts keys on ONE resolved mode and can never cover one
