@@ -101,11 +101,14 @@ describe("CM12 ctrl+n/ctrl+p mirror down/up exactly (`n`→Re(), `p`→he())", (
 });
 
 describe("CM12 alt+d = deleteWordAfter, and it is NOT a kill", () => {
-  it("deletes from the cursor to the next word boundary", () => {
+  // WAVE C t3: `deleteWordAfter` is defined as the range up to `wordRight`, and that boundary moved from the
+  // END of the word crossed to the START of the next one (annex §C7.6 `nextWord`, bundle L394936) — so the
+  // separating space now goes with the word. Deliberate blast radius, pinned here rather than special-cased.
+  it("deletes from the cursor to the START of the next word, separating space included", () => {
     let s = type(initialEditorState(), "one two three");
     s = applyKey(s, "a", CTRL).state;                             // column 0
     s = applyKey(s, "d", META).state;
-    expect(text(s)).toBe(" two three");
+    expect(text(s)).toBe("two three");
     expect(s.cursor).toEqual({ row: 0, col: 0 });
   });
   it("leaves the kill ring untouched (the meta map's `d` result never reaches the ring)", () => {
@@ -115,7 +118,7 @@ describe("CM12 alt+d = deleteWordAfter, and it is NOT a kill", () => {
     s = type(s, "alpha beta");
     s = applyKey(s, "a", CTRL).state;
     const r = applyKey(s, "d", META);
-    expect(text(r.state)).toBe(" beta");
+    expect(text(r.state)).toBe("beta");                           // WAVE C t3 boundary (see above)
     expect(r.killed).toBeUndefined();
     expect(r.state.killRing).toEqual(["one two"]);                // unchanged: alt+d does not feed the ring
   });

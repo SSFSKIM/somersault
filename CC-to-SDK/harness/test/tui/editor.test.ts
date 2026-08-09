@@ -2,6 +2,7 @@
 // embedded \n; submit = a lone key.return; `\`+Enter = continuation.
 import { describe, it, expect } from "vitest";
 import { applyKey, initialEditorState, setMentionFiles, setCommandCatalog, stripPasteMarkers, inputMode, withBufferText, clearToHistory, UNDO_CAP, UNDO_COALESCE_MS, type EditorState, type KeyFlags } from "../../src/tui/editor.js";
+import { toKeyFlags } from "../../src/tui/keys/editorAdapter.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 
 const type = (s: EditorState, text: string): EditorState => applyKey(s, text, {}).state;
@@ -302,14 +303,16 @@ describe("word movement (Alt/Option)", () => {
     s = meta(s, "", { leftArrow: true });
     expect(s.cursor).toEqual({ row: 0, col: 2 });                  // end of "ab"
   });
-  it("Alt-Right steps forward a word at a time (mirrors Alt-Left)", () => {
+  // WAVE C t3: the landing site moved from the END of the word crossed (col 5) to the START of the next word
+  // (col 6) — upstream `nextWord` returns `r.start` (annex §C7.6, bundle L394936).
+  it("Alt-Right steps forward to the START of the next word, then to the end of the text", () => {
     let s = type(initialEditorState(), "hello world");
     s = applyKey(s, "a", { ctrl: true }).state;                   // Ctrl-A → col 0
     expect(s.cursor.col).toBe(0);
     s = meta(s, "", { rightArrow: true });
-    expect(s.cursor).toEqual({ row: 0, col: 5 });
+    expect(s.cursor).toEqual({ row: 0, col: 6 });                  // start of "world", not end of "hello"
     s = meta(s, "", { rightArrow: true });
-    expect(s.cursor).toEqual({ row: 0, col: 11 });
+    expect(s.cursor).toEqual({ row: 0, col: 11 });                 // no further word start → end of the text
   });
   it("Alt-Right at end of an earlier row crosses to col 0 of the row below", () => {
     let s = type(initialEditorState(), "ab\ncd");                  // cursor {1,2}
@@ -324,7 +327,7 @@ describe("word movement (Alt/Option)", () => {
     expect(s.cursor).toEqual({ row: 0, col: 6 });
     s = applyKey(s, "a", { ctrl: true }).state;                   // back to col 0
     s = meta(s, "f");
-    expect(s.cursor).toEqual({ row: 0, col: 5 });
+    expect(s.cursor).toEqual({ row: 0, col: 6 });                  // WAVE C t3: next word START (see above)
   });
   it("an unrecognized meta combo is a no-op — never inserts a character or moves the cursor", () => {
     let s = type(initialEditorState(), "hi");                     // cursor {0,2}
@@ -338,6 +341,86 @@ describe("word movement (Alt/Option)", () => {
   it("an unrecognized meta combo (meta + input \"q\") still inserts nothing", () => {
     const s = meta(type(initialEditorState(), "hi"), "q");
     expect(text(s)).toBe("hi");
+  });
+});
+
+// WAVE C Task 3 (EP-C7a). Four keys that upstream handles INSIDE the text-input key switch and binds in no
+// keymap table at all (annex §C7.9: "there is no home / end / ctrl+left / ctrl+right binding in the Chat
+// context"), so they are pinned here at the two layers that actually carry them — `toKeyFlags`'s projection
+// and the reducer — and nowhere in the bindings tables.
+//  · §C7.5 (L395798): `case "home": if (Pe.ctrl) return; return W.startOfLine()` (and `end`/`endOfLine`).
+//  · §C7.6 (L395760/L395775): `if (Pe.ctrl || Pe.meta || Pe.fn) return W.prevWord()/W.nextWord()`.
+//  · §C7.6 `nextWord` (L394936): the forward boundary is `r.start`, the START of the next word-like run.
+describe("Wave C t3 — Home/End and ctrl+arrows (annex §C7.5 / §C7.6)", () => {
+  /** Through the REAL adapter, because the projection is half the behavior: an unnamed key reaches the reducer
+   *  as an empty `input` with no flag and is silently a no-op edit, which is exactly how home/end died. */
+  const named = (s: EditorState, name: string, mods: Partial<{ ctrl: boolean; alt: boolean; shift: boolean; super: boolean }> = {}): EditorState => {
+    const { input, key } = toKeyFlags({ kind: "key", name, ctrl: false, alt: false, shift: false, super: false, raw: "", ...mods });
+    return applyKey(s, input, key).state;
+  };
+  it("Home moves to the start of the current line, End to its end", () => {
+    let s = type(initialEditorState(), "hello world");            // {0,11}
+    s = named(s, "home");
+    expect(s.cursor).toEqual({ row: 0, col: 0 });
+    s = named(s, "end");
+    expect(s.cursor).toEqual({ row: 0, col: 11 });
+  });
+  it("Home/End act on the CURRENT line of a multi-line buffer, never on the buffer edge", () => {
+    let s = type(initialEditorState(), "alpha\nbravo\ncharlie");   // {2,7}
+    s = press(s, { upArrow: true });                              // {1,5}
+    s = named(s, "home");
+    expect(s.cursor).toEqual({ row: 1, col: 0 });
+    s = named(s, "end");
+    expect(s.cursor).toEqual({ row: 1, col: 5 });
+  });
+  it("ctrl+Home and ctrl+End fall through UNHANDLED (upstream's `if (Pe.ctrl) return`)", () => {
+    const s = type(initialEditorState(), "hello world");
+    expect(named(s, "home", { ctrl: true })).toBe(s);              // identity: the editor did not touch it
+    expect(named(s, "end", { ctrl: true })).toBe(s);
+  });
+  it("ctrl+Left / ctrl+Right are word motion, the same ops alt+Left/Right run", () => {
+    let s = type(initialEditorState(), "hello world");            // {0,11}
+    s = named(s, "left", { ctrl: true });
+    expect(s.cursor).toEqual({ row: 0, col: 6 });                  // prevWord → start of "world"
+    s = named(s, "left", { ctrl: true });
+    expect(s.cursor).toEqual({ row: 0, col: 0 });
+    s = named(s, "right", { ctrl: true });
+    expect(s.cursor).toEqual({ row: 0, col: 6 });                  // nextWord → start of "world"
+  });
+  it("a ctrl+arrow never inserts text (it used to die in the ctrl switch's default arm)", () => {
+    const s = type(initialEditorState(), "hi");
+    expect(text(named(s, "right", { ctrl: true }))).toBe("hi");
+    expect(text(named(s, "left", { ctrl: true }))).toBe("hi");
+  });
+  it("ctrl+Up / ctrl+Down stay unhandled — they are the Global diff-list bindings, not editor keys", () => {
+    const s = type(initialEditorState(), "a\nb");
+    expect(named(s, "up", { ctrl: true })).toBe(s);
+    expect(named(s, "down", { ctrl: true })).toBe(s);
+  });
+  it("word-forward lands at the START of the next word-like run, on every offset of a three-word buffer", () => {
+    // "one two three" — word starts at 0, 4, 8; length 13.
+    const base = type(initialEditorState(), "one two three");
+    const from = (col: number) => applyKey({ ...base, cursor: { row: 0, col } }, "", { meta: true, rightArrow: true }).state.cursor.col;
+    expect(from(0)).toBe(4);                                       // NOT 3 (the end of "one")
+    expect(from(1)).toBe(4);                                       // mid-word: still the next word's start
+    expect(from(3)).toBe(4);                                       // sitting on the space: the very next start
+    expect(from(4)).toBe(8);                                       // NOT 7
+    expect(from(6)).toBe(8);
+    expect(from(8)).toBe(13);                                      // no further start → the end of the text
+    expect(from(13)).toBe(13);                                     // at the end of the only row: a no-op
+  });
+  it("multiple spaces collapse into one hop — the landing site is the word start, not the run of spaces", () => {
+    const base = type(initialEditorState(), "one   two");
+    const from = (col: number) => applyKey({ ...base, cursor: { row: 0, col } }, "", { meta: true, rightArrow: true }).state.cursor.col;
+    expect(from(0)).toBe(6);
+    expect(from(9)).toBe(9);
+  });
+  it("BLAST RADIUS: alt+d deletes through the new boundary, taking the separating space with it", () => {
+    let s = type(initialEditorState(), "one two three");
+    s = applyKey(s, "a", { ctrl: true }).state;                   // column 0
+    const r = applyKey(s, "d", { meta: true });
+    expect(text(r.state)).toBe("two three");                       // was " two three" under the old boundary
+    expect(r.state.cursor).toEqual({ row: 0, col: 0 });
   });
 });
 

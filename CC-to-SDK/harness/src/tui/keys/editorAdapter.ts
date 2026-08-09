@@ -14,11 +14,19 @@
 import type { KeyFlags } from "../editor.js";
 import type { KeyEvent, TextEvent } from "./types.js";
 
-/** Named keys → the reducer's boolean. Names with no editor meaning (home/end/f1…) are absent on purpose:
- *  they arrive as an empty `input` with no flag set, which `applyKeyInner` returns unchanged. */
+/** Named keys → the reducer's boolean. Names with no editor meaning (pageup/insert/f1…) are absent on purpose:
+ *  they arrive as an empty `input` with no flag set, which `applyKeyInner` returns unchanged.
+ *
+ *  WAVE C t3: `home`/`end` USED to be in that absent set, and that was the whole bug — upstream handles both
+ *  inside its text-input key switch (annex §C7.5, bundle L395798) and binds them in no keymap table, so a port
+ *  that dropped them here had no other route to the reducer and the two keys did nothing at all. They map onto
+ *  `KeyFlags.home`/`.end`, which exist for this projection alone (Ink never delivered either — keys/types.ts
+ *  §1.1 — so there is no ink flag to borrow). ctrl+home/ctrl+end are projected the same way and declined by
+ *  the reducer, which is upstream's own `if (Pe.ctrl) return`. */
 const NAMED: Record<string, keyof KeyFlags> = Object.assign(Object.create(null), {
   enter: "return", escape: "escape", tab: "tab", backspace: "backspace", delete: "delete",
   up: "upArrow", down: "downArrow", left: "leftArrow", right: "rightArrow",
+  home: "home", end: "end",
 });
 /** Raw C0 bytes the reducer matches on directly, flags and all stripped (see the header). Null-prototype like
  *  the t2 spec tables: `e.name in RAW` must never see Object.prototype. */
@@ -41,5 +49,5 @@ export function toKeyFlags(e: KeyEvent | TextEvent): { input: string; key: KeyFl
   // A literal character: the parser lowercased it and recorded the shift, so re-case it here — the reducer
   // inserts `input` verbatim.
   if (e.name.length === 1) return { input: e.shift ? e.name.toUpperCase() : e.name, key };
-  return { input: "", key };                                  // home/end/pageup/insert/f1–f12: a no-op edit
+  return { input: "", key };                                  // pageup/pagedown/insert/f1–f12: a no-op edit
 }
