@@ -744,3 +744,22 @@ making the boundary unreachable — instrument lesson). Remainders recorded in-c
 (parser decodes it; only KeyFlags projection missing), pageup/pagedown (need the popup guard).
 Task 4 caveats from review: dispose() deliberately does NOT notify onArmChange — callers that
 dispose while mounted own their own state; the 2000ms /clear window is a CALL-SITE argument.
+
+## 2026-08-10 — Wave C Task 4 complete (2752c5c463, review approved, no fix round)
+
+Ctrl-C both-at-once (clear + arm 800ms in ONE press, busy interrupts without clearing), all five
+arms rebuilt on createDoublePress with the five hand-rolled triples deleted, rewind arm on its own
+notification key, arm keys derived from the binding table (rebind test proves Alt-C renders), and
+the ← agents gesture wired (empty composer, doublePress, second press opens the bg pane; upstream's
+attach-ambiguity dance skipped as recorded divergence). Reviewer reproduced the 7 reds at the parent
+commit by name and re-ran both sabotages to exact counts; frame-level probe proved no draft+arm
+coexisting frame (the token channel costs no stale paint). Concern adjudications: zero-task ←
+gesture stays (gating would invent canon; the pane says "No tasks currently running" so nothing
+lies); no Esc hint overhang (upstream's 200ms is a side effect, not design); ← hint lifetime tied
+to its arm. MINORS FOR FINAL-REVIEW TRIAGE: (L1) remount-guard unpinned — add the defensive-path
+docblock clause or a remount test; (L2) window props captured at mount not press-time — docblock
+line; (L3) report overstates disarm breadth — no code change; (I1) SIXTH un-migrated arm found:
+useChat.ts:1759 killAgents timestamp-ref double-press with a hardcoded chord literal upstream
+derives (L499289) — good follow-up, useChat.ts not in the banned-chord sweep; (I2) ← gesture has no
+busy gate (probably right, undocumented); (I3) ESC_CLEAR_HINT_MS 1000 is unreachable as a timing —
+say so in the docblock.
