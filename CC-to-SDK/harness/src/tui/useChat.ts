@@ -16,6 +16,7 @@ import { mergeSettingsFile, appendToArray, type SettingsFileDeps, type SettingsT
 import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsModel.js";
 import type { CcxPrefs } from "./prefs.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
+import { disqualifiesTurnDuration, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
 import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, shouldShowAutoModeNotice } from "./autoModeNotice.js";
 import { hasAcceptedBypass } from "./bypassConsent.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
@@ -90,7 +91,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
+  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; usageWarn?: string; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; permissions: { open: boolean; tab?: string }; denials: DenialEntry[];
   /** The session's working directories — the cwd plus every `/add-dir` grant (`listDirs()`). The FILE
    *  permission dialog's in-directory test runs over this set; nothing else reads it. */
   workDirs: readonly string[];
@@ -116,14 +117,17 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void } } = {},
+  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void } } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
   deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; appendMemory?: (note: string, cwd: string) => string; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
     /** Wave C Task 1/2: the notification queue. Injected so a test can drive its timers synthetically. */
-    notifications?: NotificationStore } = {},
+    notifications?: NotificationStore;
+    /** Wave C Task 7: the duration row's verb. Upstream picks it uniformly at random (`SvH`), which would
+     *  make every expected string in a test a regex — so the pick is a seam, exactly like `now`. */
+    pickTurnVerb?: () => string } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -406,6 +410,21 @@ export function useChat(
   const historyEnv = deps.env ?? process.env;
   const runBash = deps.runBash ?? realRunBash;
   const savePrefsFn = deps.savePrefs ?? realSavePrefs;   // W3 T5: applyOutputStyle is useChat's first ACTUAL reader of this dep (Task 4 only threaded it through to ThemeDialog)
+  // ── Wave C Task 7 (EP-C4d): the end-of-turn duration row ─────────────────────────────────────────────
+  // SEEDED BY THE CALLER, not read here — `initialOutputStyle`'s exact pattern (W3 T5) and for its exact
+  // reason: `chatMain` loads the prefs file once, before the first render, and this hook stays a pure
+  // function of what it is handed. A `loadPrefs()` inside the hook would make every keyless test in
+  // `test/tui/` read the developer's own `~/.claude/ccx/prefs.json` and answer differently on two machines.
+  // Held in state from mount on: the /config row toggles this and writes the file behind it.
+  const [showTurnDuration, setShowTurnDurationState] = useState<boolean>(opts.initialShowTurnDuration ?? true);
+  const showTurnDurationRef = useRef(showTurnDuration); showTurnDurationRef.current = showTurnDuration;   // read inside the event effect, which never re-subscribes on a pref flip
+  const pickTurnVerb = deps.pickTurnVerb ?? realPickTurnVerb;
+  // The turn's own wall clock, and its disqualifier. Both are REFS, not state: they are written and read
+  // inside the `onSessionEvent` closure, which is created once per session — a state read there would be one
+  // render stale, and `turnStartedAt` (the spinner's clock) is already exactly that shape for that reason.
+  // `undefined` start = no turn is being clocked, which is what the bare-truncated idle follow tail leaves.
+  const turnStartRef = useRef<number | undefined>(undefined);
+  const turnDisqualifiedRef = useRef(false);
   const appendMemory = deps.appendMemory ?? realAppendMemory;
   const copyText = deps.copyText ?? realCopyToClipboard;
   const writeFile = deps.writeFile ?? ((p: string, t: string) => realWriteFileSync(p, t));
@@ -630,6 +649,10 @@ export function useChat(
         // The SAME injected clock the projection uses: the thinking clock's arrival stamps and the `now`
         // the fold row is rendered against must not come from two different sources (a frame-capture
         // fixture pins one of them, and a live-reading LiveTurn would make its output unreproducible).
+        // W-C T7: the duration row's clock, on the INJECTED `nowFn` rather than the `Date.now()` beside it —
+        // that one feeds `TurnSpinner`'s wall-clock render loop and has to match it; this one is measured and
+        // then FORMATTED into a permanent transcript row, so a test has to be able to place both ends of it.
+        turnStartRef.current = nowFn(); turnDisqualifiedRef.current = false;
         liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnMeter(IDLE_METER); setStreaming([]); clearRetry(); armStall();
       }
       else if (ev.kind === "message") {
@@ -666,6 +689,11 @@ export function useChat(
           if (partial) { partial.ingest(data); setStreaming(partial.snapshot()); setTurnMeter(partial.meter()); if (partial.model) setModel(partial.model); }
           return;
         }
+        // W-C T7: an interrupt sentinel or an API-failure frame disqualifies the turn that carried it from
+        // the duration row — neither turn COMPLETED. NOT guarded on `ev.replay`: the only replay that arrives
+        // while a turn is being clocked is `follow()`'s mid-turn drain, whose frames belong to that very
+        // turn; every other replay lands with no clock running and cannot produce a row anyway.
+        if (disqualifiesTurnDuration(data)) turnDisqualifiedRef.current = true;
         // Harvest bg-task metadata (command/output-file) first: a reconnect-buffer replay carries no live
         // turn but still needs to reach the (idempotent) harvest.
         bgHarvest.current.ingestMessage(ev.data);
@@ -763,6 +791,15 @@ export function useChat(
         // rendering) still earns a notice — otherwise an idle host's death is invisible until the next
         // submit times out ~10s later (F5).
         if (ev.error) l ? append([{ text: `✗ ${ev.error}`, color: role("error") }]) : notice(`✗ connection lost: ${ev.error}`);
+        // W-C T7 (EP-C4d): the duration row, on the LOCAL-ENTRY seam every notice rides. Three ways not to
+        // earn one, and each is a different "this turn did not complete": no clock at all (the bare-truncated
+        // idle follow tail opens no turn, and its `end` must not clock the gap since the last real one), an
+        // interrupt sentinel inside it, or an `ev.error` end. The clock is dropped either way — a second
+        // `turn:end` for the same turn (a redelivered close) then finds nothing to measure.
+        const startedAt = turnStartRef.current; turnStartRef.current = undefined;
+        if (startedAt !== undefined && !turnDisqualifiedRef.current && !ev.error && showTurnDurationRef.current) {
+          append([turnDurationLine(Math.max(0, nowFn() - startedAt), { pickVerb: pickTurnVerb })]);
+        }
         // A call still open at turn end is an ORPHAN (interrupted, denied, or a result that never came):
         // the turn is over, so nothing is running — end the blink epoch instead of leaving a "running" row.
         clearLiveOpen();
@@ -1127,6 +1164,7 @@ export function useChat(
             case "permissionMode": await applyMode(result.value); break;
             // Boolean row vocabulary ("true"/"false") → setThink's own off/default vocabulary (its doc comment).
             case "thinking": await setThink(result.value === "false" ? "off" : "default"); break;
+            case "showTurnDuration": setShowTurnDuration(result.value !== "false"); break;
           }
           if (!disposed.current) append(result.lines);
           break;
@@ -1366,7 +1404,7 @@ export function useChat(
   // never cache it) alongside whatever this hook's own state currently holds for model/outputStyle/mode/
   // thinkLevel, so both the open-time baseline and the close-time snapshot are always accurate regardless
   // of how many times the Model/Theme/Output-style sub-flows ran in between.
-  function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel }; }
+  function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration }; }
   function openSettings() {
     if (disposed.current) return;
     settingsBaselineRef.current = currentSettingsCtx();
@@ -1398,6 +1436,15 @@ export function useChat(
     // while setMaxThinkingTokens was still in flight.
     setThinkLevel(next);
     await session.setMaxThinkingTokens(next === "off" ? 0 : null).catch(() => {});
+  }
+  /** The Turn-duration row's boolean toggle (W-C T7). Purely client-side — there is no engine leg at all, so
+   *  this is `/theme`'s shape rather than `setThink`'s: commit the state, persist behind it. The write is
+   *  wrapped for the reason every prefs write in this file is (a read-only home must not take down a session
+   *  over a cosmetic flag), and `savePrefs` merges, so it cannot clobber a neighbouring key. */
+  function setShowTurnDuration(next: boolean): void {
+    if (disposed.current) return;
+    setShowTurnDurationState(next);
+    try { savePrefsFn({ showTurnDuration: next }, historyEnv); } catch { /* best-effort */ }
   }
   // The Output-style row: apply the live engine style (best-effort, like every other flag-state op — a
   // session without SettingsOps just skips this leg), remember it in ccx's own prefs (the seed for next
@@ -1845,5 +1892,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, permissions, denials, workDirs, retryStatus, compacting, notification } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, usageWarn, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, permissions, denials, workDirs, retryStatus, compacting, notification } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

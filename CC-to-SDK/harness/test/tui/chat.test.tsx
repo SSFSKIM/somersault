@@ -1434,7 +1434,7 @@ describe("<ChatApp>", () => {
   // the two characters this file used to match as one literal. A raw `includes("❯ Model")` therefore goes
   // false forever — including the NEGATIVE one in keys-migration-dialogs.test.tsx, which would have gone
   // vacuously green instead of red. The rendered TEXT is unchanged, which is what these tests are about.
-  it("/config opens the Settings dialog at the Config tab, showing all 5 rows and the normal-mode footer", async () => {
+  it("/config opens the Settings dialog at the Config tab, showing all 6 rows and the normal-mode footer", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/config"); await waitFor(() => frame(lastFrame).includes("/config"));
@@ -1450,6 +1450,7 @@ describe("<ChatApp>", () => {
     expect(f).toContain("Output style");
     expect(f).toContain("Default permission mode");
     expect(f).toContain("Thinking mode");
+    expect(f).toContain("Turn duration");                           // W-C T7's row
     expect(f).toContain("Enter/Space to change · / to search · Esc to close");
   });
 

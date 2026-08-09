@@ -474,18 +474,19 @@ const CATALOG: CommandEntry[] = [
   { name: "brainstorm", description: "explore a design", source: "catalog" },
   { name: "compact", description: "summarize the conversation", source: "local" },
 ];
-// WAVE S t5 — the Config tab's five rows, at a pane tall enough that the whole catalog is on screen (the
+// WAVE S t5 — the Config tab's rows, at a pane tall enough that the whole catalog is on screen (the
 // windowing itself is settings-dialog.test.tsx's; what this pins is that all five key groups now arrive here).
+// SIX rows since W-C T7 added `Turn duration`, which is also the list's new last row.
 const SETTINGS_PROPS = {
   tab: "Config", onTabChange: () => {}, mode: "default", thinkLevel: "default", outputStyle: "default",
   onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
   fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
-  onOpenModelPicker: () => {}, savePrefs: () => {},
+  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {},
 };
 pinsListNavigation(
   "the Settings dialog's Config list",
-  () => opened(<SettingsDialog {...SETTINGS_PROPS} rows={40} columns={100} />, "Thinking mode"),
-  ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode"],
+  () => opened(<SettingsDialog {...SETTINGS_PROPS} rows={40} columns={100} />, "Turn duration"),
+  ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode", "Turn duration"],
 );
 
 // WAVE S t6b — the Allow tab's rule list, at a pane tall enough that all three rows are on screen (the

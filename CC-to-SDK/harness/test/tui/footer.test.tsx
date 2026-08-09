@@ -49,6 +49,7 @@ describe("modeTable (annex §C4.c)", () => {
     expect(modeColor("acceptEdits")).toBe(tok("autoAccept"));
     expect(modeColor("auto")).toBe(tok("warning"));
     expect(modeColor("bypassPermissions")).toBe(tok("error"));
+    expect(modeColor("dontAsk")).toBe(tok("error"));
   });
 });
 
@@ -122,11 +123,33 @@ describe("<Footer> — the composed row (annex §C1.1-§C1.2)", () => {
     expect(f).toContain("⏸ plan mode on (shift+tab to cycle)");
     expect(f).not.toContain("? for shortcuts");
   });
-  it("renders every mode's chip text verbatim", () => {
+  // WAVE C TASK 7 widened this from four modes to SIX and added the colour half below. Task 2 pinned the
+  // table's colour TOKENS and the chip's TEXT, but never that the rendered chip actually wears its mode's
+  // token — the frame those tests read is ANSI-stripped, so `<Text color={modeColor(mode)}>` could have been
+  // `<Text>` and the whole suite would have stayed green.
+  it("renders all SIX mode chips verbatim (annex §C4.c)", () => {
+    expect(frameOf({ mode: "default" })).toContain("⏸ manual mode on");
+    expect(frameOf({ mode: "plan" })).toContain("⏸ plan mode on");
     expect(frameOf({ mode: "acceptEdits" })).toContain("⏵⏵ accept edits on");
     expect(frameOf({ mode: "auto" })).toContain("⏵⏵ auto mode on");
     expect(frameOf({ mode: "bypassPermissions" })).toContain("⏵⏵ bypass permissions on");
     expect(frameOf({ mode: "dontAsk" })).toContain("⏵⏵ don't ask on");
+  });
+  it("paints all SIX chips in their own `$O` token — grey/plan/accept/warning/error/error", () => {
+    // The token is `rgb(r,g,b)` and Ink paints it as a truecolor SGR (bg-dialog.test.tsx's `sgr` idiom); the
+    // chip is the first thing on its row, so the row's opening escape IS the chip's colour.
+    const sgr = (name: Parameters<typeof tok>[0]) => {
+      const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(themeTokens()[name]);
+      return `\x1b[38;2;${m![1]};${m![2]};${m![3]}m`;
+    };
+    const rawChipRow = (mode: string, needle: string) =>
+      (render(<Footer {...home} mode={mode} />).lastFrame() ?? "").split("\n").find((l) => plain(l).includes(needle)) ?? "";
+    expect(rawChipRow("default", "manual mode on")).toContain(`${sgr("inactive")}⏸`);
+    expect(rawChipRow("plan", "plan mode on")).toContain(`${sgr("planMode")}⏸`);
+    expect(rawChipRow("acceptEdits", "accept edits on")).toContain(`${sgr("autoAccept")}⏵⏵`);
+    expect(rawChipRow("auto", "auto mode on")).toContain(`${sgr("warning")}⏵⏵`);
+    expect(rawChipRow("bypassPermissions", "bypass permissions on")).toContain(`${sgr("error")}⏵⏵`);
+    expect(rawChipRow("dontAsk", "don't ask on")).toContain(`${sgr("error")}⏵⏵`);
   });
   it("collapses to the mode chip ALONE while a draft is live (§C1.5)", () => {
     const f = frameOf({ draftNonEmpty: true, isInputEmpty: false, agents: { count: 2 } });

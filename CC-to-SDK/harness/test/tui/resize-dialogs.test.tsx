@@ -100,27 +100,28 @@ describe("ModelPicker re-derives its geometry from the size it is given", () => 
 // cases below follow `ModelPicker`'s "windows its list from the height it is given" shape exactly — a live
 // `rerender` with a new `rows`, asserted in BOTH directions so a build stuck at one height cannot satisfy it.
 
-/** The Config catalog is a FIXED five rows (settingsRows.ts's `buildRows`), so `settingsVisibleRows` — which
- *  is `max(1, rows − 11)` — saturates at five from a pane of 16 up. 40 shows all five and 13 shows two. */
-const configRowCount = (f: string) => strip(f).split("\n").filter((l) => /(Theme|Model|Output style|Default permission mode|Thinking mode)/.test(l)).length;
+/** The Config catalog is a FIXED six rows (settingsRows.ts's `buildRows` — W-C T7 added `Turn duration`), so
+ *  `settingsVisibleRows` — which is `max(1, rows − 11)` — saturates at six from a pane of 17 up. 40 shows all
+ *  six and 13 shows two. */
+const configRowCount = (f: string) => strip(f).split("\n").filter((l) => /(Theme|Model|Output style|Default permission mode|Thinking mode|Turn duration)/.test(l)).length;
 const settingsProps = {
   tab: "Config", onTabChange: () => {}, model: "opus", mode: "default", thinkLevel: "off", outputStyle: "default",
   onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
   fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
-  onOpenModelPicker: () => {}, savePrefs: () => {},
+  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {},
 };
 
 describe("SettingsDialog re-derives its geometry from the size it is given", () => {
   it("windows its Config list from the height it is given", async () => {
     const r = renderWithKeymap(<SettingsDialog {...settingsProps} rows={40} columns={200} />);
     await waitFor(() => strip(frame(r.lastFrame)).includes("❯ Theme"));
-    expect(configRowCount(frame(r.lastFrame))).toBe(5);
+    expect(configRowCount(frame(r.lastFrame))).toBe(6);
     r.rerender(<SettingsDialog {...settingsProps} rows={13} columns={200} />);
     await tick();
     expect(configRowCount(frame(r.lastFrame))).toBe(2);                // settingsVisibleRows(13) = 13 − 11
     r.rerender(<SettingsDialog {...settingsProps} rows={40} columns={200} />);
     await tick();
-    expect(configRowCount(frame(r.lastFrame))).toBe(5);
+    expect(configRowCount(frame(r.lastFrame))).toBe(6);
     r.unmount();
   });
 

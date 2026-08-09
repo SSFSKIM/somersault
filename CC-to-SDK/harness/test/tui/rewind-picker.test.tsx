@@ -194,7 +194,13 @@ describe("<ChatApp> with the rewind picker open never renders a frame that reach
   async function openPicker(rows: number, columns: number, tasks = 0) {
     const deps = { columns: () => columns, getSessionMessages: async () => [] as never[] };
     const session = rewindRemote();
-    const r = render(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} />);
+    // `initialShowTurnDuration: false` KEEPS THE FIXTURE'S OWN PRECONDITION TRUE (W-C T7). `seedTasks` wraps
+    // its wire pair in a turn, and a completed turn now leaves a `✻ Worked for 0s` row in the transcript —
+    // a STATIC item, so it never counts toward the `outputHeight` Ink compares against `stdout.rows`, but it
+    // does count toward `lastFrame().split("\n").length`, which is the quantity these cells read. Left on, the
+    // grid measures the seeding artifact instead of the picker's budget (four cells went one row over on
+    // exactly that). The `not.toContain("TaskCreate")` assertion below is the same precondition, stated.
+    const r = render(<ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps} hookOpts={{ initialShowTurnDuration: false }} />);
     Object.defineProperty(r.stdout, "rows", { configurable: true, get: () => rows });
     Object.defineProperty(r.stdout, "columns", { configurable: true, get: () => columns });
     await waitFor(() => frame(r.lastFrame).includes("❯ "));

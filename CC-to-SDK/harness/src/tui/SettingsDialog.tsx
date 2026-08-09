@@ -317,16 +317,21 @@ export function settingsWrapRows(columns?: number): number {
 export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24, columns?: number, thinkingTouched: boolean = false): number =>
   Math.max(1, rows - SETTINGS_CHROME_ROWS - (thinkingTouched ? settingsWrapRows(columns) : 0));
 
-export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, onDone, applyMode, setThink, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
+export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, showTurnDuration, onDone, applyMode, setThink, setShowTurnDuration, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
   tab: string;
   onTabChange: (tab: string) => void;
   model?: string;
   mode: string;
   thinkLevel: string;
   outputStyle: string;
+  /** W-C T7: the `Turn duration` row's live value and its toggle. Required rather than defaulted — the row
+   *  is a claim about a persisted pref, and a component that quietly renders `true` while the file says
+   *  otherwise would be lying in the one place `/config` exists to tell the truth. */
+  showTurnDuration: boolean;
   onDone: () => void;
   applyMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
+  setShowTurnDuration: (next: boolean) => void;
   applyOutputStyle: (id: string) => Promise<void>;
   fetchStatus: () => Promise<RenderLine[]>;
   fetchUsage: () => Promise<RenderLine[]>;
@@ -360,7 +365,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     return () => { cancelled = true; };
   }, [activeTab]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel };
+  const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration };
   // NOT `rows` any more (Wave S t5): that name is the TERMINAL HEIGHT prop now, and two things called `rows`
   // in one component is how a geometry bug hides.
   const configRows = buildRows(ctx);
@@ -406,7 +411,10 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   /** Takes the row from the value `Select` hands back, rather than re-reading an index it no longer owns. */
   const acceptRow = (id: string) => {
     const row = configRows.find((r) => r.id === id); if (!row) return;
-    if (row.type === "boolean") { setThinkingTouched(true); void setThink(row.value === "true" ? "off" : "default"); }
+    // TWO boolean rows now (W-C T7), and only `thinking` carries the mid-conversation warning — so the
+    // branch is by ID, not by type. `showTurnDuration` is a pure client flag with nothing to warn about.
+    if (row.id === "thinking") { setThinkingTouched(true); void setThink(row.value === "true" ? "off" : "default"); }
+    else if (row.id === "showTurnDuration") setShowTurnDuration(row.value !== "true");
     else if (row.type === "enum") { void applyMode(cycleEnum(row)); }
     else if (row.id === "theme") setSub("theme");
     else if (row.id === "model") onOpenModelPicker();

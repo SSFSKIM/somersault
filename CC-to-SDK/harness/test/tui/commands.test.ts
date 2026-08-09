@@ -201,7 +201,7 @@ describe("/detach (F0 KB5 — detach moved off Ctrl-Z)", () => {
 });
 
 describe("/config key=value (W3 T6)", () => {
-  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default" };
+  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default", showTurnDuration: true };
   const freshRows = () => buildRows(FRESH_CTX);
 
   it("no arg → open", () => {
@@ -239,6 +239,16 @@ describe("/config key=value (W3 T6)", () => {
     expect((r as any).id).toBe("thinking");
     expect((r as any).value).toBe("false");
     expect((r as any).lines).toEqual([{ text: "Set thinking to false" }]);
+  });
+
+  // W-C T7's second boolean row — the same generic arm, reached through its own id.
+  it("showTurnDuration=false is a validated set, and repeating it against an off row is the 'already off' notice", () => {
+    const r = parseConfigArg("showTurnDuration=false", freshRows());
+    expect(r.kind).toBe("set");
+    expect((r as any).id).toBe("showTurnDuration");
+    expect((r as any).value).toBe("false");
+    const off = parseConfigArg("showTurnDuration=false", buildRows({ ...FRESH_CTX, showTurnDuration: false }));
+    expect(off).toEqual({ kind: "error", lines: [{ text: "showTurnDuration is already off.", dim: true }] });
   });
 
   it("permissionMode (enum) rejects an out-of-domain value, listing the exact 4 options", () => {

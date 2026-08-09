@@ -1826,11 +1826,16 @@ describe("useChat: one retained document behind every surface", () => {
   /** 5c follow-up: between "every member settled" and "a breaker closed the run" the row used to render
    *  NOWHERE — the active row had left the transient region and the settled row had not published. It now
    *  stays in the dynamic region, in its settled form, under its own id, and swaps into Static in one render. */
+  // W-C T7 SEEDS `initialShowTurnDuration: false` HERE, and that is the whole point of the seam. The
+  // end-of-turn `✻ Worked for 4s` row is a LOCAL ENTRY, and every local entry is a fold BREAKER — so with the
+  // row on, `turn:end` publishes the run and this test's "a turn boundary is NOT a breaker" claim stops being
+  // about the turn boundary at all. Turning the row off keeps the original claim testable in its own right;
+  // the case below pins what the row does to the same sequence when it is on.
   it("keeps a settled-but-unclosed fold run visible in the dynamic region until a breaker publishes it", async () => {
     const fake = fakeRemote();
     let snap!: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
     function H() {
-      const c = useChat(() => fake);
+      const c = useChat(() => fake, { initialShowTurnDuration: false });
       snap = { staticItems: c.state.staticItems, pendingItems: c.state.pendingItems };
       return <Text>{allText(c)}</Text>;
     }
@@ -1850,6 +1855,30 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "message", data: CLOSING_PROSE });                       // the breaker publishes it
     await waitFor(() => snap.staticItems.some((i) => i.id === "group:read-1:row"));
     expect(snap.pendingItems).toEqual([]);                                          // and the dynamic copy is gone the same render
+    expect(frame(lastFrame).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);
+  });
+
+  it("with the duration row ON, turn end IS the breaker — the run publishes above it, exactly once", async () => {
+    const fake = fakeRemote();
+    let snap!: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
+    function H() {
+      const c = useChat(() => fake, {}, { pickTurnVerb: () => "Worked" });
+      snap = { staticItems: c.state.staticItems, pendingItems: c.state.pendingItems };
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: READ_CALL });
+    fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
+    await waitFor(() => snap.pendingItems.some((i) => i.id === "group:read-1:unclosed-row"));
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => snap.staticItems.some((i) => i.id === "group:read-1:row"));
+    expect(snap.pendingItems).toEqual([]);
+    // ORDER MATTERS: the run is published at a lower sequence than the row that broke it, so the fold row
+    // reads above `✻ Worked for …` rather than under it.
+    const texts = snap.staticItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text)));
+    expect(texts.findIndex((t) => t.includes("Read 1 file"))).toBeLessThan(texts.findIndex((t) => t.startsWith("Worked for")));
     expect(frame(lastFrame).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);
   });
 

@@ -9,10 +9,10 @@ import type { ThemeId } from "./theme.js";
 /** Everything a row's display value is computed from — a snapshot, not a live subscription. useChat takes
  *  one snapshot when /config opens (the baseline) and another when it closes (current), diffing the two
  *  `buildRows()` outputs row-by-row to decide what changed. */
-export interface SettingsRowCtx { theme: ThemeId; model?: string; outputStyle: string; mode: string; thinkLevel: string }
+export interface SettingsRowCtx { theme: ThemeId; model?: string; outputStyle: string; mode: string; thinkLevel: string; showTurnDuration: boolean }
 
 export interface SettingsRow {
-  id: "theme" | "model" | "outputStyle" | "permissionMode" | "thinking";
+  id: "theme" | "model" | "outputStyle" | "permissionMode" | "thinking" | "showTurnDuration";
   label: string;
   type: "boolean" | "enum" | "managedEnum";
   value: string;                       // display value ("Default (recommended)" for unset model, "true"/"false" for booleans)
@@ -28,7 +28,13 @@ export const PERMISSION_MODE_OPTIONS = ["default", "acceptEdits", "plan", "auto"
 const MODEL_UNSET = "Default (recommended)";
 export const THINKING_WARNING = "Changing thinking mode mid-conversation will increase latency and may reduce quality.";
 
-/** ctx → the 5 Config rows, in the pinned display order (Global Constraints line 29). */
+/** ctx → the 6 Config rows, in the pinned display order (Global Constraints line 29).
+ *
+ *  RECORDED DIVERGENCE (Wave C T7): `showTurnDuration` is a row HERE and is not one upstream. Upstream
+ *  declares the setting in its schema (bundle L42035) and reads it straight out of the settings file
+ *  (L428650) with no `/config` entry at all — the reachable surface for it there is hand-editing JSON. ccx
+ *  keeps the value in its own prefs file, so a row is the only surface it could have; it is a boolean and it
+ *  rides the `thinking` row's exact shape. */
 export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
   return [
     { id: "theme", label: "Theme", type: "managedEnum", value: ctx.theme, hint: "For custom themes, use /theme." },
@@ -36,6 +42,7 @@ export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
     { id: "outputStyle", label: "Output style", type: "managedEnum", value: ctx.outputStyle },
     { id: "permissionMode", label: "Default permission mode", type: "enum", value: ctx.mode, options: [...PERMISSION_MODE_OPTIONS] },
     { id: "thinking", label: "Thinking mode", type: "boolean", value: String(ctx.thinkLevel !== "off") },
+    { id: "showTurnDuration", label: "Turn duration", type: "boolean", value: String(ctx.showTurnDuration) },
   ];
 }
 

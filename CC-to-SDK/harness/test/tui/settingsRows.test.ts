@@ -4,12 +4,12 @@
 import { describe, it, expect } from "vitest";
 import { buildRows, filterRows, cycleEnum, summarizeChanges, THINKING_WARNING, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
 
-const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off" };
+const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true };
 
 describe("settingsRows.ts", () => {
-  it("buildRows returns the 5 rows in the pinned order: theme, model, outputStyle, permissionMode, thinking", () => {
+  it("buildRows returns the 6 rows in the pinned order: theme, model, outputStyle, permissionMode, thinking, showTurnDuration", () => {
     const rows = buildRows(BASE_CTX);
-    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking"]);
+    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration"]);
   });
 
   it("row labels + hints match the Global Constraints table (theme/model carry a hint, the rest don't)", () => {
@@ -25,6 +25,8 @@ describe("settingsRows.ts", () => {
     expect(byId.permissionMode.hint).toBeUndefined();
     expect(byId.thinking.label).toBe("Thinking mode");
     expect(byId.thinking.hint).toBeUndefined();
+    expect(byId.showTurnDuration.label).toBe("Turn duration");
+    expect(byId.showTurnDuration.hint).toBeUndefined();
   });
 
   it("display values: theme/outputStyle/permissionMode echo ctx verbatim, model shows the live id when set", () => {
@@ -47,6 +49,14 @@ describe("settingsRows.ts", () => {
     expect(buildRows({ ...BASE_CTX, thinkLevel: "high" }).find((r) => r.id === "thinking")!.value).toBe("true");
   });
 
+  // WAVE C TASK 7 (EP-C4d). ccx's own row: upstream has no `/config` entry for `showTurnDuration` at all
+  // (it is settings-file-only, L42035), so this is a recorded divergence — see `settingsRows.ts`.
+  it("showTurnDuration is a boolean row echoing the pref, which defaults TRUE", () => {
+    expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.type).toBe("boolean");
+    expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.value).toBe("true");
+    expect(buildRows({ ...BASE_CTX, showTurnDuration: false }).find((r) => r.id === "showTurnDuration")!.value).toBe("false");
+  });
+
   it("permissionMode is an enum row with exactly the 4 pinned options (bypassPermissions excluded)", () => {
     const row = buildRows(BASE_CTX).find((r) => r.id === "permissionMode")!;
     expect(row.type).toBe("enum");
@@ -65,6 +75,7 @@ describe("settingsRows.ts", () => {
     expect(filterRows(rows, "THEME").map((r) => r.id)).toEqual(["theme"]);
     // "mode" is also a substring of "Model" (m-o-d-e-l), so it legitimately matches 3 rows, not 2.
     expect(filterRows(rows, "mode").map((r) => r.id)).toEqual(["model", "permissionMode", "thinking"]);
+    expect(filterRows(rows, "duration").map((r) => r.id)).toEqual(["showTurnDuration"]);
     expect(filterRows(rows, "permission").map((r) => r.id)).toEqual(["permissionMode"]);
     expect(filterRows(rows, "zzz")).toEqual([]);
     expect(filterRows(rows, "")).toEqual(rows);
