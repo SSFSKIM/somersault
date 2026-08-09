@@ -70,8 +70,10 @@ export function createDoublePress(handlers: DoublePressHandlers, windowMs: numbe
     press(): void {
       if (disposed) return;
       const t = now();
-      // `handle !== undefined` FIRST: `last` starts at 0, and a caller on an injected clock that also starts
-      // at 0 would otherwise read its very first press as a second one.
+      // `handle !== undefined` reads FIRST for legibility, not for correctness: both operands are pure, so
+      // either order decides the same way (an unarmed primitive fails the handle test however early `last`
+      // still sits at 0). Leading with "am I armed?" says what the branch is about; upstream writes the
+      // elapsed test first only because its handle lives in a ref.
       if (handle !== undefined && t - last <= windowMs) { stop(); handlers.onArmChange(false); handlers.onSecondPress(); }
       else {
         handlers.onFirstPress?.();

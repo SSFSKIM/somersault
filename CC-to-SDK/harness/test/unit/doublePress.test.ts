@@ -20,6 +20,11 @@ function fakeClock() {
       setTimeout: (fn: () => void, ms: number): unknown => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
       clearTimeout: (h: unknown): void => { timers.delete(h as number); },
     },
+    /** Move the clock WITHOUT running anything due. `advance` fires due timers before it returns, so a press
+     *  "at exactly the window" can never be observed through it — the expiry has already disarmed. This is the
+     *  only way to reach the state the `<=` in `press` actually decides: elapsed == windowMs, handle still
+     *  live. (Real time can produce it: the event loop delivers a keypress before a same-millisecond timer.) */
+    jump(ms: number): void { now += ms; },
     advance(ms: number): void {
       const target = now + ms;
       for (;;) {
@@ -84,6 +89,18 @@ describe("createDoublePress — the arm (annex §C7.1, `Pee` L183445)", () => {
     expect(s.second).toBe(0);
     expect(s.first).toBe(2);
     expect(s.arms).toEqual([true, false, true]);
+  });
+  it("a press at EXACTLY the window boundary still fires the action (upstream's `<=`, not `<`)", () => {
+    const clock = fakeClock(), s = spy();
+    const dp = createDoublePress(s.handlers, 800, clock.deps);
+    dp.press();
+    clock.jump(800);                                       // t = 800 with the expiry still pending, not yet run
+    expect(clock.pending()).toBe(1);                       // the arm is live — this is the boundary, not after it
+    dp.press();
+    expect(s.second).toBe(1);                              // `l - i.current <= n`: 800 <= 800 is a SECOND press
+    expect(s.first).toBe(1);
+    expect(s.arms).toEqual([true, false]);
+    expect(clock.pending()).toBe(0);
   });
   it("three presses inside one window are second-press, then re-arm — the arm is not sticky", () => {
     const clock = fakeClock(), s = spy();

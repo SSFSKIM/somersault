@@ -321,14 +321,28 @@ describe("snapOut — a cursor strictly inside a chip lands on an edge", () => {
     expect(applyKey(s, "", { leftArrow: true }).state.cursor.col).toBe(0);
     expect(applyKey({ ...s, cursor: { row: 0, col: 0 } }, "", { rightArrow: true }).state.cursor.col).toBe(LABEL0.length);
   });
+  // "one [Pasted text #1 +3 lines] two" — the chip spans [4, 29), "two" starts at 30.
+  //
+  // The forward cases are three DIFFERENT clauses of upstream `nextWord` (L394936), and the t3 review found
+  // that pinning only the middle one hid a real defect: a walk that lands exactly ON the chip's opening
+  // bracket never snapped (`placeholderContaining` is strictly inside), so alt+Right from column 0 parked on
+  // "[" instead of jumping the whole chip. Column 4 could not see it — starting ON the edge, the walk lands
+  // one column deep inside the label, where `containing` already answered.
   it("a WORD motion crosses the chip instead of stopping at the spaces inside the label", () => {
     let s = applyKey(initialEditorState(), "one ", {}).state;
     s = paste(s, "a\nb\nc\nd", 24).state;
     s = applyKey(s, " two", {}).state;                                   // "one " + LABEL3 + " two"
+    const fwdFrom = (col: number) => applyKey({ ...s, cursor: { row: 0, col } }, "", { meta: true, rightArrow: true }).state.cursor.col;
     const back = applyKey({ ...s, cursor: { row: 0, col: 4 + LABEL3.length } }, "", { meta: true, leftArrow: true });
     expect(back.state.cursor.col).toBe(4);                               // prevWord → snapOutOfPlaceholder(…, "start")
-    const fwd = applyKey({ ...s, cursor: { row: 0, col: 4 } }, "", { meta: true, rightArrow: true });
-    expect(fwd.state.cursor.col).toBe(4 + LABEL3.length);                // nextWord → snapOutOfPlaceholder(…, "end")
+    expect(fwdFrom(4)).toBe(4 + LABEL3.length);                          // nextWord → snapOutOfPlaceholder(…, "end")
+    // From OUTSIDE the chip: the walk's landing site is the chip's own start, which must still snap to its end
+    // (`snapOutOfPlaceholder(r.start, "end")`) — a caret parked on "[" is exactly the state chips forbid.
+    expect(fwdFrom(0)).toBe(4 + LABEL3.length);                          // NOT 4
+    // From INSIDE the chip: upstream's early return fires before any boundary walk
+    // (`placeholderStartingAt(offset) ?? placeholderContaining(offset)` → `e.end`), so the motion ends AT the
+    // chip's end rather than carrying on to the next word. Column 27 is the "s" of "lines".
+    expect(fwdFrom(27)).toBe(4 + LABEL3.length);                         // NOT 30, the start of "two"
   });
 });
 

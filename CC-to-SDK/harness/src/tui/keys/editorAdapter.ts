@@ -14,8 +14,13 @@
 import type { KeyFlags } from "../editor.js";
 import type { KeyEvent, TextEvent } from "./types.js";
 
-/** Named keys → the reducer's boolean. Names with no editor meaning (pageup/insert/f1…) are absent on purpose:
- *  they arrive as an empty `input` with no flag set, which `applyKeyInner` returns unchanged.
+/** Named keys → the reducer's boolean. Names this table omits arrive as an empty `input` with no flag set,
+ *  which `applyKeyInner` returns unchanged. For `insert`/`f1…` that is simply the truth — there is no editor
+ *  op behind them. `pageup`/`pagedown` are a DEFERRAL, not an absence: upstream makes both line motions inside
+ *  the same key switch (annex §C7.5, `case "pageup": if (ds() || Pe.ctrl) return; return W.startOfLine()`), but
+ *  the port would owe them `ds()` — the "is a popup open" guard that has no equivalent here yet — and the two
+ *  keys already carry real bindings in other contexts (`scroll:pageUp/Down`, `select:pageUp/Down` in
+ *  bindings.ts), so giving them a composer meaning is a §C7.5 remainder to design, not a line to add.
  *
  *  WAVE C t3: `home`/`end` USED to be in that absent set, and that was the whole bug — upstream handles both
  *  inside its text-input key switch (annex §C7.5, bundle L395798) and binds them in no keymap table, so a port
@@ -49,5 +54,5 @@ export function toKeyFlags(e: KeyEvent | TextEvent): { input: string; key: KeyFl
   // A literal character: the parser lowercased it and recorded the shift, so re-case it here — the reducer
   // inserts `input` verbatim.
   if (e.name.length === 1) return { input: e.shift ? e.name.toUpperCase() : e.name, key };
-  return { input: "", key };                                  // pageup/pagedown/insert/f1–f12: a no-op edit
+  return { input: "", key };                                  // pageup/pagedown/insert/f1–f12: a no-op edit (see NAMED)
 }

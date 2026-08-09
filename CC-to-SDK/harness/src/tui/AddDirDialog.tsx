@@ -86,8 +86,10 @@ export function AddDirDialog({ prefill, onValidate, onConfirm, onCancel }: {
     if (phase === "entry") { onEntryKey(e); return; }
     op();
   };
-  // Jumps never had a `toKeyFlags` projection to re-read (home/end/pageup/pagedown all flatten to an empty
-  // input) — on a three-row list a page IS the list. Inert during entry, like every other confirm-phase op.
+  // Jumps do their own arithmetic rather than re-reading a `toKeyFlags` projection — on a three-row list a
+  // page IS the list, so first/last and pageUp/pageDown are the same two positions. (Wave C t3 gave home/end
+  // a projection; pageup/pagedown still flatten to an empty input. Neither changes anything here: this is the
+  // Select context, not the composer.) Inert during entry, like every other confirm-phase op.
   const jump = (to: number) => () => { if (phase === "confirm") setIdx(Math.max(0, Math.min(OPTIONS.length - 1, to))); };
   useKeyScope("Select");
   useKeyActions({

@@ -253,12 +253,25 @@ function wordLeft(s: EditorState): EditorState {         // Alt/Option-Left (and
 //  · Upstream walks the whole flat text and falls off the end to `text.length`; ours is per-ROW and falls off
 //    to the end of the current row, crossing to the next only from a cursor already at the row's end (the arm
 //    above). That is this file's row/col model, not a Wave C choice.
+//
+// t3 review (Minor-1): a chip is jumped WHOLE, and that takes both chip clauses of `nextWord`, not one.
+//  · The early return — `placeholderStartingAt(offset) ?? placeholderContaining(offset)` → `e.end`, before any
+//    boundary walk. A caret on or inside a label leaves at the label's end; the walk would otherwise read the
+//    spaces in `[Pasted text #1 +3 lines]` as real gaps and, from late inside the label, sail past the chip to
+//    the following word.
+//  · The landing snap — `snapOutOfPlaceholder(r.start, "end")` — with the SAME `startingAt ?? containing` pair.
+//    `chipContaining` alone is strictly inside, so a walk that lands exactly on a chip's "[" (alt+Right from
+//    column 0 of `one [Pasted text #1 +3 lines] two`) never snapped and parked on the bracket: a cursor sitting
+//    inside a chip's span is precisely the state the placeholder model forbids.
+const chipEndAt = (line: string, i: number): number | undefined => (chipStartingAt(line, i) ?? chipContaining(line, i))?.end;
 function wordRight(s: EditorState): EditorState {        // Alt/Option-Right, ctrl+Right (and Alt-f): to the next word's START
   const { row, col } = s.cursor;
   const line = s.lines[row];
   if (col >= line.length) { if (row === s.lines.length - 1) return s; return { ...s, cursor: { row: row + 1, col: 0 } }; }
+  const onChip = chipEndAt(line, col);
+  if (onChip !== undefined) return { ...s, cursor: { row, col: onChip } };
   let i = col; while (i < line.length && !/\s/.test(line[i])) i++; while (i < line.length && /\s/.test(line[i])) i++;
-  return { ...s, cursor: { row, col: chipContaining(line, i)?.end ?? i } };
+  return { ...s, cursor: { row, col: chipEndAt(line, i) ?? i } };
 }
 /** Alt-d (CM12, bundle meta map `["d", () => W.deleteWordAfter()]`): delete forward to the next word boundary.
  *  WAVE C t3 blast radius, taken deliberately rather than frozen: this is DEFINED as the range up to
@@ -403,15 +416,24 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
   // arm below — word delete read as "does not work" in live use. `delete` with meta is upstream's `oe()`
   // = deleteToLineEnd (ring, append). Both sit ABOVE the ctrl switch — a ctrl+backspace entering that
   // switch dies in its default arm before any backspace handling. The superKey arms beside them upstream
-  // are cmd-key combos no terminal wire delivers (KeyFlags has no such flag) and stay unported.
+  // (cmd+backspace = kill to line start, cmd+delete = kill to line end) are unported for the same reason
+  // cmd+arrow is — see the §C7.6 note below: the modifier does reach us, the projection for it does not.
   if (key.backspace && (key.meta || key.ctrl)) { const r = killWordBack(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "prepend" as const } }; }
   if (key.delete && key.meta) { const r = killToEnd(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "append" as const } }; }
   // WAVE C t3, annex §C7.6 (bundle L395760/L395775): `case "left": … if (Pe.ctrl || Pe.meta || Pe.fn) return
   // W.prevWord()` — ctrl, alt/meta AND fn on an arrow are all the same word motion. The meta third is the arm
   // above; this is the ctrl third, and it has to sit ABOVE the ctrl switch because that switch dispatches on
   // `input`, which a ctrl+arrow leaves empty: every ctrl+←/→ died in its `default` arm. `fn` is unportable —
-  // no terminal wire delivers it and `KeyFlags` has no such flag, the same reason the `superKey` arms upstream
-  // pairs with these stay unported. ctrl+↑/↓ deliberately fall past this into that same default: they are
+  // no terminal wire delivers it and `KeyFlags` has no such flag.
+  //
+  // The `superKey` arm upstream pairs with these (`if (Pe.superKey) return W.startOfLine()/endOfLine()`) is a
+  // different case, and the t3 review corrected an earlier claim here that it was unportable: cmd/super DOES
+  // arrive — parse.ts decodes xterm's modifier bit 8 into `KeyEvent.super` (keys/types.ts). What is missing is
+  // only the last hop: `KeyFlags` has no `super`, so `toKeyFlags` has nowhere to put it. Wiring it is the same
+  // one-flag-plus-one-arm move `home`/`end` just got, and it leaves cmd+←/→ a genuine §C7.6 REMAINDER — the
+  // companion to the §C7.5 one (pageup/pagedown as line motions; see editorAdapter.ts).
+  //
+  // ctrl+↑/↓ deliberately fall past this into that same default: they are
   // Global's `app:diffFileListUp/Down`, not editor keys (§C7.9).
   if (key.ctrl && (key.leftArrow || key.rightArrow)) return { state: syncCompletions(key.leftArrow ? wordLeft(s) : wordRight(s)) };
   if (key.ctrl) {                                        // readline keys; other ctrl combos (l/c/d) act at app level → ignore here (never insert)

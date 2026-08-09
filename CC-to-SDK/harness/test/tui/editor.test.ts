@@ -373,6 +373,16 @@ describe("Wave C t3 — Home/End and ctrl+arrows (annex §C7.5 / §C7.6)", () =>
     s = named(s, "end");
     expect(s.cursor).toEqual({ row: 1, col: 5 });
   });
+  // The home/end arm is placed ABOVE the meta branch on purpose, and that placement is the only thing keeping
+  // alt+Home a line motion: the meta branch ends in `return { state: s }` for every combo it does not name, so
+  // a home/end arm below it would make alt+Home and alt+End silently do nothing.
+  it("meta+Home / meta+End are still line motions — the arm sits above the meta branch that swallows the rest", () => {
+    let s = type(initialEditorState(), "hello world");            // {0,11}
+    s = named(s, "home", { alt: true });
+    expect(s.cursor).toEqual({ row: 0, col: 0 });
+    s = named(s, "end", { alt: true });
+    expect(s.cursor).toEqual({ row: 0, col: 11 });
+  });
   it("ctrl+Home and ctrl+End fall through UNHANDLED (upstream's `if (Pe.ctrl) return`)", () => {
     const s = type(initialEditorState(), "hello world");
     expect(named(s, "home", { ctrl: true })).toBe(s);              // identity: the editor did not touch it
