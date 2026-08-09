@@ -146,6 +146,99 @@ describe("useChat — the /rename rung, which outranks the ai-title unconditiona
   });
 });
 
+// W-C T8 REVIEW (Medium + Low, one edit). The title outlived the conversation it named: `resumeInto`'s real
+// session swap reset tasks, bg rows and the context percentage but neither title rung nor the once-per-session
+// latch — so after a `/resume` the tab kept the OLD session's title, and the latch it left standing blocked the
+// new session's fetch forever. The pair below is deliberately shaped like the W-S5 ctxPct pair in
+// `useChat.test.tsx` (tests "different session drops it" / "same session keeps it"), because it is the same
+// boundary and the placement of the reset is exactly what wants guarding: hoist it above the `sameSession`
+// branch and the third test goes red while the first two stay green.
+describe("useChat — the title dies with its conversation (a session swap resets both rungs, then re-reads)", () => {
+  const prior = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+  const titleFor = (id: string) => (id === "sess-1" ? "Old topic" : "Resumed topic");
+
+  it("a /resume onto a DIFFERENT session drops the old title AND fetches the resumed session's own (probe (d): it is already on disk)", async () => {
+    const oldSession = fakeRemote(), newSession = fakeRemote({ sessionId: "new1234567890" });
+    const reads: string[] = [];
+    const deps = {
+      hasWorktrees: async () => false,
+      listSessions: async () => [{ sessionId: "new1234567890", summary: "prior", lastModified: 1 }],
+      getSessionMessages: async () => prior as any,
+      getSessionInfo: async (id: string) => { reads.push(id); return { customTitle: titleFor(id) } as any; },
+    };
+    let pick: ((s: any) => void) | undefined;
+    const sink: { title?: string } = {};
+    function H() {
+      const c = useChat((resume?: string) => (resume ? newSession : oldSession), {}, deps);
+      pick = (c as any).pickSession; sink.title = c.state.aiTitle; return <Text>t:{c.state.aiTitle ?? "-"}</Text>;
+    }
+    const { unmount } = render(<H />);
+    await tick();
+    try {
+      await runTurn(oldSession, 1);
+      await waitFor(() => sink.title === "Old topic");                 // the tab names the conversation on screen
+      await act(async () => { pick!({ sessionId: "new1234567890", summary: "prior", lastModified: 1 }); });
+      await waitFor(() => sink.title !== "Old topic");                 // half one: it does NOT ride onto the new one
+      await waitFor(() => sink.title === "Resumed topic");             // half two: and the latch did not block the re-read
+      expect(reads).toEqual(["sess-1", "new1234567890"]);
+    } finally { unmount(); }
+  });
+
+  it("the same swap drops a /rename too — it named the conversation that just went away", async () => {
+    const oldSession = fakeRemote(), newSession = fakeRemote({ sessionId: "new1234567890" });
+    const deps = {
+      hasWorktrees: async () => false,
+      listSessions: async () => [{ sessionId: "new1234567890", summary: "prior", lastModified: 1 }],
+      getSessionMessages: async () => prior as any,
+      getSessionInfo: async () => ({ customTitle: "Resumed topic" }) as any,
+      renameSession: async () => {},
+    };
+    let pick: ((s: any) => void) | undefined;
+    const api: { run?: (s: string) => void } = {}; const sink: { rename?: string } = {};
+    function H() {
+      const c = useChat((resume?: string) => (resume ? newSession : oldSession), {}, deps);
+      pick = (c as any).pickSession; api.run = c.submit; sink.rename = c.state.renameTitle;
+      return <Text>r:{c.state.renameTitle ?? "-"}</Text>;
+    }
+    const { unmount } = render(<H />);
+    await tick();
+    try {
+      api.run!("/rename my old session");
+      await waitFor(() => sink.rename === "my old session");
+      await act(async () => { pick!({ sessionId: "new1234567890", summary: "prior", lastModified: 1 }); });
+      await waitFor(() => sink.rename === undefined);
+    } finally { unmount(); }
+  });
+
+  it("/resume onto the SAME session keeps its /rename and re-reads nothing — no conversation went away (placement guard)", async () => {
+    const fake = fakeRemote(); let reads = 0;
+    const deps = {
+      hasWorktrees: async () => false,
+      listSessions: async () => [{ sessionId: "sess-1", summary: "prior", lastModified: 1 }],
+      getSessionMessages: async () => prior as any,
+      getSessionInfo: async () => { reads++; return { customTitle: "Old topic" } as any; },
+      renameSession: async () => {},
+    };
+    let pick: ((s: any) => void) | undefined;
+    const api: { run?: (s: string) => void } = {}; const sink: { rename?: string } = {};
+    function H() {
+      const c = useChat(() => fake, {}, deps);
+      pick = (c as any).pickSession; api.run = c.submit; sink.rename = c.state.renameTitle;
+      return <Text>r:{c.state.renameTitle ?? "-"}</Text>;
+    }
+    const { unmount } = render(<H />);
+    await tick();
+    try {
+      api.run!("/rename still mine");
+      await waitFor(() => sink.rename === "still mine");
+      await act(async () => { pick!({ sessionId: "sess-1", summary: "prior", lastModified: 1 }); });
+      await tick();
+      expect(sink.rename).toBe("still mine");
+      expect(reads).toBe(0);                                            // no turn ran, and a self-resume triggers no fetch
+    } finally { unmount(); }
+  });
+});
+
 describe("<ChatApp> — the mount site", () => {
   it("sets the launch title from `name` at mount, with no busy state yet", async () => {
     const spy = spyTitle();

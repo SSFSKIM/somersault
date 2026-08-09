@@ -394,9 +394,11 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   process.stdout.on("resize", resize.onResize);
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
   // reasons: it is a process-level concern with a teardown obligation (the `finally` below clears the title
-  // before the shell gets the terminal back), and its writes must bypass Ink entirely — a title escape that
-  // went through `output.stdout` would be recorded as frame content and the resize corrector would reason
-  // about it. THIS IS ALSO THE CONTAINMENT: only the REPL builds one, so a daemon/HOST session — which never
+  // before the shell gets the terminal back), and its writes must bypass Ink entirely — a title escape is not
+  // newline-terminated, so the resume-safe proxy above would classify it FOREIGN ("nobody's frame", :219) and
+  // drop the `justErased`/`dropped` latches with it, perturbing the W-R resize state machine once per 960 ms
+  // animation tick for a write that changes nothing on the pane.
+  // THIS IS ALSO THE CONTAINMENT: only the REPL builds one, so a daemon/HOST session — which never
   // calls `runChatClient` — cannot retitle a terminal it does not own.
   const title = createTerminalTitle({ write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); } });
   const app = render(

@@ -455,9 +455,13 @@ export function useChat(
   /** WAVE C TASK 8 — the once-per-session read of the engine's ai-title, called from the first `turn:end`.
    *  Silent on failure by design: an unreadable session file must cost the terminal title nothing (and must
    *  certainly not become a transcript notice), so the tab simply keeps whatever it already said. The
-   *  `fetched` latch is set BEFORE the await so two turn ends racing on the same tick cannot both read. */
-  const adoptAiTitle = (): void => {
-    const id = session.sessionId;
+   *  `fetched` latch is set BEFORE the await so two turn ends racing on the same tick cannot both read.
+   *
+   *  `sessionId` is a PARAMETER because `resumeInto`'s caller has the new id and this closure does not: inside
+   *  that function `session` is still the object being swapped out, so an un-parameterized call there would
+   *  read the title of the conversation we just left. */
+  const adoptAiTitle = (sessionId?: string): void => {
+    const id = sessionId ?? session.sessionId;
     if (aiTitleFetched.current || !id) return;
     aiTitleFetched.current = true;
     void getSessionInfoFn(id).then(
@@ -1297,6 +1301,15 @@ export function useChat(
     // NON-EMPTY snapshot). Without this, stale ⟳ running rows linger forever and killAgents targets ids
     // the new engine never had (F2, final review).
     setBgTasks([]);
+    // W-C T8, THE SAME BOUNDARY AND THE SAME CLASS AS W-S5's context percentage: both title rungs name the
+    // conversation that just went away, and the once-per-session latch was set for it. Left standing, the tab
+    // kept the OLD session's title after a `/resume` AND the latch blocked the new session's fetch forever
+    // (t8 review, Medium + Low). Gated on a REAL swap for the reason the sameSession branch above exists —
+    // resuming a session into itself keeps its own `/rename`, which is a user action on this very conversation.
+    // The re-read is IMMEDIATE rather than deferred to the first `turn:end`: a resumed session's ai-title is
+    // already on disk (probes annex §(d)), so waiting for a turn would show `ccx` for a conversation the engine
+    // has already named. Launch `--resume`/`--continue` route through here too, so they inherit the mount read.
+    if (!sameSession) { setAiTitle(undefined); setRenameTitle(undefined); aiTitleFetched.current = false; adoptAiTitle(id); }
   }
   async function doContinue() {
     try {

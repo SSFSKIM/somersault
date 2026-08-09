@@ -24,9 +24,14 @@
 //  · The kitty ST-terminator variant (`Das = "\x1B\\"`, chosen by `o0u() === "kitty"`). BEL everywhere: every
 //    terminal that honours OSC 0 at all honours the BEL form, and ccx does not sniff `TERM`.
 //
-// ONE MORE DELIBERATE DIVERGENCE (W-S11): the literal fallback is `ccx`, not upstream's `"Claude Code"` —
-// this is a different program and the tab must say so. The rung above it is `--name` (upstream's `mk`, the
+// ONE MORE DELIBERATE DIVERGENCE (authorized by D-C9 — ccx keeps its own identity strings — and recorded
+// here per W-S11, the record-divergences rule): the literal fallback is `ccx`, not upstream's `"Claude Code"`
+// — this is a different program and the tab must say so. The rung above it is `--name` (upstream's `mk`, the
 // `--agent` type) rather than an agent type, because that is the launch-time identity ccx actually has.
+//
+// FOLLOW-UP, RECORDED AND NOT THIS MODULE'S JOB: a SIGTERM kills the process without running the mount site's
+// teardown, so the title is left set — alongside raw mode, the cursor and a parked decision. A single
+// whole-process SIGTERM restore is the fix, and it belongs wherever those other three are already owned.
 //
 // The animation timer is injected (plan constraint 15) and the frame index resets to 0 at the start of every
 // busy stretch. Upstream's `IxL` comes from a process-wide animation counter, so its first busy frame is
