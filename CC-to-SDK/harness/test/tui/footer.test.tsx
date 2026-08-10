@@ -323,4 +323,51 @@ describe("useChat drives the statusLine (annex §C2.4's triggers, over ccx's own
     await waitFor(() => (lastFrame() ?? "").includes("[SL#2]"));
     expect(JSON.parse(runs[1])).toMatchObject({ thinking: { enabled: false } });
   });
+
+  // WAVE C FINAL REVIEW, finding 2 — the payload's `cost` / `context_window` blocks are fed by two REFS the
+  // turn-end refreshers write, and `/clear` swaps the engine underneath them. `replaceDocument` reset the
+  // rendered `ctxPct` but not these, so the very next run — a `/config` flip, the refresh poll, anything —
+  // carried the NEW session identity with the OLD conversation's dollars and tokens. Wave S's rule, on the
+  // boundary Wave S named: a measurement dies with the conversation it measured.
+  it("drops the cleared conversation's cost and context from the payload, and repaints at the boundary (final review, finding 2)", async () => {
+    const usage = { session: { total_cost_usd: 4.25, total_duration_ms: 9000, total_api_duration_ms: 8000, total_lines_added: 3, total_lines_removed: 1, model_usage: { "claude-opus-4-6": { inputTokens: 900, outputTokens: 120 } } } };
+    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: 4000, maxTokens: 200_000 }), usage: () => usage });
+    const clock = slClock(), runs: string[] = [];
+    const api: { run?: (t: string) => void } = {};
+    function SLHost() {
+      const c = useChat(() => fake, { cwd: "/repo", statusLine: { type: "command", command: "my-status" }, initialModel: "claude-opus-4-6" },
+        // `getSessionInfo` is injected for the reason every keyless tui test injects it: the turn below
+        // triggers the ai-title read, and the real one would open the developer's own ~/.claude.
+        { home: "/fake-home", getSessionInfo: async () => ({}) as any, statusLine: { runStatusLine: (_c, payload) => { runs.push(payload); return Promise.resolve(`SL#${runs.length}`); }, ...clock.deps } });
+      api.run = c.submit;
+      return <Text>[{c.state.statusLineText ?? "-"}]</Text>;
+    }
+    // The refreshers are two independent fire-and-forget awaits and the driver debounces every poke, so
+    // "how many 300 ms windows until the reading lands" is not something a test should hard-code: pump the
+    // injected clock until the condition holds instead.
+    const pumpUntil = async (cond: () => boolean, timeout = 2000) => {
+      const start = Date.now();
+      for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("pumpUntil timeout"); clock.advance(300); await new Promise((r) => setTimeout(r, 5)); }
+    };
+    const { unmount } = render(<SLHost />);
+    try {
+      await waitFor(() => runs.length === 1);                    // mountRun
+
+      api.run!("hello");                                          // one whole turn → both refreshers land + poke
+      await pumpUntil(() => runs.some((p) => JSON.parse(p).cost.total_cost_usd === 4.25));
+      const measured = JSON.parse(runs[runs.length - 1]);
+      expect(measured.cost.total_cost_usd).toBe(4.25);
+      expect(measured.context_window).toMatchObject({ total_input_tokens: 4000, context_window_size: 200_000, used_percentage: 2 });
+
+      const before = runs.length;
+      api.run!("/clear");
+      // HALF ONE: the boundary itself pokes, so an idle statusLine repaints instead of sitting on the old
+      // numbers until some unrelated delta happens along.
+      await pumpUntil(() => runs.length > before);
+      // HALF TWO: and what it repaints with carries nothing the cleared conversation measured.
+      const after = JSON.parse(runs[runs.length - 1]);
+      expect(after.cost).toEqual({ total_cost_usd: 0, total_duration_ms: 0, total_api_duration_ms: 0, total_lines_added: 0, total_lines_removed: 0 });
+      expect(after.context_window).toMatchObject({ total_input_tokens: 0, context_window_size: 0, current_usage: null, used_percentage: null, remaining_percentage: null });
+    } finally { unmount(); }
+  });
 });

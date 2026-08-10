@@ -268,7 +268,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, clearDraftToken, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -341,10 +341,19 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  component cannot leave a stale `Pasting…` on the footer row. */
   onFooterState?: (s: ComposerFooterState) => void;
   /** WAVE C TASK 4 (EP-C7b) — Ctrl-C's clear channel, a monotonic token from `ChatApp` (see `clearDraftToken`
-   *  there for why a token and not a callback). Every BUMP past the one this component was mounted with runs
-   *  upstream's `t(""), B(0), c?.()` over the live buffer; the value it mounted with is already consumed, so a
-   *  Ctrl-C pressed while a dialog owned the screen cannot clear a draft typed after it. */
+   *  there for why a token and not a callback). Every BUMP past the last CONSUMED one runs upstream's
+   *  `t(""), B(0), c?.()` over the buffer. */
   clearDraftToken?: number;
+  /** WAVE C FINAL REVIEW, finding 1 — the consumed cursor for the token above, APP-scoped exactly like
+   *  `consumedPrefillTokenRef`. It was a component-local ref seeded FROM the live token, on the theory that a
+   *  clear must not survive a remount; the theory was wrong, because a draft does not die at a remount either.
+   *  The composer unmounts whenever a dialog takes the screen but its buffer is parked in the app-scoped
+   *  `editorStateRef` and painted again on the way back — so a Ctrl-C pressed while the dialog is up has a
+   *  real draft to clear, and seeding from the live token marked that very bump as already consumed and handed
+   *  the draft back. Kept outside the component, the cursor still forbids the case that motivated the old
+   *  seeding (a bump consumed once cannot fire again on the next mount), and now also honours the one it
+   *  broke. A bare mount with no app above falls back to the old local ref. */
+  consumedClearTokenRef?: React.MutableRefObject<number>;
   /** WAVE C TASK 4 — where the ← agents gesture goes on its second press: `ChatApp`'s background pane, the
    *  same surface `task:background` opens while idle. Absent in a bare mount, where the gesture still arms and
    *  simply has nowhere to go. */
@@ -542,13 +551,17 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // `V` runs `if (e) t(""), B(0), c?.()` on its FIRST press (`clearForInterrupt` is those three calls), and
   // the arm that press also raised lives in `ChatApp` — the two halves are one gesture split across the two
   // components that own the two pieces of state.
-  //   The consumed marker SEEDS FROM THE LIVE TOKEN and is a plain ref: unlike `prefill`, a clear must not
-  // survive a remount (see `clearDraftToken`'s docblock in ChatApp). The empty-buffer no-op is upstream's own
+  //   The consumed marker is APP-SCOPED (`consumedClearTokenRef`, final review finding 1) for the same reason
+  // `prefill`'s is: this component is unmounted by every dialog and its buffer is parked in `editorStateRef`
+  // meanwhile, so a bump that lands during a dialog must still find the parked draft on the way back. The
+  // local ref below is only the bare-mount fallback, and it keeps the old seed-from-live-token behaviour
+  // because with no app above there is no parked draft to speak of. The empty-buffer no-op is upstream's own
   // `if (e)` guard, and it is what makes a Ctrl-C at the home state cost nothing but the arm.
-  const consumedClearTokenRef = useRef(clearDraftToken);
+  const localClearTokenRef = useRef(clearDraftToken);
+  const lastClearToken = consumedClearTokenRef ?? localClearTokenRef;
   useEffect(() => {
-    if (clearDraftToken === undefined || clearDraftToken === consumedClearTokenRef.current) return;
-    consumedClearTokenRef.current = clearDraftToken;
+    if (clearDraftToken === undefined || clearDraftToken === lastClearToken.current) return;
+    lastClearToken.current = clearDraftToken;
     const s = stateRef.current;
     if (isEmptyBuffer(s)) return;
     commitState(clearForInterrupt(endKillAndYank(s)));

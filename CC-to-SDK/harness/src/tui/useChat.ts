@@ -146,7 +146,7 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
+  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string, dir?: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
     /** Wave C Task 1/2: the notification queue. Injected so a test can drive its timers synthetically. */
     notifications?: NotificationStore;
     /** Wave C Task 7: the duration row's verb. Upstream picks it uniformly at random (`SvH`), which would
@@ -333,6 +333,13 @@ export function useChat(
   // to be fetched — and fetched once: the engine writes one title per session and never refreshes it as the
   // topic drifts, so a per-turn re-read would be a file open per turn for a value that cannot have changed.
   const aiTitleFetched = useRef(false);
+  /** WAVE C FINAL REVIEW, finding 5 — the generation the latch above belongs to, bumped at every conversation
+   *  boundary (`replaceDocument`). The fetch is a DISK READ of unbounded latency and the only thing it used to
+   *  check on the way back was `disposed`, so a read started for the session we just left could land after a
+   *  resume/clear had already published the NEW session's title and overwrite it — with the statusLine's
+   *  `session_name` riding along. The idiom is the repo's own (`suggester.ts`'s `q1t`: capture at request,
+   *  compare on return, drop on mismatch). */
+  const titleGen = useRef(0);
   const [turnStartedAt, setTurnStartedAt] = useState(0);
   const [ctxPct, setCtxPct] = useState<number | undefined>(undefined);
   // WAVE C TASK 14 (spec D-C3): the plan-usage warning is a QUEUE entry now, not a status-bar chip — the bar
@@ -580,7 +587,12 @@ export function useChat(
   const openEditor = deps.openEditor ?? ((file: string, prepare: () => void) => openInEditor(file, { prepare }));
   const renameSessionFn = deps.renameSession ?? ((id: string, t: string, dir?: string) => realRenameSession(id, t, { cwd: dir ?? opts.cwd }));
   const tagSessionFn = deps.tagSession ?? ((id: string, t: string | null) => realTagSession(id, t, { cwd: opts.cwd }));
-  const getSessionInfoFn = deps.getSessionInfo ?? ((id: string) => realGetSessionInfo(id, { cwd: opts.cwd }));
+  /** WAVE C FINAL REVIEW, finding 4 — `dir` is the row's OWN project directory, threaded exactly the way
+   *  `getSessionMessages`/`renameSessionFn` above already thread it. The store is per-directory, so once
+   *  Ctrl+A has widened the resume picker past this project a row read under `opts.cwd` simply is not there:
+   *  the transcript was found under `/elsewhere`, the title lives under `/elsewhere`, and looking for it here
+   *  found nothing and left the tab naming the session we had just left. */
+  const getSessionInfoFn = deps.getSessionInfo ?? ((id: string, dir?: string) => realGetSessionInfo(id, { cwd: dir ?? opts.cwd }));
   /** WAVE C TASK 8 — the once-per-session read of the engine's ai-title, called from the first `turn:end`.
    *  Silent on failure by design: an unreadable session file must cost the terminal title nothing (and must
    *  certainly not become a transcript notice), so the tab simply keeps whatever it already said. The
@@ -588,13 +600,19 @@ export function useChat(
    *
    *  `sessionId` is a PARAMETER because `resumeInto`'s caller has the new id and this closure does not: inside
    *  that function `session` is still the object being swapped out, so an un-parameterized call there would
-   *  read the title of the conversation we just left. */
-  const adoptAiTitle = (sessionId?: string): void => {
+   *  read the title of the conversation we just left. `dir` rides with it for the same reason and one more
+   *  (final review, finding 4): a cross-project pick names a directory this REPL's `opts.cwd` is not.
+   *
+   *  THE GENERATION GUARD (final review, finding 5) is what makes the two safe together: the id/dir pair is
+   *  captured at fetch time and so is `titleGen`, and a read that returns after the boundary has moved on is
+   *  dropped instead of publishing a dead conversation's title over the live one. */
+  const adoptAiTitle = (sessionId?: string, dir?: string): void => {
     const id = sessionId ?? session.sessionId;
     if (aiTitleFetched.current || !id) return;
     aiTitleFetched.current = true;
-    void getSessionInfoFn(id).then(
-      (info) => { if (disposed.current) return; const t = (info as any)?.customTitle ?? (info as any)?.summary; if (typeof t === "string" && t.trim()) setAiTitle(t.trim()); },
+    const gen = titleGen.current;
+    void getSessionInfoFn(id, dir).then(
+      (info) => { if (disposed.current || gen !== titleGen.current) return; const t = (info as any)?.customTitle ?? (info as any)?.summary; if (typeof t === "string" && t.trim()) setAiTitle(t.trim()); },
       () => {},
     );
   };
@@ -844,6 +862,30 @@ export function useChat(
     setPromptSuggestion(EMPTY_SUGGESTION);
     suggestionTailRef.current = []; assistantSeenRef.current = 0;
     retireSuggester();
+    // FINAL REVIEW, FINDING 2 — THE SAME BOUNDARY AND THE SAME CLASS ONCE MORE, now for the two readings the
+    // statusLine payload's `cost` and `context_window` blocks are built from. They are refs written by the
+    // turn-end refreshers, and until now only their RENDERED sibling (`ctxPct`, W-S5 above) was dropped here:
+    // `/clear` swaps the engine, so `usage()` restarts at zero, and the very next run of the script — a
+    // `/config` flip, the refresh poll, anything at all — put the NEW session identity on the wire beside the
+    // OLD conversation's dollars, durations and token counts. Nulled, they report the honest "no reading yet"
+    // shape the payload already has words for (`current_usage: null`, a zeroed `cost` block).
+    statusCtxRef.current = undefined; statusUsageRef.current = undefined;
+    // FINAL REVIEW, FINDING 3 — and the title dies here too, not only in `resumeInto`. W-C T8's review put the
+    // reset trio at the `/resume` swap, which is ONE of the four paths through this boundary; `/clear` came
+    // through here without it, so the tab kept naming the conversation the user had just wiped and the
+    // once-per-session latch — still standing — blocked the new engine's title from ever being adopted.
+    // Hoisting it to the boundary is Wave S's own rule (`replaceDocument` IS the shared boundary): a fifth
+    // path inherits the reset by construction instead of having to remember it.
+    //   A REWIND lands here too and so loses both rungs, which is the honest reading and not a regression:
+    // the latch reopens with them, so the next turn end re-reads the same session's title straight back — and
+    // a `/rename` is written to disk as that session's `customTitle`, which is the very field the re-read
+    // returns. `resumeInto` still calls `adoptAiTitle` itself, because only IT has the new id and dir.
+    setAiTitle(undefined); setRenameTitle(undefined); aiTitleFetched.current = false;
+    titleGen.current++;                 // finding 5: whatever read is in flight belongs to the old conversation
+    // FINDING 2, THE OTHER HALF. Nulling the refs changes no React state, so nothing on the delta list moves
+    // and an idle session would keep displaying the stale line until some unrelated setting changed. This is
+    // the one boundary that has to announce itself.
+    pokeStatusLine("conversation-boundary");
 
     setStaticItems([]); setPendingItems([]);
     setStaticEpoch((e) => e + 1);
@@ -1638,12 +1680,15 @@ export function useChat(
     // W-C T8, THE SAME BOUNDARY AND THE SAME CLASS AS W-S5's context percentage: both title rungs name the
     // conversation that just went away, and the once-per-session latch was set for it. Left standing, the tab
     // kept the OLD session's title after a `/resume` AND the latch blocked the new session's fetch forever
-    // (t8 review, Medium + Low). Gated on a REAL swap for the reason the sameSession branch above exists —
-    // resuming a session into itself keeps its own `/rename`, which is a user action on this very conversation.
-    // The re-read is IMMEDIATE rather than deferred to the first `turn:end`: a resumed session's ai-title is
-    // already on disk (probes annex §(d)), so waiting for a turn would show `ccx` for a conversation the engine
-    // has already named. Launch `--resume`/`--continue` route through here too, so they inherit the mount read.
-    if (!sameSession) { setAiTitle(undefined); setRenameTitle(undefined); aiTitleFetched.current = false; adoptAiTitle(id); }
+    // (t8 review, Medium + Low). THE RESET ITSELF MOVED to `replaceDocument` (final review, finding 3) — which
+    // is called on this very line's `else` branch and nowhere in the sameSession one, so the gating is
+    // unchanged: resuming a session into itself keeps its own `/rename`, a user action on this conversation.
+    // What stays here is the RE-READ, because only this function has the new id and the row's directory.
+    // It is IMMEDIATE rather than deferred to the first `turn:end`: a resumed session's ai-title is already on
+    // disk (probes annex §(d)), so waiting for a turn would show `ccx` for a conversation the engine has
+    // already named. Launch `--resume`/`--continue` route through here too, so they inherit the mount read.
+    // `dir` is finding 4: a cross-project row's title lives under ITS directory, never under `opts.cwd`.
+    if (!sameSession) adoptAiTitle(id, dir);
   }
   async function doContinue() {
     try {

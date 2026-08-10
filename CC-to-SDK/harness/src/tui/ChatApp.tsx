@@ -239,12 +239,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  its `EditorState` and writes the durable ref itself, so a parent that mutated `editorStateRef` behind a
    *  mounted composer would be overwritten by its next commit. `prefill` solved the same problem the same way
    *  — a monotonic counter the child watches and consumes — and reusing that shape means one pattern to
-   *  understand instead of two. What differs is the CONSUMED marker: `prefill`'s lives in an app-scoped ref
-   *  (`consumedPrefillTokenRef`) because a rewind prefill must survive a composer remount and land, while a
-   *  clear must NOT — a Ctrl-C pressed while a dialog owned the screen has no draft to clear, and applying it
-   *  on the way back would wipe a buffer the user typed in between. So the composer seeds its marker from the
-   *  live token at mount and only ever acts on a LATER bump. */
+   *  understand instead of two — INCLUDING the consumed marker, which lives in an app-scoped ref next to
+   *  `consumedPrefillTokenRef` below.
+   *
+   *  FINAL REVIEW, FINDING 1 — that marker used to be composer-local and seeded from the live token, on the
+   *  premise that "a Ctrl-C pressed while a dialog owned the screen has no draft to clear". The premise was
+   *  false: the draft is parked in `editorStateRef` for the whole life of the dialog and painted again when
+   *  the composer remounts, so the bump had a real buffer waiting for it and the seeding is precisely what
+   *  marked that bump as spent. App-scoped, the cursor still cannot fire one bump twice — which is the
+   *  property the seeding was reaching for — and a clear pressed behind a dialog now lands on the way back. */
   const [clearDraftToken, setClearDraftToken] = useState(0);
+  const consumedClearTokenRef = useRef(0);
   // WAVE C TASK 2 — the composer's half of the footer (the four early-return states plus the draft signal).
   // It lives up here rather than in the composer for the same reason the typing debounce does: the composer
   // is unmounted by every dialog, and its own cleanup reports IDLE so nothing stale survives the unmount.
@@ -895,7 +900,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
                       // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
                       // arm clock every double-press in this tree shares.
-                      clearDraftToken={clearDraftToken} onOpenAgents={openBgPanel} doublePressDeps={doublePressDeps}
+                      clearDraftToken={clearDraftToken} consumedClearTokenRef={consumedClearTokenRef} onOpenAgents={openBgPanel} doublePressDeps={doublePressDeps}
                       // WAVE C TASK 12 (EP-C5): the suggestion's text down, and the composer's two facts back
                       // up — whether it could paint one right now, and that a key accepted it. The SLICE stays
                       // in useChat (it has to survive this component's remounts and Ctrl-C's buffer clear).

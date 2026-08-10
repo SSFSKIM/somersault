@@ -283,3 +283,106 @@ describe("<ChatApp> — the mount site", () => {
     } finally { unmount(); }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// WAVE C FINAL WHOLE-BRANCH REVIEW — three findings, all of them the same sentence W-S5 wrote for the
+// context percentage and T8's review wrote for `/resume`: chrome that names a conversation must not outlive
+// it. What T8 missed is that `/resume` is one of FOUR paths through the boundary and it fixed only that one.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+describe("useChat — /clear takes the title with it (final review, finding 3)", () => {
+  it("drops both rungs and re-reads the new engine's own title on the next turn", async () => {
+    const fake = fakeRemote(); const reads: string[] = [];
+    const api: { run?: (s: string) => void } = {}; const sink: { ai?: string; rename?: string } = {};
+    function H() {
+      const c = useChat(() => fake, {}, {
+        renameSession: async () => {},
+        getSessionInfo: async (id: string) => { reads.push(id); return { customTitle: `topic #${reads.length}` } as any; },
+      });
+      api.run = c.submit; sink.ai = c.state.aiTitle; sink.rename = c.state.renameTitle;
+      return <Text>t:{c.state.aiTitle ?? "-"}/{c.state.renameTitle ?? "-"}</Text>;
+    }
+    const { unmount } = render(<H />);
+    await tick();
+    try {
+      await runTurn(fake, 1);
+      await waitFor(() => sink.ai === "topic #1");
+      api.run!("/rename the old conversation");
+      await waitFor(() => sink.rename === "the old conversation");
+
+      api.run!("/clear");                                       // the engine is swapped; the screen is wiped
+      await waitFor(() => sink.ai === undefined);               // half one: the tab stops naming what is gone
+      expect(sink.rename).toBeUndefined();                      // …both rungs, because both named it
+
+      await runTurn(fake, 2);
+      await waitFor(() => sink.ai === "topic #2");              // half two: the latch did not block the re-read
+      expect(reads).toHaveLength(2);
+    } finally { unmount(); }
+  });
+});
+
+describe("useChat — a cross-project resume reads the title from the ROW's directory (final review, finding 4)", () => {
+  const prior = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+  it("threads the picked row's cwd into the title lookup, the way preview and rename already do", async () => {
+    const oldSession = fakeRemote(), newSession = fakeRemote({ sessionId: "other1234567890" });
+    const infoCalls: (string | undefined)[] = [];
+    const deps = {
+      hasWorktrees: async () => false,
+      listSessions: async () => [{ sessionId: "other1234567890", summary: "prior", lastModified: 1, cwd: "/elsewhere" }],
+      getSessionMessages: async () => prior as any,
+      // The store is per-DIRECTORY: a row found under `/elsewhere` is unreadable under `/repo`, which is
+      // exactly what the picker's own `getSessionMessages`/`renameSession` calls already account for.
+      getSessionInfo: async (id: string, dir?: string) => { infoCalls.push(dir); return (dir === "/elsewhere" ? { customTitle: "Other project topic" } : undefined) as any; },
+    };
+    let pick: ((s: any) => void) | undefined;
+    const sink: { title?: string } = {};
+    function H() {
+      const c = useChat((resume?: string) => (resume ? newSession : oldSession), { cwd: "/repo" }, deps);
+      pick = (c as any).pickSession; sink.title = c.state.aiTitle; return <Text>t:{c.state.aiTitle ?? "-"}</Text>;
+    }
+    const { unmount } = render(<H />);
+    await tick();
+    try {
+      await act(async () => { pick!({ sessionId: "other1234567890", summary: "prior", lastModified: 1, cwd: "/elsewhere" }); });
+      await waitFor(() => sink.title === "Other project topic");
+      expect(infoCalls).toEqual(["/elsewhere"]);
+    } finally { unmount(); }
+  });
+});
+
+describe("useChat — a late title read from a replaced session loses the race (final review, finding 5)", () => {
+  const prior = [{ type: "user", message: { content: [{ type: "text", text: "prior prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
+  it("discards an in-flight read whose session was swapped out from under it", async () => {
+    const oldSession = fakeRemote(), newSession = fakeRemote({ sessionId: "new1234567890" });
+    let releaseOld: (() => void) | undefined;
+    const deps = {
+      hasWorktrees: async () => false,
+      listSessions: async () => [{ sessionId: "new1234567890", summary: "prior", lastModified: 1 }],
+      getSessionMessages: async () => prior as any,
+      getSessionInfo: async (id: string) => {
+        if (id !== "sess-1") return { customTitle: "Resumed topic" } as any;
+        // The slow disk read of the conversation we are about to leave.
+        await new Promise<void>((r) => { releaseOld = r; });
+        return { customTitle: "Old topic" } as any;
+      },
+    };
+    let pick: ((s: any) => void) | undefined;
+    const sink: { title?: string } = {};
+    function H() {
+      const c = useChat((resume?: string) => (resume ? newSession : oldSession), {}, deps);
+      pick = (c as any).pickSession; sink.title = c.state.aiTitle; return <Text>t:{c.state.aiTitle ?? "-"}</Text>;
+    }
+    const { unmount } = render(<H />);
+    await tick();
+    try {
+      await runTurn(oldSession, 1);                             // starts the read; it hangs
+      await waitFor(() => releaseOld !== undefined);
+      expect(sink.title).toBeUndefined();
+
+      await act(async () => { pick!({ sessionId: "new1234567890", summary: "prior", lastModified: 1 }); });
+      await waitFor(() => sink.title === "Resumed topic");
+
+      await act(async () => { releaseOld!(); await new Promise((r) => setTimeout(r, 20)); });
+      expect(sink.title).toBe("Resumed topic");                 // the ghost must not win
+    } finally { unmount(); }
+  });
+});
