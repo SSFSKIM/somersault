@@ -530,6 +530,13 @@ inline ctx%%/usageWarn/bg chips removed with the information surviving via statu
   five-hour warnings; upstream's `/effort` extras ccx doesn't ship (`auto`/`ultracode`,
   persistence, `help`/`current` sub-verbs); first-ever-launch billing-label omission (cold
   fresh-HOME handshake ~1.8 s exceeds even 1500 ms).
+- *Final whole-branch review (codex, gpt-5.6-sol, base `899b681d60`):* five findings, ALL the
+  measurement-dies-with-its-conversation class applied to the wave's own new chrome — title and
+  statusLine usage refs surviving `/clear`, the Ctrl-C clear token lost across dialog remounts,
+  resumed titles read against the wrong project dir, and a late title read winning a race against
+  a newer session. All five reproduced red-first and fixed (`63f8ad697e`); `replaceDocument` is
+  now the reset boundary for every chrome measurement the wave added. The wave's central lesson
+  applied to the wave itself.
 
 ## Revision Notes
 

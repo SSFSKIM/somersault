@@ -1013,3 +1013,21 @@ job env is credential-clean; most plausible path is macOS Keychain (HOME isolati
 + a warm boot beating the old 300ms wire — keyless pty runs are NOT credential-isolated on this
 machine, worth remembering. Also keyed: all 9 test/tui/live e2e suites PASS. Suites: 1913 unit /
 3178 tui / build clean.
+
+## 2026-08-10 — WAVE C CLOSED (final review round 63f8ad697e; QA Sprint 1 complete)
+
+Wave close: spec Outcomes & Retrospective written; umbrella §9 Wave C ticked (all four waves T/R/S/C
+now shipped — QA Sprint 1 complete); coverage.md gains the F7-no-longer-not-started entry; tui-ux.md
+re-scored 76fa18a136 (§3 36.8%→62.5%, overall ~71%→~75%; §1/§4/§5 honestly DOWN — new surfaces
+brought named gaps; scorecard also now flags its own R/S staleness in the header); memory
+wave-c-chrome-composer-shipped written. Final whole-branch codex review (gpt-5.6-sol, base
+899b681d60): five findings, every one the wave's own measurement-dies-with-its-conversation lesson
+pointed back at the wave's new chrome — title + statusLine usage refs surviving /clear, Ctrl-C
+clear token lost across dialog remounts (consumed-token cursor now app-scoped in ChatApp),
+resumed-title lookup against the wrong project dir (dir threaded like getSessionMessages/rename
+already did), late title read winning the race (titleGen guard, the suggester's idiom). All five
+REPRODUCED red-first, fixed in one commit 63f8ad697e; replaceDocument is now the reset boundary for
+every chrome measurement Wave C added. Suites after: 1913 unit / 3184 tui. The /compact flake
+re-adjudicated by the fixer with a stash test: pre-existing (4/4 clean on stashed tree), 1 failure
+in 10 isolated runs under load. Recorded-not-fixed minors stand as the owner-knob list in the spec
+Outcomes. ~40 commits this wave, none pushed.
