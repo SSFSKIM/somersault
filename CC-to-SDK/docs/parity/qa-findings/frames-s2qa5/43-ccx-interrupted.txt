@@ -1,0 +1,40 @@
+  8. Raspberry
+  9. Blackberry
+  10. Grape
+  11. Watermelon
+  12. Cantaloupe
+  13. Honeydew
+  14. Peach
+  15. Nectarine
+  16. Plum
+  17. Apricot
+  18. Cherry
+  19. Pear
+  20. Kiwi
+  21. Papaya
+  22. Guava
+  23. Lychee
+  24. Passion fruit
+  25. Pomegranate
+  26. Fig
+  27. Date
+  28. Persimmon
+  29. Dragon fruit
+  30. Starfruit
+  31. Jackfruit
+  32. Durian
+  33. Coconut
+  34. Lemon
+  35. Lime
+  36. Grapefruit
+  37. Tangerine
+  38. Cranberry
+  39. Gooseberry
+  40. Mulberry
+✻ Crunched for 3s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+

@@ -1,0 +1,24 @@
+[38;5;174m│[39m                 [1mWelcome back![0m                [2m[38;5;174m│[0m Ask Claude to create a new a… [38;5;174m│
+│[39m                                              [2m[38;5;174m│[0m [38;5;174m─────────────────────────────[39m [38;5;174m│
+│[39m                   [38;5;174m ▐[48;5;16m▛███▜[49m▌[39m                   [2m[38;5;174m│[0m [1m[38;5;174mWhat's new[0m                    [38;5;174m│
+│[39m                   [38;5;174m▝▜[48;5;16m█████[49m▛▘[39m                  [2m[38;5;174m│[0m Bug fixes and reliability im… [38;5;174m│
+│[39m                   [38;5;174m  ▘▘ ▝▝  [39m                  [2m[38;5;174m│[0m Added gateway spend-limit su… [38;5;174m│
+│[39m                                              [2m[38;5;174m│[0m Added a workspace trust prom… [38;5;174m│
+│[39m            [38;5;246mSonnet 5 · Claude API[39m             [2m[38;5;174m│[0m [3m[38;5;246m/release-notes for more[0m       [38;5;174m│
+│[39m   [38;5;246m/private/tmp/s2qa6-uZ0gAX/proj-cc-f70quZ[39m   [2m[38;5;174m│[0m                               [38;5;174m│
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[39m [38;5;174m▎[39m [38;5;174mFable 5 is now a standard part of your Max plan[39m
+ [38;5;174m▎[39m You can use up to 50% of your weekly usage limit on Fable 5. If you hit your
+ [38;5;174m▎[39m limit, you can continue on Fable 5 with usage credits. Fable 5 draws down
+ [38;5;174m▎[39m usage faster than Opus 5. Run /model and select Fable to use it. Learn more:
+ [38;5;174m▎[39m [94m]8;id=1iz7s2z;https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access\https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-ac]8;;\
+[39m [38;5;174m▎[39m [94m]8;id=1iz7s2z;https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access\cess[39m]8;;\
+
+[38;5;239m[48;5;237m❯[39m [38;5;231m/clear[39m
+
+[38;5;244m[49m────────────────────────────────────────────────────────────────────────────────
+[39m❯ 
+[38;5;244m────────────────────────────────────────────────────────────────────────────────
+[39m  [38;5;246mS2-STATUS #4 t=1786341722 ctx=None cost=0 sid=a02ce69d LONGTAIL-ABCDEFGHIJKL…[39m
+  [38;5;246m⏸ manual mode on · ← for agents[39m

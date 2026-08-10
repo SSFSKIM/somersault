@@ -1,0 +1,53 @@
+Usage: ccx [options] [command] [prompt]
+
+cc-harness (ccx) - starts an interactive session by default, use -p/--print for
+non-interactive output
+
+Arguments:
+  prompt                          Your prompt
+
+Options:
+  --all                           Include sessions from every project
+  --allow-origin <origin>         Allow a browser origin to reach serve
+                                  (repeatable)
+  --bg, --background              Run the session detached in the background
+  -c, --continue                  Continue the most recent conversation in the
+                                  current directory
+  --cwd <dir>                     Working directory (filters the listing for
+                                  agents)
+  --dangerously-skip-permissions  Bypass all permission checks
+  --detachable                    Attach to a session that survives this
+                                  terminal
+  --effort <level>                Reasoning effort: low, medium, high, xhigh,
+                                  max
+  -h, --help                      Display help for command
+  --idle-timeout <seconds>        Stop a detachable session after this much idle
+                                  time
+  --json                          Machine-readable output
+  --listen <url>                  ws:// address for serve (default: loopback,
+                                  ephemeral port)
+  --model <model>                 Model id or alias for this session
+  -n, --name <name>               Set a display name for this session
+  --permission-mode <mode>        One of default, acceptEdits,
+                                  bypassPermissions, plan, dontAsk, auto
+  -p, --print                     Print the response and exit (non-interactive)
+  -r, --resume <value>            Resume a conversation by session id
+  --settings <file-or-json>       Settings as inline JSON or a path to a JSON
+                                  file
+  --think <level>                 Thinking budget: off, low, medium, high,
+                                  xhigh, max, or a token count
+  --token-file <path>             Bearer token file authorizing serve clients
+  -v, --version                   Output the version number
+  --worktree <name>               Create a git worktree for this session
+
+Commands:
+  agents                          List the background agents of this project
+  attach <session>                Attach to a running session by short id, uuid
+                                  or name
+  doctor                          Check the health of your ccx installation
+  fleet gc                        Remove dead sessions from the fleet roster
+  rm <session>                    Remove a session, its transcript row and its
+                                  worktree
+  serve                           Run the app-server control plane over a
+                                  WebSocket
+  stop <session>                  Stop a running session

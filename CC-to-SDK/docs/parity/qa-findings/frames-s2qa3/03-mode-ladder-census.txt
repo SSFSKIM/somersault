@@ -1,0 +1,25 @@
+Shift+Tab (BTab) mode-ladder census — sweep #2, agent s2qa3, 2026-08-10
+Method: press BTab, sleep 1.0s, capture `capture-pane -p | grep -v '^[[:space:]]*$' | tail -1`.
+Both panes 120x40. ccx = harness/dist/cli/bin.js @ d699e0839c; claude = 2.1.226.
+
+=== CCX (starting from accept edits) ===
+now:   ⏵⏵ accept edits on (shift+tab to cycle)
+p1:   ⏸ plan mode on (shift+tab to cycle)
+p2:   ⏵⏵ auto mode on (shift+tab to cycle)
+p3:   ⏸ manual mode on · ? for shortcuts
+p4:   ⏵⏵ accept edits on (shift+tab to cycle)
+p5:   ⏸ plan mode on (shift+tab to cycle)
+
+=== CLAUDE (starting from accept edits) ===
+now:   ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents
+p1:   ⏸ plan mode on (shift+tab to cycle) · ← for agents
+p2:   ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+p3:   ⏸ manual mode on · ? for shortcuts · ← for agents
+p4:   ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents
+p5:   ⏸ plan mode on (shift+tab to cycle) · ← for agents
+
+Cycle on both: manual -> accept edits -> plan -> auto -> manual.
+Launch state on both (bare, no flags): manual mode on.
+Bypass is NOT in the ladder on either side; it is reachable only via
+--dangerously-skip-permissions, on both sides.
+Only textual difference: the unrelated `· ← for agents` chrome item, absent in ccx.

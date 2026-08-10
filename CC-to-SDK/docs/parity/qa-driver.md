@@ -16,9 +16,10 @@ This file is the verbatim recipe. Follow it literally.
 | ccx binary | `harness/dist/cli/bin.js` (package.json `bin.ccx`) |
 | platform | darwin 25.5.0 |
 
-> The parity corpus is pinned to Claude Code 2.1.220; the installed CLI is **2.1.222**. The
-> recipe was proven against 2.1.222. Nothing was installed or upgraded. If a future run finds a
-> different version, re-check the onboarding seed keys (`lastOnboardingVersion` in particular).
+> The parity corpus is pinned to Claude Code 2.1.220; the installed CLI was **2.1.222** at proving
+> time and **2.1.226** by sweep #2 (2026-08-10). Nothing was installed or upgraded by any agent.
+> If a future run finds a different version, re-check the onboarding seed keys
+> (`lastOnboardingVersion` in particular) and re-read §4.2's alternate-screen caveat.
 
 ---
 
@@ -121,7 +122,7 @@ tmux new-session -d -s qaccx -x 120 -y 40 -c "$CCX_PROJ" \
    node /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness/dist/cli/bin.js"
 
 tmux set-option -t qaccx remain-on-exit on    # keeps the final frame + exit code readable
-wait_until qaccx '⏎ send' 30                  # ready-needle for ccx (see §5.4 — NOT '⇧Tab to cycle')
+wait_until qaccx '⏸ manual mode on' 30        # ready-needle for ccx (see §7.4 — '⏎ send' is GONE)
 ```
 
 `ccx` needs no onboarding seed at all — a bare isolated `HOME` lands straight in the REPL.
@@ -284,6 +285,13 @@ Result for `claude` 2.1.222 — `any=0 btn=0 std=0 sgr=0 all=0`, in **every** st
 REPL, mid-turn, after a folded tool row, after `ctrl+o` expansion, and with the `/model` picker
 open. `ccx` reports the same all-zero set. **Neither TUI ever enables mouse reporting.**
 
+> **STALE at ≤24 rows for claude ≥2.1.226** (sweep #2, s2qa6-19, reproduced twice): launched at
+> 80×24, claude 2.1.226 enters the **alternate screen with SGR + any-motion mouse reporting ON**
+> (`alternate_on=1`, `sgr=1`, `any=1`). This is upstream's fullscreen renderer becoming the
+> default at small panes — 24-row scrollback/anchoring comparisons between the two TUIs are no
+> longer measuring the same renderer (see D10 in the umbrella spec and FULLSCREEN-1). At 40 rows
+> the all-zero result still held.
+
 ### 4.3 Injecting mouse bytes — which method actually delivers
 
 Two methods were tested against the live pane.
@@ -423,13 +431,13 @@ Things that needed retries or timing care. Read this before debugging a flaky QA
    cycle)` instead, and a wait on `for shortcuts` burned its full 30 s timeout on a REPL that was
    ready in 1 s. Use `for agents`, which is in both footers.
 
-   **For ccx use `⏎ send`.** The `⇧Tab to cycle` this section used to name is GONE from the build —
-   the tips line now reads `⇧Tab to change mode` and the footer `⇧Tab mode`, and the old string
-   appears nowhere, so a wait on it burns its whole timeout on every session (measured: 60 s × 7
-   cells in the first `scripts/resize-matrix.sh` run). `⏎ send` is the composer's own hint row; it
-   wraps at narrow widths but never disappears, which is what makes it safe across a resize matrix.
-   The frame quoted in §2.2 above is a *recording* from the older build — read it as history, not as
-   a needle to copy.
+   **For ccx use `⏸ manual mode on`.** This needle has now rotted TWICE: first `⇧Tab to cycle`
+   vanished, then Wave C's footer unification removed the `⏎ send` composer hint row entirely
+   (sweep #2: all six agents burned a full timeout on it — s2qa1-21, s2qa2-14). The footer now
+   mirrors claude's `⏸ manual mode on · ? for shortcuts`, so the manual-mode chip is the ready
+   needle on BOTH TUIs' default launches. Frames quoted elsewhere in this file are *recordings*
+   from older builds — read them as history, never as needles to copy. When a needle burns its
+   timeout, capture the actual frame before assuming the app is dead.
 
 5. **claude's double-`C-c` window is short.** 0.2 s apart exits; 1.2 s apart does not (the second
    press is treated as a new first press). `C-d` on an empty composer did not exit at all.

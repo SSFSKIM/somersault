@@ -1,0 +1,40 @@
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     xhigh
+  cwd        /private/tmp/s2qa5-MDlPev/proj-ccx-d0h2xI
+❯ /cost
+Total cost:            $0.0000
+Total duration (API):  0s
+Total duration (wall): 17s
+Total code changes:    0 lines added, 0 lines removed
+Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+❯ /context
+ctx 2% · 19.7k / 1m · ok
+❯ Reply with exactly: ONE
+⏺ ONE
+✻ Worked for 3s
+❯ Reply with exactly: TWO
+⏺ TWO
+✻ Cooked for 3s
+❯ Reply with exactly: THREE
+⏺ THREE
+✻ Worked for 1s
+❯ /rename s2qa5-fresh
+✓ renamed to "s2qa5-fresh"
+❯ /tag lifecycle
+✓ tagged #lifecycle
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+

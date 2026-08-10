@@ -627,7 +627,10 @@ which are opportunistic.
 - [x] Wave C — shipped 2026-08-10 (spec `2026-08-09-wave-c-chrome-composer-design.md`; 15 tasks,
   A1–A15 all pass keyed+keyless; six more bundle-settles-testimony overturns incl. the
   token-warning ceiling mis-citation; `#` memory mode and inline chips removed per D-C2/D-C3)
-- [ ] Recurring sweep #2 run against a shipped wave, delta triaged
+- [x] Recurring sweep #2 run 2026-08-10 against the shipped sprint (ccx @ `d699e0839c`, all four
+  waves), delta triaged in `docs/parity/qa-sweep-2-triage.md` — 131 findings: 51 fixed (both
+  sweep-1 P1s independently confirmed dead), 43 new, 33 persists, 4 regressed; one open P1
+  (`/copy` regression family, s2qa5-21/22). **Sprint definition of done (§3) fully met.**
 
 ## §10 Decision Log *(living)*
 
@@ -691,6 +694,18 @@ which are opportunistic.
 | `#` memory mode and the ccx-extra context %% (qa6-13, qa1-10): keep or drop | Owner, surfaced at Wave C spec review | Wave C spec time |
 
 ## §12 Surprises & Discoveries *(living)*
+
+**Sweep #2 (2026-08-10, sprint close — full record in `docs/parity/qa-sweep-2-triage.md`):** the
+sprint's headline claims all verified independently (51 `fixed` verdicts with frames), but the sweep
+found what no wave audited: `/copy` regressed to "nothing to copy" fresh and, resumed, pins to the
+replay's first message *across `/clear`* — the measurement-dies rule inverted in a command outside
+every wave grid (W1). Wave C's effort surfaces have the right shape but non-transactional semantics
+vs the picker-as-transaction canon (W3). Environment moved under the fleet twice: claude 2.1.226
+auto-enters the **fullscreen renderer at ≤24-row panes** (re-manufacturing withdrawn qa2-12 → D10's
+instrument confound is now version-triggered; FULLSCREEN-1 gains urgency), and the ccx ready-needle
+rotted a second time (`⏎ send` removed by Wave C's own footer work — the sweep's instrument was
+partially invalidated by the code it was verifying). The vanished composer placeholder is Wave C's
+recorded `promptSuggestionEnabled` default-off knock-on, correctly not re-filed as a defect.
 
 Seeded from triage: the triage omission (`qa4-07`, §5.3); the `listSessions` misread reversal (§5.2);
 the protective drift calls (`ctrl+_`, `ctrl+e to show all`, `#` memory — §5.2); `qa3-05`'s amend rows are

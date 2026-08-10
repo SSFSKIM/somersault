@@ -1,0 +1,40 @@
+
+╭─── Claude Code v2.1.226 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                              │ Tips for getting started                                              │
+│                 Welcome back!                │ Ask Claude to create a new app or clone a repository                  │
+│                                              │ ───────────────────────────────────────────────────────────────────── │
+│                    ▐▛███▜▌                   │ What's new                                                            │
+│                   ▝▜█████▛▘                  │ Bug fixes and reliability improvements                                │
+│                     ▘▘ ▝▝                    │ Added gateway spend-limit support to Claude Code's usage warning; th… │
+│                                              │ Added a workspace trust prompt to `claude agents` for untrusted dire… │
+│   Sonnet 5 with medium effort · Claude API   │ /release-notes for more                                               │
+│       /private/tmp/s2qa4-root/proj-cc        │                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Fable 5 is now a standard part of your Max plan
+ ▎ You can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with
+ ▎ usage credits. Fable 5 draws down usage faster than Opus 5. Run /model and select Fable to use it. Learn more:
+ ▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Theme
+
+   Choose the text style that looks best with your terminal
+
+     1. Auto (match terminal)
+   ❯ 2. Dark mode ✔
+     3. Light mode
+     4. Dark mode (colorblind-friendly)
+     5. Light mode (colorblind-friendly)
+     6. Dark mode (ANSI colors only)
+     7. Light mode (ANSI colors only)
+     8. New custom theme…
+
+   ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+    1  function greet() {
+    2 -  console.log("Hello, World!");
+    2 +  console.log("Hello, Claude!");
+    3  }
+   ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+    Syntax theme: Monokai Extended (ctrl+t to disable)
+
+   Enter to select · Esc to cancel

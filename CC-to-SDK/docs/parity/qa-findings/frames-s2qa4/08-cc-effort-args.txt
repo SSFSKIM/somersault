@@ -1,0 +1,40 @@
+ ▎ You can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with
+ ▎ usage credits. Fable 5 draws down usage faster than Opus 5. Run /model and select Fable to use it. Learn more:
+ ▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access
+
+❯ /model
+  ⎿  Kept model as Sonnet 5 (default)
+
+❯ /model
+  ⎿  Kept model as Sonnet 5 (default)
+
+❯ /effort
+  ⎿  Cancelled
+
+❯ /effort low
+  ⎿  Set effort level to low (saved as your default for new sessions): Quick, straightforward implementation with
+     minimal overhead
+
+❯ /effort help
+  ⎿  Usage: /effort [low|medium|high|xhigh|max|ultracode|auto]
+
+     Effort levels:
+     - low: Quick, straightforward implementation
+     - medium: Balanced approach with standard testing
+     - high: Comprehensive implementation with extensive testing
+     - xhigh: Extended reasoning with thorough analysis (Fable 5, Opus 4.7+, Sonnet 5)
+     - max: Maximum capability with deepest reasoning (Fable 5, Opus 4.6+, Sonnet 4.6+)
+     - ultracode: xhigh + dynamic workflow orchestration (this session only)
+     - auto: Use the default effort level for your model
+
+❯ /effort current
+  ⎿  Current effort level: low (Quick, straightforward implementation with minimal overhead)
+
+❯ /effort maximum
+  ⎿  Invalid argument: maximum. Valid options are: low, medium, high, xhigh, max, ultracode, auto
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents                                         ○ low · /effort
+

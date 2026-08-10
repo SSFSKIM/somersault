@@ -1,0 +1,40 @@
+[38;5;174m╭───[39m [38;5;174mClaude[39m [38;5;174mCode[39m [38;5;246mv2.1.226[39m [38;5;174m─────────────────────────────────────────────────────────────────────────────────────────────╮
+│[39m                                              [2m[38;5;174m│[0m [1m[38;5;174mTips[0m [1m[38;5;174mfor[0m [1m[38;5;174mgetting[0m [1m[38;5;174mstarted[0m                                              [38;5;174m│
+│[39m                 [1mWelcome[0m [1mback![0m                [2m[38;5;174m│[0m Ask Claude to create a new app or clone a repository                  [38;5;174m│
+│[39m                                              [2m[38;5;174m│[0m [38;5;174m─────────────────────────────────────────────────────────────────────[39m [38;5;174m│
+│[39m                    [38;5;174m▐[48;5;16m▛███▜[49m▌[39m                   [2m[38;5;174m│[0m [1m[38;5;174mWhat's[0m [1m[38;5;174mnew[0m                                                            [38;5;174m│
+│[39m                   [38;5;174m▝▜[48;5;16m█████[49m▛▘[39m                  [2m[38;5;174m│[0m Bug fixes and reliability improvements                                [38;5;174m│
+│[39m                     [38;5;174m▘▘[39m [38;5;174m▝▝[39m                    [2m[38;5;174m│[0m Added gateway spend-limit support to Claude Code's usage warning; th… [38;5;174m│
+│[39m                                              [2m[38;5;174m│[0m Added a workspace trust prompt to `claude agents` for untrusted dire… [38;5;174m│
+│[39m            [38;5;246mSonnet[39m [38;5;246m5[39m [38;5;246m·[39m [38;5;246mClaude[39m [38;5;246mAPI[39m             [2m[38;5;174m│[0m [3m[38;5;246m/release-notes[0m [3m[38;5;246mfor[0m [3m[38;5;246mmore[0m                                               [38;5;174m│
+│[39m   [38;5;246m/private/tmp/s2qa6-uZ0gAX/proj-cc-f70quZ[39m   [2m[38;5;174m│[0m                                                                       [38;5;174m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+[39m [38;5;174m▎[39m [38;5;174mFable[39m [38;5;174m5[39m [38;5;174mis[39m [38;5;174mnow[39m [38;5;174ma[39m [38;5;174mstandard[39m [38;5;174mpart[39m [38;5;174mof[39m [38;5;174myour[39m [38;5;174mMax[39m [38;5;174mplan[39m
+ [38;5;174m▎[39m You can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with
+ [38;5;174m▎[39m usage credits. Fable 5 draws down usage faster than Opus 5. Run /model and select Fable to use it. Learn more:
+ [38;5;174m▎[39m [94m]8;id=1iz7s2z;https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access\https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access[39m]8;;\
+
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ [2mTry[0m [2m"fix[0m [2mlint[0m [2merrors"[0m
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [38;5;211m⏵⏵[39m [38;5;211mbypass[39m [38;5;211mpermissions[39m [38;5;211mon[38;5;246m (shift+tab[39m [38;5;246mto[39m [38;5;246mcycle)[39m [38;5;246m·[39m [38;5;246m←[39m [38;5;246mfor[39m [38;5;246magents[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

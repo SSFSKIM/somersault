@@ -1,0 +1,24 @@
+│ ✻ Welcome to Claude Code                        │
+╰─────────────────────────────────────────────────╯
+
+  cwd    /private/tmp/s2qa6-uZ0gAX/proj-ccx-62TGG7
+  model  claude-opus-5 · Claude subscription   ·   mode  default
+
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ Reply with exactly: F1
+⏺ F1
+✻ Brewed for 2s
+❯ Reply with exactly: F2
+⏺ F2
+✻ Sautéed for 3s
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  S2-FAILPROBE-GOOD #2
+  ⏸ manual mode on
+
+

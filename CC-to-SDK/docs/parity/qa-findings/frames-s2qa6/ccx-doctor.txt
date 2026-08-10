@@ -1,0 +1,9 @@
+ccx doctor
+
+Running: cc-harness (0.1.0)
+Node: v24.18.0
+SDK: @anthropic-ai/claude-agent-sdk 0.3.220
+Platform: darwin-arm64
+Invoked: /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness/dist/cli/bin.js
+
+No installation issues found.

@@ -1,0 +1,15 @@
+   1. Default (recommended)  Use the default model
+                             (currently Opus)
+ ❯ 2. Sonnet ✔                Sonnet 5 · Efficient for
+                              routine tasks
+ ↓ 3. Opus                   Opus 5 · Best for everyday,
+                             complex tasks
+    … +1 model
+
+ ◈ Max effort ←/→ to adjust
+ May use excessive tokens resulting in long response times
+ or overthinking. Use sparingly for the hardest tasks.
+
+ enter to set as default · s to use this session only · esc
+  to cancel
+  ⏸ manual mode on

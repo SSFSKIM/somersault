@@ -1,0 +1,24 @@
+│                     ▘▘ ▝▝                    │ Added gateway spend-limit su… │
+│                                              │ Added a workspace trust prom… │
+│            Sonnet 5 · Claude API             │ /release-notes for more       │
+│   /private/tmp/s2qa6-uZ0gAX/proj-cc-f70quZ   │                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Fable 5 is now a standard part of your Max plan
+ ▎ You can use up to 50% of your weekly usage limit on Fable 5. If you hit your
+ ▎ limit, you can continue on Fable 5 with usage credits. Fable 5 draws down
+ ▎ usage faster than Opus 5. Run /model and select Fable to use it. Learn more:
+ ▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-ac
+ ▎ cess
+
+❯ Reply with exactly: F1
+
+⏺ F1
+
+✻ Crunched for 2s
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  S2-FAILPROBE-GOOD #2
+  ⏸ manual mode on · ← for agents

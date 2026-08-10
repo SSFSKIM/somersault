@@ -1,0 +1,40 @@
+❯ /context
+ctx 2% · 19.7k / 1m · ok
+❯ /resume
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Resume session
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ ⌕  Search…                                                                                                         │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ❯ s2qa5-fresh            6s ago · HEAD
+   Reply with exactly R2  5m ago · HEAD
+   Reply with exactly R1  5m ago · HEAD
+   One                    5m ago · HEAD
+
+ Ctrl+A to show all projects · space to preview · Ctrl+R to rename · Type to search · esc to cancel
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

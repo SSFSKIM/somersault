@@ -1,0 +1,40 @@
+ ▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access
+
+❯ Create a file named probe.txt containing exactly S2-PERM-PROBE
+
+⏺ Write(probe.txt)
+  ⎿  User rejected write to probe.txt
+      1 S2-PERM-PROBE
+
+✻ Brewed for 1m 48s
+
+❯ Run this shell command: echo hi
+
+⏺ Bash(echo hi)
+  ⎿  hi
+
+⏺ hi
+
+✻ Cooked for 3s
+
+❯ Run the shell command: git init
+
+⏺ Bash(git init)
+  ⎿  Waiting…
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   git init
+
+   Loading explanation…
+
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: git init *
+   3. No
+
+ Esc to cancel · Tab to amend · ctrl+e to hide
+

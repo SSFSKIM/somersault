@@ -1,0 +1,40 @@
+
+   1. Default (recommended)  Use the default model
+                             (currently Opus)
+ ❯ 2. Sonnet ✔                Sonnet 5 · Efficient for
+                              routine tasks
+ ↓ 3. Opus                   Opus 5 · Best for everyday,
+                             complex tasks
+    … +1 model
+
+ ◈ Max effort ←/→ to adjust
+ May use excessive tokens resulting in long response times
+❯ Reply with exactly: S2QA4-CCX-OK
+⏺ S2QA4-CCX-OK
+✻ Sautéed for 3s
+❯ /model
+❯ /resume
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Resume session
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ ⌕  Search…                                                                                                         │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ❯ Provide verification response  1m ago · HEAD
+
+ Ctrl+A to only show current repo · space to preview · Ctrl+R to rename · Type to search · esc to cancel
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
+
+

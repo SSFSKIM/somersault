@@ -1,0 +1,40 @@
+─── resumed: 68d35497 · 1 turn · 05:54 ───
+❯ Reply with exactly: ONE
+⏺ ONE
+─── resumed here · live ───
+❯ /usage
+plan usage not available under this credential (claude setup-token has no profile scope)
+❯ /context
+ctx 2% · 22.5k / 1m · ok
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

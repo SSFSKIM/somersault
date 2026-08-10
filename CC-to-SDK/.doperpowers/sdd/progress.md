@@ -1031,3 +1031,4 @@ every chrome measurement Wave C added. Suites after: 1913 unit / 3184 tui. The /
 re-adjudicated by the fixer with a stash test: pre-existing (4/4 clean on stashed tree), 1 failure
 in 10 isolated runs under load. Recorded-not-fixed minors stand as the owner-knob list in the spec
 Outcomes. ~40 commits this wave, none pushed.
+Sweep #2: complete (2026-08-10) — six-agent recurring QA sweep against the shipped sprint (ccx @ d699e0839c, claude 2.1.226). 131 findings (51 fixed / 43 new / 33 persists / 4 regressed); both sweep-1 P1s confirmed dead with frames; one open P1 (s2qa5-21/22 /copy regression family). Delta triaged in docs/parity/qa-sweep-2-triage.md; qa-driver.md de-rotted (needle + 2.1.226 alt-screen caveat); umbrella §9 ticked — sprint definition of done fully met. Isolation held 6/6 (prefs mtime 1786340224 unchanged).

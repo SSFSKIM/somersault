@@ -1,0 +1,40 @@
+⏺ There have been no markers in this conversation — the only exchange so far was your instruction to reply "ONE", which
+ I did.
+✻ Sautéed for 2s
+❯ /export
+✓ exported to /private/tmp/s2qa5-MDlPev/proj-ccx-d0h2xI/conversation-9fcfe570.md
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     xhigh
+  context    2% used
+  cwd        /private/tmp/s2qa5-MDlPev/proj-ccx-d0h2xI
+  session    9fcfe570
+❯ /context
+ctx 2% · 22.5k / 1m · ok
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,40 @@
+╭─── Claude Code v2.1.226 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                     │ Tips for getting started                                                       │
+│            Welcome back!            │ Ask Claude to create a new app or clone a repository                           │
+│                                     │ ────────────────────────────────────────────────────────────────────────────── │
+│               ▐▛███▜▌               │ What's new                                                                     │
+│              ▝▜█████▛▘              │ Bug fixes and reliability improvements                                         │
+│                ▘▘ ▝▝                │ Added gateway spend-limit support to Claude Code's usage warning; the limit-r… │
+│                                     │ Added a workspace trust prompt to `claude agents` for untrusted directories, … │
+│        Sonnet 5 · Claude API        │ /release-notes for more                                                        │
+│   /private/tmp/s2qa4-root/proj-cc   │                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Fable 5 is now a standard part of your Max plan
+ ▎ You can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with
+ ▎ usage credits. Fable 5 draws down usage faster than Opus 5. Run /model and select Fable to use it. Learn more:
+ ▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access
+
+❯ /model
+  ⎿  Kept model as Sonnet 5 (default)
+
+❯ /model
+  ⎿  Kept model as Sonnet 5 (default)
+
+❯ /effort
+  ⎿  Cancelled
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents                                        ● high · /effort
+
+
+
+
+
+
+
+
+
+

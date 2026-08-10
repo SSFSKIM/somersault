@@ -1,0 +1,40 @@
+
+   1. Default (recommended)  Use the default model
+                             (currently Opus)
+ ❯ 2. Sonnet ✔                Sonnet 5 · Efficient for
+                              routine tasks
+ ↓ 3. Opus                   Opus 5 · Best for everyday,
+                             complex tasks
+    … +1 model
+
+ ◈ Max effort ←/→ to adjust
+ May use excessive tokens resulting in long response times
+❯ Reply with exactly: S2QA4-CCX-OK
+⏺ S2QA4-CCX-OK
+✻ Sautéed for 3s
+❯ /model
+❯ /resume
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Provide verification response
+ > <command-name>/model</command-name>
+ > <local-command-stdout>Set model to claude-sonnet-5</local-command-stdout>
+ > Reply with exactly: S2QA4-CCX-OK
+   S2QA4-CCX-OK
+
+ 1m ago · 4 messages · HEAD
+
+ enter to resume · esc to cancel
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
