@@ -1,0 +1,40 @@
+  row 279
+  row 280
+  row 281
+  row 282
+  row 283
+  row 284
+  row 285
+  row 286
+  row 287
+  row 288
+  row 289
+  row 290
+  row 291
+  row 292
+  row 293
+  row 294
+  row 295
+  row 296
+  row 297
+  row 298
+  row 299
+  row 300
+✻ Sautéed for 21s
+❯ Read the file big.txt in full. Then reply with exactly: FOLD-OK
+  Read 1 file (ctrl+o to expand)
+⏺ FOLD-OK
+✻ Cogitated for 9s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+

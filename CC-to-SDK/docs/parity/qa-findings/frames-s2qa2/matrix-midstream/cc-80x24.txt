@@ -1,0 +1,24 @@
+  first widely produced model and established the QWERTY keyboard layout still
+  used today. Throughout the late nineteenth and early twentieth centuries,
+  typewriters transformed offices, journalism, and literature, enabling faster
+  written communication and opening clerical work to women. Manufacturers such
+  as Remington, Underwood, and Royal competed fiercely, refining mechanisms like
+  shift keys and ribbon systems. Electric typewriters emerged mid-century,
+  notably IBM's Selectric in 1961, before word processors and personal computers
+  gradually rendered the typewriter obsolete by the late twentieth century,
+  though it remains a cultural icon.
+
+✻ Churned for 4s
+
+❯ List the numbers 1 to 120, one per line, each formatted as "line N". Output
+  nothing else.
+
+✻ Catapulting…
+  ⎿  Tip: Working on a plan or design doc? Ask Claude to publish it as an
+     artifact — a polished web page you can open in your browser.
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for ag…
+

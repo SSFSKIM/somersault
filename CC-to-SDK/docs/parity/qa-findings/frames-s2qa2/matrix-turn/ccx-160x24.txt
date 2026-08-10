@@ -1,0 +1,24 @@
+❯ Write exactly one paragraph of about 120 words about the history of the typewriter. No lists, no headings, plain
+  prose only.
+⏺ The typewriter emerged from centuries of tinkering: patents for writing machines appear as early as 1714, when Henry
+Mill secured an English patent for a device to impress letters, though nothing survives of it. Practical designs
+followed in the nineteenth century, including Pellegrino Turri's machine built around 1808 for a blind countess. The
+decisive breakthrough came in 1868, when Christopher Latham Sholes, Carlos Glidden, and Samuel Soulé patented a model in
+ Milwaukee; Remington began manufacturing it in 1873, introducing the QWERTY layout that persists today. Later
+refinements brought visible typing, shift keys for lowercase, and portable models that carried journalists and novelists
+ through two world wars. Electric machines, notably IBM's Selectric of 1961 with its rotating typeball, dominated
+offices until word processors and personal computers displaced them in the 1980s.
+✻ Worked for 6s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,40 @@
+  cwd    /private/tmp/s2qa2-root/proj-ccx2
+  model  claude-opus-5 · Claude subscription   ·   mode  default
+
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+
+❯ /model
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Select model
+ Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify
+ with --model.
+
+ ❯ 1. Default (recommended) ✔   Use the default model (currently Opus)
+   2. Sonnet                   Sonnet 5 · Efficient for routine tasks
+   3. Opus                     Opus 5 · Best for everyday, complex tasks
+   4. Haiku                    Haiku 4.5 · Fastest for quick answers
+
+ ◉ xHigh effort (default) ←/→ to adjust
+
+ enter to set as default · s to use this session only · esc to cancel
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

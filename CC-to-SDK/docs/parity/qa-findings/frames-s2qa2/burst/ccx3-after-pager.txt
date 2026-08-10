@@ -1,0 +1,40 @@
+  cwd    /private/tmp/s2qa2-root/proj-ccx3
+  model  claude-opus-5 · Claude subscription   ·   mode  default
+
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ Reply with exactly: BURSTSEED
+⏺ BURSTSEED
+✻ Churned for 3s
+                                                                                                      ◉ xhigh · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                          ◉ xhigh · /effort
+──────────────────────────────────────────────────────────────────────────────────────────
+                                                                        ◉ xhigh · /effort
+──────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

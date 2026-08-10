@@ -1,0 +1,24 @@
+✻ Worked for 6s
+❯ List the numbers 1 to 120, one per line, each formatted as "line N". Output no
+thing else.
+⏺ line 1
+  line 2
+  line
+✶ Unfurling… (2s · ↓ 2 tokens)
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt
+
+
+
+
+
+
+
+
+
+
+
+
+

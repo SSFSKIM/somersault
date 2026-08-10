@@ -1,0 +1,40 @@
+
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
