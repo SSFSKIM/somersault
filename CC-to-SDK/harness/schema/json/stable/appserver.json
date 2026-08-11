@@ -58,9 +58,6 @@
           ]
         }
       },
-      "required": [
-        "unattended"
-      ],
       "additionalProperties": false
     },
     "thread/resume": {
@@ -87,8 +84,7 @@
         }
       },
       "required": [
-        "sessionId",
-        "unattended"
+        "sessionId"
       ],
       "additionalProperties": false
     },
@@ -653,8 +649,7 @@
         }
       },
       "required": [
-        "threadId",
-        "unattended"
+        "threadId"
       ],
       "additionalProperties": false
     },

@@ -288,7 +288,7 @@ calls the SDK's own `Query.close()`.
 Three methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
 no walker can ever produce a row for them: `initialize` is special-cased in `dispatch()` ahead of the
 handlers table, `server/status` reports this process, and `thread/start` *creates* the thread the other
-three tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). They were
+four tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). They were
 therefore invisible to a scorecard whose rows all came from the walked-token direction, and the M2b
 Task 6 gate (every registered method must be named by some row — the "zero schema-less methods"
 acceptance) is what surfaced the omission. Origin scope is a question about an *existing* thread and

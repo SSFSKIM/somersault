@@ -22,10 +22,35 @@ export const DRAFT_7 = "http://json-schema.org/draft-07/schema#";
 export interface SchemaArtifact { $schema: string; methods: Record<string, unknown> }
 export type SchemaTier = "stable" | "experimental";
 
+/** A DEFAULTED param is optional to the client, required only to the server. zod converts in its `io:
+ *  "output"` view, which describes the object AFTER parsing — so `unattended: z.enum([…]).default("park")`
+ *  lands in `required`, and a draft-7 validator run without `useDefaults` (ajv's default, and the only
+ *  honest setting for validating a REQUEST) rejects `thread/start {config:{…}}` — a call the server itself
+ *  accepts. Flipping to `io:"input"` is the wrong repair: measured, it drops `additionalProperties:false`,
+ *  trading an over-strict artifact for an under-strict one. Instead keep the output view and relax exactly
+ *  the one keyword that is wrong — a key whose own emitted schema carries a `default` cannot be required.
+ *  Recursive, since a nested object (initialize's `clientInfo`) has the same problem for the same reason. */
+function relaxDefaultedRequired(node: unknown): void {
+  if (Array.isArray(node)) { for (const child of node) relaxDefaultedRequired(child); return; }
+  if (!node || typeof node !== "object") return;
+  const schema = node as { properties?: Record<string, unknown>; required?: unknown };
+  if (schema.properties && Array.isArray(schema.required)) {
+    const kept = (schema.required as string[]).filter((key) => {
+      const property = schema.properties![key];
+      return !(property && typeof property === "object" && Object.hasOwn(property, "default"));
+    });
+    // Dropped entirely when nothing survives, matching what zod emits for an all-optional object — an
+    // artifact should not carry `"required": []` in one place and no key at all in another.
+    if (kept.length) schema.required = kept; else delete schema.required;
+  }
+  for (const child of Object.values(node as Record<string, unknown>)) relaxDefaultedRequired(child);
+}
+
 /** The per-method `$schema` zod emits is DROPPED: the document declares the dialect once at its root, and
  *  draft-7 says the keyword should not appear in subschemas. */
 function methodJsonSchema(params: z.ZodType): unknown {
   const { $schema: _dialect, ...rest } = z.toJSONSchema(params, { target: "draft-7" }) as Record<string, unknown>;
+  relaxDefaultedRequired(rest);
   return rest;
 }
 

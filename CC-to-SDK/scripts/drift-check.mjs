@@ -148,7 +148,11 @@ const statusRows = [...readFileSync(scorecardPath, "utf8")
 if (!statusRows.length) { console.error(`PARSE FAILURE: appserver staleness pass parsed 0 scorecard rows — fix the regexes in this script before trusting any verdict.`); process.exit(2); }
 for (const [, token, source, methodCol, , status] of statusRows) {
   const name = (methodCol.match(/`([^`]+)`/) || [])[1];
-  if (!name || !wireNameRe.test(name)) continue; // N/A rows and non-wire-shaped columns have no status to verify
+  // N/A rows and non-wire-shaped columns have no status to verify. `wireNameRe` OR a registry hit: the one
+  // shipped method with no slash in it (`initialize`) is a real status to check, and admitting it by exact
+  // registry membership rather than by loosening the shape keeps prose noise ("N/A — internal plumbing")
+  // out of the pass.
+  if (!name || !(wireNameRe.test(name) || liveMethods.has(name))) continue;
   if (/^shipped/.test(status) && !liveMethods.has(name) && !liveWireStrings.has(name)) {
     appserverStale.push(`${source}::${token} → ${name} claims "${status}" but the name exists nowhere under appserver/`);
   } else if (/^(planned|probe-gated)/.test(status) && liveMethods.has(name)) {
@@ -161,10 +165,23 @@ for (const [, token, source, methodCol, , status] of statusRows) {
 // method that is registered, dispatchable and generated into the published JSON-Schema artifact while the
 // scorecard never mentions it — which is precisely the drift a server-origin method makes (nothing walks
 // `thread/start`; no seam produces it). So the third check starts from the CODE: every `methodSchemas` key
-// must be named, in backticks, by SOME row's protocol-method column. All backticks in the column count,
-// not just the first — a row legitimately names more than one method (`thread/status/changed` (+
-// `thread/list` status field)), and reading only the first would demand duplicate rows to satisfy the gate.
-const rowNamedMethods = new Set(statusRows.flatMap((r) => [...r[3].matchAll(/`([^`]+)`/g)].map((m) => m[1])));
+// must be named, in backticks, by SOME row's protocol-method column.
+//
+// What counts as "named" is narrow on purpose. Every backtick in the column would ALSO count an incidental
+// mention: `thread/capabilities/read` (bridge `initialize` returns `capabilities()`) is a row about
+// capabilities that happens to quote another method's name in its prose, and letting it satisfy the gate
+// for `initialize` is a green light bought with a parenthetical. So: the names BEFORE the first `(` are the
+// mapping, and a parenthetical counts only when it OPENS with `+` — the scorecard's own notation for "this
+// row maps these too" (`thread/status/changed` (+ `thread/list` status field)). Everything else inside
+// parentheses is commentary and names nothing.
+function rowMethodNames(methodCol) {
+  const paren = methodCol.indexOf("(");
+  const head = paren === -1 ? methodCol : methodCol.slice(0, paren);
+  const names = [...head.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  for (const [, continuation] of methodCol.matchAll(/\(\s*\+([^)]*)\)/g)) names.push(...[...continuation.matchAll(/`([^`]+)`/g)].map((m) => m[1]));
+  return names;
+}
+const rowNamedMethods = new Set(statusRows.flatMap((r) => rowMethodNames(r[3])));
 const appserverUnrowed = [...liveMethods].filter((m) => !rowNamedMethods.has(m));
 
 const report = {
