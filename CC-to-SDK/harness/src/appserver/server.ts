@@ -19,6 +19,7 @@ import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
 import { broadcastToWatchers, broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { rewindAnchors, rewindDryRun, threadRewind } from "./rewind.js";
+import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverrideSet } from "./mcp.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
@@ -237,6 +238,11 @@ export class AppServer {
     "thread/rewind/anchors": rewindAnchors,
     "thread/rewind/dryRun": rewindDryRun,
     "thread/rewind": threadRewind,
+    "mcpServer/status/list": mcpStatusList,
+    "mcpServer/reconnect": mcpReconnect,
+    "mcpServer/toggle": mcpToggle,
+    "mcpServer/set": mcpSet,
+    "mcpServer/permissionModeOverride/set": mcpPermissionModeOverrideSet,
   };
 
   private readonly token: string;

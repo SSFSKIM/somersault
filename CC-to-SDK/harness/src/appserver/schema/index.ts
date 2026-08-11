@@ -7,6 +7,7 @@ import { turnStartParams, turnInterruptParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.js";
+import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./mcp.js";
 
 export interface MethodSchema { params: z.ZodType }
 export const methodSchemas: Record<string, MethodSchema> = {
@@ -41,4 +42,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/rewind/anchors": { params: rewindAnchorsParams },
   "thread/rewind/dryRun": { params: rewindDryRunParams },
   "thread/rewind": { params: rewindParams },
+  "mcpServer/status/list": { params: mcpStatusParams },
+  "mcpServer/reconnect": { params: mcpNameParams },
+  "mcpServer/toggle": { params: mcpToggleParams },
+  "mcpServer/set": { params: mcpSetParams },
+  "mcpServer/permissionModeOverride/set": { params: mcpOverrideParams },
 };

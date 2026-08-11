@@ -118,9 +118,9 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `compact` | host/ops.ts | `thread/compact/start` | both | shipped(M2a) — compact-as-turn |
 | `usage` | host/ops.ts | `thread/usage/read` | both | shipped(M2a) |
 | `context_usage` | host/ops.ts | `thread/contextUsage/read` | both | shipped(M2a) |
-| `mcp_status` | host/ops.ts | `mcpServer/status/list` | both | planned(M2b) |
-| `mcp_reconnect` | host/ops.ts | `mcpServer/reconnect` | both | planned(M2b) |
-| `mcp_toggle` | host/ops.ts | `mcpServer/toggle` | both | planned(M2b) |
+| `mcp_status` | host/ops.ts | `mcpServer/status/list` | both | shipped(M2b) |
+| `mcp_reconnect` | host/ops.ts | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
+| `mcp_toggle` | host/ops.ts | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `resume` | host/ops.ts | `thread/resume` | both | shipped(M1) — via `resumeSession` (lib), see gap 2 |
 | `tasks` | host/ops.ts | `task/list` | both | planned(M2b) — `task/changed` notification ships (gap 5) |
 | `background` | host/ops.ts | `turn/background` | both | planned(M2b) |
@@ -175,7 +175,7 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 |---|---|---|---|---|
 | `interrupt` | sdk.d.ts (Query) | `turn/interrupt` | both | shipped(M1) — `cancelQueued` inert (gap 1) |
 | `setPermissionMode` | sdk.d.ts (Query) | `thread/permissionMode/set` | both | shipped(M2a) |
-| `setMcpPermissionModeOverride` | sdk.d.ts (Query) | `mcpServer/permissionModeOverride/set` | inProcess | planned(M2b) |
+| `setMcpPermissionModeOverride` | sdk.d.ts (Query) | `mcpServer/permissionModeOverride/set` | inProcess | shipped(M2b) — rules-layer only (probe 49) |
 | `setModel` | sdk.d.ts (Query) | `thread/model/set` | both | shipped(M2a) |
 | `setMaxThinkingTokens` | sdk.d.ts (Query) | `thread/thinking/set` | both | shipped(M2a) |
 | `applyFlagSettings` | sdk.d.ts (Query) | `thread/settings/apply` | inProcess | shipped(M2a) |
@@ -184,7 +184,7 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `supportedCommands` | sdk.d.ts (Query) | `thread/capabilities/read` | both | shipped(M2a) |
 | `supportedModels` | sdk.d.ts (Query) | `thread/capabilities/read` | both | shipped(M2a) |
 | `supportedAgents` | sdk.d.ts (Query) | `thread/capabilities/read` | both | shipped(M2a) |
-| `mcpServerStatus` | sdk.d.ts (Query) | `mcpServer/status/list` | both | planned(M2b) |
+| `mcpServerStatus` | sdk.d.ts (Query) | `mcpServer/status/list` | both | shipped(M2b) |
 | `getContextUsage` | sdk.d.ts (Query) | `thread/contextUsage/read` | both | shipped(M2a) |
 | `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET` | sdk.d.ts (Query) | `thread/usage/read` | both | shipped(M2a) |
 | `readFile` | sdk.d.ts (Query) | `fs/read` *(X, M3)* | inProcess | probe-gated — unprobed |
@@ -193,9 +193,9 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `accountInfo` | sdk.d.ts (Query) | `account/read` | inProcess | shipped(M2a) — see gap 3 |
 | `rewindFiles` | sdk.d.ts (Query) | `thread/rewind` (+`/anchors`, `/dryRun`) | both | shipped(M2b) |
 | `seedReadState` | sdk.d.ts (Query) | N/A — internal plumbing | N/A | N/A |
-| `reconnectMcpServer` | sdk.d.ts (Query) | `mcpServer/reconnect` | both | planned(M2b) |
-| `toggleMcpServer` | sdk.d.ts (Query) | `mcpServer/toggle` | both | planned(M2b) |
-| `setMcpServers` | sdk.d.ts (Query) | `mcpServer/set` | inProcess | planned(M2b) |
+| `reconnectMcpServer` | sdk.d.ts (Query) | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
+| `toggleMcpServer` | sdk.d.ts (Query) | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
+| `setMcpServers` | sdk.d.ts (Query) | `mcpServer/set` | inProcess | shipped(M2b) |
 | `streamInput` | sdk.d.ts (Query) | `turn/steer` *(X)* | inProcess | probe-gated — unprobed (D5) |
 | `stopTask` | sdk.d.ts (Query) | `task/stop` | both | planned(M2b) |
 | `backgroundTasks` | sdk.d.ts (Query) | `turn/background` | both | planned(M2b) |

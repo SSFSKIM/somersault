@@ -61,6 +61,16 @@ export interface EngineSession {
    *  can happen, the bare call performs it — and it needs the LIVE transport, so it is always driven on
    *  the engine that is about to be replaced, never on the one that replaces it (probe 68d). */
   rewind?(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown>;
+  /** Optional (the real lib Session has it — src/session/session.ts:222-239): M2b's MCP quintet. Live
+   *  runtime MCP topology (W3.5; probes 52/52b) — `reconnectMcpServer`/`toggleMcpServer` THROW for
+   *  SDK-type servers ("SDK servers should be handled in print.ts", session.ts's own doc comment), which
+   *  mcp.ts maps to a -32602-class method error carrying the SDK's message. `setMcpPermissionModeOverride`
+   *  is RULES-LAYER only (probe 49) — it does not by itself silence a canUseTool broker. */
+  mcpServerStatus?(): Promise<unknown[]>;
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
+  setMcpServers?(servers: Record<string, unknown>): Promise<{ added: string[]; removed: string[]; errors: Record<string, string> }>;
+  setMcpPermissionModeOverride?(serverName: string, mode: string | null): Promise<unknown>;
   /** Optional (the real lib Session has it): true once the read loop has ended — the engine is gone.
    *  The ONLY dead-engine signal handlers may use (spec Wave 0: no message-matching, ever). */
   isEnded?(): boolean;
