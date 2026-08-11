@@ -6,12 +6,12 @@ const msgs = [
   // uuid mirrors a real persisted transcript row — rowKind only classifies a user row as "prompt" when
   // it carries one (rows.ts:28; a uuid-less user row is deliberately "other" per test/unit/rows.test.ts).
   { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "fix the bug" }] } },
-  { type: "assistant", message: { content: [
+  { type: "assistant", parent_tool_use_id: null, message: { content: [
     { type: "text", text: "Looking now." },
     { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/a.ts" } },
   ] } },
   { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "…" }] } },
-  { type: "assistant", message: { content: [
+  { type: "assistant", parent_tool_use_id: null, message: { content: [
     { type: "tool_use", id: "t2", name: "Edit", input: { file_path: "/repo/b.ts", old_string: "x", new_string: "y" } },
     { type: "text", text: "Done." },
   ] } },
@@ -46,9 +46,9 @@ describe("filesInContext", () => {
     // first-touch order here too, so it can't discriminate); last-touch instead puts z LAST because it
     // was re-touched after a.
     const reTouchZ = [
-      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/z.ts" } }] } },
-      { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/repo/a.ts" } }] } },
-      { type: "assistant", message: { content: [{ type: "tool_use", id: "t3", name: "Edit", input: { file_path: "/repo/z.ts", old_string: "x", new_string: "y" } }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/z.ts" } }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/repo/a.ts" } }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t3", name: "Edit", input: { file_path: "/repo/z.ts", old_string: "x", new_string: "y" } }] } },
     ];
     expect(filesInContext(reTouchZ as any[])).toEqual(["/repo/a.ts", "/repo/z.ts"]);
 
@@ -56,9 +56,9 @@ describe("filesInContext", () => {
     // would also be [a2, z2]. Last-touch is the ONLY ordering that puts z2 before a2 (a2 was re-touched
     // last), so this discriminates last-touch from both other orderings at once.
     const reTouchA2 = [
-      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/a2.ts" } }] } },
-      { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/repo/z2.ts" } }] } },
-      { type: "assistant", message: { content: [{ type: "tool_use", id: "t3", name: "Edit", input: { file_path: "/repo/a2.ts", old_string: "x", new_string: "y" } }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/a2.ts" } }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/repo/z2.ts" } }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t3", name: "Edit", input: { file_path: "/repo/a2.ts", old_string: "x", new_string: "y" } }] } },
     ];
     expect(filesInContext(reTouchA2 as any[])).toEqual(["/repo/z2.ts", "/repo/a2.ts"]);
   });

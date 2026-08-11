@@ -323,7 +323,7 @@ const settingsRemote = () => Object.assign(fakeRemote(), {
 });
 function seedTodo(fake: { pushEvent: (ev: HostEvent) => void }) {
   const msg = (data: unknown) => fake.pushEvent({ kind: "message", data } as HostEvent);
-  msg({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu-seed", name: "TaskCreate", input: { subject: "a seeded todo" } }] } });
+  msg({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tu-seed", name: "TaskCreate", input: { subject: "a seeded todo" } }] } });
   msg({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-seed", content: "Task #1 created successfully: a seeded todo" }] } });
 }
 /** Seed the todo, watch the row appear (ChatApp opens the panel by default), then close the panel with a Ctrl-T

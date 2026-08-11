@@ -178,11 +178,11 @@ describe("F1 shared tool renderer", () => {
 // both detail projections and only `projectCompact`/`projectPending` fold.
 const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
 const call = (id: string, name: string, input: unknown, messageId = `m-${id}`) =>
-  ({ type: "assistant", message: { id: messageId, content: [{ type: "tool_use", id, name, input }] } }) as Record<string, unknown>;
+  ({ type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "tool_use", id, name, input }] } }) as Record<string, unknown>;
 const result = (id: string, content = "body", isError = false) =>
   ({ type: "user", uuid: `u-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] } }) as Record<string, unknown>;
 const prose = (text: string, id = `t-${text.slice(0, 6)}`) =>
-  ({ type: "assistant", message: { id, content: [{ type: "text", text }] } }) as Record<string, unknown>;
+  ({ type: "assistant", parent_tool_use_id: null, message: { id, content: [{ type: "text", text }] } }) as Record<string, unknown>;
 const built = (...messages: Record<string, unknown>[]) => { const doc = new TranscriptDocument(); for (const m of messages) doc.appendSdk("host", m); return doc; };
 const lineTexts = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: RenderLine }).line.text);
 const groupRows = (items: readonly RenderItem[]) => items.filter((i) => i.id.startsWith("group:"));
@@ -528,7 +528,7 @@ describe("F3 thought clause on the collapsed group row", () => {
   /** The ubiquitous live shape: ONE assistant message whose first block is the thinking that preceded the
    *  call it carries (upstream `Ae_` reads exactly that first block). */
   const thinkingCall = (id: string, input: unknown, messageId: string, thinking: string) =>
-    ({ type: "assistant", message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input }] } }) as Record<string, unknown>;
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input }] } }) as Record<string, unknown>;
   const thoughtMs = (entries: Record<string, number>) => new Map(Object.entries(entries));
 
   it("renders `Thought for Ns` FIRST on the group that follows the thinking message", () => {
@@ -554,7 +554,7 @@ describe("F3 thought clause on the collapsed group row", () => {
   });
 
   it("requires the FIRST content block to be non-blank thinking (upstream `Ae_`)", () => {
-    const trailing = { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } }, { type: "thinking", thinking: "after" }] } } as Record<string, unknown>;
+    const trailing = { type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: [{ type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } }, { type: "thinking", thinking: "after" }] } } as Record<string, unknown>;
     const blank = thinkingCall("read-2", { file_path: "/work/b.ts" }, "m2", "   \n ");
     const doc = built(trailing, result("read-1"), blank, result("read-2"), prose("done"));
     const rows = groupRows(projectCompact(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": 3200, "message:m2": 4000 }) }));
@@ -565,7 +565,7 @@ describe("F3 thought clause on the collapsed group row", () => {
     // LiveTurn already sums every thinking block of that id — so two thinking frames of one message must
     // not book the same total twice.
     const thinkingFrame = (uuid: string, thinking: string) =>
-      ({ type: "assistant", uuid, message: { id: "m1", content: [{ type: "thinking", thinking, signature: "sig" }] } }) as Record<string, unknown>;
+      ({ type: "assistant", parent_tool_use_id: null, uuid, message: { id: "m1", content: [{ type: "thinking", thinking, signature: "sig" }] } }) as Record<string, unknown>;
     const doc = built(thinkingFrame("f1", "first"), thinkingFrame("f2", "second"),
       call("read-1", "Read", { file_path: "/work/a.ts" }, "m1"), result("read-1"), prose("done"));
     const rows = groupRows(projectCompact(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": 3200 }) }));
@@ -585,7 +585,7 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
   /** The live shape again (see the Task 3 block): ONE assistant message whose first block is the thinking
    *  that preceded the read it carries — the only route by which a group acquires `latestThinkingSummary`. */
   const thinkingCallRead = (id: string, file: string, messageId: string, thinking: string) =>
-    ({ type: "assistant", message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input: { file_path: file } }] } }) as Record<string, unknown>;
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input: { file_path: file } }] } }) as Record<string, unknown>;
 
   it("never lets the live row's read count drop when R1.5's quirk recounts the run", () => {
     const state = new FoldPendingState({ now: () => 0 });
@@ -679,7 +679,7 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
 // block (`!i&&h dimColor ["  ",Ug]`), not a segment on the row. Same for the two launch rows.
 describe("F3 Task 7: Agent progress and the Done row", () => {
   const agent = (id = "agent-1", description = "review the diff") =>
-    ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Agent", input: { description, prompt: "do it" } }] } }) as Record<string, unknown>;
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Agent", input: { description, prompt: "do it" } }] } }) as Record<string, unknown>;
   const childCall = (id: string, file: string, parent = "agent-1") =>
     ({ type: "assistant", parent_tool_use_id: parent, message: { id: `mc-${id}`, content: [{ type: "tool_use", id, name: "Read", input: { file_path: file } }] } }) as Record<string, unknown>;
   const childResult = (id: string, parent = "agent-1") =>
@@ -780,7 +780,7 @@ describe("F3 Task 7: Agent progress and the Done row", () => {
 // in the pending region and its members are inert to Static, exactly like the trailing fold run.
 describe("F3 Task 8: same-message agent batches", () => {
   const agents = (specs: readonly { id: string; description?: string; input?: Record<string, unknown> }[]) =>
-    ({ type: "assistant", message: { id: `m-${specs.map((s) => s.id).join("-")}`, content: specs.map((s) => ({ type: "tool_use", id: s.id, name: "Agent", input: { description: s.description ?? `do ${s.id}`, prompt: "p", ...s.input } })) } }) as Record<string, unknown>;
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: `m-${specs.map((s) => s.id).join("-")}`, content: specs.map((s) => ({ type: "tool_use", id: s.id, name: "Agent", input: { description: s.description ?? `do ${s.id}`, prompt: "p", ...s.input } })) } }) as Record<string, unknown>;
   const settle = (id: string, sidecar?: unknown, isError = false) =>
     ({ type: "user", uuid: `ur-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content: "the report", is_error: isError }] }, ...(sidecar === undefined ? {} : { tool_use_result: sidecar }) }) as Record<string, unknown>;
   const childOf = (parent: string, id: string, file: string) =>
@@ -808,8 +808,8 @@ describe("F3 Task 8: same-message agent batches", () => {
     // The live-wire shape P82/P83 make normal: one frame per content block, so two same-message Agent
     // dispatches land as two frames with distinct uuids sharing one `message.id`. Retention keeps both
     // (identity prefers uuid); the batch key must be the API id or the unit never assembles live.
-    const frameA = { type: "assistant", uuid: "fa-1", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
-    const frameB = { type: "assistant", uuid: "fb-2", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-2", name: "Agent", input: { description: "write the tests", prompt: "p" } }] } } as Record<string, unknown>;
+    const frameA = { type: "assistant", parent_tool_use_id: null, uuid: "fa-1", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
+    const frameB = { type: "assistant", parent_tool_use_id: null, uuid: "fb-2", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-2", name: "Agent", input: { description: "write the tests", prompt: "p" } }] } } as Record<string, unknown>;
     const items = projectPending(built(frameA, frameB), context);
     expect(lineTexts(items)[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");
     expect(items[0]!.id).toBe("agents:ag-1,ag-2:pending-header");
@@ -884,7 +884,7 @@ describe("F3 Task 8: same-message agent batches", () => {
   });
 
   it("leaves a SINGLE Agent in a message on Task 7's standalone path, untouched", () => {
-    const one = { type: "assistant", message: { id: "m-solo", content: [{ type: "tool_use", id: "solo", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
+    const one = { type: "assistant", parent_tool_use_id: null, message: { id: "m-solo", content: [{ type: "tool_use", id: "solo", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
     const doc = built(one, settle("solo", COMPLETED), prose("summary"));
     const items = projectCompact(doc, context);
     expect(items.some((i) => i.id.startsWith("agents:"))).toBe(false);
@@ -893,7 +893,7 @@ describe("F3 Task 8: same-message agent batches", () => {
   });
 
   it("never batches an Agent with a differently-named tool that shared its assistant message", () => {
-    const mixedMessage = { type: "assistant", message: { id: "m-mixed", content: [
+    const mixedMessage = { type: "assistant", parent_tool_use_id: null, message: { id: "m-mixed", content: [
       { type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } },
       { type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } },
     ] } } as Record<string, unknown>;
@@ -907,14 +907,14 @@ describe("F3 Task 8: same-message agent batches", () => {
     // The membership test is `isAgentTool`, not "≥2 of one name" — upstream groups only tools declaring
     // `renderGroupedToolUse`. Two same-message Reads must still reach Mechanism B's fold row, and two
     // same-message Bash calls must still be two ordinary standalone rows.
-    const reads = { type: "assistant", message: { id: "m-reads", content: [
+    const reads = { type: "assistant", parent_tool_use_id: null, message: { id: "m-reads", content: [
       { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } },
       { type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/b.ts" } },
     ] } } as Record<string, unknown>;
     const doc = built(reads, result("read-1"), result("read-2"), prose("done"));
     expect(doc.toolEvents().every((e) => e.callSequence === 1)).toBe(true);        // genuinely one message
     expect(lineTexts(groupRows(projectCompact(doc, context)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
-    const bashes = { type: "assistant", message: { id: "m-bash", content: [
+    const bashes = { type: "assistant", parent_tool_use_id: null, message: { id: "m-bash", content: [
       { type: "tool_use", id: "b-1", name: "Bash", input: { command: "npm test" } },
       { type: "tool_use", id: "b-2", name: "Bash", input: { command: "npm run build" } },
     ] } } as Record<string, unknown>;
@@ -986,7 +986,7 @@ describe("F3 Task 9 — the Bash background hint (LT20)", () => {
 
   it("reaches the screen through projectPending, under the open row it belongs to", () => {
     const doc = new TranscriptDocument();
-    doc.appendSdk("host", { type: "assistant", uuid: "a1", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } }] } });
+    doc.appendSdk("host", { type: "assistant", parent_tool_use_id: null, uuid: "a1", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } }] } });
     const items = projectPending(doc, { cwd: "/work", home: "/home/me", platform: "darwin", columns: 100, now: 0, bashHint: hint, agentMeta: started("bash-1", "local_bash") });
     expect(items.map((item) => (item.kind === "line" ? item.line.text : ""))).toEqual(["⏺ Bash(npm test)", "     (ctrl+b to run in background)"]);
   });
@@ -994,7 +994,7 @@ describe("F3 Task 9 — the Bash background hint (LT20)", () => {
 
 describe("F3 Task 9 — the interrupt sentinel user frame (LT14)", () => {
   const readPair = (n: number) => [
-    { type: "assistant", uuid: `a${n}`, message: { id: `m${n}`, content: [{ type: "tool_use", id: `r${n}`, name: "Read", input: { file_path: `/work/f${n}.ts` } }] } },
+    { type: "assistant", parent_tool_use_id: null, uuid: `a${n}`, message: { id: `m${n}`, content: [{ type: "tool_use", id: `r${n}`, name: "Read", input: { file_path: `/work/f${n}.ts` } }] } },
     { type: "user", uuid: `u${n}`, message: { content: [{ type: "tool_result", tool_use_id: `r${n}`, content: "x" }] } },
   ];
   // P80 § A frame 2, verbatim in shape: no subtype, no marker field — the bracketed text is the ONLY signal.
@@ -1014,7 +1014,7 @@ describe("F3 Task 9 — the interrupt sentinel user frame (LT14)", () => {
   // exactly what keeps the count at one — so this pins the pair, not either half alone.
   it("paints the Interrupted row exactly once for a cancelled tool call plus its suppressed sentinel frame", () => {
     const doc = new TranscriptDocument();
-    doc.appendSdk("host", { type: "assistant", uuid: "ac", message: { id: "mc", content: [{ type: "tool_use", id: "bc", name: "Bash", input: { command: "sleep 90" } }] } });
+    doc.appendSdk("host", { type: "assistant", parent_tool_use_id: null, uuid: "ac", message: { id: "mc", content: [{ type: "tool_use", id: "bc", name: "Bash", input: { command: "sleep 90" } }] } });
     doc.appendSdk("host", { type: "user", uuid: "uc", message: { content: [{ type: "tool_result", tool_use_id: "bc", content: "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", is_error: true }] } });
     doc.appendSdk("host", SENTINEL);
     const text = projectCompact(doc, context).flatMap((item) => (item.kind === "gutter-block" ? item.body : [item.line])).map((line) => line.text).join("\n");
@@ -1025,7 +1025,7 @@ describe("F3 Task 9 — the interrupt sentinel user frame (LT14)", () => {
   it("still BREAKS the fold run, so a read run either side of it renders as two group rows", () => {
     const doc = new TranscriptDocument();
     for (const frame of [...readPair(1), ...readPair(2), SENTINEL, ...readPair(3), ...readPair(4)]) doc.appendSdk("host", frame);
-    doc.appendSdk("host", { type: "assistant", uuid: "a9", message: { id: "m9", content: [{ type: "text", text: "done" }] } });   // closes the trailing run
+    doc.appendSdk("host", { type: "assistant", parent_tool_use_id: null, uuid: "a9", message: { id: "m9", content: [{ type: "text", text: "done" }] } });   // closes the trailing run
     const groups = projectCompact(doc, context).filter((item) => item.id.startsWith("group:"));
     expect(groups).toHaveLength(2);
     expect(groups.map((item) => (item.kind === "line" ? item.line.text : ""))).toEqual(["  Read 2 files (ctrl+o to expand)", "  Read 2 files (ctrl+o to expand)"]);

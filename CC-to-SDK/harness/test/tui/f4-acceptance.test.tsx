@@ -68,7 +68,7 @@ const COMPOSITE = [
 ].join("\n");
 
 const assistantReply = (text: string, platform: NodeJS.Platform = "darwin"): RenderLine[] =>
-  renderMessage({ type: "assistant", message: { content: [{ type: "text", text }] } } as Record<string, unknown>, { width: 80, platform });
+  renderMessage({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } } as Record<string, unknown>, { width: 80, platform });
 
 /** Upstream's assistant row is a `minWidth: 2` gutter box beside a sibling column (`VAr` L422851), so every
  *  line after the first carries a two-column inset. Stripping it here keeps each per-feature expectation
@@ -330,9 +330,9 @@ const projectionContext = { cwd: "/work", home: "/home/me", platform: "linux" as
 const THINKING = "weighing **both** options";
 const thinkingDoc = (): TranscriptDocument => {
   const doc = new TranscriptDocument();
-  doc.appendSdk("host", { type: "assistant", message: { id: "m1", content: [{ type: "thinking", thinking: THINKING, signature: "sig" }, { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/work/a.ts" } }] } } as Record<string, unknown>);
+  doc.appendSdk("host", { type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: [{ type: "thinking", thinking: THINKING, signature: "sig" }, { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/work/a.ts" } }] } } as Record<string, unknown>);
   doc.appendSdk("host", { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } } as Record<string, unknown>);
-  doc.appendSdk("host", { type: "assistant", message: { id: "m2", content: [{ type: "text", text: "done" }] } } as Record<string, unknown>);
+  doc.appendSdk("host", { type: "assistant", parent_tool_use_id: null, message: { id: "m2", content: [{ type: "text", text: "done" }] } } as Record<string, unknown>);
   return doc;
 };
 const THOUGHT_MS = new Map([["message:m1", 12_000]]);

@@ -110,7 +110,7 @@ describe("F1 capture fixture contract", () => {
         deps={{ now: () => 0, columns: () => 100, home: "/home/me", platform: "linux", scheduleRepaint: () => () => {} }} />,
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
-    session.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "a-home", content: [{ type: "tool_use", id: "read-home", name: "Read", input: { file_path: "/home/me/notes.ts" } }] } } });
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a-home", content: [{ type: "tool_use", id: "read-home", name: "Read", input: { file_path: "/home/me/notes.ts" } }] } } });
     const start = Date.now();
     while (!visible(lastFrame() ?? "").includes("~/notes.ts")) {
       if (Date.now() - start > 2000) throw new Error(`pinned projection never rendered: ${JSON.stringify(lastFrame())}`);

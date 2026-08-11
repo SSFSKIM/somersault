@@ -6,7 +6,7 @@ import { projectCompact } from "../../src/tui/toolRenderer.js";
 import { READ_CALL, READ_RESULT_WITH_SIDECAR } from "../fixtures/f1-tool-transcript.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 
-const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
+const asst = (content: unknown[]) => ({ type: "assistant", parent_tool_use_id: null, message: { content } });
 // F4 Task 8: the bullet is `Za` (per-platform) in the `text` token, not the accent — every call below names
 // its platform so the expectation does not depend on the machine the suite runs on. Full pins: identity.test.tsx.
 const LINUX = { platform: "linux" as NodeJS.Platform };
@@ -46,7 +46,7 @@ describe("one tool grammar across live and replay", () => {
     const projectionOptions = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
     // The closing prose is load-bearing since Task 5c: a fold run nothing has closed yet is still growable, so
     // the compact projection deliberately withholds its summary row (Static is append-only).
-    const closed = { type: "assistant", message: { id: "assistant-done", content: [{ type: "text", text: "done" }] } };
+    const closed = { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-done", content: [{ type: "text", text: "done" }] } };
     const host = new TranscriptDocument();
     host.appendSdk("host", READ_CALL); host.appendSdk("host", READ_RESULT_WITH_SIDECAR); host.appendSdk("host", closed);
     const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR, closed], { id: "session-1" });
@@ -75,7 +75,7 @@ describe("trunc", () => { it("truncates with an ellipsis", () => { expect(trunc(
 
 describe("renderMessage (markdown wiring)", () => {
   it("renders assistant text as markdown (whole-line bold) and drops the sibling thinking block", () => {
-    const lines = renderMessage({ type: "assistant", message: { content: [
+    const lines = renderMessage({ type: "assistant", parent_tool_use_id: null, message: { content: [
       { type: "text", text: "**hi**" },
       { type: "thinking", thinking: "**not parsed**" },
     ] } }, LINUX);

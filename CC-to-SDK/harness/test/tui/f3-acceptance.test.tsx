@@ -22,10 +22,10 @@ import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
 const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
 const call = (id: string, name: string, input: unknown) =>
-  ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] } }) as Record<string, unknown>;
+  ({ type: "assistant", parent_tool_use_id: null, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] } }) as Record<string, unknown>;
 const result = (id: string, content = "body") =>
   ({ type: "user", uuid: `u-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: false }] } }) as Record<string, unknown>;
-const prose = (text: string) => ({ type: "assistant", message: { id: `t-${text}`, content: [{ type: "text", text }] } }) as Record<string, unknown>;
+const prose = (text: string) => ({ type: "assistant", parent_tool_use_id: null, message: { id: `t-${text}`, content: [{ type: "text", text }] } }) as Record<string, unknown>;
 const built = (...messages: Record<string, unknown>[]) => { const doc = new TranscriptDocument(); for (const m of messages) doc.appendSdk("host", m); return doc; };
 const lineTexts = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: RenderLine }).line.text);
 

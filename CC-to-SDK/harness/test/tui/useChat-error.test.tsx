@@ -25,7 +25,7 @@ const itemLines = (item: RenderItem): string[] => (item.kind === "line" ? [item.
 const API_ERROR_TEXT = "Failed to authenticate. API Error: 401 probe 96 synthetic 401";
 // Probe 96's synthetic assistant frame, key-for-key (`model:"<synthetic>"`, `is_api_error_message:true`).
 const SYNTHETIC = {
-  type: "assistant", model: "<synthetic>", is_api_error_message: true, error: "authentication_failed", uuid: "a1",
+  type: "assistant", parent_tool_use_id: null, model: "<synthetic>", is_api_error_message: true, error: "authentication_failed", uuid: "a1",
   message: { role: "assistant", content: [{ type: "text", text: API_ERROR_TEXT }] },
 };
 

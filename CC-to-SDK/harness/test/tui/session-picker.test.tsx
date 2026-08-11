@@ -84,7 +84,7 @@ describe("sessionPickerModel — the pure half", () => {
     const msgs = [
       { type: "user", message: { content: "hello there\nmore" } },
       { type: "user", message: { content: [{ type: "tool_result", content: "x" }] } },
-      { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "hi" }] } },
       { type: "system", subtype: "init" },
     ];
     expect(previewLines(msgs)).toEqual([{ role: "user", text: "hello there" }, { role: "assistant", text: "hi" }]);
@@ -94,9 +94,9 @@ describe("sessionPickerModel — the pure half", () => {
 
 // ── Wave S Task 10 ─────────────────────────────────────────────────────────────────────────────────
 const userPrompt = (text: string) => ({ type: "user", message: { content: text } });
-const assistantText = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+const assistantText = (text: string) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } });
 const toolResultOnly = () => ({ type: "user", message: { content: [{ type: "tool_result", content: "x" }] } });
-const toolUseOnly = () => ({ type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } });
+const toolUseOnly = () => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } });
 // THE TWO SHAPES THE OLD AND NEW PREDICATES DISAGREE ON (t10 review, finding 2). Without these in the fixture
 // the "same predicate" pin is decorative: every other row shape is classified identically by the pane's old
 // private text-emptiness test and by upstream's `$$_`/`B$_`, so reverting `previewLines` stayed green.
@@ -155,8 +155,8 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
     expect(isPreviewMessage({ type: "user", message: { content: "   " } })).toBe(false);
     expect(isPreviewMessage({ type: "user", message: { content: [{ type: "image" }] } })).toBe(true);
     expect(isPreviewMessage(toolUseOnly())).toBe(false);
-    expect(isPreviewMessage({ type: "assistant", message: { content: [{ type: "thinking", thinking: "hm" }] } })).toBe(false);
-    expect(isPreviewMessage({ type: "assistant", message: { content: [{ type: "text", text: "  " }] } })).toBe(false);
+    expect(isPreviewMessage({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "thinking", thinking: "hm" }] } })).toBe(false);
+    expect(isPreviewMessage({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "  " }] } })).toBe(false);
     expect(isPreviewMessage({ type: "system", subtype: "init" })).toBe(false);
     expect(isPreviewMessage({ type: "progress" })).toBe(false);
   });
@@ -275,7 +275,7 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     const r = mount({
       loadMessages: async (id) => { calls.push(id); return [
         { type: "user", message: { content: "what does this do?" } },
-        { type: "assistant", message: { content: [{ type: "text", text: "it resumes" }] } },
+        { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "it resumes" }] } },
       ]; },
     });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
@@ -399,8 +399,8 @@ describe("SessionPicker — Ctrl-R renames (L476568/L476609)", () => {
       loadMessages: async () => [
         { type: "user", message: { content: "what does this do?" } },
         { type: "user", message: { content: [{ type: "tool_result", content: "1000 lines" }] } },
-        { type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } },
-        { type: "assistant", message: { content: [{ type: "text", text: "it resumes" }] } },
+        { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } },
+        { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "it resumes" }] } },
       ],
     });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));

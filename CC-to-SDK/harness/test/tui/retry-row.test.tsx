@@ -138,7 +138,7 @@ describe("ChatApp: the row replaces the spinner", () => {
     try {
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
       await act(async () => {
-        fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "npm test" } }] } } });
+        fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "npm test" } }] } } });
       });
       await act(async () => { await vi.advanceTimersByTimeAsync(12_000); });   // `npm test` is simply running
       expect(line(lastFrame)).not.toContain("Waiting for API response");
@@ -183,7 +183,7 @@ describe("ChatApp: the row replaces the spinner", () => {
     try {
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
       await waitForFakeTimers(() => line(lastFrame).includes("Waiting for API response"), 15_000);
-      await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "recovered" }] } } }); });
+      await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "recovered" }] } } }); });
       await waitForFakeTimers(() => spinnerUp(line(lastFrame)));
       expect(line(lastFrame)).not.toContain("Waiting for API response");
     } finally { unmount(); }

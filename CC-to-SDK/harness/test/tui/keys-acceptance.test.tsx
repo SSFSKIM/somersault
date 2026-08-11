@@ -163,7 +163,7 @@ describe("F2 acceptance 2 — an open overlay owns the keyboard", () => {
     const h = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(h.lastFrame).includes("❯\u00a0"));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "transcript-anchor-line" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "transcript-anchor-line" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => frame(h.lastFrame).includes("transcript-anchor-line"));
     fake.pushEvent({ kind: "tasks_changed", tasks: [

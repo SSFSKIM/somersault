@@ -39,7 +39,7 @@ describe("useChat: system/api_retry frames drive a live retry status", () => {
     expect(frame(lastFrame)).toContain("[]");   // the whole transcript, still empty
 
     // Nothing announces "the retry succeeded" (probe 96) — the next non-retry frame is what tears it down.
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "recovered" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "recovered" }] } } });
     await waitFor(() => frame(lastFrame).includes("NORETRY"));
     expect(frame(lastFrame)).toContain("recovered");
 

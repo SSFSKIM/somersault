@@ -194,7 +194,7 @@ function Host({ fake, env, sink, sugg, enabled, mode }: { fake: FakeRemote; env:
 /** One whole turn on the wire, with one top-level assistant message in it. */
 async function runTurn(fake: FakeRemote, n: number, o: { error?: string; text?: string } = {}) {
   await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: n }); });
-  await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", uuid: `a${n}`, message: { id: `m${n}`, content: [{ type: "text", text: o.text ?? "ok" }] } } }); });
+  await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: `a${n}`, message: { id: `m${n}`, content: [{ type: "text", text: o.text ?? "ok" }] } } }); });
   await act(async () => { fake.pushEvent({ kind: "turn", phase: "end", seq: n, ...(o.error ? { error: o.error } : {}) }); });
   await tick();
 }

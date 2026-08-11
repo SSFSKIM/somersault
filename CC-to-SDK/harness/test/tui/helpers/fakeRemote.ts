@@ -74,7 +74,10 @@ export function fakeRemote(opts: FakeRemoteOpts = {}): FakeRemote {
     const mySeq = seq++;
     route({ kind: "turn", phase: "start", seq: mySeq });
     const messages = typeof opts.submitMessages === "function" ? opts.submitMessages(prompt)
-      : opts.submitMessages ?? [{ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }];
+      // `parent_tool_use_id: null` is the wire shape of a top-level frame (SDK type `string | null`), and it
+      // belongs in the DEFAULT so every test driven by this fake gets the real shape rather than an omission
+      // — an omitted field is what let a strict `=== undefined` nesting test pass the suite and fail live.
+      : opts.submitMessages ?? [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } }];
     for (const m of messages) { onMessage(m); route({ kind: "message", data: m }); }
     route({ kind: "turn", phase: "end", seq: mySeq });
     return { result: "done" };

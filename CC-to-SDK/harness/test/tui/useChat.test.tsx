@@ -63,7 +63,7 @@ describe("useChat: the host event stream is the single rendering source", () => 
     await new Promise((r) => setTimeout(r, 20));   // let mount effects subscribe
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     await waitFor(() => frame(lastFrame).includes("BUSY"));
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "hello from elsewhere" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "hello from elsewhere" }] } } });
     await waitFor(() => frame(lastFrame).includes("hello from elsewhere"));
     expect(frame(lastFrame)).toContain("BUSY");                  // still busy — the turn hasn't ended
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -78,8 +78,8 @@ describe("useChat: the host event stream is the single rendering source", () => 
       async submit(_prompt, onMessage) {
         capturedOnMessage = onMessage;
         fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-        onMessage({ type: "assistant", message: { content: [{ type: "text", text: "SHOULD-NOT-RENDER-VIA-CALLBACK" }] } });   // onMessage-only — NOT routed
-        fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "VIA-EVENTS" }] } } });  // the real path
+        onMessage({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "SHOULD-NOT-RENDER-VIA-CALLBACK" }] } });   // onMessage-only — NOT routed
+        fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "VIA-EVENTS" }] } } });  // the real path
         fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
         return { result: "done" };
       },
@@ -103,8 +103,8 @@ describe("useChat: the host event stream is the single rendering source", () => 
     await new Promise((r) => setTimeout(r, 20));
     // the exact replay shape a mid-turn joiner now gets (plan-review finding 2's client half)
     fake.pushEvent({ kind: "turn", phase: "start", seq: 7 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "first" }] } } });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "text", text: "second" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "first" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "second" }] } } });
     const entry: PendingEntry = { sessionId: "s", toolUseID: "t9", toolName: "Read", kind: "permission", input: { file_path: "x" }, createdAt: Date.now() };
     fake.pushEvent({ kind: "decision", entry });
     fake.pushEvent({ kind: "state", status: { state: "working", status: "busy" } });
@@ -119,7 +119,7 @@ describe("useChat: the host event stream is the single rendering source", () => 
     // Idle-attach shape: a COMPLETED record with no preceding start frame. F1 Task 4 retains it — a
     // completion landing in the disk-read/follow window is real history, and identity dedup (not a
     // no-live-turn guard) is what stops a redelivered copy showing twice — while busy stays false.
-    const late = { type: "assistant", message: { id: "late-1", content: [{ type: "text", text: "LATE-COMPLETION" }] } };
+    const late = { type: "assistant", parent_tool_use_id: null, message: { id: "late-1", content: [{ type: "text", text: "LATE-COMPLETION" }] } };
     fake.pushEvent({ kind: "message", data: late });
     await waitFor(() => frame(lastFrame).includes("LATE-COMPLETION"));
     expect(frame(lastFrame)).toContain("IDLE");
@@ -270,7 +270,7 @@ describe("useChat", () => {
       { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
       { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "PINE" } } },
       { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "CONE" } } },
-      { type: "assistant", message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "PINECONE" }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "PINECONE" }] } },
     ] });
     const { lastFrame } = render(<Host makeSession={() => fake} prompt="hi" />);
     await waitFor(() => frame(lastFrame).includes("PINECONE") && frame(lastFrame).includes("m:claude-sonnet-4-6"));
@@ -544,7 +544,7 @@ describe("useChat", () => {
       submits++;
       const seq = submits;
       fake.pushEvent({ kind: "turn", phase: "start", seq });
-      const m = { type: "assistant", message: { content: [{ type: "text", text: `reply${submits}` }] } };
+      const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `reply${submits}` }] } };
       onMessage(m); fake.pushEvent({ kind: "message", data: m });
       await new Promise<void>((res) => { release = res; });
       fake.pushEvent({ kind: "turn", phase: "end", seq });
@@ -570,7 +570,7 @@ describe("useChat", () => {
       submits++;
       const seq = submits;
       fake.pushEvent({ kind: "turn", phase: "start", seq });
-      const m = { type: "assistant", message: { content: [{ type: "text", text: "r" }] } };
+      const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "r" }] } };
       onMessage(m); fake.pushEvent({ kind: "message", data: m });
       await new Promise<void>((res) => { release = res; });
       fake.pushEvent({ kind: "turn", phase: "end", seq });
@@ -691,7 +691,7 @@ describe("useChat", () => {
         submits++;
         const seq = submits;
         fake.pushEvent({ kind: "turn", phase: "start", seq });
-        const m = { type: "assistant", message: { content: [{ type: "text", text: "x" }] } };
+        const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "x" }] } };
         onMessage(m); fake.pushEvent({ kind: "message", data: m });
         await new Promise<void>((res) => { release = res; });
         fake.pushEvent({ kind: "turn", phase: "end", seq });
@@ -796,7 +796,7 @@ describe("useChat", () => {
     const fake = fakeRemote({
       capabilities: () => ({ models: [], commands: [{ name: "review", description: "review code" }], mcpServers: [] }),
       submit: async (p, onMessage) => { submitted.push(p); return { result: "ok" }; },
-      submitMessages: [{ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }],
+      submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } }],
     });
     const api: { run?: (s: string) => void; state?: any } = {};
     // Read the catalog off c.state directly (not the wrapped <Text>): the comma-joined catalog string has
@@ -813,7 +813,7 @@ describe("useChat", () => {
 
   it("accumulates tasks from a turn's frames and exposes them in state", async () => {
     const fake = fakeRemote({ submitMessages: [
-      { type: "assistant", message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } },
       { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tc1", content: "Task #1 created successfully: build it" }] } },
     ] });
     let tasks: any[] = [];
@@ -984,9 +984,9 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
     fake.pushEvent({ kind: "message", data: READ_CALL });
     fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
     fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "t9", tool_use_id: "read-2", task_type: "local_bash", description: "a foreground shell" } });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", uuid: "user-result-b", message: { content: [{ type: "tool_result", tool_use_id: "read-2", content: "b" }] } } });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "assistant-3", content: [{ type: "text", text: "all done" }] } } });   // the breaker that publishes the run
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-3", content: [{ type: "text", text: "all done" }] } } });   // the breaker that publishes the run
     await waitFor(() => snap.staticItems.some((i) => i.id.startsWith("group:")));
     const groups = snap.staticItems.filter((i) => i.id.startsWith("group:"));
     expect(groups).toHaveLength(1);
@@ -999,7 +999,7 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "a-agent", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "go" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a-agent", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "go" } }] } } });
     fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "t1", tool_use_id: "agent-1", subagent_type: "reviewer", task_type: "local_agent", description: "review the diff" } });
     await waitFor(() => frame(lastFrame).includes("Initializing…"));
     // P83: the notification lands ~1 ms BEFORE the tool_result, which is what makes it available to the row.
@@ -1065,7 +1065,7 @@ describe("useChat: killAgents (Ctrl-X Ctrl-K) + bgRows", () => {
     render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", input: { command: "echo hi", run_in_background: true } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tu1", input: { command: "echo hi", run_in_background: true } }] } } });
     fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "b1", tool_use_id: "tu1", description: "d", task_type: "local_bash" } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", content: "Command running in background with ID: b1. Output is being written to: /tmp/x.output. Use BashOutput to check progress." }] } } });
     fake.pushEvent({ kind: "tasks_changed", tasks: [{ task_id: "b1", task_type: "local_bash", description: "d" }] });
@@ -1305,7 +1305,9 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
-    const late = { type: "assistant", message: { id: "late-copy", content: [{ type: "text", text: "LATE-COMPLETION" }] } };
+    // `parent_tool_use_id: null` is the WIRE shape of a top-level assistant frame (SDK `string | null`);
+    // omitting it is what let a strict `=== undefined` nesting test pass here and fail on every real reply.
+    const late = { type: "assistant", parent_tool_use_id: null, message: { id: "late-copy", content: [{ type: "text", text: "LATE-COMPLETION" }] } };
     fake.pushEvent({ kind: "message", data: late });
     await waitFor(() => frame(lastFrame).includes("LATE-COMPLETION"));
     fake.pushEvent({ kind: "message", data: late });                     // the same record redelivered
@@ -1316,7 +1318,7 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     expect(copied).toBe("LATE-COMPLETION");
   });
 
-  it("/copy with no assistant text yet notices 'nothing to copy' and never calls the copy fn", async () => {
+  it("/copy with no assistant text yet notices 'No assistant message to copy' and never calls the copy fn", async () => {
     let calls = 0;
     const fake = fakeRemote();
     const api: { run?: (s: string) => void } = {};
@@ -1324,13 +1326,13 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/copy");
-    await waitFor(() => frame(lastFrame).includes("nothing to copy"));
+    await waitFor(() => flat(lastFrame).includes("No assistant message to copy"));
     expect(calls).toBe(0);
   });
 
   it("/copy after an assistant message calls the injected copy fn with THAT text and notices ✓ copied", async () => {
     let copied: string | undefined;
-    const fake = fakeRemote({ submitMessages: [{ type: "assistant", message: { content: [{ type: "text", text: "the answer is 42" }] } }] });
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the answer is 42" }] } }] });
     const api: { run?: (s: string) => void } = {};
     function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
@@ -1341,6 +1343,26 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     await waitFor(() => frame(lastFrame).includes("✓ copied"));
     expect(copied).toBe("the answer is 42");                          // the fn received the actual text, not just a call
     expect(frame(lastFrame)).toContain(`✓ copied ${"the answer is 42".length} chars`);
+  });
+
+  // The conversation boundary owns this ref like it owns every other measurement: the reply belonged to the
+  // conversation `/clear` threw away, so putting it on the system clipboard afterwards is the Wave S rule
+  // inverted. `replaceDocument` is the one place all four boundary paths (clear/resume/rewind/empty-rewind)
+  // pass through, and resume/rewind re-seed AFTER the swap, so only `/clear` newly resets.
+  it("/copy after /clear has nothing to copy — the cleared conversation's reply never reaches the clipboard", async () => {
+    let calls = 0;
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the answer is 42" }] } }] });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async () => { calls++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("the answer is 42"));
+    api.run!("/clear");
+    await waitFor(() => !frame(lastFrame).includes("the answer is 42"));
+    api.run!("/copy");
+    await waitFor(() => flat(lastFrame).includes("No assistant message to copy"));
+    expect(calls).toBe(0);
   });
 });
 
@@ -1434,7 +1456,7 @@ describe("U5a: /export /files /diff", () => {
     const api: { run?: (s: string) => void } = {};
     function H() {
       const c = useChat(() => fake, {}, {
-        getSessionMessages: async () => [{ type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Edit", input: { file_path: "/repo/z.ts" } }] } }],
+        getSessionMessages: async () => [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t", name: "Edit", input: { file_path: "/repo/z.ts" } }] } }],
         runBash: async (cmd) => { bashCalls.push(cmd); return { code: 0, output: " M z.ts" }; },   // BashResult shape (bash.ts:7)
       });
       api.run = c.submit; return <Text>{allText(c)}</Text>;
@@ -1597,7 +1619,7 @@ describe("U5b: /rename /tag /session /stats", () => {
       const c = useChat(() => fake, {}, {
         getSessionMessages: async () => [
           { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "fix it" }] } },
-          { type: "assistant", message: { content: [
+          { type: "assistant", parent_tool_use_id: null, message: { content: [
             { type: "text", text: "ok" },
             { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/a.ts" } },
           ] } },
@@ -1813,7 +1835,7 @@ describe("useChat's own emitted lines carry semantic tokens, not ANSI literals",
 // ── F1 Task 4: the retained-source cutover ────────────────────────────────────────────────────────────
 /** Since Task 5c the default view collapses a contiguous read/search/list/MCP run into ONE summary row, and
  *  withholds it while the run is still growable — real assistant prose is what closes the run and publishes it. */
-const CLOSING_PROSE = { type: "assistant", message: { id: "assistant-closes-run", content: [{ type: "text", text: "all done" }] } };
+const CLOSING_PROSE = { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-closes-run", content: [{ type: "text", text: "all done" }] } };
 describe("useChat: one retained document behind every surface", () => {
   /** A fake repaint scheduler so a test can fire the 600 ms pending tick by hand and prove that no stale
    *  callback survives a settle, a session swap or an unmount. */
@@ -1911,7 +1933,7 @@ describe("useChat: one retained document behind every surface", () => {
     function H() { const c = useChat(() => fake); ids = [...c.state.staticItems].map((i) => i.id); return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
-    const text = { type: "assistant", message: { id: "stable-text", content: [{ type: "text", text: "stable reply" }] } };
+    const text = { type: "assistant", parent_tool_use_id: null, message: { id: "stable-text", content: [{ type: "text", text: "stable reply" }] } };
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "message", data: text });
     fake.pushEvent({ kind: "message", data: text });                      // exact duplicate
@@ -2007,7 +2029,7 @@ describe("useChat: one retained document behind every surface", () => {
     await waitFor(() => scheduler.armed === 0);                   // settled → the epoch is over
     expect(scheduler.armed).toBe(0);
 
-    first.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "open-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/b.ts" } }] } } });
+    first.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "open-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/b.ts" } }] } } });
     await waitFor(() => scheduler.armed === 1);
     api.pick!({ sessionId: "other-1", summary: "s", lastModified: 1 });   // replace the session while a call is OPEN
     await waitFor(() => flat(view.lastFrame).includes("❯ swapped"));
@@ -2024,7 +2046,7 @@ describe("useChat: one retained document behind every surface", () => {
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", truncated: true });          // BARE: no seq
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "tail-1", content: [{ type: "text", text: "retained idle tail" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "tail-1", content: [{ type: "text", text: "retained idle tail" }] } } });
     fake.pushEvent({ kind: "state", status: { state: "working", status: "idle" } });
     await waitFor(() => frame(lastFrame).includes("retained idle tail"));
     expect(frame(lastFrame)).toContain("Earlier live output unavailable while attaching");
@@ -2137,7 +2159,7 @@ describe("useChat: one retained document behind every surface", () => {
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "message", data: READ_CALL });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
     await waitFor(() => rows.some((r) => r.includes("Reading 2 files")));
     fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });          // settles read-1 only
     await new Promise((r) => setTimeout(r, 30));
@@ -2172,7 +2194,7 @@ describe("useChat: the thinking clock survives the turn that measured it", () =>
   const streamEvent = (event: unknown) => ({ kind: "message" as const, data: { type: "stream_event", event } });
   /** ONE assistant message carrying the thinking that preceded the call — the live shape (the engine emits
    *  one frame per content block, but our document retains whatever the host forwards). */
-  const THINKING_READ = { type: "assistant", message: { id: "m1", content: [
+  const THINKING_READ = { type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: [
     { type: "thinking", thinking: "Checking the config first", signature: "sig" },
     { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } },
   ] } };
@@ -2201,7 +2223,7 @@ describe("useChat: the thinking clock survives the turn that measured it", () =>
     expect(frame(lastFrame)).toContain("Thought for 3s, read 1 file");
     // …and it must survive publication into Static, which only a breaker triggers.
     fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m2", content: [{ type: "text", text: "all done" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m2", content: [{ type: "text", text: "all done" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
     await waitFor(() => frame(lastFrame).includes("all done"));
     expect(frame(lastFrame)).toContain("Thought for 3s, read 1 file");
@@ -2235,7 +2257,7 @@ describe("useChat: the thinking clock survives the turn that measured it", () =>
     // Only the turn-end merge can have captured this: the LiveTurn is gone by the time the next
     // projection runs, and the block never stopped.
     fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m2", content: [{ type: "text", text: "all done" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m2", content: [{ type: "text", text: "all done" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
     await waitFor(() => frame(lastFrame).includes("all done"));
     expect(frame(lastFrame)).toContain("Thought for 8s, read 1 file");
@@ -2249,9 +2271,9 @@ describe("useChat: the thinking clock survives the turn that measured it", () =>
 // end: the whole point is that no intermediate frame shows the drop.
 describe("useChat: latched counters and the throttled group hint", () => {
   const catCall = (id: string, file: string) =>
-    ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Bash", input: { command: `cat ${file}` } }] } });
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Bash", input: { command: `cat ${file}` } }] } });
   const readCall = (id: string, file: string) =>
-    ({ type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Read", input: { file_path: file } }] } });
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Read", input: { file_path: file } }] } });
   const done = (id: string) => ({ type: "user", uuid: `u-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
   const POKE = { kind: "message" as const, data: { type: "system", subtype: "noop" } };   // a frame the document retains nothing of — it exists to force one repaint
   type Api = { run?: (s: string) => void; items?: () => readonly RenderItem[] };
@@ -2308,7 +2330,7 @@ describe("useChat: latched counters and the throttled group hint", () => {
     fake.pushEvent(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }));
     clock.now = 4200;
     fake.pushEvent(streamEvent({ type: "content_block_stop", index: 0 }));
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m1", content: [
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: [
       { type: "thinking", thinking: "Checking the\n  config   first", signature: "sig" },
       { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } },
     ] } } });
@@ -2331,7 +2353,7 @@ describe("useChat: F3 final review", () => {
   const noRepaint = { scheduleRepaint: () => () => {} };   // the 600 ms blink would re-project on its own and mask what these pin
   const agentCall = (replay?: true) => ({
     kind: "message" as const, ...(replay ? { replay } : {}),
-    data: { type: "assistant", uuid: "a1", message: { id: "m1", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "go" } }] } },
+    data: { type: "assistant", parent_tool_use_id: null, uuid: "a1", message: { id: "m1", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "go" } }] } },
   });
   const agentResult = (replay?: true) => ({
     kind: "message" as const, ...(replay ? { replay } : {}),
@@ -2358,7 +2380,7 @@ describe("useChat: F3 final review", () => {
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 5" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 5" } }] } } });
     await waitFor(() => (seen.at(-1)?.length ?? 0) > 0);          // the running call owns a transient row
     const projected = seen.at(-1)!, before = seen.length;
     fake.pushEvent(streamEvent({ type: "message_start", message: { id: "m2" } }));
@@ -2379,7 +2401,7 @@ describe("useChat: F3 final review", () => {
     const { lastFrame, rerender } = render(withLayers([]));
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 5" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 5" } }] } } });
     fake.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "t1", tool_use_id: "bash-1", task_type: "local_bash", description: "sleep" } });
     await waitFor(() => frame(lastFrame).includes("(ctrl+b to run in background)"));
     rerender(withLayers([{ context: "Global", bindings: { "ctrl+b": null, "ctrl+k": "task:background" } }]));
@@ -2397,7 +2419,7 @@ describe("useChat: F3 final review", () => {
   describe("expand hint (Task 10b)", () => {
     const REBIND: readonly ContextBindings[] = [{ context: "Global", bindings: { "ctrl+o": null, "ctrl+t": "app:toggleTranscript" } }];
     const UNBIND: readonly ContextBindings[] = [{ context: "Global", bindings: { "ctrl+o": null } }];
-    const read = (n: number) => ({ type: "assistant", message: { id: `m${n}`, content: [{ type: "tool_use", id: `r${n}`, name: "Read", input: { file_path: `/tmp/f${n}.ts` } }] } });
+    const read = (n: number) => ({ type: "assistant", parent_tool_use_id: null, message: { id: `m${n}`, content: [{ type: "tool_use", id: `r${n}`, name: "Read", input: { file_path: `/tmp/f${n}.ts` } }] } });
     const readResult = (n: number) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `r${n}`, content: "x" }] } });
     // THREE of the four sites are reachable from a live compact transcript: the collapsed tool-GROUP row
     // (toolRenderer, twice over — reads and the search), the generic output FOLD marker (outputFold), and the
@@ -2408,9 +2430,9 @@ describe("useChat: F3 final review", () => {
     async function paint(fake: FakeRemote, lastFrame: () => string | undefined) {
       fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
       for (const n of [1, 2, 3]) { fake.pushEvent({ kind: "message", data: read(n) }); fake.pushEvent({ kind: "message", data: readResult(n) }); }
-      fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "mb", content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "seq 40" } }] } } });
+      fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "mb", content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "seq 40" } }] } } });
       fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "b1", content: Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n") }] } } });
-      fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "mg", content: [{ type: "tool_use", id: "g1", name: "Grep", input: { pattern: "x" } }] } } });
+      fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "mg", content: [{ type: "tool_use", id: "g1", name: "Grep", input: { pattern: "x" } }] } } });
       fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "g1", content: "a.ts" }] }, tool_use_result: { mode: "files_with_matches", numFiles: 3, filenames: ["a.ts", "b.ts", "c.ts"] } } });
       fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
       fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", uuid: "cb-1" } });
@@ -2521,7 +2543,7 @@ describe("useChat: F3 final review", () => {
 // that never re-measures fails with the value it wrongly kept ("expected 'ctx:5 …' to contain 'ctx:42'")
 // instead of a bare `waitFor timeout` that names nothing. The reply alone can't carry the assertion — it
 // renders a microtask BEFORE the measurement refreshCtx triggers lands, so the poll is what closes that gap.
-const reply = (p: string) => [{ type: "assistant", message: { content: [{ type: "text", text: `re: ${p}` }] } }];
+const reply = (p: string) => [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `re: ${p}` }] } }];
 describe("W-S5: the context percentage never outlives the conversation it measured", () => {
   it("/clear hides the measured percentage — /status too — and the next turn end measures a fresh one (A8)", async () => {
     let ctx = { totalTokens: 5, maxTokens: 100 };

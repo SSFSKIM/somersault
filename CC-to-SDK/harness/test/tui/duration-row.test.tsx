@@ -57,7 +57,7 @@ function Host({ fake, env, sink, clock, verb = "Worked", show, savePrefs, api }:
  *  between the two turn events. `extra` frames (an interrupt sentinel, say) ride between them. */
 async function runTurn(fake: FakeRemote, clock: { ms: number }, ms: number, extra: unknown[] = []) {
   await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
-  await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", uuid: "a1", message: { id: "m1", content: [{ type: "text", text: "ok" }] } } }); });
+  await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "a1", message: { id: "m1", content: [{ type: "text", text: "ok" }] } } }); });
   for (const data of extra) await act(async () => { fake.pushEvent({ kind: "message", data }); });
   clock.ms += ms;
   await act(async () => { fake.pushEvent({ kind: "turn", phase: "end", seq: 1 }); });
@@ -167,9 +167,9 @@ describe("useChat — the end-of-turn duration row", () => {
     await tick();
     try {
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 4 }); });
-      await act(async () => { fake.pushEvent({ kind: "message", replay: true, data: { type: "assistant", uuid: "r1", message: { id: "m1", content: [{ type: "text", text: "from before the attach" }] } } }); });
+      await act(async () => { fake.pushEvent({ kind: "message", replay: true, data: { type: "assistant", parent_tool_use_id: null, uuid: "r1", message: { id: "m1", content: [{ type: "text", text: "from before the attach" }] } } }); });
       clock.ms += 4000;
-      await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", uuid: "r2", message: { id: "m2", content: [{ type: "text", text: "live" }] } } }); });
+      await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "r2", message: { id: "m2", content: [{ type: "text", text: "live" }] } } }); });
       await act(async () => { fake.pushEvent({ kind: "turn", phase: "end", seq: 4 }); });
       await tick();
       expect(sink.text).toContain("from before the attach");   // it DID render the joined turn

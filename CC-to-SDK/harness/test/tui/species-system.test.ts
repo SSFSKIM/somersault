@@ -203,7 +203,7 @@ describe("errorSentinelLines — the eleven `VAr` cases (L422726–422825)", () 
 });
 
 describe("renderMessage — an assistant frame routes through the sentinel switch first", () => {
-  const assistant = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  const assistant = (text: string) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } });
   it("renders the sentinel row, not the markdown bullet", () => {
     expect(texts(renderMessage(assistant(CREDIT_BALANCE_LOW), { width: 200 })))
       .toEqual(["Credit balance too low · Add funds: https://platform.claude.com/settings/billing"]);

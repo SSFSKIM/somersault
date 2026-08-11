@@ -29,7 +29,7 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 }
 
 const QUEUE_PAD = 2;                                    // ChatApp's own `$jp` (bundle L426022), pinned here
-const asst = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+const asst = (text: string) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } });
 const tok = (name: "text" | "subtle" | "userMessageBackground") => resolveThemeColor(themeTokens()[name]);
 
 describe("assistant identity — the platform bullet", () => {
@@ -141,7 +141,7 @@ describe("userEchoLines — the 10 000-char fold", () => {
 describe("the platform bullet survives the anchored-entry cache", () => {
   it("projects ONE document under two platforms and gets a different glyph each time", () => {
     const doc = new TranscriptDocument();
-    doc.appendSdk("host", { type: "assistant", uuid: "a-1", message: { id: "m1", content: [{ type: "text", text: "answer" }] } });
+    doc.appendSdk("host", { type: "assistant", parent_tool_use_id: null, uuid: "a-1", message: { id: "m1", content: [{ type: "text", text: "answer" }] } });
     const base = { cwd: "/work", home: "/home/me", columns: 100, now: 0 };
     const mac = projectCompact(doc, { ...base, platform: "darwin" });
     const linux = projectCompact(doc, { ...base, platform: "linux" });

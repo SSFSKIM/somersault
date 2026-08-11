@@ -768,7 +768,7 @@ export function useChat(
    *  call has since acquired a result leaves (so a redelivered call that already settled never re-enters). */
   function syncLiveOpen(data: unknown): void {
     const live = liveOpenIds.current, m = data as any;
-    if (m?.type === "assistant" && m.parent_tool_use_id === undefined)
+    if (m?.type === "assistant" && !m.parent_tool_use_id)
       for (const b of m.message?.content ?? []) if (b?.type === "tool_use" && typeof b.id === "string" && b.id) live.add(b.id);
     if (live.size) for (const e of documentRef.current!.toolEvents()) if (e.result && live.has(e.id)) live.delete(e.id);
     setLiveOpen(live.size > 0);
@@ -837,6 +837,11 @@ export function useChat(
     // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
     pendingStateRef.current!.reset();
     setCtxPct(undefined);               // W-S5, see above: measured against a conversation that is gone
+    // THE SAME BOUNDARY AND THE SAME CLASS for /copy's one source: the retained reply was measured against a
+    // conversation that is gone, so `/clear` followed by `/copy` was putting the wiped text on the system
+    // clipboard. `resumeInto` and the rewind rebuild both assign this ref AFTER their swap, so they keep
+    // their seed by construction and only `/clear` (and the empty-rewind arm) newly reset.
+    lastAssistant.current = "";
     // WAVE S T12, THE SAME BOUNDARY AND THE SAME CLASS AS W-S5/Task 8: the ack is a number measured against
     // a conversation that no longer exists. `/clear` swaps the ENGINE (host `clear` op), so `usage()`
     // restarts at zero — an ack of 500 carried across would sit above every count the new conversation
@@ -1079,7 +1084,11 @@ export function useChat(
         // invent them, and an unstamped call falls back to the clause-less honest row.
         if (!ev.replay) stampAgentCalls(agentMetaRef.current, data, nowFn());
         const appended = documentRef.current!.appendSdk("host", data);
-        if (appended && data?.type === "assistant" && data.parent_tool_use_id === undefined) {
+        // FALSINESS, not `=== undefined`: a top-level frame carries `parent_tool_use_id: null` on the wire
+        // (SDK type `string | null`), so a strict-undefined test matches only a fixture that omits the field
+        // — it was never true for a real reply, and /copy therefore never advanced. Every other nested-frame
+        // reader in the tree (transcriptModel, toolRenderer, liveTurn, host, router) already tests this way.
+        if (appended && data?.type === "assistant" && !data.parent_tool_use_id) {
           const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
           if (t.trim()) lastAssistant.current = t;
           // W-C T12: the same text, into the suggester's tail — behind the `appended` guard, so a redelivered
@@ -1479,7 +1488,7 @@ export function useChat(
         // would be unreachable. See ChatApp's `app:toggleTranscript` neighbour for the full routing note.
         case "history": openHistorySearch(); break;
         case "rewind": void openRewind(); break;
-        case "copy": { const t = lastAssistant.current; if (!t) { notice("nothing to copy"); break; } await copyText(t); notice(`✓ copied ${t.length} chars`); break; }
+        case "copy": { const t = lastAssistant.current; if (!t) { notice("No assistant message to copy"); break; } await copyText(t); notice(`✓ copied ${t.length} chars`); break; }
         case "export": {
           const id = session.sessionId;
           if (!id) { notice("no conversation to export yet"); break; }

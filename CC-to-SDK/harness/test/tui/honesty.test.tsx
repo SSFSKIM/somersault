@@ -175,7 +175,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
       interrupt: () => { interrupts++; },
       submit: async (_p, onMessage) => {
         fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
         onMessage(m); fake.pushEvent({ kind: "message", data: m });
         await new Promise<void>((res) => { release = res; });
         fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -215,7 +215,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     const { lastFrame, stdin } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/" />);
     await settle();
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => TODO_ROW.test(lastFrame() ?? ""));

@@ -34,7 +34,7 @@ const tok = (name: keyof ReturnType<typeof themeTokens>) => resolveThemeColor(th
 
 /** One agent dispatch: the `Agent` tool_use frame that mints the id every child message points back at. */
 const dispatch = (id: string, subagentType: string) => ({
-  type: "assistant", uuid: `u-${id}`,
+  type: "assistant", parent_tool_use_id: null, uuid: `u-${id}`,
   message: { id: `m-${id}`, content: [{ type: "tool_use", id, name: "Agent", input: { subagent_type: subagentType, description: "d" } }] },
 });
 const dispatchResult = (id: string, content: unknown, isError = false) => ({

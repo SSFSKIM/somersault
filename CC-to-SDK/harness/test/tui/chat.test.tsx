@@ -313,7 +313,7 @@ describe("<ChatApp>", () => {
       interrupt: () => { interrupts++; },
       submit: async (_p, onMessage) => {
         fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
         onMessage(m); fake.pushEvent({ kind: "message", data: m });
         await new Promise<void>((res) => { release = res; });
         fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -360,7 +360,7 @@ describe("<ChatApp>", () => {
       interrupt: () => { interrupts++; },
       submit: async (_p, onMessage) => {
         fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
         onMessage(m); fake.pushEvent({ kind: "message", data: m });
         await new Promise<void>((res) => { release = res; });
         fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -478,7 +478,7 @@ describe("<ChatApp>", () => {
     const { lastFrame, stdin } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/" />);
     await new Promise((r) => setTimeout(r, 30));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     // "todo-item-one" alone is ambiguous: the transcript ALSO prints the TaskCreate tool_use + its result
@@ -502,7 +502,7 @@ describe("<ChatApp>", () => {
         deps={{ savePrefs: (patch) => { saved.push(patch as Record<string, unknown>); } }} />);
     await new Promise((r) => setTimeout(r, 30));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await new Promise((r) => setTimeout(r, 60));                         // let the seeded task settle
@@ -639,7 +639,7 @@ describe("<ChatApp>", () => {
       background: () => { backgroundCalls++; return true; },
       submit: async (_p, onMessage) => {
         fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
         onMessage(m); fake.pushEvent({ kind: "message", data: m });
         await new Promise<void>((res) => { release = res; });
         fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -695,7 +695,7 @@ describe("<ChatApp>", () => {
         interrupt: () => { interrupts++; },
         submit: async (_p, onMessage) => {
           fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-          const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+          const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
           onMessage(m); fake.pushEvent({ kind: "message", data: m });
           await new Promise<void>((res) => { release = res; });
           fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -765,7 +765,7 @@ describe("<ChatApp>", () => {
     fake = fakeRewindRemote({}, {
       submit: async (_p, onMessage) => {
         fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
         onMessage(m); fake.pushEvent({ kind: "message", data: m });
         await new Promise<void>((res) => { release = res; });
         fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -843,7 +843,7 @@ describe("<ChatApp>", () => {
     fake = fakeRemote({
       submit: async (_p, onMessage) => {
         fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-        const m = { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } };
+        const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
         onMessage(m); fake.pushEvent({ kind: "message", data: m });
         await new Promise<void>((res) => { release = res; });
         fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
@@ -1156,7 +1156,7 @@ describe("<ChatApp>", () => {
     // null regardless of todosOpen, which would make the Ctrl-T-while-open check below pass vacuously
     // even if the gate leaked (the "still contains Transcript" check alone can't tell the difference).
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => TODO_ROW.test(frame(lastFrame)));
@@ -2324,7 +2324,7 @@ async function waitForFakeTimers(cond: () => boolean, timeout = 2_000) {
 describe("<ChatApp> — retained source", () => {
   /** Task 5c: a read run collapses to ONE dim summary row, and the projection withholds it while the run is
    *  still growable — real assistant prose is what closes the run and publishes it into Static. */
-  const CLOSING_PROSE = { type: "assistant", message: { id: "assistant-closes-run", content: [{ type: "text", text: "all done" }] } };
+  const CLOSING_PROSE = { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-closes-run", content: [{ type: "text", text: "all done" }] } };
   it("repaints an open tool at 600ms without an SDK event, then appends one final Static row", async () => {
     const fake = fakeRemote(), { stdout, lastFrame, unmount } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
     await tick(); vi.useFakeTimers();
@@ -2350,7 +2350,7 @@ describe("<ChatApp> — retained source", () => {
     const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "attached" }} cwd="/work" />);
     await tick();
     fake.pushEvent({ kind: "turn", phase: "start", truncated: true });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "idle-tail", content: [{ type: "text", text: "retained idle tail" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "idle-tail", content: [{ type: "text", text: "retained idle tail" }] } } });
     fake.pushEvent({ kind: "state", status: { state: "working", status: "idle" } });
     await waitFor(() => printed(stdout).includes("Earlier live output unavailable while attaching") && printed(stdout).includes("retained idle tail"));
     expect(plain(frame(lastFrame))).not.toContain("esc to interrupt");   // never busy: no turn was opened
@@ -2364,7 +2364,7 @@ describe("<ChatApp> — retained source", () => {
     const initialEntries = [
       { kind: "sdk" as const, source: "disk" as const, message: { type: "user", uuid: "u-first", message: { content: [{ type: "text", text: "FIRST-DISK-ROW" }] } } },
       { kind: "local" as const, identity: "attach:no-persisted-history", event: { kind: "notice" as const, lines: [{ text: "MIDDLE-LOCAL-NOTICE", dim: true }] } },
-      { kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", message: { id: "a-last", content: [{ type: "text", text: "LAST-DISK-ROW" }] } } },
+      { kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", parent_tool_use_id: null, message: { id: "a-last", content: [{ type: "text", text: "LAST-DISK-ROW" }] } } },
     ];
     const { lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "attached" }} cwd="/work" initialEntries={initialEntries} />);
     await waitFor(() => frame(lastFrame).includes("LAST-DISK-ROW"));
@@ -2385,7 +2385,7 @@ describe("<ChatApp> — retained source", () => {
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("thinking:"));
     stdin.write("/clear"); await waitFor(() => frame(lastFrame).includes("/clear"));
     stdin.write("\r"); await waitFor(() => clears.length === 1);
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { id: "post-clear", content: [{ type: "text", text: "POST-CLEAR-ROW" }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "post-clear", content: [{ type: "text", text: "POST-CLEAR-ROW" }] } } });
     await waitFor(() => frame(lastFrame).includes("POST-CLEAR-ROW"));
     expect(frame(lastFrame).match(/POST-CLEAR-ROW/g)).toHaveLength(1);
   });
@@ -2396,7 +2396,7 @@ describe("<ChatApp> — retained source", () => {
   // A NON-collapsible tool since Task 5c: the default view folds every read/search/list/MCP run into one
   // summary row and drops its result body entirely, so the compact three-row-plus-overflow shape this pager
   // pair is about only survives on a standalone row. Nothing else here changed.
-  const LONG_CALL = { type: "assistant", message: { id: "assistant-long", content: [{ type: "tool_use", id: "long-1", name: "Bash", input: { command: "echo hi" } }] } };
+  const LONG_CALL = { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-long", content: [{ type: "tool_use", id: "long-1", name: "Bash", input: { command: "echo hi" } }] } };
   const longReadResult = (rows: number) => ({
     type: "user", uuid: "user-long",
     message: { content: [{ type: "tool_result", tool_use_id: "long-1", content: Array.from({ length: rows }, (_, i) => `line ${i + 1}`).join("\n"), is_error: false }] },
@@ -2483,7 +2483,7 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
   /** The todo panel's own wire pair (taskList.ts), wrapped in a turn so `state.busy` lands back at false. */
   const seedTodo = (fake: ReturnType<typeof fakeRemote>) => {
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tu1", name: "TaskCreate", input: { subject: "todo-item-one" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "Task #1 created successfully: todo-item-one" }] } } });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
   };

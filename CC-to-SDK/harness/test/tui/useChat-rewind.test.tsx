@@ -132,10 +132,10 @@ describe("useChat: rewind flow", () => {
     expect(frame(lastFrame)).toContain("⏪ rewound: fix the parser · 1 turn");
   });
 
-  it("5b. after a rewind, /copy copies the assistant reply the REPLAY put on screen (never 'nothing to copy')", async () => {
+  it("5b. after a rewind, /copy copies the assistant reply the REPLAY put on screen (never 'No assistant message to copy')", async () => {
     const msgs = [
       { type: "user", uuid: "u-fix2", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
-      { type: "assistant", message: { content: [{ type: "text", text: "the parser is fixed" }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the parser is fixed" }] } },
     ];
     const session = fakeRewindSession({ rewind: async () => {} });
     let copied: string | undefined;
@@ -227,7 +227,7 @@ describe("useChat: rewind flow", () => {
     // transcript while its next prompt runs against the truncated host conversation.
     const msgs = [
       { type: "user", uuid: "u-a", message: { content: [{ type: "text", text: "the surviving prompt" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
-      { type: "assistant", message: { content: [{ type: "text", text: "the surviving reply" }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the surviving reply" }] } },
     ];
     const session = fakeRewindSession();
     const deps = { getSessionMessages: async () => msgs };
@@ -252,7 +252,7 @@ describe("useChat: rewind flow", () => {
   it("16. a `cleared` rewound broadcast empties THIS follower's transcript, off a NON-empty old file", async () => {
     const readerRows = [
       { type: "user", uuid: "u-a", message: { content: [{ type: "text", text: "the discarded prompt" }] }, timestamp: "2026-08-08T08:00:00.000Z" },
-      { type: "assistant", uuid: "a-a", message: { content: [{ type: "text", text: "the discarded reply" }] } },
+      { type: "assistant", parent_tool_use_id: null, uuid: "a-a", message: { content: [{ type: "text", text: "the discarded reply" }] } },
     ];
     let reads = 0;
     const session = fakeRewindSession();
@@ -297,7 +297,7 @@ describe("useChat: rewind flow", () => {
   it("11. an empty first read is retried — the replay lands once the persisted file appears", async () => {
     const msgs = [
       { type: "user", uuid: "u-fix3", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
-      { type: "assistant", message: { content: [{ type: "text", text: "replayed after the flush" }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "replayed after the flush" }] } },
     ];
     let reads = 0;
     const session = fakeRewindSession();
@@ -313,7 +313,7 @@ describe("useChat: rewind flow", () => {
   it("12. the rebuild wipes the real screen+scrollback (clearScreen), not only Ink's Static", async () => {
     const msgs = [
       { type: "user", uuid: "u-w", message: { content: [{ type: "text", text: "wipe check" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
-      { type: "assistant", message: { content: [{ type: "text", text: "fresh view" }] } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "fresh view" }] } },
     ];
     let wipes = 0;
     const session = fakeRewindSession();
@@ -338,11 +338,11 @@ describe("useChat: rewind flow", () => {
     // turn on screen and nothing after it.
     const readerRows = [
       { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-07T08:00:00.000Z" },
-      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one" }] } },
+      { type: "assistant", parent_tool_use_id: null, uuid: "a1", message: { content: [{ type: "text", text: "one" }] } },
       { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-07T08:01:00.000Z" },
-      { type: "assistant", uuid: "a2", message: { content: [{ type: "text", text: "two" }] } },
+      { type: "assistant", parent_tool_use_id: null, uuid: "a2", message: { content: [{ type: "text", text: "two" }] } },
       { type: "user", uuid: "u3", message: { content: [{ type: "text", text: "THREE" }] }, timestamp: "2026-08-07T08:02:00.000Z" },
-      { type: "assistant", uuid: "a3", message: { content: [{ type: "text", text: "three" }] } },
+      { type: "assistant", parent_tool_use_id: null, uuid: "a3", message: { content: [{ type: "text", text: "three" }] } },
     ];
     const session = fakeRewindSession({ rewind: async () => {} });
     const deps = { getSessionMessages: async () => readerRows };
@@ -378,7 +378,7 @@ describe("useChat: rewind flow", () => {
   it("15. renders the empty conversation immediately after a first-message restore, off a NON-empty old file", async () => {
     const readerRows = [
       { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-08T08:00:00.000Z" },
-      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "assistant", parent_tool_use_id: null, uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
       { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-08T08:01:00.000Z" },
     ];
     let reads = 0;
@@ -434,7 +434,7 @@ describe("useChat: rewind flow", () => {
     session = fakeRewindSession({ rewind: async () => { session.pushEvent({ kind: "rewound", sessionId: "sess-1", prevUuid: "a1" } as any); } });
     const readerRows = [
       { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-07T08:00:00.000Z" },
-      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "assistant", parent_tool_use_id: null, uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
       { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-07T08:01:00.000Z" },
     ];
     const deps = { getSessionMessages: async () => { reads++; return readerRows; } };
@@ -459,7 +459,7 @@ describe("useChat: rewind flow", () => {
     // an assertion of its own, rather than making `waitFor` the assertion: a build that never re-measures
     // fails with the value it kept, not a bare `waitFor timeout`. The reply renders a microtask before the
     // measurement does, which is why the poll and not a bare expect closes it.
-    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ctx, submitMessages: (p) => [{ type: "assistant", message: { content: [{ type: "text", text: `re: ${p}` }] } }] });
+    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ctx, submitMessages: (p) => [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `re: ${p}` }] } }] });
     const deps = { getSessionMessages: async () => msgs, clearScreen: () => {} };
     const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
     function H() {

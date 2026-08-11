@@ -80,7 +80,7 @@ describe("F1 canonical transcript", () => {
   });
   // Refusal-fallback supersede (sdk.d.ts `SDKAssistantMessage.supersedes`): the named frames are retracted, not history.
   const REFUSED_CALL = { ...READ_CALL, uuid: "assistant-refused" };
-  const fallback = (supersedes: unknown) => ({ type: "assistant", uuid: "assistant-fallback", supersedes, message: { id: "assistant-fallback", content: [{ type: "text", text: "I can't help with that." }] } });
+  const fallback = (supersedes: unknown) => ({ type: "assistant", parent_tool_use_id: null, uuid: "assistant-fallback", supersedes, message: { id: "assistant-fallback", content: [{ type: "text", text: "I can't help with that." }] } });
   it("evicts a superseded assistant frame together with the calls it extracted", () => {
     const doc = new TranscriptDocument(); doc.appendSdk("host", REFUSED_CALL);
     expect(doc.appendSdk("host", fallback(["assistant-refused"]))).toBe(true);

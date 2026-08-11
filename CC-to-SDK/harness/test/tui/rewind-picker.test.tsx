@@ -174,7 +174,7 @@ describe("<ChatApp> with the rewind picker open never renders a frame that reach
     if (n === 0) return;
     session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     for (let i = 0; i < n; i++) {
-      session.pushEvent({ kind: "message", data: { type: "assistant", message: { content: [{ type: "tool_use", id: `tc${i}`, name: "TaskCreate", input: { subject: `todo-item-${i}` } }] } } });
+      session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: `tc${i}`, name: "TaskCreate", input: { subject: `todo-item-${i}` } }] } } });
       session.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `tc${i}`, content: `Task #${i + 1} created successfully: todo-item-${i}` }] } } });
     }
     session.pushEvent({ kind: "turn", phase: "end", seq: 1 });

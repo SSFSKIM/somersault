@@ -121,7 +121,7 @@ describe("F3 Task 7: the system/task_* capture", () => {
 });
 
 describe("F3 Task 7: the arrival stamps", () => {
-  const dispatch = { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: {} }, { type: "tool_use", id: "bash-1", name: "Bash", input: {} }, { type: "tool_use", id: "read-1", name: "Read", input: {} }] } };
+  const dispatch = { type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: {} }, { type: "tool_use", id: "bash-1", name: "Bash", input: {} }, { type: "tool_use", id: "read-1", name: "Read", input: {} }] } };
   it("stamps dispatch for the Agent/Bash calls only, and only the FIRST time each is observed", () => {
     const meta = new Map<string, AgentMeta>();
     stampAgentCalls(meta, dispatch, 100);

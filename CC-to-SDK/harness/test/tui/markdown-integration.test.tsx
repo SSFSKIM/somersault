@@ -11,10 +11,10 @@ import { setTheme } from "../../src/tui/theme.js";
 
 const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
 const prose = (text: string, id = `t-${text.slice(0, 8)}`) =>
-  ({ type: "assistant", message: { id, content: [{ type: "text", text }] } }) as Record<string, unknown>;
+  ({ type: "assistant", parent_tool_use_id: null, message: { id, content: [{ type: "text", text }] } }) as Record<string, unknown>;
 const built = (...messages: Record<string, unknown>[]) => { const doc = new TranscriptDocument(); for (const m of messages) doc.appendSdk("host", m); return doc; };
 const lineTexts = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: RenderLine }).line.text);
-const asst = (text: string) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+const asst = (text: string) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } });
 
 // A table is the one block whose rendering is a function of the terminal width (the box engine fits its
 // columns to it), so it is what makes width plumbing OBSERVABLE end to end.

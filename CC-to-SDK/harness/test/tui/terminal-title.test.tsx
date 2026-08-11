@@ -26,7 +26,7 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 /** One whole turn on the host event stream — the only rendering source useChat has. */
 async function runTurn(fake: FakeRemote, seq: number) {
   await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq }); });
-  await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", uuid: `a${seq}`, message: { id: `m${seq}`, content: [{ type: "text", text: "ok" }] } } }); });
+  await act(async () => { fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: `a${seq}`, message: { id: `m${seq}`, content: [{ type: "text", text: "ok" }] } } }); });
   await act(async () => { fake.pushEvent({ kind: "turn", phase: "end", seq }); });
   await tick();
 }

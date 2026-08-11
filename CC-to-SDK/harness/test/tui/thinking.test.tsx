@@ -25,11 +25,11 @@ import { setTheme } from "../../src/tui/theme.js";
 
 const context = { cwd: "/work", home: "/home/me", platform: "linux" as NodeJS.Platform, columns: 80, now: 0 };
 const thinker = (thinking: string, id = "m1") =>
-  ({ type: "assistant", message: { id, content: [{ type: "thinking", thinking, signature: "sig" }] } }) as Record<string, unknown>;
+  ({ type: "assistant", parent_tool_use_id: null, message: { id, content: [{ type: "thinking", thinking, signature: "sig" }] } }) as Record<string, unknown>;
 const built = (...messages: Record<string, unknown>[]) => { const doc = new TranscriptDocument(); for (const m of messages) doc.appendSdk("host", m); return doc; };
 const lines = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: RenderLine }).line);
 const texts = (items: readonly RenderItem[]) => lines(items).map((l) => l.text);
-const asst = (content: unknown[]) => ({ type: "assistant", message: { content } });
+const asst = (content: unknown[]) => ({ type: "assistant", parent_tool_use_id: null, message: { content } });
 const se = (event: unknown) => ({ type: "stream_event", event }) as any;
 
 describe("F4 Task 9 — thinking is hidden by default", () => {
@@ -158,9 +158,9 @@ describe("F4 Task 9 — TR33 regression pin: the `Thought for Ns` mechanism is u
   // thinking line. (The mechanism's own tests live in liveTurn.test.ts / toolRenderer.test.tsx; this is the
   // cross-task pin that Task 9 did not regress them.)
   const call = (id: string, messageId: string, thinking: string) =>
-    ({ type: "assistant", message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input: { file_path: "/work/a.ts" } }] } }) as Record<string, unknown>;
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }, { type: "tool_use", id, name: "Read", input: { file_path: "/work/a.ts" } }] } }) as Record<string, unknown>;
   const result = (id: string) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } }) as Record<string, unknown>;
-  const prose = (text: string) => ({ type: "assistant", message: { id: `t-${text}`, content: [{ type: "text", text }] } }) as Record<string, unknown>;
+  const prose = (text: string) => ({ type: "assistant", parent_tool_use_id: null, message: { id: `t-${text}`, content: [{ type: "text", text }] } }) as Record<string, unknown>;
 
   it("still renders `Thought for Ns` on the group that follows the thinking message", () => {
     // The breaker (`prose`) is what lets the compact projection PUBLISH the run; the map is keyed by the

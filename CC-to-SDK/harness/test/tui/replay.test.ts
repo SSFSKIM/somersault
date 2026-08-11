@@ -16,7 +16,7 @@ const TS = "2026-06-19T15:58:00.000Z";
 // carries one (real transcript rows always do — see sessions/rows.ts) — omitting it here would silently
 // make every fixture "other", not "prompt", under the Minor-3 fix (turns counted via rowKind).
 const userText = (text: string, timestamp = "2026-06-19T15:56:00.000Z", uuid = "u-test") => ({ type: "user", uuid, message: { role: "user", content: [{ type: "text", text }] }, timestamp });
-const asstText = (text: string, id = "a-1", timestamp = TS) => ({ type: "assistant", message: { id, role: "assistant", content: [{ type: "text", text }] }, timestamp });
+const asstText = (text: string, id = "a-1", timestamp = TS) => ({ type: "assistant", parent_tool_use_id: null, message: { id, role: "assistant", content: [{ type: "text", text }] }, timestamp });
 const compactText = (doc: TranscriptDocument) => JSON.stringify(projectCompact(doc, projectionOptions));
 /** The tool rows alone, with the sequence component of `toolItemId` normalized away. A replayed document
  *  legitimately carries the two display dividers `replayDocument` seeds (Task 4 step 3 item 4), and those
@@ -103,7 +103,7 @@ describe("replayDocument", () => {
     expect(toolRows(projectCompact(disk, projectionOptions))).toEqual(toolRows(projectCompact(host, projectionOptions)));
   });
   it("adapts ordinary completed SDK text with stable item IDs without competing with tool projection", () => {
-    const text = { type: "assistant", message: { id: "assistant-text-1", content: [{ type: "text", text: "Done" }] } };
+    const text = { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-text-1", content: [{ type: "text", text: "Done" }] } };
     const first = replayDocument([READ_CALL, READ_RESULT_FLAT, text], replayOptions), second = replayDocument([READ_CALL, READ_RESULT_FLAT, text], replayOptions);
     const firstItems = projectCompact(first, projectionOptions), secondItems = projectCompact(second, projectionOptions);
     expect(firstItems.map((item) => item.id)).toEqual(secondItems.map((item) => item.id)); expect(JSON.stringify(firstItems)).toContain("Done"); expect(new Set(firstItems.map((item) => item.id)).size).toBe(firstItems.length);

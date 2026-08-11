@@ -91,7 +91,7 @@ describe("BgMetaHarvest", () => {
 
   it("a foreground Bash (no run_in_background) contributes nothing", () => {
     const h = new BgMetaHarvest();
-    h.ingestMessage({ type: "assistant", message: { content: [{ type: "tool_use", id: "tuF", name: "Bash", input: { command: "ls" } }] } });
+    h.ingestMessage({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tuF", name: "Bash", input: { command: "ls" } }] } });
     h.ingestTask({ type: "system", subtype: "task_started", task_id: "tf", tool_use_id: "tuF", description: "d", task_type: "local_bash" });
     expect(h.rows([{ task_id: "tf", task_type: "local_bash", description: "d" }])[0].command).toBeUndefined();
   });

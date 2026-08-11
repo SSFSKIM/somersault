@@ -28,7 +28,7 @@ function feed(lt: LiveTurn) {
   lt.ingest(se({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{\"file" } }));
   lt.ingest(se({ type: "content_block_stop", index: 1 }));
   lt.ingest(se({ type: "message_stop" }));
-  lt.ingest({ type: "assistant", message: { model: "claude-sonnet-4-6", content: [
+  lt.ingest({ type: "assistant", parent_tool_use_id: null, message: { model: "claude-sonnet-4-6", content: [
     { type: "thinking", thinking: "let me check", signature: "sig" },
     { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "fact.txt" } },
   ] } });
@@ -81,7 +81,7 @@ describe("LiveTurn", () => {
     lt.ingest(se({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     lt.ingest(se({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "PINECONE" } }));
     expect(texts(lt).join("")).toContain("PINECONE");
-    lt.ingest({ type: "assistant", message: { content: [{ type: "text", text: "PINECONE" }] } });
+    lt.ingest({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "PINECONE" }] } });
     expect(lt.snapshot()).toEqual([]);                            // the document owns it from here on
   });
 
@@ -98,7 +98,7 @@ describe("LiveTurn", () => {
     expect(lt.model).toBeUndefined();                              // the subagent's model is not this turn's
     lt.ingest({ type: "user", parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_result", tool_use_id: "nested-1", content: "nested result" }] } });
     expect(texts(lt).join("")).toContain("parent still typing");
-    lt.ingest({ type: "assistant", message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "parent still typing" }] } });
+    lt.ingest({ type: "assistant", parent_tool_use_id: null, message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "parent still typing" }] } });
     expect(lt.snapshot()).toEqual([]);                             // the parent's own completion DOES supersede
     expect(lt.model).toBe("claude-sonnet-4-6");
   });
@@ -116,7 +116,7 @@ describe("LiveTurn", () => {
 
   it("captures the model from a full assistant message even with no partials", () => {
     const lt = new LiveTurn();
-    lt.ingest({ type: "assistant", message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "no partials here" }] } });
+    lt.ingest({ type: "assistant", parent_tool_use_id: null, message: { model: "claude-sonnet-4-6", content: [{ type: "text", text: "no partials here" }] } });
     expect(lt.model).toBe("claude-sonnet-4-6");
     expect(lt.snapshot()).toEqual([]);
   });
@@ -300,7 +300,7 @@ describe("LiveTurn spinner meter (Wave C Task 6)", () => {
     expect(lt.meter().mode).toBe("tool-input");
     lt.ingest(se({ type: "message_stop" }));
     expect(lt.meter().mode).toBe("tool-use");
-    lt.ingest({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] } });
+    lt.ingest({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] } });
     expect(lt.meter().hasActiveTools).toBe(true);
     lt.ingest({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } });
     expect(lt.meter().hasActiveTools).toBe(false);
@@ -344,7 +344,7 @@ describe("live and replay share ONE tool grammar", () => {
   // disk, yields byte-identical final RenderItem[].
   // The closing prose is load-bearing since Task 5c: a fold run that nothing has closed yet is still growable,
   // so the compact projection deliberately withholds its summary row (Static is append-only).
-  const CLOSED = { type: "assistant", message: { id: "assistant-done", content: [{ type: "text", text: "done" }] } };
+  const CLOSED = { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-done", content: [{ type: "text", text: "done" }] } };
   it("returns equal final RenderItem[] for the same fixture from a live document and a replayed one", () => {
     const lt = new LiveTurn(); const live = new TranscriptDocument();
     for (const message of [READ_CALL, READ_RESULT_WITH_SIDECAR, CLOSED]) { lt.ingest(message); live.appendSdk("host", message); }
