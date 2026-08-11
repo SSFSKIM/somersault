@@ -61,6 +61,7 @@
 # `SESSIONS`, which a name joins only after `tmux new-session` has succeeded (see `RUN_ID` below).
 #
 # Usage:  bash scripts/resize-matrix.sh [--no-build]      (or: npm run test:resize-matrix)
+#         RESIZE_MATRIX_CELLS=a3 bash scripts/resize-matrix.sh --no-build   — one cell, for iterating on it
 # Exit:   0 = every cell passed (or tmux is absent and the run SKIPPED), 1 = at least one cell failed.
 # CI:     .github/workflows/cc-to-sdk.yml runs this on the node-22 leg with RESIZE_MATRIX_REQUIRE_TMUX=1,
 #         which makes a missing tmux exit 1 instead of skipping. Two environment traps are handled below and
@@ -186,9 +187,34 @@ self_test() {
   [ "$(wide_rows_above_frame 80 "$dir/bare120")" = 0 ]  || { echo "SELF-TEST: the A3 wide-row precondition counts the composer's own rules — its failure branch can never fire"; ok=0; }
   [ "$(wide_rows_above_frame 80 "$dir/streamed")" = 1 ] || { echo "SELF-TEST: the A3 wide-row precondition misses a streamed row wider than 80"; ok=0; }
   [ "$(wide_rows_above_frame 80 "$dir/wide_carets")" = 0 ] || { echo "SELF-TEST: the A3 wide-row precondition measures bytes, not columns"; ok=0; }
+  # …AND THE A3 SPINNER NEEDLES, whose whole history is a pair of assertions that could not fail (see their
+  # block below). Five canned rows, each one a case the repair has to get right; the DUPLICATE frame is the
+  # qa2-09 photograph itself — two spinner rows carrying two different clocks — and it is what proves the
+  # count can reach 2 on a build that strands one, which no healthy live run can demonstrate.
+  { echo "some streamed prose"; echo "✻ Baking… (4s · ↓ 142 tokens · thinking)"; rule_of 80; echo "$CARET "; rule_of 80; } > "$dir/sp_live"
+  { echo "some streamed prose"; echo "✳ Baking… (4s · ↓ 142 tokens · thinking)"
+    echo "· Baking… (11s · ↓ 380 tokens)"; rule_of 80; echo "$CARET "; rule_of 80; } > "$dir/sp_dup"
+  { echo "some streamed prose"; echo "✻ Worked for 4s"; rule_of 80; echo "$CARET "; rule_of 80; } > "$dir/sp_done"
+  { echo "some streamed prose"; echo "✻ Thinking…"; rule_of 80; echo "$CARET "; rule_of 80; } > "$dir/sp_placeholder"
+  { echo "some streamed prose"; echo "✶ Baking… (thinking)"; rule_of 80; echo "$CARET "; rule_of 80; } > "$dir/sp_noclock"
+  { echo "some streamed prose"; echo "✳ Baking…"; rule_of 80; echo "$CARET "; rule_of 80; } > "$dir/sp_bare"
+  [ "$(spinner_rows "$dir/sp_live")" = 1 ]        || { echo "SELF-TEST: spinner_rows does not see a live spinner row"; ok=0; }
+  [ "$(elapsed_rows "$dir/sp_live")" = 1 ]        || { echo "SELF-TEST: elapsed_rows does not see the parenthetical clock"; ok=0; }
+  [ "$(spinner_clock "$dir/sp_live")" = "4s" ]    || { echo "SELF-TEST: spinner_clock misreads the clock ($(spinner_clock "$dir/sp_live"))"; ok=0; }
+  [ "$(spinner_rows "$dir/sp_dup")" = 2 ]         || { echo "SELF-TEST: spinner_rows CANNOT COUNT A STRANDED DUPLICATE — the A3 cell has no teeth"; ok=0; }
+  [ "$(elapsed_rows "$dir/sp_dup")" = 2 ]         || { echo "SELF-TEST: elapsed_rows cannot count a stranded duplicate"; ok=0; }
+  [ "$(spinner_rows "$dir/sp_done")" = 0 ]        || { echo "SELF-TEST: the end-of-turn duration row reads as a live spinner"; ok=0; }
+  [ "$(elapsed_rows "$dir/sp_done")" = 0 ]        || { echo "SELF-TEST: the end-of-turn duration row reads as an elapsed row"; ok=0; }
+  [ "$(spinner_rows "$dir/sp_placeholder")" = 0 ] || { echo "SELF-TEST: the transcript's collapsed-thinking placeholder reads as a live spinner"; ok=0; }
+  [ "$(spinner_rows "$dir/sp_noclock")" = 1 ] && [ "$(elapsed_rows "$dir/sp_noclock")" = 0 ] \
+    || { echo "SELF-TEST: the two needles are not independent — a tail with no clock must satisfy the shape and not the content"; ok=0; }
+  # The QUIET-GATED head of a turn: no parenthetical at all. The shape needle must still see it, or the cell
+  # waits for the tail before it resizes and lands its shrink in whichever regime the model chose that run.
+  [ "$(spinner_rows "$dir/sp_bare")" = 1 ] && [ "$(elapsed_rows "$dir/sp_bare")" = 0 ] \
+    || { echo "SELF-TEST: the shape needle misses a quiet-gated spinner row (no tail yet)"; ok=0; }
   rm -rf "$dir"
   [ "$ok" = 1 ] || { echo "ABORT: frame checker self-test failed."; exit 1; }
-  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above; the A3 wide-row precondition fires on a bare composer frame."
+  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above; the A3 wide-row precondition fires on a bare composer frame; the A3 spinner needles count a stranded duplicate as 2 and read neither the end-of-turn row nor the thinking placeholder as a spinner."
 }
 
 # ── session helpers (docs/parity/qa-driver.md §2) ─────────────────────────────────────────────────────────
@@ -470,20 +496,74 @@ run_g1_cell() {
 # and skips (recording neither pass nor fail) when there is none. The component-level regression guard for the
 # same acceptance is `test/tui/resize-midturn.test.tsx`, which is keyless and runs in CI; it can prove that
 # ChatApp never mounts a second spinner, and cannot see repaint residue at all. This cell is the other half.
-# ⚠ THESE TWO NEEDLES ARE STALE, AND THE CELL CANNOT PASS UNTIL THEY ARE RE-AUTHORED (found W2 t7 fix round 1,
-# the first run of this cell WITH a credential since Wave C — it skips keyless, which is why the rot survived
-# the two runs that reported 7/7). WAVE C TASK 6 rewrote the spinner tail to canon's `C0p`
-# (`({elapsed} · ↑ {N} tokens · {phase})`, spinner.ts:6-16) and MOVED the interrupt offer to the footer's hint
-# list (Footer.tsx:174-181, `⏸ manual mode on · esc to interrupt`). So `esc to interrupt` no longer appears on
-# the spinner row at all and DOES appear on the footer: `spinner_rows` now counts the footer, returns 1 the
-# instant a turn starts, and `settle_spinner` breaks out of its hold before the parenthetical clock exists —
-# measured on a live run, `escRows=1 elapsedRows=0` against a healthy build with one spinner up. Re-authoring
-# them means keying on the spinner GLYPH row (`SPINNER_FRAMES`, `{glyph} {verb}…`) and on the parenthetical's
-# own clock, and it needs its own live iteration (the segments are behind a width gate and a 16 s quiet
-# threshold, and the end-of-turn row must not read as an elapsed row) — which is a Wave C instrument repair,
-# not a task 7 one. Until then this cell fails for anyone who runs the matrix with a credential.
-spinner_rows() { grep -cF 'esc to interrupt' "$1"; }                        # ⚠ stale — see above
-elapsed_rows() { grep -cE '\(([0-9]+m )?[0-9]+s( · [0-9]+ tokens)? · esc to interrupt\)' "$1"; }   # ⚠ stale — see above
+#
+# ⚠ AND AS OF THE REPAIR BELOW IT IS RED ON THIS BUILD, ON THE PRODUCT AND NOT ON THE INSTRUMENT. With the
+# needles re-authored the cell reproduces qa2-09 verbatim: an early mid-turn shrink strands the spinner row it
+# was painting, frozen at the second of the resize, above the assistant text that arrives afterwards, while the
+# live spinner carries on below it — `spinnerRows=2` for about seventeen seconds, after which the corpse leaves
+# by scrolling off the top rather than by being erased, and in one run of five it outlived the interrupt too.
+# Measured 5/5 on an early shrink and 0/2 on a late one (a shrink that lands once the screen is already
+# scrolling shows nothing), which is the regime split the shrink timing below is pinned to. The composer
+# geometry is repaired in the same frames (`check_frame` is green throughout), so this is the ONE live row
+# `resizeRepaint.ts`'s correction does not reach. Filed as a product defect; the cell stays honest and red
+# until it is fixed, and must not be re-timed to land its shrink where the defect hides.
+#
+# THE NEEDLES ROTTED ONCE ALREADY, AND THE LESSON IS WHY THEY LOOK LIKE THIS. Both used to key on the literal
+# `esc to interrupt`, which Wave C task 6 deleted from the spinner tail and re-homed on the FOOTER — so the old
+# `spinner_rows` counted the footer and returned 1 the instant any turn began, on any build, healthy or not
+# (measured `escRows=1 elapsedRows=0` against a healthy build with one spinner up; full mechanism in git
+# history, this block's Wave-C-era comment). Two rules fall out of that and both are structural, not
+# incidental:
+#   · NEVER KEY ON AFFORDANCE TEXT. The footer hint spells whatever chord is bound to `chat:cancel`
+#     (Footer.tsx's own note), so `esc to interrupt` is wrong twice over — wrong surface, and not even a
+#     constant on the surface it lives on. Key on what the spinner IS.
+#   · KEY ON TWO INDEPENDENT LAYERS, so one drifting cannot silently green the other: `spinner_rows` on the
+#     row's SHAPE, `elapsed_rows` on its CONTENT.
+#
+# WHAT THE SPINNER ACTUALLY RENDERS TODAY (TurnSpinner.tsx, spinner.ts): one row, `{glyph} {Gerund}… {tail}` —
+# an animated glyph from `SPINNER_FRAMES` (`· ✢ ✳ ✶ ✻ ✽`, pulsed out and back), a single-token gerund with a
+# U+2026 ellipsis, and canon `C0p`'s dim parenthetical `({elapsed} · {↓|↑} {N} tokens · {phase})`.
+#   · `spinner_rows` counts rows of that SHAPE — glyph, gerund, ellipsis. This is the count the cell asserts:
+#     exactly 1 while the turn runs, 0 once it has ended.
+#   · `elapsed_rows` counts the subset whose parenthetical LEADS WITH A CLOCK (`formatDuration`: `4s`,
+#     `1m 5s`, `1h 2m 3s` — spaced and unpadded). That is the segment a stranded copy freezes.
+#
+# THE TWO GATES, AND WHY THE SHAPE NEEDLE STOPS SHORT OF THE TAIL (spinner.ts `spinnerStatus`). Every tail
+# segment is behind a WIDTH gate (`room = columns - (messageWidth + 2) - 5`; at the 80/100/120 columns this
+# cell uses, a clock of three or four glyphs clears it with ~50 to spare) and behind the QUIET gate — `loud =
+# verbose || hasPhase || tokens > 0 || elapsedMs > 16 s` — so a turn that has produced nothing yet renders a
+# BARE `✻ Baking…` and the parenthetical simply is not there. A first draft folded the parenthetical into the
+# shape needle, and that decided WHEN THE CELL RESIZES: the tail arrives in about a second when the model
+# opens with a thinking burst (`hasPhase`) and not for twenty-five when it does not (nothing is loud until
+# tokens flow), and the two land the shrink in two completely different regimes. Measured, that is the whole
+# verdict — see the shrink step below. So the shape needle is gate-free and fires within a second of any turn,
+# the clock is asserted in its own step once it is guaranteed to exist, and every count assertion holds
+# `elapsed_rows <= spinner_rows`: a clock can only ride a spinner row, which pins 0 of each after the turn
+# ends while leaving the head of a turn free to be briefly clockless.
+#
+# AND IT IS WHY THE END-OF-TURN ROW CANNOT READ AS A SPINNER. `durationRow.ts` prints `✻ Worked for 4s` when a
+# turn finishes — the SAME U+273B glyph, dim, with a duration on it. It has no ellipsis and no parenthetical,
+# so neither needle sees it, which is what lets `settle_spinner "$s" 0` after the interrupt mean "the spinner
+# is gone" instead of "the turn never happened". The transcript's collapsed-thinking placeholder (`✻ Thinking…`,
+# render.ts) is excluded by the same clause — it wears the glyph and the ellipsis but never a parenthetical.
+# All five of those cases are pinned in `self_test`, including a two-spinner frame the count must catch.
+SPINNER_GLYPH='(·|✢|✳|✶|✻|✽)'                       # `SPINNER_FRAMES` (spinner.ts) as an alternation: a byte
+                                                    # class would match the shared UTF-8 lead byte of all six.
+SPINNER_ROW="^${SPINNER_GLYPH} [^ ]+…"              # glyph · single-token gerund · U+2026
+SPINNER_CLOCK='\(([0-9]+d )?([0-9]+h )?([0-9]+m )?[0-9]+(\.[0-9])?s'   # `formatDuration`, all four rollovers
+# The ONE literal the shape needle has to step over: `render.ts`'s collapsed-thinking placeholder, a transcript
+# row that wears the same glyph and the same ellipsis and is not a spinner. It is a frozen constant, where the
+# spinner's glyph animates over six frames and its gerund over 186 verbs — so excluding the exact string costs
+# at most one polling frame in the 1-in-1116 case where the live spinner happens to spell it too.
+THINKING_PLACEHOLDER_ROW='✻ Thinking…'
+spinner_rows() {                                    # spinner_rows <capture-file>
+  LC_ALL=C awk -v skip="$THINKING_PLACEHOLDER_ROW" -v re="$SPINNER_ROW" '
+    { line = $0; sub(/[ \t]+$/, "", line); if (line != skip && line ~ re) n++ } END { print n+0 }' "$1"
+}
+elapsed_rows() { LC_ALL=C grep -cE "${SPINNER_ROW} ${SPINNER_CLOCK}( ·|\))" "$1"; }
+# The clock itself, for the "it is still ticking" assertion below — a stranded copy of the row keeps whatever
+# time it was painted at, so a live spinner and its corpse differ in exactly this field.
+spinner_clock() { LC_ALL=C grep -oE "${SPINNER_ROW} ${SPINNER_CLOCK}" "$1" | tail -1 | sed 's/.*(//'; }
 # How many rows of the STREAMED REGION — everything ABOVE the composer's first rule — are wider than <width>.
 # Measured on the PRE-shrink capture, because `capture-pane` already folds every row to the pane width, so
 # SP-R0's "a line longer than the new width" can only be observed before the resize.
@@ -511,21 +591,61 @@ wide_rows_above_frame() {                   # wide_rows_above_frame <width> <cap
 # settle_frame's discipline applied to the spinner count: poll, never sleep on a fixed delay, and never send a
 # key during the wait (a keystroke forces a partial repaint that HIDES residue). The extra rule here is the
 # HOLD — the count must be right on three consecutive captures, because a live turn repaints continuously and
-# a single good capture between two repaints proves nothing. A build with the filed defect never reaches the
-# hold: the stale rows do not self-heal (qa-driver §5).
+# a single good capture between two repaints proves nothing.
+#
+# AND THE WINDOW IS SHORT ON PURPOSE, WHICH IS THE OTHER HALF OF THE REPAIR. The convergence window every
+# other assertion here uses is safe because an idle screen only ever gets better. A STREAMING one has a second
+# way to reach the wanted count, and it is not a repair: text arriving under a stranded row scrolls that row
+# off the top of the pane, so a long enough poll rewards the defect for waiting. Measured on this build, a
+# stranded spinner row stays visible for about seventeen seconds and then leaves that way — so a fifteen-second
+# window was a coin toss. Eight seconds is far more than a healthy repaint needs (one frame) and far less than
+# scroll-away takes. A build with the filed defect therefore fails here rather than outliving the poll.
 settle_spinner() {                          # settle_spinner <session> <expected-count> <label>
   local s="$1" want="$2" label="$3" i=0 hold=0 cap="$MATRIX_ROOT/cap-a3" n m
-  while [ "$i" -lt 40 ]; do                 # 10 s
+  while [ "$i" -lt 32 ]; do                 # 8 s — see above; NOT a convergence window
     tmux capture-pane -t "$s" -p > "$cap"
-    n=$(spinner_rows "$cap")
-    if [ "$n" = "$want" ]; then hold=$((hold+1)); [ "$hold" -ge 3 ] && break; else hold=0; fi
+    n=$(spinner_rows "$cap"); m=$(elapsed_rows "$cap")
+    if [ "$n" = "$want" ] && [ "$m" -le "$want" ]; then hold=$((hold+1)); [ "$hold" -ge 3 ] && break; else hold=0; fi
     sleep 0.25; i=$((i+1))
   done
   tmux capture-pane -t "$s" -p > "$cap"
   n=$(spinner_rows "$cap"); m=$(elapsed_rows "$cap")
-  if [ "$n" = "$want" ] && [ "$m" = "$want" ]; then printf '      ok   %-28s escRows=%s elapsedRows=%s\n' "$label" "$n" "$m"; return 0; fi
-  printf '      FAIL %-28s escRows=%s elapsedRows=%s (want %s of each)\n' "$label" "$n" "$m" "$want"
+  if [ "$n" = "$want" ] && [ "$m" -le "$want" ]; then printf '      ok   %-28s spinnerRows=%s elapsedRows=%s\n' "$label" "$n" "$m"; return 0; fi
+  printf '      FAIL %-28s spinnerRows=%s elapsedRows=%s (want %s spinner rows, no more clocks than rows)\n' "$label" "$n" "$m" "$want"
   [ "$want" = 1 ] && [ "$n" = 0 ] && echo "      NB zero rows where one was expected means the TURN ENDED before this step — inconclusive, not a spinner defect. Lengthen A3_PROMPT and rerun."
+  echo "      ── frame ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"
+  return 1
+}
+# The clock, asserted where it is guaranteed to exist rather than where the resize has to happen. `loud` opens
+# on a thinking burst within a second, or on the first tokens, or at the 16 s quiet threshold — so this poll is
+# generous where `settle_spinner`'s is deliberately not, and it is the one place the cell will sit and wait.
+settle_tail() {                             # settle_tail <session> <label>
+  local s="$1" label="$2" i=0 cap="$MATRIX_ROOT/cap-a3" n m
+  while [ "$i" -lt 100 ]; do                # 25 s — covers the quiet threshold with room to spare
+    tmux capture-pane -t "$s" -p > "$cap"
+    [ "$(elapsed_rows "$cap")" = 1 ] && break
+    sleep 0.25; i=$((i+1))
+  done
+  n=$(spinner_rows "$cap"); m=$(elapsed_rows "$cap")
+  if [ "$n" = 1 ] && [ "$m" = 1 ]; then printf '      ok   %-28s spinnerRows=%s elapsedRows=%s\n' "$label" "$n" "$m"; return 0; fi
+  printf '      FAIL %-28s spinnerRows=%s elapsedRows=%s (want 1 of each)\n' "$label" "$n" "$m"
+  echo "      ── frame ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"
+  return 1
+}
+# …and the other half of "the row survived the resize": it is the LIVE one. A duplicate stranded by a repaint
+# is a dead copy of a row painted at an earlier second, so the surviving row's clock must still be moving.
+# Sampled twice with a gap wider than the clock's one-second resolution; equal readings fail. (A resize that
+# strands a copy usually fails the COUNT first — this catches the other shape, where the live row is the one
+# erased and what is left behind is the corpse.)
+spinner_ticks() {                           # spinner_ticks <session> <label>
+  local s="$1" label="$2" cap="$MATRIX_ROOT/cap-a3" t0 t1
+  tmux capture-pane -t "$s" -p > "$cap"; t0=$(spinner_clock "$cap")
+  sleep 2
+  tmux capture-pane -t "$s" -p > "$cap"; t1=$(spinner_clock "$cap")
+  if [ -n "$t0" ] && [ -n "$t1" ] && [ "$t0" != "$t1" ]; then
+    printf '      ok   %-28s clock advanced %s -> %s\n' "$label" "$t0" "$t1"; return 0
+  fi
+  printf '      FAIL %-28s clock did not advance (%s -> %s)\n' "$label" "${t0:-<none>}" "${t1:-<none>}"
   echo "      ── frame ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"
   return 1
 }
@@ -559,7 +679,9 @@ run_a3_cell() {
   launch "$s" 120 40 "$fwd" || { record "a3" 1; kill_cell "$s"; return; }
   settle_frame "$s" 120 "a3 start 120x40" || rc=1
   type_line "$s" "$A3_PROMPT"
-  # PRECONDITION 1 — the turn is really in flight. Resizing an idle REPL is cell c1, not this one.
+  # PRECONDITION 1 — the turn is really in flight. Resizing an idle REPL is cell c1, not this one. The needle
+  # is the gate-free SHAPE, so this clears about a second into any turn and the shrink below lands EARLY and
+  # at the same point every run, whatever the model does with its first breath (see the needle block).
   settle_spinner "$s" 1 "a3 spinner up" || { echo "      FAIL a3 precondition: no live spinner to resize under"; kill_cell "$s"; record "a3" 1; return; }
   # PRECONDITION 2 — SP-R0's second condition, asserted rather than assumed: STREAMED rows (above the composer
   # frame — see `wide_rows_above_frame`, and the self-test that proves this branch can fire) wider than the
@@ -586,6 +708,12 @@ run_a3_cell() {
   tmux resize-window -t "$s" -x 100 -y 40 || { echo "      FAIL resize-window failed"; rc=1; }
   settle_spinner    "$s" 1 "a3 grow 100x40" || rc=1
   settle_frame_hold "$s" 100 "a3 frame 100x40" || rc=1
+  # …and now the CONTENT half, in the one place the tail is guaranteed: the surviving row carries a clock, and
+  # that clock is still moving. A row stranded by a repaint is a dead copy frozen at the second it was painted,
+  # so a build that erases the LIVE row and keeps the corpse — the shape the count alone cannot tell apart —
+  # fails here instead.
+  settle_tail   "$s" "a3 clock present" || rc=1
+  spinner_ticks "$s" "a3 clock advancing" || rc=1
   # …AND THE INTERRUPT, which is the half the original finding got wrong. Esc on a busy turn is always
   # interrupt (ChatApp's onInterrupt), so no second key is needed and none is sent.
   tmux send-keys -t "$s" Escape
@@ -619,15 +747,23 @@ MATRIX_ROOT=$(mktemp -d /tmp/wr-t5-matrix-XXXXXX)
 
 # The QA-2 width matrix (plan Global Constraints). The first four shrink; the last two are the height-only
 # controls, which must stay clean — they are the "did the fix over-erase?" half of the matrix.
-run_cell c1 120x40 80x24 120x40
-run_cell c2 120x40 60x15 120x40
-run_cell c3 80x24 160x40 80x24
-run_cell c4 120x40 100x40 90x40 80x40          # the accumulation cell (A2): three shrinks, no reset between
-run_cell h1 120x24 120x40                      # height-only control
-run_cell h2 80x40 80x15                        # height-only control
-run_a5_cell
-run_g1_cell                                    # W2 t7 (s2qa2-05): clip-then-grow out of Ink's tall branch
-run_a3_cell                                    # live (task 6, A3); skips cleanly with no credential
+#
+# CELL SELECTION, for iterating on one cell without paying for the other eight: `RESIZE_MATRIX_CELLS=a3`
+# (space- or comma-separated names) runs only what it names. Unset — the CI and the DoD form — runs all nine.
+# A filtered run still prints its own tally, so it can never be mistaken for a full one.
+want_cell() {                               # want_cell <name>
+  [ -z "${RESIZE_MATRIX_CELLS:-}" ] && return 0
+  case " $(printf '%s' "$RESIZE_MATRIX_CELLS" | tr ',' ' ') " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+want_cell c1 && run_cell c1 120x40 80x24 120x40
+want_cell c2 && run_cell c2 120x40 60x15 120x40
+want_cell c3 && run_cell c3 80x24 160x40 80x24
+want_cell c4 && run_cell c4 120x40 100x40 90x40 80x40   # the accumulation cell (A2): three shrinks, no reset between
+want_cell h1 && run_cell h1 120x24 120x40               # height-only control
+want_cell h2 && run_cell h2 80x40 80x15                 # height-only control
+want_cell a5 && run_a5_cell
+want_cell g1 && run_g1_cell                    # W2 t7 (s2qa2-05): clip-then-grow out of Ink's tall branch
+want_cell a3 && run_a3_cell                    # live (task 6, A3); skips cleanly with no credential
 
 PREFS_AFTER=$(prefs_stamp)
 if [ "$PREFS_BEFORE" != "$PREFS_AFTER" ]; then
