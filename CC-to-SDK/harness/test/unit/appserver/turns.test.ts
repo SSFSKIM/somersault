@@ -200,10 +200,13 @@ describe("appserver turns (Task 8)", () => {
   });
 
   it("turn/interrupt arriving in the SAME synchronous tick as turn/start (before the chain callback runs) still reports 'interrupted' — the flag must not be wiped by that turn's own deferred setup", async () => {
+    const submits: string[] = [];
     const sessionFactory = () => ({
-      // Resolves quickly regardless of whether interrupt() ran first — the point under test is only
-      // whether interruptRequested survives to when onSuccess reads it, not submit/interrupt ordering.
-      submit: async () => ({ result: {} }),
+      // NEVER CALLED on this path, and that is the point: beginTurn's chain callback re-reads
+      // interruptRequested before running the runner, so a turn the client aborted before its own deferred
+      // setup ran never reaches the engine at all. Recorded rather than asserted-away, because `submits`
+      // being empty is the other half of what "the flag survived" now means.
+      submit: async (prompt: string) => { submits.push(prompt); return { result: {} }; },
       interrupt: async () => ({}),
       dispose: async () => {},
       onFrame: () => () => {},
@@ -217,6 +220,14 @@ describe("appserver turns (Task 8)", () => {
 
     const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
     expect(completed.params.turn).toEqual({ id: `turn_${threadId}_1`, status: "interrupted" });
+    expect(submits).toEqual([]);
+    // The turn/start caller's own reply carries that same terminal status — the turn object, never an
+    // error (it is the only place a plain turn/start learns its id, which the notification above names).
+    // It read `inProgress` before the re-read landed; pinned here because a client branching on the reply
+    // must not be told a turn started that never will.
+    expect(parsed(s.lines).find((f) => f.id === 3).result).toEqual({ turn: { id: `turn_${threadId}_1`, status: "interrupted" } });
+    // and no turn/started went out for a turn that never ran
+    expect(parsed(s.lines).find((f) => f.method === "turn/started")).toBeUndefined();
   });
 
   it("submit() throwing SYNCHRONOUSLY (not returning a rejected promise) still completes as failed, clears busy, and does not wedge the thread's chain", async () => {

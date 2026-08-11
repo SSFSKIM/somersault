@@ -392,6 +392,40 @@ describe("turn queue (spec Wave 4)", () => {
     expect(replyTo(s, 6).result).toEqual({ ok: true });
   });
 
+  // The interrupt half of the same re-read. Same park, different stopper: nothing is closing here, so the
+  // callback's OTHER term is the only thing standing between a client's abort and an engine call it
+  // already asked not to happen. A plain interrupt stops ONE turn, not the queue — so the entry behind the
+  // stopped one must still drain, which is what separates this from the closing case.
+  it("a DRAINED turn parked behind a chain item is settled 'interrupted' by a plain turn/interrupt — it never submits, and the queue behind it still drains", async () => {
+    const gate = mkGate();
+    const engine = mkEngine({ setModelImpl: () => gate.wait });
+    const { s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    send(c, { id: 5, method: "turn/start", params: { threadId, input: "three", queue: true } });
+    await tick();
+    const drainedId = replyTo(s, 4).result.turn.id;
+    send(c, { id: 6, method: "thread/model/set", params: { threadId, model: "opus" } }); // parks on engine I/O
+    await tick();
+
+    engine.release(); // turn 1 settles -> "two" is drained and claims the thread, behind the parked setter
+    await settle();
+    expect(engine.submits).toEqual(["one"]);
+
+    send(c, { id: 7, method: "turn/interrupt", params: { threadId } });
+    await settle();
+    gate.release(); // the setter answers; the drained turn's callback finally runs
+    await settle();
+
+    expect(engine.submits).toEqual(["one", "three"]); // "two" never reached the engine; "three" drained normally
+    expect(notifs(s, "turn/completed").find((f) => f.params.turn.id === drainedId).params.turn)
+      .toEqual({ id: drainedId, status: "interrupted" });
+    // and no turn/started was ever emitted for it — a turn that never ran is not announced as running
+    expect(notifs(s, "turn/started").map((f) => f.params.turn.id)).toEqual([`turn_${threadId}_1`, `turn_${threadId}_3`]);
+    expect(replyTo(s, 7).result).toEqual({ interrupted: true });
+  });
+
   it("interrupt with BOTH turnId and cancelQueued flushes FIRST: the named entry reports cancelled and the whole flush rides along", async () => {
     const engine = mkEngine();
     const { srv, s, c, threadId } = await boot(engine);
