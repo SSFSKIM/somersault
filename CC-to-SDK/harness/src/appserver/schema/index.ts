@@ -11,7 +11,12 @@ import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverr
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
 
-export interface MethodSchema { params: z.ZodType }
+/** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
+ *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
+ *  which generated artifact a method lands in (`schema/emit.ts`: stable file XOR experimental file), so
+ *  flipping the marker is how a method graduates — there is no second list to keep in step. Absent, not
+ *  `false`, on a stable method: the marker is an exception, and an entry that says nothing says "stable". */
+export interface MethodSchema { params: z.ZodType; experimental?: true }
 export const methodSchemas: Record<string, MethodSchema> = {
   "initialize": { params: initializeParams },
   "server/status": { params: serverStatusParams },
@@ -63,7 +68,11 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/clear": { params: threadClearParams },
   // Task 5's probe promotions. Both reloads take the bare `{threadId}` — no options exist to pass, the
   // engine re-scans its whole plugin/skill set.
-  "turn/steer": { params: turnSteerParams },
+  // `turn/steer` is the spec's one X method that shipped: it rides `Query.streamInput`, an SDK surface with
+  // no stability promise (probe 103b), so it is published in the experimental artifact only. The reloads
+  // are NOT marked — they were probe-GATED, which is a question about whether to ship at all, not about
+  // how stable the shape is once shipped; probe 105 answered it and they graduated straight to stable.
+  "turn/steer": { params: turnSteerParams, experimental: true },
   "plugin/reload": { params: threadIdParams },
   "skill/reload": { params: threadIdParams },
 };

@@ -24,6 +24,11 @@ export interface CcxInvocation {
   listen: { host: string; port: number };
   tokenFile?: string;
   allowOrigins: string[];
+  /** `serve --emit-schema DIR`: write the generated draft-7 JSON-Schema artifacts into DIR and exit
+   *  WITHOUT binding anything (a build step that hands over the wire contract, not a server). Grammar
+   *  only — like `listen`/`tokenFile` above it is parsed for any command and read by the `serve` arm
+   *  alone, so the flag obeys the same missing-value and unknown-flag rules as every other. */
+  emitSchema?: string;
   /** The ABSOLUTE path `--worktree` resolved to. The parser never sets it — main fills it in after
    *  ensureWorktree, and spawnDetached carries it to the child, which is what writes it on the roster
    *  row. Distinct from `worktree` (the name as typed) on purpose: the two live in different domains,
@@ -174,6 +179,7 @@ export function parseCcx(argv: string[]): CcxInvocation {
         break;
       }
       case "--token-file": a.tokenFile = val(t); break;
+      case "--emit-schema": a.emitSchema = val(t); break;
       // Repeatable — a web UI's own origin plus e.g. a dev server's are both real cases (spec §11: the
       // transport fails closed, so this list is the ONLY way a browser client ever gets in at all).
       case "--allow-origin": a.allowOrigins.push(val(t)); break;

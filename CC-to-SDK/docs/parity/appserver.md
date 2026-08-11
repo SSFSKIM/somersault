@@ -283,10 +283,29 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 `Session.dispose()` (which closes the input queue and awaits the read loop); nothing in `harness/src`
 calls the SDK's own `Query.close()`.
 
+## Server-origin methods — no seam token, so never walked
+
+Three methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
+no walker can ever produce a row for them: `initialize` is special-cased in `dispatch()` ahead of the
+handlers table, `server/status` reports this process, and `thread/start` *creates* the thread the other
+three tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). They were
+therefore invisible to a scorecard whose rows all came from the walked-token direction, and the M2b
+Task 6 gate (every registered method must be named by some row — the "zero schema-less methods"
+acceptance) is what surfaced the omission. Origin scope is a question about an *existing* thread and
+none of the three has one, so all three read `N/A` there. The seam-token column repeats the method
+name: there is no upstream token to put in it.
+
+| seam token | source | protocol method | origin scope | status |
+|---|---|---|---|---|
+| `initialize` | appserver/server.ts | `initialize` | N/A | shipped(M1) — Bearer-token handshake, connection-scoped; `watchThreads` opts into the server-scoped notifications |
+| `server/status` | appserver/server.ts | `server/status` | N/A | shipped(M1) |
+| `thread/start` | appserver/server.ts | `thread/start` | N/A | shipped(M1) — registers an `inProcess` thread; a client's whole `config` reaches `openSession` |
+
 ## Totals
 
 34 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **79 walked tokens**,
-all rowed above.
+all rowed above — plus the 3 server-origin rows just above, which no walker produces, for **82 rows**
+in all.
 
 **Per-status row tallies are recomputed once, at the M2b close-out sweep (Task 9) — not carried here
 between waves.** Every landing wave flips a handful of rows, so a shipped/planned split written down

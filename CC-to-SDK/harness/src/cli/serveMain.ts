@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AppServer } from "../appserver/server.js";
+import { writeArtifacts } from "../appserver/schema/emit.js";
 import { listenWs } from "../appserver/transport/ws.js";
 import { runDir } from "../fleet/paths.js";
 import type { CcxInvocation } from "./args.js";
@@ -93,6 +94,12 @@ export function onStopSignals(stop: () => void | Promise<void>, proc: NodeJS.Eve
 /** Runs until SIGINT/SIGTERM closes the listener, then resolves — main.ts awaits this for the whole
  *  `serve` command's lifetime (the process's ordinary stop, not a crash path). */
 export async function runServe(inv: CcxInvocation): Promise<void> {
+  // `--emit-schema DIR` short-circuits the whole server: generate the wire contract, say where it went,
+  // exit 0. Checked BEFORE the run dir, the token and the listener on purpose — this arm must neither mint
+  // a secret on disk nor occupy a port, and it must work on a machine with no fleet root. It runs the same
+  // generator `npm run emit-schema` does (appserver/schema/emit.ts), so a client holding only the installed
+  // package — no repo, no scripts/ — can still produce the artifacts its validator needs.
+  if (inv.emitSchema) { for (const path of writeArtifacts(inv.emitSchema)) console.log(`wrote ${path}`); return; }
   const dir = runDir();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const { token, tokenFile } = loadOrMintToken(inv.tokenFile, dir);

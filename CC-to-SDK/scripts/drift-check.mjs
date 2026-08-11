@@ -156,12 +156,24 @@ for (const [, token, source, methodCol, , status] of statusRows) {
   }
 }
 
+// ---- Registry→scorecard direction (Task 6, spec §9's "zero schema-less methods"). The two checks above
+// both start from the DOC: a walked token needs a row, a row's status needs to match. Neither can see a
+// method that is registered, dispatchable and generated into the published JSON-Schema artifact while the
+// scorecard never mentions it — which is precisely the drift a server-origin method makes (nothing walks
+// `thread/start`; no seam produces it). So the third check starts from the CODE: every `methodSchemas` key
+// must be named, in backticks, by SOME row's protocol-method column. All backticks in the column count,
+// not just the first — a row legitimately names more than one method (`thread/status/changed` (+
+// `thread/list` status field)), and reading only the first would demand duplicate rows to satisfy the gate.
+const rowNamedMethods = new Set(statusRows.flatMap((r) => [...r[3].matchAll(/`([^`]+)`/g)].map((m) => m[1])));
+const appserverUnrowed = [...liveMethods].filter((m) => !rowNamedMethods.has(m));
+
 const report = {
   package: PKG, installed: installedVersion, head: headVersion, drift: diff(installed, head),
-  appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, missing: appserverMissing, stale: appserverStale },
+  appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, missing: appserverMissing, stale: appserverStale, unrowed: appserverUnrowed },
 };
-// The gate's verdict travels with the JSON too: exit 1 on a missing or stale row, exactly as the text mode does.
-if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(appserverMissing.length || appserverStale.length ? 1 : 0); }
+// The gate's verdict travels with the JSON too: exit 1 on a missing, stale or unrowed row, exactly as the
+// text mode does.
+if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(appserverMissing.length || appserverStale.length || appserverUnrowed.length ? 1 : 0); }
 
 console.log(`${PKG}: installed ${installedVersion} vs npm HEAD ${headVersion}\n`);
 let any = false;
@@ -195,4 +207,12 @@ if (appserverStale.length) {
   process.exitCode = 1;
 } else {
   console.log(`  every row status matches the live surface (${liveMethods.size} registered methods) — no staleness`);
+}
+if (appserverUnrowed.length) {
+  console.error(`\nFAIL: registered method(s) no scorecard row names (${appserverUnrowed.length}):`);
+  for (const m of appserverUnrowed) console.error(`  ${m} — in schema/index.ts and in the generated artifact, absent from every row`);
+  console.error(`Add a row naming each in docs/parity/appserver.md — a dispatchable method the scorecard never mentions is exactly the "100% coverage" claim going quietly false.`);
+  process.exitCode = 1;
+} else {
+  console.log(`  every registered method is named by a scorecard row — zero schema-less methods`);
 }

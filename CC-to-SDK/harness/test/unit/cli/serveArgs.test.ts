@@ -54,10 +54,19 @@ describe("parseCcx serve", () => {
     expect(() => parseCcx(["serve", "extra"])).toThrow(/extra/);
   });
 
-  it("throws on a dangling --listen/--token-file/--allow-origin with no value", () => {
+  it("throws on a dangling --listen/--token-file/--allow-origin/--emit-schema with no value", () => {
     expect(() => parseCcx(["serve", "--listen"])).toThrow(/--listen/);
     expect(() => parseCcx(["serve", "--token-file"])).toThrow(/--token-file/);
     expect(() => parseCcx(["serve", "--allow-origin"])).toThrow(/--allow-origin/);
+    expect(() => parseCcx(["serve", "--emit-schema"])).toThrow(/--emit-schema/);
+  });
+
+  it("parses --emit-schema DIR, leaving every listener field at its default", () => {
+    // Task 6. Nothing about the flag changes the bind grammar — runServe short-circuits on it before the
+    // run dir, the token and the port, so an operator asking for the wire contract gets no side effects.
+    const a = parseCcx(["serve", "--emit-schema", "/tmp/schema-out"]);
+    expect(a).toMatchObject({ command: "serve", emitSchema: "/tmp/schema-out", listen: { host: "127.0.0.1", port: 0 } });
+    expect(a.tokenFile).toBeUndefined();
   });
 
   describe("nonLocalWithoutToken — spec §11's last rule, pure (no I/O)", () => {

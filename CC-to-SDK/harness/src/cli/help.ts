@@ -108,6 +108,7 @@ export const CCX_OPTIONS: CcxOption[] = [
   // Value domains are spelled with spaces, not `a|b|c`: the wrapper breaks on spaces (as commander's
   // does), and an unbreakable 55-character run would push its row past the 80-column help width.
   { longs: ["--effort"], value: "<level>", description: "Reasoning effort: low, medium, high, xhigh, max" },
+  { longs: ["--emit-schema"], value: "<dir>", description: "Write serve's JSON-Schema artifacts to a directory and exit" },
   { longs: ["--help"], short: "-h", description: "Display help for command" },
   { longs: ["--idle-timeout"], value: "<seconds>", description: "Stop a detachable session after this much idle time" },
   { longs: ["--json"], description: "Machine-readable output" },

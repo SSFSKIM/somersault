@@ -63,7 +63,7 @@ describe("helpText — C3.2", () => {
     const terms = section(text, "Options:").map(term).filter((t): t is string => t !== undefined);
     expect(terms).toEqual([
       "--all", "--allow-origin <origin>", "--bg, --background", "-c, --continue", "--cwd <dir>",
-      "--dangerously-skip-permissions", "--detachable", "--effort <level>", "-h, --help",
+      "--dangerously-skip-permissions", "--detachable", "--effort <level>", "--emit-schema <dir>", "-h, --help",
       "--idle-timeout <seconds>", "--json", "--listen <url>", "--model <model>", "-n, --name <name>",
       "--permission-mode <mode>", "-p, --print", "-r, --resume <value>", "--settings <file-or-json>",
       "--think <level>", "--token-file <path>", "-v, --version", "--worktree <name>",
