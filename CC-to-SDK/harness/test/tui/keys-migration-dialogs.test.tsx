@@ -448,6 +448,86 @@ describe("Wave 2 task 3 — ctrl+c falls through an overlay to the exit arm", ()
   });
 });
 
+// ── WAVE 2 TASK 3, FIX ROUND (review finding M1) — THE FIRST PRESS ARMS, AND ONLY A FOCUSED COMPOSER CLEARS.
+// Making ctrl+c fall through the overlays (above) handed the press to `ChatApp`'s exit arm, whose
+// `onFirstPress` bumps `clearDraftToken` — so opening a panel over a half-typed prompt and pressing Ctrl-C
+// once silently emptied the parked draft, and the user only found out when the overlay closed.
+// CANON SPLITS THE GESTURE IN TWO, and ccx had merged them into one arm:
+//   · the composer's own latch `V` (L395616) passes an `onFirstPress` of `if (e) t(""), B(0), c?.()` — clear
+//     the buffer, cursor to 0, reset the history walk — because the composer is the surface holding the text;
+//   · the dialog/overlay pair `h5u` (L183477) calls the SAME latch factory `Pee` (L183445) with only two
+//     arguments, `Pee(setState, exitFn)`. The third `onFirstPress` parameter is optional and is simply not
+//     passed: over a dialog the first press arms and does NOTHING else.
+// So the bump is gated on `composerOwns(inputOwnerRef.current)` — the one derivation in ChatApp that already
+// answers "is the composer the surface holding the keys" ("composer" and "typing", the suppressed-decision
+// state where the composer keeps both screen and keyboard). This also RETIRES the clear over a parked
+// decision dialog, which `Confirmation`/`SelectDecision` have fired since they first kept ctrl+c live: canon
+// arms-only there too, for the same reason — the composer is not on screen to have its draft cleared from.
+describe("Wave 2 task 3 fix — Ctrl-C over an overlay arms WITHOUT eating the parked draft", () => {
+  const DRAFT = "half a thought";
+  const modelRemote = () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
+  /** The composer's own prompt row (the last `❯` line): the draft is never submitted here, so any occurrence
+   *  in the frame is the composer holding it — but matching the row keeps the assertion honest anyway. */
+  const composerLine = (f: () => string | undefined) => {
+    const lines = stripAnsi(frame(f)).split("\n").filter((l) => l.includes("❯"));
+    return lines[lines.length - 1] ?? "";
+  };
+
+  // Two overlays, opened by a gesture that works with a draft in the buffer (a slash command cannot be typed
+  // over one): the reviewer's own repro, the bg tasks panel (ctrl+b, a bare `Select`, not paneOwned), and the
+  // model picker (alt+p — `Select` + `ModelPicker`, paneOwned; the surface QA drove as `/model`).
+  const PARKED: { name: string; open: string; marker: string; session: () => ReturnType<typeof fakeRemote> }[] = [
+    { name: "the bg tasks panel (ctrl+b)", open: "\x02", marker: "No tasks currently running", session: () => fakeRemote() },
+    { name: "the model picker (alt+p)", open: "\x1bp", marker: "Select model", session: modelRemote },
+  ];
+
+  it.each(PARKED)("$name: the draft survives the press and comes back on close", async ({ open, marker, session }) => {
+    const fake = session();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    stdin.write(DRAFT); await waitFor(() => composerLine(lastFrame).includes(DRAFT));
+    stdin.write(open); await waitFor(() => frame(lastFrame).includes(marker));
+    stdin.write("\x03");
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));   // it still ARMS
+    stdin.write("\x1b"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));      // esc closes the overlay
+    await new Promise((r) => setTimeout(r, 40));                                    // let a remount clear-effect land
+    expect(composerLine(lastFrame), "the overlay's Ctrl-C must not have touched the parked draft").toContain(DRAFT);
+  });
+
+  // The decision half, which diverged the same way and is corrected the same way: with the draft idle the
+  // parked dialog owns the screen ("decision"), the composer is unmounted, and canon's `h5u` pair arms only.
+  it("a parked decision dialog: Ctrl-C arms, and answering it returns the draft intact", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} typingIdleMs={20} />);
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    stdin.write(DRAFT); await waitFor(() => composerLine(lastFrame).includes(DRAFT));
+    await new Promise((r) => setTimeout(r, 60));                                    // typing goes idle → owner "decision", not "typing"
+    fake.parkPermission({
+      sessionId: "s", toolUseID: "q", toolName: "AskUserQuestion", kind: "question",
+      input: { questions: [{ question: "Which one?", options: [{ label: "alpha" }, { label: "bravo" }], multiSelect: false }] },
+      createdAt: Date.now(),
+    });
+    await waitFor(() => frame(lastFrame).includes("Which one?"));
+    stdin.write("\x03");
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
+    stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("❯\u00a0"));        // answer it; the composer comes back
+    await new Promise((r) => setTimeout(r, 40));
+    expect(composerLine(lastFrame), "canon's dialog latch takes no onFirstPress — the draft is untouched").toContain(DRAFT);
+  });
+
+  // The other direction, unchanged and pinned here beside its exception: with the composer focused, Ctrl-C
+  // still clears (canon `V`'s own `onFirstPress`). chat.test.tsx owns the full three-case block; this is the
+  // one line that makes the gate above readable as a gate rather than a removal.
+  it("with the composer focused, Ctrl-C still clears the draft in the same press", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    stdin.write(DRAFT); await waitFor(() => composerLine(lastFrame).includes(DRAFT));
+    stdin.write("\x03");
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
+    expect(composerLine(lastFrame)).not.toContain(DRAFT);
+  });
+});
+
 // F6 T2 review, Important 1 — the DECISION half of the same gate, driven through the real ChatApp. The four
 // surfaces above are OVERLAYS and must be deaf; a dialog answering the MODEL is the opposite and must stay
 // reachable, which is what the `Confirmation` block's own comment has always said. Moving QuestionDialog's

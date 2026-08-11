@@ -172,6 +172,15 @@ describe("app-scoped durable editor state across overlay remounts", () => {
 // the app-scoped `editorStateRef` and painted again on the way back — so a Ctrl-C pressed while the dialog is
 // up has a real buffer to clear. Seeding the consumed marker FROM the live token at mount marked that bump
 // as already-consumed, and the parked draft came back intact.
+//   WAVE 2 TASK 3 FIX (review M1) narrows what this block SPEAKS FOR, without changing a line of it. `ChatApp`
+// no longer bumps the token while an overlay or a shown decision dialog owns the keys — canon's dialog latch
+// `h5u` (L183477) calls `Pee(setState, exitFn)` with no `onFirstPress` at all, so the first press there arms
+// and nothing more, and only the composer's own `V` (L395616) clears. These two cases therefore pin the
+// COMPOSER-side mechanism — an app-scoped consumed cursor, applied once and only once, whenever the bump
+// lands relative to a remount — and no longer describe a Ctrl-C that ChatApp would actually send from under a
+// dialog. The mechanism still has to hold: the composer unmounts and remounts for reasons other than the
+// gesture (the suppressed-decision flip, a re-render across an overlay), and a token that double-applied or
+// went missing across one of those would eat the next real clear.
 describe("composer clear channel: a Ctrl-C during a dialog still clears the PARKED draft (final review, finding 1)", () => {
   it("applies a clear-token bump that landed while the composer was unmounted", async () => {
     const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;

@@ -388,7 +388,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // primitive owns the state machine; what stays here is the ROUTING — which press reaches it at all.
   //
   //  · `onFirstPress` on the ctrl+c arm is upstream's `if (e) t(""), B(0), c?.()` (annex §C7.2), reaching the
-  //    composer through the clear channel below. The clear and the arm are ONE press, not alternatives.
+  //    composer through the clear channel below. The clear and the arm are ONE press, not alternatives —
+  //    BUT ONLY FOR A FOCUSED COMPOSER (Wave 2 t3 fix, review M1). Canon splits the gesture across two call
+  //    sites of ONE latch factory: the composer's `V` (L395616) passes that `onFirstPress`, while the
+  //    dialog/overlay pair `h5u` (L183477) calls `Pee(setState, exitFn)` (L183445) with the third
+  //    `onFirstPress` parameter simply absent — over a dialog the first press arms and does nothing else.
+  //    ccx had merged the two into this single arm, so once t3 let ctrl+c fall THROUGH an overlay, a press
+  //    meant only to arm silently emptied the draft parked in `editorStateRef` behind that overlay.
+  //    `composerOwns(inputOwnerRef.current)` is the gate, and it is the same derivation the footer's
+  //    `composerOwnsKeys` reads: true for "composer" and for "typing" (the suppressed-decision state, where
+  //    the composer keeps both the screen and the keyboard and so still has a visible draft to clear), false
+  //    for every overlay, the pager, shortcuts, and a SHOWN decision dialog — which retires the clear those
+  //    dialogs used to fire for the same canon reason.
   //  · The handlers close over refs, not render values: the primitive is built once (lazy `useRef` init, the
   //    same idiom `useChat` uses for its notification store) so a closure capture here would freeze the first
   //    render's `state`/callbacks forever.
@@ -399,7 +410,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   if (ctrlCArmRef.current === null) ctrlCArmRef.current = createDoublePress({
     onArmChange: (armed) => { setExitArmed(armed); },
     onSecondPress: () => { exitRef.current(); },
-    onFirstPress: () => { setClearDraftToken((n) => n + 1); },
+    onFirstPress: () => { if (composerOwns(inputOwnerRef.current)) setClearDraftToken((n) => n + 1); },
   }, DOUBLE_PRESS_WINDOW_MS, doublePressDeps);
   const disarm = () => { ctrlCArmRef.current!.disarm(); };
   useEffect(() => () => { ctrlCArmRef.current!.dispose(); }, []);
