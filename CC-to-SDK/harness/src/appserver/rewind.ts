@@ -17,7 +17,7 @@
 import { ERR } from "./rpc.js";
 import { installRouter } from "./router.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
-import { seedSettings, threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
+import { emptyFlagPerms, seedSettings, threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
@@ -112,7 +112,10 @@ export async function swapEngine(
  *  happen is silence: the state a client believes is in force would be gone with nothing saying so. Two
  *  independent things are therefore said about a rejected step, and they answer different questions:
  *
- *  - The MIRROR IS RECONCILED to what the replacement engine actually has. `record.settings` is the only
+ *  - THE STATE IS RECONCILED to what the replacement engine actually has — both layers, by the same rule.
+ *    For the flag layer that means clearing what was refused (the fresh engine's session layer is empty);
+ *    see the reconciliation block below for why the accumulator cannot be the exception. For the mirror:
+ *    `record.settings` is the only
  *    source `threadView` and `thread/settings/changed` answer from, so a step the replacement rejected
  *    leaves the wire announcing a knob no engine is honouring — and for `permissionMode` that lie is a
  *    security statement ("acceptEdits" over an engine still asking, or the reverse). Engine reality after
@@ -164,6 +167,17 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
       model: record.settings.model, permissionMode: record.settings.permissionMode, thinkingTokens: record.settings.thinkingTokens,
     });
   }
+  // The FLAG LAYER reconciles exactly like the mirror above, and for a sharper reason than symmetry
+  // (external review 2026-08-11, superseding the deliberate asymmetry appserver.md's gap 9 recorded). The
+  // replacement engine was built from `record.config`, so its SESSION flag layer is empty — that IS engine
+  // reality, the same way the config seed is for the mirror. Keeping a refused grant is wrong twice over:
+  // `thread/directory/list` reports a directory no engine has, and — the sharp part — the add-side dedup
+  // guards read this very accumulator (settingsOps.ts's `directoryAdd`/`permissionRuleAdd`), so a client's
+  // retry of the refused grant short-circuits to `ok` WITHOUT touching the engine, leaving it unrecoverable
+  // until some later swap. Clearing is what makes the retry a real push again.
+  if (lost.includes("permissions")) record.flagPerms = emptyFlagPerms();
+  if (lost.includes("outputStyle")) record.flagOutputStyle = undefined;
+  if (lost.includes("effortLevel")) record.flagEffort = undefined;
   if (lost.length) {
     broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "warning", {
       threadId: record.id, code: "stateRepushFailed", message: `the replacement engine did not accept: ${lost.join(", ")}`,

@@ -79,10 +79,11 @@ bumped, `sessionId` dropped, `thread/rewound {cleared:true}` broadcast). Every e
 and clear's alike — re-pushes the settings mirror and the flag accumulator onto the replacement engine
 from the one shared seam (`rewind.ts`'s `swapEngine`), since a replacement is rebuilt from
 `record.config` and would otherwise silently revert every runtime write. A re-push the replacement
-rejects never fails the completed swap; it is reported twice over instead — the mirror field is
-reconciled to what the replacement actually has (its `record.config` seed, or cleared when the config
-named none) and re-announced as `thread/settings/changed {source:"engine"}`, and the losses are named
-in one `warning {threadId, code:"stateRepushFailed"}` fanned to subscribers AND watchers. Registered
+rejects never fails the completed swap; it is reported twice over instead — the state is reconciled to
+what the replacement actually has (the mirror field to its `record.config` seed, or cleared when the
+config named none, re-announced as `thread/settings/changed {source:"engine"}`; the refused half of the
+flag accumulator cleared outright, since a fresh engine's session flag layer is empty), and the losses
+are named in one `warning {threadId, code:"stateRepushFailed"}` fanned to subscribers AND watchers. Registered
 last, as their own cluster, are Wave 4's **probe promotions** (`probes/probes/103b-streaminput-steer.ts`,
 `…/105-reload-plugins-skills.ts`) — `turn/steer` *(X)*, the one method whose busy gate is INVERTED
 (un-chained, and it requires the thread to be busy *with a turn*: an idle thread answers `-32602`
@@ -186,20 +187,23 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
    is a product question, not a correctness one. It is deferred rather than guessed: clearing the pair
    would silently discard something a client set and nothing on the wire can restore, while keeping it is
    trivially undone with `thread/name/set`. A client that wants clear-resets-naming does it in two calls.
-9. **The flag accumulator KEEPS grants a replacement engine refused during the post-swap re-push** —
-   deliberately asymmetric with the settings mirror, which reconciles (M2b Task 3b re-review). Both
-   layers are re-pushed by `rewind.ts`'s `repushThreadState` after every swap, and both name a rejected
-   step in the one `warning{code:"stateRepushFailed"}`; only the mirror then corrects itself to the value
-   the replacement was built with. The consequence is real and worth knowing: after a refused
-   `permissions` push, `thread/directory/list` and the accumulator still report grants the live engine
-   does not have — the layer over-reports versus engine reality, and **the warning is the signal**, not
-   the list. The asymmetry is on purpose. The mirror is a *claim the wire keeps making* (`threadView` and
-   `thread/settings/changed` re-serve it, and for `permissionMode` a stale claim is a security statement),
-   so leaving it wrong is not an option. The accumulator is the *replay set for the next swap*, and the
-   engine that refused it may itself be replaced; clearing it would delete grants a client made and no
-   later push would ever re-assert, converting one engine's refusal into permanent silent revocation.
-   Re-asserting the layer is a client call away (`thread/directory/add` and the rule ops have no dedup
-   guard precisely so a re-push works).
+9. **CLOSED — the flag accumulator now reconciles exactly like the settings mirror** (external review
+   2026-08-11, superseding the Task 3b re-review that recorded the asymmetry as deliberate). Both layers
+   are re-pushed by `rewind.ts`'s `repushThreadState` after every swap, both name a rejected step in the
+   one `warning{code:"stateRepushFailed"}`, and both now correct themselves to what the replacement engine
+   really has: the config seed for the mirror, and the EMPTY layer for the accumulator (a fresh engine
+   built from `record.config` has no session flag state at all). A refused `permissions` replay therefore
+   clears `record.flagPerms`, a refused `outputStyle`/`effortLevel` replay clears its field, and
+   `thread/directory/list` stops reporting grants no engine holds.
+
+   The old entry's argument for keeping them — "clearing deletes grants a client made, and re-asserting is
+   one client call away" — was **wrong on its own terms**, and that is what closed the gap. The add-side
+   dedup guards (`settingsOps.ts`'s `directoryAdd`, `permissionRuleAdd`) test membership against this very
+   accumulator, so a retained-but-uninstalled grant makes the client's retry short-circuit to `ok` WITHOUT
+   touching the engine. The grant was not merely over-reported; it was **unrecoverable** until some later
+   swap happened to replay it. Clearing is what restores the escape hatch the old reasoning assumed. The
+   remove-side ops keep having no dedup guard, so re-asserting a layer against an engine a client does not
+   trust still works.
 10. **A factory throw inside `swapEngine` leaves the record holding a DISPOSED engine** — known residual,
     **M3 candidate**. The swap's fixed order (bump epoch, drop router, dispose, install replacement) means
     the outgoing engine is already gone when `makeReplacement()` runs, so a factory that throws — an

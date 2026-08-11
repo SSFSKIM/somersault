@@ -36,6 +36,7 @@ interface QueueEngine {
   models: Array<string | undefined>;
   sessionId?: string;
   release(): void;
+  abort(): void;
   submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
@@ -50,7 +51,14 @@ function mkGate(): { wait: Promise<void>; release: () => void } {
   return { wait: new Promise<void>((r) => { release = r; }), release };
 }
 
-function mkEngine(opts: { disposeImpl?: () => Promise<void>; setModelImpl?: () => Promise<void> } = {}): QueueEngine {
+function mkEngine(opts: {
+  disposeImpl?: () => Promise<void>;
+  setModelImpl?: () => Promise<void>;
+  /** The other engine build's interrupt contract: `submit()` REJECTS on abort instead of resolving. The
+   *  shipped Session resolves (file header), but nothing in the wire contract requires it, and the two
+   *  land on different callbacks inside beginTurn — so the abort must report identically either way. */
+  interruptRejects?: boolean;
+} = {}): QueueEngine {
   const pending: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
   const e: QueueEngine = {
     submits: [],
@@ -67,7 +75,7 @@ function mkEngine(opts: { disposeImpl?: () => Promise<void>; setModelImpl?: () =
       e.submits.push(prompt);
       return new Promise<{ result: unknown }>((resolve, reject) => { pending.push({ resolve: () => resolve({ result: {} }), reject }); });
     },
-    interrupt: async () => { e.interrupts++; e.release(); return {}; },
+    interrupt: async () => { e.interrupts++; if (opts.interruptRejects) e.abort(); else e.release(); return {}; },
     // The real `input.close(); await this.done`: the read loop's `finally` rejects every still-pending
     // waiter ("<label> disposed") before dispose resolves, so the close drives the in-flight turn's
     // settle-and-drain itself.
@@ -80,6 +88,8 @@ function mkEngine(opts: { disposeImpl?: () => Promise<void>; setModelImpl?: () =
     onFrame: () => () => {},
     /** resolve the OLDEST still-pending submit — one engine turn finishing */
     release: () => { pending.shift()?.resolve(); },
+    /** reject it instead — the `interruptRejects` build's abort */
+    abort: () => { pending.shift()?.reject(new Error("turn aborted")); },
   };
   return e;
 }
@@ -267,6 +277,30 @@ describe("turn queue (spec Wave 4)", () => {
     await settle();
     expect(notifs(s, "turn/completed").find((f) => f.params.turn.id === `turn_${threadId}_1`).params.turn.status).toBe("completed");
     expect(engine.submits).toEqual(["one"]);
+  });
+
+  it("an interrupted turn whose submit REJECTS still reports `interrupted` when a queued turn drains in the same step", async () => {
+    // The drain is SYNCHRONOUS inside settleTurn and re-enters beginTurn, which clears
+    // `interruptRequested` — so the abort's status must be snapshotted before the settle, not read after
+    // it (external review 2026-08-11). With one turn queued, reading it late reported `failed` + an error
+    // tag for a turn the client itself stopped.
+    const engine = mkEngine({ interruptRejects: true });
+    const { s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    await tick();
+    const queuedId = replyTo(s, 4).result.turn.id;
+
+    send(c, { id: 5, method: "turn/interrupt", params: { threadId } });
+    await settle();
+
+    // exact object: an `error` tag on a turn the client aborted is the other half of the misreport
+    expect(notifs(s, "turn/completed").find((f) => f.params.turn.id === `turn_${threadId}_1`).params.turn)
+      .toEqual({ id: `turn_${threadId}_1`, status: "interrupted" });
+    // and the queue behind it still drained, under the id it was given at enqueue
+    expect(notifs(s, "turn/started").map((f) => f.params.turn.id)).toEqual([`turn_${threadId}_1`, queuedId]);
+    expect(engine.submits).toEqual(["one", "two"]);
   });
 
   it("interrupt naming an unknown id still interrupts the running turn (unchanged behavior)", async () => {

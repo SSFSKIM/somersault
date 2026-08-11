@@ -238,9 +238,15 @@ export function beginTurn(
       statusChanged(srv, record);
     };
     const onFailure = (err: unknown) => {
+      // Snapshotted FIRST — before settleTurn, exactly as onSuccess does. settleTurn drains the queue
+      // SYNCHRONOUSLY, and the drain re-enters beginTurn, which clears `interruptRequested` in its own
+      // arrival-time section. Reading the flag afterwards therefore reads the NEXT turn's freshly-cleared
+      // value, and an aborted turn that happened to have a successor queued behind it reported `failed`
+      // with an error tag instead of `interrupted` (external review 2026-08-11).
+      const interrupted = record.interruptRequested;
       emitItems(srv, record, turnId, mapper.finalize(true));
       settleTurn(srv, record);
-      const status = record.interruptRequested ? "interrupted" : "failed";
+      const status = interrupted ? "interrupted" : "failed";
       const turn2: Record<string, unknown> = { id: turnId, status };
       if (status === "failed") turn2.error = String(err);
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: turn2 });

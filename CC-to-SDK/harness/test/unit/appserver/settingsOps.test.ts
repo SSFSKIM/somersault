@@ -847,6 +847,65 @@ describe("appserver post-swap state re-push (M2b Task 3b, both swap paths)", () 
     expect(notifs(s.lines, "warning")[0].params.message).toContain("model");
   });
 
+  it("a rejected permissions replay CLEARS the accumulator: the list stops claiming grants the replacement refused, and a re-add genuinely reaches the engine", async () => {
+    // The accumulator reconciles like the mirror (external review 2026-08-11). Two properties, and the
+    // SECOND is the sharp one: `directoryAdd` dedups against this accumulator, so a stale entry would make
+    // the client's retry short-circuit to `ok` without ever pushing — the grant unrecoverable until the
+    // next swap.
+    let refuse = true;
+    const fresh = mkEngine({ flagImpl: async () => { if (refuse) throw new Error("engine refused the replay"); } });
+    const { s, c, threadId, srv } = await bootThread({
+      sessions: [mkEngine({ sessionId: "s1" }), fresh],
+      config: { cwd: "/tmp/proj", additionalDirectories: ["/launch/a"] },
+    });
+
+    send(c, { id: 3, method: "thread/directory/add", params: { threadId, path: "/sess/c" } });
+    await settle();
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(reply(s.lines, 4).result.ok).toBe(true);
+    expect(notifs(s.lines, "warning")[0].params.message).toContain("permissions"); // the loss is still named
+    expect(srv.registry.get(threadId)!.flagPerms).toEqual(EMPTY_PERMS);
+
+    send(c, { id: 5, method: "thread/directory/list", params: { threadId } });
+    await tick();
+    expect(reply(s.lines, 5).result.data).toEqual([
+      { path: "/tmp/proj", source: "cwd" },
+      { path: "/launch/a", source: "launch" },
+    ]);
+
+    refuse = false; fresh.flagCalls.length = 0;
+    send(c, { id: 6, method: "thread/directory/add", params: { threadId, path: "/sess/c" } });
+    await settle();
+
+    expect(reply(s.lines, 6).result).toEqual({ ok: true });
+    expect(fresh.flagCalls).toEqual([{ permissions: { ...EMPTY_PERMS, additionalDirectories: ["/sess/c"] } }]);
+  });
+
+  it("a rejected outputStyle replay CLEARS that field too — the single-value half of the same rule", async () => {
+    let refuse = true;
+    const fresh = mkEngine({ flagImpl: async (settings) => { if (refuse && "outputStyle" in settings) throw new Error("engine refused the style"); } });
+    const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+
+    send(c, { id: 3, method: "thread/outputStyle/set", params: { threadId, style: "explanatory" } });
+    await settle();
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(notifs(s.lines, "warning")[0].params.message).toContain("outputStyle");
+    expect(srv.registry.get(threadId)!.flagOutputStyle).toBeUndefined();
+
+    refuse = false; fresh.flagCalls.length = 0;
+    send(c, { id: 5, method: "thread/outputStyle/set", params: { threadId, style: "explanatory" } });
+    await settle();
+
+    expect(reply(s.lines, 5).result).toEqual({ ok: true });
+    expect(fresh.flagCalls).toEqual([{ outputStyle: "explanatory" }]);
+  });
+
   it("an ACCEPTED re-push announces nothing — the mirror never moved, so the replacement's own status echo is echo-deduped away (router.ts)", async () => {
     const fresh = mkEngine({});
     const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
