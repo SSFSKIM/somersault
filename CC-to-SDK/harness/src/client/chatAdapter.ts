@@ -85,6 +85,12 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
       for (const entry of [...pendingList]) route({ kind: "decision_settled", toolUseID: entry.toolUseID, by: "system", decision: "deny" });
       route({ kind: "turn", phase: "end", error: e.message });   // no seq: pure UI unblock, matches no waiter
     });
+    // RESUME BEFORE FOLLOW, and that order is load-bearing (M3 §1a-a): the host announces every engine swap
+    // with a `rewound` broadcast, and a client that was already following would receive its OWN resume's
+    // announcement and rebuild its transcript from disk on top of the replay it is about to be sent. Issuing
+    // the op while this connection is not yet a follower is what makes the self-swap silent to its initiator —
+    // the same guarantee `useChat`'s `selfRewind` ref buys the /clear and rewind paths, which have no such
+    // pre-follow window because they run on a long-established connection.
     if (opts.resume) { const rep = await r.resumeOp(opts.resume); if (!rep.ok) throw new Error(rep.error ?? "resume refused"); }
     r.follow(route);
     await r.whenFollowed();                 // registration acked — a prompt sent after this cannot race it

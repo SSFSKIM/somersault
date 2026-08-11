@@ -1566,11 +1566,20 @@ export function useChat(
         // The engine half is a fresh-conversation swap (host `clear` op, busy-gated like resume). It runs
         // FIRST: if the host refuses (mid-turn) or predates the op, the screen is left alone and the
         // refusal is printed — a wiped screen over a kept context is exactly the lie this fixes.
+        // SELF-SWAP GUARD (M3 §1a-a review, Important 1). The host announces EVERY engine swap now, and
+        // /clear rides the very connection this client follows — so its own `rewound {cleared:true}` is
+        // routed here before the op reply resolves, and the follower arm would run `rebuildAfterRewind`,
+        // whose wipe is the 2J/3J scrollback erase only a rewind may use (W-R t7 gave /clear the
+        // viewport-only arm on purpose). `selfRewind` is the ref that already exists for exactly this —
+        // confirmRewind sets it for the same reason — and a swap this client asked for repaints through
+        // its OWN path, `clear()` on the next line. A FOREIGN client's rewound still rebuilds: the ref is
+        // set only across our own op.
         case "clear": {
+          selfRewind.current = true;
           try { await session.clearSession?.(); } catch (e) {
             append([{ text: `clear: ${e instanceof Error ? e.message : String(e)} — screen left as is (engine context unchanged)`, dim: true }]);
             break;
-          }
+          } finally { selfRewind.current = false; }
           clear();
           break;
         }

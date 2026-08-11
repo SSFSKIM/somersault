@@ -514,4 +514,30 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
       expect(await fresh.rewindAnchors()).toEqual([]);
     } finally { fresh.detach(); await stopQuietly(host); }
   });
+
+  // M3 §1a-a REVIEW, Important 1 — the RESUME half of the self-swap question. Every engine swap announces
+  // now, so a client that received its own swap's `rewound` would rebuild its transcript from disk on top
+  // of the replay it is about to be sent. On the /clear and rewind paths a ref guards it (useChat's
+  // `selfRewind`); here the guarantee is STRUCTURAL and this test is what keeps it so: the adapter issues
+  // the resume op while this connection is not yet a follower, so the announcement reaches every OTHER
+  // client and not its initiator. Both halves are asserted, because "nobody heard it" would pass the
+  // self-quiet half while silently undoing the change §1a-a exists to make.
+  it("17. a resuming client never receives its OWN `rewound` — while an already-attached client does", async () => {
+    const engine = { ...syncSession("unused", []), sessionId: undefined } as unknown as HostSession;
+    const { host, path } = await startHost(engine, { kind: "interactive", getMessages: async () => [] });
+    const watcher = remoteChatSession(path);
+    const watched: HostEvent[] = [];
+    const mine: HostEvent[] = [];
+    try {
+      await watcher.whenReady();
+      watcher.onSessionEvent((ev) => watched.push(ev));
+      const resumed = remoteChatSession(path, { resume: "sid-resumed" });
+      resumed.onSessionEvent((ev) => mine.push(ev));
+      try {
+        await resumed.whenReady();
+        await vi.waitFor(() => expect(watched.filter((e) => e.kind === "rewound")).toHaveLength(1));
+        expect(mine.filter((e) => e.kind === "rewound")).toHaveLength(0);
+      } finally { resumed.detach(); }
+    } finally { watcher.detach(); await stopQuietly(host); }
+  });
 });

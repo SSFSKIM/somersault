@@ -269,6 +269,46 @@ describe("useChat: rewind flow", () => {
     expect(reads).toBe(0);                                         // the old file is a trap, not a source
   });
 
+  // M3 §1a-a REVIEW, Important 1 — the SELF half of test 16, and the reason the two must be tested as a
+  // pair. The host now announces EVERY engine swap, and `/clear` rides the very connection this client
+  // follows: the clearing client receives its own `rewound {cleared:true}` before clearOp's reply resolves.
+  // Routed to the follower arm it runs rebuildAfterRewind, whose wipe is the 2J/3J screen+SCROLLBACK erase
+  // (test 12) — the one W-R t7 deliberately took `/clear` off, because a cleared conversation stays on disk
+  // and its transcript stays scrollable above the prompt. The wipe COUNT is the only discriminator that
+  // survives: both paths end at an empty document, because clear() replaces the rebuild's a moment later.
+  it("18. `/clear`'s OWN rewound broadcast does not rebuild — the scrollback the transcript lives in survives", async () => {
+    let wipes = 0, viewports = 0, reads = 0;
+    let session!: ReturnType<typeof fakeRewindSession>;
+    // The fake announces from INSIDE clearSession, which is where the wire puts it: the host emits at the
+    // end of the swap and only then writes the op reply, so the frame is routed while `/clear` is awaiting.
+    session = fakeRewindSession({}, { clearSession: () => { session.pushEvent({ kind: "rewound", cleared: true } as any); } });
+    const deps = { getSessionMessages: async () => { reads++; return []; }, clearScreen: () => { wipes++; }, clearViewport: () => { viewports++; } };
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => session, {}, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/clear");
+    await waitFor(() => viewports === 1);                          // `/clear`'s own viewport-only reset ran
+    await new Promise((r) => setTimeout(r, 40));                   // long enough for a stray rebuild to land
+    expect(wipes).toBe(0);
+    expect(reads).toBe(0);
+  });
+
+  it("19. a FOREIGN `cleared` rewound still rebuilds AND still wipes — the guard is self-only", async () => {
+    // The tripwire for the obvious wrong fix (dropping `cleared` frames, or clearing unconditionally in the
+    // follower arm): another client's /clear or first-message restore truncated the conversation under us,
+    // and the turns it discarded must not stay readable above the transcript that replaced them.
+    let wipes = 0;
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => [], clearScreen: () => { wipes++; } };
+    function H() { const c = useChat(() => session, {}, deps); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "rewound", cleared: true } as any);
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    expect(wipes).toBe(1);
+  });
+
   it("10. the composer is held behind a modal while a rewind runs, so a prompt typed mid-rewind cannot be lost", async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => { release = r; });

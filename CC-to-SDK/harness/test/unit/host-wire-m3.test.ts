@@ -220,6 +220,47 @@ describe("§1a-c — model/thinkingTokens on the status frame, `state` on the se
   });
 });
 
+// ─── §1a-c (review, Important 2): a swap opens at the RUNTIME settings, not the launch config's ───────
+// Publishing the mirrors made them a promise. `swapEngine` overrode only `permissionMode` from its runtime
+// mirrors, so after a `set_model` + a /resume or /clear the fresh engine ran the LAUNCH model while the host
+// went on advertising the set one on every status reply and `state` event — and the swap's own mid-swap
+// `state` emit was the first frame to say it. The assertions are on BOTH halves: the config the engine was
+// actually opened with, and the frames the wire carried afterwards.
+describe("§1a-c — an engine swap carries the runtime model/thinking mirrors", () => {
+  it("a `resume` after `set_model` opens the fresh engine on the SET model, and no post-swap frame says otherwise", async () => {
+    const { f, path } = await startHost({ firstSessionId: "sid-1" });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "set_model", model: "opus" })).toMatchObject({ ok: true });
+    const before = conn.events("state").length;
+    expect(await conn.ask({ op: "resume", sessionId: "sid-resumed" })).toMatchObject({ ok: true });
+    expect(f.opened).toHaveLength(2);
+    expect(f.opened[0].model).toBe("claude-test-9");                 // the launch config's
+    expect(f.opened[1].model).toBe("claude-opus-5");                 // the runtime mirror's, alias resolved
+    // EVERY state frame the swap produced, not just the last: the mid-swap emit is the one that was stale.
+    const after = conn.events("state").slice(before);
+    expect(after.length).toBeGreaterThan(0);
+    for (const ev of after) expect(ev.status).toMatchObject({ model: "claude-opus-5" });
+    expect(await conn.ask({ op: "status" })).toMatchObject({ ok: true, model: "claude-opus-5" });
+    conn.close();
+  });
+
+  it("a swap carries the runtime thinking budget — and a CLEARED budget does not come back from the launch config", async () => {
+    const { f, path } = await startHost({ firstSessionId: "sid-1", config: { model: "claude-test-9", maxThinkingTokens: 8_000 } as never });
+    const conn = await followed(path);
+    expect(f.opened[0].maxThinkingTokens).toBe(8_000);
+    expect(await conn.ask({ op: "set_thinking", maxTokens: 12_000 })).toMatchObject({ ok: true });
+    expect(await conn.ask({ op: "clear" })).toMatchObject({ ok: true });
+    expect(f.opened[1].maxThinkingTokens).toBe(12_000);
+    // `null` CLEARS the mirror, and the clear has to survive the next swap: re-seeding from the launch
+    // config would hand the fresh engine the 8k budget the user just turned off.
+    expect(await conn.ask({ op: "set_thinking", maxTokens: null })).toMatchObject({ ok: true });
+    expect(await conn.ask({ op: "resume", sessionId: "sid-2" })).toMatchObject({ ok: true });
+    expect(f.opened[2].maxThinkingTokens).toBeUndefined();
+    expect((await conn.ask({ op: "status" })).thinkingTokens).toBeUndefined();
+    conn.close();
+  });
+});
+
 // ─── §1a-d: the capabilities op returns all FOUR catalogs ─────────────────────────────────────────────
 describe("§1a-d — the `agents` catalog reaches the wire", () => {
   it("a `capabilities` reply carries the engine's agents catalog verbatim, alongside the other three", async () => {

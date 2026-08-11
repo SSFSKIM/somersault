@@ -444,7 +444,23 @@ export class SessionHost {
     // (re-seeding from resolvedPermissionMode instead) would be the OTHER obvious fix, but it throws away a
     // choice the user just made with no notice — the worse surprise of the two. This keeps the host's
     // reported mode and the engine's actual mode in agreement, which is the one invariant that must hold.
-    this.session = this.deps.openSession(this.engineConfig({ ...extra, permissionMode: this.mode as HarnessConfig["permissionMode"] }));
+    //
+    // ALL THREE PUBLISHED SETTINGS ride that same rule (M3 §1a-c review, Important 2), not the mode alone.
+    // `status()` now publishes model and thinkingTokens on every status reply and `state` event, so a swap
+    // that re-seeded them from the LAUNCH config would leave the host advertising a model the fresh engine
+    // is not running — and the mid-swap `state` emit below would be the first frame to say so. The mirrors
+    // are the runtime truth for exactly the same reason `this.mode` is: each is rewritten only after its
+    // setter's engine call succeeds.
+    //   The two are spread differently on purpose. `model` is omitted when the mirror is unset, so a swap
+    // never invents a key the launch config did not have. `maxThinkingTokens` is written UNCONDITIONALLY,
+    // because `undefined` is a value here: a `set_thinking(null)` CLEARS the mirror (see control()), and
+    // only an explicit undefined can stop the launch config's budget from coming back with the new engine.
+    this.session = this.deps.openSession(this.engineConfig({
+      ...extra,
+      permissionMode: this.mode as HarnessConfig["permissionMode"],
+      ...(this.model ? { model: this.model } : {}),
+      maxThinkingTokens: this.thinkingTokens,
+    }));
     this.turnBuffer.reset(); this.settledBy.clear();
     this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
