@@ -14,8 +14,9 @@
 // stopped at the process boundary, one place, which also inoculates the frame against the sibling
 // `allowedTools`-shadowing warning the same SDK function emits.
 //
-// The debug seam is `statusLine.ts:109`'s idiom verbatim (`CCX_DEBUG` → stderr, otherwise silence): inside a
-// live Ink render an unguarded stderr write is exactly the thing this module exists to prevent.
+// The debug seam is `statusLine.ts:109`'s idiom (`CCX_DEBUG` → stderr, otherwise silence): inside a live Ink
+// render an unguarded stderr write is exactly the thing this module exists to prevent. It differs in ONE way,
+// deliberately — the write goes through `console.error`, for the reason spelled out at `defaultSink` below.
 
 /** Where a routed warning goes. Two sinks, because the two classes are not the same message: an SDK warning
  *  is plumbing the user cannot act on (debug seam, silent by default) and anything else is ours to report. */
@@ -24,11 +25,17 @@ export interface WarningSink {
   debug: (line: string) => void;
 }
 
+// BOTH sinks go through `console.error`, NOT `process.stderr.write`. Ink's `render` leaves `patchConsole` at its
+// default `true` (chatMain.tsx does not turn it off), which routes `console.error` through Ink's `writeToStderr`:
+// clear the frame → write the line → repaint. A bare `process.stderr.write` bypasses that and lands in the middle
+// of the frame Ink is painting — the same corruption this module exists to remove, re-introduced by its own
+// reporting path. Outside a render the two are byte-identical (`console.error` is a `process.stderr.write` with a
+// trailing newline), so this costs the headless paths nothing.
 const defaultSink: WarningSink = {
   // `ccx: <what went wrong>` is the program's one stderr shape (`main.ts`'s `fail`, `bin.ts`'s top-level
   // catch); a warning wears it too, with the severity spelled out so it is not read as a failed command.
-  stderr: (line) => process.stderr.write(`${line}\n`),
-  debug: (line) => { if (process.env.CCX_DEBUG) process.stderr.write(`${line}\n`); },
+  stderr: (line) => { console.error(line); },
+  debug: (line) => { if (process.env.CCX_DEBUG) console.error(line); },
 };
 
 /** Pure: decide where ONE warning goes and write it there. Every `CLAUDE_SDK_*` code is dropped off stderr by
