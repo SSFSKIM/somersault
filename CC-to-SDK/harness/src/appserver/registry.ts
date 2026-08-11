@@ -159,6 +159,23 @@ export interface ThreadRecord {
                                  // second counter of its own
 }
 
+/** The settings mirror at birth: what the engine a config OPENS is actually running, before any client
+ *  write. Seeded once at thread/start|resume (server.ts) — and read a second time by the engine-swap
+ *  re-push (rewind.ts), because a replacement engine is rebuilt from that same `record.config`, so this is
+ *  exactly the value a REJECTED re-push step has to reconcile the mirror back to. Lives here, next to the
+ *  record it describes, so the two readings cannot drift apart.
+ *
+ *  `thinkingTokens` only has a value for the SDK's `{type:'enabled', budgetTokens}` shape; adaptive/
+ *  disabled thinking (or no thinking config at all) leaves it undefined. */
+export function seedSettings(config: Record<string, unknown> | undefined): ThreadRecord["settings"] {
+  const thinking = config?.thinking as { type?: string; budgetTokens?: number } | undefined;
+  return {
+    model: config?.model as string | undefined,
+    permissionMode: config?.permissionMode as string | undefined,
+    thinkingTokens: thinking?.type === "enabled" ? thinking.budgetTokens : undefined,
+  };
+}
+
 /** A record's flag layer at birth. A FUNCTION, not a shared constant: the four arrays are replaced
  *  wholesale on every accepted push, but a shared literal would still let one thread's accumulator be
  *  aliased by every other thread created before the first push. */

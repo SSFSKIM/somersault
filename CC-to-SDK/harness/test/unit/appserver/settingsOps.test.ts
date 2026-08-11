@@ -66,6 +66,10 @@ function mkEngine(opts: {
   flagImpl?: (settings: Record<string, unknown>) => Promise<void>;
   disposeImpl?: () => Promise<void>;
   submitImpl?: () => Promise<{ result: unknown }>;
+  /** The read loop's liveness, overridable so a fake can DIE mid-op (tasks.test.ts's `dyingSession`): the
+   *  chain-deferred bodies here run later than dispatch's arrival-time -33005 gate, so "ended by the time
+   *  the chain reached it" is a state only a settable isEnded can reach. Default: alive throughout. */
+  isEndedImpl?: () => boolean;
 } = {}): FakeEngine {
   const live = new Set<(m: unknown) => void>();
   const captured: ((m: unknown) => void)[] = [];
@@ -79,7 +83,7 @@ function mkEngine(opts: {
     interrupt: async () => ({}),
     dispose: () => { e.disposed++; return opts.disposeImpl ? opts.disposeImpl() : new Promise<void>((r) => setTimeout(r, 1)); },
     onFrame: (cb) => { live.add(cb); captured.push(cb); return () => { live.delete(cb); }; },
-    isEnded: () => false,
+    isEnded: opts.isEndedImpl ?? (() => false),
   };
   if (!opts.noFlags) {
     e.applyFlagSettings = async (settings) => { e.flagCalls.push(settings); if (opts.flagImpl) await opts.flagImpl(settings); };
@@ -209,6 +213,23 @@ describe("appserver thread/directory/* (M2b Task 3b)", () => {
     expect(reply(s.lines, 4).result).toEqual({ ok: true });
     expect(engine.flagCalls).toHaveLength(1);
     expect(record.updatedAt).toBe(0);
+  });
+
+  it("a push whose engine DIES mid-op answers -33005, not -32603 — the chain-deferred re-check, since the arrival-time gate saw a live engine", async () => {
+    let ended = false;
+    const engine = mkEngine({
+      sessionId: "s1",
+      isEndedImpl: () => ended,
+      flagImpl: async () => { ended = true; throw new Error("Session is not running"); },
+    });
+    const { s, c, threadId } = await bootThread({ sessions: [engine] });
+
+    send(c, { id: 3, method: "thread/directory/add", params: { threadId, path: "/a" } });
+    await tick();
+
+    expect(engine.flagCalls).toHaveLength(1);            // the op did reach the engine — it died on the way through
+    expect(reply(s.lines, 3).error.code).toBe(ERR.ENGINE_GONE);
+    expect(reply(s.lines, 3).error.message).toBe("Engine is gone (session ended)");
   });
 
   it("a REJECTED push leaves the accumulator untouched: the retry pushes the SAME delta, not a doubled one (commit-after-accept)", async () => {
@@ -532,7 +553,7 @@ describe("appserver thread/clear (M2b Task 3b)", () => {
     expect(reply(s.lines, 8).result.data).toEqual([{ path: "/tmp/proj", source: "cwd" }, { path: "/sess/c", source: "session" }]);
   });
 
-  it("refuses while a turn is in flight and while a decision is parked — before any swap", async () => {
+  it("refuses while a turn is in flight (-33001 'turn') — before any swap", async () => {
     const busyEngine = mkEngine({ sessionId: "s1", submitImpl: () => new Promise(() => {}) });
     const fresh = mkEngine({});
     const { s, c, threadId, configs } = await bootThread({ sessions: [busyEngine, fresh] });
@@ -587,6 +608,41 @@ describe("appserver thread/clear (M2b Task 3b)", () => {
     send(c, { id: 5, method: "turn/start", params: { threadId, input: "now" } });
     await settle();
     expect(reply(s.lines, 5).result.turn.status).toBe("inProgress");
+  });
+
+  it("refuses -33007 while the server is shutting down, before the replacement factory is ever reached", async () => {
+    const { s, c, threadId, configs, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), mkEngine({})] });
+
+    // Same tick as the shutdown pass, which is the whole window: `shuttingDown` latches synchronously
+    // while the teardown itself sits behind each record's chain, so a clear admitted here would open a
+    // replacement engine — an SDK session and its `claude` child — that the sweep has already walked past.
+    const done = srv.shutdown();
+    send(c, { id: 3, method: "thread/clear", params: { threadId } });
+    await settle();
+    await done;
+
+    expect(reply(s.lines, 3).error.code).toBe(ERR.SHUTTING_DOWN);
+    expect(reply(s.lines, 3).error.message).toBe("Server is shutting down");
+    expect(configs).toHaveLength(1);
+  });
+
+  it("a replacement factory that throws on an engine which died during the swap answers -33005, not -32603", async () => {
+    let ended = false;
+    let n = 0;
+    // The outgoing engine's read loop ends with its dispose — which swapEngine awaits BEFORE building the
+    // replacement, so the throw below lands with `record.session` still pointing at a dead engine.
+    const oldEngine = mkEngine({ sessionId: "s1", isEndedImpl: () => ended, disposeImpl: async () => { ended = true; } });
+    const { s, c, threadId, srv } = await bootThread({
+      sessions: [oldEngine],
+      deps: { sessionFactory: () => { if (n++ === 0) return oldEngine; throw new Error("replacement engine failed to open"); } },
+    });
+
+    send(c, { id: 3, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(reply(s.lines, 3).error.code).toBe(ERR.ENGINE_GONE);
+    expect(reply(s.lines, 3).error.message).toBe("Engine is gone (session ended)");
+    expect(srv.registry.get(threadId)!.swapInFlight).toBe(false); // and the thread is not wedged at "swapping"
   });
 
   it("clears a thread whose engine never reported a session id — a fresh conversation needs no anchor (unlike a rewind)", async () => {
@@ -696,10 +752,10 @@ describe("appserver post-swap state re-push (M2b Task 3b, both swap paths)", () 
     expect(notif(s.lines, "warning")).toBeUndefined();
   });
 
-  it("a re-push that FAILS does not fail the swap — the caller still gets ok, and subscribers get a warning naming what was lost", async () => {
+  it("a re-push that FAILS does not fail the swap — the caller still gets ok, and the warning names what was lost, carries the threadId, and reaches watchers as well as subscribers", async () => {
     const fresh = mkEngine({ flagImpl: async () => { throw new Error("engine refused the replay"); } });
     fresh.setPermissionMode = async () => { throw new Error("engine refused the mode"); };
-    const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+    const { s, w, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh], watcher: true });
 
     send(c, { id: 3, method: "thread/permissionMode/set", params: { threadId, mode: "acceptEdits" } });
     send(c, { id: 4, method: "thread/directory/add", params: { threadId, path: "/sess/c" } });
@@ -712,8 +768,81 @@ describe("appserver post-swap state re-push (M2b Task 3b, both swap paths)", () 
     expect(srv.registry.get(threadId)!.session).toBe(fresh);
     const warnings = notifs(s.lines, "warning");
     expect(warnings).toHaveLength(1);
+    expect(warnings[0].params.threadId).toBe(threadId);   // WHICH thread lost state — a bare {code,message} cannot say
     expect(warnings[0].params.code).toBe("stateRepushFailed");
     expect(warnings[0].params.message).toContain("permissionMode");
     expect(warnings[0].params.message).toContain("permissions");
+    // the same both-scope audience thread/rewound has: lost state is a fact about what this thread now IS
+    const watcherWarnings = notifs(w!.lines, "warning");
+    expect(watcherWarnings).toHaveLength(1);
+    expect(watcherWarnings[0].params).toEqual(warnings[0].params);
+  });
+
+  it("a rejected mirror step reconciles the mirror to what the replacement engine really has — the config seed — and announces it as source:'engine'", async () => {
+    const fresh = mkEngine({});
+    fresh.setPermissionMode = async () => { throw new Error("engine refused the mode"); };
+    const { s, c, threadId, srv } = await bootThread({
+      sessions: [mkEngine({ sessionId: "s1" }), fresh],
+      config: { permissionMode: "default" },
+    });
+
+    send(c, { id: 3, method: "thread/permissionMode/set", params: { threadId, mode: "acceptEdits" } });
+    await settle();
+    expect(srv.registry.get(threadId)!.settings.permissionMode).toBe("acceptEdits");
+    s.lines.length = 0; // drop the client leg's own settings/changed — what follows is the swap's doing
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    // The replacement was BUILT from record.config, so "default" — not the client's write — is the mode it
+    // is actually running. Leaving "acceptEdits" in the mirror is threadView announcing a permission
+    // posture no engine is honouring.
+    expect(srv.registry.get(threadId)!.settings.permissionMode).toBe("default");
+    const changed = notifs(s.lines, "thread/settings/changed");
+    expect(changed).toHaveLength(1);
+    expect(changed[0].params.threadId).toBe(threadId);
+    expect(changed[0].params.source).toBe("engine");      // the engine decided this, not a client
+    expect(changed[0].params.permissionMode).toBe("default");
+    expect(notifs(s.lines, "warning")[0].params.message).toContain("permissionMode"); // and the loss is still named
+  });
+
+  it("a rejected mirror step for a knob the config never named CLEARS the field — the replacement has no value for it at all", async () => {
+    const fresh = mkEngine({});
+    fresh.setModel = async () => { throw new Error("unknown model"); };
+    const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+
+    send(c, { id: 3, method: "thread/model/set", params: { threadId, model: "claude-haiku-4-8" } });
+    await settle();
+    s.lines.length = 0;
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(srv.registry.get(threadId)!.settings.model).toBeUndefined();
+    const changed = notifs(s.lines, "thread/settings/changed");
+    expect(changed).toHaveLength(1);
+    expect(changed[0].params.source).toBe("engine");
+    expect("model" in changed[0].params).toBe(false);     // JSON drops the cleared key — "no model", not a stale one
+    expect(notifs(s.lines, "warning")[0].params.message).toContain("model");
+  });
+
+  it("an ACCEPTED re-push announces nothing — the mirror never moved, so the replacement's own status echo is echo-deduped away (router.ts)", async () => {
+    const fresh = mkEngine({});
+    const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+
+    send(c, { id: 3, method: "thread/permissionMode/set", params: { threadId, mode: "plan" } });
+    await settle();
+    s.lines.length = 0;
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+    expect(fresh.modeCalls).toEqual(["plan"]);            // the replacement accepted the whole re-push
+
+    fresh.push({ type: "system", subtype: "status", permissionMode: "plan" }); // the replacement echoing it back
+    await tick();
+
+    expect(notifs(s.lines, "thread/settings/changed")).toEqual([]);
+    expect(notifs(s.lines, "warning")).toEqual([]);
+    expect(srv.registry.get(threadId)!.settings.permissionMode).toBe("plan");
   });
 });

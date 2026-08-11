@@ -75,12 +75,16 @@ rewind gate order against a FRESH conversation — `resume`/`resumeAt` explicitl
 bumped, `sessionId` dropped, `thread/rewound {cleared:true}` broadcast). Every engine swap — rewind's
 and clear's alike — re-pushes the settings mirror and the flag accumulator onto the replacement engine
 from the one shared seam (`rewind.ts`'s `swapEngine`), since a replacement is rebuilt from
-`record.config` and would otherwise silently revert every runtime write; a re-push the replacement
-rejects is reported as a `warning` to the thread's subscribers rather than failing the completed swap.
+`record.config` and would otherwise silently revert every runtime write. A re-push the replacement
+rejects never fails the completed swap; it is reported twice over instead — the mirror field is
+reconciled to what the replacement actually has (its `record.config` seed, or cleared when the config
+named none) and re-announced as `thread/settings/changed {source:"engine"}`, and the losses are named
+in one `warning {threadId, code:"stateRepushFailed"}` fanned to subscribers AND watchers.
 
 **25 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
-connection-scoped `initialized` and `warning` (the latter also fans out to a thread's subscribers when
-a post-swap state re-push is rejected — the loss affects every attached client, not only the caller);
+connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
+subscribers and watchers alike — when a post-swap state re-push is rejected, since the loss is a fact
+about what the thread now is, not a per-peer aside to whoever asked for the swap);
 server-scoped (via `initialize{watchThreads:true}`) `thread/started`, `thread/deleted`; both-scoped
 `thread/closed` and `thread/rewound` (`{threadId, sessionId}`, plus `cleared: true` and a null id when
 the swap was a `thread/clear`); thread-scoped
@@ -133,10 +137,18 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
    `add_dir`, `remove_dir`, `set_output_style`, `add_rule`, `remove_rule`; Wave C's `set_effort`) all
    ship as protocol methods now (`appserver/settingsOps.ts`) — the names in the rows below are
    registered, not proposed, and they land in the parent spec's §7 as a settled addition. Six of the
-   nine drive ONE engine primitive, `applyFlagSettings`, which replaces the dynamic flag layer wholesale
-   rather than merging a delta; the appserver therefore keeps a per-thread accumulator on the record
-   (`flagPerms`/`flagOutputStyle`/`flagEffort`, `host/host.ts`'s pattern) and writes to it only after
-   the engine accepts a push, so a rejected grant leaves nothing behind for a later replay to re-push.
+   nine drive ONE engine primitive, `applyFlagSettings`, which is per-key replacement: every key a push
+   names is overwritten wholesale (never merged into), while keys it does not name are untouched. The
+   appserver therefore keeps a per-thread accumulator on the record (`flagPerms`/`flagOutputStyle`/
+   `flagEffort`, `host/host.ts`'s pattern) and writes to it only after the engine accepts a push, so a
+   rejected grant leaves nothing behind for a later replay to re-push.
+   **None of the six emits a notification** — `thread/outputStyle/set` and `thread/effort/set`
+   included. That is deliberate and consistent with `thread/settings/apply`, which likewise announces
+   nothing: only the three MIRRORED knobs (model, permissionMode, thinkingTokens) have a
+   `thread/settings/changed`, because only they are re-served on `threadView` and so must be kept
+   honest; the flag layer is read back on demand through `thread/settings/read`. The one frame a flag
+   value can still provoke is not a per-method notification: an engine swap whose re-push the
+   replacement rejects reconciles the mirror and fans out a `warning`.
 7. **The existing SDK-drift pass's own `Query`-method extraction over-counts by 5** (its `block()`
    helper ends on `"\n};"`, right for `type Options` but wrong for `interface Query`). It doesn't
    corrupt that pass's installed-vs-npm diff; the appserver pass re-parses `interface Query`
@@ -176,10 +188,10 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `list_dirs` | host/ops.ts | `thread/directory/list` | both | shipped(M2b) — three-source assembly; record-only, so exempt from the -33005 gate |
 | `add_dir` | host/ops.ts | `thread/directory/add` | both | shipped(M2b) — flag accumulator, commit-after-accept; supersedes probe 5's `register_repo_root` |
 | `remove_dir` | host/ops.ts | `thread/directory/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept |
-| `set_output_style` | host/ops.ts | `thread/outputStyle/set` | both | shipped(M2b) — flag accumulator, commit-after-accept |
+| `set_output_style` | host/ops.ts | `thread/outputStyle/set` | both | shipped(M2b) — flag accumulator, commit-after-accept; emits no notification (deliberate, as `thread/settings/apply` — gap 6) |
 | `add_rule` | host/ops.ts | `thread/permissionRule/add` | both | shipped(M2b) — flag accumulator, commit-after-accept |
 | `remove_rule` | host/ops.ts | `thread/permissionRule/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept |
-| `set_effort` | host/ops.ts | `thread/effort/set` | both | shipped(M2b) — closed level enum, host/ops.ts's verbatim (probe 102) |
+| `set_effort` | host/ops.ts | `thread/effort/set` | both | shipped(M2b) — closed level enum, host/ops.ts's verbatim (probe 102); emits no notification (deliberate, as `thread/settings/apply` — gap 6) |
 
 ## ControlFrame — `harness/src/bridge/types.ts` (11 tokens)
 

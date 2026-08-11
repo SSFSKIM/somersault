@@ -4,7 +4,7 @@
 import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
-import { Registry, activeTurnId, emptyFlagPerms, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
+import { Registry, activeTurnId, emptyFlagPerms, seedSettings, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
@@ -84,19 +84,6 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     preview: undefined,
-  };
-}
-
-/** `settings` is seeded once, from the start/resume config, here — Task 8's router/setters mutate it
- *  thereafter. `thinkingTokens` only has a value for the SDK's `{type:'enabled', budgetTokens}` shape;
- *  adaptive/disabled thinking (or no thinking config at all) leaves it undefined. */
-function seedSettings(config: Record<string, unknown> | undefined): ThreadRecord["settings"] {
-  const c = config as OpenSessionConfig | undefined;
-  const thinking = c?.thinking as { type?: string; budgetTokens?: number } | undefined;
-  return {
-    model: c?.model,
-    permissionMode: c?.permissionMode,
-    thinkingTokens: thinking?.type === "enabled" ? thinking.budgetTokens : undefined,
   };
 }
 

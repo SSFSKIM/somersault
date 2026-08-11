@@ -17,7 +17,7 @@
 import { ERR } from "./rpc.js";
 import { installRouter } from "./router.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
-import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
+import { seedSettings, threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
@@ -109,13 +109,25 @@ export async function swapEngine(
  *  BEST EFFORT, never fatal. The swap has already happened by the time this runs — the outgoing engine is
  *  disposed and the record holds the replacement — so a rejection here cannot be undone, and propagating
  *  it would turn a completed swap into a reported failure with a live engine behind it. What must not
- *  happen is silence: the state a client believes is in force would be gone with nothing saying so. So
- *  each step is attempted independently and the losses are named in ONE `warning` — the same
- *  `{code, message}` payload `AppServer.warn` sends, fanned to the thread's subscribers rather than to one
- *  peer, because the lost state affects every attached client and not just whoever asked for the swap.
+ *  happen is silence: the state a client believes is in force would be gone with nothing saying so. Two
+ *  independent things are therefore said about a rejected step, and they answer different questions:
  *
- *  An ABSENT optional method is not a failure and raises no warning (the convention every handler here
- *  follows): an engine build that has no `setModel` never had the value to lose. */
+ *  - The MIRROR IS RECONCILED to what the replacement engine actually has. `record.settings` is the only
+ *    source `threadView` and `thread/settings/changed` answer from, so a step the replacement rejected
+ *    leaves the wire announcing a knob no engine is honouring — and for `permissionMode` that lie is a
+ *    security statement ("acceptEdits" over an engine still asking, or the reverse). Engine reality after
+ *    a rejected push is the value the replacement was BUILT with: `record.config`'s seed (`seedSettings`,
+ *    the same function thread/start seeds the mirror with), or nothing at all when the config never named
+ *    one — hence the field is CLEARED in that case rather than left holding a client's write. The
+ *    correction rides the existing `thread/settings/changed` with `source: "engine"`, which is precisely
+ *    what it is (the engine, not a client, decided this value) and which every client already renders.
+ *  - The LOSSES ARE NAMED in ONE `warning`, so a client can tell "the engine disagrees" from "your request
+ *    never took". It carries `threadId` and goes to the thread's subscribers AND every server-scoped
+ *    watcher — the same both-scope fan-out `thread/rewound` uses (fanout.ts) — because lost state is a
+ *    fact about what this thread now IS, not a per-peer aside to whoever asked for the swap.
+ *
+ *  An ABSENT optional method is not a failure: it raises no warning and reconciles nothing (the convention
+ *  every handler here follows) — an engine build that has no `setModel` never had the value to lose. */
 async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<void> {
   const s = record.session;
   const lost: string[] = [];
@@ -132,7 +144,26 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
     if (record.flagOutputStyle) await step("outputStyle", () => s.applyFlagSettings!({ outputStyle: record.flagOutputStyle }));
     if (record.flagEffort) await step("effortLevel", () => s.applyFlagSettings!({ effortLevel: record.flagEffort }));
   }
-  if (lost.length) srv.broadcast(record.id, "warning", { code: "stateRepushFailed", message: `the replacement engine did not accept: ${lost.join(", ")}` });
+  // Reconciliation FIRST, then the warning: by the time a client is told what was lost, the state it will
+  // re-read already tells the truth. A step whose mirror value already equals the seed changed nothing —
+  // the engine has that value either way — so it is named in the warning without moving the mirror.
+  const seeded = seedSettings(record.config);
+  let reconciled = false;
+  if (lost.includes("model") && record.settings.model !== seeded.model) { record.settings.model = seeded.model; reconciled = true; }
+  if (lost.includes("permissionMode") && record.settings.permissionMode !== seeded.permissionMode) { record.settings.permissionMode = seeded.permissionMode; reconciled = true; }
+  if (lost.includes("thinkingTokens") && record.settings.thinkingTokens !== seeded.thinkingTokens) { record.settings.thinkingTokens = seeded.thinkingTokens; reconciled = true; }
+  if (reconciled) {
+    // The identical payload settings.ts/router.ts build — full post-update mirror, never a partial diff.
+    srv.broadcast(record.id, "thread/settings/changed", {
+      threadId: record.id, source: "engine",
+      model: record.settings.model, permissionMode: record.settings.permissionMode, thinkingTokens: record.settings.thinkingTokens,
+    });
+  }
+  if (lost.length) {
+    broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "warning", {
+      threadId: record.id, code: "stateRepushFailed", message: `the replacement engine did not accept: ${lost.join(", ")}`,
+    });
+  }
 }
 
 export const rewindAnchors: Handler = async (srv, ctx, id, params) => {

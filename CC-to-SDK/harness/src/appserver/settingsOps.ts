@@ -1,10 +1,14 @@
 // appserver/settingsOps.ts — M2b Task 3b: the nine host-wire ops gap 6 named (`thread/settings/read`,
 // `thread/directory/{list,add,remove}`, `thread/permissionRule/{add,remove}`, `thread/outputStyle/set`,
 // `thread/effort/set`, `thread/clear`). Six of the nine reach the engine through ONE primitive —
-// `applyFlagSettings` — which is a WHOLESALE write, not a delta: each push replaces the engine's dynamic
-// flag layer with whatever object it is handed. That is why this file keeps a per-record accumulator
-// (`registry.ts`'s `flagPerms`/`flagOutputStyle`/`flagEffort`) rather than forwarding each request
-// verbatim: without it, granting a second directory would revoke the first.
+// `applyFlagSettings` — which is PER-KEY REPLACEMENT: every key the pushed object names is overwritten
+// wholesale, never merged into, while keys it does not name are left alone. This file depends on both
+// halves of that. Because a named key is REPLACED, the whole of that key's value must be pushed every
+// time — hence the per-record accumulator (`registry.ts`'s `flagPerms`/`flagOutputStyle`/`flagEffort`)
+// rather than forwarding each request verbatim: without it, granting a second directory would revoke the
+// first. Because an UNNAMED key is untouched, the layer can be replayed as three independent single-key
+// calls — which is exactly what the swap seam does (rewind.ts's `repushThreadState`, mirroring
+// `host/host.ts`'s `replayFlagState`, host.ts:432-437).
 //
 // COMMIT ONLY AFTER THE ENGINE ACCEPTS (`host/host.ts`'s `pushFlagPerms`, verbatim reasoning). The
 // accumulator is not a log of what clients asked for, it is the set the swap seam will REPLAY onto every
@@ -208,8 +212,14 @@ const defaultFreshFactory = (config: Record<string, unknown>): EngineSession => 
  *
  *  Not exempt from dispatch's -33005 gate: the swap disposes the outgoing engine and opens a replacement
  *  through the same factory `thread/start` uses, so it is not "answerable without live transport" — a
- *  client reconciling a dead thread closes it and starts a new one. */
+ *  client reconciling a dead thread closes it and starts a new one.
+ *
+ *  And for the same reason it consults the SHUTDOWN LATCH like every other engine-CREATING method
+ *  (`thread/start`, `thread/fork`): shutdown's whole guarantee is that its snapshot of live threads cannot
+ *  go stale (server.ts's `shutdown`), and a clear admitted inside that window opens a replacement engine —
+ *  an SDK session and its `claude` child — that the pass already walked past and will never dispose. */
 export const threadClear: Handler = (srv, ctx, id, params) => {
+  if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
   const parsed = threadClearParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const { threadId } = parsed.data;
@@ -240,7 +250,7 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
       broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "thread/rewound", { threadId, sessionId: record.sessionId ?? null, cleared: true });
       ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
     } catch (e) {
-      ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+      replyMutationThrow(record, ctx, id, e); // chain-deferred like every mutation here: the engine can die between arrival and this body
     } finally {
       record.swapInFlight = false; // a throw from the factory or the swap must not wedge the thread at "swapping"
     }
