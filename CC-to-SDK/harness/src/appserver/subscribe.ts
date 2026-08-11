@@ -4,6 +4,7 @@
 // file sprawl" rule (turns.ts is the precedent for this split).
 import { ERR } from "./rpc.js";
 import { itemEventNotification } from "./turns.js";
+import { queuedNotification } from "./queue.js";
 import { itemsFromTranscript } from "./items/replay.js";
 import type { Item } from "./items/types.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
@@ -106,6 +107,18 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
     const turnId = record.buffer.length ? record.buffer[record.buffer.length - 1].turnId : record.currentTurnId!;
     ctx.peer.notify("turn/started", { threadId: record.id, turn: { id: turnId, status: "inProgress" } });
   }
+  // The queue, FIFO, one turn/queued per entry (M2b Task 8, chartered by the Task 4 review adjudication).
+  // Replayed HERE — with the turn layer it belongs to, ahead of the item layer below — so the join order
+  // stays turn edges -> items -> decisions -> status. Un-gated on `turnStartedBroadcast` unlike the
+  // turn/started above: that gate exists because a live broadcast is about to deliver the same event to
+  // this peer, and no such broadcast is pending for an entry that was enqueued before this peer arrived.
+  // Without this a late client holds no id for the turns waiting behind the one in flight, and the
+  // terminal `turn/completed {cancelled}` (or the `turn/started`) it will receive for each names a turn it
+  // never saw exist.
+  record.queue.forEach((q, i) => {
+    const queued = queuedNotification(record.id, q.id, i + 1);
+    ctx.peer.notify(queued.method, queued.params);
+  });
   for (const b of record.buffer) {
     const { method, params: p } = itemEventNotification(record.id, b.turnId, b.event);
     ctx.peer.notify(method, p);

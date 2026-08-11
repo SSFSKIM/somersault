@@ -13,7 +13,7 @@
 // after that rejects immediately rather than parking a waiter nothing can drain (session.ts:124). The
 // close tests below rely on exactly that: no test hand-releases a turn the close already ended.
 import { describe, it, expect } from "vitest";
-import { AppServer } from "../../../src/appserver/server.js";
+import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { AppServerDeps } from "../../../src/appserver/server.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
@@ -460,6 +460,60 @@ describe("turn queue (spec Wave 4)", () => {
     expect(replyTo(s, 5).result).toEqual({ interrupted: true, cancelledQueued: [`turn_${threadId}_2`] });
     expect(engine.interrupts).toBe(1);
     expect(notifs(s, "turn/completed").find((f) => f.params.turn.id === `turn_${threadId}_1`).params.turn.status).toBe("interrupted");
+  });
+
+  // --- queue VISIBILITY (Task 8, chartered by the Task 4 review adjudication 2026-08-11) ------------
+  // Before this, a queued turn existed only in the enqueue reply — a private answer to one caller. Every
+  // other subscriber's first news of that id was a `turn/started` or a `turn/completed {cancelled}` for a
+  // turn it had never seen begin.
+  it("enqueue broadcasts turn/queued to the thread's subscribers — the enqueuer's own connection included, once each, AFTER the private reply", async () => {
+    const engine = mkEngine();
+    const { srv, s, c, threadId } = await boot(engine);
+    const s2 = mkSink(); const c2 = srv.connect(s2.sink);
+    init(c2, 1, "B");
+    send(c2, { id: 2, method: "thread/subscribe", params: { threadId } });
+    await tick();
+    s2.lines.length = 0;
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    await tick();
+
+    const queuedId = replyTo(s, 4).result.turn.id;
+    const expected = { threadId, turn: { id: queuedId, status: "queued" }, position: 1 };
+    expect(notifs(s2, "turn/queued").map((f) => f.params)).toEqual([expected]);
+    // The enqueuer is a subscriber too, and hears it exactly once — one delivery per Peer, like every
+    // other thread-scoped notification (its reply is not a substitute: the two carry the same id, and a
+    // client that renders the queue off the notification must not have to special-case its own writes).
+    expect(notifs(s, "turn/queued").map((f) => f.params)).toEqual([expected]);
+    // Reply first, notification second — beginTurn's own turn/started precedent.
+    const lines = parsed(s.lines);
+    expect(lines.findIndex((f) => f.id === 4)).toBeLessThan(lines.findIndex((f) => f.method === "turn/queued"));
+  });
+
+  it("threadView.queueDepth tracks the queue: 0 while idle, 0 for a RUNNING turn, up on enqueue, down on drain, 0 after a flush", async () => {
+    const engine = mkEngine();
+    const { srv, c, threadId } = await boot(engine);
+    const record = srv.registry.get(threadId)!;
+    expect(threadView(srv, record).queueDepth).toBe(0);
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    expect(threadView(srv, record).queueDepth).toBe(0); // a turn that is RUNNING is not a turn that is queued
+
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    send(c, { id: 5, method: "turn/start", params: { threadId, input: "three", queue: true } });
+    await tick();
+    expect(threadView(srv, record).queueDepth).toBe(2);
+
+    engine.release();
+    await settle();
+    expect(threadView(srv, record).queueDepth).toBe(1); // "two" drained into the engine, "three" still waits
+
+    send(c, { id: 6, method: "turn/interrupt", params: { threadId, cancelQueued: true } });
+    await settle();
+    expect(threadView(srv, record).queueDepth).toBe(0);
   });
 
   it("a SWAPPING thread refuses turn/start{queue:true} too — a swap never calls settleTurn, so an enqueue there would strand", async () => {

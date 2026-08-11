@@ -58,7 +58,7 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
     void srv;
   });
 
-  it("store-only rows project the same 13-field shape, with id=sessionId (no thr_ id) and status idle; pages with the merged-array cursor", async () => {
+  it("store-only rows project the same 14-field shape, with id=sessionId (no thr_ id) and status idle; pages with the merged-array cursor", async () => {
     const { lines, c } = boot({
       // lastModified/createdAt are MILLISECONDS-since-epoch on SDKSessionInfo (per sdk.d.ts) — realistic
       // ms-scale values here (not small round numbers) so a /1000 unit bug would actually show up as a

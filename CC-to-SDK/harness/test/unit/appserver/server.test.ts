@@ -262,8 +262,8 @@ describe("threadBusyReason (spec D-M2-8) — the ONE busy predicate", () => {
   });
 });
 
-describe("threadView (parent §5's 13-field Thread projection) + thread/list cursor", () => {
-  it("produces all 13 wire fields; status is an object; a parked decision yields waitingOn:'decision'", async () => {
+describe("threadView (parent §5's 14-field Thread projection) + thread/list cursor", () => {
+  it("produces all 14 wire fields; status is an object; queueDepth is present-and-0 on an empty queue; a parked decision yields waitingOn:'decision'", async () => {
     let broker: any;
     const sessionFactory = (cfg: any) => {
       broker = cfg.permissionBroker;
@@ -285,9 +285,11 @@ describe("threadView (parent §5's 13-field Thread projection) + thread/list cur
 
     const idleView = threadView(srv, record);
     expect(Object.keys(idleView).sort()).toEqual(
-      ["cwd", "createdAt", "id", "model", "origin", "permissionMode", "preview", "sessionId", "status", "tags", "thinking", "title", "updatedAt"].sort()
+      ["cwd", "createdAt", "id", "model", "origin", "permissionMode", "preview", "queueDepth", "sessionId", "status", "tags", "thinking", "title", "updatedAt"].sort()
     );
     expect(idleView.status).toEqual({ state: "idle" });
+    // M2b Task 8: always present, 0 when nothing is queued — never omitted-when-zero (see threadView).
+    expect(idleView.queueDepth).toBe(0);
     expect(idleView.cwd).toBe("/tmp/x");
     expect(idleView.model).toBe("opus");
     expect(idleView.permissionMode).toBe("default");

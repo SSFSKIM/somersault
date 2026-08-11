@@ -187,6 +187,55 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
     expect(notifs[0].params).toEqual({ threadId, status: { state: "idle" } });
   });
 
+  it("(b2) a late subscriber's replay carries one turn/queued per queued entry, FIFO and positioned, right after turn/started — and a later flush completes exactly those ids", async () => {
+    // M2b Task 8, chartered by the Task 4 review adjudication (2026-08-11). Without the queue in the
+    // replay a client joining mid-turn learns nothing about the turns waiting behind the one in flight,
+    // and its FIRST news of a queued id is a `turn/completed {cancelled}` (or a `turn/started`) for a
+    // turn it never saw exist — the id is uncorrelatable, so the event is unrenderable.
+    const sessionFactory = () => ({
+      submit: () => new Promise<{ result: unknown }>(() => {}), // never resolves — the turn stays in flight, so the queue holds
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    const b = mkSink(); const connB = srv.connect(b.sink);
+    init(connA, 1, "A"); init(connB, 1, "B");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(connA, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick(); // the chain callback ran: turn/started broadcast, submit parked forever
+    send(connA, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    send(connA, { id: 5, method: "turn/start", params: { threadId, input: "three", queue: true } });
+    await tick();
+    const queuedIds = [4, 5].map((i) => parsed(a.lines).find((f) => f.id === i).result.turn.id);
+
+    b.lines.length = 0;
+    send(connB, { id: 6, method: "thread/subscribe", params: { threadId } });
+    await tick();
+
+    const notifs = parsed(b.lines).filter((f) => !("id" in f));
+    // The turn LAYER replays together (started, then what is queued behind it), then the item layer,
+    // then decisions, then status — the §5 order with the queue slotted into the layer it belongs to.
+    expect(notifs.map((f) => f.method)).toEqual(["turn/started", "turn/queued", "turn/queued", "item/completed", "thread/status/changed"]);
+    expect(notifs.slice(1, 3).map((f) => f.params)).toEqual([
+      { threadId, turn: { id: queuedIds[0], status: "queued" }, position: 1 },
+      { threadId, turn: { id: queuedIds[1], status: "queued" }, position: 2 },
+    ]);
+
+    // The point of holding those ids: the flush that follows is now correlatable — every id this peer
+    // was replayed gets its terminal event, and no id it was never told about appears.
+    b.lines.length = 0;
+    send(connA, { id: 7, method: "turn/interrupt", params: { threadId, cancelQueued: true } });
+    await tick();
+    const terminal = parsed(b.lines).filter((f) => f.method === "turn/completed");
+    expect(terminal.map((f) => f.params.turn)).toEqual(queuedIds.map((id) => ({ id, status: "cancelled" })));
+  });
+
   it("(c) stitch contract: buffered-replay ids and thread/read ids overlap, and dedup-by-id collapses the overlap to exactly one entry per id", async () => {
     // Task 5's replay.test.ts fixture — a prompt, an assistant reply with a tool_use, and its tool_result.
     // gap 6 makes this fake uuid-aware (engine-faithful): probe 70 (ALIVE) found the SDK persists exactly

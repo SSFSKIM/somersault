@@ -340,6 +340,13 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
 
 ## Surprises & Discoveries
 
+- **2026-08-11 (M2b Task 8) — `turn/queued` shipped after all, per the Task 4 review adjudication.** The
+  queue was designed with no notification of its own (the enqueue reply was the whole announcement); the
+  review found that leaves every other subscriber holding a terminal `cancelled` for an id it never saw,
+  and chartered the notification + its subscribe-replay + `threadView.queueDepth` into Task 8 — where the
+  console, a foreign consumer, is what proves the shape. Deferred-then-proven: the gap was found by asking
+  what a second client sees, not by re-reading the queue module.
+
 - 2026-08-11 (M2b Task 5, probes 103b/104/105 run keyed (103 suffixed: a concurrent QA session claimed 103 on main the same day) at SDK 0.3.220):
   - **Probe 103b `streamInput` — ALIVE.** Mid-turn injection steers a running turn: during a
     four-sequential-Bash-sleeps turn, `q.streamInput(oneShot("abandon remaining steps… reply

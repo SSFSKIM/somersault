@@ -58,11 +58,12 @@ function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRecord | 
   return srv.registry.list().find((r) => r.sessionId === sessionId);
 }
 
-/** Store-only rows project to the SAME 13-field shape threadView produces (parent §5) — a client must not
+/** Store-only rows project to the SAME 14-field shape threadView produces (parent §5) — a client must not
  *  be able to tell a live row from a stored one by its shape alone, only by its content. No `thr_` id
  *  exists for a session this server never opened, so `id` IS the store sessionId; `status` is always idle
- *  (a store-only session has no engine to be busy); `model`/`permissionMode`/`thinking`/`origin` have no
- *  store equivalent and stay `undefined` exactly as an un-configured registry row would read.
+ *  and `queueDepth` always 0 (a store-only session has no engine to be busy and no queue to fill — 0 is
+ *  the fact, not a placeholder); `model`/`permissionMode`/`thinking`/`origin` have no store equivalent and
+ *  stay `undefined` exactly as an un-configured registry row would read.
  *
  *  UNIT NOTE (real bug caught in self-review, not just a style choice): `SDKSessionInfo.createdAt`/
  *  `lastModified` are documented milliseconds-since-epoch; `ThreadRecord.createdAt`/`updatedAt`
@@ -80,6 +81,7 @@ function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
     permissionMode: undefined,
     thinking: { maxTokens: undefined },
     status: { state: "idle" as const },
+    queueDepth: 0,
     origin: undefined,
     createdAt: info.createdAt !== undefined ? Math.floor(info.createdAt / 1000) : undefined,
     updatedAt: Math.floor(info.lastModified / 1000),

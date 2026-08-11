@@ -14,7 +14,7 @@ import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
-import { cancelQueued, enqueueTurn, flushQueue, takeNext, type QueuedTurn } from "./queue.js";
+import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, type QueuedTurn } from "./queue.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams } from "./schema/turns.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
@@ -305,6 +305,14 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     if (parsed.data.queue && busyReason === "turn") {
       const q = enqueueTurn(record, parsed.data.input);
       ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position });
+      // Reply first, notify second — beginTurn's own turn/started ordering, for the same reason: the
+      // caller's answer must not depend on the fan-out, and every OTHER subscriber needs the id before it
+      // can be handed a turn/started or a turn/completed{cancelled} naming it (Task 4 review adjudication).
+      // The enqueuer hears it too if it is subscribed, once, like every other thread-scoped notification —
+      // deduped by Peer identity in `broadcast`, so a client can render the queue from one event stream
+      // instead of merging its own replies into it.
+      const queued = queuedNotification(record.id, q.id, q.position);
+      srv.broadcast(record.id, queued.method, queued.params);
     } else {
       ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`);
     }

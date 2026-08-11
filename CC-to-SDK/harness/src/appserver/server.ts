@@ -63,13 +63,17 @@ export interface ConnCtx {
   optOut: Set<string>;   // initialize{optOutNotificationMethods} — the SAME instance the Peer was built with (mutable-in-place)
 }
 
-/** parent §5's full Thread projection (13 fields) — a GUI's thread row. `title`/`tags` reflect only
+/** parent §5's full Thread projection (14 fields) — a GUI's thread row. `title`/`tags` reflect only
  *  what thread/name/set or thread/tag/set have explicitly patched onto this record (registry.ts) — a
  *  thread that was never renamed/tagged in-process reads `undefined` here even if the store has a title
  *  for it; sessionLib.ts's merged thread/list is what fills that gap from a store match, on the VIEW it
  *  builds, without mutating the record. `preview` stays store-only (no registry equivalent exists) and is
  *  always `undefined` off this function. `status` goes through the one predicate+shape pair (registry.ts,
- *  spec D-M2-8) — `waitingOn` needs the decisions map, which the record itself does not have, hence `srv`. */
+ *  spec D-M2-8) — `waitingOn` needs the decisions map, which the record itself does not have, hence `srv`.
+ *  `queueDepth` (M2b Task 8, flagged addition to §5) is ALWAYS present and 0 when the queue is empty,
+ *  rather than omitted-when-zero: a thread row that answers "how many turns are waiting" with a missing
+ *  key forces every consumer to write the `?? 0` itself, and one that forgets it renders "unknown" for the
+ *  ordinary case. It counts only turns that have NOT started — the running turn is `status`'s business. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
   const waitingOn = srv.pendingDecisions(r.id).length > 0;
   return {
@@ -82,6 +86,7 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     permissionMode: r.settings.permissionMode,
     thinking: { maxTokens: r.settings.thinkingTokens },
     status: threadStatus(r, waitingOn),
+    queueDepth: r.queue.length,
     origin: r.origin,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,

@@ -14,12 +14,18 @@
   One JSON message per WebSocket text frame. Replies are `{id, result}` or `{id, error:{code,
   message, data?}}`. Notifications are `{method, params, emittedAtMs}` (no id).
 
-  Panels (waves 0-2, per the M2 design spec's "one panel per wave"):
+  Panels (waves 0-4, per the M2 design spec's "one panel per wave"):
     A. Connect & threads   — initialize, thread/list, thread-existence notifications, subscribe.
     B. Settings & meters    — the four setters, the notification-only settings readout, the five
                               introspection reads, token-usage/rate-limit meters.
+    D. Turn & decisions     — turn/start + interrupt, the item stream, the three decision kinds.
     C. Session library      — the store-merged thread/list with cursor paging, rename/tag/delete/
                               fork, compact/reinitialize.
+    E. Rewind/MCP/tasks/ops — wave 3 + the gap-6 nonet: rewind anchors (dryRun/rewind/clear), live
+                              MCP topology, background tasks, and the settings ops (directories,
+                              permission rules, effort, output style, settings read).
+    F. Turn queue           — wave 4: turn/start {queue:true}, the turn/queued-driven queue list,
+                              per-turn cancel, stop-everything, and the threadView queue depth.
     Z. Wire log             — every request, reply, and notification, chronological, for the whole
                               session — this is where protocol awkwardness becomes visible.
 -->
@@ -69,7 +75,7 @@
   .stream-pane div { border-bottom: 1px dotted color-mix(in srgb, currentColor 15%, transparent); padding: .1rem 0; }
 </style>
 
-<h1>agent app-server console <span class="sub">waves 0&ndash;2 &middot; foreign consumer &middot; disposable</span></h1>
+<h1>agent app-server console <span class="sub">waves 0&ndash;4 &middot; foreign consumer &middot; disposable</span></h1>
 <div class="row status-line">
   status: <span id="connStatus" class="conn-bad">disconnected</span>
   <span id="activeThreadLine"></span>
@@ -289,6 +295,180 @@
   </div>
 </section>
 
+<!-- ============ Panel E: Rewind, MCP, tasks & settings ops (wave 3 + gap-6 nonet) ============ -->
+<section id="panelWave3">
+  <h2>E. Rewind &middot; MCP &middot; tasks &middot; settings ops</h2>
+  <div class="callout">
+    Everything in this panel acts on the <b>active thread</b> set in panel B. All of it is
+    chain-scoped server-side except the three reads (<code>thread/rewind/anchors</code>,
+    <code>thread/rewind/dryRun</code>, <code>mcpServer/status/list</code>,
+    <code>task/list</code>, <code>thread/directory/list</code>), so a mutation issued while a turn
+    runs waits its turn rather than racing it &mdash; and <code>thread/rewind</code> /
+    <code>thread/clear</code> refuse outright (<code>-33001</code>) while a turn is in flight or a
+    decision is parked.
+  </div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">rewind</h3>
+  <div class="row">
+    <button id="btnLoadAnchors">Load anchors <span class="wirename">(thread/rewind/anchors)</span></button>
+    <label>scope
+      <select id="rewindScope">
+        <option value="both" selected>both</option>
+        <option value="conversation">conversation</option>
+        <option value="code">code</option>
+      </select>
+    </label>
+    <button id="btnClearThread">Clear thread <span class="wirename">(thread/clear)</span></button>
+    <span id="rewindStatus">(no anchors loaded)</span>
+  </div>
+  <table id="anchorTable">
+    <thead><tr><th>#</th><th>prompt</th><th>uuid</th><th>prevUuid</th><th>actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    Anchors arrive <b>newest first</b> and each carries its own <code>prevUuid</code> &mdash; the row
+    sends that value back verbatim, because the server refuses a <code>both</code>/
+    <code>conversation</code> rewind whose <code>prevUuid</code> is <code>null</code> with
+    <code>-32602</code> ("no conversation anchor before the first prompt &mdash; code-only rewind is
+    available"). A thread with no <code>sessionId</code> yet answers an empty list, not an error.
+    <b>Dry run</b> is read-only and never throws: an engine without the capability, or a refusal,
+    both come back as <code>{canRewind:false, error}</code>. The repaint below is driven by the
+    <code>thread/rewound</code> notification (<code>{threadId, sessionId}</code>, plus
+    <code>cleared:true</code> and a <code>null</code> id for <code>thread/clear</code>), never by the
+    reply &mdash; same asymmetry as panels B and D, and here it also proves the swap reached
+    <em>watchers</em>, not just the requester.
+  </div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">MCP servers</h3>
+  <div class="row">
+    <button id="btnMcpStatus">Status <span class="wirename">(mcpServer/status/list)</span></button>
+    <button id="btnMcpSet">Set servers&hellip; <span class="wirename">(mcpServer/set)</span></button>
+    <span id="mcpStatusNote">(no status read yet)</span>
+  </div>
+  <table id="mcpTable">
+    <thead><tr><th>name</th><th>status</th><th>scope</th><th>error</th><th>actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    <b>Toggle is advisory, not a security boundary</b> (the wire says so in
+    <code>mcpToggleParams</code>'s own schema description): a disabled server is resurrected by the
+    next model tool call that needs it &mdash; gate with permissions instead. Reconnect and toggle
+    <b>throw for SDK-type servers</b> ("SDK servers should be handled in print.ts"); the server maps
+    that to <code>-32602</code> carrying the SDK's own message, which is what the alert below shows.
+    Neither emits a notification: this table only ever changes when you press Status again.
+  </div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">background tasks</h3>
+  <div class="row">
+    <button id="btnTaskList">List tasks <span class="wirename">(task/list)</span></button>
+    <label>toolUseId <input type="text" id="bgToolUseId" placeholder="(blank = every foreground task, i.e. Ctrl+B)" /></label>
+    <button id="btnBackgroundAll">Background all <span class="wirename">(turn/background)</span></button>
+    <span id="taskNote">(no task list read yet)</span>
+  </div>
+  <table id="taskTable">
+    <thead><tr><th>task_id</th><th>task_type</th><th>description</th><th>actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    <code>task/list</code> answers from the session's cached task set (replaced wholesale by each
+    <code>background_tasks_changed</code> frame), so it stays answerable even on a dead engine &mdash;
+    it is one of the methods exempt from the <code>-33005</code> gate. <b>Stop emits no notification
+    of its own</b>: the engine's own frames arrive as <code>task/event</code> and
+    <code>task/changed</code> (snapshot-replace, never merge) &mdash; watch the wire log. This table
+    auto-refreshes from <code>task/changed</code> for the active thread.
+  </div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">settings ops (the gap-6 nonet)</h3>
+  <div class="row">
+    <button id="btnDirList">List directories <span class="wirename">(thread/directory/list)</span></button>
+    <label>path <input type="text" id="dirPath" class="wide" placeholder="/absolute/path" /></label>
+    <button id="btnDirAdd">Add <span class="wirename">(thread/directory/add)</span></button>
+    <button id="btnDirRemove">Remove <span class="wirename">(thread/directory/remove)</span></button>
+  </div>
+  <table id="dirTable">
+    <thead><tr><th>path</th><th>source</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row">
+    <label>effort
+      <select id="effortLevel">
+        <option value="low">low</option>
+        <option value="medium" selected>medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max</option>
+      </select>
+    </label>
+    <button id="btnSetEffort">Set effort <span class="wirename">(thread/effort/set)</span></button>
+    <label>output style <input type="text" id="outputStyle" placeholder="e.g. Explanatory" /></label>
+    <button id="btnSetOutputStyle">Set output style <span class="wirename">(thread/outputStyle/set)</span></button>
+  </div>
+  <div class="row">
+    <label>rule behavior
+      <select id="ruleBehavior">
+        <option value="allow">allow</option>
+        <option value="ask">ask</option>
+        <option value="deny">deny</option>
+      </select>
+    </label>
+    <label>rule <input type="text" id="ruleText" placeholder="e.g. Bash(git status:*)" /></label>
+    <button id="btnRuleAdd">Add rule <span class="wirename">(thread/permissionRule/add)</span></button>
+    <button id="btnRuleRemove">Remove rule <span class="wirename">(thread/permissionRule/remove)</span></button>
+    <button id="btnReadSettings">Read settings <span class="wirename">(thread/settings/read)</span></button>
+    <button id="btnReloadPlugins">Reload plugins <span class="wirename">(plugin/reload)</span></button>
+    <button id="btnReloadSkills">Reload skills <span class="wirename">(skill/reload)</span></button>
+  </div>
+  <pre id="settingsOpsDump">(thread/settings/read and thread/directory/list replies are dumped here verbatim)</pre>
+  <div class="callout">
+    These six writers share one per-thread <b>flag accumulator</b> committed only <em>after</em> the
+    engine accepts, and the whole layer is <b>re-pushed onto the replacement engine</b> by every
+    rewind or clear above &mdash; so the directory list is the honest way to see whether a swap kept
+    your grants (a rejected re-push arrives as a <code>warning</code> naming the losses, in the wire
+    log). None of the six emits a settings notification: an idempotent re-add replies
+    <code>{ok:true}</code> without pushing anything at all, and the effort level is validated
+    <em>here</em>, on the wire &mdash; the SDK itself accepts a bogus level silently.
+  </div>
+</section>
+
+<!-- ======================= Panel F: Turn queue (wave 4) ======================= -->
+<section id="panelQueue">
+  <h2>F. Turn queue</h2>
+  <div class="row">
+    <input type="text" id="queueInput" class="wide" placeholder="prompt to send (or to queue behind the running turn)" />
+    <label><input type="checkbox" id="queueFlag" checked /> queue <span class="wirename">(turn/start {queue:true})</span></label>
+    <button id="btnQueueSend">Send</button>
+    <button id="btnQueueStop">Stop everything <span class="wirename">(turn/interrupt {cancelQueued:true})</span></button>
+    <button id="btnSteer">Steer running turn <span class="wirename">(turn/steer)</span></button>
+  </div>
+  <div class="row">
+    <span id="queueDepthBadge" class="badge idle">queueDepth &mdash;</span>
+    <button id="btnQueueRefresh" class="hint">Refresh depth <span class="wirename">(thread/list)</span></button>
+    <span id="queueNote"></span>
+  </div>
+  <table id="queueTable">
+    <thead><tr><th>turn id</th><th>status</th><th>position (at announce)</th><th>actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    The rows below are written <b>only by notifications</b> &mdash; <code>turn/queued</code> (the id is
+    minted at <em>enqueue</em>, so it exists before the turn does), then <code>turn/started</code>
+    when the drain picks it up, then <code>turn/completed</code> with
+    <code>completed</code>/<code>interrupted</code>/<code>failed</code>/<code>cancelled</code>. The
+    enqueue reply carries the identical id and is deliberately ignored here, so this panel is a real
+    test that a <em>second</em> client can follow a queue it did not create: subscribe from another
+    browser tab and you will see the same rows appear. Joining late is covered too &mdash;
+    <code>thread/subscribe</code> replays one <code>turn/queued</code> per pending entry, FIFO.
+    <br />
+    <b>Known wire characteristic:</b> <code>queueDepth</code> travels only on the
+    <code>threadView</code> projection (<code>thread/list</code>, <code>thread/started</code>) &mdash;
+    no notification carries it, and <code>thread/status/changed</code> does not. The badge therefore
+    shows the depth as of the last list, next to this console's own event-derived count; if the two
+    disagree after a refresh, the event stream and the projection have genuinely drifted.
+    <b>Per-row Cancel</b> sends <code>turn/interrupt {turnId}</code>, which removes just that entry
+    and never touches the engine &mdash; the running turn keeps going.
+  </div>
+</section>
+
 <!-- ======================= Panel Z: Wire log ======================= -->
 <section>
   <h2>Wire log</h2>
@@ -461,6 +641,9 @@ function renderThreadTable() {
     tbody.appendChild(tr);
   }
   document.getElementById("threadListCount").textContent = `${liveThreads.size} known`;
+  // Panel F's depth badge is a projection of this same threadView data (the only carrier `queueDepth`
+  // has), so it repaints exactly when the table does — never on its own timer.
+  renderQueueDepth();
 }
 
 // Routes through Panel D's doSubscribe() (defined below, but function declarations hoist) so a row
@@ -506,6 +689,21 @@ function setActiveThread(id) {
   document.getElementById("itemStream").textContent = "(item/started and item/completed for the active thread appear here as they arrive)";
   renderSubscribeStatus();
   renderDecisions();
+  // Panels E and F are per-thread reads with no notification carrier of their own (except the two
+  // handled in the dispatch), so switching threads must blank them rather than leave the previous
+  // thread's anchors/servers/tasks/directories on screen attributed to this one. The queue map is
+  // NOT cleared — it is keyed by threadId and rendered filtered, so a queue that filled while
+  // another thread was active is still there when you switch back.
+  anchors = []; renderAnchors();
+  document.getElementById("rewindStatus").textContent = "(no anchors loaded)";
+  document.querySelector("#mcpTable tbody").innerHTML = "";
+  document.getElementById("mcpStatusNote").textContent = "(no status read yet)";
+  document.querySelector("#taskTable tbody").innerHTML = "";
+  document.getElementById("taskNote").textContent = "(no task list read yet)";
+  document.querySelector("#dirTable tbody").innerHTML = "";
+  document.getElementById("settingsOpsDump").textContent = "(thread/settings/read and thread/directory/list replies are dumped here verbatim)";
+  document.getElementById("queueNote").textContent = "";
+  renderQueue();
 }
 function activeThreadOrAlert() {
   const id = activeThreadInput.value.trim();
@@ -821,6 +1019,256 @@ document.getElementById("btnLibRefresh").onclick = () => { libCursor = null; ref
 document.getElementById("btnLibMore").onclick = () => refreshLibrary(true);
 
 // ---------------------------------------------------------------------------------------------
+// Panel E: rewind / MCP / tasks / settings ops (wave 3 + the gap-6 nonet). Every one of these is
+// scoped to the active thread, and every table is repainted from its own read's reply — none of
+// these methods emits a notification of its own. The two events they DO provoke come from
+// elsewhere and are handled in the dispatch below: `thread/rewound` (rewind + clear, fanned out to
+// watchers as well as subscribers) and `task/changed` (the engine's own task frames).
+// ---------------------------------------------------------------------------------------------
+
+/** The one call helper panels E and F share. Resolves the active thread, folds it into the params,
+ *  and surfaces a failure as an alert carrying the wire error VERBATIM: a `-33001` refusal names its
+ *  reason ("turn" / "closing" / "swapping") and a `-32602` from an MCP call carries the SDK's own
+ *  message — flattening either into a friendly string is exactly the consumability loss this console
+ *  exists to catch. */
+async function callActive(method, params, onOk) {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  try {
+    const r = await send(method, { threadId, ...(params || {}) });
+    if (onOk) onOk(r, threadId);
+  } catch (e) { alert(`${method} failed: ` + JSON.stringify(e)); }
+}
+
+function dumpOps(label, payload) {
+  document.getElementById("settingsOpsDump").textContent = `${label} →\n` + JSON.stringify(payload, null, 2);
+}
+
+// --- rewind ---------------------------------------------------------------------------------
+let anchors = [];
+function renderAnchors() {
+  const tbody = document.querySelector("#anchorTable tbody");
+  tbody.innerHTML = "";
+  for (const a of anchors) {
+    const tr = document.createElement("tr");
+    // prevUuid is REQUIRED-but-nullable on the wire, and null is meaningful ("this is the first
+    // prompt"), so it is shown as such rather than blank — the both/conversation rewind of that row
+    // is the one the server refuses -32602.
+    tr.innerHTML = `
+      <td>${esc(a.index)}</td>
+      <td>${esc((a.text || "").slice(0, 120))}</td>
+      <td>${esc(a.uuid)}</td>
+      <td>${a.prevUuid === null || a.prevUuid === undefined ? "<i>null (first prompt)</i>" : esc(a.prevUuid)}</td>
+      <td></td>`;
+    const actions = tr.lastElementChild;
+    actions.append(
+      mkBtn("Dry run", () => callActive("thread/rewind/dryRun", { uuid: a.uuid }, (r) => {
+        // Never throws by contract: an engine without the capability and a genuine refusal both come
+        // back as {canRewind:false, error} — so this reads the FIELD, it does not catch.
+        document.getElementById("rewindStatus").textContent =
+          `dryRun ${a.uuid.slice(0, 8)}: ` + (r.canRewind ? "canRewind" : `refused — ${r.error || "(no reason given)"}`);
+      })),
+      mkBtn("Rewind", () => {
+        const scope = document.getElementById("rewindScope").value;
+        if (!confirm(`rewind to ${a.uuid} with scope=${scope}?\nthis replaces the thread's engine and invalidates every thread/read cursor.`)) return;
+        callActive("thread/rewind", { uuid: a.uuid, prevUuid: a.prevUuid ?? null, scope });
+        // no repaint here on purpose — thread/rewound is what repaints (see the panel's callout)
+      }),
+    );
+    tbody.appendChild(tr);
+  }
+}
+document.getElementById("btnLoadAnchors").onclick = () => callActive("thread/rewind/anchors", {}, (r) => {
+  anchors = r.data || [];
+  document.getElementById("rewindStatus").textContent = anchors.length
+    ? `${anchors.length} anchor(s), newest first`
+    : "(no anchors — this thread has no persisted prompts yet)";
+  renderAnchors();
+});
+document.getElementById("btnClearThread").onclick = () => {
+  if (!confirm("thread/clear discards the conversation and swaps in a fresh engine (the flag layer is re-pushed onto it). continue?")) return;
+  callActive("thread/clear", {});
+};
+
+// --- MCP ------------------------------------------------------------------------------------
+function renderMcp(rows) {
+  const tbody = document.querySelector("#mcpTable tbody");
+  tbody.innerHTML = "";
+  for (const e of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${esc(e.name)}</td><td>${esc(e.status)}</td><td>${esc(e.scope)}</td><td>${esc(e.error)}</td><td></td>`;
+    const actions = tr.lastElementChild;
+    const enable = e.status === "disabled"; // toggle is a SET, not a flip — send the state we want
+    actions.append(
+      mkBtn("Reconnect", () => callActive("mcpServer/reconnect", { name: e.name }, () => readMcpStatus())),
+      mkBtn(enable ? "Enable" : "Disable", () => callActive("mcpServer/toggle", { name: e.name, enabled: enable }, () => readMcpStatus())),
+      mkBtn("Pin mode", () => {
+        const mode = prompt("permission mode to pin for this server (blank clears the pin — rules layer only, a canUseTool broker is still consulted)", "");
+        if (mode === null) return;
+        callActive("mcpServer/permissionModeOverride/set", { name: e.name, mode: mode.trim() === "" ? null : mode.trim() });
+      }),
+    );
+    tbody.appendChild(tr);
+  }
+}
+function readMcpStatus() {
+  callActive("mcpServer/status/list", {}, (r) => {
+    const rows = r.data || [];
+    renderMcp(rows);
+    document.getElementById("mcpStatusNote").textContent = `${rows.length} server(s), read at ${new Date().toLocaleTimeString()}`;
+  });
+}
+document.getElementById("btnMcpStatus").onclick = readMcpStatus;
+// The whole topology, replaced wholesale. The reply is the engine's OWN receipt ({added, removed,
+// errors}) relayed verbatim — a per-server `errors` entry means that server was rejected while the
+// others still landed, which is why this shows the receipt instead of a success alert.
+document.getElementById("btnMcpSet").onclick = () => {
+  const raw = prompt('servers JSON, e.g. {"docs":{"type":"stdio","command":"npx","args":["-y","some-mcp"]}} — replaces the runtime set', "{}");
+  if (raw === null) return;
+  let servers;
+  try { servers = JSON.parse(raw); } catch { alert("servers must be a JSON object"); return; }
+  callActive("mcpServer/set", { servers }, (r) => {
+    document.getElementById("mcpStatusNote").textContent = `mcpServer/set → ${JSON.stringify(r)}`;
+    readMcpStatus();
+  });
+};
+
+// --- background tasks -----------------------------------------------------------------------
+function renderTasks(rows) {
+  const tbody = document.querySelector("#taskTable tbody");
+  tbody.innerHTML = "";
+  for (const t of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(t.task_id)}</td><td>${esc(t.task_type)}</td><td>${esc(t.description)}</td><td></td>`;
+    tr.lastElementChild.append(mkBtn("Stop", () => callActive("task/stop", { taskId: t.task_id })));
+    tbody.appendChild(tr);
+  }
+  document.getElementById("taskNote").textContent = `${rows.length} task(s)`;
+}
+document.getElementById("btnTaskList").onclick = () => callActive("task/list", {}, (r) => renderTasks(r.data || []));
+document.getElementById("btnBackgroundAll").onclick = () => {
+  const toolUseId = document.getElementById("bgToolUseId").value.trim();
+  // Absent means "every in-flight foreground task" (Ctrl+B) — genuinely optional, not nullable, so an
+  // empty box omits the key rather than sending null.
+  callActive("turn/background", toolUseId ? { toolUseId } : {}, (r) => {
+    document.getElementById("taskNote").textContent = `turn/background → backgrounded: ${r.backgrounded} (a RECEIPT — "was anything backgrounded", not a success flag)`;
+  });
+};
+
+// --- settings ops (the nonet) ---------------------------------------------------------------
+function renderDirs(rows) {
+  const tbody = document.querySelector("#dirTable tbody");
+  tbody.innerHTML = "";
+  for (const d of rows) {
+    const tr = document.createElement("tr");
+    // The three sources are the point of this table: only "session" rows are removable.
+    tr.innerHTML = `<td>${esc(d.path)}</td><td>${esc(d.source)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+function listDirs() { callActive("thread/directory/list", {}, (r) => { renderDirs(r.data || []); dumpOps("thread/directory/list", r); }); }
+document.getElementById("btnDirList").onclick = listDirs;
+document.getElementById("btnDirAdd").onclick = () => {
+  const path = document.getElementById("dirPath").value.trim();
+  if (!path) { alert("enter a path first"); return; }
+  callActive("thread/directory/add", { path }, () => listDirs());
+};
+document.getElementById("btnDirRemove").onclick = () => {
+  const path = document.getElementById("dirPath").value.trim();
+  if (!path) { alert("enter a path first"); return; }
+  callActive("thread/directory/remove", { path }, () => listDirs());
+};
+document.getElementById("btnSetEffort").onclick = () => callActive("thread/effort/set", { level: document.getElementById("effortLevel").value });
+document.getElementById("btnSetOutputStyle").onclick = () => {
+  const style = document.getElementById("outputStyle").value.trim();
+  if (!style) { alert("enter an output style first"); return; }
+  callActive("thread/outputStyle/set", { style });
+};
+function ruleParams() {
+  const rule = document.getElementById("ruleText").value.trim();
+  if (!rule) { alert("enter a rule first"); return null; }
+  return { behavior: document.getElementById("ruleBehavior").value, rule };
+}
+document.getElementById("btnRuleAdd").onclick = () => { const p = ruleParams(); if (p) callActive("thread/permissionRule/add", p); };
+document.getElementById("btnRuleRemove").onclick = () => { const p = ruleParams(); if (p) callActive("thread/permissionRule/remove", p); };
+document.getElementById("btnReadSettings").onclick = () => callActive("thread/settings/read", {}, (r) => dumpOps("thread/settings/read", r));
+// Both reloads answer with a FRESH CATALOG, not an ack (probe 105) — dumped verbatim, since a reload
+// IS a capabilities refresh and the receipt is the evidence of it.
+document.getElementById("btnReloadPlugins").onclick = () => callActive("plugin/reload", {}, (r) => dumpOps("plugin/reload", r));
+document.getElementById("btnReloadSkills").onclick = () => callActive("skill/reload", {}, (r) => dumpOps("skill/reload", r));
+
+// ---------------------------------------------------------------------------------------------
+// Panel F: the turn queue (wave 4). Rows are written ONLY by notifications — turn/queued, then
+// turn/started, then turn/completed — never by turn/start's own reply, even though that reply
+// carries the identical id. Same asymmetry as panels B and D, and here it is the check that a
+// client which did NOT issue the enqueue can still follow the queue.
+// ---------------------------------------------------------------------------------------------
+const queuedTurns = new Map(); // turnId -> {threadId, status, position} — insertion order IS queue order
+
+function renderQueue() {
+  const tbody = document.querySelector("#queueTable tbody");
+  tbody.innerHTML = "";
+  const id = activeId();
+  let shown = 0;
+  for (const [turnId, q] of queuedTurns) {
+    if (q.threadId !== id) continue;
+    shown++;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(turnId)}</td><td>${esc(q.status)}</td><td>${esc(q.position)}</td><td></td>`;
+    // Only a still-queued entry is cancellable by id: once it has started, the same turnId falls
+    // through to an ordinary interrupt of the running turn, which is a different request entirely.
+    if (q.status === "queued") {
+      tr.lastElementChild.append(mkBtn("Cancel", () => callActive("turn/interrupt", { turnId })));
+    }
+    tbody.appendChild(tr);
+  }
+  document.getElementById("queueNote").textContent = shown ? "" : "(no turn/queued seen yet for the active thread)";
+  renderQueueDepth();
+}
+
+/** The badge is a projection of the last `threadView` this console received (thread/list or
+ *  thread/started) NEXT TO its own event-derived count — see the panel callout: `queueDepth` has no
+ *  notification carrier, so the server number is only as fresh as the last list. Showing both is the
+ *  honest rendering, and a disagreement after a refresh is a real finding rather than a redraw bug. */
+function renderQueueDepth() {
+  const id = activeId();
+  const view = liveThreads.get(id);
+  const reported = view && typeof view.queueDepth === "number" ? view.queueDepth : null;
+  const local = [...queuedTurns.values()].filter((q) => q.threadId === id && q.status === "queued").length;
+  const el = document.getElementById("queueDepthBadge");
+  el.textContent = `queueDepth ${reported === null ? "—" : reported} (server, as of last list) · ${local} queued here`;
+  el.className = "badge " + (local || reported ? "active" : "idle");
+}
+
+document.getElementById("btnQueueSend").onclick = async () => {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  const input = document.getElementById("queueInput").value;
+  if (!input.trim()) { alert("enter a prompt first"); return; }
+  if (!subscribedThreads.has(threadId)) {
+    if (!confirm("This thread is not subscribed — turn/queued and turn/* notifications will not reach this console, so the queue list will stay empty. Send anyway?")) return;
+  }
+  const queue = document.getElementById("queueFlag").checked;
+  // The reply ({queued:true, turn, position} when it was enqueued, {turn} when it started outright)
+  // is deliberately not rendered — the notification is.
+  try { await send("turn/start", { threadId, input, ...(queue ? { queue: true } : {}) }); }
+  catch (e) { alert("turn/start failed (an unflagged busy thread answers -33001, and a closing/swapping one refuses even with the flag): " + JSON.stringify(e)); }
+};
+document.getElementById("btnQueueStop").onclick = () => callActive("turn/interrupt", { cancelQueued: true }, (r) => {
+  document.getElementById("queueNote").textContent = `turn/interrupt → ${JSON.stringify(r)}`;
+});
+document.getElementById("btnQueueRefresh").onclick = async () => { await refreshThreadList(false); renderQueueDepth(); };
+// The one method on this wire whose busy gate is INVERTED: it needs a turn actually in flight, so an
+// idle thread answers -32602 "no turn in flight" (not -33001 — nothing is unavailable, the request
+// simply has no referent) and a closing/swapping one answers -33001. It sends the SAME box as the
+// prompt above: a steer is an injection into the running turn, not a new turn — and {ok:true} means
+// "pushed onto the input stream", never "the model obeyed".
+document.getElementById("btnSteer").onclick = () => {
+  const input = document.getElementById("queueInput").value;
+  if (!input.trim()) { alert("type the steering instruction in the prompt box first"); return; }
+  callActive("turn/steer", { input }, () => { document.getElementById("queueNote").textContent = "turn/steer → {ok:true} (pushed onto the live input stream — watch the running turn's items)"; });
+};
+
+// ---------------------------------------------------------------------------------------------
 // Notification dispatch — this is where the "settings readout is notification-only" rule and the
 // "no explicit limit-clear" characteristic actually get honored. Every notification, matched or
 // not, was already written to the wire log by onWsMessage's caller before this runs (see below).
@@ -863,10 +1311,41 @@ function handleNotification(method, params) {
       break;
     // --- Panel D: the ONLY writers of #turnStatus, the decision list, and the item stream ---
     case "turn/started":
-    case "turn/completed":
+    case "turn/completed": {
       if (params.threadId === activeId()) {
         document.getElementById("turnStatus").textContent = `${params.turn.id}: ${params.turn.status}` + (params.turn.error ? ` (${params.turn.error})` : "");
       }
+      // Panel F: a turn this console was told was QUEUED (live or replayed) moves on through
+      // started -> completed/interrupted/failed/cancelled. Turns never announced as queued are not
+      // queue rows — this panel is about the queue, not about every turn on the thread.
+      const q = queuedTurns.get(params.turn.id);
+      if (q) { q.status = params.turn.status; if (params.threadId === activeId()) renderQueue(); }
+      break;
+    }
+    // --- Panel F: the queue's own announcement. The id is minted at ENQUEUE, so this arrives for a
+    // turn that does not exist yet — and it is the only reason a client that did not issue the
+    // enqueue can correlate the turn/started or turn/completed{cancelled} that eventually names it.
+    // thread/subscribe replays one of these per pending entry, FIFO, so a late join is covered too.
+    case "turn/queued":
+      queuedTurns.set(params.turn.id, { threadId: params.threadId, status: params.turn.status, position: params.position });
+      if (params.threadId === activeId()) renderQueue();
+      break;
+    // --- Panel E: the two events wave-3 operations actually produce ---
+    case "thread/rewound": {
+      // The rewind/clear repaint (see panel E's callout) — driven by the notification, never by the
+      // reply, which also proves it reached watchers and not just the requester.
+      const t = liveThreads.get(params.threadId);
+      if (t) { t.sessionId = params.sessionId; renderThreadTable(); }
+      if (params.threadId === activeId()) {
+        anchors = []; renderAnchors();
+        document.getElementById("rewindStatus").textContent =
+          `thread/rewound${params.cleared ? " (cleared)" : ""} — sessionId ${params.sessionId === null ? "(none yet)" : params.sessionId}; press Load anchors to re-read`;
+      }
+      break;
+    }
+    case "task/changed":
+      // snapshot-REPLACE, never merge (the tasks_changed rule) — this table is swapped wholesale.
+      if (params.threadId === activeId()) renderTasks(params.tasks || []);
       break;
     case "item/started":
     case "item/completed":
@@ -888,7 +1367,8 @@ function handleNotification(method, params) {
       if (params.threadId === activeId()) renderDecisions();
       break;
     default:
-      // task/*, thread/compacted, thread/capabilities/changed, thread/name/updated, warning,
+      // task/event, thread/compacted, thread/capabilities/changed, thread/name/updated, warning
+      // (including the post-swap "these settings were lost" one panel E's callout points at),
       // initialized, and every item/* delta channel — no dedicated widget; the wire log above is
       // their display surface, which is the point of a foreign-consumer console.
       break;

@@ -92,7 +92,7 @@ last, as their own cluster, are Wave 4's **probe promotions** (`probes/probes/10
 IS a capabilities refresh). `readFile` won no method at all: probe 104 found it callable but resolving
 null for an existing file and for a missing path alike.
 
-**25 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
+**26 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
 subscribers and watchers alike — when a post-swap state re-push is rejected, since the loss is a fact
 about what the thread now is, not a per-peer aside to whoever asked for the swap);
@@ -101,7 +101,9 @@ server-scoped (via `initialize{watchThreads:true}`) `thread/started`, `thread/de
 the swap was a `thread/clear`); thread-scoped
 `thread/status/changed` (`{state, waitingOn?}`), `thread/settings/changed` (client + engine legs,
 echo-deduped), `thread/name/updated`, `thread/capabilities/changed`, `thread/compacted`,
-`thread/tokenUsage/updated`, `thread/limits/updated`, `turn/started`, `turn/completed` (carries the
+`thread/tokenUsage/updated`, `thread/limits/updated`, `turn/queued` (M2b Task 8 — broadcast at enqueue
+and replayed FIFO by `thread/subscribe`, so a queued id is never first heard of at its terminal event),
+`turn/started`, `turn/completed` (carries the
 Wave T t14 `error` tag for a resolved-but-failed turn), `turn/todo/updated`, `item/started`,
 `item/completed`, `item/agentMessage/delta`, `item/reasoning/delta`, `item/toolCall/argumentsDelta`,
 `decision/requested`, `decision/resolved`, `task/changed`, `task/event`.

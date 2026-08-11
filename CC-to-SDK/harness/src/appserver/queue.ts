@@ -28,6 +28,19 @@ export function enqueueTurn(record: ThreadRecord, input: string): { id: string; 
   return { id, position: record.queue.length };
 }
 
+/** The `turn/queued` payload, built in ONE place because two paths emit it and they must not drift:
+ *  turns.ts's enqueue arm broadcasts it live, subscribe.ts's replay notifies a late-joining peer one per
+ *  queued entry (the same rule, and the same reason, as `itemEventNotification`'s two callers in turns.ts).
+ *  Chartered by the Task 4 review adjudication (2026-08-11): the enqueue reply is private to one caller, so
+ *  without this every OTHER subscriber's first news of a queued id is a `turn/started` or a
+ *  `turn/completed {cancelled}` for a turn it never saw exist — an uncorrelatable, unrenderable event.
+ *  `position` is 1-based and is a SNAPSHOT of where the entry sat when the event was emitted, exactly as
+ *  the enqueue reply's own `position` always was — an interrupt naming an earlier entry shortens the queue
+ *  without renumbering anything already sent. */
+export function queuedNotification(threadId: string, turnId: string, position: number): { method: string; params: Record<string, unknown> } {
+  return { method: "turn/queued", params: { threadId, turn: { id: turnId, status: "queued" }, position } };
+}
+
 /** `turn/interrupt` aimed at a QUEUED turn's own id (spec D-M2-10): remove the entry and complete it
  *  cancelled. Returns false when the id is not in the queue — the caller then treats the request as an
  *  ordinary interrupt of the running turn. */

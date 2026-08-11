@@ -96,7 +96,8 @@ makes 100% coverage a closure property, not a feature wishlist).
 
 **Thread** = one SDK session (keyed by our registry id `thr_…`, carrying `sessionId` once known).
 Fields: `id, sessionId, title, tags, cwd, model, permissionMode, thinking: {level, maxTokens},
-status, origin: "inProcess"|"fleet:<name>", createdAt, updatedAt, preview`.
+status, queueDepth, origin: "inProcess"|"fleet:<name>", createdAt, updatedAt, preview`
+(`queueDepth` added M2b — see Revision Notes).
 `ThreadStatus = idle | active{waitingOn: ("decision"|"input")[]} | disconnected | closed` —
 mirrors Codex's tagged `ThreadStatus` and our host's honest `busy()` vs projected `status()`.
 
@@ -284,6 +285,7 @@ command-list push — replace, don't merge; §13), `thread/name/updated`, `threa
 `thread/tokenUsage/updated` (per-turn result usage + context %), `thread/limits/updated`
 (limit/overage classification — sparse merge like Codex rate limits).
 Turn: `turn/started` `{turnId}`, `turn/completed` `{turnId, status, error?, truncated?}`,
+`turn/queued` `{threadId, turn: {id, status: "queued"}, position}` (added M2b — see Revision Notes),
 `turn/todo/updated`.
 Item: `item/started`, `item/completed`, deltas per §5 table.
 Decision: `decision/requested`, `decision/resolved` (§6).
@@ -611,3 +613,12 @@ claim).
   no existing notification says so; the shipped host's own `rewound` event is the precedent. It
   reaches BOTH the thread's subscribers and every server-scoped watcher (deduped by peer, like
   `thread/closed`), since a rewind changes what the thread IS.
+
+- **Flagged addition (2026-08-11, as2b Task 8, chartered by the Task 4 review adjudication of the same
+  date):** §8's Turn family gains `turn/queued` `{threadId, turn: {id, status: "queued"}, position}` and
+  §5's Thread gains `queueDepth` (always present, 0 when empty). Task 4 shipped the queue with the enqueue
+  reply as its only announcement — private to one caller, so every other subscriber's first news of a
+  queued id was a `turn/started` or `turn/completed {cancelled}` for a turn it never saw exist. The
+  notification broadcasts at enqueue (after the private reply, `turn/started`'s ordering) and
+  `thread/subscribe`'s replay emits one per queued entry, FIFO, so a late-joining client holds every id it
+  may later see a terminal event for. Both additive; no existing shape changes.
