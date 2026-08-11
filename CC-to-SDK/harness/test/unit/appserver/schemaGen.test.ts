@@ -7,6 +7,9 @@
 import { describe, it, expect } from "vitest";
 // NAMED, not default: under NodeNext the CJS default resolves to the module namespace and is not
 // constructable at the type level, while `exports.Ajv` is both a real runtime export and a declared class.
+// `ajv` is a DIRECT devDependency (^8.20.0). It first reached us transitively, through
+// @anthropic-ai/claude-agent-sdk → @modelcontextprotocol/sdk; pinning it here means an SDK bump that drops
+// or moves that transitive edge can no longer take this file's validation with it.
 import { Ajv } from "ajv";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -80,10 +83,7 @@ describe("emit-appserver-schema", () => {
   it("compiles under the CLI's own ajv in draft-7 mode, with zero errors", () => {
     // The Wave 4 ajv gotcha, as an executable check rather than a comment: `new Ajv()` IS draft-7 (ajv 8
     // exposes 2019/2020 as separate entry points), and `strict: true` is its own default, so anything zod
-    // emitted that draft-7 does not understand fails here. ajv 8.20.0 reaches us transitively through
-    // @anthropic-ai/claude-agent-sdk → @modelcontextprotocol/sdk; it is deliberately NOT added as a
-    // dependency (the plan's "no new dependency" constraint), so if an SDK bump ever drops it this import
-    // is what will say so.
+    // emitted that draft-7 does not understand fails here.
     const ajv = new Ajv({ strict: true });
     const failures: string[] = [];
     let compiled = 0;

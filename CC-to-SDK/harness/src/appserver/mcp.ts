@@ -28,16 +28,13 @@
 // `{ok:true}` for work no engine ever did (and, for `set`, reply a bare `undefined` — a result-less
 // frame this codebase's own `classify()` scores `invalid`, so the caller's request never settles).
 import { ERR } from "./rpc.js";
+import { replyEngineThrow } from "./engineThrow.js";
 import type { AppServer, Handler } from "./server.js";
 import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./schema/mcp.js";
 
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors settings.ts/rewind.ts — registry.ts's `updatedAt` is unix seconds, not ms
 
 const UNSUPPORTED = "unsupported by this engine"; // introspect.ts:36's exact wording — one string, four call sites
-
-function replyError(ctx: { peer: { replyError(id: unknown, code: number, message: string): void } }, id: unknown, code: number, e: unknown): void {
-  ctx.peer.replyError(id, code, e instanceof Error ? e.message : String(e));
-}
 
 /** The ping the three topology-changing mutations owe their subscribers (registry.ts:56). Payload is the
  *  bare `{threadId}` — identical to lifecycle.ts:74 and router.ts's routeCapabilities — and it is sent
@@ -57,16 +54,6 @@ export const mcpStatusList: Handler = async (srv, ctx, id, params) => {
   ctx.peer.reply(id, { data, nextCursor: null });
 };
 
-/** reconnect/toggle share one catch: an SDK-type server's throw is a bad request (-32602, the engine's
- *  message verbatim), but a chain-deferred body runs LATER than dispatch's arrival-time -33005 gate — the
- *  engine can die while this op waits its turn in the chain, and that throw is not the caller's fault. So
- *  re-check `isEnded()` first, exactly as `dispatch()` re-checks it in its own post-handler catch
- *  (server.ts). Same wording as that gate, so a client sees one -33005 message on either path. */
-function replyMutationThrow(record: { session: { isEnded?(): boolean } }, ctx: { peer: { replyError(id: unknown, code: number, message: string): void } }, id: unknown, e: unknown): void {
-  if (record.session.isEnded?.()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, "Engine is gone (session ended)"); return; }
-  replyError(ctx, id, ERR.INVALID_PARAMS, e);
-}
-
 export const mcpReconnect: Handler = (srv, ctx, id, params) => {
   const parsed = mcpNameParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
@@ -84,7 +71,7 @@ export const mcpReconnect: Handler = (srv, ctx, id, params) => {
       pingCapabilities(srv, record.id); // a reconnect changes the server's live status catalog
     } catch (e) {
       // SDK-type servers throw here — the caller's request, not this server's fault.
-      replyMutationThrow(record, ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INVALID_PARAMS);
     }
   });
 };
@@ -104,7 +91,7 @@ export const mcpToggle: Handler = (srv, ctx, id, params) => {
       pingCapabilities(srv, record.id); // an enabled/disabled server is a different capabilities catalog
     } catch (e) {
       // Same throw mapping as reconnect — toggle(true) throws for SDK-type servers too.
-      replyMutationThrow(record, ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INVALID_PARAMS);
     }
   });
 };
@@ -125,7 +112,9 @@ export const mcpSet: Handler = (srv, ctx, id, params) => {
       ctx.peer.reply(id, receipt); // the engine's {added, removed, errors} receipt, verbatim
       pingCapabilities(srv, record.id); // wholesale replacement of the server set — the biggest catalog change of the three
     } catch (e) {
-      replyError(ctx, id, ERR.INTERNAL, e);
+      // -32603 rather than reconnect/toggle's -32602: `setMcpServers` has no SDK-type refusal to relay, so
+      // a throw from a live engine really is an internal failure.
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };
@@ -147,7 +136,7 @@ export const mcpPermissionModeOverrideSet: Handler = (srv, ctx, id, params) => {
       // payload carries no per-server permission override — nothing a client would re-read has changed.
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
-      replyError(ctx, id, ERR.INTERNAL, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };

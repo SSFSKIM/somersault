@@ -153,6 +153,11 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
   if (lost.includes("permissionMode") && record.settings.permissionMode !== seeded.permissionMode) { record.settings.permissionMode = seeded.permissionMode; reconciled = true; }
   if (lost.includes("thinkingTokens") && record.settings.thinkingTokens !== seeded.thinkingTokens) { record.settings.thinkingTokens = seeded.thinkingTokens; reconciled = true; }
   if (reconciled) {
+    // Bumped HERE, not left to the caller: a reconciliation is a settings mutation like any of settings.ts's
+    // four, and `updatedAt` is what a client polling thread/list keys "this row moved" off (registry.ts's
+    // contract). Both swap callers happen to bump afterwards, but this correction can be the only thing that
+    // changed on a swap the caller reports as a plain success — so it must not depend on them.
+    record.updatedAt = nowSec();
     // The identical payload settings.ts/router.ts build — full post-update mirror, never a partial diff.
     srv.broadcast(record.id, "thread/settings/changed", {
       threadId: record.id, source: "engine",

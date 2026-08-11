@@ -326,6 +326,47 @@ describe("appserver settings setters (Task 9)", () => {
     expect(calls.setPermissionMode).toEqual(["auto"]);
   });
 
+  it("an engine that DIED mid-setter answers -33005 on all four methods, not -32603", async () => {
+    // These bodies are chain-deferred, so they run after dispatch's arrival-time -33005 gate has already
+    // let them through: the engine can die in between, and scoring that throw -32603 reports a
+    // server-internal fault for a dead read loop the caller can see for itself (engineThrow.ts).
+    const cases: [string, Record<string, unknown>][] = [
+      ["thread/model/set", { model: "claude-b" }],
+      ["thread/permissionMode/set", { mode: "plan" }],
+      ["thread/thinking/set", { level: "high" }],
+      ["thread/settings/apply", { settings: { x: 1 } }],
+    ];
+    for (const [method, extra] of cases) {
+      const calls = mkCalls();
+      let ended = false;
+      const die = async () => { ended = true; throw new Error("Session is not running"); };
+      const session = Object.assign(fakeSession(calls), {
+        isEnded: () => ended,
+        setModel: die, setPermissionMode: die, setMaxThinkingTokens: die, applyFlagSettings: die,
+      });
+      const { a, connA, threadId } = await bootTwoSubscribers(() => session);
+
+      send(connA, { id: 3, method, params: { threadId, ...extra } });
+      await tick();
+
+      expect(parsed(a.lines).find((f) => f.id === 3).error.code, method).toBe(ERR.ENGINE_GONE);
+      expect(parsed(a.lines).find((f) => f.method === "thread/settings/changed"), method).toBeUndefined();
+    }
+  });
+
+  it("a rejecting setter on an engine that is still ALIVE keeps the -32603 mapping — the re-check narrows the class, it does not replace it", async () => {
+    const calls = mkCalls();
+    const session = Object.assign(fakeSession(calls, { setModel: "reject" }), { isEnded: () => false });
+    const { a, connA, threadId } = await bootTwoSubscribers(() => session);
+
+    send(connA, { id: 3, method: "thread/model/set", params: { threadId, model: "claude-b" } });
+    await tick();
+
+    const reply = parsed(a.lines).find((f) => f.id === 3);
+    expect(reply.error.code).toBe(ERR.INTERNAL);
+    expect(reply.error.message).toBe("setter rejected");
+  });
+
   it("a setter resolving after a REAL delay still serializes through record.chain: a second setter's engine call only fires once the first's has genuinely settled (engine-faithful async round trip, not just a microtask)", async () => {
     const calls = mkCalls();
     const { a, connA, threadId } = await bootTwoSubscribers(() => fakeSession(calls, { setModel: "delay" }));

@@ -13,15 +13,29 @@
 // Node-version and import-attributes question this package does not answer; the fs route works everywhere.
 // The generator behind them is not exported: `ccx serve --emit-schema DIR` regenerates them pinned to the
 // installed build, and `methodSchemas` below is the same source of truth in zod form.
+import { methodSchemas as registry } from "./schema/index.js";
+import type { MethodSchema } from "./schema/index.js";
+
 export { AppServer } from "./server.js";
 /** The DI seam an embedder overrides to supply its own engine/session-store implementations. */
 export type { AppServerDeps } from "./server.js";
 export { listenWs } from "./transport/ws.js";
 export type { WsListenOpts } from "./transport/ws.js";
+/** The transport seam. `listenWs` is the batteries-included WebSocket listener; an embedder putting the
+ *  server on anything else (stdio, UDS, an in-process pipe) implements this and calls
+ *  `AppServer.connect(sink)` itself. */
+export type { PeerSink } from "./peer.js";
+export type { MethodSchema };
 /** The method→zod-schema registry the artifacts are generated from — walk it to validate params, or to
- *  discover which methods this build actually answers. */
-export { methodSchemas } from "./schema/index.js";
-export type { MethodSchema } from "./schema/index.js";
+ *  discover which methods this build actually answers.
+ *
+ *  Deliberately typed LOOSER than the internal declaration (`schema/index.ts` keeps the exact record, and
+ *  handlers hold direct references into it): `| undefined` forces a consumer indexing it with a method name
+ *  this build does not answer to handle the miss, and `Readonly` says the registry is a description of the
+ *  wire, not a place to register a method — an entry added here answers nothing. */
+export const methodSchemas: Readonly<Record<string, MethodSchema | undefined>> = registry;
 /** The two shapes an `AppServerDeps` override has to speak: what a thread IS, and the slice of a session
- *  the server drives (structural — the lib `Session` satisfies `EngineSession` without adapting). */
+ *  the server drives (structural — the lib `Session` satisfies `EngineSession` without adapting). The
+ *  third, `TurnFailure` (the tag a failed turn's result carries), is exported from the root `cc-harness`
+ *  barrel — this subpath does not re-export it. */
 export type { EngineSession, ThreadRecord } from "./registry.js";

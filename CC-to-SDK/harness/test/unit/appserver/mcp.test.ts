@@ -343,6 +343,8 @@ describe("appserver MCP quintet — engine death inside a chain-deferred mutatio
       isEnded: () => ended,
       reconnectMcpServer: async (name: string) => { calls.reconnect.push(name); ended = true; throw new Error("Session is not running"); },
       toggleMcpServer: async (name: string, enabled: boolean) => { calls.toggle.push([name, enabled]); ended = true; throw new Error("Session is not running"); },
+      setMcpServers: async (servers: Record<string, unknown>) => { calls.set.push(servers); ended = true; throw new Error("Session is not running"); },
+      setMcpPermissionModeOverride: async (name: string, mode: string | null) => { calls.override.push([name, mode]); ended = true; throw new Error("Session is not running"); },
     });
   }
 
@@ -379,5 +381,48 @@ describe("appserver MCP quintet — engine death inside a chain-deferred mutatio
     const reply = parsed(a.lines).find((f) => f.id === 3);
     expect(reply.error.code).toBe(ERR.INVALID_PARAMS);
     expect(reply.error.message).toBe("SDK servers should be handled in print.ts");
+  });
+
+  it("mcpServer/set on an engine that died mid-op answers -33005, not -32603", async () => {
+    const calls = mkCalls();
+    const { a, connA, threadId } = await bootOneThread(() => dyingSession(calls));
+
+    send(connA, { id: 3, method: "mcpServer/set", params: { threadId, servers: { fs: { command: "node" } } } });
+    await tick();
+
+    expect(calls.set).toEqual([{ fs: { command: "node" } }]);
+    expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(ERR.ENGINE_GONE);
+  });
+
+  it("mcpServer/permissionModeOverride/set on an engine that died mid-op answers -33005, not -32603", async () => {
+    const calls = mkCalls();
+    const { a, connA, threadId } = await bootOneThread(() => dyingSession(calls));
+
+    send(connA, { id: 3, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "fs", mode: "acceptEdits" } });
+    await tick();
+
+    expect(calls.override).toEqual([["fs", "acceptEdits"]]);
+    expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(ERR.ENGINE_GONE);
+  });
+
+  it("set/override on an engine that is still ALIVE keep their -32603 mapping — these two never map to -32602", async () => {
+    const calls = mkCalls();
+    const session = Object.assign(fakeSession(calls), {
+      isEnded: () => false,
+      setMcpServers: async () => { throw new Error("set blew up"); },
+      setMcpPermissionModeOverride: async () => { throw new Error("override blew up"); },
+    });
+    const { a, connA, threadId } = await bootOneThread(() => session);
+
+    send(connA, { id: 3, method: "mcpServer/set", params: { threadId, servers: { fs: { command: "node" } } } });
+    send(connA, { id: 4, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "fs", mode: null } });
+    await tick();
+
+    for (const [id, message] of [[3, "set blew up"], [4, "override blew up"]] as const) {
+      const reply = parsed(a.lines).find((f) => f.id === id);
+      expect(reply.error.code, message).toBe(ERR.INTERNAL);
+      expect(reply.error.message).toBe(message);
+    }
+    expect(capPings(a.lines)).toEqual([]); // a failed mutation still changes no catalog
   });
 });

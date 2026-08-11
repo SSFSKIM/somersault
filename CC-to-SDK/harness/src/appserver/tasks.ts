@@ -30,6 +30,7 @@
 // for work no engine ever did (and, for the two value-returning methods, a bare `undefined` — a
 // result-less frame this codebase's own `classify()` scores `invalid`, so the caller never settles).
 import { ERR } from "./rpc.js";
+import { replyEngineThrow } from "./engineThrow.js";
 import type { Handler } from "./server.js";
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./schema/tasks.js";
 
@@ -37,17 +38,9 @@ const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors mcp.ts/se
 
 const UNSUPPORTED = "unsupported by this engine"; // introspect.ts:36's exact wording — one string, three call sites
 
-/** The two mutations share one catch. A chain-deferred body runs LATER than dispatch's arrival-time -33005
- *  gate, so the engine can die while the op waits its turn in the chain — and scoring that -32603 reports
- *  a server-internal fault for a dead read loop the caller can see for itself. Re-check `isEnded()` first,
- *  exactly as `dispatch()` re-checks it in its own post-handler catch (server.ts), with the same wording so
- *  a client sees one -33005 message on either path. Everything else really is internal: the engine's own
- *  failures here are untyped strings ("Session is not running", `callQ`'s "unsupported: stopTask"), and
- *  message-matching to re-class them is the thing spec Wave 0 forbids outright. */
-function replyMutationThrow(record: { session: { isEnded?(): boolean } }, ctx: { peer: { replyError(id: unknown, code: number, message: string): void } }, id: unknown, e: unknown): void {
-  if (record.session.isEnded?.()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, "Engine is gone (session ended)"); return; }
-  ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
-}
+// The two mutations share engineThrow.ts's re-check (see its header). -32603 is the right ALIVE mapping
+// here: the engine's own failures are untyped strings ("Session is not running", `callQ`'s "unsupported:
+// stopTask"), and message-matching to re-class them is the thing spec Wave 0 forbids outright.
 
 export const taskList: Handler = async (srv, ctx, id, params) => {
   const parsed = taskListParams.safeParse(params);
@@ -78,7 +71,7 @@ export const taskStop: Handler = (srv, ctx, id, params) => {
       // `task_notification{stopped}` and the changed-frame are what report that, via the router.
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
-      replyMutationThrow(record, ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };
@@ -101,7 +94,7 @@ export const turnBackground: Handler = (srv, ctx, id, params) => {
       // has for "your Ctrl+B did nothing".
       ctx.peer.reply(id, { backgrounded });
     } catch (e) {
-      replyMutationThrow(record, ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };

@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as appserver from "../../../src/appserver/index.js";
-import type { AppServerDeps, EngineSession, MethodSchema, ThreadRecord, WsListenOpts } from "../../../src/appserver/index.js";
+import type { AppServerDeps, EngineSession, MethodSchema, PeerSink, ThreadRecord, WsListenOpts } from "../../../src/appserver/index.js";
 
 const harness = fileURLToPath(new URL("../../../", import.meta.url));
 const pkg = JSON.parse(readFileSync(join(harness, "package.json"), "utf8")) as {
@@ -39,17 +39,30 @@ describe("cc-harness/appserver subpath export", () => {
     expect(appserver.methodSchemas["turn/steer"]?.experimental).toBe(true);
   });
 
-  it("re-exports the types a consumer needs to write its own deps, opts and engine (compile-time)", () => {
+  it("re-exports the types a consumer needs to write its own deps, opts, engine and transport (compile-time)", () => {
     const opts: WsListenOpts = { host: "127.0.0.1", port: 0, allowOrigins: ["https://example.test"], token: "t" };
     const deps: AppServerDeps = { sessionFactory: () => engine };
-    const schema: MethodSchema = appserver.methodSchemas["initialize"];
     const engine: EngineSession = {
       submit: async () => ({ result: null }), interrupt: async () => null,
       dispose: async () => {}, onFrame: () => () => {},
     };
     const record: Pick<ThreadRecord, "id" | "origin" | "busy"> = { id: "t1", origin: "inProcess", busy: false };
-    expect([opts.port, typeof deps.sessionFactory, !!schema.params, typeof engine.submit, record.id])
-      .toEqual([0, "function", true, "function", "t1"]);
+    // PeerSink is the transport seam a non-WS embedder implements and hands to AppServer.connect — surface,
+    // not plumbing, so it is exported and driven here exactly as such an embedder would.
+    const written: string[] = [];
+    const sink: PeerSink = { write: (l) => void written.push(l), buffered: () => 0, end: () => {} };
+    new appserver.AppServer({}, deps).connect(sink).close();
+    expect([opts.port, typeof deps.sessionFactory, typeof engine.submit, record.id, written])
+      .toEqual([0, "function", "function", "t1", []]);
+  });
+
+  it("types methodSchemas so a consumer must handle a method this build does not answer", () => {
+    // The barrel's re-export is DELIBERATELY looser than schema/index.ts's own declaration: `| undefined`
+    // is what makes the existence guard a compile-time obligation rather than a convention. Both arms are
+    // exercised, so the annotation cannot rot into a plain `MethodSchema`.
+    const known: MethodSchema | undefined = appserver.methodSchemas["initialize"];
+    const unknown: MethodSchema | undefined = appserver.methodSchemas["thread/doesNotExist"];
+    expect([!!known?.params, unknown]).toEqual([true, undefined]);
   });
 
   it("declares the subpath in package.json exports", () => {
@@ -57,6 +70,9 @@ describe("cc-harness/appserver subpath export", () => {
     // Direct-path form: a JSON artifact has no types/import split to make.
     expect(pkg.exports["./appserver/schema/stable.json"]).toBe("./schema/json/stable/appserver.json");
     expect(pkg.exports["./appserver/schema/experimental.json"]).toBe("./schema/json/experimental/appserver.json");
+    // An `exports` map is CLOSED — declaring one hides every path it does not name, including the
+    // package.json that tooling (version reads, resolver probes) routinely resolves by subpath.
+    expect(pkg.exports["./package.json"]).toBe("./package.json");
   });
 
   it("builds the barrel into dist at the exact paths the export map names", { timeout: 120_000 }, () => {

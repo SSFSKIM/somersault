@@ -17,6 +17,7 @@
 // useful feature. Contrast Task 11's thread/reinitialize (lifecycle.ts), which DOES busy-gate: its engine
 // call is heavy enough that running it concurrently with a live turn is not safe, unlike these four.
 import { ERR } from "./rpc.js";
+import { replyEngineThrow } from "./engineThrow.js";
 import { resolveAutoModel } from "../config/autoModel.js";
 import { thinkBudget } from "../tui/thinkLevels.js";
 import type { ThreadRecord } from "./registry.js";
@@ -38,9 +39,10 @@ function broadcastSettings(srv: AppServer, record: ThreadRecord): void {
   });
 }
 
-function replyError(ctx: { peer: { replyError(id: unknown, code: number, message: string): void } }, id: unknown, e: unknown): void {
-  ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
-}
+// All four setters' catches go through engineThrow.ts's shared -33005 re-check (see its header): these
+// bodies are chain-deferred, so the engine can die after dispatch's arrival-time gate has let them
+// through, and a dead read loop is not the -32603 the caller would otherwise read. -32603 stays the ALIVE
+// mapping — a live engine refusing a setter is an internal failure, and its errors are untyped strings.
 
 export const modelSet: Handler = (srv, ctx, id, params) => {
   const parsed = modelSetParams.safeParse(params);
@@ -57,7 +59,7 @@ export const modelSet: Handler = (srv, ctx, id, params) => {
       broadcastSettings(srv, record);
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
-      replyError(ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };
@@ -97,7 +99,7 @@ export const permissionModeSet: Handler = (srv, ctx, id, params) => {
       // error: the request as a whole still fails (permissionMode never changed), but the genuine partial
       // state change must not go silent.
       if (healedMirror) { record.updatedAt = nowSec(); broadcastSettings(srv, record); }
-      replyError(ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };
@@ -119,7 +121,7 @@ export const thinkingSet: Handler = (srv, ctx, id, params) => {
       broadcastSettings(srv, record);
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
-      replyError(ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };
@@ -139,7 +141,7 @@ export const settingsApply: Handler = (srv, ctx, id, params) => {
       record.updatedAt = nowSec();
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
-      replyError(ctx, id, e);
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
     }
   });
 };

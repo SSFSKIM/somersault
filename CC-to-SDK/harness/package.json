@@ -34,7 +34,8 @@
       "import": "./dist/appserver/index.js"
     },
     "./appserver/schema/stable.json": "./schema/json/stable/appserver.json",
-    "./appserver/schema/experimental.json": "./schema/json/experimental/appserver.json"
+    "./appserver/schema/experimental.json": "./schema/json/experimental/appserver.json",
+    "./package.json": "./package.json"
   },
   "bin": {
     "cc-harness": "./dist/cli.js",
@@ -81,6 +82,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/ws": "^8.5.12",
+    "ajv": "^8.20.0",
     "ink-testing-library": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",

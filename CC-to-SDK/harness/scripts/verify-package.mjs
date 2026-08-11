@@ -50,12 +50,16 @@ try {
     'const asMissing = asNeed.filter((k) => typeof as[k] === "undefined");',
     'if (asMissing.length) { console.error("MISSING cc-harness/appserver exports: " + asMissing.join(", ")); process.exit(1); }',
     'const require = createRequire(import.meta.url);',
+    // An `exports` map is CLOSED, so ./package.json only resolves because the map names it — and it
+    // resolves in-repo whether or not the map does, which is exactly the half this installed proof covers.
+    'const selfPkg = JSON.parse(readFileSync(require.resolve("cc-harness/package.json"), "utf8"));',
+    'if (selfPkg.name !== "cc-harness") { console.error("BAD cc-harness/package.json export"); process.exit(1); }',
     'for (const tier of ["stable","experimental"]) {',
     '  const doc = JSON.parse(readFileSync(require.resolve(`cc-harness/appserver/schema/${tier}.json`), "utf8"));',
     '  if (doc.$schema !== "http://json-schema.org/draft-07/schema#" || !Object.keys(doc.methods || {}).length) {',
     '    console.error("BAD schema artifact: " + tier); process.exit(1); }',
     '}',
-    'console.log("library import OK (" + need.length + " root + " + asNeed.length + " appserver exports, 2 schema artifacts)");',
+    'console.log("library import OK (" + need.length + " root + " + asNeed.length + " appserver exports, 2 schema artifacts, package.json subpath)");',
   ].join("\n"));
   run(process.execPath, [probe], { cwd: dir });
 

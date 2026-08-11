@@ -14,6 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { swapEngine } from "../../../src/appserver/rewind.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -804,6 +805,26 @@ describe("appserver post-swap state re-push (M2b Task 3b, both swap paths)", () 
     expect(changed[0].params.source).toBe("engine");      // the engine decided this, not a client
     expect(changed[0].params.permissionMode).toBe("default");
     expect(notifs(s.lines, "warning")[0].params.message).toContain("permissionMode"); // and the loss is still named
+  });
+
+  it("the reconciliation bumps updatedAt ITSELF, rather than relying on whichever handler drove the swap", async () => {
+    // Driven through `swapEngine` directly, because both shipped callers bump afterwards and would mask a
+    // missing bump here. A reconciliation is a settings mutation like settings.ts's four: it is what a
+    // client polling thread/list keys "this row moved" off, and on a swap the caller reports as a plain
+    // success it can be the only thing that changed.
+    const fresh = mkEngine({});
+    fresh.setPermissionMode = async () => { throw new Error("engine refused the mode"); };
+    const { c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" })], config: { permissionMode: "default" } });
+
+    send(c, { id: 3, method: "thread/permissionMode/set", params: { threadId, mode: "acceptEdits" } });
+    await settle();
+
+    const record = srv.registry.get(threadId)!;
+    record.updatedAt = 0; // `updatedAt` is unix SECONDS — without this the bump is invisible inside one second
+    await swapEngine(srv, record, () => fresh, undefined);
+
+    expect(record.settings.permissionMode).toBe("default"); // reconciled to the seed the replacement really has
+    expect(record.updatedAt).toBeGreaterThan(0);
   });
 
   it("a rejected mirror step for a knob the config never named CLEARS the field — the replacement has no value for it at all", async () => {

@@ -18,6 +18,7 @@
 // resolved INSIDE the chain, not at arrival — rewind's swap can replace `record.session` while this waits
 // its turn, and the engine that serves the op is the one live when the chain reaches it.
 import { ERR } from "./rpc.js";
+import { replyEngineThrow } from "./engineThrow.js";
 import type { Handler } from "./server.js";
 import type { EngineSession } from "./registry.js";
 import { threadIdParams } from "./schema/core.js";
@@ -43,12 +44,7 @@ function reload(pick: (s: EngineSession) => (() => Promise<unknown>) | undefined
         ctx.peer.reply(id, { ok: true });
         srv.broadcast(record.id, "thread/capabilities/changed", { threadId: record.id });
       } catch (e) {
-        // A chain-deferred body runs LATER than dispatch's arrival-time -33005 gate, so the engine can die
-        // while the op waits its turn — and scoring that -32603 blames the server for a dead read loop the
-        // caller can see for itself. Same re-check and wording as dispatch's own post-handler catch
-        // (server.ts), so a client sees one -33005 message on either path.
-        if (record.session.isEnded?.()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, "Engine is gone (session ended)"); return; }
-        ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+        replyEngineThrow(record, ctx, id, e, ERR.INTERNAL); // the shared -33005 re-check — engineThrow.ts's header has the why
       }
     });
   };

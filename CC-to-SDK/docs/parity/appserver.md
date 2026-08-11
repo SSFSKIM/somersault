@@ -178,6 +178,39 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
    helper ends on `"\n};"`, right for `type Options` but wrong for `interface Query`). It doesn't
    corrupt that pass's installed-vs-npm diff; the appserver pass re-parses `interface Query`
    independently (verified: exactly 27).
+8. **A cleared thread keeps the `title` and `tags` of the conversation it dropped** (M2b Task 3b review
+   adjudication, deliberate). `thread/clear` replaces the engine and the conversation but leaves the
+   record's own naming intact, so a thread named "auth refactor" still reads that way over a transcript
+   that no longer mentions auth. Both readings are defensible — a title is a name for the *thread* a
+   person is working in, or a name for the *conversation* the thread holds — and which one a client wants
+   is a product question, not a correctness one. It is deferred rather than guessed: clearing the pair
+   would silently discard something a client set and nothing on the wire can restore, while keeping it is
+   trivially undone with `thread/name/set`. A client that wants clear-resets-naming does it in two calls.
+9. **The flag accumulator KEEPS grants a replacement engine refused during the post-swap re-push** —
+   deliberately asymmetric with the settings mirror, which reconciles (M2b Task 3b re-review). Both
+   layers are re-pushed by `rewind.ts`'s `repushThreadState` after every swap, and both name a rejected
+   step in the one `warning{code:"stateRepushFailed"}`; only the mirror then corrects itself to the value
+   the replacement was built with. The consequence is real and worth knowing: after a refused
+   `permissions` push, `thread/directory/list` and the accumulator still report grants the live engine
+   does not have — the layer over-reports versus engine reality, and **the warning is the signal**, not
+   the list. The asymmetry is on purpose. The mirror is a *claim the wire keeps making* (`threadView` and
+   `thread/settings/changed` re-serve it, and for `permissionMode` a stale claim is a security statement),
+   so leaving it wrong is not an option. The accumulator is the *replay set for the next swap*, and the
+   engine that refused it may itself be replaced; clearing it would delete grants a client made and no
+   later push would ever re-assert, converting one engine's refusal into permanent silent revocation.
+   Re-asserting the layer is a client call away (`thread/directory/add` and the rule ops have no dedup
+   guard precisely so a re-push works).
+10. **A factory throw inside `swapEngine` leaves the record holding a DISPOSED engine** — known residual,
+    **M3 candidate**. The swap's fixed order (bump epoch, drop router, dispose, install replacement) means
+    the outgoing engine is already gone when `makeReplacement()` runs, so a factory that throws — an
+    `openSession` that cannot spawn the CLI child — unwinds with the old, disposed session still in
+    `record.session`. Post-Task-3b this at least READS honestly rather than confusingly: `isEnded()` is
+    true on the disposed engine, so dispatch's gate and every chain-deferred mutation answer `-33005`
+    ("Engine is gone"), and `thread/rewind`/`thread/clear` clear `swapInFlight` in a `finally` so the
+    thread never wedges at "swapping". What is missing is a way back: the thread cannot be re-opened in
+    place, and a client's only recovery is `thread/close` plus a fresh `thread/resume`. The fix is a
+    re-open path (retry the factory, or admit a replacement engine into an existing record), which is M3
+    work — it needs the same admission machinery fleet adoption is bringing.
 
 ## Host ops — `harness/src/host/ops.ts` (34 tokens)
 

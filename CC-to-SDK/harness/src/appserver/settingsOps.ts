@@ -27,12 +27,12 @@
 // that seam whole — including the post-swap state re-push, which is what carries this file's accumulator
 // across the replacement.
 import { ERR } from "./rpc.js";
+import { replyEngineThrow } from "./engineThrow.js";
 import { swapEngine } from "./rewind.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
-import type { AppServer, ConnCtx, Handler } from "./server.js";
-import type { RequestId } from "./rpc.js";
+import type { AppServer, Handler } from "./server.js";
 import {
   settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams,
   outputStyleSetParams, effortSetParams, threadClearParams,
@@ -42,15 +42,9 @@ const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors mcp.ts/ta
 
 const UNSUPPORTED = "unsupported by this engine"; // introspect.ts:36's exact wording — one string, every call site
 
-/** Shared by every chain-deferred mutation here, identical to tasks.ts/mcp.ts's copy: a chain-deferred
- *  body runs LATER than dispatch's arrival-time -33005 gate, so the engine can die while the op waits its
- *  turn — and scoring that -32603 reports a server-internal fault for a dead read loop the caller can see
- *  for itself. Re-check `isEnded()` first, with dispatch's own wording, so a client sees one -33005
- *  message on either path. */
-function replyMutationThrow(record: ThreadRecord, ctx: ConnCtx, id: RequestId, e: unknown): void {
-  if (record.session.isEnded?.()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, "Engine is gone (session ended)"); return; }
-  ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
-}
+// Every chain-deferred mutation here shares engineThrow.ts's -33005 re-check (see its header), with
+// -32603 as the ALIVE mapping: the engine's failures on this seam are untyped strings, so there is no
+// sub-class to relay.
 
 /** The whole of a flag mutation's body, minus the delta each one computes. `next` returns the accumulator
  *  value this op WANTS; returning `undefined` means "nothing changes" — an idempotent re-add — which
@@ -78,7 +72,7 @@ function flagMutation(
         record.updatedAt = nowSec();
         ctx.peer.reply(id, { ok: true });
       } catch (e) {
-        replyMutationThrow(record, ctx, id, e);
+        replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
       }
     });
   };
@@ -250,7 +244,7 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
       broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "thread/rewound", { threadId, sessionId: record.sessionId ?? null, cleared: true });
       ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
     } catch (e) {
-      replyMutationThrow(record, ctx, id, e); // chain-deferred like every mutation here: the engine can die between arrival and this body
+      replyEngineThrow(record, ctx, id, e, ERR.INTERNAL); // chain-deferred like every mutation here: the engine can die between arrival and this body
     } finally {
       record.swapInFlight = false; // a throw from the factory or the swap must not wedge the thread at "swapping"
     }
