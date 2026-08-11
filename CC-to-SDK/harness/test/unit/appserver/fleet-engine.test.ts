@@ -1,6 +1,13 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { createServer } from "node:net";
+import type { Socket } from "node:net";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startFakeHost } from "../../helpers/fakeHost.js";
 import type { FakeHostControls } from "../../helpers/fakeHost.js";
+import { encodeEvent, decodeFrame } from "../../../src/host/wire.js";
+import type { HostEvent } from "../../../src/host/wire.js";
 import { connectFleetEngine, FleetBusyError } from "../../../src/appserver/fleetEngine.js";
 import type { FleetEngineSession } from "../../../src/appserver/fleetEngine.js";
 import { ERR } from "../../../src/appserver/rpc.js";
@@ -25,6 +32,9 @@ function taps(s: FleetEngineSession) {
   const t = {
     turns: [] as unknown[], decisions: [] as unknown[], settled: [] as unknown[], tasks: [] as unknown[][],
     states: [] as unknown[], rewound: [] as unknown[], deaths: 0, frames: [] as unknown[], order: [] as string[],
+    // The envelope's replay mark, per frame and positionally aligned with `frames` — history is not news
+    // (wire.ts:16-19), and the frame itself must stay byte-for-byte what the SDK produced.
+    replays: [] as (true | undefined)[],
   };
   s.onTurn((e) => { t.turns.push(e); t.order.push("turn"); });
   s.onDecision((e) => { t.decisions.push(e); t.order.push("decision"); });
@@ -33,8 +43,34 @@ function taps(s: FleetEngineSession) {
   s.onState((x) => { t.states.push(x); t.order.push("state"); });
   s.onRewound((e) => { t.rewound.push(e); t.order.push("rewound"); });
   s.onSocketDeath(() => { t.deaths += 1; t.order.push("death"); });
-  s.onFrame((m) => { t.frames.push(m); t.order.push("frame"); });
+  s.onFrame((m, replay) => { t.frames.push(m); t.replays.push(replay); t.order.push("frame"); });
   return t;
+}
+
+/** The ONE frame the fake host cannot put on the wire: a mid-turn replay start carrying `truncated`
+ *  (host.ts:607 — the flag rides the SEQ-BEARING frame; only the idle marker at :610 is seq-less). Task 5
+ *  recorded the truncated buffer as unmodelled and `fakeHost.ts` is out of scope for this fix, so this one
+ *  case speaks the wire by hand — through the SHARED codec (`encodeEvent`), so it cannot drift on what a
+ *  frame is — and answers every correlated op `{ok:true}` so `follow`/`unfollow` complete. */
+async function startRawHost(): Promise<{ socketPath: string; emit(ev: HostEvent): void; close(): Promise<void> }> {
+  const socketPath = join(mkdtempSync(join(tmpdir(), "fleet-raw-")), "h.sock");
+  let peer: Socket | undefined;
+  const srv = createServer((s) => {
+    peer = s;
+    s.on("error", () => {});
+    s.on("data", (c) => {
+      for (const line of c.toString("utf8").split("\n")) {
+        const id = (decodeFrame(line) as { id?: number } | undefined)?.id;
+        if (typeof id === "number") s.write(JSON.stringify({ ok: true, id }) + "\n");
+      }
+    });
+  });
+  await new Promise<void>((r) => srv.listen(socketPath, () => r()));
+  return {
+    socketPath,
+    emit: (ev) => { peer?.write(encodeEvent(ev)); },
+    close: () => new Promise<void>((r) => { peer?.destroy(); srv.close(() => r()); }),
+  };
 }
 
 /** Connect, tap, activate — the ordinary case. A test about the barrier itself does these by hand. */
@@ -120,6 +156,42 @@ describe("FleetEngineSession", () => {
     await expect(p).resolves.toEqual({ result: "ok" });
   });
 
+  it("QUARANTINES a foreign turn's frames while a busy refusal is in flight, and never accepts a seq", async () => {
+    // The host is busy precisely BECAUSE a foreign turn is streaming, so its frames are what a refused
+    // submit's round trip is full of. They must not reach this caller's onMessage: turns.ts feeds that
+    // sink into the item mapper under the caller's OWN turnId, so one leaked frame publishes items for a
+    // turn that never started. Emitted synchronously after submit writes its op, hence strictly ahead of
+    // the refusal reply on the wire — the ordering the ends-before-waiter case uses.
+    fh = await startFakeHost({ busy: true });
+    const { s } = await live(fh); eng = s;
+    const msgs: unknown[] = [];
+    const accepted: number[] = [];
+    const p = s.submit("go", (m) => msgs.push(m), { onAccepted: (n) => accepted.push(n) });
+    fh.emitMessage({ type: "assistant", whose: "foreign" });
+    const err = await p.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FleetBusyError);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(msgs).toEqual([]);
+    expect(accepted).toEqual([]);   // no seq was resolved, so Task 7 has no turn to own
+  });
+
+  it("FLUSHES a straggler that arrived before the prompt reply — after onAccepted, ahead of live frames", async () => {
+    // The other half of the quarantine: our own turn's first frame can be on the wire before the reply
+    // that names its seq (the host emits it inside the prompt handler), so holding pre-reply frames must
+    // DELAY them, never drop them. onAccepted lands first — Task 7 has to know which turn it owns before
+    // the first item of that turn reaches it.
+    fh = await startFakeHost();
+    const { s } = await live(fh); eng = s;
+    const order: string[] = [];
+    const p = s.submit("go", (m) => order.push(`msg:${(m as { n: string }).n}`), { onAccepted: (n) => order.push(`accepted:${n}`) });
+    fh.emitMessage({ n: "straggler" });
+    await waitFor(() => expect(fh!.promptCalls).toHaveLength(1));
+    fh.emitMessage({ n: "live" });
+    fh.endTurn(1, { result: "ok" });
+    await expect(p).resolves.toEqual({ result: "ok" });
+    expect(order).toEqual(["accepted:1", "msg:straggler", "msg:live"]);
+  });
+
   it("ignores a seq-less turn START (a replay marker) and still reports the next real one", async () => {
     fh = await startFakeHost();
     const { s, t } = await live(fh); eng = s;
@@ -140,6 +212,41 @@ describe("FleetEngineSession", () => {
     expect(settled).toBe(false);
     fh.endTurn(1, { result: "real" });
     await expect(p).resolves.toEqual({ result: "real" });
+  });
+
+  it("carries `truncated` through on a seq-bearing turn frame — and still drops the seq-less marker", async () => {
+    // `truncated` is the real "this replay is partial" signal, and at HEAD it rides a frame that DOES name
+    // its turn (host.ts:607); only the idle notice (:610) is seq-less. Dropping the flag would leave Task 7
+    // announcing a partial turn as a whole one.
+    const raw = await startRawHost();
+    try {
+      const s = await connectFleetEngine(raw.socketPath); eng = s;
+      const t = taps(s);
+      s.activate();
+      raw.emit({ kind: "turn", phase: "start", seq: 7, truncated: true });
+      raw.emit({ kind: "turn", phase: "start", truncated: true });   // the idle marker: names no turn, still dropped
+      await waitFor(() => expect(t.turns).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(t.turns).toEqual([{ phase: "start", seq: 7, truncated: true }]);
+    } finally {
+      await eng?.dispose().catch(() => {}); eng = undefined;
+      await raw.close();
+    }
+  });
+
+  it("keeps the host's `replay` mark on a replayed frame, and the frame itself untouched", async () => {
+    // Replay honesty is a wire contract here (wire.ts:16-19: a joiner that clocks buffered history
+    // fabricates durations for work that finished before it connected). The mark travels BESIDE the frame,
+    // never on it — the router must never be handed a frame the SDK never produced.
+    fh = await startFakeHost();
+    fh.emitMessage({ type: "assistant", n: 1 });        // into the turn buffer: follow replays it marked
+    const s = await connectFleetEngine(fh.socketPath); eng = s;
+    const t = taps(s);
+    s.activate();
+    fh.emitMessage({ type: "assistant", n: 2 });        // live: no mark
+    await waitFor(() => expect(t.frames).toHaveLength(2));
+    expect(t.frames).toEqual([{ type: "assistant", n: 1 }, { type: "assistant", n: 2 }]);
+    expect(t.replays).toEqual([true, undefined]);
   });
 
   it("feeds onMessage ONLY inside the submit's turn window", async () => {

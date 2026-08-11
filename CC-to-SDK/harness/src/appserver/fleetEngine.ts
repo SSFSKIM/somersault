@@ -65,8 +65,12 @@ export interface AnswerReceipt { ok: boolean; alreadyAnsweredBy?: string; error?
 /** What a seq-bearing host turn frame carries. `result`/`failure`/`error` are the turn-end trio of spec
  *  §1a-f (wire.ts): `error` is a turn that THREW and travels alone; `result` and `failure` describe a turn
  *  that RESOLVED and can travel together. The fleet event layer (Task 7) is the SOLE turn-lifecycle owner
- *  for fleet threads, so this is the whole evidence base for `turn/completed`'s status. */
-export interface FleetTurnEvent { phase: "start" | "end"; seq: number; result?: unknown; failure?: TurnFailure; error?: string }
+ *  for fleet threads, so this is the whole evidence base for `turn/completed`'s status.
+ *  `truncated` is the OTHER thing a turn frame can say (host.ts:607): the buffer this replay came out of
+ *  had already evicted frames, so what follows is a PART of the turn, not the turn. It rides the
+ *  seq-bearing mid-turn frame — only the idle notice (:610) is seq-less — so it survives the replay-marker
+ *  drop below and has to reach Task 7, which would otherwise announce a partial turn as a whole one. */
+export interface FleetTurnEvent { phase: "start" | "end"; seq: number; truncated?: true; result?: unknown; failure?: TurnFailure; error?: string }
 
 /** The host refused a prompt because a turn — anyone's — is already in flight (`{ok:false, error:"busy"}`,
  *  host/server.ts:169). Carries the code the turns spine answers with, and the same message shape its own
@@ -95,6 +99,15 @@ export interface FleetEngineEvents {
 
 export interface FleetEngineSession extends EngineSession, FleetEngineEvents {
   readonly kind: "fleet";
+  /** `opts.onAccepted` (widening `EngineSession.submit`) fires EXACTLY ONCE, with the seq the host's `ok`
+   *  reply named, before the first frame of that turn is delivered. It is the only race-free seq channel a
+   *  caller has: deriving the seq from "the next turn-start we saw" is wrong on the refusal path, where a
+   *  FOREIGN turn's start can land between the op leaving and the busy reply coming back. */
+  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }>;
+  /** `replay` is the host's own mark (wire.ts:16-19), passed BESIDE the frame rather than on it: the frame
+   *  stays byte-for-byte what the SDK produced, and a consumer that clocks arrival can still tell buffered
+   *  history from news instead of fabricating a duration for work that finished before it connected. */
+  onFrame(cb: (m: unknown, replay?: true) => void): () => void;
   /** REQUIRED here, optional on `EngineSession`: the socket-close latch always exists on a fleet engine,
    *  and it is the only dead-engine signal the -33005 gate is allowed to read. */
   isEnded(): boolean;
@@ -108,7 +121,8 @@ export interface FleetEngineSession extends EngineSession, FleetEngineEvents {
 type Fan<T> = Set<(v: T) => void>;
 /** One subscriber's failure is not another's (host.ts's deliver()). */
 const fan = <T>(cbs: Fan<T>, v: T): void => { for (const cb of [...cbs]) { try { cb(v); } catch { /* dropped from this event, not from the set */ } } };
-const sub = <T>(cbs: Fan<T>, cb: (v: T) => void): (() => void) => { cbs.add(cb); return () => { cbs.delete(cb); }; };
+/** Generic over the CALLBACK, not its value: the frame fan carries the envelope's replay mark alongside. */
+const sub = <C>(cbs: Set<C>, cb: C): (() => void) => { cbs.add(cb); return () => { cbs.delete(cb); }; };
 
 class FleetEngine implements FleetEngineSession {
   readonly kind = "fleet" as const;
@@ -131,7 +145,7 @@ class FleetEngine implements FleetEngineSession {
   private stateCbs: Fan<HostStatus> = new Set();
   private rewoundCbs: Fan<{ sessionId?: string; prevUuid?: string; cleared?: true }> = new Set();
   private deathCbs: Fan<void> = new Set();
-  private frameCbs: Fan<unknown> = new Set();
+  private frameCbs = new Set<(m: unknown, replay?: true) => void>();
 
   constructor(private sock: Socket) {
     sock.on("data", (c) => this.onData(c.toString("utf8")));
@@ -195,8 +209,8 @@ class FleetEngine implements FleetEngineSession {
     switch (ev.kind) {
       // The router first, then the turn's own sink — the order the in-process read loop delivers in
       // (session.ts:305 vs :325), so an item mapper sees the same interleave on both origins.
-      case "message": fan(this.frameCbs, ev.data); if (this.turnSink) { try { this.turnSink(ev.data); } catch { /* the sink is its owner's problem */ } } return;
-      case "task": fan(this.frameCbs, ev.data); return;
+      case "message": this.fanFrame(ev.data, ev.replay); if (this.turnSink) { try { this.turnSink(ev.data); } catch { /* the sink is its owner's problem */ } } return;
+      case "task": this.fanFrame(ev.data); return;
       case "decision": fan(this.decisionCbs, ev.entry); return;
       case "decision_settled": fan(this.settledCbs, { toolUseID: ev.toolUseID, by: ev.by, decision: ev.decision, ...(ev.answer ? { answer: ev.answer } : {}) }); return;
       case "tasks_changed": fan(this.tasksCbs, ev.tasks); return;
@@ -212,13 +226,20 @@ class FleetEngine implements FleetEngineSession {
         // late follower gets. They name no turn, so they can neither settle one nor start one — dropped
         // here rather than passed on, because everything downstream treats a turn event as lifecycle.
         if (typeof ev.seq !== "number") return;
-        const e: FleetTurnEvent = { phase: ev.phase, seq: ev.seq, ...(ev.result === undefined ? {} : { result: ev.result }),
+        const e: FleetTurnEvent = { phase: ev.phase, seq: ev.seq, ...(ev.truncated ? { truncated: true as const } : {}),
+          ...(ev.result === undefined ? {} : { result: ev.result }),
           ...(ev.failure === undefined ? {} : { failure: ev.failure }), ...(ev.error === undefined ? {} : { error: ev.error }) };
         if (e.phase === "end") this.settle(e);
         fan(this.turnCbs, e);
         return;
       }
     }
+  }
+
+  /** The router's fan. `replay` travels as a SECOND argument, never merged into the frame: property 3 of
+   *  the header is that the router is only ever handed a frame the SDK actually produced. */
+  private fanFrame(data: unknown, replay?: true): void {
+    for (const cb of [...this.frameCbs]) { try { cb(data, replay); } catch { /* dropped from this event, not from the set */ } }
   }
 
   private settle(e: FleetTurnEvent): void {
@@ -248,7 +269,7 @@ class FleetEngine implements FleetEngineSession {
   onState(cb: (s: HostStatus) => void): () => void { return sub(this.stateCbs, cb); }
   onRewound(cb: (e: { sessionId?: string; prevUuid?: string; cleared?: true }) => void): () => void { return sub(this.rewoundCbs, cb); }
   onSocketDeath(cb: () => void): () => void { return sub(this.deathCbs, cb); }
-  onFrame(cb: (m: unknown) => void): () => void { return sub(this.frameCbs, cb); }
+  onFrame(cb: (m: unknown, replay?: true) => void): () => void { return sub(this.frameCbs, cb); }
 
   activate(): void {
     if (this.active) return;
@@ -260,14 +281,19 @@ class FleetEngine implements FleetEngineSession {
   expectDeath(): void { this.expectedDeath = true; }
 
   // ── the EngineSession contract ──────────────────────────────────────────────────────────────────
-  async submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }> {
+  async submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }> {
     // One in-flight submit per engine: a second would clobber the sink and the waiter under the first.
     // The host refuses a concurrent prompt anyway (busy), but this engine must not depend on that to
     // keep its own bookkeeping straight.
     if (this.turnSink || this.waiter) throw new Error("a submit is already in flight on this fleet engine");
-    // Installed BEFORE the op leaves, so the turn's first frames — which the host emits before it writes
-    // the reply — are inside the window rather than dropped.
-    this.turnSink = onMessage;
+    // QUARANTINE, not delivery. A sink is open before the op leaves — the turn's own first frames are on
+    // the wire ahead of the reply that names its seq, and dropping them is worse than delaying them — but
+    // until that reply says `ok` there is no evidence any of those frames are OURS. On a busy refusal they
+    // are a FOREIGN turn's, which is the common case rather than the edge: the host is busy precisely
+    // because someone else's turn is streaming. Leaked, they reach the caller's item mapper under a turnId
+    // whose turn never started. So they are held here and flushed only once the seq is in hand.
+    const pending: unknown[] = [];
+    this.turnSink = (m) => { pending.push(m); };
     let rep: { ok: boolean; accepted?: boolean; seq?: number; error?: string };
     try { rep = await this.sendOp({ op: "prompt", text: prompt, ...(opts?.uuid ? { uuid: opts.uuid } : {}) }); }
     catch (e) { this.turnSink = undefined; throw e; }
@@ -279,10 +305,23 @@ class FleetEngine implements FleetEngineSession {
       throw new Error(rep.error ?? "prompt refused");
     }
     const seq = rep.seq;
+    // The seq FIRST, then the frames it names: a caller that publishes its turn record here is holding it
+    // before the turn's first item arrives. Guarded like every other callback this engine calls — its
+    // failure must not strand a turn the host has already started.
+    try { opts?.onAccepted?.(seq); } catch { /* the callback is its owner's problem */ }
+    this.turnSink = onMessage;
+    // Synchronous, so no live frame can interleave: the quarantined ones keep their arrival order and stay
+    // ahead of everything that follows.
+    for (const m of pending) { try { onMessage(m); } catch { /* the sink is its owner's problem */ } }
     try {
       const end = this.ends.get(seq);
       if (end !== undefined) this.ends.delete(seq);
-      const outcome = end ?? await new Promise<FleetTurnEvent>((resolve, reject) => { this.waiter = { seq, resolve, reject }; });
+      const outcome = end ?? await new Promise<FleetTurnEvent>((resolve, reject) => {
+        // The connection can have died across the round trip; a waiter installed on a dead socket is a
+        // promise nothing will ever settle, because die() already ran its rejection sweep.
+        if (this.closed) { reject(new Error("fleet host connection closed")); return; }
+        this.waiter = { seq, resolve, reject };
+      });
       // A turn that THREW host-side rejects, mirroring the local Session.submit — `error` is that turn's
       // whole result. A turn that RESOLVED reporting failure returns its `failure` as the contract's
       // `error` tag, which is what keeps `turn/completed {status:"failed"}` reachable for fleet threads.
