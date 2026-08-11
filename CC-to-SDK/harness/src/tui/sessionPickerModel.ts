@@ -1,6 +1,7 @@
 // tui/src/sessionPickerModel.ts — the /resume picker's literals, filter and row projections (F6 T11),
 // transcribed from 2.1.220's `moi` (L476394-476628) with its row helpers `mKt` (L17882), `EGa`/`SGa`
-// (L476386/L476390) and `Nqr` (L107122). Pure: no React, no Ink, no I/O.
+// (L476386/L476390) and `Nqr` (L107122). No React and no I/O of its own; `previewItems` (wave2 T8) reaches
+// the SHARED transcript projection, which is where the preview pane's rows now come from.
 //
 // WHAT IS HERE VERSUS WHAT UPSTREAM HAS. Upstream's picker filters over four fields (title, git branch, tag,
 // PR) and groups forked sessions into an expandable tree (`Vgb`/`bGa`). Our session store carries neither the
@@ -14,7 +15,10 @@
 // carry — which cannot widen a query it never narrowed. It is left unbound (bindings.ts nulls `ctrl+b` in the
 // SessionPicker context) rather than faked with a client-side filter that would silently shrink the list.
 
+import { homedir } from "node:os";
 import { formatRelativeTime } from "./format.js";
+import { replayDocument } from "./replay.js";
+import { projectCompact, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 
 /** Structurally what `listSessions()` hands the REPL (`SDKSessionInfo`), narrowed to what a row reads. */
 export interface SessionRow {
@@ -144,9 +148,11 @@ export const PREVIEW_ROWS = 12;
  *  carrying at least one non-blank text block. Everything else — tool-result-only user rows, tool-use-only and
  *  thinking-only assistant rows, and every `attachment`/`system`/`progress` entry — is not a message.
  *
- *  ONE PREDICATE, TWO CONSUMERS. `previewMessageCount` (the pane's `N messages` line) and `previewLines` (the
- *  pane itself) both gate on this. They disagreed before — the count was the raw row count — so the number and
- *  the rows under it contradicted each other in both directions (qa4-07 ii). Keep them on this function.
+ *  THE COUNT'S ONE PREDICATE — and, since wave2 T8, its ONLY consumer. The pane below no longer answers "is
+ *  this a message?" at all: it draws the whole projected transcript, tool traffic included, exactly as
+ *  upstream's pane does (it renders the real transcript component and counts separately, through `Pqs`). What
+ *  qa4-07 ii actually cost us was a count computed from the RAW row length, so the number contradicted the
+ *  rows under it; the fix is that this function is the only thing that may produce that number.
  *  Note a slash command contributes 2 upstream (the `<command-name>` message and its `<local-command-stdout>`
  *  reply are both ordinary non-meta user rows); ours inherits that arithmetic unchanged. */
 export function isPreviewMessage(m: unknown): boolean {
@@ -169,25 +175,77 @@ export function isPreviewMessage(m: unknown): boolean {
 export const previewMessageCount = (messages: readonly unknown[]): number =>
   messages.reduce<number>((n, m) => n + (isPreviewMessage(m) ? 1 : 0), 0);
 
-export interface PreviewLine { role: "user" | "assistant"; text: string }
-/** First text block of a persisted row, however its content is shaped. */
-function rowText(m: any): string {
-  const c = m?.message?.content;
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) return c.filter((b: any) => b?.type === "text").map((b: any) => String(b.text ?? "")).join("\n");
-  return "";
+// ── The pane itself (wave2 T8, s2qa4-13/14) ─────────────────────────────────────────────────────────────
+// It used to be a hand-rolled excerpt: one trimmed line per countable message, taken straight off
+// `message.content`. That is a SECOND renderer, and it drew what the store literally holds — so a slash
+// command previewed as `<command-name>/cost</command-name>` and its reply as `<local-command-stdout>…`, tags
+// and all, while a tool turn either vanished or arrived as raw text. Stripping the envelopes there would have
+// been a third spelling of a routing table `species.ts` already owns.
+//
+// So the pane stops rendering and starts PROJECTING: `replayDocument` into the retained document, then the
+// same projection the live transcript runs over it, which is what brings the species router, the tool folds,
+// the `⎿` gutters and the prompt band with it. The pane is now a strict superset of what the count admits —
+// tool traffic draws here and counts nowhere, exactly as upstream arranges it.
+//
+// IN-PANE AND TAIL-ANCHORED (D-W9, a recorded divergence). Upstream's preview REPLACES the picker with the
+// real transcript screen; ours keeps the pane inside the picker frame, so it shows the last `PREVIEW_ROWS`
+// rows of the projection with `moreAbove` counting what that cut. The full-screen takeover is backlog.
+
+/** The pane's own column budget: the picker frame's `paddingX={1}` on each side. Wrapping must be computed
+ *  for the PANE — a projection sized to the terminal would wrap a band wider than the box it sits in. */
+export const previewWidth = (columns: number): number => Math.max(20, Math.floor(columns) - 2);
+/** How far back a preview reads. `replayDocument` + `projectCompact` walk every row they are given, and this
+ *  runs on a keystroke against a session that may hold thousands; the tail window bounds that cost at the only
+ *  place it can be bounded honestly, because the `hidden` count below is computed from the projection we
+ *  actually built and never claims to know about rows we never read. */
+export const PREVIEW_MESSAGE_WINDOW = 200;
+
+/** The picker's `ProjectionContext`. Three of its fields are INERT here and deliberately so:
+ *   · `now` — the only clock reader here is the ACTIVE fold row's blink phase, and nothing in this pane can
+ *     be active: `previewItems` passes an EMPTY live set, so every row it draws has already completed.
+ *     Pinned at 0 so the pane is a pure function of its messages.
+ *   · `expandHint: ""` — the empty string is the resolver's "that chord is unbound" answer (keys/hints.ts),
+ *     which is the truth here: ctrl+o opens nothing from a picker pane, and offering it would be the same
+ *     dishonesty a stale chord is. Absent would print the `(ctrl+o to expand)` fallback instead.
+ *   · `pending`/`thoughtMs`/`agentMeta`/`bashHint` — all omitted: they are the LIVE turn's state (ratcheted
+ *     counters, the locally-clocked thinking durations, the backgroundable-shell hint), and none of it exists
+ *     for a session being read off disk.
+ *  `cwd` is the PREVIEWED SESSION's directory, not this process's — it is what `displayPath` shortens tool
+ *  arguments against, and a widened row belongs to another project (the same reasoning that makes the picker
+ *  load and rename through the row's own `cwd`). */
+export function previewProjection(width: number, env: { cwd?: string; home?: string; platform?: NodeJS.Platform } = {}): ProjectionContext {
+  return { cwd: env.cwd ?? process.cwd(), home: env.home ?? homedir(), platform: env.platform ?? process.platform, columns: width, now: 0, expandHint: "" };
 }
-/** A countable row with nothing printable in it — an image- or document-only user turn. Upstream's pane draws
- *  the attachment through the real message renderer; ours is one line per message, so it says what is there
- *  rather than dropping a row the count admitted. */
-export const PREVIEW_ATTACHMENT = "[attachment]";
-/** The tail of a transcript as one line per message, newest LAST (reading order). */
-export function previewLines(messages: readonly unknown[], limit = PREVIEW_ROWS): PreviewLine[] {
-  const out: PreviewLine[] = [];
-  for (const m of messages) {
-    if (!isPreviewMessage(m)) continue;
-    const text = rowText(m).split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? PREVIEW_ATTACHMENT;
-    out.push({ role: (m as any).type, text });
+
+/** How many terminal rows one projected item occupies: a line is one, a gutter block is its body. */
+const itemRows = (item: RenderItem): number => (item.kind === "line" ? 1 : Math.max(1, item.body.length));
+export interface PreviewTail { items: readonly RenderItem[]; hidden: number }
+/** The last `limit` ROWS of a projection, cut on item boundaries, plus the number of rows that cut dropped.
+ *  The final item always survives even if it alone overflows the budget — a pane that renders nothing is
+ *  worse than one that renders a row too many, and the alternative (slicing a gutter block's body) would put
+ *  a second, silent truncation under the one the count reports. */
+export function previewTail(items: readonly RenderItem[], limit = PREVIEW_ROWS): PreviewTail {
+  let start = items.length, rows = 0;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const height = itemRows(items[i]!);
+    if (rows > 0 && rows + height > limit) break;
+    rows += height; start = i;
   }
-  return out.slice(-limit);
+  return { items: items.slice(start), hidden: items.slice(0, start).reduce((n, item) => n + itemRows(item), 0) };
+}
+
+/** A previewed session's persisted messages → the rows the pane draws, and what the row budget cut above
+ *  them. `width` is the PANE's (see `previewWidth`); `limit` exists for tests and for a caller with a
+ *  different budget. */
+export function previewItems(messages: readonly unknown[], opts: { width: number; id?: string; cwd?: string; limit?: number }): PreviewTail {
+  const window = messages.length > PREVIEW_MESSAGE_WINDOW ? messages.slice(-PREVIEW_MESSAGE_WINDOW) : messages;
+  const document = replayDocument(window, { width: opts.width, frame: false, ...(opts.id === undefined ? {} : { id: opts.id }) });
+  const context = previewProjection(opts.width, opts.cwd === undefined ? {} : { cwd: opts.cwd });
+  // BOTH regions, exactly as the live transcript composes them (useChat: Static + the dynamic tail). The
+  // compact projection withholds the trailing fold run while it is still growable, so a session whose last
+  // act was a tool call would otherwise preview with that call missing. `liveIds` is EMPTY rather than
+  // absent: nothing is running in a transcript read off disk, and an empty set is what keeps a dangling
+  // `tool_use` from drawing a blinking row for work no process is doing.
+  const projected = [...projectCompact(document, context), ...projectPending(document, context, new Set())];
+  return previewTail(projected, opts.limit ?? PREVIEW_ROWS);
 }

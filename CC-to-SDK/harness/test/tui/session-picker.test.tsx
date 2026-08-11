@@ -10,11 +10,13 @@ import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import type { SessionInfo } from "../../src/tui/useChat.js";
 import {
   filterSessions, isPreviewMessage, NARROWED_SCOPE, NO_CONVERSATIONS, NO_CONVERSATIONS_IN_PROJECT,
-  noConversations, noSessionsMatch, PREVIEW_ATTACHMENT, PREVIEW_ROWS, previewLines, previewMessageCount,
-  previewMeta, RENAME_FALLBACK, renamePlaceholder, RESUME_CANCELLED, resumeFooter, resumeHeader,
-  resumeVisibleRows, sessionMeta, sessionTitle, widenHints,
+  noConversations, noSessionsMatch, PREVIEW_ROWS, previewItems, previewMessageCount,
+  previewMeta, previewTail, previewWidth, RENAME_FALLBACK, renamePlaceholder, RESUME_CANCELLED, resumeFooter,
+  resumeHeader, resumeVisibleRows, sessionMeta, sessionTitle, widenHints,
 } from "../../src/tui/sessionPickerModel.js";
 import type { ResumeScope } from "../../src/tui/sessionPickerModel.js";
+import { moreAbove } from "../../src/tui/select/overflow.js";
+import { GROUP_HINT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -80,15 +82,49 @@ describe("sessionPickerModel — the pure half", () => {
     expect(previewMeta({ sessionId: "x", lastModified: NOW }, 1, new Date(NOW))).toBe("0s ago · 1 message");
   });
 
-  it("takes the TAIL of a transcript, one line per conversational message, tool traffic dropped", () => {
+  // WAVE 2 T8 replaced this test's subject. It used to pin `previewLines` — one trimmed line per
+  // conversational message — which is the very excerpt that leaked `<command-name>` into the pane (s2qa4-13).
+  // What it pins now is the pane's real product: the SAME projection the live transcript and `/resume`'s own
+  // replay draw, tail-anchored to the row budget.
+  it("projects the transcript through the replay renderer, tail-anchored to the row budget", () => {
     const msgs = [
-      { type: "user", message: { content: "hello there\nmore" } },
+      { type: "user", uuid: "u1", message: { content: "hello there\nmore" } },
       { type: "user", message: { content: [{ type: "tool_result", content: "x" }] } },
       { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "hi" }] } },
       { type: "system", subtype: "init" },
     ];
-    expect(previewLines(msgs)).toEqual([{ role: "user", text: "hello there" }, { role: "assistant", text: "hi" }]);
-    expect(previewLines(Array.from({ length: 30 }, () => ({ type: "user", message: { content: "x" } })), 3)).toHaveLength(3);
+    const { items, hidden } = previewItems(msgs, { width: 60 });
+    expect(hidden).toBe(0);
+    // The prompt band and the assistant bullet, in reading order — no replay frame dividers around them
+    // (`resumed: …` / `resumed here · live` are a RESUME's chrome, and this pane resumes nothing).
+    expect(items.map((i) => (i.kind === "line" ? i.line.text.trimEnd() : "")).filter(Boolean))
+      .toEqual(["❯ hello there", "  more", "hi"]);
+    expect(items.every((i) => !/resumed/.test(i.kind === "line" ? i.line.text : ""))).toBe(true);
+    // …and the budget cuts from the TOP, because the pane is tail-anchored.
+    const long = previewItems(Array.from({ length: 30 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `say ${i}` }] } })), { width: 60, limit: 3 });
+    expect(long.items).toHaveLength(3);
+    expect(long.hidden).toBe(27);
+    expect((long.items.at(-1) as { line: { text: string } }).line.text).toBe("say 29");
+  });
+
+  it("cuts the projection to the row budget from the tail, counting ROWS and never dropping the last item", () => {
+    const line = (id: string): RenderItem => ({ kind: "line", id, line: { text: id } });
+    const lines = Array.from({ length: 20 }, (_, i) => line(`l${i}`));
+    const tail = previewTail(lines, 5);
+    expect(tail.items.map((i) => i.id)).toEqual(["l15", "l16", "l17", "l18", "l19"]);
+    expect(tail.hidden).toBe(15);
+    // A gutter block costs its BODY's rows, not one — a row budget counted in items would overflow the pane.
+    const block: RenderItem = { kind: "gutter-block", id: "b", gutter: GROUP_HINT_GUTTER, body: [{ text: "a" }, { text: "b" }, { text: "c" }] };
+    expect(previewTail([line("x"), block], 3)).toEqual({ items: [block], hidden: 1 });
+    // One item taller than the whole budget still draws: a pane rendering nothing is worse than one overflowing.
+    expect(previewTail([line("x"), block], 2).items).toEqual([block]);
+    expect(previewTail([], 5)).toEqual({ items: [], hidden: 0 });
+  });
+
+  it("sizes the projection to the PANE, not the terminal (the frame's paddingX)", () => {
+    expect(previewWidth(100)).toBe(98);
+    const [banded] = previewItems([{ type: "user", uuid: "u1", message: { content: "hi" } }], { width: previewWidth(40) }).items;
+    expect((banded as { line: { text: string } }).line.text).toHaveLength(37);   // the band is `width - 1`
   });
 });
 
@@ -161,26 +197,35 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
     expect(isPreviewMessage({ type: "progress" })).toBe(false);
   });
 
-  it("count and pane apply the SAME predicate", () => {
-    // NOT "the count equals the pane's row count" — `previewLines` ends `return out.slice(-PREVIEW_ROWS)`,
-    // so for any transcript longer than the window the total and the windowed tail MUST differ. What has to
-    // be shared is the predicate, and the way to pin THAT is to assert the pane's rows one for one against
-    // the rows the count admitted — a length check alone can be satisfied by one wrong drop plus one wrong
-    // addition, which is exactly how the first version of this test failed to notice a reverted pane.
+  // WAVE 2 T8. The pane is no longer one trimmed line per counted message, so "the same predicate drives
+  // both" is no longer TRUE and pinning it would pin the excerpt back. What survives — and is the half that
+  // ever mattered (qa4-07 ii) — is that `isPreviewMessage` is the ONLY thing deciding the `N messages`
+  // number, and that nothing it counted goes missing from the pane. The pane is now a SUPERSET: it also
+  // draws the tool traffic the count excludes, which is exactly upstream's arrangement (it renders the whole
+  // transcript and counts through `Pqs`).
+  it("count and pane agree on the messages, with the pane drawing the tool traffic the count excludes", () => {
+    // The COUNT is still `isPreviewMessage` and nothing else — the meta row out, the image row in.
     const disagree = [userPrompt("plain ask"), imageOnly(), metaText(), assistantText("reply")];
-    expect(previewMessageCount(disagree)).toBe(3);                     // the meta row is out, the image row in
-    expect(previewLines(disagree)).toEqual([
-      { role: "user", text: "plain ask" },
-      { role: "user", text: PREVIEW_ATTACHMENT },                      // counted, so it is DRAWN, never dropped
-      { role: "assistant", text: "reply" },
-    ]);
+    expect(previewMessageCount(disagree)).toBe(3);
+    expect(previewMessageCount(disagree)).toBe(disagree.filter(isPreviewMessage).length);
+    const text = (r: { items: readonly RenderItem[] }) => r.items.map((i) => (i.kind === "line" ? i.line.text : i.body.map((b) => b.text).join("\n"))).join("\n");
+    expect(text(previewItems(disagree, { width: 60 }))).toContain("plain ask");
+    expect(text(previewItems(disagree, { width: 60 }))).toContain("reply");
+    // The pane is a SUPERSET of the count: a tool turn contributes nothing to `N messages` and still draws.
+    // The pair must be MATCHED — an unanswered call is an open one, and the compact projection leaves those
+    // to the live pending region, which a static pane has no business drawing.
+    const tools = [userPrompt("go"),
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t9", name: "Read", input: { file_path: "/tmp/a.ts" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t9", content: "x" }] } }];
+    expect(previewMessageCount(tools)).toBe(1);
+    expect(text(previewItems(tools, { width: 60 }))).toContain("Read");
+    // And the pane stays inside its row budget however long the transcript is, reporting what it cut.
     const rows = manyMixedRows(40);
     expect(previewMessageCount(rows)).toBe(rows.filter(isPreviewMessage).length);
     expect(previewMessageCount(rows)).toBeGreaterThan(PREVIEW_ROWS);
-    expect(previewLines(rows).length).toBeLessThanOrEqual(PREVIEW_ROWS);
-    // …and no row the count admits is silently dropped by the pane: on a short transcript they agree exactly.
-    const short = manyMixedRows(16);
-    expect(previewLines(short).length).toBe(previewMessageCount(short));
+    const pane = previewItems(rows, { width: 60 });
+    expect(pane.items.length).toBeLessThanOrEqual(PREVIEW_ROWS);
+    expect(pane.hidden).toBeGreaterThan(0);
   });
 });
 
@@ -328,6 +373,59 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     await waitFor(() => flat(frame(r.lastFrame)).includes("space to preview"));
     expect(r.picked).toEqual([]);
     expect(r.wasCancelled()).toBe(false);                                   // …and did NOT close the picker
+  });
+
+  // ── WAVE 2 T8 (s2qa4-13/14) ───────────────────────────────────────────────────────────────────────
+  // The pane used to be a hand-rolled excerpt — the first non-blank line of each countable message — which
+  // printed a slash command as the raw `<command-name>/cost</command-name>` the store holds and its reply as
+  // `<local-command-stdout>…`. The fix is not a second envelope stripper: it is to stop having a second
+  // renderer at all. The pane now draws `projectCompact(replayDocument(…))`, the SAME two primitives the live
+  // transcript and `/resume`'s own replay use, so every species router, fold and gutter arrives with them.
+  const ENVELOPE = [
+    { type: "user", uuid: "u1", message: { content: "what does this do?" } },
+    { type: "user", uuid: "u2", message: { content: "<command-name>/cost</command-name>\n<command-message>cost</command-message>\n<command-args></command-args>" } },
+    { type: "user", uuid: "u3", message: { content: "<local-command-stdout>Total cost: $0.42</local-command-stdout>" } },
+    { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/tmp/notes.ts" } }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "alpha\nbeta" }] } },
+    { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "it resumes" }] } },
+  ];
+
+  it("renders the slash-command pair through the species router — no envelope tag reaches the pane", async () => {
+    const r = mount({ loadMessages: async () => ENVELOPE });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("it resumes"));
+    const f = flat(frame(r.lastFrame));
+    expect(f).not.toMatch(/<\/?command-(name|message|args)>|<\/?local-command-stdout>/);
+    expect(f).toContain("❯ /cost");                                       // the echo, as the transcript draws it
+    expect(f).toContain("Total cost: $0.42");                             // its stdout, in the `⎿` gutter
+    expect(f).toContain("⎿");
+  });
+
+  it("draws the tool turn in its projected form, not as raw input JSON", async () => {
+    const r = mount({ loadMessages: async () => ENVELOPE });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("it resumes"));
+    const f = flat(frame(r.lastFrame));
+    expect(f).toContain("Read 1 file");                                   // the fold row the transcript folds it to
+    expect(f).not.toContain("file_path");
+    expect(f).not.toContain("tool_use");
+    // A STATIC pane offers no chord it cannot answer: ctrl+o does nothing here, so the expand hint is off.
+    expect(f).not.toContain("ctrl+o");
+    expect(f).toContain("4 messages");                                    // …and the count is untouched by any of it (a slash command is 2)
+  });
+
+  it("tail-anchors the projection at the row budget and says how many rows it cut", async () => {
+    const long = Array.from({ length: 30 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `reply number ${i}` }] } }));
+    const r = mount({ loadMessages: async () => long });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("reply number 29"));
+    const f = flat(frame(r.lastFrame));
+    expect(f).toContain(moreAbove(30 - PREVIEW_ROWS));                    // the rows CUT from this projection
+    expect(f).not.toContain(`reply number ${29 - PREVIEW_ROWS}`);         // …which are the oldest ones
+    expect(f).toContain(`reply number ${30 - PREVIEW_ROWS}`);             // the tail starts exactly there
   });
 
   it("a preview that cannot be read is an empty pane, not a crash", async () => {

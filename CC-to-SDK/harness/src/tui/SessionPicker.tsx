@@ -26,11 +26,13 @@ import type { KeyEvent, TextEvent } from "./keys/types.js";
 import { InputText, Select } from "./select/Select.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import type { SessionInfo } from "./useChat.js";
+import { RenderItemView } from "./toolRenderer.js";
+import { moreAbove } from "./select/overflow.js";
 import {
   filterSessions, NARROWED_SCOPE, noConversations, noSessionsMatch, PREVIEW_EMPTY, PREVIEW_FOOTER,
-  PREVIEW_LOADING, previewLines, previewMessageCount, previewMeta, REFRESHING, RENAME_FOOTER, RENAME_TITLE,
-  renamePlaceholder, RESUME_FOOTER, resumeFooter, resumeHeader, resumeVisibleRows, SEARCH_PLACEHOLDER,
-  SEARCH_PREFIX, sessionMeta, sessionTitle, type ResumeScope,
+  PREVIEW_LOADING, previewItems, previewMessageCount, previewMeta, previewWidth, REFRESHING, RENAME_FOOTER,
+  RENAME_TITLE, renamePlaceholder, RESUME_FOOTER, resumeFooter, resumeHeader, resumeVisibleRows,
+  SEARCH_PLACEHOLDER, SEARCH_PREFIX, sessionMeta, sessionTitle, type ResumeScope,
 } from "./sessionPickerModel.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
@@ -89,9 +91,11 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   const [renames, setRenames] = useState<Record<string, string>>({});
   const [renameText, setRenameText, renameTextRef] = useRefState("");
   const [renameCursor, setRenameCursor, renameCursorRef] = useRefState(0);
-  // `lines: null` is "still loading". No session id is kept beside it: which session the pane is about is
-  // `focused`, and the token below is what makes a late arrival for another row a no-op.
-  const [preview, setPreview] = useState<{ lines: ReturnType<typeof previewLines> | null; count: number }>({ lines: null, count: 0 });
+  // `messages: null` is "still loading". No session id is kept beside it: which session the pane is about is
+  // `focused`, and the token below is what makes a late arrival for another row a no-op. The RAW rows are
+  // held, not the projected ones, so a resize re-projects at the new pane width instead of redrawing a
+  // transcript wrapped for the terminal it was fetched at.
+  const [preview, setPreview] = useState<{ messages: readonly unknown[] | null; count: number }>({ messages: null, count: 0 });
   // Wave S T10. The scope is the PICKER's, not the caller's: only this component knows which chords have been
   // pressed, and the caller's `sessions` prop is just the narrowed set it opened with. `widened` holds what the
   // last re-query returned (null = "nobody has widened anything yet, use the prop").
@@ -122,14 +126,15 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     const target = liveFocused();
     if (!target || !loadMessages) return;
     const id = target.sessionId, token = ++previewToken.current;
-    setPreview({ lines: null, count: 0 });
+    setPreview({ messages: null, count: 0 });
     setStage("preview");
     void loadMessages(id, target.cwd).then((msgs) => {
       if (!mounted.current || previewToken.current !== token) return;
-      // ONE PREDICATE (sessionPickerModel.ts): the `N messages` line counts exactly the rows the pane draws,
-      // windowing aside. `msgs.length` counted tool traffic the pane had already dropped (qa4-07 ii).
-      setPreview({ lines: previewLines(msgs), count: previewMessageCount(msgs) });
-    }, () => { if (mounted.current && previewToken.current === token) setPreview({ lines: [], count: 0 }); });
+      // The `N messages` line is `isPreviewMessage`'s alone (sessionPickerModel.ts) — `msgs.length` counted
+      // tool traffic as conversation (qa4-07 ii). The ROWS below come from the shared projection, which draws
+      // that tool traffic; the two numbers are deliberately different things and only one is advertised.
+      setPreview({ messages: msgs, count: previewMessageCount(msgs) });
+    }, () => { if (mounted.current && previewToken.current === token) setPreview({ messages: [], count: 0 }); });
   };
   /** A widen chord: flip one axis, then re-query through the caller's loader. Tokened like the preview fetch —
    *  Ctrl+A Ctrl+A in one chunk fires two queries, and only the last one may land. */
@@ -218,19 +223,23 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
 
   if (stage === "preview") {
     const target = focused;
+    // Projected at RENDER time, off the retained rows: the pane width is a prop, so a resize while the pane
+    // is open re-wraps the transcript for the box it is actually in. `focused` supplies the previewed
+    // session's own directory (a widened row belongs to another project) and its id, which is what keys the
+    // replay document's local entries.
+    const pane = preview.messages === null ? null
+      : previewItems(preview.messages, { width: previewWidth(columns ?? process.stdout.columns ?? 80), ...(target?.sessionId === undefined ? {} : { id: target.sessionId }), ...(target?.cwd === undefined ? {} : { cwd: target.cwd }) });
     return (
       <PickerFrame footer={PREVIEW_FOOTER} header={<Text bold color={role("suggestion")}>{target ? titleOf(target) : ""}</Text>}>
-        {preview.lines === null
+        {pane === null
           ? <Text dimColor>{PREVIEW_LOADING}</Text>
           : (
             <Box flexDirection="column">
-              {preview.lines.length === 0 ? <Text dimColor>{PREVIEW_EMPTY}</Text> : null}
-              {preview.lines.map((l, i) => (
-                <Text key={i} wrap="truncate-end">
-                  {l.role === "user" ? <Text color={role("suggestion")}>{"> "}</Text> : <Text dimColor>{"  "}</Text>}
-                  <Text dimColor={l.role !== "user"}>{l.text}</Text>
-                </Text>
-              ))}
+              {pane.items.length === 0 ? <Text dimColor>{PREVIEW_EMPTY}</Text> : null}
+              {/* The cut is at the TOP — the pane is tail-anchored — so the counted indicator sits above the
+                  rows and points the way the missing ones went (`moreAbove`, the package's one spelling). */}
+              {pane.hidden > 0 ? <Text dimColor>{moreAbove(pane.hidden)}</Text> : null}
+              {pane.items.map((item) => <RenderItemView key={item.id} item={item} />)}
               {/* `dGa` L476179, under the same top rule upstream puts it under. */}
               {target ? <Box marginTop={1}><Text>{previewMeta(target, preview.count)}</Text></Box> : null}
             </Box>

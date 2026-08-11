@@ -13,8 +13,13 @@ import { rowKind, promptText } from "../sessions/rows.js";
 /** `width` (F4 Task 8): the terminal column budget the command-echo band is padded to. The prompt rows
  *  themselves are retained SDK frames and get their width from the projection, but a `command_echo` is a
  *  LOCAL entry whose lines are baked here — so it needs the caller's width or it would default to 80 and
- *  wear a narrower band than the prompt above it. `useChat` passes its own `columnsFn()`. */
-export interface ReplayOptions { id?: string; label?: string; width?: number }
+ *  wear a narrower band than the prompt above it. `useChat` passes its own `columnsFn()`.
+ *
+ *  `frame` (wave2 T8): the two RESUME dividers — the `resumed: <title> · N turns` banner and the closing
+ *  `resumed here · live` — are the chrome of a session you are rejoining, not part of the transcript. A
+ *  surface that only READS a transcript (the /resume picker's preview pane) turns them off; every surface
+ *  that actually resumes leaves them on, which is the default. */
+export interface ReplayOptions { id?: string; label?: string; width?: number; frame?: boolean }
 
 function firstUserText(messages: readonly any[]): string {
   for (const m of messages) {
@@ -38,7 +43,8 @@ export function replayDocument(messages: readonly unknown[], options: ReplayOpti
   const turns = rows.filter((m) => rowKind(m) === "prompt").length;
   const title = trunc(firstUserText(rows) || (options.id ? options.id.slice(0, 8) : "session"), 40);
   const time = hhmm(rows.at(-1)?.timestamp);
-  document.appendLocal({ kind: "resume-divider", lines: [divider(`${label}: ${title} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`)] }, `replay:${session}:head`);
+  const frame = options.frame !== false;
+  if (frame) document.appendLocal({ kind: "resume-divider", lines: [divider(`${label}: ${title} · ${turns} turn${turns === 1 ? "" : "s"}${time ? " · " + time : ""}`)] }, `replay:${session}:head`);
   rows.forEach((m, index) => {
     const kind = rowKind(m);
     // F4 Task 10a: replay no longer decides what a sentinel LOOKS like — `species.ts` does, for the disk path
@@ -59,6 +65,6 @@ export function replayDocument(messages: readonly unknown[], options: ReplayOpti
     }
     document.appendSdk("disk", m);
   });
-  document.appendLocal({ kind: "resume-divider", lines: [divider(`${label} here · live`)] }, `replay:${session}:live`);
+  if (frame) document.appendLocal({ kind: "resume-divider", lines: [divider(`${label} here · live`)] }, `replay:${session}:live`);
   return document;
 }
