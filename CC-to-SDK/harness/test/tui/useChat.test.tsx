@@ -1364,6 +1364,51 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     await waitFor(() => flat(lastFrame).includes("No assistant message to copy"));
     expect(calls).toBe(0);
   });
+
+  // A failed turn's terminal frame is `type:"assistant"` with `parent_tool_use_id:null` and real text — it
+  // differs from a reply ONLY by `is_api_error_message:true` (probe 96's shape, pinned key-for-key in
+  // useChat-error.test.tsx). Truthiness on the nesting field is therefore not enough: without the error
+  // filter /copy hands the user "Failed to authenticate. API Error: 401 …" as though Claude had said it.
+  // Canon's rule is "the newest NON-ERROR assistant message", so an error is not a source and does not
+  // displace the last real reply either.
+  const API_ERROR_FRAME = {
+    type: "assistant", parent_tool_use_id: null, model: "<synthetic>", is_api_error_message: true,
+    error: "authentication_failed", uuid: "copy-err-1",
+    message: { role: "assistant", content: [{ type: "text", text: "Failed to authenticate. API Error: 401 synthetic" }] },
+  };
+  it("/copy never sources an api_error frame — a failed turn leaves nothing to copy", async () => {
+    let calls = 0;
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async () => { calls++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: API_ERROR_FRAME });
+    await waitFor(() => frame(lastFrame).includes("API Error: 401"));   // it still RENDERS — only /copy declines it
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    api.run!("/copy");
+    await waitFor(() => flat(lastFrame).includes("No assistant message to copy"));
+    expect(calls).toBe(0);
+  });
+
+  it("an api_error after a real reply does not displace it — /copy still yields the reply", async () => {
+    let copied: string | undefined;
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the answer is 42" }] } }] });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("the answer is 42"));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 7 });
+    fake.pushEvent({ kind: "message", data: API_ERROR_FRAME });
+    await waitFor(() => frame(lastFrame).includes("API Error: 401"));
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 7 });
+    api.run!("/copy");
+    await waitFor(() => frame(lastFrame).includes("✓ copied"));
+    expect(copied).toBe("the answer is 42");
+  });
 });
 
 describe("thinking control", () => {

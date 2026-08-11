@@ -1090,7 +1090,13 @@ export function useChat(
         // reader in the tree (transcriptModel, toolRenderer, liveTurn, host, router) already tests this way.
         if (appended && data?.type === "assistant" && !data.parent_tool_use_id) {
           const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
-          if (t.trim()) lastAssistant.current = t;
+          // …and NOT an api_error frame. A failed turn's terminal message is `type:"assistant"` with
+          // `parent_tool_use_id:null` and ordinary text — it differs from a reply only by
+          // `is_api_error_message:true` (probe 96's terminal shape, pinned in useChat-error.test.tsx). Canon's
+          // /copy rule is "the newest NON-ERROR assistant message", so it neither sources the clipboard nor
+          // displaces the last real reply. The suggester tail below is deliberately NOT filtered: it wants
+          // every turn the conversation actually had, failures included.
+          if (t.trim() && data.is_api_error_message !== true) lastAssistant.current = t;
           // W-C T12: the same text, into the suggester's tail — behind the `appended` guard, so a redelivered
           // or replayed frame neither doubles the tail nor inflates the `early_conversation` count.
           noteTail("assistant", t);

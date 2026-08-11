@@ -67,4 +67,25 @@ describe("lastAssistantText", () => {
   it("returns empty string when there is no assistant text at all", () => {
     expect(lastAssistantText([user("q", "u1")])).toBe("");
   });
+  // A failed turn persists as an ordinary-looking assistant row whose only tell is `is_api_error_message`
+  // (probe 96's synthetic frame). Seeding /copy from it on resume would hand the user "API Error: 401 …" as
+  // the assistant's reply, so the disk seeder skips it exactly like the live writer does.
+  const apiError = (text: string, uuid: string) => ({ ...assistant(text, uuid), is_api_error_message: true, error: "authentication_failed" });
+  it("skips api-error rows and keeps the last REAL reply", () => {
+    const msgs = [assistant("real", "a1"), user("q", "u1"), apiError("Failed to authenticate. API Error: 401", "a2")];
+    expect(lastAssistantText(msgs)).toBe("real");
+  });
+  it("returns empty string when the only assistant row is an api error", () => {
+    expect(lastAssistantText([user("q", "u1"), apiError("API Error: 401", "a1")])).toBe("");
+  });
+  // The shape that actually arrives here. Measured against a real session on SDK 0.3.220: getSessionMessages
+  // STRIPS the row-level flag, so a disk row's only tell is the synthetic model marker inside `message`.
+  const diskSynthetic = (text: string, uuid: string) =>
+    ({ type: "assistant", uuid, session_id: "s", parent_tool_use_id: null, parent_agent_id: null, timestamp: "t",
+       message: { id: "m", role: "assistant", model: "<synthetic>", type: "message", content: [{ type: "text", text }] } });
+  it("skips a disk-read synthetic row (flag stripped, model \"<synthetic>\" survives)", () => {
+    const msgs = [assistant("real", "a1"), user("q", "u1"), diskSynthetic("You've hit your session limit · resets 10:50am", "a2")];
+    expect(lastAssistantText(msgs)).toBe("real");
+    expect(lastAssistantText([diskSynthetic("API Error: 401", "a1")])).toBe("");
+  });
 });

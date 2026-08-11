@@ -50,12 +50,26 @@ export function rewindAnchorsFrom(messages: any[]): RewindAnchor[] {
   return out.reverse();
 }
 
+/** A locally-minted assistant frame — an API failure, a session-exit notice, a reconnect notice — rather
+ *  than something the model said. TWO spellings because the two read paths carry different ones:
+ *  - LIVE wire: `is_api_error_message:true` (probe 96's terminal shape; on disk it is `isApiErrorMessage`).
+ *  - DISK via `getSessionMessages`: NEITHER survives. Measured on SDK 0.3.220 against a real session that
+ *    holds one: the reader returns exactly {type,uuid,session_id,message,parent_tool_use_id,parent_agent_id,
+ *    timestamp} and drops the row-level `isApiErrorMessage`/`error`/`apiErrorStatus` flags. What DOES survive
+ *    is `message.model === "<synthetic>"`, the CLI's marker on every locally-minted frame — all four mint
+ *    sites in the 2.1.227 bundle are the error factory, the session-exit message, the attestation/reconnect
+ *    notices, and a proactive tool_use, none of them a model reply. So the flag alone would be inert here. */
+function syntheticAssistant(m: any): boolean {
+  return m?.is_api_error_message === true || m?.isApiErrorMessage === true || m?.message?.model === "<synthetic>";
+}
+
 /** The last assistant reply's text in a persisted transcript ("" if none). Lets a replayed view (resume,
- *  rewind) seed /copy with the reply that is actually ON SCREEN — the live message arm never saw it. */
+ *  rewind) seed /copy with the reply that is actually ON SCREEN — the live message arm never saw it.
+ *  Synthetic frames are skipped: /copy hands over what Claude said, never "API Error: 401 …". */
 export function lastAssistantText(messages: any[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i] as any;
-    if (m?.type !== "assistant") continue;
+    if (m?.type !== "assistant" || syntheticAssistant(m)) continue;
     const t = (m.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
     if (t.trim()) return t;
   }
