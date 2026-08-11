@@ -101,8 +101,10 @@ export const mcpSet: Handler = (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  // inProcess-only by nature in M2 (every thread is inProcess) — no origin check needed yet. M3's fleet-
-  // adopted threads land the -33006 UNSUPPORTED_FOR_ORIGIN refusal here (rpc.ts already reserves the code).
+  // inProcess-only: the host wire has no op for a wholesale server-set replacement (nor for the rules-layer
+  // override below), so a fleet thread is refused -33006 by the dispatch-level origin gate (registry.ts's
+  // FLEET_UNSUPPORTED) before this handler runs. The live topology reads/reconnect/toggle above DO have
+  // host ops and stay allowed for both origins.
   record.chain = record.chain.then(async () => {
     const fn = record.session.setMcpServers?.bind(record.session);
     if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }
@@ -124,8 +126,8 @@ export const mcpPermissionModeOverrideSet: Handler = (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  // inProcess-only by nature in M2 (every thread is inProcess) — no origin check needed yet. M3's fleet-
-  // adopted threads land the -33006 UNSUPPORTED_FOR_ORIGIN refusal here (rpc.ts already reserves the code).
+  // inProcess-only for the same reason as mcpSet above: no host op, so the dispatch-level origin gate
+  // refuses a fleet thread -33006 before this handler runs.
   record.chain = record.chain.then(async () => {
     const fn = record.session.setMcpPermissionModeOverride?.bind(record.session);
     if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }

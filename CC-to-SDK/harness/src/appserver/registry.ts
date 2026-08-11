@@ -6,8 +6,13 @@ import type { ItemEvent } from "./items/types.js";
 import type { QueuedTurn } from "./queue.js";
 import type { PlanGrantMode } from "../permissions/types.js";
 import type { TurnFailure } from "../session/turnResult.js";
+import { ERR, type RpcError } from "./rpc.js";
 
-export type ThreadOrigin = "inProcess"; // fleet adoption is M3
+/** Where a thread's engine lives: one this server spawned (`inProcess`), or a running ccx fleet session
+ *  this server attached to over its host socket (`fleet`, M3 §1b). The distinction is not cosmetic —
+ *  a fleet thread's engine is the HOST's, shared with other clients, and the host wire carries a smaller
+ *  op set than the SDK session does (see FLEET_UNSUPPORTED below). */
+export type ThreadOrigin = "inProcess" | "fleet";
 
 /** One buffered item event tagged with the turn it belongs to. The buffer is a bounded PER-TURN
  *  window (spec §5: subscribe-time replay is the in-flight turn's items; completed-turn history comes
@@ -173,6 +178,14 @@ export interface ThreadRecord {
                                  // (server.ts) and never cleared — the latch M2b Task 4's queue drain
                                  // checks so no engine call starts after a close began
   swapInFlight?: boolean;       // set by M2b's rewind while an engine swap is in flight
+  short?: string;               // FLEET ONLY (M3 §1b): the roster row's 8-hex id — the handle `ccx` itself
+                                 // addresses a session by, so a client can name the same session both here
+                                 // and at the CLI. Filled at attach (Task 7); never set on inProcess.
+  name?: string;                // FLEET ONLY: the roster row's session name. Distinct from `title`, which
+                                 // is this server's own thread/name/set patch over a STORE row — one is
+                                 // the fleet's label for a running session, the other a client's label for
+                                 // a persisted conversation, and merging them would let a rename here
+                                 // silently disagree with `ccx fleet list`.
   epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
                                  // ONLY by M2b's rewind engine swap (spec D-M2-8) — every later task that
                                  // needs "am I still talking to the current engine" reads this, not a
@@ -227,6 +240,38 @@ export function threadBusyReason(r: ThreadRecord): "turn" | "closing" | "swappin
 export function threadStatus(r: ThreadRecord, waitingOn: boolean): { state: "idle" | "active"; waitingOn?: "decision" } {
   if (!threadBusyReason(r)) return { state: "idle" };
   return waitingOn ? { state: "active", waitingOn: "decision" } : { state: "active" };
+}
+
+/** The methods a fleet-origin thread cannot serve, because the HOST WIRE has no op behind them (spec
+ *  §1c) — not because some engine build happens to lack a member. Membership is a statement about the
+ *  wire, so it is a flat set here rather than a per-handler check: the refusal must read the same for a
+ *  fleet thread whichever engine object is behind it.
+ *
+ *  Every string MUST be a registered `methodSchemas` key (schema/index.ts) — a typo gates nothing at all,
+ *  silently, since the misspelled name is never dispatched. origin-gate.test.ts pins both directions.
+ *  `thread/reopen` belongs here too (the host owns its own engine lifecycle) and joins in Task 14, in the
+ *  same change that registers its schema — never before, or the subset tripwire is lying.
+ *
+ *  `turn/start` is deliberately ABSENT: only its `{queue:true}` FLAG is unsupported (the server-side queue
+ *  rides ownership of the engine chain, which a fleet thread's host does not hand over), so that refusal
+ *  lives in the turns handler where the flag is visible — the method itself stays allowed. */
+export const FLEET_UNSUPPORTED: ReadonlySet<string> = new Set([
+  "turn/steer", "thread/settings/apply", "mcpServer/set", "mcpServer/permissionModeOverride/set",
+  "plugin/reload", "skill/reload", "thread/reinitialize", "account/read", "thread/init/read",
+]);
+
+/** The one message every origin refusal carries — the turns handler's queue-flag arm included, so a client
+ *  matches one string rather than a family of near-identical ones. */
+export const ORIGIN_REFUSAL_MESSAGE = "unsupported for fleet-origin threads";
+
+/** The origin gate (spec §1c). Consulted in dispatch BEFORE handler entry, which is the load-bearing part:
+ *  several of these methods ALSO map an absent optional `EngineSession` member to -32601, and a fleet
+ *  thread must never answer a wire gap as if it were an engine-capability accident — a client would then
+ *  retry against a different engine build that can never exist. Precedence inverts only for the gated set:
+ *  a NON-gated method whose member is absent still answers -32601 on a fleet thread. */
+export function originRefusal(record: ThreadRecord, method: string): RpcError | null {
+  if (record.origin !== "fleet") return null;
+  return FLEET_UNSUPPORTED.has(method) ? { code: ERR.UNSUPPORTED_FOR_ORIGIN, message: ORIGIN_REFUSAL_MESSAGE } : null;
 }
 
 /** The id of the turn a decision belongs to, or undefined when none is in flight. `currentTurnId` is

@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { ERR } from "./rpc.js";
 import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
-import { mintTurnId, threadBusyReason, threadStatus } from "./registry.js";
+import { mintTurnId, threadBusyReason, threadStatus, ORIGIN_REFUSAL_MESSAGE } from "./registry.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
@@ -297,6 +297,14 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // The one origin refusal that does NOT live in the dispatch gate (M3 §1c), because it is scoped to a
+  // FLAG rather than to the method: `turn/start` itself is fully supported for fleet threads, but the
+  // server-side queue rides ownership of the engine chain, which a fleet thread's host never hands over —
+  // draining an entry later would mean retrying over busy refusals, racing every other host client for a
+  // turn slot. Checked BEFORE the busy branch, not inside it: the flag is unsupported for this origin
+  // whatever the thread happens to be doing, and a client that only learned that on the one call that
+  // happened to arrive mid-turn would have built its queueing UI on a capability it never had.
+  if (record.origin === "fleet" && parsed.data.queue) { ctx.peer.replyError(id, ERR.UNSUPPORTED_FOR_ORIGIN, ORIGIN_REFUSAL_MESSAGE); return; }
   // The busy branch is resolved HERE rather than left to beginTurn's own gate, because `queue:true` turns
   // one of its outcomes into an acceptance. Gated on the ONE predicate (spec D-M2-8), never a re-assembled
   // condition — and the queue is offered for exactly one of its reasons:

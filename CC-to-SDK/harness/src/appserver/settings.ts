@@ -131,8 +131,9 @@ export const settingsApply: Handler = (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  // inProcess-only by nature in M2 (every thread is inProcess) — no origin check needed yet. M3's fleet-
-  // adopted threads land the -33006 UNSUPPORTED_FOR_ORIGIN refusal here (rpc.ts already reserves the code).
+  // inProcess-only: no host op carries an arbitrary flag-settings object, so a fleet thread is refused
+  // -33006 by the dispatch-level origin gate (registry.ts's FLEET_UNSUPPORTED) BEFORE this handler runs.
+  // Nothing to check here — the gate exists precisely so each handler need not re-state it.
   record.chain = record.chain.then(async () => {
     try {
       await record.session.applyFlagSettings?.(parsed.data.settings);

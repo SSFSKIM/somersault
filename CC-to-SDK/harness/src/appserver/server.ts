@@ -4,7 +4,9 @@
 import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
-import { Registry, activeTurnId, emptyFlagPerms, seedSettings, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
+import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
+import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
+import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
@@ -77,7 +79,15 @@ export interface ConnCtx {
  *  `queueDepth` (M2b Task 8, flagged addition to §5) is ALWAYS present and 0 when the queue is empty,
  *  rather than omitted-when-zero: a thread row that answers "how many turns are waiting" with a missing
  *  key forces every consumer to write the `?? 0` itself, and one that forgets it renders "unknown" for the
- *  ordinary case. It counts only turns that have NOT started — the running turn is `status`'s business. */
+ *  ordinary case. It counts only turns that have NOT started — the running turn is `status`'s business.
+ *
+ *  `cwd` is ORIGIN-BRANCHED (M3 §1b; `fs/search` and `thread/shellCommand` both root themselves on it):
+ *  an inProcess thread whose start config named no cwd genuinely runs in THIS process's cwd, so reporting
+ *  that is a fact, not a placeholder. A fleet thread does not — its session runs wherever its roster row
+ *  says, filled at attach (Task 7) — so an absent value stays absent rather than borrowing ours, which
+ *  would point a client's file reads at the wrong tree. `short`/`name` are the roster's own handles and
+ *  exist for fleet threads only; the keys are OMITTED (not undefined) on inProcess rows, which keeps this
+ *  view's key set identical to sessionLib.ts's store-only projection for every row that predates M3. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
   const waitingOn = srv.pendingDecisions(r.id).length > 0;
   return {
@@ -85,7 +95,8 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     sessionId: r.sessionId,
     title: r.title,
     tags: r.tags,
-    cwd: r.cwd,
+    cwd: r.origin === "inProcess" ? r.cwd ?? process.cwd() : r.cwd,
+    ...(r.origin === "fleet" ? { short: r.short, name: r.name } : {}),
     model: r.settings.model,
     permissionMode: r.settings.permissionMode,
     thinking: { maxTokens: r.settings.thinkingTokens },
@@ -105,6 +116,32 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 }
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+const RESUME_LIVE_FLEET = "sessionId belongs to a running fleet session; use thread/attach";
+
+/** The synchronous half of `thread/resume`'s live-session guard (spec §1c). `thread/resume` is NOT
+ *  origin-gated — it CREATES a thread, so there is no record to gate on — but the hazard it opens is real:
+ *  resuming a sessionId a running ccx session is still writing forks a second engine over a live
+ *  conversation, and both then append to the same store id. `thread/attach` is what that caller wants, so
+ *  the refusal names it.
+ *
+ *  Two sources, both needed: a session THIS server already attached is authoritative on its own (and its
+ *  roster row may be mid-rewrite), while a live fleet session nobody here attached is invisible to the
+ *  registry. Answers `"live"` for the first, or the roster rows that still need a liveness probe for the
+ *  second — never a promise. That split is load-bearing, not a micro-optimization: `thread/resume` must
+ *  reach `startThread` in the SAME TICK it was dispatched, because the delete/resume reservation race
+ *  (sessionLib.ts) is decided by which of the two admits first, and an `await` on the happy path (where
+ *  there is no roster row to probe at all — the overwhelmingly common case) would silently hand every
+ *  same-tick delete the win.
+ *
+ *  Deliberately NOT `collectFleet`: that dials every host's socket to derive live state, which is a great
+ *  deal of I/O for one yes/no, and its extra precision (busy vs idle) is not what this asks. A
+ *  non-terminal row whose pid is still alive IS "still running"; a terminal row is a finished session,
+ *  whose transcript is exactly what resume is for. */
+function fleetResumeCandidates(srv: AppServer, sessionId: string): "live" | RosterRow[] {
+  if (srv.registry.list().some((r) => r.origin === "fleet" && r.sessionId === sessionId)) return "live";
+  return listRoster().filter((r) => r.sessionId === sessionId && !TERMINAL.has(r.state));
+}
 
 /** Methods still answerable when the thread's engine is dead (dispatch's -33005 gate). The invariant is
  *  "answerable without live transport", not "is a read" — three families:
@@ -166,6 +203,17 @@ export class AppServer {
     "thread/resume": async (srv, ctx, id, params) => {
       const parsed = threadResumeParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+      // Before anything is spawned (see fleetResumeCandidates): a live fleet session is the one sessionId
+      // this method must not fork. -32602 rather than a new code — the request is well-formed but its ONE
+      // parameter names something resume cannot legally act on, which is what INVALID_PARAMS means here
+      // (thread/delete's own live-refusal reasons the same way). The loop below awaits ONLY when a roster
+      // row actually carries this sessionId; with none (the ordinary case) the handler falls straight
+      // through to startThread in its dispatch tick — see fleetResumeCandidates for why that matters.
+      const candidates = fleetResumeCandidates(srv, parsed.data.sessionId);
+      if (candidates === "live") { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
+      for (const row of candidates) {
+        if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
+      }
       srv.startThread(ctx, id, { resume: parsed.data.sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
     },
     "thread/list": threadList,
@@ -521,6 +569,21 @@ export class AppServer {
     if (goneBefore !== undefined && !ENGINE_GONE_EXEMPT.has(method)) {
       ctx.peer.replyError(id, goneBefore, "Engine is gone (session ended)"); return;
     }
+    // The origin gate (M3 §1c, registry.ts). HERE — before handler entry — is the whole point: the
+    // handlers themselves map an absent optional EngineSession member to -32601, and for a fleet thread a
+    // missing HOST OP must never read as a missing engine capability. Running the gate at the dispatch
+    // seam is also what keeps that ordering true for every future handler without each one re-stating it.
+    //
+    // AFTER the -33005 gate above, deliberately: a dead engine is a fact about this thread RIGHT NOW and
+    // outranks a structural refusal (spec §1f — once a fleet socket dies, "subsequent methods answer
+    // -33005", and recovery is thread/close + a fresh thread/attach). Where a method is BOTH gated and
+    // engine-gone-exempt this order is what makes it answer correctly rather than accidentally:
+    // `thread/reopen` (Task 14) is exempt precisely so a dead thread can reach it, and a fleet thread must
+    // then hear -33006 — the host owns its own engine lifecycle — which is exactly what running the gate
+    // after an exemption produces.
+    const gated = this.recordFor(params);
+    const refusal = gated ? originRefusal(gated, method) : null;
+    if (refusal) { ctx.peer.replyError(id, refusal.code, refusal.message, refusal.data); return; }
     try {
       await handler(this, ctx, id, params);
     } catch (e) {
@@ -532,13 +595,18 @@ export class AppServer {
     }
   }
 
+  /** The thread a request names, when it names one — the ONE reading of `params.threadId` at dispatch
+   *  level, shared by the -33005 gate and M3's origin gate so the two can never disagree about which
+   *  record they are judging. */
+  private recordFor(params: Record<string, unknown>): ThreadRecord | undefined {
+    const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
+    return threadId ? this.registry.get(threadId) : undefined;
+  }
+
   /** -33005 mapping (spec Wave 0): a dead read-loop is real on inProcess threads (probe 38). Checked
    *  via isEnded() ONLY — the lib's errors are untyped strings and message-matching misses half the
    *  class ("not running" vs "disposed"). `threadId` comes from the request params when present. */
   private engineGoneCode(params: Record<string, unknown>): number | undefined {
-    const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
-    if (!threadId) return undefined;
-    const record = this.registry.get(threadId);
-    return record?.session.isEnded?.() ? ERR.ENGINE_GONE : undefined;
+    return this.recordFor(params)?.session.isEnded?.() ? ERR.ENGINE_GONE : undefined;
   }
 }
