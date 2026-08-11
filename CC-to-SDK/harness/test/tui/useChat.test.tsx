@@ -3069,7 +3069,14 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
         : new Promise((res) => { landCtx = res; })),
       usage: () => new Promise((res) => { landUsage = res; }),
     });
-    mountStatus(fake, r, clock, {}, latch);
+    // THE FIRST turn, so `adoptAiTitle` fires here too — a LOCAL disk read that answers long before the two
+    // control calls. It used to poke on its own and cost this turn a second run; it is awaited now instead.
+    function H() {
+      useChat(() => fake, { statusLine: STATUS_CFG, promptLatch: latch } as any,
+        { statusLine: { runStatusLine: r.run, ...clock.deps }, getSessionInfo: async () => ({ summary: "Engine's own title" }) } as any);
+      return <Text>ok</Text>;
+    }
+    render(<H />);
     await settle(clock, 2);
     expect(r.runs).toHaveLength(1);                                   // boot: one run, as EP-D4 already had it
     expect(r.runs[0].payload.cost.total_cost_usd).toBe(0);
@@ -3089,6 +3096,7 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
     expect(refresh.context_window.total_output_tokens).toBe(21);
     expect(refresh.prompt_id).toBe("pid-turn-1");                     // and still the turn's own prompt id
     expect(refresh.transcript_path).toBe("/home/u/.claude/projects/-repo/s.jsonl");
+    expect(refresh.session_name).toBe("Engine's own title");          // the title rides IN it, not in a run of its own
   });
 
   it("a context read that never answers cannot suppress the row forever: the cap fires, one run, zero window", async () => {

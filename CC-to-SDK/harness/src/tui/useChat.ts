@@ -628,13 +628,17 @@ export function useChat(
    *
    *  THE GENERATION GUARD (final review, finding 5) is what makes the two safe together: the id/dir pair is
    *  captured at fetch time and so is `titleGen`, and a read that returns after the boundary has moved on is
-   *  dropped instead of publishing a dead conversation's title over the live one. */
-  const adoptAiTitle = (sessionId?: string, dir?: string): void => {
+   *  dropped instead of publishing a dead conversation's title over the live one.
+   *
+   *  RETURNS ITS PROMISE (W2 A8) so the turn's one status-line refresh can wait for it — see
+   *  `statusRefreshAfterTurn`. Every caller may still ignore it; a latched or id-less call is already
+   *  settled. */
+  const adoptAiTitle = (sessionId?: string, dir?: string): Promise<void> => {
     const id = sessionId ?? session.sessionId;
-    if (aiTitleFetched.current || !id) return;
+    if (aiTitleFetched.current || !id) return Promise.resolve();
     aiTitleFetched.current = true;
     const gen = titleGen.current;
-    void getSessionInfoFn(id, dir).then(
+    return getSessionInfoFn(id, dir).then(
       (info) => { if (disposed.current || gen !== titleGen.current) return; const t = (info as any)?.customTitle ?? (info as any)?.summary; if (typeof t === "string" && t.trim()) setAiTitle(t.trim()); },
       () => {},
     );
@@ -804,15 +808,21 @@ export function useChat(
   //   THE LIST IS UPSTREAM'S, MINUS WHAT CCX HAS NO PRODUCER FOR: `vimMode`, `fastMode` and `prStatus` do not
   // exist here, and `effortValue` arrives with TASK 11 (its payload block does too). `tokenUsage` and
   // `lastAssistantMessageId` are not React state in ccx at all — they are the two refresher refs above, which
-  // poke explicitly from their own completion. `outputStyle`/`session_name` are ccx additions to the list:
+  // poke explicitly from their own completion. `outputStyle`/`renameTitle` are ccx additions to the list:
   // both are payload fields here, and both can change with no turn in sight.
+  //   `aiTitle` IS DELIBERATELY NOT ON IT (W2 A8, and it is the half the live re-run caught). Unlike
+  // `renameTitle` it has exactly one producer, `adoptAiTitle`, and exactly one moment — the first turn's
+  // end. Left on the list it poked there on its own, ~300 ms after a local disk read and so a whole run
+  // ahead of the second-scale control readings: the first turn of every conversation ran the user's script
+  // twice however well the readings were gated. `statusRefreshAfterTurn` AWAITS the same promise instead,
+  // which is what puts `session_name` in the turn's one run rather than in a run of its own.
   const statusFirstRender = useRef(true);
   useEffect(() => {
     if (statusFirstRender.current) { statusFirstRender.current = false; return; }
     pokeStatusLine("state-delta");
     // W-C T11: `effort` IS upstream's `effortValue` delta, and `effortSupported` rides with it because the
     // catalog landing is the moment the block appears or disappears from the payload.
-  }, [mode, model, thinkLevel, outputStyle, renameTitle, aiTitle, effort, effortSupported]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, model, thinkLevel, outputStyle, renameTitle, effort, effortSupported]);   // eslint-disable-line react-hooks/exhaustive-deps
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
   // Set for the whole window in which THIS client's own rewind is in flight, so the host's `rewound`
@@ -1245,18 +1255,18 @@ export function useChat(
         // ends a turn of its own, and that turn end takes the bar down before `session.compact()` returns.
         // Narrow (it needs a submit during the pass), harmless (the `finally` then no-ops on an already-clear
         // state, and the `✦ compacted N → M` row still lands), and not worth a second flag to prevent.
+        // W-C T8: the one read of the engine's ai-title. At turn END rather than `turn:start` because the row
+        // it reads is written mid-turn (probe (d) saw it land at row 6 of 20, before the first assistant
+        // frame) — a fetch at start would race the engine's own write. Latched, so it is a no-op from the
+        // second turn on. Its PROMISE goes to the status-line refresh below (W2 A8): the title lands in
+        // `session_name`, so the turn's one run has to be later than the read rather than racing it.
         // W-C T10 / W2 A8: the two refreshers AND the status line's one refresh for this turn — see
         // `statusRefreshAfterTurn`, which owns the ordering that makes it one run rather than two.
-        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void statusRefreshAfterTurn(); drainNext();
+        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void statusRefreshAfterTurn(adoptAiTitle()); drainNext();
         // W-C T12 (EP-C5), annex §C5.2: `acd(d, c?.lastResult)` — FIRE AND FORGET, at the end of an assistant
         // turn, after the last tool round-trip. Not a `useEffect`, not idle-based, no debounce and no
         // cooldown; the eligibility chain inside is the only thing that declines.
         maybeRequestSuggestion(!!ev.error);
-        // W-C T8: and the one read of the engine's ai-title. Here rather than at `turn:start` because the row
-        // it reads is written mid-turn (probe (d) saw it land at row 6 of 20, before the first assistant
-        // frame) — a fetch at start would race the engine's own write. Latched, so this is a no-op from the
-        // second turn on.
-        adoptAiTitle();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
@@ -1406,9 +1416,16 @@ export function useChat(
    *  reading that fails is not a reason to withhold the turn's refresh — the payload simply carries the last
    *  numbers it had, which is what it did before either call existed. No cap here (unlike the boot gate): a
    *  control call that never answers costs this turn its refresh and nothing else — the poke is local to this
-   *  function, every other trigger still reaches the driver, and the next turn end tries again. */
-  async function statusRefreshAfterTurn(): Promise<void> {
-    await Promise.allSettled([refreshCtx({ quiet: true }), refreshUsage({ quiet: true })]);
+   *  function, every other trigger still reaches the driver, and the next turn end tries again.
+   *
+   *  `titleAdopted` IS THE THIRD FACT, and the live re-run is what added it: the FIRST turn of a conversation
+   *  still ran twice after the readings were gated, because `adoptAiTitle` lands `session_name` at that same
+   *  turn end and `aiTitle` was on the delta list — a poke of its own, ~300 ms after a local disk read, well
+   *  ahead of the second-scale control calls. It is awaited here and off that list instead (see the delta
+   *  effect), so the title reaches the payload through the turn's one run rather than through a run of its
+   *  own. Latched, so from the second turn on this promise is already settled. */
+  async function statusRefreshAfterTurn(titleAdopted: Promise<void> = Promise.resolve()): Promise<void> {
+    await Promise.allSettled([refreshCtx({ quiet: true }), refreshUsage({ quiet: true }), titleAdopted]);
     pokeStatusLine("turn-end");
   }
   /** WAVE C TASK 14 (spec D-C3): `usageWarning()`'s text, on the queue instead of on the retired bar. ONLY ON
