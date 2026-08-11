@@ -197,7 +197,9 @@ export const previewWidth = (columns: number): number => Math.max(20, Math.floor
 /** How far back a preview reads. `replayDocument` + `projectCompact` walk every row they are given, and this
  *  runs on a keystroke against a session that may hold thousands; the tail window bounds that cost at the only
  *  place it can be bounded honestly, because the `hidden` count below is computed from the projection we
- *  actually built and never claims to know about rows we never read. */
+ *  actually built and never claims to know about rows we never read. When the window DID cut, the pane says
+ *  so — `windowTruncated` turns the indicator's count into a floor rather than a flat number it knows is
+ *  short (review M2). */
 export const PREVIEW_MESSAGE_WINDOW = 200;
 
 /** The picker's `ProjectionContext`. Three of its fields are INERT here and deliberately so:
@@ -234,11 +236,17 @@ export function previewTail(items: readonly RenderItem[], limit = PREVIEW_ROWS):
   return { items: items.slice(start), hidden: items.slice(0, start).reduce((n, item) => n + itemRows(item), 0) };
 }
 
+/** `previewTail` plus whether the message window (not the row budget) had already cut the input. The two
+ *  truncations compose: `hidden` counts rows the budget dropped from a projection that may itself have been
+ *  built over only the last `PREVIEW_MESSAGE_WINDOW` messages, so with `windowTruncated` set the number is a
+ *  FLOOR and the indicator says so (`↑ 188+ more above`). */
+export interface PreviewPane extends PreviewTail { windowTruncated: boolean }
 /** A previewed session's persisted messages → the rows the pane draws, and what the row budget cut above
  *  them. `width` is the PANE's (see `previewWidth`); `limit` exists for tests and for a caller with a
  *  different budget. */
-export function previewItems(messages: readonly unknown[], opts: { width: number; id?: string; cwd?: string; limit?: number }): PreviewTail {
-  const window = messages.length > PREVIEW_MESSAGE_WINDOW ? messages.slice(-PREVIEW_MESSAGE_WINDOW) : messages;
+export function previewItems(messages: readonly unknown[], opts: { width: number; id?: string; cwd?: string; limit?: number }): PreviewPane {
+  const windowTruncated = messages.length > PREVIEW_MESSAGE_WINDOW;
+  const window = windowTruncated ? messages.slice(-PREVIEW_MESSAGE_WINDOW) : messages;
   const document = replayDocument(window, { width: opts.width, frame: false, ...(opts.id === undefined ? {} : { id: opts.id }) });
   const context = previewProjection(opts.width, opts.cwd === undefined ? {} : { cwd: opts.cwd });
   // BOTH regions, exactly as the live transcript composes them (useChat: Static + the dynamic tail). The
@@ -247,5 +255,5 @@ export function previewItems(messages: readonly unknown[], opts: { width: number
   // absent: nothing is running in a transcript read off disk, and an empty set is what keeps a dangling
   // `tool_use` from drawing a blinking row for work no process is doing.
   const projected = [...projectCompact(document, context), ...projectPending(document, context, new Set())];
-  return previewTail(projected, opts.limit ?? PREVIEW_ROWS);
+  return { ...previewTail(projected, opts.limit ?? PREVIEW_ROWS), windowTruncated };
 }

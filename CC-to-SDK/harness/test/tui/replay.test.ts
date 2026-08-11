@@ -32,6 +32,19 @@ describe("replayDocument", () => {
     expect(items[0]).toEqual({ kind: "line", id: "local:replay:session:head:line:0", line: { text: "─── resumed: fix the parser · 1 turn · 15:58 ───", dim: true } });
     expect(items.at(-1)).toEqual({ kind: "line", id: "local:replay:session:live:line:0", line: { text: "─── resumed here · live ───", dim: true } });
   });
+  // `frame: false` (wave2 T8) is for a surface that only READS a transcript — the /resume preview pane, which
+  // is not rejoining anything and must not claim to be live. Everything but the two dividers is unaffected.
+  it("drops both resume dividers under `frame: false`, and frames by default", () => {
+    const msgs = [userText("fix the parser"), asstText("done")];
+    const unframed = projectCompact(replayDocument(msgs, { frame: false }), projectionOptions);
+    expect(JSON.stringify(unframed)).not.toContain("resumed");
+    expect(unframed.some((i) => i.id.startsWith("local:replay:"))).toBe(false);
+    expect(JSON.stringify(unframed)).toContain("fix the parser");            // the transcript itself is untouched
+    expect(JSON.stringify(unframed)).toContain("done");
+    const framed = projectCompact(replayDocument(msgs, {}), projectionOptions);
+    expect(JSON.stringify(framed)).toContain("resumed here · live");         // the default is unchanged
+    expect(framed).toHaveLength(unframed.length + 2);
+  });
   it("RETAINS the tool_result body the old lossy replay dropped, and renders it through the shared tool row", () => {
     const doc = replayDocument([userText("add a flag"), READ_CALL, READ_RESULT_FLAT, asstText("added", "a-2")], replayOptions);
     expect(doc.toolEvents()).toHaveLength(1);

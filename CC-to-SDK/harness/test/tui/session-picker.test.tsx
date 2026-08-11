@@ -10,7 +10,7 @@ import { SessionPicker } from "../../src/tui/SessionPicker.js";
 import type { SessionInfo } from "../../src/tui/useChat.js";
 import {
   filterSessions, isPreviewMessage, NARROWED_SCOPE, NO_CONVERSATIONS, NO_CONVERSATIONS_IN_PROJECT,
-  noConversations, noSessionsMatch, PREVIEW_ROWS, previewItems, previewMessageCount,
+  noConversations, noSessionsMatch, PREVIEW_MESSAGE_WINDOW, PREVIEW_ROWS, previewItems, previewMessageCount,
   previewMeta, previewTail, previewWidth, RENAME_FALLBACK, renamePlaceholder, RESUME_CANCELLED, resumeFooter,
   resumeHeader, resumeVisibleRows, sessionMeta, sessionTitle, widenHints,
 } from "../../src/tui/sessionPickerModel.js";
@@ -21,6 +21,9 @@ import { GROUP_HINT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.j
 const frame = (f: () => string | undefined) => f() ?? "";
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const flat = (s: string) => plain(s).replace(/\s*\n\s*/g, " ");
+/** A projected pane read back as plain text — a line is itself, a gutter block is its body. */
+const text = (r: { items: readonly RenderItem[] }) =>
+  r.items.map((i) => (i.kind === "line" ? i.line.text : i.body.map((b) => b.text).join("\n"))).join("\n");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -208,9 +211,9 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
     const disagree = [userPrompt("plain ask"), imageOnly(), metaText(), assistantText("reply")];
     expect(previewMessageCount(disagree)).toBe(3);
     expect(previewMessageCount(disagree)).toBe(disagree.filter(isPreviewMessage).length);
-    const text = (r: { items: readonly RenderItem[] }) => r.items.map((i) => (i.kind === "line" ? i.line.text : i.body.map((b) => b.text).join("\n"))).join("\n");
-    expect(text(previewItems(disagree, { width: 60 }))).toContain("plain ask");
-    expect(text(previewItems(disagree, { width: 60 }))).toContain("reply");
+    const drawn = text(previewItems(disagree, { width: 60 }));
+    expect(drawn).toContain("plain ask");
+    expect(drawn).toContain("reply");
     // The pane is a SUPERSET of the count: a tool turn contributes nothing to `N messages` and still draws.
     // The pair must be MATCHED — an unanswered call is an open one, and the compact projection leaves those
     // to the live pending region, which a static pane has no business drawing.
@@ -226,6 +229,31 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
     const pane = previewItems(rows, { width: 60 });
     expect(pane.items.length).toBeLessThanOrEqual(PREVIEW_ROWS);
     expect(pane.hidden).toBeGreaterThan(0);
+  });
+
+  // THE SECOND TRUNCATION (review M2). `previewItems` windows its input before it projects, so on a long
+  // session `hidden` counts rows the BUDGET cut out of a projection the WINDOW had already shortened — a
+  // number the pane has evidence is too small. The window is what bounds a keystroke-time projection over a
+  // session holding thousands of rows, so it stays; what changes is that the pane stops printing the short
+  // number flat and prints it as a floor.
+  // The fixture's length is a LITERAL, deliberately: sized off `PREVIEW_MESSAGE_WINDOW` it would grow with any
+  // raise of the cap and stay green through the very edit it exists to catch.
+  it("windows the input at PREVIEW_MESSAGE_WINDOW and marks the cut count as a floor when it did", () => {
+    const long = Array.from({ length: 400 }, (_, i) => assistantText(`say ${i}`));
+    expect(long.length).toBeGreaterThan(PREVIEW_MESSAGE_WINDOW);
+    const pane = previewItems(long, { width: 60 });
+    expect(pane.windowTruncated).toBe(true);
+    // Counted over the WINDOW, not the transcript: 200 read, PREVIEW_ROWS drawn, the rest reported.
+    expect(pane.hidden).toBe(PREVIEW_MESSAGE_WINDOW - PREVIEW_ROWS);
+    expect(pane.hidden).toBeLessThan(long.length - PREVIEW_ROWS);              // …which is short of the truth
+    expect(text(pane)).toContain(`say ${long.length - 1}`);                    // still anchored on the real last row
+    expect(text(pane)).not.toContain(`say ${long.length - PREVIEW_MESSAGE_WINDOW - 1}`);   // …and blind before the window
+    expect(moreAbove(pane.hidden, pane.windowTruncated)).toBe(`↑ ${PREVIEW_MESSAGE_WINDOW - PREVIEW_ROWS}+ more above`);
+    // The `+` is earned, not decorative: a transcript the window did not touch reports a flat, exact count.
+    const short = previewItems(Array.from({ length: 30 }, (_, i) => assistantText(`say ${i}`)), { width: 60 });
+    expect(short.windowTruncated).toBe(false);
+    expect(moreAbove(short.hidden, short.windowTruncated)).toBe(`↑ ${30 - PREVIEW_ROWS} more above`);
+    expect(moreAbove(5)).toBe("↑ 5 more above");                               // every other caller is unchanged
   });
 });
 
@@ -400,6 +428,13 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(f).toContain("❯ /cost");                                       // the echo, as the transcript draws it
     expect(f).toContain("Total cost: $0.42");                             // its stdout, in the `⎿` gutter
     expect(f).toContain("⎿");
+    // …and the projection is sized to the PANE, not the terminal. `previewWidth` is pinned pure above, but
+    // only this asserts the component THREADS it: the frame spends one column of `paddingX` on each side of
+    // a 97-column band, so at columns={100} the band's line is exactly 98 wide. Handing the projection the
+    // raw terminal width makes it 99 — one column wider than the box it sits in, which is the wrap-inside-
+    // the-pane failure this whole design exists to prevent (review I1).
+    const band = plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("what does this do?"))!;
+    expect(band.length).toBe(98);
   });
 
   it("draws the tool turn in its projected form, not as raw input JSON", async () => {
@@ -426,6 +461,18 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(f).toContain(moreAbove(30 - PREVIEW_ROWS));                    // the rows CUT from this projection
     expect(f).not.toContain(`reply number ${29 - PREVIEW_ROWS}`);         // …which are the oldest ones
     expect(f).toContain(`reply number ${30 - PREVIEW_ROWS}`);             // the tail starts exactly there
+    expect(f).not.toContain(`${30 - PREVIEW_ROWS}+ more above`);          // nothing was windowed, so no floor mark
+  });
+
+  it("spells the cut count as a floor once the message window has already shortened the transcript", async () => {
+    const long = Array.from({ length: 400 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `reply number ${i}` }] } }));
+    const r = mount({ loadMessages: async () => long });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes(`reply number ${long.length - 1}`));
+    // The number is what the pane actually projected — the window's 200 rows minus the budget's 12 — and the
+    // `+` is the pane admitting it never read the 200 rows before that.
+    expect(flat(frame(r.lastFrame))).toContain(moreAbove(PREVIEW_MESSAGE_WINDOW - PREVIEW_ROWS, true));
   });
 
   it("a preview that cannot be read is an empty pane, not a crash", async () => {

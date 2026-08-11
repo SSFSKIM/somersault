@@ -237,8 +237,9 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
             <Box flexDirection="column">
               {pane.items.length === 0 ? <Text dimColor>{PREVIEW_EMPTY}</Text> : null}
               {/* The cut is at the TOP — the pane is tail-anchored — so the counted indicator sits above the
-                  rows and points the way the missing ones went (`moreAbove`, the package's one spelling). */}
-              {pane.hidden > 0 ? <Text dimColor>{moreAbove(pane.hidden)}</Text> : null}
+                  rows and points the way the missing ones went (`moreAbove`, the package's one spelling).
+                  It reads `N+` when the message window cut the input first: the row count is then a floor. */}
+              {pane.hidden > 0 ? <Text dimColor>{moreAbove(pane.hidden, pane.windowTruncated)}</Text> : null}
               {pane.items.map((item) => <RenderItemView key={item.id} item={item} />)}
               {/* `dGa` L476179, under the same top rule upstream puts it under. */}
               {target ? <Box marginTop={1}><Text>{previewMeta(target, preview.count)}</Text></Box> : null}
