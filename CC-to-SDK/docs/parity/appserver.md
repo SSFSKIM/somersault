@@ -33,8 +33,12 @@
 
 ## Shipped, per the code (post-merge 2026-08-11)
 
-**28 methods** — `initialize` special-cased in `dispatch()`, the rest in `server.ts`'s handlers table,
-every one pinned in `appserver/schema/index.ts`'s `methodSchemas`:
+**The method registry is the count, not this prose.** `initialize` is special-cased in `dispatch()`;
+every other method lives in `server.ts`'s handlers table and is pinned in
+`appserver/schema/index.ts`'s `methodSchemas` — and `scripts/drift-check.mjs` prints that registry's
+size on every run (`every row status matches the live surface (N registered methods)`). A hand-carried
+total is wrong the day the next wave lands, which is the same class of drift the staleness pass above
+exists to catch, so no number is written here. The names, in registration order:
 `initialize`, `server/status`, `thread/start`, `thread/resume`, `thread/list` (live registry ∪ session
 store, deduped on `sessionId`, live wins, cursor-paged), `thread/fork`, `thread/name/set`,
 `thread/tag/set`, `thread/delete` (busy-guarded), `thread/close`, `thread/reinitialize` (busy-gated),
@@ -43,7 +47,11 @@ limit clamped to 500 + `warning`), `thread/compact/start` (compaction is a turn 
 spine), `turn/start`, `turn/interrupt`, `decision/list`, `decision/respond`, `thread/model/set`,
 `thread/permissionMode/set` (`auto` self-heals the model first), `thread/thinking/set`,
 `thread/settings/apply`, `thread/capabilities/read`, `thread/contextUsage/read`, `thread/usage/read`,
-`thread/init/read`, `account/read`.
+`thread/init/read`, `account/read`, and M2b Wave 3's MCP quintet — `mcpServer/status/list` (un-chained
+read), `mcpServer/reconnect`, `mcpServer/toggle`, `mcpServer/set` (all three chain-scoped, and each
+pings `thread/capabilities/changed` on success since `mcpServers` is one of the four catalogs
+`thread/capabilities/read` replies), `mcpServer/permissionModeOverride/set` (chain-scoped, rules-layer
+only per probe 49 — no capabilities ping).
 
 **24 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized`, `warning`; server-scoped (via `initialize{watchThreads:true}`)
@@ -208,8 +216,13 @@ calls the SDK's own `Query.close()`.
 ## Totals
 
 34 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **79 walked tokens**,
-all rowed above. Shipped: **44 rows** (15 host + 8 ControlFrame + 7 wrappers + 14 Query), collapsing
-across duplicate seams to the **28 distinct protocol methods** listed at the top. `planned(M2b)`:
-29 rows (rewind ×3, MCP ×5-methods, tasks ×3-methods across seams, the 9 gap-6 host ops).
-`planned(M3)`: 1 (`stop`). `probe-gated`: 4 (`readFile`, `reloadPlugins`, `reloadSkills`,
-`streamInput`). `N/A`: 1 (`seedReadState`).
+all rowed above.
+
+**Per-status row tallies are recomputed once, at the M2b close-out sweep (Task 9) — not carried here
+between waves.** Every landing wave flips a handful of rows, so a shipped/planned split written down
+mid-milestone is stale within a day (the M2a lesson, restated). Between sweeps the authority is the
+drift gate: `node scripts/drift-check.mjs` prints the live registry count and fails when any row's
+status disagrees with the real surface, so the per-row `status` column above is the truth and the gate
+is what proves it. The three buckets no M2b wave touches are stable: `planned(M3)` 1 (`stop`),
+`probe-gated` 4 (`readFile`, `reloadPlugins`, `reloadSkills`, `streamInput`), `N/A` 1
+(`seedReadState`).
