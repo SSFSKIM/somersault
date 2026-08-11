@@ -24,14 +24,16 @@ const AGENTS = [{ name: "reviewer", description: "reviews" }];
 
 /** A stub engine factory. `openSession` is called once by start() and once per swap, so it MINTS A NEW
  *  engine per call — and only the first carries a session id, because a freshly-opened engine reports
- *  none until its first turn's init frame (the exact state the `cleared` announce has to describe). */
-function engineFactory(firstSessionId?: string) {
+ *  none until its first turn's init frame (the exact state the `cleared` announce has to describe).
+ *  `submitOutcome` stands in for the real `Session.submit`'s resolved `TurnOutcome` (§1a-f); a function
+ *  that THROWS drives the failed-turn path. Defaults to the bare `{}` every pre-§1a-f case here used. */
+function engineFactory(firstSessionId?: string, submitOutcome: () => unknown = () => ({})) {
   const submits: { prompt: string; opts?: { uuid?: string } }[] = [];
   const opened: Record<string, unknown>[] = [];
   const engines: { sessionId?: string }[] = [];
   const make = (sessionId?: string) => ({
     sessionId,
-    submit: async (prompt: string, _on: (m: unknown) => void, opts?: { uuid?: string }) => { submits.push({ prompt, opts }); return {}; },
+    submit: async (prompt: string, _on: (m: unknown) => void, opts?: { uuid?: string }) => { submits.push({ prompt, opts }); return submitOutcome(); },
     dispose: async () => {},
     interrupt: async () => {},
     onFrame: () => () => {},
@@ -50,10 +52,10 @@ function engineFactory(firstSessionId?: string) {
   };
 }
 
-async function startHost(opts: { firstSessionId?: string } & Partial<SessionHostOpts> = {}) {
-  const { firstSessionId, ...over } = opts;
+async function startHost(opts: { firstSessionId?: string; submitOutcome?: () => unknown } & Partial<SessionHostOpts> = {}) {
+  const { firstSessionId, submitOutcome, ...over } = opts;
   const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
-  const f = engineFactory(firstSessionId);
+  const f = engineFactory(firstSessionId, submitOutcome);
   const host = new SessionHost(
     { short: "3a1b2c3d", name: "m3wire", cwd: "/tmp", kind: "interactive", detached: true,
       config: { model: "claude-test-9" }, env, ...over } as SessionHostOpts,
@@ -297,6 +299,71 @@ describe("§1a-e — `decision_settled` carries the answer the `answer` op recei
     expect(await conn.ask({ op: "answer", toolUseID: "tu-2", by: "tester", decision: "allow_once" })).toMatchObject({ ok: true });
     const settled = conn.events("decision_settled");
     expect(settled[0].answer).toEqual({ kind: "allow_once" });
+    conn.close();
+  });
+});
+
+// ─── §1a-f: the turn-end event carries the turn's result ──────────────────────────────────────────────
+// P106 measured 88 `{kind:"message"}` frames on a following client and ZERO carrying `type:"result"` —
+// Session's read loop resolves a result frame into the submit waiter and never hands it to `onMessage`,
+// which is the only feed the host's message emission rides. So the turn-end event is the ONLY route a
+// result has to a follower, and these cases are what make it one. Asserted over the wire, on a socket
+// client that never touched the host object: the result must survive JSON, not merely exist in-process.
+const turnEnds = (conn: { frames: Record<string, any>[] }) =>
+  conn.frames.filter((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+
+describe("§1a-f — a following client reads the turn result off `turn` end", () => {
+  it("carries the result the engine resolved, structure intact", async () => {
+    const { path } = await startHost({ submitOutcome: () => ({ result: { text: "done", n: 7 } }) });
+    const conn = await followed(path);
+    const rep = await conn.ask({ op: "prompt", text: "hello" });
+    expect(rep).toMatchObject({ ok: true, accepted: true });
+    const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+    expect(end.seq).toBe(rep.seq);                      // the SAME turn the prompt reply named
+    expect(end.result).toEqual({ text: "done", n: 7 });
+    expect(end.error).toBeUndefined();
+    conn.close();
+  });
+
+  it("a plain string result reaches the wire as itself", async () => {
+    const { path } = await startHost({ submitOutcome: () => ({ result: "the answer" }) });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello" })).toMatchObject({ ok: true });
+    const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+    expect(end.result).toBe("the answer");
+    conn.close();
+  });
+
+  it("`structuredOutput` does NOT ride the wire — the field is additive, and no consumer asked for it", async () => {
+    const { path } = await startHost({ submitOutcome: () => ({ result: "r", structuredOutput: { shape: "json" } }) });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello" })).toMatchObject({ ok: true });
+    const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+    expect(end.result).toBe("r");
+    expect(Object.keys(end)).not.toContain("structuredOutput");
+    conn.close();
+  });
+
+  it("a resultless turn keeps the pre-M3 bare frame — the key is absent, not present-and-null", async () => {
+    const { path } = await startHost();                 // the default stub resolves `{}`
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello" })).toMatchObject({ ok: true });
+    const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+    expect(Object.keys(end)).not.toContain("result");
+    conn.close();
+  });
+
+  it("a FAILED turn ends with its error and NO result — a turn that threw produced none to carry", async () => {
+    const { path } = await startHost({ submitOutcome: () => { throw new Error("engine exploded"); } });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello" })).toMatchObject({ ok: true });
+    const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+    expect(end.error).toBe("engine exploded");
+    expect(Object.keys(end)).not.toContain("result");
+    // …and exactly ONE end frame: the catch's emission is terminal (it rethrows), so a failed turn must
+    // not also produce the success-path end that would blank the error a follower just read.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(turnEnds(conn)).toHaveLength(1);
     conn.close();
   });
 });

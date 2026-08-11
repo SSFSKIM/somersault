@@ -42,7 +42,13 @@ export type HostEvent =
   // id, and a follower whose cached id has not flipped yet would read the OLD file — still holding every
   // discarded turn — and, with no anchor to cut at, render all of it back. It never travels with `prevUuid`.
   | { kind: "rewound"; sessionId?: string; prevUuid?: string; cleared?: true }
-  | { kind: "turn"; phase: "start" | "end"; seq?: number; error?: string; truncated?: boolean };
+  // `result` (§1a-f) is the turn's own result, and turn-end is the ONLY frame that can carry it: Session's
+  // read loop resolves a `result` frame into the submit waiter and never hands it to `onMessage`
+  // (session.ts:313-325), which is the sole feed the `message` events above ride — P106 measured 88 message
+  // frames on a following client and zero carrying one. Optional because a pre-M3 host emits none, because a
+  // turn can legitimately end without one (an errored result subtype carries no text), and because it never
+  // travels with `error`: a turn that threw produced no result to send.
+  | { kind: "turn"; phase: "start" | "end"; seq?: number; result?: unknown; error?: string; truncated?: boolean };
 
 export type HostFrame = ({ t: "event" } & HostEvent) | ({ t?: undefined } & Record<string, unknown>);
 

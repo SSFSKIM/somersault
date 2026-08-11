@@ -76,14 +76,17 @@ describe("SessionHost.control", () => {
     const seen: HostEvent[] = [];
     host.follow((e) => seen.push(e));
     await host.runTask("x");
+    // `result` on the end frames is M3 §1a-f: this fixture's submit resolves `{result:{}}`, and the turn's
+    // result now ships on turn-end (the only frame that can carry it). These stay EXACT-equality checks —
+    // the point of this case is the full frame shape, so a future field has to be admitted here on purpose.
     expect(seen.filter((e) => e.kind === "turn")).toEqual([
       { kind: "turn", phase: "start", seq: 1 },
-      { kind: "turn", phase: "end", seq: 1 },
+      { kind: "turn", phase: "end", seq: 1, result: {} },
     ]);
     await host.runTask("y");
     const turns = seen.filter((e) => e.kind === "turn");
     expect(turns[turns.length - 2]).toEqual({ kind: "turn", phase: "start", seq: 2 });
-    expect(turns[turns.length - 1]).toEqual({ kind: "turn", phase: "end", seq: 2 });
+    expect(turns[turns.length - 1]).toEqual({ kind: "turn", phase: "end", seq: 2, result: {} });
     await host.stop();
   });
 

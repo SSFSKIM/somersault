@@ -42,6 +42,9 @@ export interface HostSession {
   // `opts` is Session.submit's own third parameter, surfaced here by M3 §1a-b so the `prompt` op's uuid can
   // reach it. OPTIONAL, and an implementation may declare fewer parameters than this — every existing
   // two-parameter HostSession fake still satisfies it.
+  // Stays `unknown` even though §1a-f now READS the resolved value as `{result?}`: the real Session resolves
+  // a `TurnOutcome`, but a dozen HostSession fakes declare `Promise<unknown>` outright, and narrowing here
+  // would reject every one of them. runTask asserts the shape at the single point it reads it.
   submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<unknown>;
   readonly sessionId: string | undefined;
   dispose(): Promise<void>;
@@ -332,11 +335,17 @@ export class SessionHost {
     // A bg worker's success IS the terminal event — `done`. An interactive host stays LIVE across
     // turns instead: `working`, the same state start() wrote, so it is ready for the next runTask()
     // rather than frozen at a state that reads like the whole session is over.
+    // The turn's own result (M3 §1a-f). Captured here because the turn-end emission below is the ONLY route
+    // it has to a follower: Session's read loop resolves a `result` frame into the submit waiter and never
+    // forwards it to `onMessage` (session.ts:313-325), which is the sole feed the `message` events ride —
+    // P106 measured 88 message frames on a following client, zero of them carrying a result. Before this it
+    // was simply discarded, one process away from a fleet `turn/completed` that would have had nothing to say.
+    let outcome: unknown;
     try {
       // The opts object exists ONLY when a uuid was actually given (M3 §1a-b): `{uuid: undefined}` is not
       // the same offer as no opts at all to a session that reads the key, and this host must never invent
       // an id — an unstamped prompt is a caller declining to stitch, not a caller that forgot.
-      await this.session!.submit(prompt, onMessage, uuid ? { uuid } : undefined);
+      outcome = await this.session!.submit(prompt, onMessage, uuid ? { uuid } : undefined);
       // Turn-end belt: an approved plan that settled but never saw the CLI's own post-approval status
       // frame (e.g. the turn ended before the CLI emitted one) must still upgrade — never leave an
       // approved upgrade silently unapplied (spec §mode-sync ordering).
@@ -347,6 +356,9 @@ export class SessionHost {
       // A failed/interrupted turn must not leave a stale approved-upgrade that fires at the NEXT turn's
       // status frame (plan-review M2) — the plan this upgrade belonged to did not survive the turn.
       this.planUpgradeMode = undefined;
+      // NO `result` on this end (§1a-f, deliberate): submit threw, so the turn produced no outcome to
+      // carry — `error` IS this turn's result. Do not "fix" it by reaching for a partial or a last-message
+      // stand-in; a fleet `turn/completed` would then report a fabricated payload for a turn that failed.
       this.state = "error"; this.emit({ kind: "turn", phase: "end", seq, error: (e as Error)?.message }); throw e;
     }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
@@ -354,7 +366,12 @@ export class SessionHost {
     // liveness. An interactive host stays live across turns — finalize is first-terminal-wins, so
     // finalizing on turn one would freeze it at `done` while it works on turn two — it waits for stop().
     finally { this.turnInFlight = false; if (this.opts.kind === "bg") this.syncRoster(); this.armIdle(); }
-    this.emit({ kind: "turn", phase: "end", seq });
+    // Spread, not `result: outcome?.result`: a turn whose engine resolved no result must keep emitting the
+    // pre-M3 frame byte for byte, so an in-process follower cannot tell an absent result from a null one.
+    // (Over the socket JSON.stringify would drop the undefined key anyway; in-process followers get the
+    // object itself, and this host serves both.)
+    const result = (outcome as { result?: unknown } | undefined)?.result;
+    this.emit({ kind: "turn", phase: "end", seq, ...(result === undefined ? {} : { result }) });
   }
 
   /** Dispatch one A2b control op onto the underlying session. Every member is OPTIONAL on HostSession,
