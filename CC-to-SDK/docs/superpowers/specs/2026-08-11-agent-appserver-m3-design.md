@@ -318,8 +318,11 @@ Bump `@anthropic-ai/claude-agent-sdk` to `^0.3.227`, run the drift ritual (SDK-d
 scorecard sweep). Adopt `resumeDropsTurn` in the truncating-rewind seam — and the value is already
 in hand: the app-server rewind's `uuid` param names the prompt whose turn the truncation discards
 (`prevUuid` is the resume anchor), so the rewind factory widens to pass `uuid` as
-`resumeDropsTurn` and the CLI validates the fork point — refusals surface as the rewind error they
-are. The other four new properties: recorded in the drift notes, no action.
+`resumeDropsTurn` and the CLI validates the fork point. **A refusal is deferred, not synchronous**
+(Task 1 finding): the CLI validates at the replacement engine's fork time, so `thread/rewind` has
+already replied ok when the refusal arrives — as a deterministic result frame whose message starts
+`Resume rejected by --resume-drops-turn:` on the NEXT turn. No auto-recovery (D-M3-13). The other
+four new properties: recorded in the drift notes, no action.
 
 ## Wire surface delta
 
@@ -426,6 +429,16 @@ answered by the probe/implementation contact, none architectural.
 - **D-M3-12 — fleet `thread/read` is disk-only** (review fold-in): symmetric with inProcess (live
   half via subscribe replay). *Rejected:* disk + live-buffer merge — double-counts rows under an
   absolute-offset cursor once the turn persists.
+- **D-M3-13 — no auto-recovery on a `resumeDropsTurn` refusal** (Task 1 adjudication,
+  2026-08-11): the refusal fires only when the transcript's trailing entries do NOT all belong to
+  the declared dropped turn — exactly the case where the pre-guard silent truncation would have
+  destroyed foreign entries. The guard refusing IS the protection working; anchors-driven clients
+  (the only flow our wire produces — anchors are prompt-uuid-only, `sessions/rows.ts`) never hit
+  it. The client-visible shape is a deterministic next-turn failure with the
+  `Resume rejected by --resume-drops-turn:` message prefix. *Rejected:* automatic unguarded
+  re-swap — reintroduces the unvalidated destruction the guard exists to catch; a warning-frame
+  detector on the message prefix — string-matching a frame to soften an edge only misbehaving
+  clients reach.
 
 ## Surprises & Discoveries
 
