@@ -1,0 +1,40 @@
+❯ /context
+ctx 2% · 22.5k / 1m · ok
+❯ What marker did I ask you to remember? Reply with just the marker.
+⏺ ALPHA
+✻ Cooked for 2s
+❯ /cost
+Total cost:            $0.0665
+Total duration (API):  2s
+Total duration (wall): 40s
+Total code changes:    0 lines added, 0 lines removed
+Usage by model:
+       claude-opus-5:  2 input, 7 output, 16.7k cache read, 5.8k cache write ($0.0665)
+❯ /context
+ctx 2% · 22.5k / 1m · ok
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     xhigh
+  context    2% used
+  cwd        /private/tmp/s2qa5-MDlPev/proj-ccx2-Shk3EX
+  session    833636c8
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+

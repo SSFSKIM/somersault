@@ -1,0 +1,40 @@
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ /model
+❯ /model
+❯ /model
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     high
+  cwd        /private/tmp/s2qa4-root/proj-ccx
+❯ /effort
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Set effort level
+ How much reasoning effort Claude spends on each turn. This session only.
+
+ ● High effort ←/→ to adjust
+
+ ←/→ to adjust · Enter to confirm · Esc to cancel
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

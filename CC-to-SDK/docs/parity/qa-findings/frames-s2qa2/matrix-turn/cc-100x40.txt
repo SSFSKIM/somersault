@@ -1,0 +1,40 @@
+╭─── Claude Code v2.1.226 ─────────────────────────────────────────────────────────────────────────╮
+│                                     │ Tips for getting started                                   │
+│            Welcome back!            │ Ask Claude to create a new app or clone a repository       │
+│                                     │ ────────────────────────────────────────────────────────── │
+│               ▐▛███▜▌               │ What's new                                                 │
+│              ▝▜█████▛▘              │ Bug fixes and reliability improvements                     │
+│                ▘▘ ▝▝                │ Added gateway spend-limit support to Claude Code's usage … │
+│                                     │ Added a workspace trust prompt to `claude agents` for unt… │
+│        Sonnet 5 · Claude API        │ /release-notes for more                                    │
+│   /private/tmp/s2qa2-root/proj-cc   │                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Fable 5 is now a standard part of your Max plan
+ ▎ You can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can
+ ▎ continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 5. Run /model
+ ▎ and select Fable to use it. Learn more:
+ ▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access
+
+❯ Write exactly one paragraph of about 120 words about the history of the typewriter. No lists, no
+  headings, plain prose only.
+
+⏺ The typewriter's history stretches back to the late eighteenth century, with early patents by
+  inventors like Henry Mill in 1714, though practical machines did not emerge until the 1800s. The
+  Sholes and Glidden typewriter, developed by Christopher Latham Sholes and introduced commercially
+  in 1874, became the first widely produced model and established the QWERTY keyboard layout still
+  used today. Throughout the late nineteenth and early twentieth centuries, typewriters transformed
+  offices, journalism, and literature, enabling faster written communication and opening clerical
+  work to women. Manufacturers such as Remington, Underwood, and Royal competed fiercely, refining
+  mechanisms like shift keys and ribbon systems. Electric typewriters emerged mid-century, notably
+  IBM's Selectric in 1961, before word processors and personal computers gradually rendered the
+  typewriter obsolete by the late twentieth century, though it remains a cultural icon.
+
+✻ Churned for 4s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+

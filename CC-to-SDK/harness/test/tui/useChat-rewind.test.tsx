@@ -9,16 +9,19 @@ import { Text } from "ink";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import { fakeRemote, type FakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
-import { replayLines } from "../../src/tui/replay.js";
+import { replayDocument } from "../../src/tui/replay.js";
+import { projectCompact, type RenderItem } from "../../src/tui/toolRenderer.js";
 
 const frame = (f: () => string | undefined) => (f() ?? "").replace(/\n/g, " ");
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
-function allText(c: { state: { lines: { text: string }[]; streaming: { text: string }[] } }): string {
-  return [...c.state.lines, ...c.state.streaming].map((l) => l.text).join("|");
+const itemLines = (item: RenderItem): string[] => (item.kind === "line" ? [item.line.text] : item.body.map((l) => l.text));
+function allText(c: { state: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: { text: string }[] } }): string {
+  return [...[...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines), ...c.state.streaming.map((l) => l.text)].join("|");
 }
+const projectionOptions = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
 
 // The fake-session scaffold, extended onto the RewindOps surface (fakeRemote() alone satisfies ChatSession &
 // DecisionFeed & BgTasks & SessionEvents but has no rewind methods, so hasRewind() is false on it as-is —
@@ -61,14 +64,17 @@ describe("useChat: rewind flow", () => {
     await waitFor(() => frame(lastFrame).includes("picker:true:1"));
   });
 
-  it("2. openRewind with zero anchors notices 'nothing to rewind to' and stays closed", async () => {
+  // F6 T10: the "nothing to rewind to" NOTICE is gone. An empty anchor list still opens the picker, because
+  // upstream's empty state ("Nothing to rewind to yet.") lives inside the Rewind dialog and is reachable no
+  // other way — the picker owns it now, and rewind-picker.test.tsx pins the literal.
+  it("2. openRewind with zero anchors OPENS the picker (its own empty state), rather than noticing", async () => {
     const session = fakeRewindSession({ rewindAnchors: async () => [] });
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
     const { lastFrame } = render(<RewindHost makeSession={() => session} api={api} />);
     await new Promise((r) => setTimeout(r, 20));
     api.openRewind!();
-    await waitFor(() => frame(lastFrame).includes("nothing to rewind to"));
-    expect(frame(lastFrame)).toContain("picker:false:0");
+    await waitFor(() => frame(lastFrame).includes("picker:true:0"));
+    expect(frame(lastFrame)).not.toContain("nothing to rewind to");
   });
 
   it("3. openRewind while busy notices and does not fetch", async () => {
@@ -170,7 +176,9 @@ describe("useChat: rewind flow", () => {
     expect(frame(lastFrame)).toContain("prefill:-");
   });
 
-  it("7. confirmRewind rejection surfaces '✗ rewind failed: busy', closes the picker, and does not crash", async () => {
+  // F6 T10: the failure copy is upstream's (`ce`, bundle L487142-154) — a heading chosen by the scope that
+  // was asked for, then the error on its own line — in place of the invented `✗ rewind failed: <e>`.
+  it("7. confirmRewind rejection surfaces upstream's failure copy for the chosen scope, closes the picker, and does not crash", async () => {
     const session = fakeRewindSession({ rewindAnchors: async () => [ANCHOR], rewind: async () => { throw new Error("busy"); } });
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
     const { lastFrame } = render(<RewindHost makeSession={() => session} api={api} />);
@@ -178,15 +186,39 @@ describe("useChat: rewind flow", () => {
     api.openRewind!();
     await waitFor(() => frame(lastFrame).includes("picker:true:1"));
     api.confirmRewind!(ANCHOR, "both");
-    await waitFor(() => frame(lastFrame).includes("✗ rewind failed: busy"));
+    await waitFor(() => frame(lastFrame).includes("Failed to restore the conversation and code:"));
+    expect(frame(lastFrame)).toContain("busy");
     expect(frame(lastFrame)).toContain("picker:false:0");
   });
 
-  it("8. replayLines({label}) overrides the header prefix (default 'resumed')", () => {
+  it("8. replayDocument({label}) overrides the header prefix (default 'resumed')", () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "fix it" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
-    const out = replayLines(msgs, { label: "⏪ rewound" });
-    expect(out[0].text.startsWith("─── ⏪ rewound:")).toBe(true);
-    expect(out.at(-1)!.text).toBe("─── ⏪ rewound here · live ───");
+    const out = projectCompact(replayDocument(msgs, { label: "⏪ rewound" }), projectionOptions);
+    expect((out[0] as any).line.text.startsWith("─── ⏪ rewound:")).toBe(true);
+    expect((out.at(-1) as any).line.text).toBe("─── ⏪ rewound here · live ───");
+  });
+
+  it("11. a completed rewind rebuilds the document from the RESTORED persisted messages only, and the composer stays usable", async () => {
+    const msgs = [{ type: "user", uuid: "u-keep", message: { content: [{ type: "text", text: "the surviving prompt" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
+    const session = fakeRewindSession({ rewind: async () => {} });
+    const deps = { getSessionMessages: async () => msgs };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    const submitted: string[] = [];
+    function H() {
+      const c = useChat(() => ({ ...session, submit: async (p: string) => { submitted.push(p); return { result: "ok" }; } } as any), {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>epoch:{c.state.staticEpoch} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    (api as any).run!("this prompt predates the rewind");
+    await waitFor(() => frame(lastFrame).includes("this prompt predates the rewind"));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("the surviving prompt"));
+    expect(frame(lastFrame)).toContain("epoch:1");                          // a terminal boundary, fresh <Static>
+    expect(frame(lastFrame)).not.toContain("this prompt predates the rewind");   // derived ONLY from restored rows
+    (api as any).run!("after rewind");
+    await waitFor(() => submitted.includes("after rewind"));
   });
 
   it("9. a `rewound` broadcast from ANOTHER client rebuilds this follower's transcript (no prefill — not our prompt)", async () => {
@@ -212,11 +244,38 @@ describe("useChat: rewind flow", () => {
     expect(frame(lastFrame)).toContain("prefill:-");     // a follower must NOT inherit the other user's prompt
   });
 
+  // W-S8 review, Important 2. The FOLLOWER is the `cleared` wire field's only real consumer — the confirming
+  // client derives the flag locally (confirmRewind), so nothing but this arm reads it off an event. Test 15
+  // above therefore does not cover it: dropping `cleared: ev.cleared` from the follower arm left the whole
+  // tui suite green. Same shape as test 9, with the NON-empty reader that is the entire hazard — a `[]`
+  // reader renders empty either way, which is the trap this wave keeps hitting.
+  it("16. a `cleared` rewound broadcast empties THIS follower's transcript, off a NON-empty old file", async () => {
+    const readerRows = [
+      { type: "user", uuid: "u-a", message: { content: [{ type: "text", text: "the discarded prompt" }] }, timestamp: "2026-08-08T08:00:00.000Z" },
+      { type: "assistant", uuid: "a-a", message: { content: [{ type: "text", text: "the discarded reply" }] } },
+    ];
+    let reads = 0;
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => { reads++; return readerRows; } };
+    function H() { const c = useChat(() => session, {}, deps); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "rewound", sessionId: "s1", cleared: true } as any);
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    // Without the flag reaching rebuildAfterRewind, the old file is read and every discarded turn comes back
+    // (`prevUuid` is undefined here, so there is no anchor to cut at either).
+    expect(frame(lastFrame)).not.toContain("the discarded prompt");
+    expect(frame(lastFrame)).not.toContain("the discarded reply");
+    expect(reads).toBe(0);                                         // the old file is a trap, not a source
+  });
+
   it("10. the composer is held behind a modal while a rewind runs, so a prompt typed mid-rewind cannot be lost", async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => { release = r; });
     const session = fakeRewindSession({ rewind: async () => { await held; } });
-    const deps = { getSessionMessages: async () => [] as any[] };
+    // The retry override keeps this test fast: an empty fetch otherwise polls the full ~3s window the
+    // live-feedback fix added for the post-rewind disk-flush race.
+    const deps = { getSessionMessages: async () => [] as any[], rewindReplayRetry: { attempts: 1, delayMs: 0 } };
     const api: Parameters<typeof RewindHost>[0]["api"] = {};
     function H() {
       const c = useChat(() => session, {}, deps);
@@ -230,5 +289,213 @@ describe("useChat: rewind flow", () => {
     await waitFor(() => frame(lastFrame).includes("rewinding:true"));
     release();
     await waitFor(() => frame(lastFrame).includes("rewinding:false"));
+  });
+
+  // Live-feedback fix (2026-08-06): the post-rewind replay RACES the engine swap — the new session file's
+  // first flush lags the rewind reply, and a single immediate read landed in the bare-divider arm ("rewind
+  // just printed ⏪ rewound"). The rebuild now polls, re-reading session.sessionId each attempt.
+  it("11. an empty first read is retried — the replay lands once the persisted file appears", async () => {
+    const msgs = [
+      { type: "user", uuid: "u-fix3", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "assistant", message: { content: [{ type: "text", text: "replayed after the flush" }] } },
+    ];
+    let reads = 0;
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => (++reads < 3 ? [] : msgs), rewindReplayRetry: { attempts: 5, delayMs: 5 } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("replayed after the flush"));
+    expect(reads).toBeGreaterThanOrEqual(3);                      // the first empty reads did not take the divider arm
+  });
+  it("12. the rebuild wipes the real screen+scrollback (clearScreen), not only Ink's Static", async () => {
+    const msgs = [
+      { type: "user", uuid: "u-w", message: { content: [{ type: "text", text: "wipe check" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "assistant", message: { content: [{ type: "text", text: "fresh view" }] } },
+    ];
+    let wipes = 0;
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => msgs, clearScreen: () => { wipes++; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("fresh view"));
+    expect(wipes).toBe(1);                                        // the 2J/3J/H wipe — rewind's alone since W-R t7 gave /clear the viewport-only one
+  });
+
+  // EP-S1 (Wave S, the wave's spine). The rebuild READ RACES THE SWAP and the race cannot be won by
+  // waiting: the row that moves the reader's leaf onto the new branch is written by the NEXT turn, so at
+  // rebuild time `getSessionMessages` still resolves the PRE-rewind chain and hands back the very turns the
+  // rewind discarded. The rows are cut at the anchor the host itself resumed at instead.
+  it("13. renders only the restored conversation when the reader still returns the pre-rewind chain (A1)", async () => {
+    // The reader returns what it returns AT REBUILD TIME: the pre-rewind chain, all THREE turns, because
+    // the row that moves the leaf onto the new branch is not written until the next turn. This is the
+    // measured condition, not a hypothetical. Rewinding to before the SECOND prompt must leave the first
+    // turn on screen and nothing after it.
+    const readerRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-07T08:00:00.000Z" },
+      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one" }] } },
+      { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-07T08:01:00.000Z" },
+      { type: "assistant", uuid: "a2", message: { content: [{ type: "text", text: "two" }] } },
+      { type: "user", uuid: "u3", message: { content: [{ type: "text", text: "THREE" }] }, timestamp: "2026-08-07T08:02:00.000Z" },
+      { type: "assistant", uuid: "a3", message: { content: [{ type: "text", text: "three" }] } },
+    ];
+    const session = fakeRewindSession({ rewind: async () => {} });
+    const deps = { getSessionMessages: async () => readerRows };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    // The prefill is rendered on purpose: `TWO` reaches the screen BY DESIGN as the composer prefill (CC's
+    // edit-and-resend loop), so a bare `not.toContain("TWO")` would pass or fail for the wrong reason. The
+    // honest discriminators are the discarded ASSISTANT replies and the third prompt — nothing can put
+    // those on screen except the transcript.
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind;
+      const s = c.state as any;
+      return <Text>prefill:{s.composerPrefill ? s.composerPrefill.text : "-"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!({ uuid: "u2", prevUuid: "a1", text: "TWO", index: 2 }, "conversation");
+    await waitFor(() => frame(lastFrame).includes("ONE"));
+    const f = frame(lastFrame);
+    expect(f).toContain("ONE");
+    expect(f).toContain("one");                                   // the surviving assistant reply
+    expect(f).not.toContain("two");                               // the discarded reply
+    expect(f).not.toContain("THREE");
+    expect(f).not.toContain("three");
+    expect(f.split("TWO")).toHaveLength(2);                       // EXACTLY once — the prefill, never the transcript
+  });
+
+  // W-S8. A restore to the session's FIRST message CLEARS the conversation: the host swaps to a fresh engine
+  // on a NEW session id, so the correct transcript is EMPTY — but the file this client's cached id still
+  // points at holds every turn the rewind discarded, and `prevUuid` is null, so there is nothing to cut at.
+  // The fixture is deliberately the honest one: a NON-empty old file is the entire hazard, and a `[]` reader
+  // would render empty with or without the fix.
+  it("15. renders the empty conversation immediately after a first-message restore, off a NON-empty old file", async () => {
+    const readerRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-08T08:00:00.000Z" },
+      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-08T08:01:00.000Z" },
+    ];
+    let reads = 0;
+    const session = fakeRewindSession({ rewind: async () => {} });
+    const deps = { getSessionMessages: async () => { reads++; return readerRows; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!({ uuid: "u1", prevUuid: null, text: "ONE", index: 0 }, "conversation");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    // Without the `cleared` arm, truncateAtAnchor(rows, null) returns every row (null is falsy) and the
+    // discarded conversation re-renders. Timing alone would not catch that — these assertions do.
+    expect(frame(lastFrame)).not.toContain("TWO");
+    expect(frame(lastFrame)).not.toContain("one-reply");
+    // `reads === 0` is what pins the SKIPPED poll, and it pins it COMPLETELY: the poll's only side effect is
+    // a read per attempt, so zero reads is zero attempts. A `Date.now() - t0 < 200` bound stood here as a
+    // "cheap backstop" and was deleted — it pinned nothing (this reader returns rows, so even an unmodified
+    // `attempts = retry.attempts` breaks the loop on attempt 0 and finishes just as fast) and it was the ONLY
+    // wall-clock assertion in test/tui, every other Date.now() in the suite being a waitFor poll with a 2s
+    // budget. A decorative assertion that can go red under parallel load is worse than no assertion: it
+    // spends the gate's credibility without buying coverage. If a future reader shape returns nothing and the
+    // poll needs re-pinning, count the attempts — do not time them.
+    expect(reads).toBe(0);                                         // no disk read at all: the old file is a trap, not a source
+  });
+
+  // W-S8 review, Minor 5. The middle arm of `opts.cleared ? 0 : opts.prevUuid !== null ? retry.attempts : 1`
+  // had no coverage — collapsing it to `opts.cleared ? 0 : retry.attempts` left every other test here green.
+  // It is the "don't hang for 3 seconds" guard for the one shape that reaches it: an EXPLICIT null prevUuid
+  // with no `cleared` alongside it, i.e. a host old enough to have learned to clear-instead-of-refuse but not
+  // to announce it. The right answer is an empty conversation, so the rows can never arrive and polling for
+  // them turns a successful restore into an apparent hang. ONE read, then stop. (`undefined` is the other
+  // case and must NOT take this arm — it means "anchor unknown", where rows are genuinely expected; test 9
+  // covers that side.)
+  it("17. an explicit null prevUuid with no `cleared` reads ONCE and does not sit out the poll", async () => {
+    let reads = 0;
+    const session = fakeRewindSession();
+    const deps = { getSessionMessages: async () => { reads++; return [] as any[]; }, rewindReplayRetry: { attempts: 5, delayMs: 5 } };
+    function H() { const c = useChat(() => session, {}, deps); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "rewound", sessionId: "s1", prevUuid: null } as any);
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    expect(reads).toBe(1);                                         // not the full retry.attempts
+  });
+
+  it("14. rebuilds ONCE when this client is the one that confirmed", async () => {
+    // The host broadcasts `rewound` to every follower INCLUDING the confirming client, which already
+    // rebuilds from confirmRewind's own await. Two rebuilds were harmless while the rebuild was a
+    // fire-and-forget read; they are not harmless now that it truncates and sets composer prefill.
+    let reads = 0;
+    let session!: ReturnType<typeof fakeRewindSession>;
+    session = fakeRewindSession({ rewind: async () => { session.pushEvent({ kind: "rewound", sessionId: "sess-1", prevUuid: "a1" } as any); } });
+    const readerRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "ONE" }] }, timestamp: "2026-08-07T08:00:00.000Z" },
+      { type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one-reply" }] } },
+      { type: "user", uuid: "u2", message: { content: [{ type: "text", text: "TWO" }] }, timestamp: "2026-08-07T08:01:00.000Z" },
+    ];
+    const deps = { getSessionMessages: async () => { reads++; return readerRows; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] = {};
+    function H() { const c = useChat(() => session, {}, deps); api.confirmRewind = (c as any).confirmRewind; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!({ uuid: "u2", prevUuid: "a1", text: "TWO", index: 2 }, "conversation");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    await new Promise((r) => setTimeout(r, 40));   // long enough for a stray broadcast-driven second read to land
+    expect(reads).toBe(1);
+  });
+
+  // W-S5 (Wave S task 8): the mildest of the three stale-percentage paths — the discarded turns are gone but
+  // their measurement described them. 16 is the pair's whole point: the reset is pinned to the DOCUMENT
+  // boundary (replaceDocument), not to "a rewind happened", so the scope that changes no conversation state
+  // keeps the number it legitimately measured. Move the reset into confirmRewind and 16 goes red.
+  it("15. a CONVERSATION rewind drops the measured percentage; the next turn end measures a fresh one (A8)", async () => {
+    let ctx = { totalTokens: 5, maxTokens: 100 };
+    const msgs = [{ type: "user", uuid: "u-keep", message: { content: [{ type: "text", text: "the surviving prompt" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
+    // Half two waits on the second turn's own REPLY (tagged with its prompt) and then POLLS the percentage as
+    // an assertion of its own, rather than making `waitFor` the assertion: a build that never re-measures
+    // fails with the value it kept, not a bare `waitFor timeout`. The reply renders a microtask before the
+    // measurement does, which is why the poll and not a bare expect closes it.
+    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ctx, submitMessages: (p) => [{ type: "assistant", message: { content: [{ type: "text", text: `re: ${p}` }] } }] });
+    const deps = { getSessionMessages: async () => msgs, clearScreen: () => {} };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");                                                       // a real turn, so a real 5% exists to lose
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));
+    ctx = { totalTokens: 42, maxTokens: 100 };
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    expect(frame(lastFrame)).toContain("ctx:-");                          // half one
+    api.run!("again");
+    await waitFor(() => frame(lastFrame).includes("re: again"));          // half two: measured, not restored —
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:42");        // off the new turn's reply, failing with the VALUE
+  });
+
+  it("16. a CODE-ONLY rewind leaves the percentage alone — the conversation it measured is untouched", async () => {
+    const session = fakeRewindSession({ rewind: async () => {} }, { getContextUsage: async () => ({ totalTokens: 5, maxTokens: 100 }) });
+    const deps = { getSessionMessages: async () => [], clearScreen: () => {} };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));
+    api.confirmRewind!(ANCHOR, "code");
+    await waitFor(() => frame(lastFrame).includes("code restored"));
+    await new Promise((r) => setTimeout(r, 30));                          // long enough for a stray reset to land
+    expect(frame(lastFrame)).toContain("ctx:5");
   });
 });

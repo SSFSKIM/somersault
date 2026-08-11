@@ -1,0 +1,110 @@
+Claude Code 2.1.220 — captured 2026-07-31 — 100x40 — TERM=xterm-256color
+
+These tracked fixtures are identity-redacted at rest. A greeting name, email-derived organization, or
+`user@host` status segment is redacted with `▒` when its narrow write-time rule matches; no unredacted
+identity may be written under this directory. The residual identity guards inspect an SGR-normalized,
+row-wrapped dashboard-only view before publication, so valid ANSI style transitions or contiguous rendered
+row breaks cannot conceal an identity; the stored ANSI remains otherwise exact. The organization rule accepts
+both historic italic `0;3;…m` and current dim-italic `0;2;3;…m` `/release-notes` styling. A `user@host:/…`
+token is dashboard status only when it is the nearest structural status candidate before the indented
+2.1.220 `[symbol] [indicator] on` marker; earlier nonblank transcript or code rows remain semantic. The status
+candidate may precede the footer through physical path wraps. The marker is one of: `⏸ manual mode on`, `⏸ plan mode on`, `⏵⏵ accept edits on`,
+`⏵⏵ bypass permissions on`, `⏵⏵ don't ask on`, or `⏵⏵ auto mode on`. A mode may add `(shift+tab to cycle)`;
+the closed left-footer grammar is reduced, ` · ? for shortcuts`, ` · ← for agents`, the full
+` · ? for shortcuts · ← for agents`, or clipped ` · ? for shortcuts …`; a physically wrapped row may end only at a
+literal prefix of the known `? for shortcuts` token. For invalid/missing authentication, the
+right-aligned column is exactly `Not logged in · Run /login`; it is either padded after the left footer on the same
+row or flows to its own rendered row. A hostname token accepts `_` alongside alphanumerics, `.` and `-`, but never
+whitespace or path delimiters. `git` is redacted like every other authenticated username. An adjacent unknown
+`⏸`/`⏵⏵` marker of that dashboard shape fails closed; transcript/code tokens remain visible when dashboard chrome is absent. The settings-isolated tracked capture deliberately has none of those values: after the ambient namespace scrub,
+it removes OAuth and every currently recognized Claude/API credential before starting its child. It removes
+`FORCE_COLOR`, `NO_COLOR`, fixed CI/provider selectors, `CONTINUOUS_INTEGRATION`, and every exact `CI_`-prefixed
+selector, plus `TMUX`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, and `COLORFGBG`, then pins `TERM=xterm-256color` and `COLORTERM=truecolor`, the installed level-3 renderer branch
+represented by these ANSI candidates, so invoking terminal state cannot change palette, dim styling, or layout. The stock identity rules therefore remain optional
+while retaining their redaction patterns. `required_state_by_frame` independently
+validates the SGR-normalized, unredacted screen before redaction or staging: seven frames require the exact
+`Not logged in · Run /login` footer, while the footer-hidden `help-overlay/02-help.ansi` requires its exact
+non-personal `Welcome back!` state. Shared rules reject authenticated greeting and organization state, so a mixed
+screen fails atomically. State validation never substitutes or otherwise changes stored bytes. The capture command
+rejects a tracked-fixture output path unless it receives `--redact-masks`, a redaction contract, and a required-state
+contract before the child is started or any frame is written. Every requested snapshot retains first-frame readiness
+and liveness checks, then drains output for at
+most 20 ms before rendering so a split later repaint cannot publish halfway through.
+
+Every capture starts both the upstream Claude and ccx child with a fresh private `CLAUDE_CONFIG_DIR` whose
+only file is `.claude.json` containing `{"hasCompletedOnboarding":true}`. That deterministic global seed
+suppresses the upstream onboarding screen without accepting project trust; the existing first `enter` in each
+key script accepts that workspace-trust dialog. The child never reads the operator's `~/.claude`, configured
+plugins, hooks, MCP servers, or settings. Untracked/scratch capture preserves only the already-authorized OAuth
+environment credential and every supplied ambient terminal capability; tracked upstream-fixture capture instead removes
+the installed color-force/fixed-CI-provider/`CONTINUOUS_INTEGRATION`/exact-`CI_`/tmux/terminal-wrapper/palette overrides and pins `TERM=xterm-256color` plus
+`COLORTERM=truecolor`, then removes that credential together with
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and every other scrubbed `CLAUDE*`, `ANTHROPIC_*`, and `AI_AGENT`
+value. The private config is removed after the captured child process group has been terminated and reaped, or
+immediately if seeding fails before a child starts.
+
+From `CC-to-SDK/harness/`, create the pinned emulator environment once, then recapture with exactly:
+
+```sh
+python3 -m venv "$CLAUDE_JOB_DIR/tmp/frame-python-venv"
+"$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/pip" install -r scripts/frames/requirements.txt
+mkdir -p /tmp/frame-scratch
+"$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3" scripts/capture-frames.py \
+  --script scripts/frames/help-overlay.keys \
+  --out test/fixtures/upstream-frames/help-overlay \
+  --bin "claude" --cwd "/tmp/frame-scratch" --cols 100 --rows 40 \
+  --redact-masks scripts/frames/masks.json \
+  --expected-version "2.1.220 (Claude Code)"
+"$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3" scripts/capture-frames.py \
+  --script scripts/frames/composer-basics.keys \
+  --out test/fixtures/upstream-frames/composer-basics \
+  --bin "claude" --cwd "/tmp/frame-scratch" --cols 100 --rows 40 \
+  --redact-masks scripts/frames/masks.json \
+  --expected-version "2.1.220 (Claude Code)"
+```
+
+`redactions_by_frame` in `scripts/frames/masks.json` is the write-time privacy contract, while
+`required_state_by_frame` is the independent logged-out-state contract. Every tracked frame key explicitly declares
+both: named redaction patterns with per-pattern and total `minimum_matches`, plus one or more required-state rules.
+The two stock settings-isolated scenarios mark their identity patterns optional (`minimum_matches: 0`): each pattern
+still replaces a matching value, while a clean logged-out capture may match none. State rules are evaluated first on
+the unmodified render, are never substitutions, and report independently from redaction coverage. Capture stages all
+tracked frames and promotes them only when every state and publication-coverage requirement succeeds. For comparison sanitization, the same substitutions apply opportunistically to both stored goldens and current
+inputs, then always
+run residual identity guards; comparison deliberately does not require publication coverage counts or capture-state
+validation from an already-redacted golden. A guard failure reaches neither output nor a fingerprint. The patterns are
+narrowly anchored to the boot dashboard; they do not redact transcript emails, UUIDs, paths, costs, durations,
+percentages, token counts, or timestamps. `by_frame` contains separate, dashboard-only comparison masks for quota and
+status nondeterminism. Automated tests prove that identity-free stock frames are accepted, identities are redacted
+when present, and an authenticated, missing, mixed, changed-ANSI-boundary, or unmatched-required-state capture fails
+without persisting any tracked frame.
+
+f1-tool-rendering/01-read-complete.ansi — captured 2026-08-03 — 100x40 — TERM=xterm-256color — the one
+authenticated tracked golden: a real model turn's live Read (`⏺ Reading 1 file… (ctrl+o to expand)` with the
+transient `⎿  src/app.ts` hint gutter), captured with `--tracked-oauth` (first-party OAuth forwarded to the
+child and nothing else; the publication guard scans normalized screen text, a whitespace-stripped variant,
+and a rolling raw pty tail for any ≥16-char credential fragment and fails closed; that guard is armed from
+the credentials the built child environment actually carries, so an untracked scratch capture — which still
+forwards the OAuth token — is scanned on exactly the same terms). Because this frame is busy, its dashboard
+contract extends the stock footer grammar with the two segments only an in-flight footer paints, ` · esc to
+interrupt` and the right-aligned `● <effort> · /effort` column: `marker_pattern` gates both redaction and the
+fail-closed residual identity check, so a footer it cannot fullmatch would leave the frame unguarded. Its
+`by_frame` comparison masks cover what this frame actually varies between runs — the live spinner row
+(animating glyph and gradient, randomized verb, elapsed seconds, token count) and the effort word with its
+right-alignment padding — and nothing else; the `⎿  src/app.ts` gutter hint stays fully significant. The key script pauses
+`wait:0.5` between `type:` and `enter` — coalesced into one chunk, the CLI's paste detection would treat the
+trailing CR as pasted content and never submit. Recapture from `CC-to-SDK/harness/` with a workspace
+containing only `src/app.ts` (`export const app = 1;`):
+
+```sh
+mkdir -p /tmp/frame-scratch-f1/src && printf 'export const app = 1;\n' > /tmp/frame-scratch-f1/src/app.ts
+# Source the credential; never put it in argv, where ps and shell history would publish it. `../.env`
+# carries CLAUDE_CODE_OAUTH_TOKEN with its ANTHROPIC_API_KEY line commented out, so OAuth is not shadowed.
+set -a; . ../.env; set +a
+"$VENV/bin/python3" scripts/capture-frames.py \
+  --script scripts/frames/f1-upstream-read.keys \
+  --out test/fixtures/upstream-frames/f1-tool-rendering \
+  --bin "claude" --cwd "/tmp/frame-scratch-f1" --cols 100 --rows 40 \
+  --redact-masks scripts/frames/masks.json \
+  --expected-version "2.1.220 (Claude Code)" --tracked-oauth
+```

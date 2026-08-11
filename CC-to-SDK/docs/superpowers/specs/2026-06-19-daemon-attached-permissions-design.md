@@ -15,8 +15,11 @@ all locked with the user). Probe-validated premises below.
 The 18-series live probes (committed `3d104efd1b`, `c37fb61ae0`, `63ee26da00`) establish:
 
 - **`auto` is the headless AI-classifier mode, but MODEL-GATED** — only on Opus 4.6+ / Sonnet 4.6.
-  On an unsupported model (haiku, Sonnet 4.5, Opus 4.5, claude-3) `auto` silently falls back to
-  `default`. (Probes 18/18b/18c were a haiku-fallback artifact; **18d** on sonnet-4-6 flipped the
+  On an unsupported model (haiku, Sonnet 4.5, Opus 4.5, claude-3) `auto` passed at LAUNCH comes up
+  behaving as `default`. **[Corrected 2026-08-06 by probe 99: at RUNTIME there is no silent fallback —
+  `setPermissionMode("auto")` is REFUSED, "Cannot set permission mode to auto: auto mode unavailable for
+  this model", and the session stays in its previous mode.]** (Probes 18/18b/18c were a haiku-fallback
+  artifact; **18d** on sonnet-4-6 flipped the
   result: `auto` auto-approved a working-dir edit with no human in the loop where `default` blocked
   it.)
 - **`canUseTool` composes with `auto`** (probe **18g**): the classifier owns the trusted surface

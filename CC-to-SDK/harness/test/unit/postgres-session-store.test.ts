@@ -6,6 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { createPostgresSessionStore, ensurePostgresSessionStoreSchema, postgresSessionStoreDDL } from "../../src/store/postgresSessionStore.js";
 import type { PgLike } from "../../src/store/postgresSessionStore.js";
 import { sessionStoreConformance } from "../../src/store/conformance.js";
+import { foldSessionSummary } from "@anthropic-ai/claude-agent-sdk";
 
 const db = new PGlite();
 let n = 0;
@@ -184,5 +185,89 @@ describe("PostgresSessionStore specifics", () => {
     const key = { projectKey: "p", sessionId: "s" };
     await store.append(key, [{ type: "user", uuid: "u1" }]); // INSERT arm: no UPDATE issued, lands fine
     await expect(store.append(key, [{ type: "user", uuid: "u2" }])).rejects.toThrow(/CAS/);
+  });
+});
+
+describe("PostgresSessionStore: append is not atomic, so a retried batch must not duplicate", () => {
+  it("a fold that throws AFTER the insert committed does not re-insert the batch's uuid-less entries", async () => {
+    const prefix = `t${n++}`;
+    await ensurePostgresSessionStoreSchema(db, { prefix });
+    let failFold = true;
+    const flaky = wrap(async (text, _params, run) => {
+      // The first sidecar read is the fold's opening query — fail it, so the INSERT above it has already
+      // committed by the time append() rejects. This is the shape of any transient fold failure (a pg
+      // blip, or CAS exhaustion after 5 attempts).
+      if (failFold && text.includes(`FROM ${prefix}_sessions`)) { failFold = false; throw new Error("sidecar down"); }
+      return run();
+    });
+    const store = createPostgresSessionStore(flaky, { prefix });
+    const key = { projectKey: "p", sessionId: "s" };
+    // A realistic mixed batch: the user row carries a uuid (the partial unique index dedups it), the title
+    // marker does NOT (nothing dedups it — that is the whole hazard).
+    const batch = [
+      { type: "summary", summary: "a title" },
+      { type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+    ] as any[];
+    await expect(store.append(key, batch)).rejects.toThrow("sidecar down");
+    await store.append(key, batch);                      // the SDK retries the WHOLE batch (sdk.d.ts SessionStore)
+    const rows = (await store.load(key))!;
+    expect(rows.length).toBe(2);                          // NOT 3 — the uuid-less title landed exactly once
+    expect(rows.filter((r: any) => r.type === "summary").length).toBe(1);
+  });
+
+  it("a genuinely repeated uuid-less entry still appends twice — only a retry of the SAME batch is skipped", async () => {
+    const { store } = await makeStoreWith();
+    const key = { projectKey: "p", sessionId: "s" };
+    await store.append(key, [{ type: "summary", summary: "one" } as any]);
+    await store.append(key, [{ type: "summary", summary: "one" } as any]);   // the app really did it twice
+    expect((await store.load(key))!.length).toBe(2);
+  });
+});
+
+describe("PostgresSessionStore: the fold is incremental, and falls back when it cannot prove it is safe", () => {
+  it("a steady-state append folds from the cached summary, and a concurrent row forces the full re-fold back", async () => {
+    const prefix = `t${n++}`;
+    await ensurePostgresSessionStoreSchema(db, { prefix });
+    let fullReads = 0;
+    let smuggle = false;
+    const watched = wrap(async (text, _params, run) => {
+      // The fold's full read is the one filtering `subpath = ''` (load() parameterizes subpath instead).
+      if (text.includes(`FROM ${prefix}_entries`) && text.includes("subpath = ''") && text.includes("ORDER BY id")) fullReads++;
+      if (smuggle && text.includes(`FROM ${prefix}_sessions`)) {
+        smuggle = false;   // another writer commits a row between our INSERT and our fold
+        await db.query(
+          `INSERT INTO ${prefix}_entries (project_key, session_id, subpath, uuid, entry) VALUES ('p','s','',$1,$2)`,
+          ["x9", JSON.stringify({ type: "user", uuid: "x9", message: { role: "user", content: "smuggled" } })],
+        );
+      }
+      return run();
+    });
+    const store = createPostgresSessionStore(watched, { prefix });
+    const key = { projectKey: "p", sessionId: "s" };
+
+    await store.append(key, [{ type: "user", uuid: "u1", message: { role: "user", content: "first" } } as any]);
+    expect(fullReads).toBe(1);                            // cold cache: nothing to continue from
+    await store.append(key, [{ type: "user", uuid: "u2", message: { role: "user", content: "second" } } as any]);
+    expect(fullReads).toBe(1);                            // the count moved by exactly our batch → incremental
+
+    smuggle = true;
+    await store.append(key, [{ type: "user", uuid: "u3", message: { role: "user", content: "third" } } as any]);
+    expect(fullReads).toBe(2);                            // count off by the smuggled row → full re-fold
+
+    // And the summary the incremental path produced is the one a from-scratch fold would have produced.
+    const rows = (await store.load(key))!;
+    const sums = await store.listSessionSummaries!("p");
+    const fresh = foldSessionSummary(undefined, key, rows, { mtime: (sums[0] as any).mtime });
+    expect(sums[0].data).toEqual(fresh.data);
+  });
+});
+
+describe("PostgresSessionStore: table prefixes are case-folded by Postgres", () => {
+  it("rejects an uppercase prefix instead of letting two tenants silently share one schema", () => {
+    // Unquoted identifiers fold to lowercase, so "Acme" and "acme" would name the SAME tables while their
+    // operators believed they were isolated.
+    expect(() => postgresSessionStoreDDL("Acme")).toThrow(/lowercase/);
+    expect(() => createPostgresSessionStore(db, { prefix: "Acme" })).toThrow(/lowercase/);
+    expect(postgresSessionStoreDDL("acme")).toContain("acme_entries");
   });
 });

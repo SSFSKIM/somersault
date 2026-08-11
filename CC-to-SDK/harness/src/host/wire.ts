@@ -11,7 +11,12 @@ import type { HostStatus } from "./ops.js";
  *  union entirely. A pre-Goal-B host's frames still arrive shaped that way over the wire; reading them is
  *  the CLIENT's job (chatAdapter.ts's route() read-alias), not this type's. */
 export type HostEvent =
-  | { kind: "message"; data: unknown }                                      // one SDK message from the turn
+  // `replay` marks a frame the follow() drain handed a LATE joiner out of the turn buffer rather than one
+  // that just arrived. It is history, not news: a client may render it, but must not stamp it with an
+  // arrival clock (F3 final review — `ccx attach` mid-turn was deriving a ~0s Agent duration from
+  // dispatch/result stamps taken microseconds apart at attach time). Absent on every live frame.
+  | { kind: "message"; data: unknown; replay?: true }                        // one SDK message from the turn
+
   | { kind: "decision"; entry: PendingDecision }                            // a decision just parked (any kind)
   | { kind: "decision_settled"; toolUseID: string; by: string; decision: string }
   | { kind: "tasks_changed"; tasks: BackgroundTaskInfo[] }                   // REPLACE snapshot (Task 4 emits)
@@ -22,7 +27,15 @@ export type HostEvent =
   // enough — its handler only syncs permissionMode, so other attached clients would keep rendering the
   // pre-rewind transcript, and /copy would keep offering text the host no longer knows about, while
   // their next prompt runs against the truncated conversation.
-  | { kind: "rewound"; sessionId?: string }
+  // `prevUuid` is the uuid the host handed `resumeSessionAt` — the last row the restored conversation
+  // keeps. A follower needs it to cut its own rebuild at the same place the confirming client does
+  // (EP-S1); without it a second attached client renders the pre-rewind chain. Optional because a host
+  // built before this field existed emits none, and the client's fallback is "show the rows unchanged".
+  // `cleared` is the OTHER outcome, and it must be a POSITIVE signal rather than the absence of a prevUuid
+  // (W-S8): a restore to the session's FIRST message swaps to a fresh, empty conversation on a NEW session
+  // id, and a follower whose cached id has not flipped yet would read the OLD file — still holding every
+  // discarded turn — and, with no anchor to cut at, render all of it back. It never travels with `prevUuid`.
+  | { kind: "rewound"; sessionId?: string; prevUuid?: string; cleared?: true }
   | { kind: "turn"; phase: "start" | "end"; seq?: number; error?: string; truncated?: boolean };
 
 export type HostFrame = ({ t: "event" } & HostEvent) | ({ t?: undefined } & Record<string, unknown>);

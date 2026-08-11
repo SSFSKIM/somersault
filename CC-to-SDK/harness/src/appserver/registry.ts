@@ -3,6 +3,8 @@
 import { randomBytes } from "node:crypto";
 import type { Peer } from "./peer.js";
 import type { ItemEvent } from "./items/types.js";
+import type { PlanGrantMode } from "../permissions/types.js";
+import type { TurnFailure } from "../session/turnResult.js";
 
 export type ThreadOrigin = "inProcess"; // fleet adoption is M3
 
@@ -18,13 +20,17 @@ export interface EngineSession {
   /** `opts.uuid` (appserver-only seam, Task 6/gap 6): a caller-minted uuid to stamp onto the pushed
    *  SDKUserMessage. Probe 70 (ALIVE) found the SDK persists exactly the supplied uuid, so the appserver
    *  mints it BEFORE submit and reuses it as the live userMessage item's id — the live id equals the
-   *  persisted transcript id, so the item can join the replay buffer under the normal id-dedup stitch. */
-  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown }>;
+   *  persisted transcript id, so the item can join the replay buffer under the normal id-dedup stitch.
+   *  `error` is Wave T Task 14's additive failure tag: a turn that reached a terminal result frame and
+   *  reported failure RESOLVES carrying it (only a transport exception rejects), so turns.ts's success
+   *  path has to read it to keep broadcasting `turn/completed{status:"failed"}` for a failed turn.
+   *  Both are optional — a DI fake returning a bare `{result}` still satisfies this. */
+  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   onFrame(cb: (m: unknown) => void): () => void;
-  /** Optional (the real lib Session has it; a DI fake need not): the seam a plan_approve(acceptEdits:true)
-   *  upgrades the session's permission mode through — see appserver/planUpgrade.ts. */
+  /** Optional (the real lib Session has it; a DI fake need not): the seam an approved plan upgrades the
+   *  session's permission mode through — see appserver/planUpgrade.ts. */
   setPermissionMode?(mode: string): Promise<void>;
   /** Optional (the real lib Session has it — src/session/session.ts:130-161): Task 9's three remaining
    *  settings setters. `setModel(undefined)` resets to the engine's default model. */
@@ -77,8 +83,12 @@ export interface ThreadRecord {
   buffer: BufferedItemEvent[]; // reset at the start of every turn (see BufferedItemEvent) — not a rolling lifetime window
   subscribers: Set<Peer>;
   chain: Promise<unknown>;      // serialization scope for thread-scoped methods (record.chain = record.chain.then(...))
-  planUpgradePending?: boolean; // set when a plan_approve settled with acceptEdits:true and the engine has
-                                // not been upgraded yet; cleared by planUpgrade.ts's applyPlanUpgrade
+  planUpgradeMode?: PlanGrantMode; // the mode an approved plan GRANTED, set when the plan_approve settled and
+                                // the engine has not been upgraded to it yet; cleared by applyPlanUpgrade
+                                // (planUpgrade.ts). Absent = nothing armed — including a `default` grant,
+                                // which the engine reaches on its own after the allow (probe 97). Observed
+                                // and applied by the per-thread router's status route (D-M2-6), never by a
+                                // per-approval watcher — so there is no planUpgradeOff here.
   routerOff?: () => void;       // unsubscribes the ONE per-thread frame router (router.ts, Task 8a,
                                  // spec D-M2-6) — closeRecord calls this before disposing the engine
   sessionId?: string;

@@ -94,7 +94,13 @@ export class DaemonServer {
         case "permission_response": { const ok = this.supervisor.respondPermission(op.toolUseID, op.decision); send(ok ? { ok: true } : { ok: false, error: "no pending request" }); sock.end(); break; }
         case "submit": {
           const r = await this.supervisor.submit(op.id, op.prompt, (m) => send({ type: "chunk", message: m }));
-          send({ type: "done", result: r.result }); sock.end(); break;
+          // Task 14 made a turn that reached a terminal result frame and REPORTED failure resolve with an
+          // additive `error` tag instead of rejecting. Before that it threw, and this handler's catch below
+          // sent `{ok:false, error}` — so answering `{type:"done"}` here would report a dead API as a
+          // completed turn to every UDS client that branches on `ok:false`. Same shape as the catch.
+          if (r.error) send({ ok: false, error: r.error.message });
+          else send({ type: "done", result: r.result });
+          sock.end(); break;
         }
         case "shutdown":
           this.shuttingDown = true; // set before any await → concurrent ops are refused, none escape cleanup

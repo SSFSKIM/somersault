@@ -70,12 +70,12 @@ function bgSession(sessionId = "sid-bg") {
   };
 }
 
-async function startHost(session: HostSession = drivable(), opts: { kind?: "bg" | "interactive"; detached?: boolean } = {}) {
+async function startHost(session: HostSession = drivable(), opts: { kind?: "bg" | "interactive"; detached?: boolean; getMessages?: (id: string, o: { cwd?: string }) => Promise<any[]> } = {}) {
   const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
   const kind = opts.kind ?? "bg";
   const host = new SessionHost(
     { short: "ffffffff", name: "adapter", cwd: process.cwd(), kind, detached: opts.detached ?? true, config: {} as never, env },
-    { openSession: () => session, procStartOf: async () => "start" });
+    { openSession: () => session, procStartOf: async () => "start", ...(opts.getMessages ? { getMessages: opts.getMessages } : {}) });
   await host.start();
   return { host, session, env, path: hostSocketPath(process.pid, env) };
 }
@@ -201,6 +201,65 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
     try {
       await adapter.whenReady();
       expect(adapter.sessionId).toBe("sid-six");
+    } finally {
+      adapter.detach();
+      await stopQuietly(host);
+    }
+  });
+
+  // REGRESSION (codex review, F6 close). /clear swaps the host's engine for a FRESH one that has no session
+  // id until its first turn, so the state frame the swap emits carries none — and `route` only ever
+  // overwrites the cache on a TRUTHY id. Without the reset the getter kept pointing at the conversation the
+  // user just cleared, and /export, /rename and /tag would have acted on that old transcript.
+  it("6b. clearSession forgets the cached session id; a later state frame with a real id repopulates it", async () => {
+    const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
+    // The engine the swap opens: no id yet, and a `setPermissionMode` so the test can make the host emit a
+    // second state frame once the fresh conversation has earned an id.
+    const fresh = { ...drivable(""), sessionId: undefined as string | undefined, setPermissionMode: async () => {} };
+    const engines: unknown[] = [drivable("sid-before"), fresh];
+    const host = new SessionHost(
+      { short: "ffffffff", name: "adapter", cwd: process.cwd(), kind: "bg", detached: true, config: {} as never, env },
+      { openSession: () => engines.shift() as HostSession, procStartOf: async () => "start" });
+    await host.start();
+    const adapter = remoteChatSession(hostSocketPath(process.pid, env));
+    try {
+      await adapter.whenReady();
+      expect(adapter.sessionId).toBe("sid-before");
+      await adapter.clearSession!();
+      expect(adapter.sessionId).toBeUndefined();          // NOT still "sid-before"
+      fresh.sessionId = "sid-after";                       // the fresh engine earns its id on its first turn
+      await adapter.setPermissionMode("default");          // …and the next state frame carries it
+      await vi.waitFor(() => expect(adapter.sessionId).toBe("sid-after"));
+    } finally {
+      adapter.detach();
+      await stopQuietly(host);
+    }
+  });
+
+  // The SAME hazard as 6b, on the other route that swaps to a fresh engine. A first-message rewind clears the
+  // conversation instead of forking it (W-S8), and the broadcast still carries `sessionId` — the host reads
+  // `this.session?.sessionId ?? sid`, and a just-swapped engine has no id until its first system/init frame,
+  // so the value on the wire is the id of the conversation the user just DISCARDED. Left alone, `route`'s
+  // truthy-id overwrite re-affirms it and /export writes the discarded transcript while /rename and /tag
+  // mutate the abandoned session's metadata. `cleared` is the positive signal that the right answer is "no
+  // id", exactly as clearSession() above forgets it outright; a later state (or rewound) frame repopulates.
+  it("6c. a `cleared` rewound broadcast FORGETS the cached id, rather than re-affirming the discarded one", async () => {
+    const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
+    const fresh = { ...drivable(""), sessionId: undefined as string | undefined, setPermissionMode: async () => {} };
+    const engines: unknown[] = [drivable("sid-discarded"), fresh];
+    const host = new SessionHost(
+      { short: "ffffffff", name: "adapter", cwd: process.cwd(), kind: "bg", detached: true, config: {} as never, env },
+      { openSession: () => engines.shift() as HostSession, procStartOf: async () => "start" });
+    await host.start();
+    const adapter = remoteChatSession(hostSocketPath(process.pid, env));
+    try {
+      await adapter.whenReady();
+      expect(adapter.sessionId).toBe("sid-discarded");
+      await host.rewind({ uuid: "u1", prevUuid: null }, "conversation");   // the first-message restore: clears, does not fork
+      await vi.waitFor(() => expect(adapter.sessionId).toBeUndefined());   // NOT still "sid-discarded"
+      fresh.sessionId = "sid-fresh";                                       // the fresh engine earns its id on its first turn
+      await adapter.setPermissionMode("default");                          // …and the next state frame carries it
+      await vi.waitFor(() => expect(adapter.sessionId).toBe("sid-fresh"));
     } finally {
       adapter.detach();
       await stopQuietly(host);
@@ -425,5 +484,34 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
       adapter.detach();
       srv.close();
     }
+  });
+
+  // W-S13, over the REAL socket. The client half of the resumed-idle lie: `session.sessionId` is what
+  // fetchSettingsStats, /status's session row, /export, /files, /session, /rename and /tag all read, and
+  // in a session resumed with `--continue`/`--resume` it stayed undefined until the first live turn
+  // ended. The host now answers with the conversation it resumed, and the adapter learns it from the
+  // `state` frame follow() replays — no client-side fallback, one source of truth. `sessionId: undefined`
+  // on the fake session IS the pre-first-turn engine.
+  it("16. a resumed session's id reaches the client BEFORE any turn — and a fresh one still has none", async () => {
+    const engine = { ...syncSession("unused", []), sessionId: undefined } as unknown as HostSession;
+    const rows = [{ type: "user", uuid: "u1", message: { role: "user", content: "hi" } },
+                  { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "yo" }] } }];
+    const { host, path } = await startHost(engine, { kind: "interactive", getMessages: async () => rows });
+    const resumed = remoteChatSession(path, { resume: "sid-resumed" });
+    try {
+      await resumed.whenReady();
+      expect(resumed.sessionId).toBe("sid-resumed");                 // what /stats reads — was undefined
+      const anchors = await resumed.rewindAnchors();                 // what Esc-Esc reads — was []
+      expect(anchors.map((a) => a.uuid)).toEqual(["u1"]);
+    } finally { resumed.detach(); }
+    // Regression: nothing was resumed here, so the very same host must still report no id at all rather
+    // than a phantom one carried over from the client that left.
+    await host.clearSession();
+    const fresh = remoteChatSession(path);
+    try {
+      await fresh.whenReady();
+      expect(fresh.sessionId).toBeUndefined();
+      expect(await fresh.rewindAnchors()).toEqual([]);
+    } finally { fresh.detach(); await stopQuietly(host); }
   });
 });

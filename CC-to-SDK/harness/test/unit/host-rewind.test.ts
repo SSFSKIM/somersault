@@ -40,6 +40,74 @@ describe("rewindAnchors", () => {
   });
 });
 
+/** W-S13. A session resumed from the REPL presents as empty to every id-shaped surface until its first
+ *  live turn completes: the engine reports no session id until that turn's init frame, and `sessionId`
+ *  was read off the engine alone. Live-reproduced twice — Esc-Esc rendering "Nothing to rewind to yet."
+ *  over a transcript showing three replayed turns, and /stats reading zeros next to it. The host is the
+ *  one layer that KNOWS (it is what accepted the resume op), so the repair lives here and reaches the
+ *  client over `status()`, the frame the adapter already caches its id from. `sessionId: undefined` on
+ *  the fake is the whole fixture: it is exactly the pre-first-turn engine. */
+describe("a resumed session knows its own id before its first turn (W-S13)", () => {
+  it("rewindAnchors reads the transcript through the RESUME TARGET while the engine has no id yet", async () => {
+    const { host, getMessages } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    const anchors = await host.rewindAnchors();
+    expect(anchors.map((a) => a.uuid)).toEqual(["uB", "uA"]);
+    expect(getMessages).toHaveBeenCalledWith("sid-resumed", { cwd: "/tmp" });
+  });
+
+  it("the ENGINE's id wins the moment it mints one", async () => {
+    // A plain resume keeps the same session_id (probe 23), so these agree in practice — but a forking
+    // resume does not, and the engine's own report must always outrank what we asked to resume.
+    const { host, session, getMessages } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    (session as { sessionId?: string }).sessionId = "sid-engine";
+    await host.rewindAnchors();
+    expect(getMessages).toHaveBeenLastCalledWith("sid-engine", { cwd: "/tmp" });
+  });
+
+  it("a FRESH session invents nothing: no anchors, and disk is never read", async () => {
+    const { host, getMessages } = makeHost({ sessionId: undefined });
+    expect(await host.rewindAnchors()).toEqual([]);
+    expect(getMessages).not.toHaveBeenCalled();
+    expect(host.status().sessionId).toBeUndefined();
+  });
+
+  it("status() publishes the resumed id — the ONE channel the client's cached id comes from", async () => {
+    // /status's session row, /export, /files, /session, /rename, /tag, /stats and the Settings Stats tab
+    // all read the adapter's cached id, and chatAdapter populates it from `state` frames alone. This is
+    // why the client needs no fallback of its own.
+    const { host } = makeHost({ sessionId: undefined });
+    expect(host.status().sessionId).toBeUndefined();
+    await host.resumeSession("sid-resumed");
+    expect(host.status().sessionId).toBe("sid-resumed");
+  });
+
+  it("/clear FORGETS it — a discarded conversation's id must never keep being published", async () => {
+    const { host, getMessages } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    await host.clearSession();
+    expect(host.status().sessionId).toBeUndefined();
+    expect(await host.rewindAnchors()).toEqual([]);
+    expect(getMessages).not.toHaveBeenCalled();
+  });
+
+  it("rewind forks the conversation from the resume target before the first turn (it used to throw)", async () => {
+    const { host, opened } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    opened.length = 0;                                   // drop the resume's own open — assert on the rewind's
+    await host.rewind({ uuid: "uB", prevUuid: "aA" }, "conversation");
+    expect(opened[0]).toMatchObject({ resume: "sid-resumed", resumeAt: "aA" });
+  });
+
+  it("a first-message restore forgets it too — that arm swaps to a fresh, EMPTY conversation", async () => {
+    const { host } = makeHost({ sessionId: undefined });
+    await host.resumeSession("sid-resumed");
+    await host.rewind({ uuid: "uA", prevUuid: null }, "conversation");
+    expect(host.status().sessionId).toBeUndefined();
+  });
+});
+
 describe("rewindDryRun", () => {
   it("returns the shape, and normalizes a THROW into {canRewind:false,error}", async () => {
     const { host } = makeHost();
@@ -79,16 +147,69 @@ describe("rewind", () => {
     await expect(host.rewind({ uuid: "uB", prevUuid: "aA" }, "both")).rejects.toThrow(/not enabled/);
     expect(rewind).toHaveBeenCalledTimes(1);   // dry only
   });
-  it("refuses conversation scopes with a null prevUuid — and never touches files (validate before side effects)", async () => {
-    const { host, session } = makeHost();
-    await expect(host.rewind({ uuid: "uA", prevUuid: null }, "both")).rejects.toThrow(/code-only/);
-    expect(session.rewind).not.toHaveBeenCalled();
+  // W-S8 INVERTS THIS. It used to read "refuses conversation scopes with a null prevUuid — and never touches
+  // files (validate before side effects)" and assert `rejects.toThrow(/code-only/)`. That was honest only
+  // while the host had no way to express "before the first prompt"; it now clears instead of refusing, so a
+  // `both` scope does BOTH halves. What this pins is that both halves RAN — not their order: `calls` and
+  // `opened` are independent arrays with nothing interleaving them, and the review moved the swap block
+  // above the file-restore block with this test and the `scope both` test at the top of this describe both
+  // staying green. The ordering (file restore on the LIVE engine first — probe 68d needs the open transport)
+  // is UNPINNED here, a pre-existing gap inherited from that older test's idiom rather than one W-S8 opened.
+  // If you do reorder host.rewind, the failure you WILL see is `TypeError: releaseDry is not a function` from
+  // the throwing-rewind test below — that is its hanging-dry-run scaffolding collapsing, not an ordering
+  // assertion catching you. Nothing in this file actually checks that the restore precedes the swap.
+  it("scope both with a null prevUuid restores the files AND clears the conversation", async () => {
+    const { host, calls, opened } = makeHost();
+    await host.rewind({ uuid: "uA", prevUuid: null }, "both");
+    expect(calls).toEqual(["rewind:uA:dry", "rewind:uA:real"]);
+    expect(opened).toHaveLength(1);
+    expect((opened[0] as any).resumeAt).toBeUndefined();
   });
   it("scope code with a null prevUuid still succeeds and performs the file restore (the intended degradation)", async () => {
     const { host, calls, opened } = makeHost();
     await host.rewind({ uuid: "uA", prevUuid: null }, "code");
     expect(calls).toEqual(["rewind:uA:dry", "rewind:uA:real"]);
     expect(opened).toHaveLength(0);
+  });
+  it("restores to the session's FIRST message by swapping to a fresh conversation (A4b)", async () => {
+    // resumeSessionAt takes a message UUID and has no value meaning "before the first", so a fork is not
+    // the primitive here — an empty conversation is. Both keys must be EXPLICITLY undefined: engineConfig
+    // spreads the LAUNCH config first (host.ts:356), so a host born from `ccx --resume <sid>` still carries
+    // `resume` — which is why the launch config below carries one. A bare `swapEngine({})` passes a weaker
+    // version of this test and reopens the very conversation the user asked to drop.
+    const { host, opened } = makeHost({}, { config: { resume: "launch-sid" } });
+    await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
+    expect(opened).toHaveLength(1);
+    expect((opened[0] as any).resume).toBeUndefined();
+    expect((opened[0] as any).resumeAt).toBeUndefined();
+  });
+  it("keeps the busy window closed across the whole first-message restore", async () => {
+    // The reason this does NOT call the host's own clearSession(): that method opens and closes
+    // swapInFlight itself, so nesting it inside rewind's window would let the inner finally reopen the busy
+    // gate mid-swap. WHERE THIS SAMPLES IS THE WHOLE TEST. The obvious place — inside the injected
+    // openSession — cannot tell the two shapes apart, because that call sits inside the INNER window too:
+    // the review replaced the swap with `await this.clearSession()` and every test here still passed. The
+    // discriminating instant is the `rewound` broadcast, emitted after the swap resolves and before rewind's
+    // own finally: shipped code is still busy there, the nested-clearSession shape has already been reopened
+    // by the inner finally and reads false.
+    const seen: boolean[] = [];
+    const { host } = makeHost();
+    host.follow((ev) => { if (ev.kind === "rewound") seen.push(host.busy()); });
+    await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
+    expect(seen).toEqual([true]);
+  });
+  it("broadcasts rewound with `cleared` and no prevUuid after a first-message restore", async () => {
+    // POSITIVE, not the absence of prevUuid: the swap minted a NEW session id, and a follower whose cached
+    // id has not flipped yet would otherwise read the OLD (non-empty) file and re-render the conversation
+    // the user just discarded — truncateAtAnchor(rows, undefined) returns every row.
+    const { host } = makeHost();
+    const events: any[] = [];
+    host.follow((ev) => events.push(ev));
+    await host.rewind({ uuid: "uB", prevUuid: null }, "conversation");
+    const ev = events.find((e: any) => e.kind === "rewound");
+    expect(ev).toBeDefined();
+    expect(ev.cleared).toBe(true);
+    expect(ev.prevUuid).toBeUndefined();
   });
   it("refuses while a turn is in flight", async () => {
     const { host } = makeHost();
@@ -110,6 +231,16 @@ describe("rewind", () => {
     await host.rewind({ uuid: "uB", prevUuid: "aA" }, "conversation");
     expect(events.some((e) => e.kind === "task" && /ended by rewind/.test(e.data?.summary ?? ""))).toBe(true);
     expect(events.some((e) => e.kind === "tasks_changed" && e.tasks.length === 0)).toBe(true);
+  });
+  // EP-S1: a FOLLOWER's rebuild reads disk at the same instant the confirming client's does, and gets the
+  // same pre-rewind chain back. It needs the anchor to cut at, and the broadcast is its only channel.
+  it("the rewound broadcast carries the anchor's prevUuid, so a FOLLOWER can cut its own rebuild", async () => {
+    const { host } = makeHost();
+    const events: any[] = [];
+    host.follow((ev) => events.push(ev));
+    await host.rewind({ uuid: "uB", prevUuid: "a1" }, "conversation");
+    const rewound = events.find((e) => e.kind === "rewound");
+    expect(rewound).toMatchObject({ prevUuid: "a1" });
   });
   it("resumeSession still swaps at runtime mode (regression: the swap is now shared)", async () => {
     const { host, opened } = makeHost();

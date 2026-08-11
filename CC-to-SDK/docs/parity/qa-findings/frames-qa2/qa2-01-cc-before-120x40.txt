@@ -1,0 +1,40 @@
+╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                        │
+│                    Welcome back!                   │ Run /init to create a CLAUDE.md file with instructions for Cla… │
+│                                                    │ ─────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                      │
+│                      ▝▜█████▛▘                     │ Fixed worktree-isolated sessions and their subagents being abl… │
+│                        ▘▘ ▝▝                       │ Fixed PreToolUse auto-allow hooks bypassing tool restrictions … │
+│                                                    │ Fixed `/usage-credits` on Team and Enterprise showing "you've … │
+│               Sonnet 5 · Claude API                │ /release-notes for more                                         │
+│   /private/tmp/qa2-root-3f1oJf/qa-proj-cc-Y39lhz   │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "refactor <filepath>"
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

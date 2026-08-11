@@ -1,0 +1,40 @@
+  108. tokenize - Tokenizes Python source code lexically.
+  109. keyword - Tests whether strings are Python keywords.
+  110. tabnanny - Detects ambiguous indentation in source files.
+  111. pydoc - Generates documentation from Python modules.
+  112. doctest - Tests code examples embedded in docstrings.
+  113. bdb - Provides basic debugger framework functionality.
+  114. faulthandler - Dumps tracebacks on faults and signals.
+  115. pdb - Provides an interactive source code debugger.
+  116. profile - Provides deterministic profiling of Python programs.
+  117. cProfile - Provides a C-extension based profiler for speed.
+  118. timeit - Measures execution time of small code snippets.
+  119. trace - Traces program execution and generates coverage reports.
+  120. tracemalloc - Traces memory allocations made by Python.
+
+✻ Worked for 48s
+
+❯ Run this exact bash command and then say DONE: seq 1 300 | sed "s/^/row /"
+
+⏺ Bash(seq 1 300 | sed "s/^/row /")
+  ⎿  row 1
+     row 2
+     row 3
+     … +297 lines (ctrl+o to expand)
+
+⏺ DONE
+
+✻ Cooked for 5s
+
+❯ Think hard about whether 91 is prime, then answer in one word.
+
+⏺ No
+
+✻ Sautéed for 3s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ is 97 prime too
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+

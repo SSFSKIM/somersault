@@ -147,8 +147,10 @@ Type each and confirm the response line (the full current set, from `/help`):
   number`, no crash.
 - [ ] `/context` → prints `ctx N% · used / max · status`.
 - [ ] `/compact` → prints `✦ compacted X → Y` (or a dim "nothing to compact" if context is tiny).
-- [ ] `/cost` → prints a `Session cost` block: total (or "included in your … plan" on subscription
-  auth), tokens in/out, duration, and a per-model row.
+- [ ] `/cost` → prints upstream's block, every value starting at the same column: `Total cost:` (or
+  "included in your … plan" on subscription auth), `Total duration (API):`, `Total duration (wall):`,
+  `Total code changes: N lines added, M lines removed`, then `Usage by model:` and one right-aligned
+  `<model>:  … input, … output, … cache read, … cache write (…)` row per model.
 - [ ] `/status` → prints model / mode / thinking / context% / cwd / session-id in one glance.
 - [ ] `/clear` → wipes the on-screen transcript but **keeps** session context (ask a follow-up that
   references the earlier turn — it should still know).
@@ -251,16 +253,15 @@ ccx --bg --permission-mode default --settings '{"permissions":{"ask":["Bash(*)"]
 - [ ] **Answering resumes the session** — press `1` (allow) → the turn completes to `done` in the
   attached view.
 
-### C2. Ctrl-Z detaches without denying
+### C2. Ctrl-Z suspends; `/detach` detaches from the composer
 
-Repeat C1 (a fresh `--bg` + park), attach, and **before answering**, press `Ctrl-Z`:
-
-- [ ] You're back at the shell with `detached — session <short> keeps running · reattach: ccx attach
-  <short>` on stderr — no deny was sent.
-- [ ] `ccx agents --json --all` still shows the row **`blocked`** (the pending permission is
-  untouched).
-- [ ] Re-attach (`ccx attach <short>`) → the same dialog is still there. Answer allow → the session
-  runs to `done`.
+- [ ] **Ctrl-Z suspends, never detaches** — press it while attached, return with `fg`, and verify the
+  session remains attached and no pending decision was answered. This is the upstream-compatible terminal
+  suspend binding.
+- [ ] **`/detach` is the detach command** — from an attached session while the composer is visible, type
+  `/detach` ↵ → stderr prints `detached — session <short> keeps running · reattach: ccx attach <short>`.
+  `ccx agents --json --all` retains the live row, and `ccx attach <short>` reattaches it. A pending
+  decision occupies the composer, so answer or deny it before issuing this command.
 
 ### C3. `--detachable` — spawn then auto-attach
 
@@ -270,8 +271,8 @@ ccx --detachable -n qa-det "Reply with exactly: OK"
 
 - [ ] Prints the `backgrounded · <short>` banner, then **immediately** attaches in the same
   terminal (no second command needed) and the prompt you gave streams in.
-- [ ] `Ctrl-Z` here detaches (this session is attached, not loopback) — `ccx agents` still shows it
-  running; `ccx attach qa-det` reattaches.
+- [ ] Type `/detach` ↵ here to detach (this session is attached, not loopback) — `ccx agents` still
+  shows it running; `ccx attach qa-det` reattaches. `Ctrl-Z` only suspends the terminal process.
 
 ### C4. `--idle-timeout` (only valid with `--detachable`)
 
@@ -279,8 +280,8 @@ ccx --detachable -n qa-det "Reply with exactly: OK"
 ccx --detachable --idle-timeout 10 -n qa-idle
 ```
 
-- [ ] Detach immediately (`Ctrl-Z`) and leave it unattached for >10s → `ccx agents --all` shows the
-  row reach a terminal state (`done`) — the idle reaper ended it because nobody was attached.
+- [ ] Detach immediately with `/detach` ↵ and leave it unattached for >10s → `ccx agents --all`
+  shows the row reach a terminal state (`done`) — the idle reaper ended it because nobody was attached.
 - [ ] **`--idle-timeout` without `--detachable` is refused** — `ccx --bg --idle-timeout 10 "hi"` →
   exits 2 with `ccx: --idle-timeout only applies to --detachable sessions`.
 - [ ] **`--detachable` and `--bg` together are refused** — exits 2 with

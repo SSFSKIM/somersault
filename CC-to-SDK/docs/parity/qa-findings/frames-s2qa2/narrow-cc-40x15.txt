@@ -1,0 +1,15 @@
+     line 220
+
+⏺ Read(/private/tmp/s2qa2-root/proj-cc/b
+  ig.txt · from line 215)
+  ⎿  Read 7 lines
+
+        03:04 PM claude-sonnet-5
+⏺ FOLD-OK
+
+✻ Worked for 30s
+
+────────────────────────────────────────
+  Showing detailed transcript · …verbose
+
+

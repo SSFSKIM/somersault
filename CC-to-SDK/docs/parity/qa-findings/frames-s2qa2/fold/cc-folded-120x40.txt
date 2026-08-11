@@ -1,0 +1,40 @@
+  line 100
+  line 101
+  line 102
+  line 103
+  line 104
+  line 105
+  line 106
+  line 107
+  line 108
+  line 109
+  line 110
+  line 111
+  line 112
+  line 113
+  line 114
+  line 115
+  line 116
+  line 117
+  line 118
+  line 119
+  line 120
+
+✻ Worked for 4s
+
+❯ /model
+  ⎿  Set model to Sonnet 5 (default) and saved as your default for new sessions
+
+❯ Read the file big.txt in full. Then reply with exactly: FOLD-OK
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+⏺ FOLD-OK
+
+✻ Worked for 30s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ delete big.txt
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+

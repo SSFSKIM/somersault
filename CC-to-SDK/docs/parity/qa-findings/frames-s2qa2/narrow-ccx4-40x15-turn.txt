@@ -1,0 +1,15 @@
+commands, or explain code
+  • /help for commands · @ to reference
+files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ Reply with exactly: NARROW-OK
+⏺ NARROW-OK
+✻ Baked for 2s
+                      ◉ xhigh · /effort
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+

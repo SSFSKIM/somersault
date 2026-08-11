@@ -1,0 +1,40 @@
+│            Sonnet 5 · Claude API             │                                                                   │
+│   /private/tmp/s2qa1-euSiO4/proj-cc-2BflR6   │                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Fable 5 is now a standard part of your Max plan
+ ▎ You can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with
+ ▎ usage credits. Fable 5 draws down usage faster than Opus 5. Run /model and select Fable to use it. Learn more:
+ ▎ https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access
+
+❯ Reply with exactly: HIST-ONE
+
+⏺ HIST-ONE
+
+✻ Brewed for 1s
+
+❯ Reply with exactly: HIST-TWO
+
+⏺ HIST-TWO
+
+✻ Crunched for 1s
+
+❯ SE1
+
+⏺ SE1
+
+✻ Sautéed for 2s
+
+! echo S2QA1-BASH-OK
+  ⎿  S2QA1-BASH-OK
+
+⏺ S2QA1-BASH-OK
+
+✻ Cooked for 1s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  search prompts:   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+

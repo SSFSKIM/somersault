@@ -5,7 +5,9 @@ import { TERMINAL, finalizeRoster, readRoster, writeRoster } from "../fleet/rost
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
-import { resolvedPermissionMode } from "../config/resolveOptions.js";
+import { resolvedModel, resolvedPermissionMode } from "../config/resolveOptions.js";
+import { isAutoSupportedModel, resolveAutoModel } from "../config/autoModel.js";
+import { resolveModelAlias } from "../config/models.js";
 import type { HarnessConfig } from "../config/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
@@ -15,7 +17,7 @@ import { TurnBuffer } from "./follow.js";
 import type { HostEvent } from "./wire.js";
 import { PendingDecisions } from "../permissions/pending.js";
 import type { PendingDecision } from "../permissions/pending.js";
-import type { PermissionBroker, PermissionRequest, DecisionOutcome, DecisionKind } from "../permissions/types.js";
+import type { PermissionBroker, PermissionRequest, DecisionOutcome, DecisionKind, PlanGrantMode } from "../permissions/types.js";
 
 export interface SessionHostOpts {
   short: string; name: string; cwd: string; kind: "bg" | "interactive";
@@ -63,6 +65,13 @@ export interface HostSession {
   stopTask?(taskId: string): Promise<void>;
   // C5 T2: the real Session.rewind (src/session/session.ts:184) already matches this signature.
   rewind?(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown>;
+  // W3 T1: the settings/dirs surface. applyFlagSettings replaces whole top-level keys per call
+  // (probe 75) — the host never sends a partial object. getSettings is the untyped get_settings door.
+  applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
+  getSettings?(): Promise<unknown>;
+  // W-C T13 (EP-C8): the launch banner's billing label. Optional like everything else here, so every
+  // existing HostSession fake stays valid — and an engine that cannot answer simply gets no auth segment.
+  accountInfo?(): Promise<unknown>;
 }
 
 /** Owns one SDK session, its UDS socket, and its roster row. Live truth is answered over the socket;
@@ -114,13 +123,18 @@ export class SessionHost {
   // Who answered what, so a second answerer can be told. A host that runs for days would otherwise
   // accumulate one entry per decision for its whole life.
   private settledBy = new Map<string, string>();
-  // Set when a plan_approve settles with acceptEdits:true — consumed by the status-frame handler (Task
-  // 5), which is the only reason this task ever SETS it rather than also acting on it.
-  private planUpgradePending = false;
+  // The mode an approved plan GRANTED, set when the plan_approve settles and consumed by the status-frame
+  // handler. Undefined = nothing armed, which includes a `default` grant: the engine flips there by itself
+  // ten milliseconds after the allow (probe 97), so there is nothing for us to set.
+  private planUpgradeMode?: PlanGrantMode;
   // ONE source of truth for the engine's permission mode; last-write-wins between an intercepted CLI
   // `status` frame and a successful set_permission_mode/plan-upgrade setter (spec §mode-sync). Seeded
   // from resolvedPermissionMode in start(), before this default is ever read.
   private mode = "default";
+  // ONE source of truth for the engine's MODEL, on the same rule: seeded from the launch config in start()
+  // and rewritten by a successful set_model. Read by the plan-upgrade applier alone — `auto` is model-gated
+  // (autoModel.ts) and needs a supported model under it before the mode is worth setting.
+  private model?: string;
   // Nested tool_use id → parent Agent tool_use id (from nested assistant frames' parent_tool_use_id).
   private parentOf = new Map<string, string>();
   // Agent tool_use id → subagent_type (from task_started frames).
@@ -132,6 +146,34 @@ export class SessionHost {
   // Unsubscribe from the CURRENT session's onFrame — re-pointed at the fresh session on resumeSession
   // (see there for why: the swap replaces `this.session` with a subscriber set of zero).
   private offFrame?: () => void;
+  // The conversation this host RESUMED into — swapEngine's single write, `undefined` whenever the swap
+  // opened a FRESH conversation instead. The engine mints no id of its own until its first turn's init
+  // frame, so between the resume op and that frame `this.session?.sessionId` is unset and every id-shaped
+  // answer the host gave read as "there is no session" — over a transcript the client had just replayed
+  // three turns of (W-S13). Two readers: `rewindAnchors`/`rewind` (Esc-Esc said "Nothing to rewind to yet."
+  // above those three turns) and `status()`, which is the ONE frame that populates the client adapter's
+  // cached id and through it /status's session row, /export, /files, /session, /rename, /tag, /stats and
+  // the Settings Stats tab — all nine of which read zeros or "no session yet" on a resumed-idle session.
+  // The client needs no fallback of its own precisely because this one publishes: one source of truth, the
+  // host, over the channel the client already mirrors (chatAdapter's `state` arm).
+  // This is the engine's own id EARLY, not a guess: a plain resume keeps the SAME session_id (probe 23
+  // finding 3). The engine still WINS the moment it reports one — both readers are `this.session?.sessionId
+  // ?? this.resumedFrom` — so even a config that forks on resume (hostMain's `--bg --resume` arm) corrects
+  // itself at the init frame. Deliberately NOT seeded from `opts.config.resume` in start(): that path IS
+  // the forking one, and it names the SOURCE conversation rather than the fork the engine will mint.
+  private resumedFrom?: string;
+  /** The conversation this host is on, as truthfully as it can be known right now (see `resumedFrom`). */
+  private currentSessionId(): string | undefined { return this.session?.sessionId ?? this.resumedFrom; }
+  // W3 T1: the host OWNS the dynamic flag-settings state. applyFlagSettings replaces whole top-level
+  // keys per call (probe 75), and a resumed session is a NEW CLI process with an empty flag layer —
+  // both make a client-side "just call the engine" design wrong. Single accumulator, always sent whole.
+  private flagPerms = { allow: [] as string[], ask: [] as string[], deny: [] as string[], additionalDirectories: [] as string[] };
+  private flagOutputStyle?: string;
+  /** WAVE C TASK 11 (EP-C6): the session-scoped effort level, third member of the same accumulator and for
+   *  the same reason — a resumed engine starts with an empty flag layer and would silently drop back to the
+   *  launch level. Session-scoped only: `'max'` is explicitly non-persistable (sdk.d.ts:2368) and ccx never
+   *  writes ANY of the five to a settings file from here, so this field is the whole of its lifetime. */
+  private flagEffort?: string;
 
   private finishedResolve!: () => void;
   /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
@@ -183,8 +225,9 @@ export class SessionHost {
     // Seed the mode truth from the SAME config the engine is about to be opened with — before opening
     // it, so a fresh client's status bar never shows a placeholder (spec §mode-sync).
     this.mode = resolvedPermissionMode(this.opts.config);
+    this.model = resolvedModel(this.opts.config);
     try {
-      this.session = this.deps.openSession({ ...this.opts.config, permissionBroker: this.broker() });
+      this.session = this.deps.openSession(this.engineConfig());
       this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
       this.server = new HostServer({
         status: () => this.status(),
@@ -199,6 +242,7 @@ export class SessionHost {
         follow: (deliver) => this.follow(deliver),
         control: (op) => this.control(op),
         resume: (sid) => this.resumeSession(sid),
+        clear: () => this.clearSession(),
         turnSeq: () => this.turnSeq(),
         tasks: () => this.bgTasks,
         background: (toolUseId) => this.background(toolUseId),
@@ -206,6 +250,14 @@ export class SessionHost {
         rewindAnchors: () => this.rewindAnchors(),
         rewindDryRun: (uuid) => this.rewindDryRun(uuid),
         rewind: (anchor, scope) => this.rewind(anchor, scope),
+        getSettings: () => this.getSettings(),
+        listDirs: () => this.listDirs(),
+        addDir: (path) => this.addDir(path),
+        removeDir: (path) => this.removeDir(path),
+        setOutputStyle: (style) => this.setOutputStyle(style),
+        addRule: (behavior, rule) => this.addRule(behavior, rule),
+        removeRule: (behavior, rule) => this.removeRule(behavior, rule),
+        setEffort: (level) => this.setEffort(level),
       }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
@@ -218,6 +270,12 @@ export class SessionHost {
     }
     this.armIdle();
   }
+
+  /** W-C T13 (EP-C8): the account facts the LAUNCH BANNER's billing label maps from. Deliberately a plain
+   *  method rather than a control op — the one caller is the foreground launch in `cli/main.ts`, which holds
+   *  this object directly and asks BEFORE the first turn (probe 101 proved pre-turn reachability). Resolves
+   *  `undefined` on a session that does not offer it; the caller treats that as "omit the segment". */
+  async accountInfo(): Promise<unknown> { return this.session?.accountInfo?.(); }
 
   /** A second call while a turn is already running MUST be refused here, not merely by the socket's own
    *  gate: this method is public and reachable directly (RemoteChatSession.prompt() is one caller, not
@@ -242,8 +300,20 @@ export class SessionHost {
     // which a concurrent `ccx rm` has its unlink undone.
     let stamped = false;
     const onMessage = (m: unknown) => {
-      if (!stamped && this.session?.sessionId) { stamped = true; this.writeSessionId(); }
-      this.turnBuffer.push(m);
+      // Stamp the roster AND tell every follower in the same breath, for the same reason: this is the
+      // instant the engine's id exists. The roster write was already here; the emit was not, and `state`
+      // is the ONLY frame that populates the client adapter's cached session id (client/chatAdapter.ts).
+      // Without it nine surfaces — /status's session row, /rename, /tag, /export, /files, /stats and the
+      // Settings Stats tab — reported "no session yet" after any number of completed turns (EP-S2). A
+      // turn that happens to change permission mode published the id by accident (onSessionFrame's
+      // status-frame arm emits `state`); a clean turn published nothing.
+      if (!stamped && this.session?.sessionId) { stamped = true; this.writeSessionId(); this.emit({ kind: "state", status: this.status() }); }
+      // stream_event partials fan out LIVE only. With the interactive engine now streaming partials
+      // (F3 t3), a turn carries thousands of token-delta frames; through the 500-message TurnBuffer
+      // they would evict the turn's REAL frames, so a mid-turn attach replayed stale partials plus
+      // the truncation banner. A late follower cannot use a partial anyway — its LiveTurn missed the
+      // deltas before the join, and the completed message supersedes them all.
+      if ((m as { type?: unknown } | null)?.type !== "stream_event") this.turnBuffer.push(m);
       this.emit({ kind: "message", data: m });
     };
     // A bg worker's success IS the terminal event — `done`. An interactive host stays LIVE across
@@ -251,16 +321,16 @@ export class SessionHost {
     // rather than frozen at a state that reads like the whole session is over.
     try {
       await this.session!.submit(prompt, onMessage);
-      // Turn-end belt: a plan_approve(acceptEdits:true) that settled but never saw the CLI's own
-      // post-approval status frame (e.g. the turn ended before the CLI emitted one) must still upgrade —
-      // never leave an approved upgrade silently unapplied (spec §mode-sync ordering).
-      if (this.planUpgradePending) { this.planUpgradePending = false; await this.applyPlanUpgrade(); }
+      // Turn-end belt: an approved plan that settled but never saw the CLI's own post-approval status
+      // frame (e.g. the turn ended before the CLI emitted one) must still upgrade — never leave an
+      // approved upgrade silently unapplied (spec §mode-sync ordering).
+      await this.applyPlanUpgrade();
       this.state = this.opts.kind === "bg" ? "done" : "working";
     }
     catch (e) {
       // A failed/interrupted turn must not leave a stale approved-upgrade that fires at the NEXT turn's
       // status frame (plan-review M2) — the plan this upgrade belonged to did not survive the turn.
-      this.planUpgradePending = false;
+      this.planUpgradeMode = undefined;
       this.state = "error"; this.emit({ kind: "turn", phase: "end", seq, error: (e as Error)?.message }); throw e;
     }
     // For a BG worker the turn's completion IS the terminal event, so record it here: a host that dies
@@ -279,7 +349,8 @@ export class SessionHost {
     const s = this.session;
     const need = <T>(v: T | undefined, name: string): T => { if (!v) throw new Error(`${name} unsupported by this host`); return v; };
     switch (op.op) {
-      case "set_model": await need(s?.setModel?.bind(s), "set_model")(op.model); return { ok: true };
+      // The model truth moves only after the engine took it — same rule as set_permission_mode below.
+      case "set_model": await need(s?.setModel?.bind(s), "set_model")(op.model); this.model = resolveModelAlias(op.model); return { ok: true };
       case "set_permission_mode": {
         await need(s?.setPermissionMode?.bind(s), "set_permission_mode")(op.mode);
         this.mode = op.mode;                                      // our own successful set is the second writer
@@ -301,8 +372,31 @@ export class SessionHost {
    *  session-scoped resets with it; the swap opens at the CURRENT runtime mode (`this.mode`) — see
    *  resumeSession's doc for why launch-config would be the worse surprise. Shared by resumeSession
    *  and rewind (the conversation-restore engine swap). */
+  /** The config every engine this host opens is built from — `start()` and `swapEngine()` both, so a
+   *  /resume or a rewind can never quietly drop something the first engine had.
+   *
+   *  F3 Task 3: `includePartialMessages` is opt-in in `resolveOptions` and no interactive front door set
+   *  it, so the shipped REPL received no `stream_event` frames at all — its streaming partial region
+   *  rendered nothing and the thinking clock had no duration source whatsoever (P82: the only anchors
+   *  that exist are the LOCAL ARRIVAL of `content_block_start`/`content_block_stop`, which travel on
+   *  exactly those frames). Both interactive front doors — the in-process foreground host and the
+   *  detached `--detachable` one a `ccx attach` client drives — are `kind:"interactive"`, and nothing
+   *  headless is, so keying on the kind turns the frames on for every TUI session while leaving `--bg`
+   *  workers' (and every library caller's) wire volume untouched. An explicit config value still wins in
+   *  both directions: this is a default, not an override. */
+  private engineConfig(extra: Partial<HarnessConfig> = {}): HarnessConfig {
+    const partials = this.opts.kind === "interactive" ? { includePartialMessages: this.opts.config.includePartialMessages ?? true } : {};
+    return { ...this.opts.config, ...partials, ...extra, permissionBroker: this.broker() };
+  }
+
   private async swapEngine(extra: Partial<HarnessConfig>): Promise<void> {
     const old = this.session;
+    // ONE writer for `resumedFrom`, covering all four callers (resumeSession, clearSession and both rewind
+    // arms): `extra.resume` IS the conversation the new engine opens on. `undefined` — /clear and the
+    // first-message restore — must CLEAR it, not leave the previous value standing: publishing a discarded
+    // conversation's id is how /export comes to write the transcript the user just threw away (the trap
+    // chatAdapter's own clearSession comment records).
+    this.resumedFrom = extra.resume;
     // Open the resumed engine at the CURRENT runtime mode (`this.mode`), not the launch config's. `this.mode`
     // is the one field every writer (status-frame intercept, set_permission_mode, plan-upgrade) keeps
     // truthful for exactly this purpose — a Tab-laddered or plan-earned mode is live user intent, and
@@ -310,7 +404,7 @@ export class SessionHost {
     // (re-seeding from resolvedPermissionMode instead) would be the OTHER obvious fix, but it throws away a
     // choice the user just made with no notice — the worse surprise of the two. This keeps the host's
     // reported mode and the engine's actual mode in agreement, which is the one invariant that must hold.
-    this.session = this.deps.openSession({ ...this.opts.config, ...extra, permissionMode: this.mode as HarnessConfig["permissionMode"], permissionBroker: this.broker() });
+    this.session = this.deps.openSession(this.engineConfig({ ...extra, permissionMode: this.mode as HarnessConfig["permissionMode"] }));
     this.turnBuffer.reset(); this.settledBy.clear();
     this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
@@ -318,14 +412,79 @@ export class SessionHost {
     // silently die after a /resume, a shipped surface.
     this.offFrame?.();
     this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
+    // W3 T1: the new CLI process starts with an empty flag layer — re-push whatever this host has
+    // accumulated (dirs/rules/output-style) BEFORE the old session's dispose, so a fresh attach or a
+    // turn on the new engine never observes a mid-swap window with the grants silently dropped.
+    await this.replayFlagState();
     this.bgTasks = []; this.emit({ kind: "tasks_changed", tasks: [] });   // the old session's tasks are gone
-    this.planUpgradePending = false;                                       // (field exists from T3)
+    this.planUpgradeMode = undefined;                                      // (field exists from T3)
     this.emit({ kind: "state", status: this.status() });
     const graceMs = this.deps.disposeGraceMs ?? DISPOSE_GRACE_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<void>((r) => { timer = setTimeout(r, graceMs); (timer as { unref?: () => void }).unref?.(); });
     await Promise.race([old?.dispose().catch(() => {}) ?? Promise.resolve(), deadline]);
     clearTimeout(timer);
+  }
+
+  /** Re-send whatever the host has accumulated to a NEW engine process (a resumed/rewound session
+   *  starts with an empty flag layer — see swapEngine). Called from INSIDE swapEngine, after the new
+   *  engine session is live; swapEngine is the single seam both resumeSession and rewind go through. */
+  private async replayFlagState(): Promise<void> {
+    const hasPerms = Object.values(this.flagPerms).some((a) => a.length);
+    if (hasPerms) await this.session?.applyFlagSettings?.({ permissions: { ...this.flagPerms } });
+    if (this.flagOutputStyle) await this.session?.applyFlagSettings?.({ outputStyle: this.flagOutputStyle });
+    if (this.flagEffort) await this.session?.applyFlagSettings?.({ effortLevel: this.flagEffort });
+  }
+
+  /** Apply + commit one whole permissions object. Commit ONLY after the engine accepts it — a rejected
+   *  grant (a denied add_dir, say) must not leave a phantom row in the accumulator that a later replay
+   *  would then re-push as if it had succeeded (retry-safety). */
+  private async pushFlagPerms(next: typeof this.flagPerms): Promise<void> {
+    await this.session?.applyFlagSettings?.({ permissions: { ...next } });
+    this.flagPerms = next;
+  }
+  async addDir(path: string): Promise<void> {
+    if (this.flagPerms.additionalDirectories.includes(path)) return;
+    await this.pushFlagPerms({ ...this.flagPerms, additionalDirectories: [...this.flagPerms.additionalDirectories, path] });
+  }
+  async removeDir(path: string): Promise<void> {
+    await this.pushFlagPerms({ ...this.flagPerms, additionalDirectories: this.flagPerms.additionalDirectories.filter((d) => d !== path) });
+  }
+  async addRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void> {
+    if (this.flagPerms[behavior].includes(rule)) return;
+    await this.pushFlagPerms({ ...this.flagPerms, [behavior]: [...this.flagPerms[behavior], rule] });
+  }
+  async removeRule(behavior: "allow" | "ask" | "deny", rule: string): Promise<void> {
+    await this.pushFlagPerms({ ...this.flagPerms, [behavior]: this.flagPerms[behavior].filter((r) => r !== rule) });
+  }
+  async setOutputStyle(style: string): Promise<void> {
+    await this.session?.applyFlagSettings?.({ outputStyle: style });
+    this.flagOutputStyle = style;
+  }
+  /** WAVE C TASK 11 (EP-C6). Commit AFTER the engine accepts, like `pushFlagPerms` — a rejected flip must
+   *  not leave an accumulator entry a later resume would re-push as if it had worked. The level arrives
+   *  already inside the domain (`ops.ts`'s enum refused everything else before dispatch reached here), which
+   *  is the whole of ccx's answer to probe 102's "the SDK validates nothing". */
+  async setEffort(level: string): Promise<void> {
+    await this.session?.applyFlagSettings?.({ effortLevel: level });
+    this.flagEffort = level;
+  }
+  /** cwd first (it is implicit, always granted), then the launch config's static list, then this
+   *  host's own session-scoped grants — the three sources /add-dir's UI needs to tell apart. */
+  listDirs(): { path: string; source: "cwd" | "launch" | "session" }[] {
+    return [
+      { path: this.opts.cwd, source: "cwd" as const },
+      ...(this.opts.config.additionalDirectories ?? []).map((d) => ({ path: d, source: "launch" as const })),
+      ...this.flagPerms.additionalDirectories.map((d) => ({ path: d, source: "session" as const })),
+    ];
+  }
+  /** Untyped get_settings passthrough (probe 75 Q5). Throws a named error when unsupported, same as
+   *  the other session-member passthroughs (background/stopBgTask) — dispatch's catch turns it into
+   *  `{ok:false, error:…}`. */
+  async getSettings(): Promise<unknown> {
+    const fn = this.session?.getSettings?.bind(this.session);
+    if (!fn) throw new Error("get_settings unsupported by this host");
+    return fn();
   }
 
   /** Swap the underlying SDK session for a resume of `sessionId`. Interactive /resume path — refused
@@ -335,6 +494,17 @@ export class SessionHost {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
     this.swapInFlight = true;
     try { await this.swapEngine({ resume: sessionId }); }
+    finally { this.swapInFlight = false; }
+  }
+
+  /** The engine half of /clear (live-feedback fix, 2026-08-06): a fresh conversation through the same
+   *  swap seam resume/rewind use. The explicit `resume: undefined` matters — engineConfig spreads the
+   *  LAUNCH config first, so a host born from `ccx --resume <sid>` still carries that key, and without
+   *  the override a /clear would silently reopen the very conversation it was asked to drop. */
+  async clearSession(): Promise<void> {
+    if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
+    this.swapInFlight = true;
+    try { await this.swapEngine({ resume: undefined, resumeAt: undefined }); }
     finally { this.swapInFlight = false; }
   }
 
@@ -352,7 +522,9 @@ export class SessionHost {
     // the client or it is a promise we do not keep — a follower shown a partial turn with no marker
     // reads it as the whole turn — so a truncated idle replay keeps the old bare start frame.
     else if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
-    for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m });
+    // MARKED as replay: every one of these is buffered history, and a joiner that stamped them with its own
+    // arrival clock would fabricate durations for work that finished before it connected (wire.ts's note).
+    for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m, replay: true });
     // A request parked before this follower attached is otherwise invisible to it forever: the
     // `decision` event fires exactly once, at park time, over the followers registered at that
     // instant. A socket-borne follower's registration is not synchronous with its client's `follow()`
@@ -405,7 +577,7 @@ export class SessionHost {
       this.mode = mm.permissionMode;
       // The upgrade is triggered by OBSERVING this frame, never by answer release — the CLI's own flip
       // rides the message stream and an eager setter would race it (spec §mode-sync ordering).
-      if (this.planUpgradePending) { this.planUpgradePending = false; void this.applyPlanUpgrade(); }
+      if (this.planUpgradeMode) void this.applyPlanUpgrade();
       else this.emit({ kind: "state", status: this.status() });
       return;
     }
@@ -415,9 +587,37 @@ export class SessionHost {
     }
   }
 
+  /** Apply an armed plan upgrade, once — a no-op unless one is armed, so the status-frame watcher and the
+   *  turn-end belt can both call it.
+   *
+   *  TWO THINGS THIS MUST NOT DO, both of which it used to (Wave T t10, the qa3-17 / qa3-02 pair):
+   *  · GRANT `auto` WITHOUT A MODEL THAT CAN RUN IT. `auto` is model-gated (autoModel.ts, probe 72 for the
+   *    set): off its supported set the engine REFUSES the mode — probe 99 measured the setter REJECTING
+   *    ("Cannot set permission mode to auto: auto mode unavailable for this model") with the next init
+   *    still on the old mode. So granting auto unswapped does not downgrade the session, it fails to move
+   *    it at all and the upgrade the human approved is lost. Swap first, the same order and for the same
+   *    reason as useChat's applyMode.
+   *  · SWALLOW A REFUSAL. A rejected setter left `this.mode` at whatever the status frame wrote — correct —
+   *    but said nothing, so an upgrade the human explicitly approved could vanish with no trace anywhere.
+   *    The mode truth still only moves on success; the failure is now reported. */
   private async applyPlanUpgrade(): Promise<void> {
-    try { await this.session?.setPermissionMode?.("acceptEdits"); this.mode = "acceptEdits"; }
-    catch { /* the CLI's own flip stands; mode stays what the status frame wrote */ }
+    const mode = this.planUpgradeMode;
+    if (!mode) return;
+    this.planUpgradeMode = undefined;
+    if (mode === "auto" && this.model !== undefined && !isAutoSupportedModel(this.model)) {
+      const target = resolveAutoModel(this.model);
+      try { await this.session?.setModel?.(target); this.model = target; }
+      catch (e) { console.error(`cc-harness host ${this.opts.short}: plan approved auto mode but the model swap to ${target} failed (${(e as Error)?.message ?? e}) — the engine will refuse auto on ${this.model}`); }
+    }
+    // The NO-SWAP arm, and why it still speaks. `this.model` is undefined on a host whose config named no
+    // model — and stays that way after a `{op:"set_model"}` carrying none (ops.ts:43 declares the field
+    // optional). Not swapping is deliberate, the same call useChat.applyMode makes (:1450-1453): resolving
+    // an unknown model to DEFAULT_AUTO_MODEL would downgrade a session the user configured on purpose. But
+    // useChat pairs that refusal with a visible notice, and so does this line: the grant below is real but
+    // UNVERIFIED, and an unsupported model makes the setter reject (probe 99) — a refusal the human hears.
+    if (mode === "auto" && this.model === undefined) console.error(`cc-harness host ${this.opts.short}: plan approved auto mode but this client's model can't be checked — if it doesn't support auto the engine will refuse the mode`);
+    try { await this.session?.setPermissionMode?.(mode); this.mode = mode; }
+    catch (e) { console.error(`cc-harness host ${this.opts.short}: plan approved ${mode} but the engine refused it (${(e as Error)?.message ?? e}) — the session stays in ${this.mode}`); }
     this.emit({ kind: "state", status: this.status() });
   }
 
@@ -440,7 +640,7 @@ export class SessionHost {
   /** User-prompt rewind anchors from the persisted transcript — always re-read, never cached (probe
    *  68 Q4: post-rewind row counts defy local arithmetic; the transcript is the truth). */
   async rewindAnchors(): Promise<RewindAnchor[]> {
-    const sid = this.session?.sessionId;
+    const sid = this.currentSessionId();
     if (!sid) return [];
     const rows = await (this.deps.getMessages ?? realGetMessages)(sid, { cwd: this.opts.cwd });
     return rewindAnchorsFrom(rows);
@@ -456,12 +656,12 @@ export class SessionHost {
     catch (e) { return { canRewind: false, error: (e as Error).message }; }
   }
 
-  /** Esc-Esc rewind. VALIDATION FIRST, THEN SIDE EFFECTS: the null-prevUuid refusal below runs before the
-   *  file-restore block even though it only governs the LATER conversation-swap step — a `both`-scope
-   *  rewind whose anchor has no prevUuid (the first prompt, or the first prompt after a compaction
-   *  boundary) must be refused before the real, filesystem-mutating file rewind runs, or the caller sees
-   *  a rejection implying nothing happened while the working tree was already reverted with no matching
-   *  conversation swap. ORDER IS OTHERWISE LOAD-BEARING: file restore runs on the LIVE engine first
+  /** Esc-Esc rewind. VALIDATION FIRST, THEN SIDE EFFECTS still governs the guards above: every reason this
+   *  can refuse is decided before the real, filesystem-mutating file rewind runs, or the caller sees a
+   *  rejection implying nothing happened while the working tree was already reverted with no matching
+   *  conversation swap. W-S8 removed the one refusal that used to live here — a null prevUuid (the first
+   *  prompt, or the first after a compaction boundary) is now CLEARED rather than refused; see the
+   *  `clearing` line below. ORDER IS OTHERWISE LOAD-BEARING: file restore runs on the LIVE engine first
    *  (probe 68d: rewindFiles needs the open transport), THEN the conversation swap replaces the engine.
    *  The dry-run guard exists because with checkpointing off the real call THROWS where dryRun merely
    *  reports (probe 68d) — never reach the throwing call with a known-bad state. Live background tasks
@@ -469,11 +669,19 @@ export class SessionHost {
   async rewind(anchor: { uuid: string; prevUuid: string | null }, scope: RewindScope): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
     if (this.parked.list().length) throw new Error("a decision is pending — answer it first");
-    const sid = this.session?.sessionId;
+    // The READ/resume target only — the id the conversation swap below forks from. The two ENGINE calls
+    // this method makes (the dry run and the real file restore) go through `this.session` regardless: they
+    // need the live transport, not an id (probe 68d), and they are unaffected by which id names the
+    // conversation. So the fallback belongs here and nowhere else in this method.
+    const sid = this.currentSessionId();
     if (!sid) throw new Error("no session to rewind");
-    // A code-only rewind is legitimate for a null-prevUuid anchor — that is the intended degradation —
-    // so this is gated on `scope !== "code"`, same as the conversation-swap step it protects.
-    if (scope !== "code" && !anchor.prevUuid) throw new Error("no conversation anchor before the first prompt — code-only rewind is available");
+    // A null-prevUuid CONVERSATION restore is no longer a refusal (W-S8). `resumeSessionAt` takes a message
+    // UUID and has no value meaning "before the first" (sdk.d.ts:1815), so the fork primitive genuinely
+    // cannot express it — but the OUTCOME the user asked for is an empty conversation, which is what the
+    // swap seam produces with both keys undefined. Deliberately NOT this.clearSession(), which wraps that
+    // same swap in its own swapInFlight window: nesting it here would let its finally reopen the busy gate
+    // mid-operation. Gated on `scope !== "code"` like the conversation-swap step it describes.
+    const clearing = scope !== "code" && !anchor.prevUuid;
     // Spans the dry run, the real file restore, AND the engine swap — the whole window server.ts's
     // `prompt` gate must see as busy (see the field doc above). `finally` guarantees it clears even on a
     // throw from the dry run, the real restore, or the swap itself.
@@ -488,9 +696,14 @@ export class SessionHost {
       }
       if (scope !== "code") {
         if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
-        await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
+        if (clearing) await this.swapEngine({ resume: undefined, resumeAt: undefined });
+        else await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
         // Broadcast so EVERY attached client rebuilds, not just the one that confirmed (see wire.ts).
-        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid });
+        // `cleared` is POSITIVE, not the absence of prevUuid: the swap above minted a NEW session, and a
+        // client whose cached id has not flipped yet would otherwise read the OLD file, find it non-empty,
+        // and re-render the very conversation the user just discarded.
+        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid,
+                    ...(clearing ? { cleared: true } as const : anchor.prevUuid ? { prevUuid: anchor.prevUuid } : {}) });
       }
     } finally {
       this.swapInFlight = false;
@@ -529,7 +742,7 @@ export class SessionHost {
    *  human declining any of the three, settle the same way); everything else is kind-specific — a
    *  question park cannot be answered with a bare permission decision, and vice versa. */
   private static readonly KIND_ANSWERS: Record<DecisionKind, ReadonlySet<string>> = {
-    permission: new Set(["allow_once", "allow_always", "deny"]),
+    permission: new Set(["allow_once", "allow_with_updates", "allow_always", "deny"]),
     question: new Set(["question_answer", "deny"]),
     plan: new Set(["plan_approve", "plan_reject", "deny"]),
   };
@@ -550,9 +763,10 @@ export class SessionHost {
       // its answer landed.
       return who ? { ok: true, alreadyAnsweredBy: who } : { ok: false, error: `no parked request ${toolUseID}` };
     }
-    // acceptEdits upgrades the SESSION's permission mode going forward — this task only flags it; the
-    // status-frame handler (Task 5) is what actually calls setPermissionMode and clears the flag.
-    if (outcome.kind === "plan_approve" && outcome.acceptEdits) this.planUpgradePending = true;
+    // An approval upgrades the SESSION's permission mode going forward — this only ARMS the mode it
+    // granted; the status-frame handler is what calls setPermissionMode and clears it. A `default` grant
+    // arms nothing: the engine flips there by itself ten milliseconds after the allow (probe 97).
+    if (outcome.kind === "plan_approve" && outcome.mode !== "default") this.planUpgradeMode = outcome.mode;
     this.settledBy.set(toolUseID, by);
     this.emit({ kind: "decision_settled", toolUseID, by, decision: outcome.kind });
     this.emit({ kind: "state", status: this.status() });
@@ -577,8 +791,11 @@ export class SessionHost {
    *  first-terminal-wins finalize must never freeze on it. */
   status(): HostStatus {
     const first = this.parked.list()[0];
-    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, permissionMode: this.mode, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
-    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", permissionMode: this.mode, ...(this.session?.sessionId ? { sessionId: this.session.sessionId } : {}) };
+    // currentSessionId(), not `this.session?.sessionId`: a resumed session HAS an id from the moment the
+    // resume is accepted, and this frame is the only channel that tells a client so (see `resumedFrom`).
+    const sid = this.currentSessionId();
+    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, permissionMode: this.mode, ...(sid ? { sessionId: sid } : {}) };
+    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", permissionMode: this.mode, ...(sid ? { sessionId: sid } : {}) };
   }
 
   /** The host's OWN truthful busy signal, wired to the socket's `prompt` gate (see server.ts). Unlike

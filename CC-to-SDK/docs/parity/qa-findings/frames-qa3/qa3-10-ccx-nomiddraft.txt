@@ -1,0 +1,40 @@
+[38;2;215;119;87m╭─────────────────────────────────────────────────╮[39m
+[1m[38;2;215;119;87m│ ✻ Welcome to Claude Code                        │[0m
+[38;2;215;119;87m╰─────────────────────────────────────────────────╯[39m
+
+[2m  cwd    /private/tmp/qa3-root/proj-ccx-8b1gAu[0m
+[2m  model  (default)   ·   mode  default[0m
+
+  Tips for getting started
+[2m  • Ask Claude to edit files, run commands, or explain code[0m
+[2m  • /help for commands · @ to reference files · ⇧Tab to change mode[0m
+[2m  • Esc to interrupt a response[0m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mRun the shell command: touch qa3-marker.txt                                                                          [39m[49m
+[38;2;255;255;255m⏺ [39mI'll run that command.
+[38;2;78;186;101m⏺ [1m[39mBash[0m(touch qa3-marker.txt)
+  ⎿  [2mDone[0m
+[38;2;255;255;255m⏺ [39mDone — [38;2;177;185;249mtouch qa3-marker.txt[39m ran with no output. The file already existed in the working tree (it showed as untracked
+in git status), so this just updated its timestamp.
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mRun the shell command: rm qa3-marker.txt                                                                             [39m[49m
+  [2m[38;2;153;153;153mListed [1m1[0m[38;2;153;153;153m directory[2m[39m [38;2;153;153;153m(ctrl+o to expand)[0m
+[38;2;255;255;255m⏺ [39mIt's an empty (0-byte), untracked file — nothing to lose.
+[38;2;78;186;101m⏺ [1m[39mBash[0m(rm qa3-marker.txt)
+  ⎿  [2mDone[0m
+[38;2;255;255;255m⏺ [39mDone — [38;2;177;185;249mqa3-marker.txt[39m removed.
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ aaaaaaaaaaaaaaaaaaaaaaaa[7m [0m
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [2m⏎ send · backslash (\) + return (⏎) for newline · @ files · / commands · ! bash · ⇧Tab mode[0m
+ [2mEsc clear[0m
+model [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[2m[39m (⇧Tab to cycle)[0m  think [38;2;175;135;255mdefault[39m  ctx 2%
+
+
+
+
+
+
+
+
+
+

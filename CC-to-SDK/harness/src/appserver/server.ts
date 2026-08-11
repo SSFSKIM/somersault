@@ -179,10 +179,11 @@ export class AppServer {
         else ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Answer kind does not match the parked decision's kind");
         return;
       }
-      // Settling the broker only releases THIS tool call. `acceptEdits` additionally upgrades the SESSION's
-      // permission mode going forward (mirrors host/host.ts's answer -> planUpgradePending): without it the
-      // RPC reported {ok:true} while every later edit stayed in the old mode and prompted again.
-      if (outcome.kind === "plan_approve" && outcome.acceptEdits) armPlanUpgrade(record);
+      // Settling the broker only releases THIS tool call. An approval that GRANTS something additionally
+      // upgrades the SESSION's permission mode going forward (mirrors host/host.ts's answer -> planUpgrade):
+      // without it the RPC reported {ok:true} while every later edit stayed in the old mode and prompted
+      // again. `default` grants nothing — the engine flips there by itself after the allow (probe 97).
+      if (outcome.kind === "plan_approve" && outcome.mode !== "default") armPlanUpgrade(record, outcome.mode);
       // spec §6: EVERY answer variant may carry abortTurn, not just `deny` — and aborting goes through the
       // same flag-then-interrupt path turn/interrupt uses, else the turn it just aborted reports "completed"
       if (parsed.data.abortTurn) await requestInterrupt(record);

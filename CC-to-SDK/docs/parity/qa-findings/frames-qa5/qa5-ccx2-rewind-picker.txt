@@ -1,0 +1,40 @@
+[2m  cwd    /private/tmp/qa5-root-zFelpX/qa-proj-ccx-ziHyjs[0m
+[2m  model  (default)   ·   mode  default[0m
+
+  Tips for getting started
+[2m  • Ask Claude to edit files, run commands, or explain code[0m
+[2m  • /help for commands · @ to reference files · ⇧Tab to change mode[0m
+[2m  • Esc to interrupt a response[0m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mReply with exactly: ONE. No tools.                                                                                   [39m[49m
+[38;2;255;255;255m⏺ [39mONE
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mReply with exactly: TWO. No tools.                                                                                   [39m[49m
+[38;2;255;255;255m⏺ [39mTWO
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mReply with exactly: THREE. No tools.                                                                                 [39m[49m
+[38;2;255;255;255m⏺ [39mTHREE
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/rename qa5-fresh                                                                                                    [39m[49m
+[2mno session yet — send a first prompt[0m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/tag lifecycle                                                                                                       [39m[49m
+[2mno session yet — send a first prompt[0m
+[38;2;177;185;249m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│[39m [1m[38;2;177;185;249mRewind[0m                                                                                                               [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m Restore the code and/or conversation to the point before…                                                            [38;2;177;185;249m│
+│[39m   Reply with exactly: ONE. No tools.                                                                                 [38;2;177;185;249m│
+│[39m   [2m[38;2;153;153;153mNo code changes[0m                                                                                                    [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m   Reply with exactly: TWO. No tools.                                                                                 [38;2;177;185;249m│
+│[39m   [2m[38;2;153;153;153mNo code changes[0m                                                                                                    [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m   Reply with exactly: THREE. No tools.                                                                               [38;2;177;185;249m│
+│[39m   [2m[38;2;153;153;153mNo code changes[0m                                                                                                    [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m [38;2;177;185;249m❯[39m [3m[38;2;177;185;249m(current)[0m                                                                                                          [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m [2;3menter to continue · esc to cancel[0m                                                                                    [38;2;177;185;249m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[39mmodel [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[39m  think [38;2;175;135;255mdefault[39m  ctx 2%
+
+

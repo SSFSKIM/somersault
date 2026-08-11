@@ -1,12 +1,20 @@
 import { readFileSync } from "node:fs";
 import type { HarnessConfig } from "../config/types.js";
 import { parseThinkArg } from "../tui/thinkLevels.js";
+import { unknownOptionMessage } from "./help.js";
 
 // NB: `src/cliArgs.ts` is a DIFFERENT parser (the one-shot `cc-harness` grammar) that shares flag names
 // with this one (--model/--permission-mode/--cwd/--resume) — check which grammar you are editing.
 
+/** The ONE throw that exits 1 instead of 2 (Wave-C T5). Every other parse failure is an operator error in
+ *  ccx's own voice (`ccx: …`, exit 2); an unknown option is commander's, printed verbatim and unprefixed,
+ *  so the discriminator has to be the error's TYPE — the message is upstream's and carries no marker. */
+export class UnknownFlagError extends Error {
+  constructor(readonly token: string) { super(unknownOptionMessage(token)); this.name = "UnknownFlagError"; }
+}
+
 export interface CcxInvocation {
-  command: "run" | "agents" | "attach" | "stop" | "rm" | "gc" | "serve";
+  command: "run" | "agents" | "attach" | "stop" | "rm" | "gc" | "serve" | "doctor";
   prompt?: string; target?: string;
   bg: boolean; detachable: boolean; print: boolean;
   name?: string; worktree?: string;
@@ -22,6 +30,17 @@ export interface CcxInvocation {
    *  and rmSession acts only on an absolute path. */
   worktreePath?: string;
   json: boolean; all: boolean; cwdFilter?: string;
+  /** The two printer intercepts (Wave-C T5). Parsed as ORDINARY flags rather than scanned for ahead of
+   *  time, which is what makes `ccx --model -v` a model literally named `-v`: a value-taking flag consumes
+   *  its argument before the loop can read it as an option, exactly as commander does. main() acts on them
+   *  before every other check, so `--help` outranks even a cross-flag refusal — and inside this parser
+   *  they outrank the two parse-time refusals as well (see `refusal` in parseCcx). */
+  version: boolean; help: boolean;
+  /** `-c`/`--continue`: resume the most recent session in this directory. TOP-LEVEL, not `config`, unlike
+   *  `--resume` (which lands at `config.resume`) — there is no id to carry, only the intent, and the REPL
+   *  resolves "most recent" itself at launch. `continue` is a reserved word as an identifier, not as a
+   *  property, so `inv.continue` is legal. */
+  continue: boolean;
   // Field only for now — the --idle-timeout flag arm below stays the loud rejection until Task 8
   // rewires it to set this (seconds, a human CLI unit; hostOptsFrom converts to ms for SessionHostOpts).
   idleTimeoutSec?: number;
@@ -38,7 +57,11 @@ const KNOWN_UNSUPPORTED = new Set(["--remote-control", "--chrome", "--ide", "--t
 // The two value domains, checked against HarnessConfig's own unions via `satisfies`: a member added to
 // (or dropped from) the union breaks this literal at compile time instead of letting a stale value pass.
 const PERMISSION_MODES = { default: true, acceptEdits: true, bypassPermissions: true, plan: true, dontAsk: true, auto: true } satisfies Record<NonNullable<HarnessConfig["permissionMode"]>, true>;
-const EFFORT_LEVELS = { low: true, medium: true, high: true, xhigh: true, max: true } satisfies Record<NonNullable<HarnessConfig["effort"]>, true>;
+// Exported for ONE reason: `test/tui/effort.test.tsx` pins this domain equal to the tui's `EFFORT_LEVELS`
+// and to `config/validate.ts`'s zod enum. The three literals stay three (the tui may not import config, and
+// this flag domain must stay an object for `oneOf`'s `Object.hasOwn` check), so a test is the only thing
+// that can notice them drifting apart — and it can only do that if it can see this one.
+export const EFFORT_LEVELS = { low: true, medium: true, high: true, xhigh: true, max: true } satisfies Record<NonNullable<HarnessConfig["effort"]>, true>;
 
 /** `argv[++i] as any` used to put any string into these unions; resolveOptions forwards the value as-is
  *  and its `=== "auto"` guard means a near-miss like `Auto` also skips the auto-model repair. */
@@ -70,10 +93,10 @@ function parseSettings(v: string): Record<string, unknown> {
 }
 
 export function parseCcx(argv: string[]): CcxInvocation {
-  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, config: {}, listen: { host: "127.0.0.1", port: 0 }, allowOrigins: [] };
+  const a: CcxInvocation = { command: "run", bg: false, detachable: false, print: false, json: false, all: false, continue: false, version: false, help: false, config: {}, listen: { host: "127.0.0.1", port: 0 }, allowOrigins: [] };
   let i = 0;
   const sub = argv[0];
-  if (sub === "agents" || sub === "attach" || sub === "stop" || sub === "rm") { a.command = sub; i = 1; }
+  if (sub === "agents" || sub === "attach" || sub === "stop" || sub === "rm" || sub === "doctor") { a.command = sub; i = 1; }
   else if (sub === "serve") { a.command = "serve"; i = 1; }
   else if (sub === "fleet" && argv[1] === "gc") { a.command = "gc"; i = 2; }
 
@@ -86,9 +109,23 @@ export function parseCcx(argv: string[]): CcxInvocation {
     return v;
   };
 
+  /** The first token the loop refused — REMEMBERED, not thrown on sight. commander runs its help/version
+   *  intercept (`_outputHelpIfRequested`) before `unknownOption` ever reports, so both printers answer for
+   *  an argv the parser could not otherwise accept: verified against the real CLI at 2.1.226 that
+   *  `claude --nope --help` prints the help page at exit 0 and that both orders of `--nope`/`--version`
+   *  print the version. KNOWN_UNSUPPORTED defers too — upstream refuses those at parse time exactly as it
+   *  refuses an unknown flag, so it loses to the printers on the same rule. FIRST offender wins: a later
+   *  bad token is not the one the operator needs to hear about. */
+  let refusal: { token: string; unknown: boolean } | undefined;
+  /** The excess-operand throw, deferred for the same reason and reported AFTER `refusal` — commander's
+   *  `_parseCommand` runs `checkForUnknownOptions()` before `_processArguments()` reaches
+   *  `_excessArguments`. Thrown on sight, `ccx --nope 0a1b2c3d --kind bg task` blamed the stray operand
+   *  for a line whose real fault was the flag three tokens earlier. */
+  let excess: Error | undefined;
+
   for (; i < argv.length; i++) {
     const t = argv[i];
-    if (KNOWN_UNSUPPORTED.has(t)) throw new Error(`${t} is not supported by ccx (recognized, deliberately unimplemented)`);
+    if (KNOWN_UNSUPPORTED.has(t)) { refusal ??= { token: t, unknown: false }; continue; }
     switch (t) {
       case "--bg": case "--background": a.bg = true; break;
       case "--detachable": a.detachable = true; break;
@@ -110,7 +147,18 @@ export function parseCcx(argv: string[]): CcxInvocation {
       case "--model": a.config.model = val(t); break;
       case "--effort": a.config.effort = oneOf("--effort", val(t), EFFORT_LEVELS); break;
       case "-r": case "--resume": a.config.resume = val(t); break;
+      // Upstream's own flag and letter (`-c, --continue`, L563626). Valueless; it resolves at launch to
+      // the most recent session for this directory, which is exactly what the REPL's own /continue does.
+      case "-c": case "--continue": a.continue = true; break;
+      // Upstream's own letters (`-v, --version`, `-h, --help`, L563608/L563645). Valueless; main() prints
+      // and exits before anything else runs, so the rest of the invocation is never validated.
+      case "-v": case "--version": a.version = true; break;
+      case "-h": case "--help": a.help = true; break;
       case "--permission-mode": a.config.permissionMode = oneOf("--permission-mode", val(t), PERMISSION_MODES); break;
+      // The real CLI's own spelling for the same mode (Wave-T T15). It lands on the SAME field rather than a
+      // flag of its own, so the consent gate in main.ts keys on ONE resolved mode and can never cover one
+      // spelling and miss the other. Valueless, like upstream's.
+      case "--dangerously-skip-permissions": a.config.permissionMode = "bypassPermissions"; break;
       case "--settings": a.config.settings = parseSettings(val(t)); break;
       case "--think": { const v = val(t); if (!parseThinkArg(v)) throw new Error(`--think must be off|low|medium|high|xhigh|max or a token count, got ${JSON.stringify(v)}`); a.think = v; break; }
       case "--listen": {
@@ -130,13 +178,20 @@ export function parseCcx(argv: string[]): CcxInvocation {
       // transport fails closed, so this list is the ONLY way a browser client ever gets in at all).
       case "--allow-origin": a.allowOrigins.push(val(t)); break;
       default:
-        if (t.startsWith("-")) throw new Error(`unknown flag ${t}`);
+        // Commander's shape and commander's exit code (1, not the operator-error 2) — see UnknownFlagError.
+        // Deferred to the end of the loop so a `--help`/`--version` further along still wins (see `refusal`).
+        if (t.startsWith("-")) { refusal ??= { token: t, unknown: true }; break; }
         if (a.command === "run" && a.prompt === undefined) a.prompt = t;
-        else if (a.command === "serve") throw new Error(`unexpected argument ${JSON.stringify(t)} — serve takes no positional target`);
+        else if (a.command === "serve") excess ??= new Error(`unexpected argument ${JSON.stringify(t)} — serve takes no positional target`);
         else if (a.command !== "run" && a.target === undefined) a.target = t;
         // Silently dropping it is how `ccx fix the bug` (unquoted) runs an agent on the prompt "fix".
-        else throw new Error(`unexpected argument ${JSON.stringify(t)} — quote the prompt as one argument`);
+        else excess ??= new Error(`unexpected argument ${JSON.stringify(t)} — quote the prompt as one argument`);
     }
+  }
+  if (!a.version && !a.help) {
+    if (refusal?.unknown) throw new UnknownFlagError(refusal.token);
+    if (refusal) throw new Error(`${refusal.token} is not supported by ccx (recognized, deliberately unimplemented)`);
+    if (excess) throw excess;
   }
   return a;
 }

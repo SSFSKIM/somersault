@@ -1,0 +1,40 @@
+
+[38;5;231m⏺[39m 1. One is the loneliest number, the first positive integer.
+  2. Two is the smallest prime and the basis of binary code.
+  3. Three is a common number in storytelling, as in "three acts."
+  4. Four is the number of seasons in a year.
+  5. Five is the number of fingers on a typical human hand.
+  6. Six is the first perfect number, equal to the sum of its divisors.
+  7. Seven is often called a lucky number in many cultures.
+  8. Eight is the number of legs on a spider.
+  9. Nine is the highest single-digit number.
+  10. Ten marks the first double-digit milestone.
+  11. Eleven is a prime number and a palindrome.
+  12. Twelve is a highly composite number, useful for dividing into halves, thirds, and quarters.
+  13. Thirteen is often considered unlucky in Western superstition.
+  14. Fourteen is the number of days in a fortnight.
+  15. Fifteen is a quarter of sixty, common in clock time.
+  16. Sixteen is a power of two, often tied to computing.
+  17. Seventeen is a prime number and the atomic number of chlorine.
+  18. Eighteen is often the legal age of adulthood in many countries.
+  19. Nineteen is the number of holes short of a full round of golf... minus one.
+  20. Twenty marks two full decades.
+  21. Twenty-one is often the legal drinking age in the United States.
+  22. Twenty-two is a repdigit, made of two identical digits.
+  23. Twenty-three is a prime number famously referenced in pop culture.
+  24. Twenty-four is the number of hours in a day.
+  25. Twenty-five is a perfect square, five times five.
+  26. Twenty-six is the number of letters in the English alphabet.
+  27. Twenty-seven is three cubed.
+  28. Twenty-eight is another perfect number, and the typical days in February.
+  29. Twenty-nine is a prime number and the days in February during a leap year.
+  30. Thirty marks three full decades.
+  31. Thirty-one is a prime number and the most days a month can have.
+  32. Thirty-two is a power of two, often the b
+[38;5;246m  ⎿  Interrupted · What should Claude do instead?[39m
+
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ 
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [38;5;246m⏸[39m [38;5;246mmanual[39m [38;5;246mmode[39m [38;5;246mon[39m [38;5;246m·[39m [38;5;246m?[39m [38;5;246mfor[39m [38;5;246mshortcuts[39m [38;5;246m·[39m [38;5;246m←[39m [38;5;246mfor[39m [38;5;246magents[39m
+

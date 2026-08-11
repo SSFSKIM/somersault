@@ -88,7 +88,7 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
   srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, waitingOn) });
 }
 
-/** Turn-end belt for a plan_approve(acceptEdits:true) that settled but never saw the engine's own
+/** Turn-end belt for an approved plan_approve that settled but never saw the engine's own
  *  post-approval status frame (the turn ended first) — an approved upgrade must never stay unapplied.
  *  Fired on EVERY completion path below, a no-op unless one is armed (planUpgrade.ts). */
 function settleTurn(record: ThreadRecord): void {
@@ -157,16 +157,26 @@ export function beginTurn(
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: String(err) } });
       statusChanged(srv, record);
     };
-    const onSuccess = () => {
-      // The real engine (src/session/session.ts submit()/readLoop) does NOT reject on interrupt:
-      // interrupting an in-flight turn makes submit() RESOLVE, with the SDK result's
-      // error_during_execution subtype discarded by readLoop before this callback ever sees it. So the
-      // success path — not just the rejection path below — must consult interruptRequested to tell a
-      // genuine interrupt from a genuine completion.
+    // A RESOLVED submit is not the same thing as a succeeded turn. Two different resolves reach here
+    // carrying a failure, and both must be told apart from a genuine completion:
+    //  - interrupt: the real engine (src/session/session.ts submit()/readLoop) does NOT reject on
+    //    interrupt — interrupting an in-flight turn makes submit() RESOLVE, with the SDK result's
+    //    error_during_execution subtype discarded by readLoop before this callback ever sees it. So
+    //    interruptRequested is consulted on this path, not only on the rejection path below.
+    //  - Task 14's `error` tag: a turn that reached a terminal result frame and reported failure (probe
+    //    96's dead connection: `subtype:"success"` with `is_error:true`) now resolves error-tagged rather
+    //    than rejecting. That used to land on onFailure and broadcast {status:"failed", error}. This is a
+    //    ONE-SHOT broadcast that nothing later overwrites, so dropping the tag here permanently tells every
+    //    subscriber a dead API completed the turn — and finalizes its open tool items `completed` too.
+    // Interrupt wins when both hold: the client's own abort is the more specific cause of the failure.
+    const onSuccess = (outcome: { error?: { message: string } }) => {
       const interrupted = record.interruptRequested;
-      emitItems(srv, record, turnId, mapper.finalize(interrupted));
+      const failure = interrupted ? undefined : outcome?.error;
+      emitItems(srv, record, turnId, mapper.finalize(interrupted || failure !== undefined));
       settleTurn(record);
-      srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: interrupted ? "interrupted" : "completed" } });
+      const turn2: Record<string, unknown> = { id: turnId, status: interrupted ? "interrupted" : failure ? "failed" : "completed" };
+      if (failure) turn2.error = failure.message;
+      srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: turn2 });
       statusChanged(srv, record);
     };
     const onFailure = (err: unknown) => {

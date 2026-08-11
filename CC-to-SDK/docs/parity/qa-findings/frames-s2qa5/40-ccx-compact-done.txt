@@ -1,0 +1,40 @@
+❯ /usage
+plan usage not available under this credential (claude setup-token has no profile scope)
+❯ /context
+ctx 2% · 22.5k / 1m · ok
+❯ /compact
+compact: Not enough messages to compact.
+❯ Reply with exactly: C1
+⏺ C1
+✻ Cooked for 2s
+❯ Reply with exactly: C2
+⏺ C2
+✻ Brewed for 2s
+❯ /compact
+✦ compacted 22.4k → 2.3k
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

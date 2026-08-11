@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TurnBuffer } from "../../src/host/follow.js";
-import { SessionHost } from "../../src/host/host.js";
+import { SessionHost, type HostSession } from "../../src/host/host.js";
 import type { HostEvent } from "../../src/host/wire.js";
 const tmpFleet = () => mkdtempSync(join(tmpdir(), "ccx-follow-"));
 
@@ -63,7 +63,29 @@ function fakeSession() {
   };
 }
 
-const hostFor = (session: ReturnType<typeof fakeSession>, env: NodeJS.ProcessEnv) =>
+/** The engine shape fakeSession CANNOT express: no session id at all until the first frame of the first
+ *  turn dispatches — the id rides the init frame, and the real Session sets `.sessionId` just before
+ *  handing that frame on. A fixture that hardcodes the id at construction (fakeSession does, `sid-1`)
+ *  makes EP-S2 invisible: follow() spreads whatever id the session already has into its synchronous
+ *  subscribe-time `state` frame, so "a state frame carried an id" is true before runTask ever runs. */
+const LATE_ID = "0d7a7a9d-1111-2222-3333-444455556666";
+function lateIdSession() {
+  let deliver: (m: unknown) => void = () => {};
+  let finish: () => void = () => {};
+  const s = {
+    sessionId: undefined as string | undefined,
+    submit(_p: string, onMessage: (m: unknown) => void) {
+      deliver = (m) => { s.sessionId = LATE_ID; onMessage(m); };
+      return new Promise<unknown>((r) => { finish = () => r(undefined); });
+    },
+    dispose: async () => {},
+    emit: (m: unknown) => deliver(m),
+    finish: () => finish(),
+  };
+  return s;
+}
+
+const hostFor = (session: HostSession & { emit: (m: unknown) => void; finish: () => void }, env: NodeJS.ProcessEnv) =>
   new SessionHost(
     { short: "aaaaaaaa", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: {} as never, env },
     { openSession: () => session, procStartOf: async () => "start" },
@@ -90,6 +112,48 @@ describe("SessionHost.follow", () => {
     const late: HostEvent[] = [];
     host.follow((e) => late.push(e));
     expect(late.filter((e) => e.kind === "message").map((e: any) => e.data.n)).toEqual([1, 2]);
+    s.finish(); await turn; await host.stop();
+  });
+
+  it("marks DRAINED frames replay:true and live frames not at all — the stamp-honesty wire contract (F3 final re-review)", async () => {
+    // The flag is what lets a client skip arrival-time stamps on catch-up frames (fabricated Agent
+    // durations otherwise) while keeping them on live ones. Unpinned, a stray `replay: true` on the
+    // live emit would silently strip the duration from every Agent row in the foreground REPL — the
+    // re-review's sabotage of exactly that passed 2701 tests before this one existed.
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const liveEvents: HostEvent[] = [];
+    host.follow((e) => liveEvents.push(e));
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", n: 1 });
+    const liveMsgs = liveEvents.filter((e) => e.kind === "message") as { replay?: true }[];
+    expect(liveMsgs).toHaveLength(1);
+    expect(liveMsgs[0]!.replay).toBeUndefined();
+    const lateEvents: HostEvent[] = [];
+    host.follow((e) => lateEvents.push(e));
+    const drained = lateEvents.filter((e) => e.kind === "message") as { replay?: true }[];
+    expect(drained).toHaveLength(1);
+    expect(drained[0]!.replay).toBe(true);
+    s.finish(); await turn; await host.stop();
+  });
+
+  it("stream_event partials fan out LIVE but never enter the reconnect replay (F3 t3 review)", async () => {
+    // The interactive host now runs with includePartialMessages on, so a turn carries thousands of
+    // token-delta frames. The 500-message TurnBuffer would evict the turn's REAL frames for stale
+    // partials a late follower cannot use — a mid-turn attach would replay junk plus the truncation
+    // banner. Live fan-out keeps the partials (the foreground REPL needs them); the replay skips them.
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const liveFollower: HostEvent[] = [];
+    host.follow((e) => liveFollower.push(e));
+    const turn = host.runTask("hi");
+    s.emit({ type: "stream_event", event: { type: "content_block_delta" } });
+    s.emit({ type: "assistant", n: 1 });
+    s.emit({ type: "stream_event", event: { type: "content_block_delta" } });
+    expect(liveFollower.filter((e) => e.kind === "message")).toHaveLength(3);   // live path unchanged
+    const late: HostEvent[] = [];
+    host.follow((e) => late.push(e));
+    expect(late.filter((e) => e.kind === "message").map((e: any) => e.data.type)).toEqual(["assistant"]);
     s.finish(); await turn; await host.stop();
   });
 
@@ -135,6 +199,41 @@ describe("SessionHost.follow", () => {
     s.finish(); await turn; await host.stop();
   });
 
+  // The busy-vs-idle discriminant F1 Task 4's client depends on. It lives in SessionHost.follow, NOT in
+  // TurnBuffer: a MID-TURN truncated start carries a numeric `seq` (a live turn — the client opens a
+  // LiveTurn and goes busy), while an IDLE truncated start is BARE (a completed tail replay — it must
+  // never set busy and has no closing turn:end). This is a characterization pin so a later change to
+  // follow() cannot silently erase the distinction. TurnBuffer's limits are private and fixed
+  // (maxMessages 500 / maxBytes 1 MiB), so truncation is driven by byte volume rather than injection.
+  it("gives an idle truncated attach a bare start frame with no seq and no closing turn:end", async () => {
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();                                        // same harness the block above uses: runTask needs a live session
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", pad: "a".repeat(600_000) });
+    s.emit({ type: "assistant", pad: "b".repeat(600_000) });   // evicts the first: snapshot is truncated
+    s.finish(); await turn;                                    // turn COMPLETES, so the next attach is idle
+    const late: HostEvent[] = []; host.follow((e) => late.push(e));
+    const starts = late.filter((e) => e.kind === "turn" && e.phase === "start");
+    expect(starts).toEqual([{ kind: "turn", phase: "start", truncated: true }]);  // bare: carries no `seq`
+    expect(starts[0]).not.toHaveProperty("seq");                                  // the busy-vs-idle discriminant
+    expect(late.some((e) => e.kind === "turn" && e.phase === "end")).toBe(false);
+    await host.stop();
+  });
+
+  it("gives a MID-turn truncated attach a numeric seq, then the retained messages and the ending state frame", async () => {
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();                                        // same harness the block above uses: runTask needs a live session
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", pad: "a".repeat(600_000) });
+    s.emit({ type: "assistant", pad: "b".repeat(600_000) });
+    const late: HostEvent[] = []; host.follow((e) => late.push(e));               // attaches while the turn is STILL running
+    const start = late.find((e) => e.kind === "turn" && e.phase === "start") as any;
+    expect(start).toMatchObject({ truncated: true });
+    expect(typeof start.seq).toBe("number");
+    expect(late.at(-1)!.kind).toBe("state");                                      // the replay always ends on `state`
+    s.finish(); await turn; await host.stop();
+  });
+
   it("the buffer resets between turns, so turn two does not replay turn one", async () => {
     const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
     await host.start();
@@ -143,5 +242,26 @@ describe("SessionHost.follow", () => {
     const late: HostEvent[] = []; host.follow((e) => late.push(e));
     expect(late.filter((e) => e.kind === "message")).toHaveLength(0);
     s.finish(); await t2; await host.stop();
+  });
+
+  // EP-S2. `state` is the ONLY frame that populates the client adapter's cached session id
+  // (client/chatAdapter.ts), and nine surfaces read that cache — /status's session row, /rename, /tag,
+  // /export, /files, /stats, the Settings Stats tab. The host learned the id mid-turn (it stamped the
+  // roster with it) and told nobody, so after any number of completed turns those surfaces still said
+  // "no session yet". Two traps make a careless version of this test pass while broken: follow()'s
+  // subscribe-time `state` frame already carries whatever id the session has (so the fixture's id must
+  // start undefined), and onSessionFrame emits `state` for any `system/status` frame carrying a
+  // permissionMode (so this turn must carry none). `status: "busy"` pins that the frame arrives while
+  // the turn is still open, not at turn end.
+  it("publishes the engine's session id to followers mid-turn, on a turn that changes no permission mode (EP-S2)", async () => {
+    const s = lateIdSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const seen: HostEvent[] = []; host.follow((e) => seen.push(e));
+    const ids = () => seen.filter((e) => e.kind === "state").map((e) => (e as any).status.sessionId);
+    expect(ids()).toEqual([undefined]);                        // the subscribe-time frame is not evidence
+    const turn = host.runTask("hi");
+    s.emit({ type: "assistant", n: 1 });                       // the id materializes as this frame dispatches
+    expect(seen.some((e) => e.kind === "state" && (e as any).status.sessionId === LATE_ID && (e as any).status.status === "busy")).toBe(true);
+    s.finish(); await turn; await host.stop();
   });
 });

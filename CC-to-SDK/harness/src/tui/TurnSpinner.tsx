@@ -1,21 +1,82 @@
-// tui/src/TurnSpinner.tsx — the live-turn indicator: an animated ✻ asterisk-pulse glyph (Claude accent) + a
-// random thinking verb (fixed per mount = per turn) + a dim "(elapsed · esc to interrupt)" tail. ChatApp
-// mounts it only while a turn is in flight, so each turn picks a fresh verb. `now`/`verb` injectable for
-// deterministic tests. Supersedes the old ThinkingIndicator (which only covered the pre-first-frame gap).
+// tui/src/TurnSpinner.tsx — the live-turn indicator: an animated ✻ asterisk-pulse glyph (Claude accent), a
+// thinking gerund, and the dim parenthetical `({elapsed} · {↓|↑} {N} tokens · {phase})`. ChatApp mounts it
+// only while a turn is in flight. `now`/`verb`/`pick` are injectable for deterministic tests.
+//
+// WAVE C TASK 6 — everything past the glyph changed. Three of the four pieces are per-frame state that has
+// to live in a component because it is a function of the ANIMATION clock, not of the wire:
+//   · the eased character count (`animRef`) walks toward `meter.chars` in 50 ms steps, so the token figure
+//     climbs smoothly instead of stepping once per `message_delta` (spec D-C6);
+//   · the phase machine (`phaseRef`) is upstream's `m0p`/`h0p` pair, advanced once per frame; and
+//   · the gerund is RE-PICKED on every phase transition — upstream re-picks its store's `defaultVerb` on
+//     each `resetOverrides()`, which its engine calls between phases, and that is the mid-turn rotation
+//     QA-6 reported as a bug in our fixed-per-turn version.
+// All three read from `spinner.ts`, which owns the arithmetic and is unit-tested there; this file is the
+// clock and the refs. Mutating refs during render is upstream's own shape (`D.current = m0p(D.current, P)`).
 import React, { useEffect, useRef, useState } from "react";
 import { Text } from "ink";
 import { ACCENT } from "./banner.js";
-import { glyphFrame, pickVerb, spinnerStatus } from "./spinner.js";
+import {
+  glyphFrame, pickVerb, spinnerStatus, easeChars, estimateTokens, EASE_STEP_MS,
+  initPhaseState, advancePhase, phaseFor, thinkingStatusOf, rotateVerb, type SpinnerPhase,
+} from "./spinner.js";
+import { IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
+import stringWidth from "string-width";
 
-export function TurnSpinner({ startedAt, verb, tokens = 0, now = Date.now }: { startedAt: number; verb?: string; tokens?: number; now?: () => number }) {
+/** The glyph tick. Upstream animates at 100 ms (50 while requesting) off a raised cosine; ccx's twelve-frame
+ *  ping-pong at 120 ms predates Wave C and is pinned by its own tests, so it stays — it is also the clock
+ *  the character easing counts its 50 ms steps against. */
+const FRAME_MS = 120;
+
+export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80, verbose = false, now = Date.now, pick = pickVerb }: {
+  startedAt: number; verb?: string; meter?: SpinnerMeter; columns?: number; verbose?: boolean; now?: () => number; pick?: () => string;
+}) {
   const [tick, setTick] = useState(0);
-  const verbRef = useRef(verb ?? pickVerb());                 // picked once on mount → stable for the turn
-  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 120); return () => clearInterval(t); }, []);
+  // LAZY, not `useRef(verb ?? pick())`: an argument is evaluated on every render, so the eager form drew a
+  // fresh verb from `pick` each frame and threw it away — invisible with `Math.random`, and an off-by-N
+  // walk through an injected list in a test.
+  const verbRef = useRef<string>();
+  if (verbRef.current === undefined) verbRef.current = verb ?? pick();
+  const animRef = useRef({ chars: 0, at: 0 });                 // eased char count + the animation ms it was last advanced to
+  const phaseRef = useRef(initPhaseState());
+  const kindRef = useRef<SpinnerPhase["kind"]>("none");
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), FRAME_MS); return () => clearInterval(t); }, []);
+
+  const animMs = tick * FRAME_MS;
+  const steps = Math.floor((animMs - animRef.current.at) / EASE_STEP_MS);
+  if (steps > 0) { animRef.current = { chars: easeChars(animRef.current.chars, meter.chars, steps), at: animRef.current.at + steps * EASE_STEP_MS }; }
+
+  // startedAt can be 0 for ONE frame: useChat sets busy and the start stamp in two setState calls that do
+  // not commit together here, so the first painted frame has busy=true and startedAt=0 — and `now() - 0` is
+  // milliseconds since 1970, which rendered as "(29758130m 59s)" in the real binary (pty acceptance, w3.9).
+  // Only a live frame showed it; every unit test passed a real stamp. Treat a non-positive stamp as "just
+  // started" rather than trusting the caller.
+  const clock = now();
+  const elapsedMs = startedAt > 0 ? clock - startedAt : 0;
+  const input = {
+    now: clock, isThinking: meter.isThinking, hasActiveTools: meter.hasActiveTools,
+    thinkingStatus: thinkingStatusOf(meter.lastBurst, meter.isThinking, clock),
+    // RECORDED DIVERGENCE (constraint 12): upstream gates both tool rungs on `tengu_shining_fractals`,
+    // whose call-site default is false, so a stock 2.1.220 never prints them. The Wave C spec lists
+    // `running tool for {t}` / `ran tool for {t}` as shipped copy, so ccx turns them on here.
+    showToolTimer: true,
+  };
+  phaseRef.current = advancePhase(phaseRef.current, input);
+  const phase = phaseFor(phaseRef.current, input);
+  if (phase.kind !== kindRef.current) {
+    if (verb === undefined) verbRef.current = rotateVerb(verbRef.current!, kindRef.current, phase.kind, pick);
+    kindRef.current = phase.kind;
+  }
+
+  const gerund = `${verbRef.current!}…`;
+  const status = spinnerStatus({
+    elapsedMs, tokens: estimateTokens(animRef.current.chars), mode: meter.mode, phase,
+    columns, messageWidth: stringWidth(gerund), verbose,   // `Y`; spinnerStatus adds upstream's own +2 glyph cell
+  });
   return (
     <Text>
       <Text color={ACCENT}>{glyphFrame(tick)}</Text>
-      <Text>{" " + verbRef.current + "…"}</Text>
-      <Text dimColor>{" " + spinnerStatus(now() - startedAt, tokens)}</Text>
+      <Text>{` ${gerund}`}</Text>
+      {status ? <Text dimColor>{` ${status}`}</Text> : null}
     </Text>
   );
 }

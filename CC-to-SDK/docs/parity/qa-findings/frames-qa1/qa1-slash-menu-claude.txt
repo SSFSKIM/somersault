@@ -1,0 +1,40 @@
+│                       ▐▛███▜▌                      │ What's new                                                      │
+│                      ▝▜█████▛▘                     │ Fixed worktree-isolated sessions and their subagents being abl… │
+│                        ▘▘ ▝▝                       │ Fixed PreToolUse auto-allow hooks bypassing tool restrictions … │
+│                                                    │ Fixed `/usage-credits` on Team and Enterprise showing "you've … │
+│               Sonnet 5 · Claude API                │ /release-notes for more                                         │
+│  /private/tmp/qa1-driver-JVLMIS/qa-proj-cc-NRBcha  │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ # remember: qa note
+
+⏺ What would you like me to remember? "qa note" on its own doesn't have any content to save — could you share the detail
+  you want kept (a preference, project fact, feedback, or reference)?
+
+✻ Cogitated for 4s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/add-dir                      Add a new working directory
+/advisor                      Let Claude consult a stronger model at key moments
+/agents                       (removed) Ask Claude to create/manage subagents, or edit .claude/agents/
+/artifacts                    Browse your published and shared artifacts
+/autocompact                  Set how full the context gets before auto-summarizing
+/autofix-pr                   Monitor and autofix any issues with the current PR
+/background                   Send this session to the background and free the terminal
+/branch                       Create a branch of the current conversation at this point
+/btw                          Ask a quick side question without interrupting the main conversation
+/bug                          Report a bug or share your conversation
+/cd                           Move this session to a new working directory
+/chrome                       Open Claude in Chrome settings
+/clear                        Start a new session with empty context; previous session stays on disk (resumable with
+                              /resume)
+/color                        Set the prompt bar color for this session
+/compact                      Free up context by summarizing the conversation so far
+/config                       Open settings
+/context                      Visualize current context usage as a colored grid
+/copy                         Copy Claude's last response to clipboard (or /copy N for the Nth-latest)
+/design                       Grant or revoke Claude agent access to your Design projects
+

@@ -1,11 +1,30 @@
 // tui/src/fileComplete.ts — pure @-mention file completion: recursive walk (basic ignores, capped) + fuzzy
 // ranker. The walk takes an injected readdir so it's testable with a fake tree (no disk). Paths are
-// repo-relative POSIX. Used by editor.ts (rankCandidates) and ChatComposer.tsx (collectFiles).
+// repo-relative POSIX. Used by editor.ts (rankCandidates) and ChatComposer.tsx (collectEntries).
+//
+// NO `node:` import, ever: `completions.ts` imports `rankCandidates` from here, so this module sits inside the
+// editor reducer's closure and test/tui/history-nav.test.tsx walks that closure and fails on any builtin. That
+// is why `join` below is three characters of string concatenation rather than `path.join`, and why the walk
+// takes its readdir as an argument instead of reaching for one.
 import type { Candidate } from "./editor.js";
 
 export interface DirEnt { name: string; isDir: boolean }
 export type ReaddirFn = (dir: string) => DirEnt[];
-export interface WalkOpts { cap?: number }
+/** F5 t11: the async sibling. Upstream's whole @-completion path is async (`Re`/`eQa`/`p_a` are all
+ *  `async` and every caller awaits them), and the composer's walk is now too. */
+export type AsyncReaddirFn = (dir: string) => Promise<DirEnt[]>;
+/** `root` is a cwd-RELATIVE directory prefix, `""` or ending in `/` (see `mentionWalkRoot`). The walk starts
+ *  there and still emits cwd-relative paths, so a re-rooted walk's output is interchangeable with a whole-tree
+ *  one — the ranker, the popup rows and `mentionInsertion` never learn that the root moved. */
+export interface WalkOpts { cap?: number; root?: string }
+/** One walked entry. `isDir` is redundant with the path by construction — a directory's emitted path ALWAYS
+ *  carries the trailing slash — and is kept anyway because the two readers want different halves: the composer
+ *  maps to `path` and `acceptMention` asks `endsWith("/")`. Documented invariant: `isDir === path.endsWith("/")`.
+ *
+ *  The trailing slash is upstream's, not ours: `p_a` (bundle L432324) returns
+ *  `displayText: type === "directory" ? p + "/" : p`, and the bare-`@` cwd listing `_l_` (L314127) emits
+ *  `i + path.sep` for a directory. */
+export interface Entry { path: string; isDir: boolean }
 
 const IGNORE = new Set(["node_modules", ".git"]);
 const skipDir = (name: string) => IGNORE.has(name) || name.startsWith(".");
@@ -25,6 +44,67 @@ export function collectFiles(cwd: string, readdir: ReaddirFn, opts: WalkOpts = {
   };
   walk(cwd, "");                                                // emitted paths are relative to cwd
   return out;
+}
+
+/** `collectFiles` with two differences and one addition: it is ASYNC, it lists DIRECTORIES as candidates of
+ *  their own, and it can start below the cwd (`opts.root`).
+ *
+ *  A directory is emitted BEFORE the walk descends into it, so one level reads top-down (`src/`, then
+ *  `src/app.ts`, then `src/tui/`, …). The ignore rules are unchanged and apply to listing as well as to
+ *  descent: a skipped directory (`node_modules`, `.git`, any dotdir) is neither a candidate nor walked.
+ *
+ *  `collectFiles` stays for its existing callers and its existing test; nothing in the product reads it now. */
+export async function collectEntries(cwd: string, readdir: AsyncReaddirFn, opts: WalkOpts = {}): Promise<Entry[]> {
+  const cap = opts.cap ?? 1000; const root = opts.root ?? ""; const out: Entry[] = [];
+  const walk = async (dir: string, rel: string): Promise<void> => {
+    if (out.length >= cap) return;
+    let ents: DirEnt[]; try { ents = await readdir(dir); } catch { return; }
+    for (const e of ents) {
+      if (out.length >= cap) return;
+      const childRel = rel ? rel + "/" + e.name : e.name;
+      if (e.isDir) {
+        if (skipDir(e.name)) continue;
+        out.push({ path: root + childRel + "/", isDir: true });
+        await walk(join(dir, e.name), childRel);
+      } else if (!e.name.startsWith(".")) out.push({ path: root + childRel, isDir: false });
+    }
+  };
+  // `root.slice(0, -1)` drops the trailing slash the prefix carries for the emitted paths' sake.
+  await walk(root ? join(cwd, root.slice(0, -1)) : cwd, "");
+  return out;
+}
+
+/** Which directory the @-walk should start from, given the live mention query — the composer's one input to
+ *  `WalkOpts.root`, and the thing whose CHANGE (and only whose change) schedules a new walk.
+ *
+ *  Upstream's counterpart is `A7p`'s `{ directory, prefix }` split inside `p_a` (bundle L432324): it reads one
+ *  directory per level rather than re-searching a whole index. Two transcription notes:
+ *
+ *  · Upstream reaches that per-level lane ONLY for a token `d_a` accepts (L432303: `~/`, `/`, `./`, `../`, or
+ *    exactly `~`, `.`, `..`); every other `@` token goes to the fuzzy index (`Tcn`, L314140), which
+ *    re-searches the whole repo on each keystroke. That index holds DIRECTORIES too — `FNd` (L314068) builds
+ *    it from `[...await k2s(c), ...c]` (L314073–L314075), where `k2s` (L314031) walks every tracked file's
+ *    ancestor chain and returns each directory with a trailing separator (L314036). This port has one lane, so
+ *    the split is by whether the query HAS a directory part — a plain `@app` still fuzzy-matches
+ *    `src/tui/ChatApp.tsx` across the tree, and `@src/util/f` reads only `src/util`.
+ *  · The three shapes upstream's `A7p` handles and we do not — absolute, `~`-relative, and dot-relative — fall
+ *    back to `""`, i.e. the whole-tree walk this port has always done for them. Answering them properly needs
+ *    a path resolver, which this module cannot have (see the no-builtins note at the top).
+ *
+ *  THE IGNORE-SET RULE, ruled deliberately (t11 review, I1). Re-rooting BYPASSES `skipDir`: the root itself is
+ *  never filtered, so `@node_modules/` lists node_modules' children even though the whole-tree walk refuses to
+ *  descend into it. That asymmetry is the intended behavior, not a leak — **an explicit request beats the
+ *  default filter.** `skipDir` exists to keep a bulk walk from drowning in vendored files nobody asked for; a
+ *  user who has typed the directory's name has asked for it by name. Upstream's per-level lane behaves the
+ *  same way — `FCH` (L432305) filters only dotfiles and knows nothing about `node_modules`, so `@./node_modules/`
+ *  lists it there too. Pinned in test/tui/file-complete-async.test.tsx. */
+export function mentionWalkRoot(query: string): string {
+  const i = query.lastIndexOf("/");
+  if (i === -1) return "";
+  const dir = query.slice(0, i + 1);
+  if (dir.startsWith("/") || dir.startsWith("~")) return "";
+  if (dir.split("/").some((seg) => seg === "." || seg === "..")) return "";
+  return dir;
 }
 
 function fuzzyScore(textLc: string, q: string): number {

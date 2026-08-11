@@ -1,0 +1,40 @@
+
+✻ Churned for 3s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Rewind
+
+  Restore the code and/or conversation to the point before…
+
+   ↑ 1 more above
+
+    Reply with exactly: HIST-ONE…
+    No code changes
+
+    Reply with exactly: HIST-TWO
+    No code changes
+
+    /design-sync
+    No code changes
+
+    Count slowly from 1 to 40, one number per line.
+    No code changes
+
+    queued follow-up A
+    No code changes
+
+    Run this exact bash command and nothing else: sleep 35
+    No code changes
+
+    QUEUED-ONE
+    No code changes
+
+    QUEUED-TWO
+    No code changes
+
+  ❯ (current)
+
+
+
+  Enter to continue · Esc to cancel
+

@@ -1,0 +1,40 @@
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mReply with exactly: MARKER-TWOAnswer YES or NO only: earlier in this conversation, did I ask you to reply with       [39m[49m
+[38;2;255;255;255m[48;2;55;55;55m  MARKER-THREE?                                                                                                        [39m[49m
+[38;2;255;255;255m⏺ [39mMARKER-TWO
+
+  NO
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/help                                                                                                                [39m[49m
+[2mHelp dialog dismissed[0m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/settings                                                                                                            [39m[49m
+[2mConfig dialog dismissed[0m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/theme                                                                                                               [39m[49m
+[2mTheme picker dismissed[0m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/resume                                                                                                              [39m[49m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/add-dir /tmp/qa4-root/proj-ccx2                                                                                     [39m[49m
+[38;2;215;119;87m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│[39m [1mAdd directory to workspace[0m                                                                                           [38;2;215;119;87m│
+│[39m [1m/tmp/qa4-root/proj-ccx2[0m                                                                                              [38;2;215;119;87m│
+│[39m [2mClaude Code will be able to read files in this directory and make edits when auto-accept edits is on.[0m                [38;2;215;119;87m│
+│[39m                                                                                                                      [38;2;215;119;87m│
+│[39m [38;2;215;119;87m❯ Yes, for this session[39m                                                                                              [38;2;215;119;87m│
+│[39m   Yes, and remember this directory                                                                                   [38;2;215;119;87m│
+│[39m   No                                                                                                                 [38;2;215;119;87m│
+│[39m [2mEnter to add · Esc to cancel[0m                                                                                         [38;2;215;119;87m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[39mmodel [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[39m  think [38;2;175;135;255mdefault[39m  ctx 3%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

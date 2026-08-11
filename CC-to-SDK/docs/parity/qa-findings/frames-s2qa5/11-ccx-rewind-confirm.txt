@@ -1,0 +1,40 @@
+Total duration (wall): 17s
+Total code changes:    0 lines added, 0 lines removed
+Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+❯ /context
+ctx 2% · 19.7k / 1m · ok
+❯ Reply with exactly: ONE
+⏺ ONE
+✻ Worked for 3s
+❯ Reply with exactly: TWO
+⏺ TWO
+✻ Cooked for 3s
+❯ Reply with exactly: THREE
+⏺ THREE
+✻ Worked for 1s
+❯ /rename s2qa5-fresh
+✓ renamed to "s2qa5-fresh"
+❯ /tag lifecycle
+✓ tagged #lifecycle
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Rewind                                                                                                               │
+│                                                                                                                      │
+│ Confirm you want to restore to the point before you sent this message:                                               │
+│ │ Reply with exactly: TWO                                                                                            │
+│ │ (51s ago)                                                                                                          │
+│ The conversation will be forked.                                                                                     │
+│ The code will be unchanged.                                                                                          │
+│ ❯ 1. Restore conversation                                                                                            │
+│   2. Never mind                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+

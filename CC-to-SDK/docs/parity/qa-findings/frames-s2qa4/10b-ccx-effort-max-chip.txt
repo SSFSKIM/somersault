@@ -1,0 +1,40 @@
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ /model
+❯ /model
+❯ /model
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     high
+  cwd        /private/tmp/s2qa4-root/proj-ccx
+❯ /effort
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     high
+  cwd        /private/tmp/s2qa4-root/proj-ccx
+❯ /effort low
+❯ /effort help
+effort: unknown effort level "help" · try low/medium/high/xhigh/max
+❯ /effort current
+effort: unknown effort level "current" · try low/medium/high/xhigh/max
+❯ /effort maximum
+effort: unknown effort level "maximum" · try low/medium/high/xhigh/max
+❯ /effort low
+❯ /effort max
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+

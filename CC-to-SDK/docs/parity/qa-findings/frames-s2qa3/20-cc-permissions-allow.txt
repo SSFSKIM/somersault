@@ -1,0 +1,40 @@
+
+⏺ Bash(git status)
+  ⎿  현재 브랜치 master
+
+     아직 커밋이 없습니다
+     … +9 lines (ctrl+o to expand)
+
+⏺ ae.txt is untracked (no commits yet), so removing it won't lose any committed work.
+
+⏺ Bash(rm ae.txt)
+  ⎿  Done
+
+⏺ Removed ae.txt.
+
+✻ Cogitated for 12s
+
+❯ /permissions
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Permissions  Recently denied   Allow   Ask   Deny   Workspace
+
+  Claude Code won't ask before using allowed tools.
+  ╭───────────────────────────────────────────────╮
+  │ ⌕ Search…                                     │
+  ╰───────────────────────────────────────────────╯
+
+    1. Add a new rule…
+    2. Bash(git init *)
+
+  ←/→ to switch · ↓ to select · Esc to cancel
+
+
+
+
+
+
+
+
+
+

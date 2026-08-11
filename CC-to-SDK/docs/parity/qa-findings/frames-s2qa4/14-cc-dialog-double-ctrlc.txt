@@ -1,0 +1,40 @@
+  ⎿  Invalid argument: maximum. Valid options are: low, medium, high, xhigh, max, ultracode, auto
+
+❯ /effort medium
+  ⎿  Set effort level to medium (saved as your default for new sessions): Balanced approach with standard implementation
+     and testing
+
+❯ /model
+  ⎿  Kept model as Sonnet 5 (default)
+
+❯ Reply with exactly: S2QA4-CC-OK
+
+⏺ S2QA4-CC-OK
+
+✻ Sautéed for 2s
+
+❯ /model
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Select model
+  Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,
+  specify with --model.
+
+  ❯ 1. Default (recommended) ✔  Sonnet 5 · Efficient for routine tasks
+Resume this session with:       Sonnet 5 · Efficient for routine tasks
+claude --resume 2be2811d-e036-4be8-bb6a-94648be81636eryday, complex tasks
+    4. Haiku                    Haiku 4.5 · Fastest for quick answers
+
+  ◐ Medium effort ←/→ to adjust
+
+  Press Ctrl-C again to exit
+
+
+
+
+
+
+
+
+
+Pane is dead (status 0, Mon Aug 10 15:03:48 2026)

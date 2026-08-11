@@ -1,0 +1,40 @@
+[38;2;215;119;87m╭─────────────────────────────────────────────────╮[39m
+[1m[38;2;215;119;87m│ ✻ Welcome to Claude Code                        │[0m
+[38;2;215;119;87m╰─────────────────────────────────────────────────╯[39m
+
+[2m  cwd    /private/tmp/qa4-root/proj-ccx[0m
+[2m  model  opus   ·   mode  default[0m
+
+  Tips for getting started
+[2m  • Ask Claude to edit files, run commands, or explain code[0m
+[2m  • /help for commands · @ to reference files · ⇧Tab to change mode[0m
+[2m  • Esc to interrupt a response[0m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/resume                                                                                                              [39m[49m
+
+[38;2;177;185;249m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1mRename session:[0m
+
+ QA4-RENAMED-CCX[7m [0m
+
+ [2menter to save · esc to cancel
+[0mmodel [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[39m  think [38;2;175;135;255mdefault[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

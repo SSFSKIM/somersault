@@ -1,0 +1,24 @@
+❯ Write exactly one paragraph of about 120 words about the history of the
+  typewriter. No lists, no headings, plain prose only.
+
+⏺ The typewriter's history stretches back to the late eighteenth century, with
+  early patents by inventors like Henry Mill in 1714, though practical machines
+  did not emerge until the 1800s. The Sholes and Glidden typewriter, developed
+  by Christopher Latham Sholes and introduced commercially in 1874, became the
+  first widely produced model and established the QWERTY keyboard layout still
+  used today. Throughout the late nineteenth and early twentieth centuries,
+  typewriters transformed offices, journalism, and literature, enabling faster
+  written communication and opening clerical work to women. Manufacturers such
+  as Remington, Underwood, and Royal competed fiercely, refining mechanisms like
+  shift keys and ribbon systems. Electric typewriters emerged mid-century,
+  notably IBM's Selectric in 1961, before word processors and personal computers
+  gradually rendered the typewriter obsolete by the late twentieth century,
+  though it remains a cultural icon.
+
+✻ Churned for 4s
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+

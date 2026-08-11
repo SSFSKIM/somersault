@@ -1,0 +1,40 @@
+❯ this is an unsent draft/clear
+⏺ Understood — nothing to act on here. Note that /clear only works as a slash command typed on its own; inside a
+message it's just text, so the conversation hasn't been cleared. Let me know what you'd like to work on.
+✻ Brewed for 4s
+❯ Reply with exactly: KILO
+⏺ KILO
+✻ Cooked for 4s
+❯ /copy
+✓ copied 12 chars
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -12,7 +12,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), "cc-daemon-"));
 // a session whose live query exposes getContextUsage (so the context_usage control frame returns a payload)
 function ctxQuery({ prompt }: any) {
   const gen: any = (async function* () {
-    for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: "sdk-1" }; yield { type: "result", result: "did:" + t.message.content }; }
+    for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: "sdk-1" }; yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content }; }
   })();
   gen.getContextUsage = async () => ({ totalTokens: 1000, maxTokens: 5000 });
   return gen;

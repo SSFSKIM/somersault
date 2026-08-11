@@ -1,0 +1,40 @@
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ /model
+❯ Reply with exactly: HIST-ONE
+⏺ HIST-ONE
+✻ Sautéed for 3s
+❯ Reply with exactly: HIST-TWO
+⏺ HIST-TWO
+✻ Baked for 2s
+❯ SE1
+⏺ I'm not sure what "SE1" refers to — could you say what you'd like me to do?
+✻ Brewed for 3s
+! echo S2QA1-BASH-OK
+  S2QA1-BASH-OK
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ [Pasted text #1 +4 lines]X
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

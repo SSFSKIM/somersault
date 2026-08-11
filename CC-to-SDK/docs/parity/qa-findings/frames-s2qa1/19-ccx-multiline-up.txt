@@ -1,0 +1,40 @@
+╭─── ccx v0.1.0 ──────────────────────────────────╮
+│ ✻ Welcome to Claude Code                        │
+╰─────────────────────────────────────────────────╯
+
+  cwd    /private/tmp/s2qa1-euSiO4/proj-ccx-lcv0lk
+  model  claude-opus-5   ·   mode  default
+
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ /model
+❯ Reply with exactly: HIST-ONE
+⏺ HIST-ONE
+✻ Sautéed for 3s
+❯ Reply with exactly: HIST-TWO
+⏺ HIST-TWO
+✻ Baked for 2s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ AAA#
+  BBB
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

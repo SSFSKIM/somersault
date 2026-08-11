@@ -1,0 +1,40 @@
+[38;2;215;119;87m╰─────────────────────────────────────────────────╯[39m
+
+[2m  cwd    /private/tmp/qa6-root-vgtQni/proj-ccx-dcgdkn[0m
+[2m  model  (default)   ·   mode  default[0m
+
+  Tips for getting started
+[2m  • Ask Claude to edit files, run commands, or explain code[0m
+[2m  • /help for commands · @ to reference files · ⇧Tab to change mode[0m
+[2m  • Esc to interrupt a response[0m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mWrite a 300-word essay about the history of the terminal emulator. No tools.                                         [39m[49m
+[38;2;255;255;255m⏺ [39mThe terminal emulator's history begins with hardware it no longer resembles. In the 1960s, computing terminals were
+physical machines: the Teletype Model 33, an electromechanical printer that typed onto paper rolls, connected users to
+distant mainframes at ten characters per second. Its constraints still echo in modern systems — the "tty" device name is
+ short for teletype, and the carriage return and line feed characters once described real mechanical motions.
+
+  Glass replaced paper in the early 1970s. Video display terminals like the DEC VT05, and later the enormously
+influential VT100 of 1978, drew characters on a cathode ray tube. The VT100 implemented an emerging standard for escape
+sequences — short bursts of control characters that moved the cursor, cleared regions of the screen, or changed text
+attributes. That specification, eventually ratified as ANSI X3.64 and ECMA-48, became the lingua franca of text
+interfaces and remains the reason a program written in 1980 can still color its output in a window today.
+
+  Emulation proper arrived when terminals stopped being separate machines. As workstations and personal computers gained
+ their own processors and displays, software began imitating the VT100's behavior, letting a general-purpose computer
+masquerade as dedicated hardware. The MIT X Window System brought xterm in 1984, a program that drew a terminal inside a
+ graphical window — a simulation of a device many users had never physically touched. Successors multiplied: rxvt, GNOME
+ Terminal, Konsole, PuTTY on Windows, Terminal.app on the Mac.
+
+  Rather than fading, the form has proven remarkably durable. Developers still spend their days inside emulators, and
+recent projects — GPU-accelerated ones like Alacritty and Kitty, and full-featured entrants like Ghostty and WezTerm —
+compete on rendering speed and typography. The paper rolls are gone, but their protocol survived, a layer of 1970s
+convention faithfully reproduced by software fast enough to render it thousands of times per second.
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ [7m [0m
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [2m⏎ send · backslash (\) + return (⏎) for newline · @ files · / commands · ! bash · ⇧Tab mode · ? help[0m
+ [2mEsc rewind · ? help[0m
+model [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[2m[39m (⇧Tab to cycle)[0m  think [38;2;175;135;255mdefault[39m  ctx 2%
+
+

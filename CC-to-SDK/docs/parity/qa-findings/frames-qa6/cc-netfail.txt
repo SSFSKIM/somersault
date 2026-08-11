@@ -1,0 +1,40 @@
+╭─── Claude Code v2.1.222 ────────────────────────────────────────────────────────────────────────────────╮
+│                                                  │ Tips for getting started                             │
+│                   Welcome back!                  │ Ask Claude to create a new app or clone a repository │
+│                                                  │ ──────────────────────────────────────────────────── │
+│                      ▐▛███▜▌                     │ What's new                                           │
+│                     ▝▜█████▛▘                    │ Check the Claude Code changelog for updates          │
+│                       ▘▘ ▝▝                      │                                                      │
+│                                                  │                                                      │
+│              Sonnet 5 · Claude API               │                                                      │
+│   /private/tmp/qa6-root-vgtQni/proj-net-csmHL1   │                                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ Reply with exactly: NETTEST
+
+✻ Unable to connect to API (ConnectionRefused) · Retrying in 24s · attempt 8/10
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

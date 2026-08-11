@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AsyncQueue } from "../swarm/asyncQueue.js";
 import type { QueryFn } from "../swarm/types.js";
@@ -5,6 +6,7 @@ import type { ControllableSession } from "../bridge/types.js";
 import { withContextTool, type QueryHolder, type RawContextUsage } from "../context/server.js";
 import { withCompactTool, parseCompactOutcome, type CompactHolder, type CompactOutcome } from "../compaction/server.js";
 import { classifyLimitMessage, type LimitState } from "../limits/classify.js";
+import { turnFailureOf, type TurnFailure } from "./turnResult.js";
 
 /** One live background task, as carried by system/background_tasks_changed frames. */
 export interface BackgroundTaskInfo { task_id: string; task_type: string; description: string; }
@@ -17,13 +19,19 @@ export interface MirrorErrorInfo { error: string; key: { projectKey: string; ses
 export interface SessionDeps { query: QueryFn; }
 export interface SessionOpts { contextTool?: boolean; compactTool?: boolean; label?: string; now?: () => number; }
 
-function userTurn(text: string, uuid?: string): SDKUserMessage {
-  const msg = { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null } as SDKUserMessage;
-  if (uuid) msg.uuid = uuid as SDKUserMessage["uuid"];
-  return msg;
+type UserMessageUUID = NonNullable<SDKUserMessage["uuid"]>;
+type SubmittedOrigin = "human" | "auto-continuation";
+type TurnKind = "normal" | "compact";
+
+function userTurn(text: string, uuid: UserMessageUUID, origin: SubmittedOrigin): SDKUserMessage {
+  return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, origin: { kind: origin }, uuid };
 }
 
-interface Waiter { onMessage: (m: unknown) => void; resolve: (r: { result: unknown; structuredOutput?: unknown }) => void; reject: (e: Error) => void; }
+/** What one turn settles to. `error` (Wave T Task 14) is ADDITIVE — a turn that reached a terminal result
+ *  frame and reported failure still resolves, so every `{result}`-only consumer is unaffected. */
+export interface TurnOutcome { result: unknown; structuredOutput?: unknown; error?: TurnFailure; }
+
+interface Waiter { uuid: UserMessageUUID; origin: SubmittedOrigin; kind: TurnKind; compactLifecycle: boolean; onMessage: (m: unknown) => void; resolve: (r: TurnOutcome) => void; reject: (e: Error) => void; }
 
 /** One long-lived query() session. A turn is submit(prompt,onMessage) → streamed messages → resolved result.
  *  Captures the SDK session_id from the first system/init frame (stable per probe) → .sessionId. */
@@ -32,7 +40,7 @@ export class Session implements ControllableSession {
   readonly done: Promise<void>;            // resolves when the read-loop ends (query disposed or died)
   private input = new AsyncQueue<SDKUserMessage>();
   private q: AsyncIterable<unknown>;
-  private waiters: Waiter[] = [];          // FIFO: query emits one result per submitted turn, in order
+  private waiters: Waiter[] = [];          // queued turns; success results find their matching UUID
   private ended = false;
   private compactRequested = false;        // set by the cc-compact tool; fires one /compact at the next boundary
   private now: () => number;
@@ -68,40 +76,81 @@ export class Session implements ControllableSession {
   /** Dropped sessionStore mirror batches (W3.3) — empty means the external mirror is loss-free so far. */
   get mirrorErrors(): MirrorErrorInfo[] { return this._mirrorErrors; }
 
-  /** Push a turn + its waiter onto the FIFO. Shared by submit() and compact() so every injected turn
-   *  gets its own waiter (its result resolves ITS waiter, never another turn's). `uuid` is the appserver-only
-   *  seam (Task 6/gap 6, see EngineSession.submit doc): threaded through to the pushed SDKUserMessage
-   *  untouched, undefined for every other caller. */
-  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void, uuid?: string): Promise<{ result: unknown; structuredOutput?: unknown }> {
-    return new Promise((resolve, reject) => { this.waiters.push({ onMessage, resolve, reject }); this.input.push(userTurn(prompt, uuid)); });
+  /** Queue a turn + its waiter. Every turn keeps its fixed input provenance so its result cannot settle a
+   *  waiter owned by another origin class. `uuid` is the appserver-only seam (Task 6/gap 6, see
+   *  EngineSession.submit doc): a caller-minted id stamped onto the pushed SDKUserMessage in place of the
+   *  fresh mint — result correlation by `user_message_uuid` works identically, and the live userMessage
+   *  item's id equals the persisted transcript id. Undefined for every other caller. */
+  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void, origin: SubmittedOrigin, kind: TurnKind = "normal", uuid?: string): Promise<TurnOutcome> {
+    const turnUuid = (uuid ?? randomUUID()) as UserMessageUUID;
+    return new Promise((resolve, reject) => { this.waiters.push({ uuid: turnUuid, origin, kind, compactLifecycle: false, onMessage, resolve, reject }); this.input.push(userTurn(prompt, turnUuid, origin)); });
+  }
+  private enqueueCompact(origin: SubmittedOrigin, onMessage: (m: unknown) => void): Promise<TurnOutcome> {
+    return this.enqueueTurn("/compact", onMessage, origin, "compact");
+  }
+
+  /** UUID-bearing results are turn-owned. UUID-less results may use FIFO only with matching explicit
+   *  provenance, or for a compact waiter that has observed its own compact lifecycle marker. */
+  private fifoWaiter(m: any): Waiter | undefined {
+    const waiter = this.waiters[0];
+    if (!waiter) return undefined;
+    // An api_error terminal frame is fatal to the WHOLE query — probe 96 measured the async iterator
+    // throwing immediately after it — so no later result can arrive for any waiter and there is no
+    // "wrong waiter" to protect. Settling the head one with the failure is what stops readLoop's
+    // `finally` from rejecting it "<label> disposed", a message that names the wrong cause and printed a
+    // second, wrong line underneath the honest one.
+    if (m.terminal_reason === "api_error") return waiter;
+    if (m.origin != null) return m.origin.kind === waiter.origin ? waiter : undefined;
+    return waiter.kind === "compact" && waiter.compactLifecycle ? waiter : undefined;
+  }
+  // Correlation is by the presence of `user_message_uuid`, NOT by subtype: probe 96's dead-connection
+  // frame is `subtype:"success"` with `is_error:true`, and a subtype gate here made the routing depend on
+  // a field that lies. Whether the turn SUCCEEDED is turnFailureOf()'s job, not this one's.
+  private resultWaiter(m: any): Waiter | undefined {
+    const uuid = m.user_message_uuid;
+    if (typeof uuid !== "string" || uuid.length === 0) return this.fifoWaiter(m);
+    const waiter = this.waiters.find((w) => w.uuid === uuid);
+    return waiter && (m.origin == null || m.origin.kind === waiter.origin) ? waiter : undefined;
   }
 
   /** Run one turn; non-result messages stream to onMessage; resolves with the turn's result (and, when the
    *  SDK's outputFormat produced one, `structuredOutput` — additive, so `{result}`-only callers are unaffected).
+   *  A turn that REACHED a terminal result frame and reported failure also resolves, carrying an additive
+   *  `error` tag (Task 14): it has a session id, usage, cost and an error text, which a rejection would
+   *  throw away. Only a genuine transport exception — the query dying with no terminal frame — rejects.
    *  Rejects immediately if the underlying query has already ended (else the waiter would never drain).
    *  `opts.uuid` is optional and additive (Task 6/gap 6) — every existing 1/2-arg caller is unaffected. */
-  submit(prompt: string, onMessage: (m: unknown) => void = () => {}, opts?: { uuid?: string }): Promise<{ result: unknown; structuredOutput?: unknown }> {
+  submit(prompt: string, onMessage: (m: unknown) => void = () => {}, opts?: { uuid?: string }): Promise<TurnOutcome> {
     if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
-    return this.enqueueTurn(prompt, onMessage, opts?.uuid);
+    return this.enqueueTurn(prompt, onMessage, "human", "normal", opts?.uuid);
+  }
+
+  /** Fixed route for host-generated follow-up turns; callers cannot choose another provenance class. */
+  submitAutomatic(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<TurnOutcome> {
+    if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
+    return prompt === "/compact" ? this.enqueueCompact("auto-continuation", onMessage) : this.enqueueTurn(prompt, onMessage, "auto-continuation");
   }
 
   /** Convenience: run one turn as an async generator. Yields the turn's streamed (non-result) messages,
-   *  then a terminal { type:"result", result } (or { type:"error", error } if the turn rejects). Sugar over submit. */
+   *  then a terminal { type:"result", result } — or { type:"error", error } both when the turn rejects and
+   *  when it resolves error-tagged. The tag is the SAME failure a rejection used to be (Task 14 changed how
+   *  it settles, not whether it failed), so this public generator must not report it as a result: the
+   *  terminal shape is what a `stream()` consumer branches on. Sugar over submit. */
   async *stream(prompt: string): AsyncGenerator<unknown> {
     const out = new AsyncQueue<unknown>();
     const done = this.submit(prompt, (m) => out.push(m)).then(
-      (r) => out.push({ type: "result", result: r.result }),
+      (r) => out.push(r.error ? { type: "error", error: r.error.message } : { type: "result", result: r.result }),
       (e) => out.push({ type: "error", error: (e as Error).message }),
     ).finally(() => out.close());
     for await (const m of out) yield m;
     await done;
   }
 
-  /** Inject `/compact` as a turn (its own FIFO waiter) and return the structured outcome. */
+  /** Inject `/compact` as a turn (with its own correlated waiter) and return the structured outcome. */
   async compact(): Promise<CompactOutcome> {
     this.assertRunning();
     const frames: unknown[] = [];
-    await this.enqueueTurn("/compact", (m) => {
+    await this.enqueueCompact("human", (m) => {
       const mm = m as any;
       if (mm.type === "system" && (mm.subtype === "status" || mm.subtype === "compact_boundary")) frames.push(mm);
     });
@@ -159,6 +208,12 @@ export class Session implements ControllableSession {
   async usage(): Promise<unknown> { this.assertRunning(); return this.callQValue("usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET"); }
   async initializationResult(): Promise<unknown> { this.assertRunning(); return this.callQValue("initializationResult"); }
   async applyFlagSettings(settings: Record<string, unknown>): Promise<void> { this.assertRunning(); await this.callQ("applyFlagSettings", settings); }
+  /** Untyped control door (probe 75): every declared subtype rides the same funnel the typed methods use. */
+  async getSettings(): Promise<unknown> {
+    this.assertRunning();
+    const res = (await this.callQ("request", { subtype: "get_settings" })) as { response?: unknown };
+    return res?.response ?? res;
+  }
 
   // ---- runtime MCP topology (W3.5; probes 52/52b) ----
   /** Replace the session's DYNAMIC MCP server set mid-session (stdio/sse/http and SDK-type both work).
@@ -208,17 +263,23 @@ export class Session implements ControllableSession {
         for (const cb of [...this.frameCbs]) { try { cb(m); } catch { /* one subscriber's failure is not another's */ } }
         const mm = m as any;
         if (mm.type === "system" && mm.subtype === "init" && !this._sessionId) this._sessionId = mm.session_id;
+        if (mm.type === "system" && ((mm.subtype === "status" && mm.status === "compacting") || mm.subtype === "compact_boundary")) {
+          const waiter = this.waiters[0]; if (waiter?.kind === "compact") waiter.compactLifecycle = true;
+        }
         if (mm.type === "system" && mm.subtype === "background_tasks_changed") this._bgTasks = mm.tasks ?? []; // REPLACE, never merge
         if (mm.type === "system" && mm.subtype === "mirror_error") { this._mirrorErrors.push({ error: mm.error, key: mm.key, at: this.now() }); if (this._mirrorErrors.length > 50) this._mirrorErrors.shift(); }
-        if (mm.type === "result") this._limit = classifyLimitMessage(mm); // clean result CLEARS
-        else if (mm.type === "rate_limit_event") {                        // allowed only clears a rate-limit state
+        const waiter = mm.type === "result" ? this.resultWaiter(mm) : undefined;
+        if (waiter) this._limit = classifyLimitMessage(mm); // clean result CLEARS
+        else if (mm.type === "rate_limit_event") {          // allowed only clears a rate-limit state
           const rl = classifyLimitMessage(mm);
           if (rl) this._limit = rl; else if (this._limit?.kind === "rate-limit") this._limit = undefined;
         }
-        if (mm.type === "result") {
-          this.waiters.shift()?.resolve({ result: mm.result, structuredOutput: mm.structured_output });
-          if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.compact().catch(() => {}); }
-        } else this.waiters[0]?.onMessage(m);
+        if (waiter) {
+          this.waiters.splice(this.waiters.indexOf(waiter), 1);
+          const failure = turnFailureOf(mm);   // is_error / api_error_status — never subtype (probe 96)
+          waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output, ...(failure ? { error: failure } : {}) });
+          if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.enqueueCompact("auto-continuation", () => {}).catch(() => {}); }
+        } else if (mm.type !== "result") this.waiters[0]?.onMessage(m);
       }
     } finally {
       this.ended = true;

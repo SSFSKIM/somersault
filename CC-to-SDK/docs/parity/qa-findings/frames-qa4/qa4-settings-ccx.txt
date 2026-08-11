@@ -1,0 +1,40 @@
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mReply with exactly: MARKER-TWOAnswer YES or NO only: earlier in this conversation, did I ask you to reply with       [39m[49m
+[38;2;255;255;255m[48;2;55;55;55m  MARKER-THREE?                                                                                                        [39m[49m
+[38;2;255;255;255m⏺ [39mMARKER-TWO
+
+  NO
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/help                                                                                                                [39m[49m
+[2mHelp dialog dismissed[0m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/settings                                                                                                            [39m[49m
+[38;2;215;119;87m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│[39m [1mSettings[0m                                                                                                             [38;2;215;119;87m│
+│[39m  Status  [1;7m Config [0m  Usage   Stats                                                                                     [38;2;215;119;87m│
+│[39m                                                                                                                      [38;2;215;119;87m│
+│[39m [38;2;215;119;87m❯ Theme  auto[2m   For custom themes, use /theme.[0m                                                                       [38;2;215;119;87m│
+│[39m   Model  claude-opus-5[2m   For a specific model ID, use /model.[0m                                                        [38;2;215;119;87m│
+│[39m   Output style  default                                                                                              [38;2;215;119;87m│
+│[39m   Default permission mode  auto                                                                                      [38;2;215;119;87m│
+│[39m   Thinking mode  true                                                                                                [38;2;215;119;87m│
+│[39m                                                                                                                      [38;2;215;119;87m│
+│[39m [2mEnter/Space to change · / to search · Esc to close[0m                                                                   [38;2;215;119;87m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[39mmodel [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[39m  think [38;2;175;135;255mdefault[39m  ctx 3%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

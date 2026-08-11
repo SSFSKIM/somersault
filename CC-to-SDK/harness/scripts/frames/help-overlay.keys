@@ -1,0 +1,13 @@
+# boot, help open, help closed — no model turn, no API cost
+# 2.1.220 shows a first-run "trust this folder?" prompt for any new workspace, with the
+# safe default already selected; accept it (Enter) before the boot frame, observed 2026-07-31.
+wait:4
+enter
+wait:8
+frame:boot
+type:?
+wait:1.5
+frame:help
+key:esc
+wait:1
+frame:closed

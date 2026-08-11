@@ -1,0 +1,40 @@
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+❯ /model
+❯ /model
+❯ /model
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     high
+  cwd        /private/tmp/s2qa4-root/proj-ccx
+❯ /effort
+❯ /status
+Status
+  model      claude-opus-5
+  mode       default
+  thinking   default
+  effort     high
+  cwd        /private/tmp/s2qa4-root/proj-ccx
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

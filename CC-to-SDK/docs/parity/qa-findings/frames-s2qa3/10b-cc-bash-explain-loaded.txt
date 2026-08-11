@@ -1,0 +1,40 @@
+      1 S2-PERM-PROBE
+
+✻ Brewed for 1m 48s
+
+❯ Run this shell command: echo hi
+
+⏺ Bash(echo hi)
+  ⎿  hi
+
+⏺ hi
+
+✻ Cooked for 3s
+
+❯ Run the shell command: git init
+
+⏺ Bash(git init)
+  ⎿  Waiting…
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   git init
+
+   Initializes a new, empty Git repository in the current directory by creating a .git subdirectory that stores all
+   necessary metadata for version control.
+
+   I am setting up version control for this project so changes can be tracked, committed, and eventually pushed to a
+   remote repository.
+
+   Low risk: If a .git repo already exists, this may reinitialize it; low risk of data loss otherwise.
+
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: git init *
+   3. No
+
+ Esc to cancel · Tab to amend · ctrl+e to hide
+

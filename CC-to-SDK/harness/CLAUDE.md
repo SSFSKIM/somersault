@@ -12,6 +12,8 @@ npm run typecheck                       # tsc --noEmit — the fast correctness 
 npm run test:unit                       # vitest run test/unit — DI-based, no API key, fast (preferred)
 npm run test:tui                        # vitest run test/tui — the Ink chat REPL, keyless (ink-testing-library)
 npx vitest run test/unit/<file> -t "x"  # one file / filter to one test
+npm run test:resize-matrix              # the QA-2 width matrix (Wave R A12) — builds, drives ccx under tmux; skips cleanly with no tmux
+                                        # CI runs it on node 22 with RESIZE_MATRIX_REQUIRE_TMUX=1, which turns that skip into a failure
 npm run build                           # tsc -p tsconfig.build.json → dist/ (proves public .d.ts resolve)
 npm run cli                             # tsx src/cli.ts
 ```

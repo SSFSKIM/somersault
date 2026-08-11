@@ -36,7 +36,7 @@ describe("permission wire ops", () => {
     expect(resp).toEqual({ ok: false, error: "no pending request" });
     const [spawned] = await daemonRequest(sock, { op: "spawn", model: "claude-haiku-4-5-20251001", permissionMode: "auto" });
     expect(spawned.ok).toBe(true);
-    expect(sup.list()[0].model).toBe("claude-sonnet-4-6");     // forced supported model, end-to-end over the wire
+    expect(sup.list()[0].model).toBe("claude-sonnet-5");       // forced supported model, end-to-end over the wire
     await sup.shutdown();
     rmSync(dir, { recursive: true, force: true });
   });

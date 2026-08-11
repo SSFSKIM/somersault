@@ -130,7 +130,8 @@ swaps nothing and leaves tasks untouched.
 
 - **`?` shortcuts overlay**: `?` on an empty composer opens a real overlay (new
   `ShortcutsOverlay.tsx`) listing the keymap (readline keys, Tab ladder, Esc-Esc, Ctrl-B, `!`/`#`
-  modes, popups); any key closes. The footer hint line stays.
+  modes, popups); Escape alone closes it. The footer hint line stays. **F0 correction:** the
+  original any-key close behavior was superseded after it double-fired global chords.
 - **Edit/Write diff fidelity**: the shared `toolDiffLines` gains a real hunk diff — common
   prefix/suffix rendered as up to 3 dim context lines with line numbers, changed lines as -/+.
   Numbering is **hunk-relative** (1-based within the snippet): `old_string`/`new_string` are the

@@ -76,10 +76,71 @@ describe("appserver decisions (Task 7)", () => {
     broker.request({ toolName: "Bash", input: {}, toolUseID: "toolu_m", signal: new AbortController().signal });
     await new Promise((r) => setTimeout(r, 0));
 
-    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_m", answer: { kind: "plan_approve", acceptEdits: true } } });
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_m", answer: { kind: "plan_approve", mode: "acceptEdits" } } });
     await new Promise((r) => setTimeout(r, 0));
     const reply = parsed(a.lines).find((f) => f.id === 3);
     expect(reply.error.code).toBe(ERR.INVALID_PARAMS);
+  });
+
+  // Wave T Task 10 fix, the SECOND wire's copy of permission-wire.test.ts:67. server.ts's plan_approve arm
+  // pins `mode` to the same four-value enum host/ops.ts does, but the two schemas are hand-maintained
+  // duplicates with no compiler check spanning them — and nothing here ever sent a bad mode, so loosening
+  // this one to `z.string()` passed the whole suite. A mode outside the grant set must be refused at the
+  // schema, before dispatch, exactly as the host wire refuses it.
+  it("a plan_approve naming a mode outside the grant set is invalid params", async () => {
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return fakeSession(); } });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+
+    const decision = broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_bad", kind: "plan", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_bad", answer: { kind: "plan_approve", mode: "dontAsk" } } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(ERR.INVALID_PARAMS);
+
+    // The retired pre-t10 payload is gone from this wire too, and the decision is still parked either way —
+    // a rejected answer must never settle the broker.
+    send(connA, { id: 4, method: "decision/respond", params: { threadId, toolUseId: "toolu_bad", answer: { kind: "plan_approve", acceptEdits: true } } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(parsed(a.lines).find((f) => f.id === 4).error.code).toBe(ERR.INVALID_PARAMS);
+
+    send(connA, { id: 5, method: "decision/list", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(parsed(a.lines).find((f) => f.id === 5).result.data).toHaveLength(1);
+
+    send(connA, { id: 6, method: "decision/respond", params: { threadId, toolUseId: "toolu_bad", answer: { kind: "plan_approve", mode: "auto" } } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await decision).toEqual({ kind: "plan_approve", mode: "auto" });     // …and a legal one still lands
+  });
+
+  // Wave T t11 (d): the approver's typed sentence is a NEW optional field on the same hand-duplicated arm.
+  // typecheck spans neither schema, so the only thing standing between the dialog and a silently stripped
+  // sentence is this round trip through the real decision/respond dispatch.
+  it("a plan_approve carries the approver's feedback through decision/respond", async () => {
+    let broker: any;
+    const srv = new AppServer({}, { sessionFactory: (cfg: any) => { broker = cfg.permissionBroker; return fakeSession(); } });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+    send(connA, { id: 90, method: "thread/subscribe", params: { threadId } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const decision = broker.request({ toolName: "ExitPlanMode", input: { plan: "# ship it" }, toolUseID: "toolu_fb", kind: "plan", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_fb", answer: { kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" } } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(await decision).toEqual({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" });
+    // Other watchers see what the approver said, which is the whole of what this field can reach today.
+    const resolved = parsed(a.lines).find((f) => f.method === "decision/resolved");
+    expect(resolved.params.answer).toEqual({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" });
   });
 
   it("unattended:'deny' with zero watchers denies immediately", async () => {
@@ -254,7 +315,7 @@ describe("appserver decisions (Task 7)", () => {
     expect(replayed.map((f) => f.params.turnId)).toEqual([`turn_${threadId}_1`, `turn_${threadId}_1`]);
   });
 
-  it("plan_approve with acceptEdits:true upgrades the SESSION's permission mode when the engine's status frame lands", async () => {
+  it("an approved plan upgrades the SESSION's permission mode to the GRANTED mode when the engine's status frame lands", async () => {
     // decision/respond settled the broker and stopped there, so the RPC reported {ok:true} while the engine
     // stayed in the old mode and every later edit prompted again. host/host.ts's answer() is the reference:
     // arm the upgrade, and let the engine's own post-approval status frame trigger the setter (an eager
@@ -280,22 +341,22 @@ describe("appserver decisions (Task 7)", () => {
 
     broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_plan", kind: "plan", signal: new AbortController().signal });
     await new Promise((r) => setTimeout(r, 0));
-    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_plan", answer: { kind: "plan_approve", acceptEdits: true } } });
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_plan", answer: { kind: "plan_approve", mode: "bypassPermissions" } } });
     await new Promise((r) => setTimeout(r, 0));
     expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ ok: true });
     expect(modes).toEqual([]); // not yet — the engine's own flip has not been observed
 
     for (const cb of [...cbs]) cb({ type: "system", subtype: "status", permissionMode: "plan" });
     await new Promise((r) => setTimeout(r, 0));
-    expect(modes).toEqual(["acceptEdits"]); // pre-fix: never called at all
+    expect(modes).toEqual(["bypassPermissions"]); // pre-fix: never called at all — and pre-t10, always "acceptEdits"
 
     // ...and only once: a second status frame must not re-fire the (already applied) upgrade
-    for (const cb of [...cbs]) cb({ type: "system", subtype: "status", permissionMode: "acceptEdits" });
+    for (const cb of [...cbs]) cb({ type: "system", subtype: "status", permissionMode: "bypassPermissions" });
     await new Promise((r) => setTimeout(r, 0));
-    expect(modes).toEqual(["acceptEdits"]);
+    expect(modes).toEqual(["bypassPermissions"]);
   });
 
-  it("a turn that ends before any status frame still applies an approved acceptEdits upgrade (turn-end belt)", async () => {
+  it("a turn that ends before any status frame still applies an approved upgrade (turn-end belt)", async () => {
     const modes: string[] = [];
     let broker: any;
     const sessionFactory = (cfg: any) => {
@@ -316,14 +377,14 @@ describe("appserver decisions (Task 7)", () => {
 
     send(connA, { id: 3, method: "turn/start", params: { threadId, input: "plan it" } });
     await new Promise((r) => setTimeout(r, 0)); // submit() runs to its parked ExitPlanMode request
-    send(connA, { id: 4, method: "decision/respond", params: { threadId, toolUseId: "toolu_belt", answer: { kind: "plan_approve", acceptEdits: true } } });
+    send(connA, { id: 4, method: "decision/respond", params: { threadId, toolUseId: "toolu_belt", answer: { kind: "plan_approve", mode: "acceptEdits" } } });
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0)); // the turn settles
 
     expect(modes).toEqual(["acceptEdits"]); // pre-fix: an approved upgrade silently never applied
   });
 
-  it("plan_approve WITHOUT acceptEdits leaves the permission mode alone", async () => {
+  it("a plan_approve granting `default` leaves the permission mode alone", async () => {
     const modes: string[] = [];
     const cbs = new Set<(m: unknown) => void>();
     let broker: any;
@@ -341,7 +402,7 @@ describe("appserver decisions (Task 7)", () => {
 
     broker.request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_plain", kind: "plan", signal: new AbortController().signal });
     await new Promise((r) => setTimeout(r, 0));
-    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_plain", answer: { kind: "plan_approve", acceptEdits: false } } });
+    send(connA, { id: 3, method: "decision/respond", params: { threadId, toolUseId: "toolu_plain", answer: { kind: "plan_approve", mode: "default" } } });
     await new Promise((r) => setTimeout(r, 0));
     for (const cb of [...cbs]) cb({ type: "system", subtype: "status", permissionMode: "plan" });
     await new Promise((r) => setTimeout(r, 0));

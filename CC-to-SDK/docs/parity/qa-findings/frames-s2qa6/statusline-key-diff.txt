@@ -1,0 +1,16 @@
+ccx keys ever seen: ['context_window', 'cost', 'cwd', 'effort', 'exceeds_200k_tokens', 'model', 'output_style', 'session_id', 'session_name', 'thinking', 'version', 'workspace']
+cc  keys ever seen: ['context_window', 'cost', 'cwd', 'effort', 'exceeds_200k_tokens', 'fast_mode', 'model', 'output_style', 'prompt_id', 'rate_limits', 'session_id', 'session_name', 'thinking', 'transcript_path', 'version', 'workspace']
+MISSING FROM CCX (claude has, ccx never emits): ['fast_mode', 'prompt_id', 'rate_limits', 'transcript_path']
+EXTRA IN CCX: []
+
+ccx invocation #1: session_id=False transcript_path=False fast_mode=False prompt_id=False rate_limits=False session_name=False
+ccx invocation #2: session_id=False transcript_path=False fast_mode=False prompt_id=False rate_limits=False session_name=False
+ccx invocation #3: session_id=True transcript_path=False fast_mode=False prompt_id=False rate_limits=False session_name=True
+ccx invocation #4: session_id=True transcript_path=False fast_mode=False prompt_id=False rate_limits=False session_name=True
+ccx invocation #5: session_id=False transcript_path=False fast_mode=False prompt_id=False rate_limits=False session_name=False
+ccx invocation #6: session_id=True transcript_path=False fast_mode=False prompt_id=False rate_limits=False session_name=True
+ccx invocation #7: session_id=True transcript_path=False fast_mode=False prompt_id=False rate_limits=False session_name=True
+cc invocation #1: session_id=True transcript_path=True fast_mode=True prompt_id=False rate_limits=False session_name=False
+cc invocation #2: session_id=True transcript_path=True fast_mode=True prompt_id=True rate_limits=True session_name=True
+cc invocation #3: session_id=True transcript_path=True fast_mode=True prompt_id=False rate_limits=True session_name=False
+cc invocation #4: session_id=True transcript_path=True fast_mode=True prompt_id=False rate_limits=True session_name=False

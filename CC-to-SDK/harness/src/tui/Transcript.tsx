@@ -1,23 +1,21 @@
-// tui/src/Transcript.tsx — append-only scrollback (Static) + a live region for the in-flight turn.
+// tui/src/Transcript.tsx — append-only scrollback (Static) + the transient live region. After F1 Task 4
+// every row is a `RenderItem` produced by the ONE projection over the retained `TranscriptDocument`:
+// `staticItems` are finalized and published exactly once, `pendingItems` are open tool calls (never in
+// Static), and `streaming` is the in-flight partial text/thinking snapshot. Nothing here reconstructs a
+// source row from display text, and the 600 ms running blink only ever touches the transient region.
 import React from "react";
-import { Box, Text, Static } from "ink";
+import { Box, Static } from "ink";
 import type { RenderLine } from "./render.js";
+import { RenderItemView, type RenderItem } from "./toolRenderer.js";
+import { Line } from "./Line.js";
 
-/** RenderLine → <Text>. Exported because PlanDialog renders renderMarkdown() output the same way — one
- *  renderer, so a styling-rule change can't silently drift between the transcript and the dialogs. */
-export const Line = ({ l }: { l: RenderLine }) => (
-  <Text>
-    {l.gutter ? <Text color={l.gutter.color} dimColor={l.gutter.dim}>{l.gutter.text}</Text> : null}
-    {l.segments
-      ? l.segments.map((s, i) => <Text key={i} color={s.color} dimColor={s.dim} bold={s.bold} italic={s.italic}>{s.text}</Text>)
-      : <Text color={l.color} dimColor={l.dim} bold={l.bold} italic={l.italic}>{l.text || " "}</Text>}
-  </Text>
-);
+export { Line } from "./Line.js";
 
-export function Transcript({ lines, streaming }: { lines: RenderLine[]; streaming: RenderLine[] }) {
+export function Transcript({ staticItems, pendingItems, streaming }: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: readonly RenderLine[] }) {
   return (
     <Box flexDirection="column">
-      <Static items={lines}>{(l, i) => <Line key={i} l={l} />}</Static>
+      <Static items={staticItems as RenderItem[]}>{(item) => <RenderItemView key={item.id} item={item} />}</Static>
+      {pendingItems.map((item) => <RenderItemView key={item.id} item={item} />)}
       {streaming.map((l, i) => <Line key={`s${i}`} l={l} />)}
     </Box>
   );

@@ -2,13 +2,13 @@
 // makeSession() must return synchronously (ink renders immediately); every method awaits `ready`.
 import { RemoteChatSession } from "./remote.js";
 import type { HostEvent } from "../host/wire.js";
-import type { ChatSession, DecisionFeed, BgTasks, SessionEvents, RewindOps, RewindAnchor, RewindScope } from "../session/chatSession.js";
+import type { ChatSession, DecisionFeed, BgTasks, SessionEvents, RewindOps, RewindAnchor, RewindScope, SettingsOps, EffortLevel } from "../session/chatSession.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 
 export interface RemoteChatOpts { label?: string; resume?: string; connect?: (p: string, o?: { label?: string }) => Promise<RemoteChatSession>; }
-export type RemoteChat = ChatSession & DecisionFeed & BgTasks & SessionEvents & RewindOps & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
+export type RemoteChat = ChatSession & DecisionFeed & BgTasks & SessionEvents & RewindOps & SettingsOps & { detach(): void; whenReady(): Promise<void>; pendingNow(): PendingDecision[] };
 
 export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {}): RemoteChat {
   let raw: RemoteChatSession | undefined;
@@ -46,6 +46,17 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
         if (i >= 0) pendingList.splice(i, 1);
         for (const cb of [...settledCbs]) { try { cb({ toolUseID: s.toolUseID, by: s.by, decision: s.decision }); } catch {} }
       } else if (ev.kind === "state") { if (ev.status.sessionId) sessionId = ev.status.sessionId; }
+      // Live-feedback fix (2026-08-06): the rewind engine swap can mint a NEW session id, and the host's
+      // rewound broadcast is the one frame guaranteed to carry it — the state emit inside swapEngine often
+      // fires before the fresh engine's init frame has delivered an id at all. Without this, a client's
+      // post-rewind transcript rebuild reads disk under the OLD id.
+      // …and FORGET it on the cleared arm (W-S8 review, Important 1), for the same reason clearSession()
+      // below forgets it: a first-message restore swaps to a fresh engine that has no id until its first
+      // init frame, so `this.session?.sessionId ?? sid` puts the DISCARDED conversation's id on the wire.
+      // Overwriting with it would leave /export writing the discarded transcript and /rename and /tag
+      // mutating the abandoned session's metadata. A later state (or rewound) event with a real id
+      // repopulates. `cleared` is the positive signal; it never travels with a fresh id to adopt.
+      else if (ev.kind === "rewound") { if (ev.cleared) sessionId = undefined; else if (ev.sessionId) sessionId = ev.sessionId; }
       else if (ev.kind === "turn" && ev.phase === "end" && ev.seq !== undefined) {
         if (turnWaiter && ev.seq === turnWaiter.seq) { const w = turnWaiter; turnWaiter = undefined; ev.error ? w.reject(new Error(ev.error)) : w.resolve(); }
         else endedTurns.set(ev.seq, ev.error);      // ended before its waiter existed — submit() consults this
@@ -111,6 +122,12 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     async setMaxThinkingTokens(t) { orFail(await (await ready).setThinkingOp(t)); },
     async capabilities() { const rep = orFail(await (await ready).capabilitiesOp()); return { models: rep.models ?? [], commands: rep.commands ?? [], mcpServers: rep.mcpServers ?? [] }; },
     async compact() { return orFail(await (await ready).compactOp()).outcome as CompactOutcome; },
+    // FORGET the cached id (codex review, F6 close). /clear replaces the host's engine with a fresh one that
+    // has no session id until its first turn, so the host's own state emit carries none — and `route` only
+    // ever OVERWRITES on a truthy id. Left alone, `session.sessionId` would keep pointing at the CLEARED
+    // conversation and /export, /rename and /tag would act on the old transcript. A later state (or rewound)
+    // event with a real id repopulates it.
+    async clearSession() { orFail(await (await ready).clearOp()); sessionId = undefined; },
     async interrupt() { return orFail(await (await ready).interrupt()); },
     async getContextUsage() { return orFail(await (await ready).contextUsageOp()).usage; },
     async usage() { return orFail(await (await ready).usageOp()).usage; },
@@ -130,6 +147,17 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     async rewindAnchors() { return orFail(await (await ready).rewindAnchorsOp()).anchors ?? []; },
     async rewindDryRun(uuid: string) { return orFail(await (await ready).rewindDryRunOp(uuid)).dryRun ?? { canRewind: false, error: "no reply" }; },
     async rewind(anchor: RewindAnchor, scope: RewindScope) { orFail(await (await ready).rewindOp(anchor.uuid, anchor.prevUuid, scope)); },
+    // W3 T2: settings/dirs surface — same await-ready-then-op pattern as stopBgTask/rewindAnchors above.
+    async getSettings() { return orFail(await (await ready).getSettingsOp()).settings; },
+    async listDirs() { return orFail(await (await ready).listDirsOp()).dirs ?? []; },
+    async addDir(path: string) { orFail(await (await ready).addDirOp(path)); },
+    async removeDir(path: string) { orFail(await (await ready).removeDirOp(path)); },
+    async setOutputStyle(style: string) { orFail(await (await ready).setOutputStyleOp(style)); },
+    async addRule(behavior: "allow" | "ask" | "deny", rule: string) { orFail(await (await ready).addRuleOp(behavior, rule)); },
+    async removeRule(behavior: "allow" | "ask" | "deny", rule: string) { orFail(await (await ready).removeRuleOp(behavior, rule)); },
+    // W-C T11 (EP-C6): the effort flip. The level is already inside the domain by the time it gets here —
+    // useChat's `applyEffort` gate is what makes that true, and `ops.ts`'s enum is what makes it enforced.
+    async setEffort(level: EffortLevel) { orFail(await (await ready).setEffortOp(level)); },
     onSessionEvent(cb) {
       if (!eventCb) { eventCb = cb; for (const ev of backlog.splice(0)) { try { cb(ev); } catch {} } }
       else eventCb = cb;                     // single consumer: a re-subscribe replaces (useChat's session swap)

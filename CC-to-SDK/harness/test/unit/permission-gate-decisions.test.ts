@@ -34,8 +34,18 @@ describe("gate outcome mapping", () => {
 
   it("plan_approve → allow with input unchanged (the CLI flips the mode itself, probe 66)", async () => {
     const input = { plan: "# The plan" };
-    const r = await gateWith({ kind: "plan_approve", acceptEdits: true })("ExitPlanMode", input, opts);
+    const r = await gateWith({ kind: "plan_approve", mode: "acceptEdits" })("ExitPlanMode", input, opts);
     expect(r).toEqual({ behavior: "allow", updatedInput: input });
+  });
+
+  // Wave T t11 (d): the approver's typed sentence rides the DECISION but must never reach the allow arm —
+  // sdk.d.ts's PermissionResult has no field for it, and the SDK would drop an invented one in silence, so a
+  // gate that "helpfully" merged it into updatedInput would corrupt the plan ExitPlanMode writes to disk.
+  it("plan_approve's feedback stays ccx-local — it never appears on the allow arm", async () => {
+    const input = { plan: "# The plan", planFilePath: "/tmp/p.md" };
+    const r = await gateWith({ kind: "plan_approve", mode: "acceptEdits", feedback: "keep it small" })("ExitPlanMode", input, opts);
+    expect(r).toEqual({ behavior: "allow", updatedInput: input });
+    expect(JSON.stringify(r)).not.toContain("keep it small");
   });
 
   it("plan_reject → deny carrying the feedback verbatim; empty feedback gets the default copy", async () => {
@@ -49,6 +59,90 @@ describe("gate outcome mapping", () => {
     expect(((await gateWith({ kind: "deny" })("AskUserQuestion", {}, opts)) as any).message).toBe("No user is available to answer.");
     expect(((await gateWith({ kind: "deny" })("ExitPlanMode", {}, opts)) as any).message).toBe("User rejected the plan. Continue planning.");
     expect(((await gateWith({ kind: "deny" })("Bash", {}, opts)) as any).message).toBe("User denied Bash");
+  });
+
+  // --- F6 Task 3: the widened wire. sdk.d.ts's CanUseTool options carry the engine's own suggestion
+  // payload; PermissionResult's allow arm carries `updatedPermissions` back. Probe 78 proved the round
+  // trip; these pin that the gate neither drops nor reshapes either direction.
+  it("forwards suggestions/decisionReason/blockedPath/agentID from the SDK options into the broker request", async () => {
+    const seen: PermissionRequest[] = [];
+    const suggestions = [{ type: "addRules", rules: [{ toolName: "Read", ruleContent: "//tmp/out/**" }], behavior: "allow", destination: "session" }];
+    await gateWith({ kind: "allow_once" }, seen)("Read", { file_path: "/tmp/out/a.txt" }, {
+      ...opts, suggestions, decisionReason: "Path is outside allowed working directories", blockedPath: "/tmp/out/a.txt", agentID: "agent_7",
+    });
+    expect(seen[0].suggestions).toBe(suggestions);       // the SAME array — verbatim, not copied-and-reshaped
+    expect(seen[0].decisionReason).toBe("Path is outside allowed working directories");
+    expect(seen[0].blockedPath).toBe("/tmp/out/a.txt");
+    expect(seen[0].agentID).toBe("agent_7");
+  });
+
+  it("omits the four fields when the engine sends none (no undefined-shaped noise beyond the optional keys)", async () => {
+    const seen: PermissionRequest[] = [];
+    await gateWith({ kind: "allow_once" }, seen)("Read", {}, opts);
+    expect(seen[0].suggestions).toBeUndefined();
+    expect(seen[0].decisionReason).toBeUndefined();
+    expect(seen[0].blockedPath).toBeUndefined();
+    expect(seen[0].agentID).toBeUndefined();
+  });
+
+  it("allow_with_updates → allow echoing updatedPermissions VERBATIM (probe 78's don't-ask-again)", async () => {
+    const updatedPermissions = [{ type: "addRules", rules: [{ toolName: "Read", ruleContent: "//tmp/out/**" }], behavior: "allow", destination: "localSettings" }];
+    const input = { file_path: "/tmp/out/a.txt" };
+    const r = await gateWith({ kind: "allow_with_updates", updatedPermissions })("Read", input, opts) as any;
+    expect(r).toEqual({ behavior: "allow", updatedInput: input, updatedPermissions });
+    expect(r.updatedPermissions).toBe(updatedPermissions);   // same reference: nothing in the pipeline rebuilt it
+  });
+
+  it("allow_with_updates does NOT also populate the in-memory allowlist — the rule replaces it", async () => {
+    const seen: PermissionRequest[] = [];
+    const gate = gateWith({ kind: "allow_with_updates", updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }] }, seen);
+    await gate("Edit", {}, opts);
+    await gate("Edit", {}, { ...opts, toolUseID: "t2" });
+    expect(seen.map((r) => r.toolUseID)).toEqual(["t1", "t2"]);   // consulted BOTH times
+  });
+
+  it("allow_once carries an edited updatedInput through, and falls back to the original input without one", async () => {
+    const edited = { command: "ls -a" };
+    expect(await gateWith({ kind: "allow_once", updatedInput: edited })("Bash", { command: "ls" }, opts))
+      .toEqual({ behavior: "allow", updatedInput: edited });
+    expect(await gateWith({ kind: "allow_once" })("Bash", { command: "ls" }, opts))
+      .toEqual({ behavior: "allow", updatedInput: { command: "ls" } });
+  });
+
+  it("deny feedback becomes the deny MESSAGE (the only channel to the model — allow has no message field)", async () => {
+    expect(await gateWith({ kind: "deny", feedback: "use rg instead" })("Bash", {}, opts))
+      .toEqual({ behavior: "deny", message: "use rg instead", interrupt: undefined });
+    // whitespace-only feedback is not feedback: fall back to the kind-specific copy
+    expect(((await gateWith({ kind: "deny", feedback: "   " })("Bash", {}, opts)) as any).message).toBe("User denied Bash");
+  });
+
+  it("plan_approve echoes updatedPermissions when present and omits the key entirely when absent", async () => {
+    const updatedPermissions = [{ type: "setMode", mode: "acceptEdits", destination: "session" }];
+    expect(await gateWith({ kind: "plan_approve", mode: "acceptEdits", updatedPermissions })("ExitPlanMode", { plan: "p" }, opts))
+      .toEqual({ behavior: "allow", updatedInput: { plan: "p" }, updatedPermissions });
+    const plain = await gateWith({ kind: "plan_approve", mode: "acceptEdits" })("ExitPlanMode", { plan: "p" }, opts) as any;
+    expect("updatedPermissions" in plain).toBe(false);
+  });
+
+  // F6 T9 / DG34: the human edited the plan in $EDITOR from the dialog, so the text THEY left is what the
+  // tool runs on. Upstream is `updatedInput: planEditedLocally ? {plan: currentPlan} : {}` (`lYf` L500722);
+  // ours merges so an unrelated argument survives the edit.
+  it("plan_approve carrying an edited plan overrides only that key, and an absent one changes nothing", async () => {
+    const input = { plan: "# The plan", extra: 1 };
+    expect(await gateWith({ kind: "plan_approve", mode: "default", plan: "# Edited" })("ExitPlanMode", input, opts))
+      .toEqual({ behavior: "allow", updatedInput: { plan: "# Edited", extra: 1 } });
+    expect(await gateWith({ kind: "plan_approve", mode: "default" })("ExitPlanMode", input, opts))
+      .toEqual({ behavior: "allow", updatedInput: input });
+    // an EMPTY edited plan is still an edit — the human deleted it on purpose, and "" is not "absent"
+    expect((await gateWith({ kind: "plan_approve", mode: "default", plan: "" })("ExitPlanMode", input, opts) as any).updatedInput.plan).toBe("");
+  });
+
+  it("a pre-aborted signal still denies with the kind-specific copy, ahead of any widened arm", async () => {
+    const seen: PermissionRequest[] = [];
+    const ac = new AbortController(); ac.abort();
+    const r = await gateWith({ kind: "allow_with_updates", updatedPermissions: [{ type: "setMode" }] }, seen)("Bash", {}, { ...opts, signal: ac.signal });
+    expect(r).toEqual({ behavior: "deny", message: "User denied Bash", interrupt: true });
+    expect(seen).toHaveLength(0);
   });
 
   it("allow_always allowlists ONLY the permission kind — a question is asked every time", async () => {

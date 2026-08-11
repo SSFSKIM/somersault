@@ -1,0 +1,40 @@
+⏺ HIST-ONE
+
+✻ Brewed for 1s
+
+❯ Reply with exactly: HIST-TWO
+
+⏺ HIST-TWO
+
+✻ Crunched for 1s
+
+❯ SE1
+
+⏺ SE1
+
+✻ Sautéed for 2s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ @
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++ docs/
++ README.md
++ src/
+* claude (agent) – Catch-all for any task that doesn't fit a more specific age…
+* claude-code-guide (agent) – Use this agent when the user asks questions ("Can Claude...…
+* Explore (agent) – Fast read-only search agent for locating code. Use it to fi…
+* general-purpose (agent) – General-purpose agent for researching complex questions, se…
+* Plan (agent) – Software architect agent for designing implementation plans…
+* statusline-setup (agent) – Use this agent to configure the user's Claude Code status l…
+
+
+
+
+
+
+
+
+
+
+
+

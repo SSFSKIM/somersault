@@ -1,0 +1,40 @@
+s True           │
+  ├───────────────┼──────────────────────────────────────────┼──────────────────
+─────────────────┤
+  │ in            │ Tests membership inside a container      │ 2 in a list of 1,
+ 2, 3 gives True │
+  ├───────────────┼──────────────────────────────────────────┼──────────────────
+─────────────────┤
+  │ caret         │ Sets bits present in exactly one operand │ 5 xor 3 gives 6
+                 │
+  └───────────────┴──────────────────────────────────────────┴──────────────────
+─────────────────┘
+
+  def describe(a, b):
+      """Show a handful of operators applied to two integers."""
+      print("sum:", a + b)
+      print("power:", a ** b)
+      print("floor:", a // b)
+      print("remainder:", a % b)
+      print("equal:", a == b)
+      print("both truthy:", bool(a and b))
+      print("member:", a in (1, 2, 3))
+      print("xor:", a ^ b)
+
+
+  describe(7, 2)
+────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────
+ ⏎ send · backslash (\) + return (⏎) for newline · @ files · / commands · !
+ bash · ⇧Tab mode · ? help
+ Esc rewind · ? help
+model claude-opus-5  mode acceptEdits (⇧Tab to cycle)  think default  ctx 3%
+
+

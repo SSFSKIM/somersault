@@ -1,0 +1,40 @@
+⏺ Acknowledged — QUEUED-ONE. The sleep 35 task (buiv2iy66) is still running; nothing else queued on my end.
+❯ QUEUED-TWO
+⏺ QUEUED-TWO received. Still waiting on sleep 35 (buiv2iy66) to finish — no other work in progress.
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Rewind                                                                                                               │
+│                                                                                                                      │
+│ Restore the code and/or conversation to the point before…                                                            │
+│   Reply with exactly: HIST-ONE…                                                                                      │
+│   No code changes                                                                                                    │
+│                                                                                                                      │
+│   Reply with exactly: HIST-TWO                                                                                       │
+│   No code changes                                                                                                    │
+│                                                                                                                      │
+│   Count slowly from 1 to 40, one number per line.                                                                    │
+│   No code changes                                                                                                    │
+│                                                                                                                      │
+│   queued follow-up A                                                                                                 │
+│   No code changes                                                                                                    │
+│                                                                                                                      │
+│   Run this exact bash command and nothing else: sleep 35                                                             │
+│   No code changes                                                                                                    │
+│                                                                                                                      │
+│   QUEUED-ONE                                                                                                         │
+│   No code changes                                                                                                    │
+│                                                                                                                      │
+│   QUEUED-TWO                                                                                                         │
+│   No code changes                                                                                                    │
+│                                                                                                                      │
+│   <task-notification>…                                                                                               │
+│   ⚠ No code restore                                                                                                  │
+│                                                                                                                      │
+│ ❯ (current)                                                                                                          │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ enter to continue · esc to cancel                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+model claude-opus-5  mode auto  think default  ctx 2%
+
+

@@ -44,7 +44,12 @@ export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: 
   // the new uuid differs from the old — silently never fires, so superseded turns accumulate forever.
   // Forking is also what makes that purge safe: the child's transcript physically carries the parent's
   // conversation, so deleting the parent costs no history.
-  const config = kind === "bg" && inv.config.resume ? { ...inv.config, forkSession: true } : inv.config;
+  // Wave T EP-T1: --detachable's child re-enters here with --__kind interactive and never passes through
+  // main.ts's foreground construction, while spawn.ts's configFlags forwards --permission-mode only when
+  // it was explicitly typed. Without this line `ccx --detachable` presents the identical REPL in `auto`
+  // while plain `ccx` consults. A `bg` child keeps auto: it has nobody to ask.
+  const base = kind === "interactive" ? { ...inv.config, permissionMode: inv.config.permissionMode ?? "default" } : inv.config;
+  const config = kind === "bg" && inv.config.resume ? { ...base, forkSession: true } : base;
   // --think reaches a --__host child two ways: forwarded by spawnDetached for --bg/--detachable
   // (spawn.ts's configFlags), or typed directly at `ccx --__host …` (untested-by-a-human, but the same
   // parseCcx arm handles it either way). Mapped exactly like runForegroundImpl's launch-time budget, via

@@ -1,0 +1,40 @@
+[2m  • /help for commands · @ to reference files · ⇧Tab to change mode[0m
+[2m  • Esc to interrupt a response[0m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/resume                                                                                                              [39m[49m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/resume                                                                                                              [39m[49m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mUse your todo tool to create exactly three todos: Alpha task, Beta task, Gamma task. Mark the first in_progress. Then[39m[49m
+[38;2;255;255;255m[48;2;55;55;55m   reply DONE.                                                                                                         [39m[49m
+[38;2;255;255;255m⏺ [39mDONE
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mReply with exactly: MARKER-TWO                                                                                       [39m[49m
+[38;2;255;255;255m⏺ [39mMARKER-TWO
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mReply with exactly: MARKER-THREE                                                                                     [39m[49m
+[38;2;255;255;255m⏺ [39mMARKER-THREE
+
+  [1m3[2m tasks (0 done, 1 in progress, 2 open)[0m
+  [38;2;215;119;87m◼ [39m [1mAlpha task[0m
+  [2m  Working on Alpha task…[0m
+  ◻  Beta task
+  ◻  Gamma task
+[38;2;177;185;249m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│[39m [1m[38;2;177;185;249mRewind[0m                                                                                                               [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m Restore the code and/or conversation to the point before…                                                            [38;2;177;185;249m│
+│[39m   Use your todo tool to create exactly three todos: Alpha task, Beta task, Gamma task. Mark the first in_progre…     [38;2;177;185;249m│
+│[39m   [2m[38;2;153;153;153mNo code changes[0m                                                                                                    [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m   Reply with exactly: MARKER-TWO                                                                                     [38;2;177;185;249m│
+│[39m   [2m[38;2;153;153;153mNo code changes[0m                                                                                                    [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m   Reply with exactly: MARKER-THREE                                                                                   [38;2;177;185;249m│
+│[39m   [2m[38;2;153;153;153mNo code changes[0m                                                                                                    [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m [38;2;177;185;249m❯[39m [3m[38;2;177;185;249m(current)[0m                                                                                                          [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m                                                                                                                      [38;2;177;185;249m│
+│[39m [2;3menter to continue · esc to cancel[0m                                                                                    [38;2;177;185;249m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[39mmodel [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[39m  think [38;2;175;135;255mdefault[39m  ctx 3%
+
+

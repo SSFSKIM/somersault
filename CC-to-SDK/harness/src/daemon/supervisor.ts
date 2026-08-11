@@ -1,5 +1,6 @@
 import { SessionRegistry } from "./registry.js";
 import { DaemonSession } from "./session.js";
+import type { TurnOutcome } from "../session/session.js";
 import { DaemonError } from "./types.js";
 import type { DaemonOptions, RestartPolicy, SessionRecord } from "./types.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
@@ -11,6 +12,7 @@ import { createPermissionGate } from "../permissions/gate.js";
 import type { PermissionDecision } from "../permissions/types.js";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { resolveAutoModel } from "../config/autoModel.js";
+import { resolveModelAlias } from "../config/models.js";
 import { resolveOptions } from "../config/resolveOptions.js";
 import { DEFAULTS } from "../config/types.js";
 import { validateDaemonOptions } from "../config/validate.js";
@@ -124,7 +126,10 @@ export class DaemonSupervisor {
   spawn(opts: { model?: string; restart?: RestartPolicy; resume?: string; permissionMode?: string; rewind?: { resumeAt: string; forkSession?: boolean } } = {}): string {
     if (this.pool.size >= this.maxSessions) throw new DaemonError(`max sessions (${this.maxSessions}) reached`);
     const id = `sess-${++this.seq}`;
-    const model = opts.permissionMode === "auto" ? resolveAutoModel(opts.model ?? DEFAULTS.model) : (opts.model ?? DEFAULTS.model); // explicit-auto gate; opus-4-8 default keeps the registry consistent with resolveOptions
+    // Alias-resolve before the gate, exactly as resolveOptions does — otherwise a spawn({model:"opus"})
+    // records a tier word on the roster and, under auto, fails the gate and gets silently downgraded.
+    const asked = resolveModelAlias(opts.model) ?? DEFAULTS.model;
+    const model = opts.permissionMode === "auto" ? resolveAutoModel(asked) : asked;      // explicit-auto gate
     const cfg: SpawnConfig = { model, restart: opts.restart ?? this.restartPolicy, permissionMode: opts.permissionMode, ...(opts.rewind ? { rewind: opts.rewind } : {}) };
     this.configs.set(id, cfg);
     this.pool.set(id, this.makeSession(id, cfg, opts.resume));
@@ -133,7 +138,10 @@ export class DaemonSupervisor {
     return id;
   }
 
-  async submit(id: string, prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }> {
+  // Returns the session's own TurnOutcome verbatim — including Task 14's additive `error` tag, which the
+  // UDS handler (daemon/server.ts) needs to keep reporting a failed turn as a failure. Restart policy is
+  // driven by session DEATH, not by this tag, so nothing here changes on the failure path.
+  async submit(id: string, prompt: string, onMessage: (m: unknown) => void): Promise<TurnOutcome> {
     const session = this.ensureLive(id);
     if (!session) {
       const rec = this.registry.get(id);
@@ -318,7 +326,7 @@ export class DaemonSupervisor {
       const rec = this.registry.get(id);
       throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`);
     }
-    return session.submit(prompt, () => {});          // tick output discarded; result drives idleDetector
+    return session.submitAutomatic(prompt, () => {}); // tick output discarded; result drives idleDetector
   }
 
   async stop(id: string): Promise<void> {

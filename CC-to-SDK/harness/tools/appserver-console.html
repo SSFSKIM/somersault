@@ -645,11 +645,14 @@ function renderDecisions() {
         mkBtn("Deny", () => respondDecision(entry, { kind: "deny" }, abortCk.checked)),
       );
     } else if (d.kind === "plan") {
-      const acceptCk = document.createElement("input"); acceptCk.type = "checkbox";
-      const acceptLabel = document.createElement("label"); acceptLabel.append(acceptCk, document.createTextNode(" acceptEdits"));
+      // Wave T t10: plan_approve carries the GRANTED mode, not a boolean — `default` grants nothing.
+      const modeSel = document.createElement("select");
+      for (const m of ["default", "acceptEdits", "bypassPermissions", "auto"]) {
+        const o = document.createElement("option"); o.value = m; o.textContent = "grant " + m; modeSel.appendChild(o);
+      }
       const feedbackInput = document.createElement("input"); feedbackInput.type = "text"; feedbackInput.placeholder = "rejection feedback (optional)";
-      btnRow.append(acceptLabel,
-        mkBtn("Approve (plan_approve)", () => respondDecision(entry, { kind: "plan_approve", acceptEdits: acceptCk.checked }, abortCk.checked)),
+      btnRow.append(modeSel,
+        mkBtn("Approve (plan_approve)", () => respondDecision(entry, { kind: "plan_approve", mode: modeSel.value }, abortCk.checked)),
         feedbackInput,
         mkBtn("Reject (plan_reject)", () => respondDecision(entry, { kind: "plan_reject", feedback: feedbackInput.value.trim() || undefined }, abortCk.checked)),
         mkBtn("Deny", () => respondDecision(entry, { kind: "deny" }, abortCk.checked)),

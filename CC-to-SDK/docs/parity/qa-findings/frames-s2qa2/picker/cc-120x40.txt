@@ -1,0 +1,40 @@
+  line 100
+  line 101
+  line 102
+  line 103
+  line 104
+  line 105
+  line 106
+  line 107
+  line 108
+  line 109
+  line 110
+  line 111
+  line 112
+  line 113
+  line 114
+  line 115
+  line 116
+  line 117
+  line 118
+  line 119
+  line 120
+
+✻ Worked for 4s
+
+❯ /model
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Select model
+  Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,
+  specify with --model.
+
+  ❯ 1. Default (recommended) ✔  Sonnet 5 · Efficient for routine tasks
+    2. Sonnet                   Sonnet 5 · Efficient for routine tasks
+    3. Opus                     Opus 5 · Best for everyday, complex tasks
+    4. Haiku                    Haiku 4.5 · Fastest for quick answers
+
+  ● High effort (default) ←/→ to adjust
+
+  Enter to set as default · s to use this session only · Esc to cancel
+

@@ -106,6 +106,28 @@ describe("host frame plumbing", () => {
     await host.stop();
   });
 
+  // Live-feedback fix (2026-08-06): the /clear engine half. The load-bearing subtlety is the launch
+  // config's OWN resume key — engineConfig spreads it first, so a host born from `ccx --resume <sid>`
+  // would reopen the very conversation /clear was asked to drop unless clearSession overrides it.
+  it("clearSession opens a FRESH engine — the launch config's resume key is overridden, not inherited", async () => {
+    const { fake: fake1 } = fakeSession();
+    const { fake: fake2 } = fakeSession({ sessionId: "sid-fresh" });
+    const sessions = [fake1, fake2];
+    const opened: Record<string, unknown>[] = [];
+    let i = 0;
+    const host = new SessionHost(
+      { short: "c1ea4c1e", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: { resume: "sid-launch" } as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
+      { openSession: (cfg: unknown) => { opened.push(cfg as Record<string, unknown>); return sessions[i++]! as any; }, procStartOf: async () => "start" },
+    );
+    await host.start();
+    expect(opened[0]!["resume"]).toBe("sid-launch");   // the first engine honours the launch resume
+    await host.clearSession();
+    expect(opened).toHaveLength(2);
+    expect(opened[1]!["resume"]).toBeUndefined();      // the swap does NOT reopen the dropped conversation
+    expect(opened[1]!["resumeAt"]).toBeUndefined();
+    await host.stop();
+  });
+
   it("stamps parentToolUseID + subagentType onto a parked decision via the correlation maps", async () => {
     const { fake, drive } = fakeSession();
     const host = hostFor(fake);

@@ -22,7 +22,7 @@ function hostFor(order?: string[]) {
 const KINDS = [
   { kind: "permission" as const, toolName: "Bash", answer: { kind: "allow_once" as const }, settledAs: "allow_once" },
   { kind: "question" as const, toolName: "AskUserQuestion", answer: { kind: "question_answer" as const, answers: { q: "a" } }, settledAs: "question_answer" },
-  { kind: "plan" as const, toolName: "ExitPlanMode", answer: { kind: "plan_approve" as const, acceptEdits: false }, settledAs: "plan_approve" },
+  { kind: "plan" as const, toolName: "ExitPlanMode", answer: { kind: "plan_approve" as const, mode: "default" as const }, settledAs: "plan_approve" },
 ];
 
 describe.each(KINDS)("teardown quartet [$kind]", ({ kind, toolName, answer }) => {

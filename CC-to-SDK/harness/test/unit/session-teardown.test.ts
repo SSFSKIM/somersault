@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Session } from "../../src/session/session.js";
 
 // a well-behaved fake query: one result per turn, ends when the input (prompt) closes
-const healthy = ({ prompt }: any) => (async function* () { for await (const t of prompt) yield { type: "result", result: "did:" + t.message.content }; })();
+const healthy = ({ prompt }: any) => (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content }; })();
 // a fake that accepts a turn but never yields a result (turn stays in-flight) until input closes
 const stalled = ({ prompt }: any) => (async function* () { for await (const _t of prompt) { /* never yields a result */ } })();
 

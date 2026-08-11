@@ -1,0 +1,40 @@
+[38;5;174m╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+[38;5;239m[48;5;237m❯[39m [38;5;231m/resume[39m [49m
+[38;5;246m  ⎿  [39mResume cancelled
+
+[38;5;239m[48;5;237m❯ [38;5;231mUse your todo tool to create exactly three todos: Alpha task, Beta task, Gamma task. Mark the first in_progress. Then[39m
+  [38;5;231mreply DONE.[39m
+
+[38;5;231m[49m⏺[39m DONE
+
+[38;5;246m✻[39m [38;5;246mChurned for 15s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231mReply with exactly: MARKER-TWO[39m
+
+[38;5;231m[49m⏺[39m MARKER-TWO
+
+[38;5;246m✻[39m [38;5;246mChurned for 3s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231mReply with exactly: MARKER-THREE[39m
+
+[38;5;231m[49m⏺[39m MARKER-THREE
+
+[38;5;246m✻[39m [38;5;246mSautéed for 2s[39m
+
+[38;5;153m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [1m[38;5;153mRewind[0m
+
+  Restore the code and/or conversation to the point before…
+
+   [38;5;246m↑ 2 more above[39m
+
+    Reply with exactly: MARKER-THREE
+    [38;5;246mNo code changes[39m
+
+  [1m[38;5;153m❯ [0;3m[38;5;153m(current)[0m
+
+
+
+  [3m[38;5;246mEnter to continue · Esc to cancel[0m

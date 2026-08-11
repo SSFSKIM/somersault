@@ -1,28 +1,48 @@
+import { randomUUID } from "node:crypto";
+import type { SDKMessageOrigin } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, expect } from "vitest";
 import { Session } from "../../src/session/session.js";
+import { AsyncQueue } from "../../src/swarm/asyncQueue.js";
+
+function successFor(turn: any, result: string, origin?: SDKMessageOrigin) {
+  return {
+    type: "result", subtype: "success", duration_ms: 0, duration_api_ms: 0,
+    user_message_uuid: turn.uuid, is_error: false, num_turns: 1, result, stop_reason: null,
+    total_cost_usd: 0, usage: {}, modelUsage: {}, permission_denials: [],
+    ...(origin ? { origin } : {}), uuid: randomUUID(), session_id: "sid",
+  };
+}
+function errorFor(origin?: SDKMessageOrigin) {
+  return {
+    type: "result", subtype: "error_during_execution", duration_ms: 0, duration_api_ms: 0,
+    is_error: true, num_turns: 1, stop_reason: null, total_cost_usd: 0, usage: {},
+    modelUsage: {}, permission_denials: [], errors: ["failed"],
+    ...(origin ? { origin } : {}), uuid: randomUUID(), session_id: "sid",
+  };
+}
 
 function fakeQuery({ prompt }: any) {
   return (async function* () {
     for await (const turn of prompt) {
       const text = turn.message.content;
       yield { type: "assistant", message: { content: [{ type: "text", text: "ack:" + text }] } };
-      yield { type: "result", subtype: "success", result: "did:" + text };
+      yield successFor(turn, "did:" + text, { kind: "human" });
     }
   })();
 }
 function captureQuery(sink: any[]) {
-  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield { type: "result", result: "ok:" + t.message.content }; })(); };
+  return ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const t of prompt) yield successFor(t, "ok:" + t.message.content, { kind: "human" }); })(); };
 }
-function compactQuery(seen: string[]) {
+function compactQuery(seen: string[], turns: any[] = []) {
   return ({ prompt }: any) => (async function* () {
     for await (const t of prompt) {
-      const text = t.message.content; seen.push(text);
+      const text = t.message.content; seen.push(text); turns.push(t);
       if (text === "/compact") {
         yield { type: "system", subtype: "status", status: "compacting" };
         yield { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 1000, post_tokens: 200 } };
         yield { type: "system", subtype: "status", status: null, compact_result: "success" };
-        yield { type: "result", subtype: "success", result: "compacted" };
-      } else yield { type: "result", subtype: "success", result: "did:" + text };
+        yield { ...successFor(t, "compacted", t.origin.kind === "human" ? { kind: "human" } : undefined), user_message_uuid: undefined };
+      } else yield successFor(t, "did:" + text, t.origin);
     }
   })();
 }
@@ -32,18 +52,29 @@ function initQuery(ids: string[]) {
     let i = 0;
     for await (const t of prompt) {
       yield { type: "system", subtype: "init", session_id: ids[Math.min(i, ids.length - 1)] }; i++;
-      yield { type: "result", subtype: "success", result: "did:" + t.message.content };
+      yield successFor(t, "did:" + t.message.content, { kind: "human" });
     }
   })();
 }
 
+function framedQuery() {
+  const frames = new AsyncQueue<unknown>(), prompts: string[] = [], turns: any[] = [];
+  const query = ({ prompt }: any) => {
+    void (async () => { for await (const turn of prompt) { turns.push(turn); prompts.push(turn.message.content); } })();
+    return { [Symbol.asyncIterator]: () => frames[Symbol.asyncIterator]() };
+  };
+  return { frames, prompts, turns, query };
+}
+const nextTick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 // returns a generator-object carrying the introspection control methods
 function methodQuery(rec: any) {
   return ({ prompt }: any) => {
-    const it: any = (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content }; })();
+    const it: any = (async function* () { for await (const t of prompt) yield successFor(t, "did:" + t.message.content, { kind: "human" }); })();
     it.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async () => ({ session: { total_cost_usd: 2 } });
     it.initializationResult = async () => ({ models: ["m"], account: {} });
     it.applyFlagSettings = async (s: any) => { rec.applied = s; };
+    it.request = async (payload: any) => { rec.requested = payload; return { response: { effective: {}, sources: [], applied: [] } }; };
     return it;
   };
 }
@@ -114,7 +145,7 @@ describe("Session", () => {
   });
   it("submit resolves with structuredOutput alongside result when the SDK result carries structured_output (probe 36, additive)", async () => {
     const q = ({ prompt }: any) => (async function* () {
-      for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content, structured_output: { verdict: "approve" } };
+      for await (const t of prompt) yield { ...successFor(t, "did:" + t.message.content, { kind: "human" }), structured_output: { verdict: "approve" } };
     })();
     const s = new Session({ query: q }, {});
     const r: any = await s.submit("hi");
@@ -164,21 +195,220 @@ describe("Session", () => {
     expect(sink[0].allowedTools).toEqual(expect.arrayContaining(["mcp__cc-context__GetContextUsage", "mcp__cc-compact__RequestCompaction"]));
     await s.dispose();
   });
-  it("compact() injects /compact and returns the parsed outcome", async () => {
-    const seen: string[] = [];
-    const s = new Session({ query: compactQuery(seen) }, {});
+  it("direct compact() stamps its injected input human and returns the parsed outcome", async () => {
+    const seen: string[] = [], turns: any[] = [];
+    const s = new Session({ query: compactQuery(seen, turns) }, {});
     expect(await s.compact()).toEqual({ ok: true, result: "success", error: undefined, preTokens: 1000, postTokens: 200 });
     expect(seen).toEqual(["/compact"]);
+    expect(turns).toEqual([expect.objectContaining({ origin: { kind: "human" } })]);
     await s.dispose();
   });
-  it("requestCompaction fires exactly one /compact at the turn boundary; FIFO intact", async () => {
-    const seen: string[] = [];
-    const s = new Session({ query: compactQuery(seen) }, {});
+  it("requestCompaction fires exactly one automatic /compact at the turn boundary; FIFO intact", async () => {
+    const seen: string[] = [], turns: any[] = [];
+    const s = new Session({ query: compactQuery(seen, turns) }, {});
     s.requestCompaction();
     expect((await s.submit("hello")).result).toBe("did:hello");
     expect((await s.submit("world")).result).toBe("did:world");
     await s.dispose();
     expect(seen).toEqual(["hello", "/compact", "world"]);
+    expect(turns.find((t) => t.message.content === "/compact")).toMatchObject({ origin: { kind: "auto-continuation" } });
+  });
+  it("settles an exact automatic /compact after lifecycle with an origin-absent UUID-less result", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submitAutomatic("/compact").then((r) => { settled = true; return r; });
+    await nextTick();
+    try {
+      expect(turns[0]).toMatchObject({ message: expect.objectContaining({ content: "/compact" }), origin: { kind: "auto-continuation" } });
+      frames.push({ type: "system", subtype: "status", status: "compacting" });
+      frames.push({ ...successFor(turns[0], "compacted"), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(true);
+      expect((await turn).result).toBe("compacted");
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+  it("settles a lifecycle-marked compact waiter for an origin-absent UUID-less result only", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.compact().then((r) => { settled = true; return r; });
+    await nextTick();
+    try {
+      frames.push({ ...successFor(turns[0], "task", { kind: "task-notification" }), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(false);
+      frames.push({ type: "system", subtype: "status", status: "compacting" });
+      frames.push({ ...successFor(turns[0], "wrong", { kind: "auto-continuation" }), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(false);
+      frames.push({ ...successFor(turns[0], "compacted"), user_message_uuid: undefined });
+      await nextTick();
+      expect(settled).toBe(true);
+      await turn;
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+  it("settles a lifecycle-marked compact waiter for an origin-absent error", async () => {
+    const { frames, query } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.compact().then(() => { settled = true; });
+    await nextTick();
+    try {
+      frames.push({ type: "system", subtype: "compact_boundary", compact_metadata: {} });
+      frames.push(errorFor());
+      await nextTick();
+      expect(settled).toBe(true);
+      await turn;
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+  it("submit() stamps its input human", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit("human");
+    await nextTick();
+    expect(turns).toEqual([expect.objectContaining({ message: expect.objectContaining({ content: "human" }), origin: { kind: "human" } })]);
+    frames.push(successFor(turns[0], "done", { kind: "human" }));
+    expect((await turn).result).toBe("done");
+    frames.close(); await s.dispose();
+  });
+  it("keeps both waiters pending for correct UUID successes with mismatched origins", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let humanSettled = false, automaticSettled = false;
+    const human = s.submit("human").then((r) => { humanSettled = true; return r; });
+    const automatic = s.submitAutomatic("automatic").then((r) => { automaticSettled = true; return r; });
+    await nextTick();
+    expect(turns.map((t) => t.origin.kind)).toEqual(["human", "auto-continuation"]);
+    frames.push(successFor(turns[0], "wrong-human", { kind: "auto-continuation" }));
+    frames.push(successFor(turns[1], "wrong-automatic", { kind: "human" }));
+    frames.push(successFor(turns[1], "wrong-task", { kind: "task-notification" }));
+    await nextTick();
+    expect(humanSettled).toBe(false);
+    expect(automaticSettled).toBe(false);
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
+    frames.push(successFor(turns[1], "automatic", { kind: "auto-continuation" }));
+    expect((await human).result).toBe("human");
+    expect((await automatic).result).toBe("automatic");
+    frames.close(); await s.dispose();
+  });
+  it("allows an explicit automatic error to settle the FIFO automatic waiter but leaves an unattributed error frame-only", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submitAutomatic("automatic").then((r) => { settled = true; return r; });
+    await nextTick();
+    expect(turns[0]).toMatchObject({ origin: { kind: "auto-continuation" } });
+    frames.push(errorFor());
+    await nextTick();
+    expect(settled).toBe(false);
+    frames.push(errorFor({ kind: "auto-continuation" }));
+    expect((await turn).result).toBeUndefined();
+    frames.close(); await s.dispose();
+  });
+  it("keeps a human submit pending for a task result with its UUID while onFrame still sees it", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    const frameSeen: unknown[] = [], messages: unknown[] = [];
+    s.onFrame((m) => frameSeen.push(m));
+    let settled = false;
+    const turn = s.submit("human", (m) => messages.push(m)).then((r) => { settled = true; return r; });
+    await nextTick();
+    expect(turns[0]).toMatchObject({ uuid: expect.any(String), origin: { kind: "human" } });
+    const taskResult = successFor(turns[0], "background", { kind: "task-notification" });
+    frames.push(taskResult);
+    await nextTick();
+    expect(frameSeen).toEqual([taskResult]);
+    expect(messages).toEqual([]);
+    expect(settled).toBe(false);
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
+    expect((await turn).result).toBe("human");
+    frames.close(); await s.dispose();
+  });
+  it("settles only the second waiter when its success arrives first", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let firstSettled = false, secondSettled = false;
+    const first = s.submit("one").then((r) => { firstSettled = true; return r; });
+    const second = s.submit("two").then((r) => { secondSettled = true; return r; });
+    await nextTick();
+    expect(turns[0].uuid).not.toBe(turns[1].uuid);
+    frames.push(successFor(turns[1], "second", { kind: "human" }));
+    await nextTick();
+    expect(secondSettled).toBe(true);
+    expect(firstSettled).toBe(false);
+    frames.push(successFor(turns[0], "first"));
+    expect((await first).result).toBe("first");
+    expect((await second).result).toBe("second");
+    frames.close(); await s.dispose();
+  });
+  it("keeps an origin-absent success without a UUID pending", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submit("legacy").then((r) => { settled = true; return r; });
+    await nextTick();
+    frames.push({ ...successFor(turns[0], "legacy-result"), user_message_uuid: undefined });
+    await nextTick();
+    expect(settled).toBe(false);
+    frames.push(successFor(turns[0], "legacy-result"));
+    expect((await turn).result).toBe("legacy-result");
+    frames.close(); await s.dispose();
+  });
+  it("keeps a human success with an unseen UUID pending and does not update limits", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submit("human").then((r) => { settled = true; return r; });
+    await nextTick();
+    frames.push({ ...successFor(turns[0], "Credit balance is too low", { kind: "human" }), user_message_uuid: randomUUID() });
+    await nextTick();
+    expect(settled).toBe(false);
+    expect(s.limitState).toBeUndefined();
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
+    expect((await turn).result).toBe("human");
+    frames.close(); await s.dispose();
+  });
+  it("keeps an origin-absent error pending", async () => {
+    const { frames, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    let settled = false;
+    const turn = s.submit("human").then((r) => { settled = true; return r; });
+    await nextTick();
+    frames.push(errorFor());
+    await nextTick();
+    expect(settled).toBe(false);
+    frames.push(successFor(turns[0], "human", { kind: "human" }));
+    expect((await turn).result).toBe("human");
+    frames.close(); await s.dispose();
+  });
+  it("allows an explicit-human error to settle the FIFO waiter", async () => {
+    const { frames, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit("human");
+    await nextTick();
+    frames.push(errorFor({ kind: "human" }));
+    expect((await turn).result).toBeUndefined();
+    frames.close(); await s.dispose();
+  });
+  it("does not consume requested compaction on an unassociated success", async () => {
+    const { frames, prompts, query, turns } = framedQuery();
+    const s = new Session({ query }, {});
+    s.requestCompaction();
+    const turn = s.submit("work");
+    await nextTick();
+    expect(prompts).toEqual(["work"]);
+    frames.push({ ...successFor(turns[0], "background"), user_message_uuid: randomUUID() });
+    await nextTick();
+    expect(prompts).toEqual(["work"]);
+    frames.push(successFor(turns[0], "work-done", { kind: "human" }));
+    expect((await turn).result).toBe("work-done");
+    await nextTick();
+    expect(prompts).toEqual(["work", "/compact"]);
+    expect(turns[1]).toMatchObject({ origin: { kind: "auto-continuation" } });
+    frames.push({ type: "system", subtype: "status", status: "compacting" });
+    frames.push({ ...successFor(turns[1], "compacted"), user_message_uuid: undefined });
+    frames.close(); await s.dispose();
   });
   it("stream yields the turn's messages then a terminal result frame", async () => {
     const s = new Session({ query: fakeQuery }, {});
@@ -202,6 +432,22 @@ describe("Session", () => {
     expect(await s.initializationResult()).toEqual({ models: ["m"], account: {} });
     await s.applyFlagSettings({ outputStyle: "explanatory" });
     expect(rec.applied).toEqual({ outputStyle: "explanatory" });
+    await s.dispose();
+  });
+  it("getSettings rides the untyped request door with subtype:get_settings and unwraps .response", async () => {
+    const rec: any = {};
+    const s = new Session({ query: methodQuery(rec) }, {});
+    expect(await s.getSettings()).toEqual({ effective: {}, sources: [], applied: [] });
+    expect(rec.requested).toEqual({ subtype: "get_settings" });
+    await s.dispose();
+  });
+  it("getSettings falls back to the raw response when there is no .response wrapper", async () => {
+    const s = new Session({ query: ({ prompt }: any) => {
+      const it: any = (async function* () { for await (const t of prompt) yield successFor(t, "did:" + t.message.content, { kind: "human" }); })();
+      it.request = async () => ({ effective: { x: 1 } });   // no .response key
+      return it;
+    } }, {});
+    expect(await s.getSettings()).toEqual({ effective: { x: 1 } });
     await s.dispose();
   });
   it("usage() rejects once the session has ended", async () => {

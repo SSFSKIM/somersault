@@ -34,8 +34,9 @@ function routeInit(srv: AppServer, record: ThreadRecord, frame: { type?: string;
 }
 
 /** Absorbed from the deleted `armPlanUpgrade`'s own status-frame watcher (planUpgrade.ts, D-M2-6):
- *  `armPlanUpgrade` now only sets `record.planUpgradePending`; this route is what actually applies it,
- *  once, when the engine's own post-approval status frame is observed.
+ *  `armPlanUpgrade` now only sets `record.planUpgradeMode` (the mode the approval GRANTED, Wave T t10);
+ *  this route is what actually applies it, once, when the engine's own post-approval status frame is
+ *  observed.
  *
  *  The `typeof permissionMode === "string"` qualifier is NOT a redundant type guard — it is the same
  *  condition the deleted watcher used, and dropping it reintroduces a real race (2026-07-30 review
@@ -52,7 +53,7 @@ function routeStatus(srv: AppServer, record: ThreadRecord, frame: { type?: strin
   void srv;
   if (frame?.type !== "system" || frame.subtype !== "status") return;
   if (typeof frame.permissionMode !== "string") return;
-  if (record.planUpgradePending) void applyPlanUpgrade(record);
+  if (record.planUpgradeMode) void applyPlanUpgrade(record);
 }
 
 /** The settings mirror (spec Wave 1, D-M2-6). The SDK's model/permissionMode/thinkingTokens setters are

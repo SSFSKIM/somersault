@@ -2,6 +2,10 @@
 // The rows carry NO meta flags (probe 68b) — a "user" row can be a real prompt, a tool_result, a CLI
 // slash-command echo, local-command stdout/caveat, or a compact continuation summary, and only the
 // content shape tells them apart. ONE module so the rewind picker and transcript replay cannot drift.
+// F4 Task 10a: the tag regexes moved to `tui/species.ts` — the sentinel router that has to know the SAME
+// shapes to decide what a user frame is — and are imported back here rather than kept in two places. There
+// is exactly one spelling of "this row is a caveat" in the codebase now.
+import { CAVEAT_RE, COMMAND_ECHO_RE, COMMAND_OUTPUT_RE, COMPACT_SUMMARY_RE } from "../tui/species.js";
 import type { RewindAnchor } from "../session/chatSession.js";
 
 export type RowKind = "prompt" | "tool_result" | "command_echo" | "command_output" | "caveat" | "compact_summary" | "other";
@@ -19,12 +23,10 @@ export function rowKind(m: any): RowKind {
   const c = m.message?.content;
   if (Array.isArray(c) && c.some((b: any) => b?.type === "tool_result")) return "tool_result";
   const text = promptText(m);
-  if (/^\s*<command-name>/.test(text)) return "command_echo";
-  if (/^\s*<local-command-stdout>/.test(text)) return "command_output";
-  if (/^\s*<local-command-caveat>/.test(text)) return "caveat";
-  // English-string sniffing, but the only signal there is: the CLI writes this exact preamble on the
-  // continuation-summary row that replaces pre-compact history (probe 68b).
-  if (/^This session is being continued from a previous conversation/.test(text)) return "compact_summary";
+  if (COMMAND_ECHO_RE.test(text)) return "command_echo";
+  if (COMMAND_OUTPUT_RE.test(text)) return "command_output";
+  if (CAVEAT_RE.test(text)) return "caveat";
+  if (COMPACT_SUMMARY_RE.test(text)) return "compact_summary";
   if (!m.uuid) return "other";
   return "prompt";
 }
@@ -43,7 +45,7 @@ export function rewindAnchorsFrom(messages: any[]): RewindAnchor[] {
       const p = messages[j] as any;
       if (p?.uuid && !PHANTOM.has(rowKind(p))) { prevUuid = String(p.uuid); break; }
     }
-    out.push({ uuid: String(m.uuid), prevUuid, text: promptText(m), index: i });
+    out.push({ uuid: String(m.uuid), prevUuid, text: promptText(m), index: i, ...(typeof m.timestamp === "string" ? { timestamp: m.timestamp } : {}) });
   });
   return out.reverse();
 }

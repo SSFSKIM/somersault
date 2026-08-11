@@ -1,0 +1,40 @@
+
+✻ Crunched for 1s
+
+❯ SE1
+
+⏺ SE1
+
+✻ Sautéed for 2s
+
+! echo S2QA1-BASH-OK
+  ⎿  S2QA1-BASH-OK
+
+⏺ S2QA1-BASH-OK
+
+✻ Cooked for 1s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /mod
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/model                        Set the AI model for Claude Code (currently Sonnet 5)
+/claude-api                   Reference for the Claude API / Anthropic SDK — model ids, pricing, params, streaming,
+                              tool use, MCP, agents, caching, token counting, model migration. TRIGGER — read BEFOR…
+/doctor                       Health-check the user's Claude Code setup and fix issues: diagnose installation health
+                              — what the `claude doctor` terminal diagnostics cover — from local data (duplicate or…
+/advisor                      Let Claude consult a stronger model at key moments
+/effort                       Set effort level for model usage
+/fast                         Toggle fast mode (Opus 5)
+/status                       Show Claude Code status including version, model, account, API connectivity, and tool
+                              statuses
+/voice                        Toggle voice mode
+/plan                         Enable plan mode or view the current session plan
+/update-config                Use this skill to configure the Claude Code harness via settings.json. Automated
+                              behaviors ("from now on when X", "each time X", "whenever X", "before/after X") requi…
+
+
+
+
+
+
+

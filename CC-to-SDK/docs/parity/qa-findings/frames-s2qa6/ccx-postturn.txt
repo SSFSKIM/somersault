@@ -1,0 +1,40 @@
+╭─── ccx v0.1.0 ──────────────────────────────────╮
+│ ✻ Welcome to Claude Code                        │
+╰─────────────────────────────────────────────────╯
+
+  cwd    /private/tmp/s2qa6-uZ0gAX/proj-ccx-62TGG7
+  model  claude-opus-5   ·   mode  default
+
+  Tips for getting started
+  • Ask Claude to edit files, run commands, or explain code
+  • /help for commands · @ to reference files · ⇧Tab to change mode
+  • Esc to interrupt a response
+
+Auto mode lets Claude handle permission prompts automatically — Claude checks each tool call for risky actions and
+prompt injection before executing. Actions Claude identifies as safe are executed, while actions Claude identifies as
+risky are blocked and Claude may try a different approach. Ideal for long-running tasks. Sessions are slightly more
+expensive. Claude can make mistakes that allow harmful commands to run, it's recommended to only use in isolated
+environments. Shift+Tab to change mode.
+❯ Write exactly 120 words about the history of lighthouses.
+⏺ Lighthouses began in antiquity, when fires burned atop headlands to warn mariners of danger. The Pharos of
+Alexandria, built around 280 BCE, became one of the ancient world's wonders, guiding ships safely for centuries. Romans
+erected towers across their empire; the Tower of Hercules in Spain still operates today. Medieval Europe entrusted many
+lights to monks and guilds, burning wood or coal in open braziers. The eighteenth century brought sturdier engineering,
+notably John Smeaton's Eddystone tower, which used interlocking stone. Argand lamps and parabolic reflectors improved
+brightness, then Augustin-Jean Fresnel's stepped lens of 1822 transformed visibility, projecting beams far offshore.
+Electrification followed, and automation gradually replaced keepers. Today satellite navigation has diminished their
+role, yet lighthouses endure as cherished landmarks.
+✻ Baked for 26s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts
+
+
+
+
+
+
+
+
+

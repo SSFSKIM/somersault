@@ -25,6 +25,14 @@ const REWIND_TIMEOUT_MS = 60_000;
 // late reply dropped and no transcript rebuild. Waiting is the honest behaviour; a genuinely dead host is
 // still caught, because the socket closing rejects every in-flight request (see the close handler).
 const NO_TIMEOUT = Number.POSITIVE_INFINITY;
+// Live-feedback fix (2026-08-06): compact is the rewind lesson again, worse. The host replies only after
+// the ENGINE's summarization turn completes — a full LLM pass over the whole context, routinely 30–120s on
+// a real session — so the 10s default fired mid-work every time and reported a healthy host as wedged
+// ("host did not answer compact within 10000ms" in live use). Like the mutating rewind, a fired timer here
+// is a lie, not a safety net: the engine keeps compacting and succeeds after the client has already printed
+// failure. Capped rather than NO_TIMEOUT only because compact is non-destructive — an abandoned wait costs
+// a notice line, not a torn restore.
+const COMPACT_TIMEOUT_MS = 300_000;
 
 /** THIS direction's own cap — NOT the server's `MAX_FRAME`. The two directions carry different traffic:
  *  the server bounds small fixed-shape client→host ops (`status`/`answer`/`prompt`), while this buffers
@@ -139,10 +147,15 @@ export class RemoteChatSession {
   answer(toolUseID: string, decision: PermissionDecision): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
     return this.answerDecision(toolUseID, decision);
   }
-  /** Structured kinds travel under `answer`; the 3-way kinds keep the FLAT legacy fields so an old host's
-   *  schema still parses a new client's permission answer (spec: upgrade compat, read-side only). */
+  /** Structured kinds travel under `answer`; the PAYLOAD-FREE 3-way kinds keep the FLAT legacy fields so
+   *  an old host's schema still parses a new client's permission answer (spec: upgrade compat, read-side
+   *  only). The flat field is a bare kind STRING and can carry nothing else, so the moment a permission
+   *  answer has a payload — F6 T3's `allow_with_updates.updatedPermissions`, `allow_once.updatedInput`,
+   *  `deny.feedback` — it must go structured or the payload is silently dropped on the wire. */
   answerDecision(toolUseID: string, outcome: DecisionOutcome): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
-    const flat = outcome.kind === "allow_once" || outcome.kind === "allow_always" || outcome.kind === "deny";
+    const flat = (outcome.kind === "allow_once" && outcome.updatedInput === undefined)
+      || outcome.kind === "allow_always"
+      || (outcome.kind === "deny" && outcome.feedback === undefined);
     return this.send(flat ? { op: "answer", toolUseID, decision: outcome.kind, by: this.label }
                           : { op: "answer", toolUseID, answer: outcome, by: this.label });
   }
@@ -159,19 +172,35 @@ export class RemoteChatSession {
   setPermissionModeOp(mode: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_permission_mode", mode }); }
   setThinkingOp(maxTokens: number | null) { return this.send<{ ok: boolean; error?: string }>({ op: "set_thinking", maxTokens }); }
   capabilitiesOp() { return this.send<{ ok: boolean; error?: string; models?: unknown[]; commands?: unknown[]; mcpServers?: unknown[] }>({ op: "capabilities" }); }
-  compactOp() { return this.send<{ ok: boolean; error?: string; outcome?: unknown }>({ op: "compact" }); }
+  compactOp() { return this.send<{ ok: boolean; error?: string; outcome?: unknown }>({ op: "compact" }, COMPACT_TIMEOUT_MS); }
   usageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "usage" }); }
   contextUsageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "context_usage" }); }
   mcpStatusOp() { return this.send<{ ok: boolean; error?: string; servers?: unknown[] }>({ op: "mcp_status" }); }
   mcpReconnectOp(name: string) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_reconnect", name }); }
   mcpToggleOp(name: string, enabled: boolean) { return this.send<{ ok: boolean; error?: string }>({ op: "mcp_toggle", name, enabled }); }
   resumeOp(sessionId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "resume", sessionId }); }
+  /** The engine half of /clear — a fresh-conversation engine swap, busy-gated server-side like resume. */
+  clearOp() { return this.send<{ ok: boolean; error?: string }>({ op: "clear" }); }
 
   // C5 T3: Esc-Esc rewind wire ops. anchors/dryRun are read-only; rewind is busy-gated server-side (see
   // server.ts's dispatch arm), same as resumeOp.
   rewindAnchorsOp() { return this.send<{ ok: boolean; error?: string; anchors?: RewindAnchor[] }>({ op: "rewind_anchors" }); }
   rewindDryRunOp(uuid: string) { return this.send<{ ok: boolean; error?: string; dryRun?: RewindDryRun }>({ op: "rewind_dryrun", uuid }, REWIND_TIMEOUT_MS); }
   rewindOp(uuid: string, prevUuid: string | null, scope: RewindScope) { return this.send<{ ok: boolean; error?: string }>({ op: "rewind", uuid, prevUuid, scope }, NO_TIMEOUT); }
+
+  // W3 T2: settings/dirs wire ops, same `…Op` shape as the control ops above. get_settings/list_dirs are
+  // read-only passthroughs; the rest mutate the host's flag-state accumulator (server.ts's dispatch never
+  // busy-gates any of these, unlike resume/rewind, so the default timeout is fine).
+  getSettingsOp() { return this.send<{ ok: boolean; error?: string; settings?: unknown }>({ op: "get_settings" }); }
+  listDirsOp() { return this.send<{ ok: boolean; error?: string; dirs?: { path: string; source: "cwd" | "launch" | "session" }[] }>({ op: "list_dirs" }); }
+  addDirOp(path: string) { return this.send<{ ok: boolean; error?: string }>({ op: "add_dir", path }); }
+  removeDirOp(path: string) { return this.send<{ ok: boolean; error?: string }>({ op: "remove_dir", path }); }
+  setOutputStyleOp(style: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_output_style", style }); }
+  addRuleOp(behavior: "allow" | "ask" | "deny", rule: string) { return this.send<{ ok: boolean; error?: string }>({ op: "add_rule", behavior, rule }); }
+  removeRuleOp(behavior: "allow" | "ask" | "deny", rule: string) { return this.send<{ ok: boolean; error?: string }>({ op: "remove_rule", behavior, rule }); }
+  /** W-C T11: the effort flip (EP-C6). Same `…Op` shape and same never-busy-gated flag-layer group as
+   *  `setOutputStyleOp` — the host answers it with `applyFlagSettings({effortLevel})` (probe 102). */
+  setEffortOp(level: "low" | "medium" | "high" | "xhigh" | "max") { return this.send<{ ok: boolean; error?: string }>({ op: "set_effort", level }); }
 
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,

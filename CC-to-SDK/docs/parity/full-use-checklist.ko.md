@@ -149,8 +149,10 @@ ccx --cwd /tmp/ccqa --permission-mode default
   `thinking: unknown level "bogus" · try off/low/medium/high/xhigh/max or a number`, 크래시 없음.
 - [ ] `/context` → `ctx N% · used / max · status` 출력.
 - [ ] `/compact` → `✦ compacted X → Y` 출력(컨텍스트가 너무 작으면 흐린 "nothing to compact").
-- [ ] `/cost` → `Session cost` 블록을 출력: 합계(또는 구독 인증이면 "included in your … plan"),
-  입/출 토큰, 소요 시간, 모델별 행.
+- [ ] `/cost` → 업스트림 블록을 출력(모든 값이 같은 열에서 시작): `Total cost:`(구독 인증이면
+  "included in your … plan"), `Total duration (API):`, `Total duration (wall):`,
+  `Total code changes: N lines added, M lines removed`, 그리고 `Usage by model:` 아래에
+  모델마다 오른쪽 정렬된 `<model>:  … input, … output, … cache read, … cache write (…)` 행.
 - [ ] `/status` → model / mode / thinking / context% / cwd / session-id를 한눈에 출력.
 - [ ] `/clear` → 화면상의 트랜스크립트는 지우지만 세션 컨텍스트는 **유지**(앞 턴을 참조하는
   후속 질문을 해 보라 — 여전히 알고 있어야 함).
@@ -257,16 +259,15 @@ ccx --bg --permission-mode default --settings '{"permissions":{"ask":["Bash(*)"]
   나타나 `Bash`를 실행할지 물으며 `echo PARKED-OK`가 대상으로 표시된다.
 - [ ] **답하면 세션이 재개됨** — `1`(allow)을 누름 → attach된 화면에서 턴이 `done`으로 완료된다.
 
-### C2. Ctrl-Z는 deny 없이 detach함
+### C2. Ctrl-Z는 suspend하고 `/detach`가 composer에서 detach함
 
-C1을 반복하고(새로운 `--bg` + park), attach한 뒤 **답하기 전에** `Ctrl-Z`를 누른다:
-
-- [ ] stderr에 `detached — session <short> keeps running · reattach: ccx attach <short>`와 함께
-  셸로 돌아온다 — deny는 전송되지 않았다.
-- [ ] `ccx agents --json --all`은 여전히 그 행을 **`blocked`**로 보여준다(대기 중인 권한은
-  그대로 건드려지지 않음).
-- [ ] 다시 attach(`ccx attach <short>`) → 같은 다이얼로그가 여전히 그대로 있다. allow로 답하면
-  → 세션이 `done`까지 실행된다.
+- [ ] **Ctrl-Z는 suspend만 하고 detach하지 않음** — attach 중 누른 뒤 `fg`로 돌아와 세션이 여전히
+  attach되어 있고 대기 중인 결정에 답하지 않았음을 확인한다. 이것이 upstream 호환 터미널 suspend
+  바인딩이다.
+- [ ] **`/detach`가 detach 명령임** — composer가 보이는 attached 세션에서 `/detach` ↵를 입력한다.
+  stderr에 `detached — session <short> keeps running · reattach: ccx attach <short>`가 출력되고,
+  `ccx agents --json --all`은 라이브 행을 유지하며 `ccx attach <short>`로 다시 연결된다. 대기 중인
+  결정은 composer를 차지하므로 이 명령 전에 allow 또는 deny로 처리한다.
 
 ### C3. `--detachable` — 스폰 후 자동 attach
 
@@ -276,8 +277,9 @@ ccx --detachable -n qa-det "Reply with exactly: OK"
 
 - [ ] `backgrounded · <short>` 배너를 출력한 뒤, **곧바로** 같은 터미널에서 attach하고(두 번째
   명령이 필요 없음) 넘긴 프롬프트가 스트리밍된다.
-- [ ] 여기서 `Ctrl-Z`는 detach된다(이 세션은 attached이지 loopback이 아니다) — `ccx agents`는
-  여전히 그것이 동작 중임을 보여줌; `ccx attach qa-det`가 재연결한다.
+- [ ] 여기서는 `/detach` ↵로 detach한다(이 세션은 attached이지 loopback이 아니다) — `ccx agents`는
+  여전히 그것이 동작 중임을 보여주고 `ccx attach qa-det`가 재연결한다. `Ctrl-Z`는 터미널 프로세스를
+  suspend할 뿐이다.
 
 ### C4. `--idle-timeout` (오직 `--detachable`과 함께일 때만 유효)
 
@@ -285,7 +287,7 @@ ccx --detachable -n qa-det "Reply with exactly: OK"
 ccx --detachable --idle-timeout 10 -n qa-idle
 ```
 
-- [ ] 즉시 detach하고(`Ctrl-Z`) 10초 넘게 attach하지 않은 채 둠 → `ccx agents --all`이 그 행이
+- [ ] 즉시 detach하고(`/detach`) 10초 넘게 attach하지 않은 채 둠 → `ccx agents --all`이 그 행이
   종결 상태(`done`)에 도달했음을 보여준다 — 아무도 attach하지 않았기 때문에 idle reaper가
   종료시켰다.
 - [ ] **`--detachable` 없이 쓰는 `--idle-timeout`은 거부됨** —

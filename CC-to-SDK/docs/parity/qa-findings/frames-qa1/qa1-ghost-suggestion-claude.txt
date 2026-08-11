@@ -1,0 +1,40 @@
+
+✻ Sautéed for 3s
+
+❯ queued follow-up A
+
+⏺ Got it — "queued follow-up A" doesn't include an actual request though. What would you like me to do?
+
+✻ Worked for 5s
+
+❯ Run this exact bash command and nothing else: sleep 35
+
+⏺ Bash(sleep 35)
+  ⎿  Error: Blocked: standalone sleep 35. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>;
+     do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to
+     work around this block.
+
+⏺ That command was blocked by the environment — standalone sleep calls aren't permitted (only sleeps used to poll a real
+  condition or background task). Let me know if you want me to wait on something specific instead.
+
+✻ Cogitated for 7s
+
+❯ QUEUED-ONE
+
+⏺ "QUEUED-ONE" doesn't include an actual request — what would you like me to do?
+
+✻ Churned for 3s
+
+❯ QUEUED-TWO
+
+⏺ "QUEUED-TWO" — same as before, I don't have an actual task here. What would you like me to do?
+
+✻ Churned for 3s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ count from 41 to 80
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+
+

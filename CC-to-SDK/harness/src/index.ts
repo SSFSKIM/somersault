@@ -8,6 +8,7 @@ export type { TelemetryConfig } from "./config/telemetry.js";
 export { tenantHarnessConfig } from "./config/tenantPreset.js";
 export type { TenantConfig } from "./config/tenantPreset.js";
 export { resolveAutoModel, isAutoSupportedModel } from "./config/autoModel.js";
+export { resolveModelAlias, MODEL_ALIASES } from "./config/models.js";
 export { BUILTIN_AGENTS } from "./config/agents.js";
 export { BUILTIN_OUTPUT_STYLES } from "./config/outputStyle.js";
 export { TaskStore, TaskError, createTaskMcpServer } from "./tasks/index.js";
@@ -41,7 +42,8 @@ export { createPostgresSessionStore, ensurePostgresSessionStoreSchema, postgresS
 export type { PgLike, PostgresSessionStoreOptions } from "./store/postgresSessionStore.js";
 export { sessionStoreConformance } from "./store/conformance.js";
 export type { ConformanceOpts } from "./store/conformance.js";
-export type { MirrorErrorInfo } from "./session/session.js";
+export type { MirrorErrorInfo, TurnOutcome } from "./session/session.js";
+export type { TurnFailure } from "./session/turnResult.js";
 export { runStructured, StructuredRunError } from "./structured/run.js";
 export { classifyLimitText, classifyLimitMessage } from "./limits/classify.js";
 export type { LimitState, LimitKind } from "./limits/classify.js";

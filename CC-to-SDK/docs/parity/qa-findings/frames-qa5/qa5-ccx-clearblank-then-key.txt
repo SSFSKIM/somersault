@@ -1,0 +1,40 @@
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mWithout using any tools, what session token did I give you earlier in this conversation? If there is no such token in[39m[49m
+[38;2;255;255;255m[48;2;55;55;55m   your context, reply with exactly: NO RECORD                                                                         [39m[49m
+[38;2;255;255;255m⏺ [39mNO RECORD
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/rename qa5-post-clear                                                                                               [39m[49m
+[2mno session yet — send a first prompt[0m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mTurn 1: reply with exactly the word ALPHA1 and nothing else. No tools.                                               [39m[49m
+[38;2;255;255;255m⏺ [39mALPHA1
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mTurn 2: reply with exactly the word ALPHA2 and nothing else. No tools.                                               [39m[49m
+[38;2;255;255;255m⏺ [39mALPHA2
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mTurn 3: reply with exactly the word ALPHA3 and nothing else. No tools.                                               [39m[49m
+[38;2;255;255;255m⏺ [39mALPHA3
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255m/compact                                                                                                             [39m[49m
+[2m✻ compacting… (a summarization pass over the whole context — this can take a minute or two)[0m
+✦ compacted 22.5k → 2.2k
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ [7m [0m
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [2m⏎ send · backslash (\) + return (⏎) for newline · @ files · / commands · ! bash · ⇧Tab mode · ? help[0m
+ [2mEsc rewind · ? help[0m
+model [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[2m[39m (⇧Tab to cycle)[0m  think [38;2;175;135;255mdefault[39m  ctx 2%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

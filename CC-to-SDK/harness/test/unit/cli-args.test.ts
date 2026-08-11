@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseCcx } from "../../src/cli/args.js";
+import { parseCcx, UnknownFlagError } from "../../src/cli/args.js";
 
 describe("parseCcx", () => {
   it("parses doperpowers' exact spawn line", () => {
@@ -79,6 +79,11 @@ describe("parseCcx", () => {
     const a = parseCcx(["--bg", "--resume", "uuid-1", "-n", "w", "next"]);
     expect(a.config.resume).toBe("uuid-1"); expect(a.bg).toBe(true);
   });
+  it("parses -c / --continue (A10)", () => {
+    expect(parseCcx(["-c"]).continue).toBe(true);
+    expect(parseCcx(["--continue"]).continue).toBe(true);
+    expect(parseCcx([]).continue).toBe(false);
+  });
   it("parses subcommands with their flags", () => {
     expect(parseCcx(["agents", "--json", "--all"])).toMatchObject({ command: "agents", json: true, all: true });
     expect(parseCcx(["agents", "--cwd", "/repo"])).toMatchObject({ command: "agents", cwdFilter: "/repo" });
@@ -95,8 +100,59 @@ describe("parseCcx", () => {
     // A silently ignored --permission-mode in a background worker is a safety bug, not a UX wart.
     expect(() => parseCcx(["--bg", "--remote-control", "x"])).toThrow(/--remote-control/);
   });
-  it("fails on an unknown flag rather than treating it as the prompt", () => {
-    expect(() => parseCcx(["--nope"])).toThrow(/--nope/);
+  it("keeps the KNOWN_UNSUPPORTED refusal a PLAIN error — it is not the commander unknown-option shape", () => {
+    // Wave-C T5 draws the exit-code line here: UnknownFlagError is the only throw that exits 1.
+    expect(() => parseCcx(["--bg", "--chrome", "x"])).toThrow(/is not supported by ccx/);
+    try { parseCcx(["--bg", "--chrome", "x"]); } catch (e) { expect(e).not.toBeInstanceOf(UnknownFlagError); }
+  });
+  it("fails on an unknown flag rather than treating it as the prompt, in commander's shape", () => {
+    expect(() => parseCcx(["--nope"])).toThrow(UnknownFlagError);
+    expect(() => parseCcx(["--nope"])).toThrow("error: unknown option '--nope'\n(Did you mean --name?)");
+  });
+  it("parses --version/-v and --help/-h as intercepts rather than rejecting them", () => {
+    expect(parseCcx(["--version"])).toMatchObject({ version: true });
+    expect(parseCcx(["-v"])).toMatchObject({ version: true });
+    expect(parseCcx(["--help"])).toMatchObject({ help: true });
+    expect(parseCcx(["-h"])).toMatchObject({ help: true });
+    expect(parseCcx([])).toMatchObject({ version: false, help: false });
+  });
+  it("lets --help/--version outrank an unknown option, whichever side of it they land on", () => {
+    // commander runs `_outputHelpIfRequested` BEFORE `unknownOption`, so the two printers answer even
+    // for an argv the parser cannot otherwise accept. Verified against the real CLI: `claude --nope
+    // --help` prints help at exit 0, and both orders of `--nope`/`--version` print the version.
+    // So the first unrecognized token is REMEMBERED, not thrown, until the whole argv has been read.
+    expect(parseCcx(["--nope", "--help"])).toMatchObject({ help: true });
+    expect(parseCcx(["--nope", "--version"])).toMatchObject({ version: true });
+    expect(parseCcx(["--version", "--nope"])).toMatchObject({ version: true });
+  });
+  it("still throws for the unknown option when no printer was asked for", () => {
+    expect(() => parseCcx(["--nope", "--json"])).toThrow(UnknownFlagError);
+  });
+  it("names the FIRST unknown token, not the last one it happened to read", () => {
+    expect(() => parseCcx(["--nope", "--mdoel"])).toThrow("error: unknown option '--nope'\n(Did you mean --name?)");
+  });
+  it("blames the unknown option, not the stray operand that only trails it", () => {
+    // commander's `_parseCommand` runs `checkForUnknownOptions()` before `_processArguments()` reaches
+    // `_excessArguments`, so the excess-operand throw is deferred behind the flag refusal — and behind the
+    // printers with it (`ccx one two --help` prints help, exactly as `claude one two --help` does).
+    expect(() => parseCcx(["--nope", "one", "two"])).toThrow(UnknownFlagError);
+    expect(() => parseCcx(["one", "two"])).toThrow(/unexpected argument "two"/);
+    expect(parseCcx(["one", "two", "--help"])).toMatchObject({ help: true });
+  });
+  it("lets the printers outrank a recognized-but-unsupported flag too", () => {
+    // Same rule, same reason: upstream refuses these at parse time exactly as it refuses an unknown one,
+    // and help/version outrank both. `ccx --help --chrome` is a request to read the help page.
+    expect(parseCcx(["--help", "--chrome"])).toMatchObject({ help: true });
+    expect(parseCcx(["--chrome", "--version"])).toMatchObject({ version: true });
+    expect(() => parseCcx(["--chrome"])).toThrow(/is not supported by ccx/);
+  });
+  it("leaves a value-taking flag's value alone — commander consumes it before it can read as an option", () => {
+    // `--model -v` is a model literally named "-v", not a version request: val() takes the next token
+    // whatever it is, exactly as commander's option-argument consumption does.
+    expect(parseCcx(["--model", "-v", "x"])).toMatchObject({ version: false, config: { model: "-v" } });
+  });
+  it("parses the doctor subcommand", () => {
+    expect(parseCcx(["doctor"])).toMatchObject({ command: "doctor" });
   });
   it("parses --think with a level name or a raw token count", () => {
     expect(parseCcx(["--think", "high", "x"])).toMatchObject({ think: "high" });

@@ -1,0 +1,13 @@
+# Authenticated, version-pinned tracked capture. Bash remains available; the prompt selects Read explicitly.
+wait:4
+enter
+wait:2
+type:Use the Read tool to read src/app.ts, then stop without adding an assistant response.
+# A beat between type and enter: coalesced into one chunk, the CLI's paste detection would treat the
+# trailing CR as pasted content rather than a submit keypress, leaving the prompt in the composer.
+wait:0.5
+enter
+# A real model turn plus a Read tool call takes seconds; the default 1s bound would always miss.
+wait-output:⎿:120
+wait:0.2
+frame:read-complete

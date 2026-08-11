@@ -1,0 +1,1034 @@
+Task 9: complete (suites: typecheck clean, 1202 unit, 422 tui; driver gained RAW:/RAWQ: prefixes (01ed5fbc7a + follow-up) — plan-review I3 fix, RAWQ added mid-acceptance because ink parses one keypress per pty chunk so chord bytes need separate sub-2s writes; pty acceptance runs w2-a + w2-b: panel row "❯ ⟳ b1tmha74 · local_bash · for i in $(seq 1 90)…" + Enter-tail tick14-25 LIVE MID-RUN (acceptance #2 all four properties), pager 10–17→9–16→1–8 of 17 + q close (acceptance #5a), history search everywhere-scope load→tick filter→Esc-accept→prompt IN COMPOSER frame 2069 (#5b; empty-then-filled frame pair = the designed one-render prefill effect), killAgents ALL THREE branches live (no-tasks notice run A; arm→◼ stopping 1→◼ task stopped→status chip cleared run B). ZERO defects found by the pty run — first wave with a clean acceptance.)
+- Wave T Task 8: complete (commits f0cbc87cc6 + 56f87763f5 + d4fd91fd96, review PASS/APPROVED, sabotage-verified ×4).
+  MID-TASK RETRACTION W-T22: item (a) reverted. The implementer read the bundle and found our "broken promise"
+  WebFetch No-row label is upstream VERBATIM (L506771); controller check found the idiom repeats at L544640,
+  near-twins at L503212, and appears as the `placeholder` on every input-form decline row (L504874/505650/506294).
+  Shipping a rewrite would have had this wave pinning one upstream-verbatim row as canon (item (c)/W-T16) while
+  unilaterally rewriting another. Now: one copy fix (the separator) + TWO canon pins. Spec commit 12fadc5399.
+  Divergence accepted knowingly: separator gated on `withLabel`, not `showLabelWithValue` — the amended No row
+  renders through the `withLabel` branch (all six permission bodies pass `inlineDescriptions`), so the flag alone
+  would have missed the only row A16 covers.
+- Wave T Task 9: complete (commit c781a57d5d, review PASS/APPROVED). SANCTIONED DEVIATION from the brief's
+  prescribed location, verified by me before acceptance: the third sentinel is a cancelled `tool_result` content
+  string (`CLo` L298302), NOT an `ERe` exit-9 case (L426473 tests only the other two), and `render.ts:236` skips
+  every non-`text` block before `classifyUserText` — so the brief's `startsWith` at `species.ts:160` would never
+  have fired on a real frame AND would have false-positived on any user prompt quoting the sentence. Constant
+  landed in species.ts as instructed; classification landed in `toolResult.ts` `normalizeToolResult`, routing
+  through the existing `interrupted` status to the identical dim row.
+- DURABLE FACT (task 9 reviewer): `node_modules/@anthropic-ai/claude-agent-sdk/manifest.json` declares
+  version 2.1.220, commit 4073f595 — the CLI the SDK spawns is THE SAME BUILD as our canon bundle. Canon is now
+  version-pinned to what actually runs, not merely assumed to match.
+- FIDELITY NOTE (task 9 reviewer): on Esc-during-tool upstream paints the Interrupted row TWICE (once via `HVo`'s
+  F7 branch, once via `ERe` exit 9). Our once-only behavior is the sanctioned F3 divergence, not upstream fidelity.
+- PROCESS LESSON #2: two agents running npm concurrently destroyed `harness/node_modules` mid-review (recovered
+  with `npm ci`). Reviewers must be told NOT to re-run the full suites when another worker is active — the
+  implementer's counts are the evidence.
+- Wave T Task 10: complete (commits e105b06c53 + 19d6cf10dd, review PASS / CHANGES-REQUESTED→fixed).
+  RECOVERED ORPHAN: the implementer process died before committing and left NO report. Work was found
+  uncommitted in the tree, verified green by the controller (typecheck clean, unit 1408, tui 2686), committed,
+  then reviewed as unreviewed code from an unknown author. Review found the feature complete and canon-exact
+  (sYf L500705-711, lYf L500727-731, tYf L501047 all transcribed correctly) plus two Important gaps.
+  Fixes 19d6cf10dd: (1) the availability wiring at ChatApp.tsx:464 was 100% untested — reviewer PROVED it by
+  deleting both props out-of-repo and watching all 186 ChatApp-level tests still pass, because every one of
+  them renders without hookOpts/model, i.e. exactly the neither-available arm the OLD code produced;
+  (2) applyPlanUpgrade's `this.model !== undefined` carve-out contradicted its own docblock — on an unknown
+  model it granted `auto` and wrote the chip with no swap and no report. Reachable: `set_model` with no model
+  is valid on the wire (ops.ts:43) and permanently blanks the host's model truth.
+  Fixer correction to my brief: a host with no model in config does NOT have model===undefined (resolvedModel
+  falls back to DEFAULTS.model, which is auto-capable). Only the bare `set_model` op reaches that state.
+- Wave T Task 10 review, brief over-inclusive: the plan listed TWELVE test files to migrate; two of them
+  (useChat.test.tsx:917, permissionsModel.test.ts:140) use "plan_approve" only as a bare kind string with no
+  payload and correctly needed no change. Ten migrated, none weakened; host-park.test.ts was strengthened.
+- OPEN LIVE QUESTION, routed to Task 15 (bypass consent gate) — NOT answered by this wave yet:
+  is `setPermissionMode("bypassPermissions")` REFUSED or SILENTLY IGNORED on a session launched without
+  `allowDangerouslySkipPermissions`? If refused, t10's new catch reports it and mode truth stays honest. If
+  silently ignored, host.ts:555 writes a lying chip. The dialog never offers bypass in that state, but the
+  host wire accepts the mode from any client with no availability gate. Same exposure the pre-existing
+  set_permission_mode control op already has, so not a regression — but it is the one live-SDK premise
+  Task 10's design rests on that nobody has probed. Task 15 must probe it.
+- FIDELITY OBSERVATION (t10 review): an ATTACHED client can never be offered the bypass arm — bypassAvailable
+  comes from hookOpts and the attach path (main.ts:184-190) passes none. Errs toward the narrower grant, which
+  is the honest direction and consistent with how `model` is handled, but the same host offers different arms
+  depending on how you connect to it.
+- Wave T Task 11: complete (commits 4b7884ecf7 + 7881041839, review PASS/APPROVED, 8 sabotages all caught).
+  ITEM (d) RESOLVED NEGATIVE — approve-with-feedback is UNREACHABLE, and this is now proven twice over.
+  Upstream chain: handleUserAllow (L272004-008) → buildAllow (L272000-001) → L298586-589, where acceptFeedback
+  becomes a SECOND {type:"text"} block appended to the tool_result content. No canUseTool can reach that.
+  Reviewer strengthened the case beyond the type argument: the CLI zod-validates the SDK's canUseTool response
+  (YOn/VdE, L556553) and zod STRIPS unknown keys, so a smuggled acceptFeedback is deleted at runtime, not
+  merely untyped; and the "spare updatedInput key" route is actively dangerous — updatedInput is validated
+  against the tool's own input schema (L298492-495) and a failure converts the call into an InputValidationError.
+  So: UI half only, SHIFT_TAB_HINT stays trimmed, gate drops it explicitly (gate.ts:73-77).
+- YAGNI adjudicated (t11): the `feedback` field KEEPS its place. One VERIFIED live consumer today —
+  appserver/server.ts:278 broadcasts decision/resolved with the whole outcome object — pinned by reading the
+  actual broadcast off the connection sink, not by assertion. The "one line to change if the SDK grows a
+  channel" argument was explicitly discounted as speculative and is NOT load-bearing.
+- Comment-accuracy defect class (t11 fix): FOUR copies of a false claim ("the host sees what the approver
+  said") had to be corrected — host.ts:701 emits `decision: outcome.kind` ONLY. In this repo comments are the
+  canon record, so an overstated one is a real defect: the next reader believes the REPL surfaces feedback and
+  never builds the piece that would. Known gap now recorded ONCE (PlanDialog divergence 3): an approved-plan
+  transcript row carrying the text is what would complete it.
+- FIVE citation anchors drifted 1-2 lines and were corrected (L229930 is the plan-file WRITE, L229928 the read;
+  L230000 is the `## Approved Plan:` echo). The t11 fixer also caught TWO of the reviewer's own line numbers
+  being off by one and wrote the correct ones. Citation drift is now a recurring defect class in this wave.
+- DASHED_BORDER is the repo's first custom Ink BoxStyle (stock cli-boxes has no dashed style; upstream's ink
+  fork registers it at L179535). Eight glyphs transcribed and codepoint-verified: ╌ U+254C top/bottom,
+  ╎ U+254E left/right, spaces on all four corners. Ink 5.2.1 accepts a BoxStyle object (styles.d.ts:142).
+  Known omission recorded: upstream suppresses the border under a screen reader (L424996); ccx paints
+  unconditionally, same class of gap DialogFrame already records for srPrefix.
+- Wave T Tasks 12+13: complete (b0e610ca52, b7dd9610dc, fix 4a0d353a5c; review PASS / CHANGES-REQUESTED→fixed).
+  CRITICAL caught by review, measured not reasoned: the stalled watchdog re-armed on ANY message frame, so it
+  painted "✻ Waiting for API response · check your network" 10s into a healthy `Bash(npm test)` run. Canon
+  cannot produce that — upstream's Ss (L358804-822) measures silence INSIDE the API fetch (mr.lastAt is the last
+  stream chunk), so local tool execution can never trip it; and our only mid-tool keepalive (tool_progress,
+  pks=30000, L239568) is 3x the threshold, so a one-minute command would oscillate stalled→spinner→stalled.
+  Fixed by anchoring the watchdog to turn start: armed once, retired by the first frame proving the API answered,
+  never re-armed. Disarm sits AFTER the api_retry early return on purpose — a retry frame is evidence of
+  FAILURE, not health.
+- IMPORTANT (t13): the retrying label printed the raw wire slug, so the very outage this feature exists for read
+  `✻ unknown · Retrying in 33s · attempt 7/10` — probe 96's own sample is {"error":"unknown"}. The wire `error`
+  field is `pir()` (L157864-873) returning overloaded|rate_limit|authentication_failed|server_error|unknown,
+  none of which appear in canon's UI. Canon has a prose table for exactly this frame — rZp, L437178-437190 —
+  mapping error_status to "Rate limited"/"API overloaded"/"Authentication failed"/"API error". Ported verbatim;
+  the wire `error` field is no longer read at all.
+- STALLED-DURATION resolved negative and closed positively (t13 + review): upstream DOES render
+  `· will retry in <dur>` on the stalled row (L407997), computing it before the kind branch (L407976) from
+  {kind:"stalled", deadline: Date.now() + Math.max(0, Kn - ss)} (L358821). But Kn is the stalling fetch's own
+  abort timeout (L358962 → pYi/dYi L99030-044: env vars + auth-kind branch + remote gate), all INSIDE the claude
+  CLI subprocess. The reviewer closed the hole positively: the ONLY site emitting this frame onto the SDK stream
+  is L431679 and it yields exactly five fields (attempt, max_retries, retry_delay_ms, error_status, error).
+  No second emission site, no stalled-kind wire frame. The number is genuinely unobtainable → clause dropped.
+- BRIEF MECHANISM ERROR (t12, confirmed by review): SILENT_SUBTYPES (species.ts:610) is
+  ["thinking","model_refusal_no_fallback","api_error"] — api_retry is NOT a member. The transcript null comes
+  from the `typeof content !== "string"` guard at species.ts:653. Behavior depended on was real; only the cited
+  mechanism was wrong.
+- CITATION DRIFT, now a confirmed recurring defect class in this wave: ELEVEN more anchors corrected across
+  t12/t13 (stalled label L407992 not L407989-91; stalled tail L407997 not L407995; retrying tail L408007;
+  retrying label L408010; countdown L407976 not L407975; glyph box L407985 not L407984; Ss starts L358804 not
+  L358806; rZp is L437178-437190 not -189). The fixer caught two the reviewer missed AND corrected one of the
+  reviewer's own. Every citation must be opened and read, never copied forward.
+- Wave T Task 14: complete (78ad5de275 + fix df41be4629; review PASS/APPROVED).
+  MEASUREMENT REFUTED THE PREMISE (the task's real deliverable). "The failure renders twice" was false. With a
+  user_message_uuid the frame took the SUCCESS branch: submit() resolved, turn-end carried no error, transcript
+  showed ONE row and ZERO ✗. The real defect was that a dead connection was judged a SUCCESSFUL TURN. The second
+  line existed only on the uuid-LESS variant, where fifoWaiter matched nothing and readLoop's finally rejected
+  with "session disposed" — not a duplicate, a line naming the WRONG CAUSE.
+  SEMANTICS: submit() RESOLVES with an error-tagged result (TurnOutcome.error?: TurnFailure), does not reject.
+  Reviewer strengthened the case: on rejection the failure reaches the transcript THREE times (chatAdapter.ts:108
+  rethrows → useChat.ts:1313 appends ✗ from the .catch, AND useChat.ts:601 appends ✗ from the turn-end arm).
+  Fixes: (1) turnFailureOf treated ANY finite api_error_status as failure, contradicting this repo's OWN health
+  rule — probes 94/94b classify unhealthy only at >= 400, and validResultFrameShape accepts any finite number on
+  a success frame. Latent false positive in the worst direction: runStructured would THROW ON A VALID RUN. Now
+  gated at >= 400 (the phrasing also keeps NaN a non-failure). (2) three surfaces discarded the new error tag —
+  appserver broadcast turn/completed{status:"completed"} for a failed turn (one-shot, nothing overwrites it),
+  daemon UDS returned {type:"done"}, and stream() dropped it. All three now read outcome.error.
+  Reviewer's reachability inversion: sdk.d.ts:4300 declares user_message_uuid ONLY on SDKResultSuccess, and
+  probe 96's api_error frame IS subtype:"success" — so in streaming-input mode path A is likely the REAL path,
+  making the uuid-less path largely theoretical AND the fifoWaiter api_error allowance possibly never-firing.
+  Unsettled without a variant-C rerun with a streaming prompt. CHEAP — worth doing in a later wave.
+- Wave T Task 15: complete (235f6f7f85 + fix 9045a8bad0; review PASS / CHANGES-REQUESTED→fixed).
+  CRITICAL SAFETY HOLE caught by review: `ccx --bg --dangerously-skip-permissions` reached bypass with NO consent
+  ever, and propagated (`ccx attach` onto such a session inherits it). The implementer had flagged it and
+  concluded there was no upstream precedent — there IS, at L451420-21, and it is exactly this shape: upstream
+  refuses --bg with bypass until the disclaimer was accepted interactively once, and names how to accept it.
+  Now transcribed (claude → ccx) and failing through the run arm's existing fail(…, 2) path.
+  `-p` stays ungated and that IS canon: the gate at L554501-04 sits inside the interactive REPL startup (QHE,
+  L576722) and no equivalent exists on the print path.
+- ESCAPE-EXIT-CODE adjudicated by the reviewer AGAINST the implementer, with a 6-step dispatch trace: upstream's
+  Lu(0) is NOT dead code — it is exactly what Escape runs. keybindingScope is set in only TWO places bundle-wide
+  (har L183653 = "Confirmation", dispatcher root L398345 = "Global"); the Select NEVER sets one (select:cancel
+  lives in the separate handler registry, a different mechanism). Capture-phase dispatch at the root collects
+  ["Confirmation","Global"], ePt returns the FIRST match, Confirmation binds escape→confirm:no, har consumes it,
+  Lu(0) executes. The legacy fallback that WOULD have picked Select is never reached.
+  The cited precedent (BashPermission.tsx:14, PlanDialog.tsx:63-64) does not transfer: those are Ed-framed, and
+  Ed (L437992-438014) is a plain box with no har, no scope, no confirm:no — so there confirm:no goes unconsumed
+  and the legacy path DOES land on select:cancel. REAL RULE: an `nr` frame with an active cancel intercepts
+  Escape; every other frame lets it fall through to the Select. Behavior shipped (Escape → 0) was already right;
+  the COMMENT asserting otherwise was the defect.
+- React-free guarantee made STRUCTURAL (t15 fix): the acceptance predicate lived twice (canon reader in a .tsx
+  that pulls ink, plus a raw prefs re-read in main.ts) purely to dodge the React constraint. Now one React-free
+  module both import. The old guard was line-shaped and missed BOTH a multi-line static import AND anything
+  transitive; rewritten statement-shaped with a transitive walk, and sabotage-proven against ink imported two
+  hops away in prefs.ts.
+- Wave T Task 16: complete (b7b353ab27; review PASS/APPROVED). MEASURED FIRST and the lie was REAL:
+  a rejecting setPermissionMode painted the refused mode with no error, no other guard caught it. Fixed:
+  mode truth moves only after the setter resolves; rejection appends `✗ <mode> refused by the engine
+  (<engine message>) — staying in <prev>`, mirroring host.ts applyPlanUpgrade. Implementer found a SECOND
+  instance one line up — the auto arm's setModel(...).catch(() => {}) plus an unconditional model-state
+  write and an "↻ switched model to…" announcement, so a refused SWAP painted a model that wasn't running.
+- Wave T Task 17: complete (f38366e94a + fix 9e81a0326c; review PASS/APPROVED). BRIEF ERROR caught by me
+  before dispatch: it said borderStyle="dashed", but stock cli-boxes has NO dashed style — Task 11 had
+  already transcribed the glyphs into DASHED_BORDER. Moved to a shared src/tui/boxStyles.ts as its second
+  consumer. SCOPE JUDGMENT upheld by review: the implementer wrapped the WHOLE file-write-diff body because
+  canon ial L505692 reads SM({paddingX:1, children: oal}) where oal is ALREADY the ternary — upstream frames
+  both arms. Higher fidelity than the brief asked for; the narrow reading is measurably wrong.
+- NEW GAP recorded but deliberately not closed (t17): Qsl L505550 wraps the EDIT arm in the same SM at
+  paddingX:0 — the dashed rules are not create-specific and ccx's Edit dialog lacks them. Pinned by a test
+  asserting the CURRENT ABSENCE so a follow-up must flip it visibly. Notebook arm (fal L505729-825) has no
+  SM, so ours is already correct there.
+- PROBE 99 (77f82ea073) — settled the wave's last unverified premise AND overturned a standing one:
+  · setPermissionMode("bypassPermissions") without the launch flag REJECTS with the engine's own sentence.
+    Task 16's catch genuinely fires; the fix is PROVEN, not merely plausible.
+  · setPermissionMode("auto") on a non-auto model ALSO REJECTS ("auto mode unavailable for this model").
+    The standing premise — inherited from probe 18d and repeated in TEN places — that an unsupported model
+    makes auto fall back to `default` IN SILENCE is FALSE for the runtime setter. The engine refuses loudly.
+    Swap-first ordering stays correct (it is what makes auto SUCCEED), but the lying-chip hazard it was
+    written to prevent cannot arise on that path. Corrected in 64c7f8f956 across autoModel.ts, host.ts,
+    useChat.ts, appserver/planUpgrade.ts, a test fixture, and four USER-FACING strings warning of the wrong thing.
+  · Probe 18d's claim was SCOPED, not deleted: 18d/24-P2a tested the LAUNCH path; 99 tested the RUNTIME
+    setter. Different paths — the launch-path claim is untouched and would need its own probe.
+  · system/init carries permissionMode every turn and still reported the PREVIOUS mode after both
+    rejections, so a client can reconcile from frames rather than trusting the setter's return.
+- Wave T Task 18 (final verification): 4a7a640d85. ALL FOUR gates green including `npm run build`, run for the
+  FIRST TIME this wave and clean (all four public .d.ts resolve). A1-A19+A10b walk: 17 proven by test,
+  1 needing live TTY (A1), 1 surface-shipped/wiring-deferred (A6), 1 not met as written (A9 — the W-T21
+  retraction never reached the criterion's wording; shipped behavior was correct throughout). A9 amended and
+  nine undocumented deltas written as spec Revision Notes v2.
+- Parity re-score a7f0aa75e6: HONEST, no inflation. tui-ux 71.3 → 71.5% (movement ONLY from rows that did not
+  previously exist); coverage.md domain percentages UNCHANGED — Wave T consumes no new SDK surface, so the
+  honest result is correction notes, not movement. Nothing promoted for effort: the wave's biggest work landed
+  inside rows already scored ✅, which now record that their ✅ was scored ahead of its evidence.
+- EXTERNAL WHOLE-BRANCH REVIEW (codex gpt-5.6-sol, base 7af9e093dc) found FOUR MORE real defects after all 18
+  tasks and their per-task reviews had passed — fixed in f98a3ade3a:
+  · P1 `--detachable --dangerously-skip-permissions` in a NON-TTY skipped consent AND skipped the non-TTY
+    rejection (the detachable branch runs before it), silently spawning a persistent autonomous bypass host.
+  · P2 THE STALL WATCHDOG NEVER FIRED IN ITS OWN SCENARIO. disarmStall() ran on every non-api_retry frame under
+    the false comment "every OTHER frame IS proof the API answered" — but `system/init` is the CLI's LOCAL
+    startup frame (probe 99: arrives at 3.31s every turn). On a blackholed endpoint init disarmed the 10s timer
+    and the stalled row never appeared during the ~75s silence. Fixing the earlier false POSITIVE had created a
+    false NEGATIVE. Proof set now: assistant, stream_event, result, tool_progress, tool_use_summary + system
+    subtypes thinking_tokens / model_refusal_* / task_*. `user` frames EXCLUDED — the SDK replays them
+    (SDKUserMessageReplay), so they are the same local-echo trap. thinking_tokens INCLUDED — during redacted
+    thinking it can be the only wire traffic, and excluding it would re-create the false alarm.
+  · P2 `--worktree` + bypass created the worktree BEFORE the consent prompt, so declining left it behind —
+    contradicting the gate's own comment that a refusal "costs nothing that has to be unwound".
+  · P2 the consult footer advertised `tab amend` on rows that ignore Tab (e.g. the Bash dialog's focused Yes
+    row) — a false affordance, and inconsistent with W-T22, which removed copy for exactly that reason.
+  LESSON: run the external whole-branch review BEFORE declaring a wave done. Per-task reviews are scoped to
+  their diff and structurally cannot see cross-task interactions like the init-frame/watchdog collision.
+- WAVE T COMPLETE. Final: typecheck clean, unit 1464, tui 2738 / 9 skipped, build clean. 40 commits on main
+  from 7af9e093dc, NOT pushed. Remaining for the programme: Waves R, S, C (each needs its own grounding round
+  per D9), plus the recurring QA sweep per D6.
+## Wave R (plan: docs/superpowers/plans/2026-08-06-wave-r-repaint-geometry.md, v2)
+Base: 7c9de3fc0c. 13 tasks. Grounding + SP-R0 + plan review complete before task 1.
+Task 1: dispatched (terminal size as React state)
+Task 1: review clean (spec PASS + quality PASS); 2 Minors -> fix dispatched. commit 76ef0c17a8
+Task 1: complete (commits 76ef0c17a8..ed32e037c1, review clean, 2 Minors fixed)
+Task 2: impl 87fb643af5 (DONE_WITH_CONCERNS); tall-frame-chunk hazard verified real (pager path) -> fix dispatched
+Task 2: complete (commits 87fb643af5..48baa79683, review PASS/PASS, 2 Important fixed: empty-clear guard tested, frame cleared on erase)
+Task 3: impl 77552aa953 (DONE_WITH_CONCERNS); verdict-rule false positive caught by implementer, deviation accepted; Task 4 gated on a colBefore feasibility check
+Task 3: complete (commits 77552aa953..bc5bfe602e; review PASS/PASS w/ 1 Critical + 2 Important, all fixed; answerable domain proved)
+Task 3: FINAL (commits 77552aa953..3540220b3b; 2 review rounds, 1 Critical + 4 Important fixed; oracle fires on 105/118 widths, tmux verified)
+Task 4: impl 93d6dad962 (DONE) — parking premise OVERTURNED by measurement: a bare column move can never answer (tmux clamps a reflowing cursor to its line's USED cells; Ink's cursor row is blank), so the park PADS with spaces. Erase count therefore carries ceil(parkedCol/newWidth) for the cursor row, not the plan's flat +1. Also: the brief's synchronous count would have over-erased — eraseLines leaves the cursor on the topmost cleared row, so we emit only region-ink+1 and Ink's own erase covers the rest. Two Task 2 recorder repairs folded in (bodies not ending in a newline are nobody's frame; escapes-only writes restore the park).
+Task 4: review ❌/Needs-fixes — 2 Critical, 2 Important. Sabotage pass: 23 mutations, 18 caught, 5 slept (all on the staleness axis). Both erase counts independently re-derived from ansi-escapes + log-update and CONFIRMED correct; padding departure independently reproduced.
+Task 4: fix round 1 f236ad32a5 — Critical(stale-width over-erase: 13 rows erased over 7 occupied) closed by re-reading deps.size() in the continuation, caching the verdict but abandoning the emission; Important(parkedCol stale across the tall-frame write) closed, and the fixer found the SAME lie in the erase-only branch on its own. 6 new tests, each sabotage-verified against its own mutation. unit 1543 (+6), tui 2747/9-skipped, typecheck+build clean.
+Task 4: OPEN — Critical 1 (residue survives a rapid multi-event drag) is a DESIGN question, not a patch. Mechanism confirmed in Ink's source by the controller: resized() defers the actual write through throttledLog, and log-update dedupes identical output away entirely, so a SIGWINCH does not imply a write. Measurement of FIXED-vs-BASELINE drag behaviour dispatched to decide extend-vs-ship-partial.
+Task 4: drag measurement landed (46 cells, 3 reps each): FIXED better-or-equal to BASELINE in every scenario, ZERO content loss either build (markers byte-identical in scrollback). Fine one-column drag is the honest gap: 1 composer + 3 stale rules vs baseline 3-4 composers + ~6 rules. Verdict: unimproved case, NOT a regression. INCIDENT: the measurement agent tore down with `tmux kill-server`, killing the owner's `main` and `sdk` sessions — W-R8 now bars every all-sessions form; per-name kill-session only.
+Task 4b: authored into the plan (frame-write-time correction; W-R9 in spec Decision Log). Deletes correctionBeforeRepaint + sync emission path; corrector injects between Ink's erase prefix and body against the LIVE width; fine drag becomes the acceptance cell.
+Task 4b: complete (commit f9913e1bcd, review Spec ✅ / Approved, ZERO Critical/Important in the change). Write-time corrector verified: arithmetic independently re-derived from ansi-escapes + log-update (union exactly inkErases+shortfall rows); double-correction guard traced as genuinely load-bearing (dedupe case would stack a second erase); 12 sabotage mutations, 11 caught. Both implementer deviations (width>=2 refusal; verdict() self-write suppression) ratified as refusals that can only under-erase. Burst/stepped/widen all clean 3/3; fine first-session drag residual is a NAMED gap (spec Surprises 9), controller-owned. Carried to Task 8 (in plan text): reset widthAtPaint on the 2J branch; keep inkErases read off the wire. MINORS for final review: (1) rewritten one-shot consumption unpinned (sabotage slept); (2) Static-flush erase-only window named but untested; (3) double-correction guard pinned at driver level only, no proxy+driver integration pin; (4) parkedCol can understate the park row after an escapes-only re-park at a narrower width (safe side).
+Task 4/4b: EP-R1 core DONE. BASE for Task 5: f9913e1bcd
+Task 5: complete (commits 6ab4e72fd8 + fix e5c8e3bf37 + controller fix2, review ❌/Needs-fixes → re-review ✅/Approved). Matrix PROVEN non-decorative: sabotaged correction caught in 5/7 cells, height-only controls stay green; rule-count pin caught the exact-multiple 160→80 blindness LIVE. CI truth restored: .github/workflows/cc-to-sdk.yml EXISTS (implementer claimed otherwise) — matrix now a Node-22 step with RESIZE_MATRIX_REQUIRE_TMUX=1 (renamed from CI_REQUIRE_TMUX: is-in-ci treats ANY CI_* var as CI and Ink then never subscribes to resize); ccx children launch CI=false (ratified: real interactive pty; chalk side effect measured null; capture-frames.py precedent). A5 cell restructured (shrink before first submit, TWO shrinks — one-shrink is repaired by correctionAfterRepaint and stays green under the write-corrector stub). Four dialogs threaded (Model/Rewind/Session pickers + PlanDialog), each pin individually sabotage-verified. Controller fix2: settle_frame replaces the two one-shot captures + sleep 1 (re-review finding A, CI flake risk); matrix re-run 7/7. LEDGER NOTES: "frozen at mount" premise was FALSE (default params re-evaluate every render; real rationale is single-source-of-truth) — plan Task 5 "Why" text inherits that error; FilePermission columns gap left (needs PermissionDialog signature widening); qa-driver.md needles fixed to "⏎ send". BASE for Task 6: HEAD after fix2.
+Task 6: complete (commits a5c403465e + fix 8ee86567af, review ✅/Needs-fixes → all 6 findings fixed). A3 test PASSED on current build — kept as guard, no fix invented (Step-2 rule). HONEST SCOPE (reviewer F1, measured): the keyless test guards the one-spinner-slot and interrupt-clears invariants ONLY; it is structurally blind to the resize axis (spinner renders no width-dependent quantity; test stays green with Task 1's resize wiring reverted). CONTROLLER RAN THE LIVE A3 CELL KEYED: 8/8 matrix incl. a3 — escRows/elapsedRows exactly 1 through shrink 80 + grow 100 mid-stream, 0 after Esc, preconditions genuinely asserted (2 streamed rows >80 cols), no flake on first run, isolation held. LEDGER NOTES for final review: (a) renderMarkdown does NOT wrap prose at any width — opts.width reaches only renderTable (mdTable.ts:124); the mid-turn staleness gap is REAL ONLY for a top-level markdown table streaming across a stall (reviewer F3 corrected the implementer's broader claim); (b) tmux -e credential bound: a server started by the keyed call holds the argv for its life (same-uid only, nothing on disk — accepted); (c) settle_frame_hold (3-capture hold) exists for streaming screens, idle cells keep the cheap form. BASE for Task 7: 8ee86567af
+Task 7: complete (commits 4a78034df6 + fix a6458ad6e6, review ✅/Needs-fixes → both Importants fixed, sabotage-verified). /clear now: viewport-only erase (NO 3J, byte-matched to upstream yJr = fI+(YIe+Mps(1))^n+fI), forced repaint via Ink's writeToStdout shape (log.clear→raw write→re-log) — createForceRepaint REJECTED with measured reason (app.clear zeroes counters; raw bytes leave next render appending BELOW → duplicate composer) and now DELETED (t7-fix). tmux: zero-keystroke repaint at 600ms/2s/4s, scrollback 135 lines w/ all 91 markers intact vs control 30/0. A7 amended (echo dies with viewport, L178442 controller-verified); second impossible-premise instance (banner-in-frame) recorded. Reviewer proved the /clear guarantees are UNDONE by the tall-frame branch (3J wipe + fullStaticOutput resurrects cleared transcript, SECRETTRANSCRIPT ×2) — carried into Task 8's brief as raised stakes (abe90e299b). InkModel test pattern (debug:true kills all dedupe in ink-testing-library — model + tmux is the response) noted for Task 8. MINOR on ledger: unit count 1548→1547 (one createForceRepaint-only test retired with the primitive). BASE for Task 8: a6458ad6e6
+Task 8: complete (commits 3d95b02a54 + fix b8ee2ce5b0, review ❌/Needs-fixes → Critical fixed with A/B teeth both directions). EP-R4 shipped: proxy resyncs frame/widthAtPaint/park on the 2J branch; 3J stripped from Ink's tall chunk (scrollback 40→40 vs 40→0); tallWrites counter + pager-close clearViewport repaint for the zero-byte dedupe close. CRITICAL caught by review: repaint gated on HISTORY (tall ever written) not STATE — `?`//help//model/launch-frame all armed it, only pager close cleared it → fired on unprepared screens, 6 live rows destroyed (A/B: effect removed → 6/6 survive). Fix: recorded frame write clears the counter; Critical repro now 6/6 both screen+scrollback, pager recovery at 60×15 intact, sabotage 4 red. NAMED RESIDUALS: fullStaticOutput replay resurrects /clear'ed transcript (unfixable at proxy; Ink's clear path never resets it) + one full static copy appended to history per tall render (88→172→256→340; evicts real lines at default history-limit). CANON FACT: upstream has NO tall-frame branch at all — hazard class is Ink-only. Spec Surprises 10-12. MINORS on ledger: widthAtPaint=0 reset unfalsifiable (frame gate subsumes it — correctly implemented, no teeth possible); A8 has no CI cell (matrix predicate requires contentAboveFrame>=1 which pager-close shape violates — needs a predicate decision); non-pager tall surfaces (`?` at small panes) still stay painted on close (pre-existing Ink dedupe, now safe but unrecovered). BASE for Task 9: b8ee2ce5b0
+Task 9: complete (commits ac0cbaaf1d + fix f6e1e10b57, review ✅/Needs-fixes → all 6 fixed). highlight.js@11.11.1 exact-pinned (bundle's own version, DmH L418956), lazy memoized createRequire singleton (~60ms off TUI mount). Transcription verified MECHANICALLY by reviewer: 24+24 dark/light (zero coinciding values) + 12-key ansi256 (bundle beat the spec's "24") + 16 storage keywords (not 17 — comment fixed) + 5 filenames, all byte-exact. Whole table now fixture-pinned (60 palette cells + keywords + filenames + 3 foregrounds). 12 lur aliases installed hljs can't resolve (php3-8, mysql, oracle, freepascal cluster) added with L222493 cite — reachable set now the full 383. Both fns degrade to unstyled/undefined on loader failure (setHljsLoaderForTest seam). NOTES for Tasks 10-12: Segment encoding = hex for dark/light, ansi256(n) grammar for fallback — but resolveThemeColor currently FLATTENS ansi256(n) to hex before Ink (Task 11 must settle pass-through vs drop); selectPalette keys off COLORTERM (brief-mandated substitute; upstream keys off theme name + emit-time quantisation via chalk level — divergence recorded in code). BASE for Task 10: f6e1e10b57
+Task 10: complete (commit 27539e3db2, review ✅/Approved, zero Critical/Important). ResolvedPatch.filePath threaded resolve→both rungs→renderDiff→row renderers, deliberately unread; byte-identical rendering PROVEN (315 render pairs across 9 patches × 7 widths × 5 themes, zero mismatches); memo safety structural (only 2 construction sites, no spread/clone of patches anywhere in src). Sidecar-over-input precedence UPGRADED from judgment to bundle fact: upstream's VHH (L424365) destructures the RESULT's filePath and never consults input — result leads is canon. Notebook arm resolves .ipynb path into file_path, matching upstream L505816 — Task 11 must NOT "correct" toward cellPath. MINORS → Task 11's dispatch: (1) pin the precedence with divergent input/sidecar values; (2) the thread-through has no guard until detectLanguage consumes it — Task 11 must assert a Dockerfile patch reaches it; (3) the ?? inputPath fallback on the sidecar rung is unreachable (editShape/writeShape require string filePath) — comment overstates. BASE for Task 11: 27539e3db2
+Task 11: complete (commits 6e71a4d94c + fix f54bddfa3d, review ✅spec/❌quality → Critical + 2 Important + 4 Minor all fixed). A9 core shipped: added/context rows tokenized (i2p L419813 shape), removed rows FLAT (pinned both ways), context number-cell dim asymmetry pinned. A10 verified through the real stack (dark≠light truecolor triples; ansi256 palette emits real 38;5;n indices — resolveThemeColor now PASSES THROUGH ansi256(n), measured: flattening to hex hit a DIFFERENT palette entry at chalk level 2). A11 pinned (bare Dockerfile → keyword-coloured FROM). CRITICAL caught by reviewer fuzzing (504 combos): wrap-ansi NFC-normalizes internally so NFD source lost leading indentation/trailing chars SILENTLY in a pre-approval diff — fixed both layers (per-segment NFC + piece-not-found fallback emits the piece as one flat row: mis-colour possible, text loss impossible). Fixer CORRECTED the reviewer's I2: bare ESC byte loses nothing; a full SGR sequence in source is what breaks (13 visible cols on a 7-col row) — test pins the row-width bound. Palette memo term + fill foreground now pinned (were silently mutable). detectLanguage hoisted to once per body; palette in memo key; theme switch re-renders, streaming stays cached. Divergence ledger: context rows still get a right fill upstream lacks (pre-existing, invisible). BASE for Task 12: f54bddfa3d
+Task 12: impl ca3852ef5b (review ✅/Approved). Band-under-token shipped: add side tokenize-then-overlay (only bg changes at boundary, color survives — A9 clause 3); remove side flat-then-cut, bundle reading INDEPENDENTLY CONFIRMED (L419813 span selection by marker BEFORE ZmH; KmH/YmH populate ranges for both pair members against the flat cWo pair). Whole-row wrap matches upstream a2p (band re-opens on continuation row, confirmed live) — implementer's wrap concern resolved in ccx's favour. DEFERRED (spec): port Q$p+diffArrays to replace diffWords — jsdiff normalizes whitespace to the NEW side so remove-side bands land wrong on reindented lines (pre-existing since F4; t12 made it text-safe, highlight-only). Fixer dispatched for I2 (whole-row wrap totally unpinned — per-part restore leaves 48 tests green) + M1 (f4 boundary assertion vacuous under ansi256/CI default) + two-range off-by-one localization.
+Task 12: complete (commits ca3852ef5b + fix 675a6fabdb, test-only). Whole-row wrap + continuation band pinned (per-part restore → exactly the 2 new cases red); f4 boundary assertion now bites in ALL THREE palettes (comment token exists in jmH; asserts shared colour is the scope colour, NOT fg); off-by-one localizes in diffRender.test.ts. EP-R5 COMPLETE. BASE for Task 13: 675a6fabdb
+Task 13: complete. Full gates green at 675a6fabdb (typecheck; unit 1588/149 files; tui 2796/9 skipped; build). A1-A12 ALL MET: A1/A2/A5 fresh keyless matrix 7/7; A3 keyless guard + controller's keyed 8/8 earlier this session; A4 fresh tmux (one picker, no wrong-width rules after 120→80 with /model open); A6 zero-keystroke repaint in 0.25s, markers prove blank; A7 scrollback intact + pipe-pane shows 3J=0; A8 tall pager close clean + immediate resize clean; A9/A10/A11 pinned suites + live truecolor capture (tokens in added line, flat removed, bg-only word boundary, 38;5;n degradation, Dockerfile RUN keyword); A12 workflow step verified. CONTROLLER RAN THE TWO-TURN KEYED CELL: two real streamed turns, 120→80 between, 80→120 after — rules=2 wrongWidth=0, one composer, both turns intact. FIFTH NAMED RESIDUAL found by verification: short-pane shrink strands one rule row ABOVE the viewport top (unreachable by any erase; revealed by later height growth; spec Surprises 13). Verifier's two instrument bugs recorded honestly (byte-locale grep over box glyphs; contentAboveFrame is a staging self-check).
+WAVE R CODE COMPLETE (Tasks 1-13). Pending: external whole-branch codex review.
+WAVE R CLOSED 2026-08-07. External codex review (gpt-5.6-sol, base 7c9de3fc0c): 3 findings (P1 mount-fire recovery — mechanism partly refuted but fixed on firmer ground, transition-gated; P2a stderr restore misclassified as Static — confirmed against ink.js:157-171, dropped-frame memory added; P2b matrix could kill colliding-name sessions — per-run pid names, register-after-create, decoy A/B verified). All closed in 6346f0c40a. Retrospective written into spec Outcomes. Final: unit 1592, tui 2797/9, matrix 7/7 keyless + controller-keyed cells, build clean. NEXT: Wave S (session-truth), needs its own grounding round.
+
+## WAVE S (session truth) — begins 2026-08-07
+- Owner directives at Wave R close: FULLSCREEN-1 DECIDED — fullscreen renderer becomes its own roadmap wave after S and C. Wave S begins now with its grounding round.
+- Grounding round dispatched (3 opus workers): P0 code truth, bundle transcription, P1/P2 code truth. All three landed.
+- CONTROLLER RAN THE KEYED S1 REPRO (4 runs, 5 instrument bugs fixed along the way — see spec §12 item 20). VERDICT: qa5-05/qa4-11 REPRODUCE, but the diagnosis on file (and the grounding worker's, and the spec's DECIDED-AUTO) are all wrong. The rewind is CORRECT at the data layer (post-rewind row parentUuid → the assistant row before the anchor); the session file is APPEND-ONLY and never truncated (19→20→24 rows measured); the replay is flat (`parentUuid` appears NOWHERE in src/). Fix = walk the parent chain from newest leaf. Spec §6 EP-S1 re-cut, DECIDED-AUTO retracted (c51c98f6fa).
+- UNFILED DEFECT FOUND: ccx cannot rewind to its own FIRST message (no prevUuid → conversation:false → confirm panel offers only "1. Never mind"). Assigned to EP-S3. Frame: waveS-04-first-anchor-unrestorable.txt
+- Grounding reports: waveS-grounding-P0.md, waveS-grounding-bundle.md, waveS-grounding-P1P2.md
+- Stream S re-cut in the umbrella spec (736fb5a625): S2 sheds qa5-04 (MISREAD, → ANCHORS-1 open question) and grows to 9 surfaces; S3 gains the first-anchor defect + upstream's 6-option set; S4's body MOVES to Settings/Permissions (rewind+session pickers already correct, /model needs only the counter); S5 corrected (dollar total already right; ctx goes stale not resets); S7's premise corrected (no SDK progress field — upstream's bar is 1-e^(-s/90) theatre; ~90k-line anchor drift); S8 gains upstream's narrow gate + the prefs-write ordering trap.
+- Wave S feature spec v1 authored + committed (d807cebe61): 8 epics, A1-A14, W-S1..W-S10, 3 open questions (ANCHORS-1, SLASH-PERSIST-1, CTRL-B-1), 5 surprises, 4 deferrals. Spec review dispatched (opus) before the plan.
+- SPEC REVIEW returned "plan CANNOT be written from this spec" — 3 Critical, 6 Important, 7 Minor. Controller VERIFIED the spine refutation independently against the REAL rewound session file (not fixtures): getSessionMessages returns 4 rows = the live branch only (TWO/THREE correctly absent), and parentUuid is STRIPPED from returned rows (keys: type,uuid,session_id,message,parent_tool_use_id,parent_agent_id,timestamp). W-S1 INVERTED in spec v2 (8f198fd04a): the SDK already branch-resolves; the defect is TIMING (at rebuild the fork row doesn't exist — the 20th row is `last-prompt`, which doesn't move the leaf); fix = truncate the reader's rows at anchor.prevUuid, which v1 had rejected. Rejected walking parentUuid ourselves for 3 independent reasons incl. it would BREAK compaction relinking (now criterion A2).
+- Spec v2 also: EP-S3b + EP-S4 migration split out; A2 replaced (original already passed at HEAD); A3/A4/A5/A6/A8/A13 re-worded; W-S5 justification withdrawn (upstream has NO persistent context chip); W-S11 added (record deliberate divergences); 3 dropped items restored (double rebuild de-dup, rewind window constant, qa4-07(ii) count); ANCHORS-1 flagged as unverified premise (probe 68b never re-run; reviewer's fixture suggests anchors SURVIVE compaction).
+- WAVE S PLAN AUTHORED + committed (2daf468f1b): docs/superpowers/plans/2026-08-07-wave-s-session-truth.md — 13 tasks. Global Constraints carry the credential/isolation/tmux-teardown rules, W-S10's instrument rule, and the FILE-vs-reader-OUTPUT distinction. Task order: T1 EP-S1 spine (truncateAtAnchor + wire prevUuid + double-rebuild de-dup + parentUuid guard) · T2 EP-S2 one state emit · T3 A4 guard + EP-S3b first-message restore via clearSession · T4 /model counter off onViewChange + rewind window constant re-derived · T5 Settings→Select · T6 Permissions→Select · T7 /cost fields · T8 ctx chip after /clear · T9 --continue + resolveResumeArg (3 outcomes incl. `pending`) · T10 resume cancel line + Ctrl+A/Ctrl+W + preview count · T11 compaction busy/bar · T12 model-switch confirm gated BEFORE the prefs write · T13 verification (incl. re-measuring ANCHORS-1). Appendix names the seven things deliberately NOT built.
+- SPEC v3 (same commit): PLANNING FOUND A THIRD UNFAILABLE CRITERION. EP-S3 (rewind confirm panel) is ALREADY BUILT — rewindModel.ts:186-245 carries the option set/gating/head clause/both explanation lines, wired at RewindPicker.tsx:263-281 by F6 T10. EP-S3 now has zero work items; A4 re-cast as a regression guard; its one residual (the `prevUuid != null` gate at RewindPicker.tsx:263) moved into EP-S3b, because that gate is HONEST until host.rewind can serve the case behind it — both halves move together or the panel lies. Surprise 6 records the pattern: epics written from what the BUNDLE contains rather than what CCX contains, only compared when someone names the files to edit.
+- Plan review dispatched (opus, general-purpose — doperpowers:plan-reviewer agent type is not registered in this session). Briefed to hunt for a FOURTH already-built item and to read Select.tsx + both dialogs in full for T5/T6 feasibility.
+- ANCHORS-1 CLOSED BY MEASUREMENT (probe 68e, new, run keyed by the controller). 4 pre-boundary anchors -> 1 post-boundary, ZERO survivors. The premise on file is CORRECT and the spec review's contrary fixture was wrong. NOT A DEFECT: getSessionMessages returns the compacted view (compact_summary row + preserved tail + post-boundary turns), so the pre-boundary prompts are absent from the reader's output entirely — which is honest, because the model no longer holds them. No work follows. STRONGEST EVIDENCE YET FOR W-S1(c): a hand-rolled parentUuid walk over raw JSONL would resurrect exactly these 4 discarded anchors; criterion A2 is the guard. RUNTIME CORRECTION to sdk.d.ts:2965 — preserved_segment is NOT superseded; the live boundary frame carries BOTH it and preserved_messages, plus trigger/pre_tokens/post_tokens/cumulative_dropped_tokens/duration_ms (17914 -> 1229 tokens, 16685 dropped, 11.9s). Spec Surprise 7 + Open questions row + plan T13 S2 + plan appendix all updated.
+- Plan Task 3 CORRECTED before dispatch (a1915d7be2), from a controller check: `clearSession` is NOT an SDK method (sdk.d.ts declares only resumeSessionAt:1815) — it is the HOST's own method at host.ts:449, whose body is swapEngine({resume:undefined, resumeAt:undefined}). And calling this.clearSession() from inside rewind() would NEST a second swapInFlight window (host.ts:451-453), whose inner finally reopens the busy gate mid-swap. Task 3 now calls swapEngine directly, has no feature-test and no BLOCKED path, and gained a busy-window-stays-closed test. Also gained Step 7: a null anchor must SKIP Task 1's 8x375ms poll (correct result is zero rows; polling makes a successful empty restore read as a 3s hang). Predicate is `prevUuid !== null`, not falsy — undefined means "anchor unknown" (old host) where rows ARE still expected.
+- WAVE S EXECUTION BEGINS. BASE for Task 1: a1915d7be2. Task 1 implementer dispatched (opus) in parallel with the plan review — Task 1's premises were controller-measured twice, so a review finding there costs one fix round rather than the wave.
+- PLAN REVIEW LANDED (opus, general-purpose): 13 Critical + 14 Important + minors. Verdict on citations: file/line/symbol references were "unusually accurate" and Tasks 5/6 KEY-ROUTING design was independently traced and CONFIRMED correct (resolveKey walks contexts innermost-first and stops at the first binder, so Select binding neither space nor `/` means both still fall through to Settings; a matched action with no handler falls through to the fallback, which is what keeps the `/` query and all six sub-views typing text after the movement handlers are dropped). Damage was concentrated in TEST FIXTURES, not design.
+- ROOT CAUSE OF THE REVIEW'S BIGGEST CLASS, owned: I wrote every test snippet in a renderHook/result.current idiom this repo does not have (grep -c "result.current" test/ = 0; no @testing-library/react). Nine tasks affected. Fixed structurally by Global Constraint 14 ("snippets are illustrative of the ASSERTION, not the FIXTURE; the file wins; report divergences") + Constraint 15 (a test that passes before the change proves nothing; several snippets flagged tautological). Also killed the phantom "review the changed snapshots" workflow — there are NO .snap files in this repo; what actually breaks is 22 frame-text assertions matching `❯ <row label>`.
+- SUBSTANTIVE PLAN FIXES (not fixture noise): T2 re-scoped — A3 (a P0) had ZERO red coverage; host.follow() delivers a state frame SYNCHRONOUSLY at subscribe (host.ts:488) and the fixture hardcodes sessionId at construction, so the test was true before runTask; also host.ts:526 already emits state for any permissionMode-carrying status frame, so the true defect is narrower ("a clean turn with no mode change"). T3 — clearSession mints a NEW session id (spec's "empty conversation on this session" is wrong); added `cleared?: true` to the wire because Task 1's absent-prevUuid fallback would otherwise re-render the discarded conversation off the OLD file; named the existing rewind-picker.test.tsx:315 test that INVERTS. T4 — the window test pinned nothing (any C in [7,31] passed, incl. the current 12); now asserts the constant directly plus rewindVisibleRows(21)=4-vs-3 as the discriminator; chrome re-derived to 9. T5/T6 — settingsVisibleRows(undefined)=NaN would have pinned both lists at ONE row permanently (no default; every existing test and ChatApp render with no size props); defaults added. T6 — key={activeTab} required (Select reads defaultFocusValue only in useState initializers, so the tab-change reset silently did nothing); row bodies must DROP the `❯ ` prefix or double-pointer breaks 22 assertions (T5 and T6 contradicted each other on this); chrome 9->11; DenialEntry has no toolUseID/command; footer's selectedItem needs re-deriving. T7 — wrong test file (formatCost lives in test/tui/commands.test.ts; the given command selected NOTHING and printed "1592 skipped", reading as a satisfied red gate) and tokenCount(5000) is "5k" not "5.0k". T9 — parseArgs doesn't exist (parseCcx), and the cross-flag refusal test CONTRADICTED the plan's own instruction: args.ts:101-104 documents why parser-level cross-flag rules are forbidden (detached children re-parse own argv). T10 — bindings.ts omitted from Files though ctrl+a/ctrl+w are bound in NO context and absent from VALID_ACTIONS (keys-bindings.test.ts:79-82 is a bidirectional pin); the "count agrees with pane BY CONSTRUCTION" assertion is unachievable (previewLines slices to PREVIEW_ROWS=12) — now pins the shared PREDICATE. T11 — premise FALSE for /compact: session.compact() installs a private onMessage (session.ts:146-153), host's compact op bypasses runTask (host.ts:322), and the always-on tap only emits for status frames carrying a permissionMode string (host.ts:521); busy state must be set LOCALLY at useChat.ts:781 for that path. T11 barCells domain contradicted itself (ratio is 0-95 percent, not 0-1). T12 — MODELS fixture is tier ALIASES so the obvious test fails by rule 3; savePrefs writes the raw alias; ModelPicker has neither outputTokens nor ackedAt props; ack ownership must be useChat's since the picker unmounts on pick.
+- T6 SPLIT into two dispatch rounds with a review between (6a row identity + renderItem without the pointer, no Select yet; 6b windowing) — it carried five findings alone.
+- Task 1: impl cbe0ddcdb7 + b6c3076943 (rework per the mid-task plan review I relayed). Gates: typecheck clean; unit 150 files/1599 passed; tui 121 files/2799 passed +9 skipped (the keyless live-e2e skips). IMPLEMENTER REFUTED ONE OF MY CORRECTIONS WITH EVIDENCE: my relayed point 4 claimed the "rebuilds ONCE" test was vacuous because the fixture never emits `rewound` back — it does, the fake's rewind pushes the broadcast mid-call the way the real host does, and at the red stage it failed `expected 2 to be 1`. Accepted. Sabotage: forcing truncateAtAnchor to return everything + removing the selfRewind condition produced exactly 2 of 16 failures (the two new tests), 14 pre-existing green. The parentUuid guard's comment-stripping matcher was teeth-checked by temporarily adding a real `m.parentUuid` read (red) and removing it (green). NAMED RESIDUAL: nothing here is live-verified — the "reader returns the pre-rewind chain at rebuild time" premise is the controller's measurement, not the implementer's; the anchor-not-found fallback bounds the blast radius to today's behaviour rather than an empty transcript. Host and client must upgrade together (a follower on an older host gets no prevUuid and still renders the pre-rewind chain — the deliberate optional-field fallback). Task reviewer dispatched (opus) and briefed to adjudicate the disputed test, the guard's teeth, and one sabotage mutation independently.
+- Task 1: COMPLETE (commits cbe0ddcdb7 + b6c3076943 + controller comment fix; review Spec ✅ / quality APPROVED, ZERO Critical, ZERO Important, 4 Minor). REVIEWER SETTLED ALL THREE DISPUTED POINTS BY RUNNING MUTATIONS, and my relayed correction lost on one: (1) test 14 IS red-then-green — the fixture's rewind pushes the rewound broadcast mid-call via fakeRemote's synchronous route(), and deleting the `if (!selfRewind.current)` condition fails it `expected 2 to be 1` with the other 15 green; (2) the comment-stripping parentUuid guard has teeth in ALL THREE watched files (a real `m.parentUuid` read appended to each went red) and strips zero non-comment lines; (3) forcing truncateAtAnchor to return everything fails test 13, and dropping the prevUuid spread from host.ts:638 fails the new host test. Gates reproduced independently: typecheck clean, unit 150/1599, tui 121 files 2799 +9 skipped.
+- Task 1 MINORS: M1+M2 FIXED BY CONTROLLER (both were MY comment errors inherited from the brief). M2 is the substantive one: I wrote that the not-found fallback protects a reader already resolved onto the POST-rewind branch — it does not. There prevUuid IS present (it is the last preserved row), so the cut runs and would drop turns taken since. The fallback's real trigger is the COMPACTION case (probe 68e: a pre-boundary anchor is absent from the reader's output entirely). Unreachable today (post-rewind the file is non-empty on the first read so the poll never lingers, and the confirming client is held behind the `rewinding` modal) but it is a real edge, not a guarded one — now written into the code as such. M3 (prevUuid:null renders the whole chain) is Task 3's, explicitly handed off. M4 (/copy after a successful cut is only covered via the not-found path) rolled to final review.
+- BASE for Task 2: HEAD after the comment fix.
+- Task 2: impl 1dc70acf88. GENUINELY RED FIRST — against unmodified host.ts it failed at the mid-turn assertion with `expected false to be true`, while the precondition three lines above (the subscribe-time state frame carries sessionId: undefined) PASSED. That precondition is deliberately in the test body so that if anyone later makes the fixture stamp its id at construction, the test fails loudly instead of quietly reverting to the tautology that made this task's first draft worthless. The turn's only frame is a bare {type:"assistant"}, so host.ts:526's permission-mode arm cannot supply the emit; the assertion also requires status.status === "busy", pinning arrival while the turn is still OPEN rather than relying on statement order. Gates: typecheck clean, unit 1600/150 files, tui 2800 +9 skipped/130 files.
+- Task 2 FOUND A PLAN DEFECT of the same class the review caught in T7: Step 6's `npx vitest run test/unit -t "session row"` matches NOTHING — formatStatus/formatCost are commands.ts formatters but their tests live under test/tui/. Fixed, and Global Constraint 15 now BARS the `vitest run <directory> -t "<name>"` form outright: on a miss vitest exits 0 and prints only skip counts, which at a glance is indistinguishable from a test that ran and failed. Two commands in earlier drafts had exactly this bug.
+- Task 2 deviations, both ratified: (a) widened the shared `hostFor` helper's parameter type to `HostSession & { emit; finish }` — the late-materializing fixture's sessionId is `string | undefined` and `HostSession` already declares it that way, so this is the honest minimum both fixtures satisfy; 15 pre-existing tests compile and pass unmodified. (b) the brief's snippet did not survive contact with the file (no waitFor, no unsubscribe/resubscribe, no s.deliver — the fixture drives the host synchronously via emit), exactly as Constraint 7 predicted. NOTE: the emit fires once per TURN, not once per session, deliberately — swapEngine installs a new engine with a new id after /resume or rewind, so turn two must republish. Cost is one extra state frame per turn, identical in shape to what nine other call sites already emit. Task reviewer dispatched (opus), briefed to verify red-by-mutation and to rule out BOTH tautology routes (host.ts:526's permissionMode arm and host.ts:488's synchronous subscribe-time frame).
+- Task 2: COMPLETE (commit 1dc70acf88; review Spec ✅ / quality APPROVED, ZERO Critical, ZERO Important, 3 Minor). REVIEWER SETTLED THE TAUTOLOGY QUESTION BY MUTATION, four ways: (1) deleting the emit at host.ts:277 fails the MID-TURN assertion at test line 264 with `expected false to be true` (not the precondition, not a timeout), 15 others green; (2) host.ts:526's permissionMode arm is structurally unreachable here — it lives in onSessionFrame, which only runs via the OPTIONAL `session.onFrame` member that NEITHER fixture in the file declares, and the turn's only frame `{type:"assistant"}` would not match it anyway; (3) mutating the fixture to stamp its id at construction (the exact trap that made the first draft worthless) fails the precondition LOUDLY rather than going green — the anti-tautology guard is real; (4) a plausible near-miss fix (emit at the END of runTask instead of in onMessage) is ALSO red, blocked by both statement order and the `status === "busy"` clause. Gates reproduced independently: typecheck clean, unit 150/1600, tui 130 files 2800 +9 skipped.
+- Task 2 REVIEW CORROBORATED THE ONCE-PER-TURN CHOICE from a source I had not cited: chatAdapter.ts:49-52 records from live experience that swapEngine's own state emit "often fires before the fresh engine's init frame has delivered an id at all", and the adapter's `if (ev.status.sessionId)` guard at :48 only ever OVERWRITES a truthy id, never clears a stale one. So the per-turn republish is not defensive redundancy — it is the only thing that corrects a stale cached id after a swap.
+- Task 2 MINORS: M1 stale line citations in the REPORT (not the code) — pre-edit numbers 488/724/526 vs shipped 495/731/528; no code impact, no fix. M2 PRE-EXISTING, ROLLED TO FINAL REVIEW: status() projects a parked decision as {state:"blocked", status:"idle"} and useChat.ts:651 treats ANY idle frame as "nothing is running" and tears down live-turn state; unreachable today (the id rides the init frame, which precedes any tool use) and the same hazard already exists on the onSessionFrame and answer() emit paths, so this change does not create it. M3 was the plan command bug, already fixed at 9325a82892.
+- Task 3 CONCERN 1 SETTLED BY THE BUNDLE, AND IT INVERTS THE IMPLEMENTER'S READING (controller, cli.pretty.js L487190-208). They worried the panel now says "The conversation will be forked." where it actually empties the conversation, i.e. that Task 3 introduced a wording inaccuracy. It did not — the wording was always upstream's, and what Task 3 removed was OUR divergence. Upstream builds the option list as `Y(!!Re)` where `Re = p && N?.filesChanged?.length > 0`, i.e. from CODE RESTORABILITY ALONE, with no anchor-shape gate anywhere; `defaultFocusValue: Re ? "both" : "conversation"` likewise. And `J4f` has exactly five arms (summarize, summarize_up_to, both/conversation, code/nevermind) — there is NO "emptied" arm to clone. So upstream offers "Restore conversation" on the first message and prints "forked" for it too. Pre-Task-3 ccx suppressed the option (a divergence forced by host.rewind's refusal); post-Task-3 it matches upstream exactly, imprecise copy included. DECISION: keep the copy, invent nothing. Fidelity to the canonical build is the governing rule, and inventing a sixth arm upstream does not have would be the real divergence. Recorded rather than fixed.
+- Task 3: impl e43efe3a35. REVIEW LANDED (opus): Spec ✅ / quality APPROVED, ZERO Critical, 3 Important, 5 Minor. Reviewer reproduced every red stage and both gate runs to the test, and confirmed the ONE mutation that mattered most: with the poll-skip reverted to `prevUuid !== null ? attempts : 1` — the weaker guard my own earlier draft would have shipped alone — test 15 STILL goes red on `not.toContain("TWO")`, i.e. the assertion order in the file puts correctness before timing exactly as the plan demanded.
+- Task 3 IMPORTANT 1 (a REAL, NEW defect this change created, found only because I asked the reviewer to trace concern 4 rather than accept it): `host.rewind` emits `sessionId: this.session?.sessionId ?? sid`, and a freshly swapped engine has NO id until its system/init frame (session.ts:261) — so on the cleared path the broadcast carries the OLD id, and chatAdapter.ts:53's `if (ev.sessionId) sessionId = ev.sessionId` RE-AFFIRMS the discarded conversation rather than forgetting it. Reviewer proved it at runtime: `REWOUND EVENT: {"kind":"rewound","sessionId":"OLD-SID","cleared":true}`. Blast radius until the next turn republishes: /export writes the discarded transcript and reports success, /rename and /tag MUTATE the abandoned session's metadata, and /session,/files,/stats,/status,Settings-Stats all report the old session. THE PRECEDENT WAS ALREADY IN THE SAME FILE — chatAdapter's clearSession() at :124 sets `sessionId = undefined` with a comment recording this exact hazard from an earlier review. Fixed at c08e7ba86b. (The fleet-roster half is PRE-EXISTING — writeSessionId returns early when the new engine has no id, so /clear has had the identical hole since 2026-08-06 — explicitly left out of scope.)
+- Task 3 IMPORTANT 2: the `cleared` wire field's ONLY real consumer had ZERO coverage. Removing `cleared: ev.cleared` from the follower arm (useChat.ts:648) left the entire tui suite plus host-rewind green (2824/2824). The confirming client derives the flag locally (selfRewind makes it ignore the broadcast), so followers are the field's sole consumer and a regression there would be silent. Fixed at 8f8fedcda5 with a NON-empty reader fixture — an empty one passes with or without the fix, the same trap this wave keeps hitting.
+- Task 3 IMPORTANT 3: THE BUSY-WINDOW GUARD COULD NOT DETECT ITS OWN HAZARD. The brief spends a paragraph forbidding `this.clearSession()` inside rewind(), and the test existed to pin it — but sampling busy() from inside openSession sits inside the INNER window too, so the reviewer swapped in the exact forbidden shape and all 35 tests PASSED. It only went red at the Step-4 red stage because the host still threw the refusal. Discriminating probe (reviewer-validated both ways, then re-verified by the fixer): sample busy() from a `follow` callback when the rewound event arrives — after swapEngine resolves, before rewind's finally. Shipped code observes true; the nested-clearSession mutant observes false. Fixed at 8f8fedcda5.
+- Task 3 MINORS: three test COMMENTS claimed pins that do not exist — (a) `calls`/`opened` are independent arrays with no interleaving assertion, so the file-restore-before-swap ordering is UNPINNED (pre-existing, inherited from the :57 idiom; reviewer moved the swap block above the restore block and both tests stayed green); (b) the picker test pins only the RENDER site, because Select reports focus from a mount effect that overwrites whatever open() seeded, making the :201/:211 seeds a single-frame transient at most — so the brief's stated hazard (pointer and explanation PERMANENTLY disagreeing) was OVERSTATED BY ME, though changing all three sites stays correct for consistency; (c) the timing bound covers nothing (getSessionMessages returns rows, so even unmodified code breaks the poll on attempt 0) — `reads === 0` is the real cover. All three comments corrected. Plus the `attempts === 1` arm pinned and a redundant assertion removed.
+- Task 3 count discrepancy RESOLVED, not a discrepancy: the fixer flagged the reviewer's 2824 against its own 2817 baseline. The reviewer's run was explicitly "the entire test/tui suite PLUS host-rewind" — 2806 + 18 = 2824. Same tree.
+- Fix round re-review dispatched (opus), briefed to verify all six by mutation, to trace whether /export,/rename,/tag retain ANY route to the discarded id after the fix, and to flag comments that merely SOFTENED a false claim rather than correcting it.
+- Task 3: COMPLETE (impl e43efe3a35 + fixes c08e7ba86b + 8f8fedcda5 + controller comment addendum; re-review ✅ all six verified BY MUTATION, ZERO Critical, ZERO Important, 1 Minor informational). Re-reviewer went beyond the brief on Important 3: it added a TEMPORARY probe sampling busy() from the OLD site (inside openSession) and ran it against the nested-clearSession mutant — the old site PASSED while the new one FAILED, which is direct evidence the rewrite closes a real blind spot rather than reshuffling one. It also checked Minor 4(b) in the POSITIVE direction so the corrected comment is not overcorrecting into "nothing is pinned": mutating the render site alone still fails three picker tests including the focus/explanation one.
+- Task 3 IMPORTANT 1 CONSEQUENCE TRACED SHUT, not assumed: the REPL's session is always `remoteChatSession` (sole construction site chatMain.tsx:339) and /export,/rename,/tag each read `session.sessionId` off that adapter's single cached field (useChat.ts:855,:896,:904), so with it cleared all three hit their "no session yet" guard. Nothing re-supplies the discarded id in the interval — swapEngine's own state frame is emitted BEFORE the rewound broadcast and reads the fresh engine, as does the next turn's republish. The over-correction risk was checked too: `cleared` can never travel with a good id to discard, because Session._sessionId is populated ONLY from the first system/init frame (session.ts:261) and the swap drives no turn.
+- Task 3 RESIDUAL, deliberately not fixed (consistent with existing behaviour): between a cleared rewind and the next state frame, prompt-history entries (useChat.ts:1525) carry `sessionId: undefined`, degrading session-scoped history search. chatAdapter's clearSession() at :130 has done exactly this since 2026-08-06; the new arm is deliberately consistent with it. Rolled to final review with Task 1's M4 and Task 2's M2.
+- Task 3 MINOR (informational) FIXED BY CONTROLLER: the corrected ordering comment was true but not actionable — a future reader who reorders host.rewind hits `TypeError: releaseDry is not a function` from the throwing-rewind test's scaffolding rather than a clean ordering failure. Comment now names that failure explicitly. host-rewind 18/18 green after.
+- BASE for Task 4: 17ff40bb25. Premises controller-verified BEFORE dispatch (the pattern that has paid off every task this wave): (a) Select genuinely clamps by terminal height — Select.tsx:151 calls clampVisible(visibleOptionCount, rows, perOptionRows(twoColumn)) and selectModel.ts:28 is min(visible, max(1, floor((rows-8)/perOption))) with CLAMP_CHROME_ROWS=8 — so the fixed-cap counter really is unrelated to the screen at a short pane; (b) ModelPicker ALREADY accepts rows/columns (:31,:43) and forwards them (:83), so this task adds onViewChange only, not geometry plumbing; (c) the rewind picker already consumes onViewChange (:248), so the pattern is established, not new; (d) REWIND_CHROME_ROWS=12 exists at rewindModel.ts:48 and REWIND_MIN_ROWS does not, so the brief's expected red is accurate; (e) I counted RewindPicker's chrome myself and independently got NINE, agreeing with the brief. Dispatch also named TWO judgment calls the brief left unresolved (both indicator rows are CONDITIONAL yet reserved; and a TENTH conditional row, REWIND_CHECKING at :254, that the brief never mentions) and required them decided in the code comment rather than silently.
+- Task 4: impl abc73f7a00. Gates: typecheck clean, unit 1604/150 files, tui 2811 +9 skipped/121 files. FIVE concerns returned, of which concern 1 is MISTAKEN and I checked rather than accepting it: the implementer reported that `.doperpowers/sdd/` is gitignored so its report could not be committed. progress.md is TRACKED (`git ls-files --error-unmatch` resolves it) and `git check-ignore` matches nothing — the per-task REPORTS are untracked scratch by design, which is not the same claim. No action.
+- Task 4 concern 2 is the interesting one and went to the reviewer as an adjudication rather than an acceptance: widening the window from 3 rows to 4 at a 22-row pane moved the scroll counters in rewind-picker.test.tsx from ten to nine in BOTH directions, and the implementer updated those expectations. That is either the fix working or a moved goalpost, and the difference is not visible from the diff — reviewer briefed to compute the correct counters independently at that geometry and compare.
+- Task 4 judgment calls as decided by the implementer: BOTH indicator rows reserved though conditional (a budget that shrinks as you scroll would resize the window under the cursor); REWIND_CHECKING deliberately NOT reserved (it toggles on LEAVING the list rather than on scrolling, so it cannot resize under a moving cursor, and reserving it would cost every user a row at every height for a transient wait) — with the escape hatch named in the comment: if the real product flickers there, the fix is REWIND_CHROME_ROWS=10 plus the two discriminator heights. Also renamed modelVisibleCount's parameter (one more than the brief asked) since both carry the identical `rows`-means-model-count misnomer, and recorded a residual: the rewind budget is height-only, and the prompt wraps below ~55 columns where the frame is one row taller than budgeted — upstream has the same gap.
+- TASK 4 REVIEW LANDED (opus): Spec ✅ but quality NOT APPROVED — one Important, and it INVERTS THE TASK'S CONCLUSION. The nine-row enumeration of RewindPicker's own frame is CORRECT and both new tests are genuinely discriminating (reverting the constant to 12 reddens 2 assertions incl. the direct pin; at C=8 only the direct pin fails, because 8 and 9 agree at both discriminator heights — so the direct assertion is load-bearing, not decorative). But the budget was measured against THE WRONG DENOMINATOR: RewindPicker is not the only thing ChatApp draws — ChatStatusBar renders unconditionally one line below it — so at C=9 the COMPOSED frame reaches the pane at ~2/3 of heights. Reviewer measured it on the real ChatApp: pane 21/22 → frame 21 (bottom of list) / 22 (mid-list) → overflow; pane 23 → fits; at C=12 → 18/19, always fits.
+- WHY THAT IS SEVERE, AND THE FACT THAT RESET THE WHOLE COST/BENEFIT: Ink 5.2.1's renderer (node_modules/ink/build/ink.js:121) branches on `outputHeight >= this.options.stdout.rows` and then writes `ansiEscapes.clearTerminal + this.fullStaticOutput + output`. So overflow is NOT a clipped bottom line — it is a full-terminal wipe plus a re-dump of the entire accumulated static transcript, ON EVERY RENDER, i.e. on every cursor move through the rewind list. Note the threshold is `>=`, not `>`: exactly filling the pane already trips it. The implementer's judgment call (b) — not reserving REWIND_CHECKING — was reasoned honestly but priced at "one row of transient overflow"; the real price is the wipe, and with the status bar counted that row overflows at EVERY height (the fixer measured this and found no safe height at all under C=9, going further than the reviewer's table).
+- Task 4 review also CONFIRMED THE SCROLL-COUNTER MOVE WAS THE FIX WORKING, NOT A MOVED GOALPOST — the adjudication I asked for rather than accepted. Reviewer recomputed independently: 13 options at pane 22, rewindVisibleRows(22)=4, clampVisible(4,22,1)=4, default focus on CURRENT_ROW index 12, windowBounds(13,12,4) bottom-anchors to {9,13} → "↑ 9 more above" and no below indicator; after Home viewAfterFocus gives {0,4} → "↓ 9 more below". Both updated numbers match exactly. Nothing else in the suite encoded the old 12 (grepped for the constant, the function, and four formula shapes); resize-dialogs.test.tsx:199 is updated and accurate. The extra parameter rename is purely cosmetic — every call site passes models.length and neither function is in the public barrel.
+- FIX ROUND 1 (88214cd8d0): REWIND_CHROME_ROWS = 12, DERIVED FRESH, NOT REVERTED — 9 dialog chrome + 1 ChatStatusBar + 1 headroom for the `>=` threshold + 1 for REWIND_CHECKING. Landing on upstream's inlined value by a completely different derivation is a COINCIDENCE and the comment now says so explicitly, because otherwise the next reader concludes the wave achieved nothing here. Task 4's original finding stands: upstream applies its 12 AFTER halving rows under a split-view predicate we do not have. Shipped the INVARIANT rather than just the constant — a parameterised test that ChatApp with the picker open never renders a frame reaching the pane height. That test is the point of the round; the constant is only how it is currently satisfied.
+- FIX ROUND 2 (1b89a5a2d3) — CONTROLLER DECISION, taken rather than deferred: the fixer measured a REMAINING overflow path (the budget is height-only; the 57-col prompt wraps at ≤60 columns and the footer at ≤36, each wrapped line eating the budget's single row of slack — at 44-60 cols the tallest state reaches the pane at one height in three, and at 36 cols at every height) and left the decision to me. I ordered it CLOSED, not recorded. Reasoning: (1) severity is now known to be the clear-terminal wipe, continuous for anyone in a ~50-column split pane; (2) THE "UPSTREAM DOES NOT MODEL WRAP EITHER" ARGUMENT DOES NOT TRANSFER — that is Task 4's own finding turned on itself: upstream's budget matches upstream's composed frame and ours must match OURS, and we draw a status bar upstream does not draw there. Fidelity means matching what the user sees, not inheriting a number whose derivation does not describe our frame.
+- Fix round 2 shape: `rewindVisibleRows(rows, columns?, rowHeight)` with columns optional (omitting it is exactly the old height-only budget, so no existing call site changes meaning) plus a separate exported `rewindWrapRows(columns)`, keeping REWIND_CHROME_ROWS=12 with its nine counted terms intact. WRAP ARITHMETIC NOT HAND-ROLLED: wrap-ansi is already a direct dependency and Ink's own wrap-text.js calls `wrapAnsi(text, width, {trim:false, hard:true})`, so the helper is that call verbatim — and word wrap genuinely matters, the 57-col prompt over an inner width of 32 renders as THREE lines where naive division says two. Invariant test generalised to a rows × columns matrix (122 tests in that file, was 43); reverting only the call site reddens exactly 25 cells; a Math.ceil sabotage of the wrap helper reddens both wrap tests plus three cells. Gates: typecheck clean, unit 1604/150, tui 2902 +9 skipped/121.
+- Task 4 RESIDUALS recorded in code, both handed to the re-review to confirm the classification is right rather than convenient: (a) a row's summary line (`N files changed +i -d`) is DATA not chrome and could wrap at 36 cols — fix belongs in the row renderer as clipping, the way the anchor line already is, not as another budget term; (b) below `12 + wrap + 6` rows the REWIND_MIN_ROWS readability floor outvotes the budget and the frame overflows anyway (18-20 rows at 36 cols, 18 at 37-60) — that is upstream's floor doing what it is for, so removing it is a product call, not a geometry one. Also flagged: the matrix costs ~6s for 89 cells; a third axis should sample, not cross-product.
+- TASK 4 RE-REVIEW (opus): fixes ✅ verified — every claim of both fix rounds held under mutation, including the two numeric ones I asked to be checked precisely (the 25-cell red set matched cell-for-cell; the moved expectations were RECOMPUTED not restored, and the pair (21,23) uniquely pins C=12 by arithmetic since (21)=3 admits 10..12 and (23)=3 admits 12..14). Reviewer also proved the STRICTNESS of the invariant is load-bearing: weakening `toBeLessThan(rows)` to `toBeLessThanOrEqual` at C=9 drops the failures from 96 cells to 64, because 32 cells sit exactly at frame === rows — precisely the clear-terminal case. A `<=` test would have let the original defect through. And the wrap helper survived a SECOND sabotage the report never ran (REWIND_FRAME_INSET 4→2, testing the border+paddingX derivation): 14 failures.
+- BUT QUALITY NOT APPROVED — IMPORTANT 1, THE SAME DENOMINATOR ARGUMENT ONE LAYER OUT. ChatApp.tsx:440 renders TaskPanel in the same dynamic tree directly above the dialog slot, gated only on `todosOpen && !pagerUp` — NOT on any dialog — and initialTodosOpen DEFAULTS TRUE (:115). The budget models ChatStatusBar and nothing else. Measured at 21x100 in the tallest state, at a geometry the shipped matrix CERTIFIED SAFE: 0 todos → frame 20 (fits), 1 todo → 23, 3 todos → 25 (both overflow). Since the budget's slack is exactly one row BY CONSTRUCTION, any task panel overflows at every height and width. Queue echo (:456) and the exitArmed/escArmed hint rows (:600-601) are ungated the same way. The invariant test's fixture had an EMPTY task list, which is why the matrix could never see it.
+- THE FIX WAS ALREADY IN THE FILE, 170 LINES ABOVE THE ROW THE BUDGET COMMENT CITES. ChatApp's `pagerUp` comment already describes this exact physics — "ANY other transient chrome mounted beside it ... pushes the dynamic frame past the terminal height, and Ink physically cannot erase what scrolled off the top" — and solves it by hiding every other transient region while the pager is up. The rewind picker never got that treatment. Extending the gate closes the CLASS; another budget term would close one member and leave the queue echo and the armed hints. Controller ordered the gate, not the term.
+- Task 4 fix round 3 (81195c5b6e): `pagerUp` generalised to a `paneOwned` gate over SIX surfaces — transcript pager (already there), rewind picker, session picker, model picker, help dialog, plan dialog — plus the two armed-hint rows the pager gate had never covered. EXCLUDED as content-sized (measured CONSTANT height 18-40 rows): background tasks, shortcuts overlay, settings, permissions, theme, add-directory, bypass consent, and the inline permission/question pair; their short-pane overflow is their OWN and the repair is to give them a window, not to remove their neighbours. Criterion: the surface's height is a function of `rows`, so it has already claimed the pane and no budget it could carry would absorb a sibling. NOT classified from source — a throwaway harness rendered the real ChatApp with each of ELEVEN dialogs open at seven pane heights with and without tasks and recorded frame line counts; that is what put the model picker IN (it tracks the pane through Select's clamp) and made the help dialog a mixed case included with the caveat stated.
+- THE SIGNAL THAT JUSTIFIED ANOTHER REVIEW ROUND: after the gate change the ENTIRE TUI SUITE WAS GREEN BEFORE A SINGLE TEST WAS TOUCHED — nothing in 2800+ tests had encoded the old behaviour, and five of the six gate terms had NO coverage at all. That is the signature of an under-covered region where a regression would be silent, so the change went to an independent reviewer briefed to treat the area as untrusted and probe it directly rather than trust the suite. One open/close pin added per previously-uncovered member; all six terms sabotage-checked individually.
+- Matrix reseeded with five todos through the real task wire and RESAMPLED per the review's costing (only the wrap band — 3 values — and the residue of (rows-12-wrap) mod 3 actually vary; widths 37/44/50/60 produced BYTE-IDENTICAL failure sets, i.e. one input repeated four times, and the band edges are pinned twice over by the rewindWrapRows unit assertions and the rendered-frame subtraction test). 89 cells → 24; file 122 tests/6.66s → 57/2.62s while covering strictly more. Exactly the twelve task-bearing cells failed pre-gate and exactly the twelve task-free cells passed. Gates: typecheck clean, unit 1604/150, tui 2841 +9 skipped/121.
+- Task 4 residual (a) RECLASSIFIED BY THE REVIEWER, and the worker's diagnosis was wrong on the mechanism though right on the action: a wrapping SummaryLine cannot add a row to the frame AT ALL, because Select.tsx:348 gives every option row `height: rowHeight, overflow: "hidden"` — measured 19 rows at 36 columns with a blank, a two-line and a three-line summary alike. So it is not a budget hazard, not an overflow path, not a clear-terminal risk. What actually happens at three lines is worse in a different way: yoga shrinks the ANCHOR LINE to zero and the row loses its prompt text entirely, showing only the wrapped filename. Clip-in-the-row-renderer remains right; the comment claiming a geometry hazard was corrected so nobody adds a budget term that would do nothing.
+- Task 4 residual (b) CONFIRMED correctly deferred: below `12 + wrap + 6` rows the REWIND_MIN_ROWS floor outvotes the budget and the frame overflows regardless — reviewer inverted the matrix filter and ran the seven skipped cells, all seven fail and match the claimed set exactly (18x36 frame 18, 19x36 and 20x36 frame 20, 18x each of 37/44/50/60 frame 18). At 18x36 chrome is 15, leaving floor(3/3)=1, so the floor lifts to 2 and the frame lands at exactly 18 — STRUCTURALLY unreachable by any chrome constant. Reviewer widened the framing: the other levers are REWIND_ROW_HEIGHT (a two-line row would fit) and suppressing surrounding chrome, so it is not only "give up upstream's floor".
+- NEW DEFERRAL TO WAVE C (chrome/F7), named by fix round 3's own measurements: the content-sized dialogs still overflow short panes on their own — shortcuts overlay 18 rows against an 18-row pane, help dialog's general tab at any pane ≤28, theme dialog at 17. Gating them would have MASKED the defect at some heights and left it at others, so they were deliberately left out. The work is "give each of them a window."
+- OPEN QUESTION FOR THE CURRENT REVIEW, not yet settled: the gate blanks the transcript's LIVE STREAMING REGION on five more surfaces than before, so a user who opens /model mid-turn loses the streaming text until they close it. Inherited from the pager gate and now paid on five surfaces. Reviewer asked for a PER-SURFACE answer — is the streaming region genuinely unbounded (making suppression necessary rather than convenient), and can each surface actually be opened mid-turn at all, or is the gating dead code on some of them.
+- INTERRUPTION: the paneOwned-gate reviewer was killed mid-run by a weekly API limit (reset 12am Asia/Seoul), then the owner re-authenticated. RECOVERY CHECK FIRST, not a straight re-dispatch: that agent had been told to mutate files, so a death mid-flight could have left the tree dirty and a later "green" would have been measured against sabotaged source. `git status` shows only the five pre-existing untracked probes and `git diff` is empty — it died while READING, before any mutation. CONTROLLER THEN RAN ALL THREE GATES DIRECTLY at 81195c5b6e rather than trusting the fixer's report: typecheck clean, unit 150 files/1604 passed, tui 121 files +9 skipped/2841 passed +9 skipped. Matches the fix round's numbers exactly. Review re-dispatched with the baseline handed to it (so it spends its budget on mutations, not on re-establishing what I just measured) and with an explicit instruction to prioritise Q1-Q3 and NAME what it did not reach rather than thinning all six.
+- PANEOWNED GATE REVIEW LANDED (opus, re-dispatched after the rate-limit death): change ✅ verified, quality APPROVED, ZERO Critical, 1 Important, 6 Minor — and it reached all six questions rather than thinning them. Every claim reproduced, several to the exact number. THE GATE ITSELF IS SOUND, established four ways: (1) each of the six terms mutated to `false` against the FULL 2850-test suite (not the two files the fixer ran) fails exactly its own test with zero collateral; (2) NO PARTIAL MEMBER — ChatApp's root box has nine children, six gated, ChatStatusBar deliberately budgeted instead, staticItems correctly NOT gated because renderer.js computes outputHeight from the non-static output only, and the ninth (the inline permission/question pair) is structurally unreachable while the gate is on since inputOwnerRef resolves to "transcript"/"overlay" whenever any flag is set; (3) NO FALSE NEGATIVES — every pane-owning arm of the render chain has its flag in the disjunction; (4) the exclusion criterion was verified BY MEASUREMENT at ten pane heights, and no excluded dialog's height tracks `rows` while every included one does.
+- Gate review Q3 (the streaming residual I asked to be ASSESSED not accepted) returned a per-surface answer that corrects the fixer's framing twice. The region IS genuinely unbounded, so suppression is correctness not convenience. But: the REWIND PICKER CANNOT BE OPENED MID-TURN AT ALL (ChatApp.tsx:301 makes Esc-while-busy an interrupt that never arms; :302 disarms before opening — probe confirmed two Escs during a turn leave the frame untouched), so the streaming half of the gate is DEAD CODE for the one member the matrix pins; only the task-panel half does work there. And the fixer's residual named /model while omitting the PLAN DIALOG — the one surface where blanking is guaranteed on EVERY use, because a parked ExitPlanMode decision is always mid-turn. Mitigation nobody had noted: ChatStatusBar is never gated and prints `⟳ streaming` while busy, so the user loses the text and the elapsed/interrupt row but not the signal that a turn is running. Residual accepted on that basis.
+- Gate review Q4/Q5 verified precisely: restoring ChatApp.tsx to the pre-gate commit reddens exactly the 12 task-bearing cells and passes exactly the 12 task-free ones (16 failures with the four chat.test.tsx gate tests). The task wire is GENUINE — seedTasks pushes the real TaskCreate tool_use + tool_result and the panel reaches the render through useChat's state.tasks and the real `todosOpen && !paneOwned` gate; corroborated by an idle ChatApp measuring 7 frame rows with no tasks and 14 with five. Resampling lost nothing: reviewer temporarily RESTORED the five dropped widths at full height (57 cells) and got 90/90 green, so nothing currently red was dropped.
+- Gate review IMPORTANT 1 — THE EXCLUSION ENUMERATION IS ITSELF INCOMPLETE, which is precisely the defect this round existed to close, recurring one level up in the prose. HistorySearchOverlay (/history) and RestoringModal appear in NEITHER list at ChatApp.tsx:456-465, and /history is absent from the fixer's exclusion table too, under a heading claiming every classification was measured. Classification is right (measured constant 15 rows from 18 to 50), so no behavioural gap — but the comment reads as an exhaustive partition and a future auditor will not find /history in it. Fix dispatched with the six Minors.
+- STREAM-OVERFLOW-1 DEFERRED TO THE CHROME WAVE and written into the spec's Deferred section rather than left in a review transcript (b0e00c0f4a). The reviewer found, while measuring something else, that LiveTurn.snapshot() (liveTurn.ts:100-104,:149-150) flat-maps the FULL markdown render of accumulated in-flight text with no window: eight long paragraphs into a 40-row pane produce a 47-ROW DYNAMIC FRAME WITH NO DIALOG OPEN AT ALL. So ChatApp already trips Ink's clearTerminal + fullStaticOutput path on every delta of any answer longer than the terminal — continuously, in ordinary use. Strictly larger than the defect Task 4 spent four rounds closing, entirely pre-existing (the gate is an improvement on it, never a cause), out of Wave S's subject, and the fix is a WINDOWED LIVE REGION — a design question about what a user should see while a long answer arrives, not an arithmetic one. Named honestly in the spec: Task 4's invariant holds only because its fixture has no streaming turn, and whoever picks this up should widen THAT matrix rather than write a new one.
+- Task 4: COMPLETE (impl abc73f7a00 + fixes 88214cd8d0 + 1b89a5a2d3 + 81195c5b6e + 6f6d44890c; review ✅ APPROVED, ZERO Critical). FOUR fix rounds, because the same defect recurred one layer out each time: dialog frame miscounted → ChatStatusBar uncounted → text wrap uncounted → TaskPanel/queue-echo/armed-hints uncounted. The fourth round stopped adding budget terms and generalised the gate instead, which is what closed the CLASS. Final round applied the review's Important + six Minors with the paneOwned disjunction left byte-identical. Gates: typecheck clean, unit 1604/150, tui 2842 +9 skipped/130 (one more than before — the new negative pin).
+- A REAL TRAP RECORDED FOR test/tui/chat.test.tsx: the fixer's first draft of the Minor-5 test waited on the composer prompt as `"❯ "` with an ORDINARY space, timed out before ever reaching the gate, and would have read as a valid red if accepted. The composer's pointer is `❯` followed by a NON-BREAKING space (U+00A0), and the neighbouring helper in that file carries the character pasted literally — invisible in a diff and in most editors. The new test writes it as ` `. This is the same class as Constraint 15 (a red for the wrong reason is worth nothing) but the mechanism is a character nobody can see.
+- Task 4 RESIDUAL rolled to the final whole-branch review: the ChatApp comment now claims its two lists are an EXHAUSTIVE PARTITION of the dialog chain, and nothing enforces that mechanically. The new /theme test guards against a dialog being wrongly ADDED to the gate, but not against a new dialog being left out of BOTH lists — which is exactly how Important 1 (HistorySearchOverlay/RestoringModal missing) happened in the first place. An enumeration test over the render chain would close it; that is larger than this round and the final review should triage whether it is worth it.
+- BASE for Task 5: 6f6d44890c. CONTROLLER CAUGHT A CROSS-TASK INTERACTION THE BRIEF COULD NOT KNOW, and amended the plan before dispatch (c9b0d4...): Task 4's paneOwned gate declares its two lists an explicit PARTITION of the dialog chain and files `SettingsDialog` (14) in the NOT-gated half, measured constant across panes 18-50. Task 5's whole purpose is to make that height a function of `rows` — so it moves Settings across the boundary, and it does so WHETHER OR NOT the props are threaded, because settingsVisibleRows' default reads process.stdout.rows. Landing the windowing without the gate term would reintroduce, on a new surface, exactly the clearTerminal-wipe defect Task 4 spent four rounds closing. Plan now requires all three together: the disjunction term, the partition comment move with freshly measured numbers, and an open/close pin (checking first whether an existing test asserts the OPPOSITE, the way the /theme case does for content-sized dialogs).
+- Task 5: impl 3d98b3b65d. Gates: typecheck clean, unit 1607, tui 2857 +9 skipped. Both new suites verified genuinely red first (module-not-found; 5 of 9 red including PageDown moving nothing), and the gate pin sabotage-checked with `state.settings.open` removed → exactly 1 failure of 103 in that file.
+- TASK 5 CONCERN 1 IS A REAL TENSION IN THE PARTITION RULE ITSELF, raised by the implementer against its own work, and sent to the reviewer as the HEADLINE question rather than accepted. Because buildRows returns a FIXED FIVE ROWS, the windowed dialog's height varies only over panes 12-17 (11→14) and is FLAT 14 across the whole 18-50 sweep the other six members were measured on — i.e. exactly the constant the EXCLUDED list used to record for it. It was placed in the gated half on a DIFFERENT basis: with the five-task panel beside it the composed frame is 18-21 and reaches the pane at 9 of 14 swept heights. But that is not the criterion the partition STATES ("height is a function of rows"), and if adopted it would also capture ShortcutsOverlay (18) and BypassConsent (18), which the partition deliberately EXCLUDES on the stated grounds that a fixed-height dialog too tall for a short pane overflows on its OWN and needs a window, not the removal of its neighbours. Reviewer asked to settle whether Settings is in the right half BY THE STATED CRITERION, whether Task 5 reveals the criterion is the wrong discriminator, and — if it needs restating — to recommend definitely what it should be and which members move, WITHOUT implementing it.
+- TASK 5 FOUND A VACUOUS-ASSERTION CLASS, and this is the one worth remembering: the brief predicted the existing `❯ Theme` assertions would stay green as long as the row body omitted the pointer prefix. It does — and they broke anyway, because Select renders the pointer as its OWN COLOURED SPAN, so the raw frame reads `❯` then an SGR reset then the label. Ten tests across chat.test.tsx and keys-migration-dialogs.test.tsx failed, fixed by stripping ANSI with each file's existing helper. FOURTEEN match sites, and ONE OF THEM WAS A NEGATIVE ASSERTION (`not.toContain`) that would have gone VACUOUSLY GREEN rather than red — silently ceasing to prove anything while looking healthy. Reviewer told this is the highest-value check in the round and asked to re-audit every `not.` assertion touched.
+- Task 5 other decisions: SETTINGS_CHROME_ROWS = 12, not the brief's 9, counted from the COMPOSED frame (nine rows of dialog chrome + status bar + Ink's strictly-shorter-than-pane row + the conditional thinking warning) rather than the dialog's box alone — applying Task 4's own lesson that a box-only budget composes into a frame that reaches the pane; and it binds because it exceeds the 8 rows Select's clampVisible reserves. Plus one line of the search handler reordered beyond the brief's authorisation, for a REAL bug the new test caught: setting focus AFTER closing the query let the remounting Select report its stale focus back over the pending pick, so searching selected a row and the list stayed put.
+- Task 5: COMPLETE (impl 3d98b3b65d + fixes e4a7d23bf6; review Spec ✅ / quality APPROVED, ZERO Critical, 2 Important, 4 Minor). Gates: typecheck clean, unit 1607/151, tui 2857 +9 skipped.
+- THE PARTITION QUESTION IS SETTLED AND NOTHING MOVES. Reviewer's answer, which I accept: the stated criterion ("height is a function of the terminal's rows") ALREADY separates them correctly and Settings did not need the task-panel argument. settingsVisibleRows(rows) makes the height literally that and ChatApp now threads the real rows, so the derivation is LIVE. It is a SATURATING function — min(5, rows-11) flattens at pane 17 because buildRows returns five rows — but a saturating function of rows is still a function of rows, whereas ShortcutsOverlay and BypassConsent are constants that never read rows at all. THE DECISIVE ARGUMENT, and the reason the clause is now written into the gate entry: the flatness is a property of TODAY'S FIVE-ROW CATALOG, not of the surface — add a sixth row to buildRows and Settings tracks the pane across the whole sweep with no code change. A criterion that flips membership on a data-file edit is not a criterion. So the test is DERIVATION, not observed variance. The alternative discriminator ("composes over the pane when the task panel is up") was rejected on three counts: membership would depend on a NEIGHBOUR's height and on how many tasks a fixture seeds; it would sweep in the content-sized dialogs deliberately deferred to the chrome wave, where gating costs the decision-in-flow context the gate exists to preserve; and it is unstable, since ShortcutsOverlay overflows an 18-row pane BY ITSELF and the repair for that is a window, not a gate. The nine-of-fourteen justification is DELETED from both ChatApp.tsx and chat.test.tsx (it was also miscounted — their own table marks eight).
+- Task 5 IMPORTANT 1 — AN ASSERTION THAT NEVER COULD FAIL, and my summary of it was wrong in the implementer's favour. keys-migration-dialogs.test.tsx:571 asserts `not.toContain("❯ Model")` after typing `x` — which filters the catalog to NOTHING, so the dialog renders `No settings match "x"` with no rows and no pointers at all. It cannot distinguish a cursor that moved from one that did not. NOT a regression Task 5 introduced: it was already vacuous for a different reason (the pointer was gated on `search === null` in the old row body). I had reported this as a test that "would have gone vacuously green" — it was vacuous before. Fixed by changing the query to `th`, and the fixer went further than asked in two ways: it rebound the keys so `t`/`h` still exercise the select operations, and it made the query assertion a WHOLE-LINE match because a plain substring check for `th` would have been vacuous a SECOND time (the Theme row's hint reads "For custom themes, use /theme"). Decisive proof it was blind: the pre-fix assertion stayed GREEN under a mutation that draws a live cursor in the search list.
+- Task 5 IMPORTANT 2 — A SAFE VALUE REACHED BY A WRONG DERIVATION, and it carries a MEASUREMENT-TECHNIQUE lesson bigger than the task. SETTINGS_CHROME_ROWS was 12 for two wrong reasons: (a) the budget reserved a row for `↓ N more below` AND a row for THINKING_WARNING, which are MUTUALLY EXCLUSIVE — the warning hangs off the Thinking-mode row, the LAST option, so whenever it can render the window's end equals the option count and `below` is zero; (b) THE MEASUREMENT WAS INFLATED BY ONE ROW BY A FIXTURE ARTIFACT — ink-testing-library renders Ink with `debug: true` (ink-testing-library/build/index.js:74), and in debug mode Ink writes fullStaticOutput + output and RETURNS BEFORE the `outputHeight >= stdout.rows` check (ink.js:104-109). So `lastFrame()`'s line count is staticLines + outputHeight, NOT outputHeight, and in this fixture the `❯ /config` command echo is a static item. Corrected to 11 (7 box chrome + at most 2 conditional + 1 status bar + 1 for the `>=`), which recovers one row of visible list at panes 13-16.
+- THE RIGHT INSTRUMENT, now established and worth carrying forward: do NOT count lastFrame() lines to reason about Ink's overflow. Instrument `stdout.write` on a NON-DEBUG Ink render and count `clearTerminal` writes across the pane sweep, with the gate both on and off. At 11 that gives zero clears at every pane of 12 or more (worst case a frame of 11 against a pane of 12), and clears at every pane from 10 to 16 with the gate term removed — so the gate is load-bearing by direct evidence rather than by line arithmetic. Residual stated honestly in the comment: panes 10 and 11 still clear and NO budget can fix that, because the visible-row count floors at one.
+- GATE RE-MEASUREMENT ROUND COMPLETE (77685d2845), and the load-bearing answer is the reassuring one: TASK 4'S MATRIX PREMISE IS TRUE. Measured, not asserted — in the matrix's tallest cursor state at 21/24/40 rows x 36/50/100 columns, lastFrame()'s line count and the real outputHeight AGREE EXACTLY in all nine cells, zero static rows. So the matrix has been comparing the right quantity all along and no threshold was touched; only the comment changed, from asserting the premise to recording its measurement. THREE of the six other curves were one row high (SessionPicker, ModelPicker, HelpDialog) and the pager's entry moved from `rows - 6` (its box) to `rows - 4` (the composed frame Ink actually measures). NO RECLASSIFICATION IMPLIED — every correction is a translation of one or two rows, not a change of shape, and all seven members still derive height from `rows`.
+- Adjacent finding from that round, reported not acted on: several GATED dialogs reach the pane ON THEIR OWN with no sibling mounted — HelpDialog's browse tab is 18 at a pane of 18, its general tab a flat 27, ModelPicker without descriptions a flat 20, PlanDialog 21 at panes 16-20. The gate does not save them at short panes and never could; this is the same "needs a window, not fewer neighbours" case already named for ShortcutsOverlay and BypassConsent, and it belongs with the chrome wave's deferral alongside them.
+- AN UNCAPTURED TEST FAILURE WAS NOT FILED AS A FLAKE. That round reported "the first test:tui run of the session reported one failure whose name I did not capture; three consecutive runs afterwards were green" and treated it as a flake without verifying. Controller ran the full tui suite FIVE more times — green at baseline every time (122 files +9 skipped, 2857 +9) — so it is not reproducible, and then went looking for the CLASS rather than the instance: audited every wall-clock construct in test/tui and test/unit. Result: all 40+ `Date.now()` uses are waitFor POLL helpers with 2s budgets, which do not flake at this scale, and there was EXACTLY ONE bare wall-clock assertion in the whole suite — useChat-rewind.test.tsx:403, `expect(Date.now() - t0).toBeLessThan(200)`, added by Task 3.
+- THAT ASSERTION IS DELETED, and the reasoning is worth keeping: its OWN comment already said it pinned nothing (the reader returns rows, so even an unmodified `attempts = retry.attempts` breaks the loop on attempt 0 and finishes just as fast), and `reads === 0` two lines above pins the skipped poll COMPLETELY — the poll's only side effect is a read per attempt, so zero reads is zero attempts. A decorative assertion that can go red under parallel load is strictly worse than no assertion: it spends the gate's credibility without buying coverage, which is the same currency this wave has been defending all along. Comment now records the deletion and says that a future re-pin should COUNT the attempts, not time them. Cannot prove this was the flake — it is the only candidate of its kind in the suite, and the suite now has none.
+- BASE for Task 6: 6734f2ee40. Dispatched as 6a ONLY (identity) per the plan's split, with the scope fenced explicitly in the dispatch — no Select, no windowing, no indicators, no chrome budget, no ChatApp/gate, no parity doc. Rationale carried into the brief: this dialog is ~340 lines, tabbed, six sub-views, an embedded AddDirDialog, so landing identity and windowing together makes any breakage ambiguous between the two. Also corrected two of the brief's premises before dispatch (small-permissions.test.tsx is NOT this component's test — it covers four permission-KIND dialogs; and the dialog has no rows/columns props yet, which is 6b's to add) and told the implementer to KEEP the movement handlers this round, since dropping them before Select exists would leave the list unnavigable.
+- Task 6a: impl ede4c247b4. Gates: typecheck clean, unit 1607 (unchanged), tui 2862 +9 skipped (+5, all in the new permissions-dialog.test.tsx). No test outside the new file modified — which is the point of the split: 6a is frame-byte-identical by design, so the eight pre-existing raw `❯ <label>` assertions all still pass and the pointer-span trap that bit Tasks 5 lands in 6b where it can be attributed.
+- Task 6a identity scheme: `rule\0<source>\0<rule text>`, `dir\0<path>`, `denial\0<at>\0<display>`, `\0addRule`/`\0addDir` for the affordance rows, plus a second pass appending an occurrence suffix to any repeat. Source is IN the rule value because ruleRows emits one row per (source, rule) pair; the suffix is still needed because one settings file may list the same rule twice. NUL is the join byte so no data row can spell another kind's value.
+- TASK 6a DISCLOSED A USER-VISIBLE BEHAVIOUR CHANGE and it went to the reviewer as the HEADLINE adjudication rather than an accepted note: a cursor whose row a refetch removed now resolves to the TOP row, where the old index cursor CLAMPED TO THE POSITION. The scenario that makes it matter: delete rule #5 of 30, the list refetches, the cursor jumps to row 0 — in a dialog whose whole purpose is deleting several rules in a row, and which after 6b will be WINDOWED, so a jump to the top also scrolls the viewport away from where the user was working. Reviewer asked to drive a real delete, decide whether it is a regression worth fixing, and say whether the fix belongs in 6a now or in 6b (which is already touching the cursor).
+- Task 6a other deviations, both flagged for the reviewer: (a) renderItem omits the pointer AND the colour, leaving `color=` on the caller's <Text>, because the gutter and body must share one styled span — that is what keeps 6a byte-identical, and 6b's node closure becomes `(focused) => <Text color={focused ? ACCENT : undefined}>{renderItem(it)}</Text>`; (b) the cursor had to move to useRefState rather than plain useState, because a value cursor has no functional setter and chat.test.tsx writes two `↓` in ONE chunk with no render between them. Reviewer asked whether useRefState is genuinely required or is working around something a different key-handling shape would solve, and specifically whether a ref-backed cursor React cannot see can desynchronise from render — and whether any of this will fight Select's defaultFocusValue/onFocus contract in 6b.
+- Task 6a: COMPLETE (impl ede4c247b4 + fix a3b5d7244d; review Spec ✅ / quality APPROVED conditional on one Important, ZERO Critical, 3 Minor). Gates: typecheck clean, unit 1607, tui 2863 +9 skipped.
+- THE CURSOR REGRESSION WAS REAL AND THE REVIEWER'S ARGUMENT FOR FIXING IT IN 6a — NOT 6b — IS THE PART WORTH KEEPING. Reproduced against the real component: at the index cursor, deleting `Bash(cmd04:*)` left the pointer on `Bash(cmd05:*)`; at the value cursor it left it on `Add a new rule…`. Deleting several rules used to be a hold-Enter operation. THE SUBTLE PART: 6b would have SILENTLY REPAIRED it — Select stores focus as an INDEX (Select.tsx:160-163), reads defaultFocusValue only in its useState initialisers, and normalize() clamps focus to count-1 when options shrink (:172-175) — so the regression is transient across the two rounds and fixing it in 6b would have BURIED it. It is live on main today and nothing pinned the behaviour either way. Fixed by carrying the last resolved index as cursorAt's fallback when values.indexOf misses (the value cursor's job is to survive a rebuild that KEEPS your row; when your row is gone a position is the only meaningful answer), plus a pin test that OUTLIVES the fix — 6b deletes the fallback when Select takes over and keeps the test as proof Select preserved the behaviour.
+- THE FIXER CORRECTED THE REVIEWER TWICE, both by measuring rather than restating, and both corrections stand. (1) The paired "footer/pointer flicker" is NOT live today: it scanned EVERY rendered frame (not just the last) of a Workspace session that deletes a removable directory, and pointer and footer name the same row in every frame, before and after — structurally, because both read ONE shared index computed once per render. The disagreement only becomes possible in 6b, when Select owns the pointer as its own clamped index while the footer still resolves by value. So the fix forestalls it one round early rather than removing something live. (2) The reviewer's collision counter-example `["X #1","X","X"]` does not actually collide, because the occurrence suffix joins with a NUL byte, not a space; the real counter-example needs a literal NUL inside a rule string in a settings file, and the comment now says exactly that so nobody refiles it as a bug.
+- MINOR 2 IS THE ONE TO REMEMBER — A COMMENT ASSERTING A FALSE MECHANISM. 6a's report justified useRefState by claiming a value cursor "has no functional form" and that chat.test.tsx's back-to-back `↓↓` would otherwise move one row instead of two. The reviewer disproved it two ways (plain useState with a functional updater: 143/143; plain useState with a NON-functional move reading the render closure: also 143/143, including that exact test), and the fixer then re-ran the measurement itself rather than inheriting the retraction. The real mechanism: useRegistration refreshes the handler entry DURING render (KeymapProvider.tsx:366-370) and Ink flushes those renders synchronously between iterations of the dispatch loop, so the "several events with no render between them" premise does not hold on this path. useRefState KEPT — it matches the file's convention for sub/ruleText and makes activate's synchronous read correct by construction — but the comment now says that instead. A comment asserting a false mechanism is how the next person justifies the wrong change.
+- Carried into 6b by the review: the eight pre-existing raw `❯ <label>` matchers (keys-migration-dialogs.test.tsx 594,595,596,601,676,685 and chat.test.tsx 1908,1912) are all `waitFor` PREDICATES, not expect assertions — so when 6b's pointer-span change breaks them they surface as TIMEOUTS, not string diffs. 6b must also delete `move()` and its two registrations and the now-unused `focusRef` (there is no noUnusedLocals in tsconfig, so the build will NOT catch it), and shrink cursorAt to the footer's fallback.
+- Task 6b: impl a5f24fb50f. Gates: typecheck clean, unit 1607 (unchanged), tui 2878 +9 skipped (+15: nine in permissions-dialog.test.tsx, five in f6-acceptance.test.tsx, one in chat.test.tsx). Select mounted, counted indicators, chrome budget, movement handlers dropped, rows/columns threaded from ChatApp, dialog moved across the paneOwned partition, parity doc's PermissionsDialog half closed.
+- 6b CORRECTED MY OWN DISPATCH BY MEASURING, which is what the instrument instruction was for. I carried Task 5's corrected 11 into the brief; the right answer here is 13. The brief's enumeration counted the dialog's nine rows plus the two indicator rows and STOPPED — it omitted the two terms SETTINGS_CHROME_ROWS carries against the same composed-frame denominator, one for ChatStatusBar and one for Ink's `>=`. At 11 the frame would measure one row TALLER than the pane and clear everywhere. At 13 it measures rows-2 at the top of the list and rows-1 worst case, with ZERO clearTerminal writes at every pane from 14 up.
+- 6b found ELEVEN pre-existing broken assertions, not the eight the review predicted. The extra three are in chat.test.tsx and are TEMPLATE LITERALS rather than string literals (`❯ Read`, `❯ ${process.cwd()}`, `❯ ${sessionDir}`) — which is why a grep for the literal form missed them. Worth remembering as a search-technique lesson: the pointer-prefix audit must cover interpolated forms, not just quoted ones. All eleven repaired with each file's existing ANSI-stripping helper, none loosened.
+- 6b's other findings: ruleRows sorts LEXICOGRAPHICALLY, so the brief's paging snippet expecting `cmd29` as the last row of cmd0..cmd29 is wrong — it is `cmd9` (caught red on the first run); and Task 5's `gateCycle` helper hard-codes the plain fake while /permissions refuses to open without the SettingsOps surface, so it gained an optional trailing `make` argument defaulting to fakeRemote with no existing call site changed. Two sabotage runs found MORE than their own case: deleting `key={activeTab}` reddens TWO tests (the new deep-cursor one and 6a's tab-reset one, confirming the reset effect alone genuinely does not reset the list), and re-adding the `❯ ` prefix inside the node reddens six of fifteen.
+- 6b RESIDUAL, stated not fixed: the budget is height-only and the Workspace tab's intro line is 88 columns, so it wraps below ~92; the slack absorbs one wrap (the 100-column sweep exercises it) but a 15-row pane at 80 columns on that tab has none left. Recorded in the constant's docblock with the shape of the fix. Sent to the reviewer to adjudicate whether that geometry actually clears.
+- 6b FOLLOW-UP WORTH ACTING ON, and it is the "comment claims coverage that does not exist" class again: NEITHER SettingsDialog (Task 5) NOR PermissionsDialog was added to resize-dialogs.test.tsx, so neither is pinned against a live terminal resize — while Task 5's prose in chat.test.tsx implies that file covers every windowed dialog. It covers four. Reviewer asked to confirm the gap and the false implication and to name the smallest honest repair.
+- TASK 6b REVIEW LANDED (opus): Spec ✅ / quality APPROVED, ZERO Critical, 2 Important, 6 Minor. It built its OWN instrument rather than reading the implementer's — non-debug Ink render, fake stdout counting ansiEscapes.clearTerminal writes, `CI` deleted from the env first because Ink's isInCi branch returns before the pane check — and reproduced all three of the implementer's sweeps BYTE FOR BYTE. It then swept a value the implementer had not: at 12 the top-of-list state is clean but the MID-LIST state (both indicators up) clears at every pane, so 13 is not merely correct, it is MINIMAL, and reserving both indicator rows unconditionally is what makes it so. Gate term verified against the WHOLE tui suite: removing it fails exactly the new pin, 1 of 2887.
+- 6b review IMPORTANT 1 — THE RESIDUAL WAS A COLUMN OF THE MATRIX, NOT A CORNER, and the obvious repair was the wrong one. Disclosed as "a 15-row pane at 80 columns has no slack"; measured with eight long workspace paths, the frame clears on every cursor move at EVERY pane from 15 to 24. The load-bearing insight, which I put in the fix dispatch: a budget term CANNOT fix this, because `visibleOptionCount` counts ROWS while a wrapped row costs an extra LINE, so the shortfall scales with how many wrapped rows are in the window rather than being a constant. The invariant windowing depends on is ONE OPTION = ONE LINE, and a wrapping row is what breaks it. Fixed by CLIPPING the row body (precedent: RewindPicker's AnchorLine + clipRowText), placed in the dialog's row rendering not the shared model — the fixer's three reasons: a long path is one of FOUR row kinds that overflow so a model-level clip would have fixed a quarter of the surface; workspaceRows is documented as deciding what a row SAYS not how wide it is, and is read that way by its own test; and RewindPicker sets the precedent of clipping in the component while leaving its model width-free. Instrument: clears at every pane 15-24 before, ZERO across all ten after.
+- THEN A SECOND, OPPOSITE FIX — and the distinction is the point. After the clip, the dialog still cleared at narrow widths, but now from the CHROME: the intro line and footer are wrappable literals appearing exactly ONCE per frame, so their extra lines ARE a constant and a budget term is exactly right. My earlier exclusion of a budget term was specific to ROW wrap and did not transfer. Took it (890e54d573): a tab-dependent wrap allowance — five intros and three footers, so unlike rewindWrapRows it varies by tab — kept SEPARATE from PERMISSIONS_CHROME_ROWS so the constant still documents a fixed count, and built on wrapAnsi(text, width, {trim:false, hard:true}) reused from Ink's own wrap-text.js rather than hand-rolled, because word wrap differs from ceil(len/width) at some widths.
+- A THIRD INSTRUMENT TRAP, found by the fixer producing a FALSE GREEN and catching it: in NON-DEBUG mode Ink THROTTLES its render callback at 32ms. A harness that presses a key and awaits a single macrotask — the `tick()` this repo uses everywhere — coalesces six cursor moves into ONE render, and the first sweep reported zero clears at 60x14 while the frame was measurably exactly 14 rows tall. The shipped instrument waits 45ms per keypress. The debug path is not throttled, which is why no existing test had hit it. Third distinct measurement trap in this task, after debug-mode line counts and the fixed-100-column fake stdout.
+- NARROW-CHROME-1 DEFERRED TO THE CHROME WAVE (spec Deferred section): six cells still clear after both fixes — 60 columns at panes 14 (all three cursor states) and 15 (Workspace), and 70/80 columns at pane 14 (Workspace). THIS IS THE WINDOW'S FLOOR, NOT A MISSING SUBTRACTION: max(1, …) stops buying anything once rows-13-wrap reaches zero, and one row plus two indicators is the shortest frame this dialog has, so no constant can reach it. What DOES close it — measured live, all six go to zero — is `wrap="truncate"` on the intro and footer, but at 60 columns the footer loses "· Esc to cancel". That is a COPY decision, not a geometry one, and it belongs with the chrome wave's other truncation/windowing calls so the same taste is applied once rather than decided here for one dialog in isolation.
+- SETTINGS HAS THE SAME BREAK FROM THE OTHER HALF, AND I TOOK IT RATHER THAN DEFERRING — because this wave created the assumption it violates. Task 5 windowed the Config list, windowing assumes one-option-one-line, and the Model row ("Model … For a specific model ID, use /model.") spans TWO lines at 60 columns. Measured: /config clears at panes 12 and 13 at both 60 and 70 columns, clean at 80 and 100 — so SETTINGS_CHROME_ROWS' documented "zero clears at every pane of 12 or more" holds only at 80+. Settings' own chrome does not wrap until ~54 columns, so this is the ROW half, and the repair is the clip Task 6 just established. Dispatched with the placement question posed explicitly (Task 6 clipped in the component, not the model) and a requirement to justify any divergence, because two sibling dialogs clipping in different layers is a cost.
+- SETTINGS NARROW-WIDTH REVIEW LANDED (opus): change ✅ verified, quality APPROVED, ZERO Critical, ZERO Important, 4 Minor — all comments/prose, none behavioural. The reviewer REBUILT the instrument from the report's written description alone and reproduced the head-of-branch numbers on the first full sweep, which is the check that it is the same instrument; it then reproduced the "before" columns by targeted sabotage. It also tested the impossibility claim rather than reasoning about it: inflating SETTINGS_CHROME_ROWS from 11 to an absurd 24 left the floor cells BYTE-IDENTICAL, so no constant reaches them and the arithmetic-floor claim is proven, not argued.
+- THE ONE FACTUAL FALSEHOOD, and it is instructive: the conditional term's docblock argued `thinkingTouched` "flips once and never flips back", which is why a conditional budget is safe where the scroll indicators must stay unconditional. It DOES reset inside one open /config — ChatApp renders the model picker in an arm ABOVE the settings arm, so opening it UNMOUNTS SettingsDialog outright; driven end to end, toggle Thinking, go to the Model row, Enter, Escape, and the dialog returns with the warning gone and the cursor reset, /config never having closed. The file's own header already listed thinkingTouched among the state lost on that detour, so the file CONTRADICTED ITSELF between line ~41 and line ~238. Rated Minor because the conclusion survives its premise: the budget term and both warning render sites read the SAME single boolean, so window and warning appear and disappear together — the resize is exactly compensated and can never strand a frame over the pane — and the reset coincides with a full remount that resets the cursor anyway. Comment now scoped to the component's MOUNT and reconciled with the header.
+- THE COMMENT-FIX ROUND FOUND FOUR MORE OF THE SAME CLASS and fixed them rather than leaving known-false comments behind (da28f87ee1): the fixed-width-parent error was not only in the report, SettingsDialog.tsx carried the identical clause in its measurement paragraph; the file cited its own render tree as `:171-207`, ALREADY WRONG before this round and pointing into the middle of the docblock making the citation; the same for the two warning render sites and a PERMISSIONS_ROW_INSET cross-reference the round's own one-line edit would have staled. IT CONVERTED LINE-RANGE CITATIONS TO SYMBOL FORM, which is the durable fix — a symbol survives the next insertion, a line range does not, and this wave has now staled citations three separate times. It also found the MIRROR IMAGE of Finding 3: the sibling credits RewindPicker's AnchorLine to `truncateLabel` when AnchorLine calls `clipRowText` (verified: clipRowText delegates to truncateLabel; HelpDialog and TaskPanel call truncateLabel directly; RewindPicker and SettingsDialog are clipRowText's only callers).
+- Instrument description rewritten so a third rebuild is mechanical, with the reviewer's error and three gaps closed: the fixed-width parent belongs to the TESTS not the instrument; the CI variables must be deleted BEFORE Ink is imported (is-in-ci computes a module-level constant at load, so a static import freezes it and every clear is silenced — a silent clean zero); onResize must be stubbed or the instrument subscribes the real process.stdout; the stdin stub's shape is now written out. Plus one fact the fixer verified itself in node_modules/ink/build/render.js: Ink caches ONE instance per stdout object, so each swept cell needs a fresh fake stdout or an explicit cleanup().
+- One figure NOT reproduced, stated by the reviewer rather than glossed: round one's warned-state BEFORE-the-clip column (60 cols, 6/6/12/12/20 across panes 12-16) needs the clip AND the term removed simultaneously, a state that no longer exists as a single sabotage. Its after-the-clip warned column was reproduced exactly. Nothing shipped on the unreproduced column.
+- TASK 7 RE-CUT FROM THE BUNDLE BEFORE DISPATCH, and it changed the task's KIND. The plan said "add the seven ModelUsage fields /cost is dropping to our layout". I read upstream's own /cost first (cli.pretty.js L217690-217740, `Aze()` + `E0y()`) and the task became a TRANSCRIPTION: four aligned rows (Total cost / Total duration (API) / Total duration (wall) / Total code changes) plus a `Usage by model:` block, model rows `${name}:`.padStart(21) with a two-space body, the web-search clause only above zero, singular/plural on line/lines, and a no-models fallback. WE HAD NEVER TRANSCRIBED IT — we invented `Session cost / total / tokens / duration / per-model` and the parity scorecard marked it ✅. Adding fields to an invented layout would have entrenched the divergence. SECOND TIME THIS WAVE that "add the missing thing" turned out to be "we built something different and never noticed"; both times the scorecard said complete; both times only opening the bundle before writing code caught it.
+- Task 7 re-cut also corrected the plan on two specifics: FOUR of the seven "missing" fields (contextWindow, maxOutputTokens, canonicalModel, provider) are accumulated by upstream but NEVER DISPLAYED in /cost, so adding rows for them would be an addition beyond upstream needing a W-S11 entry, not a fidelity repair — dropped from scope. And the plan's emphatic "`5k`, NOT `5.0k`" correction is BACKWARDS: upstream's formatter sets minimumFractionDigits:1 at exactly >=1000, so it prints 5.0k.
+- BUT MY OWN COMPARISON WAS AGAINST THE WRONG FORMATTER, and the implementer caught it. I measured tokenCount against `_d` and concluded it was sloppy. Upstream has TWO deliberate compact formatters — `_d` and `va`, where `va(e) = _d(e).replace(".0","")` (L107095) — and tokenCount was approximating `va`, matching it everywhere except above a million where it was simply broken. My "fix it once, its own comment forbids a second spelling" instruction collapsed them and made /context read `200.0k` where upstream's own token readouts read `200k` (verified: L314729 prints `Auto-compact window: auto (${va(n)} tokens)` and `capped to ${va(r)} by model`). THE COMMENT THAT FORBADE A SECOND SPELLING IS WHAT MADE ME GIVE THE WRONG INSTRUCTION — upstream carries two forms on purpose; two NAMED forms with a documented reason is not the drift that comment guarded against, two unnamed spellings of the SAME form would be. Corrected at 5f5e6acc7e; the replacement comment carries that reasoning.
+- THE IMPLEMENTER THEN BEAT BOTH OF US ON EVIDENCE: upstream's own module export map (L107029) NAMES them — `_d` is exported as `formatNumber` and `va` as `formatTokens`. So the second form is not merely deliberate, it is upstream's DESIGNATED token formatter, and the call-site census reverses which is the exception (`_d` ~3 surviving sites, `va` ~30). It also settled /stats as a real finding rather than a default: upstream's /stats is an alias of /usage and /cost (L351877) and our cumulative per-model in/out line is the one upstream's activity panel spells `In: _d(…) · Out: _d(…)` (L444263) — that panel and the /context panel sit ~300 lines apart in the same region using DIFFERENT formatters, which is about as clean a demonstration of the per-surface rule as the bundle can give. So my original comment's CONCERN (that /cost and /stats agree) survives; only its stated reason was wrong.
+- Task 7 judgment calls: /compact has NO verbatim upstream counterpart (upstream's post-compact notice prints "Compacted" plus hints and no numbers at all), so our before/after pair is ours — put on `va` because every compaction-adjacent token readout upstream DOES print uses it, reasoning written at the function. formatElapsed's divergence RECORDED NOT FIXED, and the implementer corrected its own earlier report on it: it is a port of `$st`/`formatBarElapsed` which emits `1m05s` with NO space (not `1m 5s`, which is a third function, `ra`), and the missing hour/day units are real, so 25 hours reads `1501m 01s`; both parts now recorded at the definition with a warning not to "fix" it toward `ra`. The brief's checkbox asserting /cost OMITS the code-changes row when unpopulated was deliberately NOT implemented — upstream prints `Total code changes: 0 lines added, 0 lines removed` unconditionally and omits only the web-search clause — and I ruled that call stands.
+- Task 7 residual for T13: NOTHING here is live-verified — every number is a fixture, and `canonicalModel` has not been confirmed to arrive populated in practice (the fold degrades safely to grouping by raw key, but the row labels lose their canonical form). One keyed /cost after a few turns settles it; add it to the T13 live cells.
+- Task 7: COMPLETE (impl 16be6d7810 + 5f5e6acc7e + fixes b127a225e8; review Spec ✅ / quality APPROVED, ZERO Critical, 2 Important, 3 Minor). Gates: typecheck clean, unit 1607, tui 2908 +9 skipped.
+- THE REVIEW MEASURED THE TRANSCRIPTION RATHER THAN READING IT, and it is character-exact: bundle L217733-217736 and L217686 put the value at COLUMN INDEX 23 on all five rows (Total cost: 11+12, Total duration (API): 21+2, Total duration (wall): 22+1, Total code changes: 19+4, Usage: 6+17), and the shipped padEnd(23) reproduces each. Model row padStart(21) + two-space body lands on the same column. TWELVE targeted mutations all went red, including the one that mattered most — removing the padding from a SINGLE row (2 failed) — which proves the whole-row-equality assertions are doing real work rather than substring-matching.
+- Review VERIFIED THE PER-SURFACE MAPPING AGAINST THE BUNDLE rather than accepting the reasoning: /cost on formatNumber (L217696 spells the row with `_d` five times); /context on formatTokens (L315889 is `**Tokens:** ${va(n)} / ${va(o)} (${i}%)`, and the whole surrounding grid is `va`); /compact has no verbatim counterpart but every compaction-adjacent readout upstream DOES print uses `va`; and /stats on formatNumber CONFIRMED — L444263 reads exactly `In: ${_d(l.inputTokens)} · Out: ${_d(l.outputTokens)}` and L351877 declares `name:"usage", aliases:["cost","stats"]`. Export map at L107029 also names `formatDuration: ra` and `formatBarElapsed: $st`.
+- IMPORTANT 1 — THE RULE WAS UNPINNED EXACTLY WHERE IT WAS MOST LOAD-BEARING. The reviewer repointed sessionTools.ts from formatNumber to formatTokens and the ENTIRE tui suite passed clean (2906/9). Three shipped comments described a per-surface rule that no test defended on that surface. Closed — and the fixer found the hole was on TWO surfaces, not one: /cost had it too, for a subtler reason. Its transcription tests are thorough, but every token count in their fixtures carries a REAL FRACTION, and the two formatters spell a real fraction IDENTICALLY — only a round four-figure count separates them. /context and /compact were already pinned.
+- IMPORTANT 2 — A MEASURED CLAIM IN SHIPPED SOURCE THAT DID NOT REPRODUCE, off by ~13x. Three comments asserted `_d` "survives at three call sites" vs `va` "roughly thirty". Recounted twice by two agents with different methods: call EXPRESSIONS give 39 vs 55; distinct LINES give 25 vs 47 (several bundle lines carry the same call four or five times, which is the whole gap). The reviewer's 24/47 and the fixer's 25/47 agree to within one on the line basis. Either way `_d` is roughly HALF as common, not a fifteenth. Census KEPT with corrected figures rather than deleted — "one form is rarer" is the true observation that tempts a reader to unify the two — but it now carries the regex that produced the numbers and states outright that the ratio routes nothing.
+- A METHOD STEP WORTH KEEPING, volunteered by the fixer: before counting occurrences of a two-character minified name in a 27MB bundle, CHECK THE NAME HAS EXACTLY ONE BINDING. Both `_d` and `va` are single module-scope declarations with no shadowing. In a minified file short names are routinely reused per module, so a count that skips this check can be meaningless.
+- Task 7 minors also closed: the formatElapsed worked example was wrong (25h+1s is `1500m 01s`, not `1501m 01s` — that figure is 25h 1m 1s, inherited from an earlier report's 90061000ms row), and two parity rows were reconciled (:1535 left reading as if U4's layout still stood; :1580 framed formatElapsed against `ra` when the new spinner note tells readers to reject exactly that comparison — repointed at `$st`).
+- BASE for Task 8: HEAD after this entry. Task 8 WIDENED BEFORE DISPATCH from `/clear` to the whole class, on one grep: setCtxPct has EXACTLY ONE WRITER (useChat.ts:690, at turn end) and NO reset anywhere, so the identical lie is live on /clear (clear(), ~:1629), on /resume and --continue (resumeInto ~:1010, doContinue ~:1034) and on a conversation rewind (rebuildAfterRewind). /RESUME IS THE WORST OF THE THREE — not a stale number about this conversation but the PREVIOUS session's percentage displayed against a DIFFERENT one. formatStatus reads ctxPct too (:796, :1206), so /status carries it as well. Fixing only the named case in a wave called "session truth" would have left two identical lies one line from the one we fixed.
+- Task 8: impl dc16b2ab40. Gates: typecheck clean, unit 1607 (baseline), tui 2912 +9 skipped (+4). Four new tests: /clear (incl. the /status line), /resume onto a DIFFERENT session, conversation rewind, and a code-only-rewind guard; three verified genuinely red by removing only the reset line and running whole files with no filter.
+- Task 8 judgment calls, all three decided well: (1) HIDE not refresh, reasoned once in one place rather than per site; (2) THE RESET LIVES IN `replaceDocument()` — the boundary all three paths already funnel through — so a future fourth discard path inherits it BY CONSTRUCTION rather than by someone remembering; (3) rewind resets only at conversation scope, and no scope check was needed because a code-only rewind returns BEFORE the rebuild and the host emits no `rewound` broadcast for it, so it cannot reach the boundary at all — sabotage-verified by moving the reset into confirmRewind, which turns the code-only guard test red.
+- THE RISK OF THAT DESIGN, sent to the reviewer as the headline: putting the reset inside replaceDocument() means EVERY caller resets, not just the three that discard a conversation, and there are FIVE call sites. If any of them replaces the document while the underlying conversation continues unchanged — a re-render, a width reflow, a detail-view or pager rebuild, a compaction redraw — the reset hides a percentage that is STILL TRUE, which is a new lie in the opposite direction and exactly the failure mode this wave exists to remove. Reviewer asked to enumerate all five and rule on each, and also to check the converse on rewind: whether a FOLLOWER rebuilding from the broadcast (rather than from its own confirm) reaches the boundary, since a follower keeping a stale percentage would be the same defect on the other client.
+- Task 8 disclosed rather than tested, and passed to the reviewer to rule on: resuming the SAME session into itself deliberately KEEPS its percentage (same conversation, so the number is not lying), with no test, on the grounds that a lone "the number stays" assertion would also pass on a build that never resets anything. That reasoning is sound as far as it goes; the question is whether a discriminating test exists.
+- TASK 8 REVIEW LANDED (opus): Spec ✅ / quality APPROVED, ZERO Critical, ZERO Important, 4 Minor. THE HEADLINE RISK I FLAGGED DID NOT MATERIALISE, and the reviewer settled it by enumeration rather than assurance: `grep -c` returns 5 but one is the DECLARATION, so there are FOUR call sites — clear() (:1650, engine half already ran via session.clearSession() at :827, which the host implements as a full engine swap), resumeInto()'s !sameSession arm (:1045), and rebuildAfterRewind()'s two arms (:1350 rows, :1351 the `cleared` empty case) — and every one installs a genuinely different or emptied conversation. It then hunted the specific failure mode I named and found none: width reflow is handled entirely in ChatApp/resizeRepaint as a state-driven re-render and never enters the document; Ctrl-O's detail view is a PURE PROJECTION over documentRef; /compact APPENDS and never replaces; the initialEntries bootstrap appends before any measurement exists. The "by construction" claim is literally true — documentRef.current is assigned in exactly two places, mount-time init and inside replaceDocument.
+- THE FOLLOWER QUESTION CAME OUT CLEAN, and the reviewer PROVED IT LIVE rather than reasoning: the broadcast handler at useChat.ts:669 routes into the same rebuildAfterRewind, so both arms hit replaceDocument. It wrote a throwaway test pushing a `rewound` frame straight into the fake's event pipe — passes on HEAD, red with the reset removed. A follower does NOT keep a stale percentage after someone else's rewind.
+- Review also sharpened the POSITIVE half in a way worth keeping as technique: removing the turn-end writer kills all four tests, but at the FIRST waitFor, which proves nothing about half two. So it built a mutation that isolates it — make refreshCtx LATCH its first reading and re-set that same stale value on every later refresh, i.e. the "restored, not measured" failure mode — and exactly the three A8 tests fail, at the `ctx:42` wait. That is how you prove a positive half pins a FRESH measurement rather than a restored one.
+- Task 8 MINORS: M1 (same-session resume untested) — the implementer's reasoning was that a lone survival assertion would also pass on a build that never resets, which is true but misses that the same is true of the code-only-rewind guard they DID ship, and correctly, because such a test guards the PLACEMENT not the defect; the reviewer built it and confirmed it discriminates against the plausible naive mutant (reset moved above the sameSession branch — the exact shape the plan's own snippet suggested). M2 — three tests fail with a bare waitFor timeout where half one was deliberately rewritten to fail with a value. M3 — /compact leaves a NUMERICALLY stale percentage (refreshCtx has one caller, turn end), which is not Task 8's defect (the number still describes THIS conversation, just out of date rather than misattributed) but is the same wave's subject and nearly free since session.compact() already returns postTokens. All three dispatched.
+- FOLLOWER-CLEAR-1 DEFERRED (spec Deferred section): /clear in one client leaves every OTHER attached client showing the whole old conversation — host.clearSession() swaps the engine and BROADCASTS NOTHING, and the client's state handler reads only idle and permission mode. Deferred not because it is small but because it is strictly LARGER than the chip Task 8 fixed (the entire transcript diverges, not one number), pre-existing, and unfixable inside useChat — the repair is a new wire frame, the same shape Task 3 made for `rewound`, which deserves its own task rather than a fix round. Task 3's rewound+cleared pair is the working precedent.
+- Task 8 fix round complete (554c3d5415): M1 same-session-resume pin added (and the mutation verified independently rather than trusting the reviewer's quote), M2 failure messages reworked, M3 /compact re-measure implemented. Gates: typecheck clean, unit 1607, tui 2916 +9 skipped; the two touched files re-run FIVE times at 142 passed to check for timing flakiness.
+- THE FIXER DIVERGED FROM MY M2 INSTRUCTION BY RUNNING IT, and was right: the prescribed fix (wait on the second turn's reply, then assert the value) FAILS ON THE ALREADY-CORRECT BUILD — all three tests went red — because Ink renders the reply SYNCHRONOUSLY inside the submit call while the measurement lands a microtask later, so the reply is visible before the number is. It kept the reviewer's structure and closed the gap with `expect.poll`, which retries like the local waitFor but prints the last value on timeout. NOTED FOR LATER: that makes `expect.poll` a new idiom in five places across two files where the rest of test/tui uses the local helper; the durable version is to teach `waitFor` to accept a value provider and print it on timeout, which would improve the whole directory rather than these five. Not taken.
+- CONTROLLER RAN PROBE 82 (new, committed) TO SETTLE THE ONE UNVERIFIED PREMISE IN THAT FIX, and hit an ENVIRONMENT BLOCKER. The /compact re-measure assumes `getContextUsage()` returns the POST-compaction figure; the unit tests prove the wiring (the fake swings its reading) but a fake cannot prove engine semantics, and the fixer said so plainly rather than shipping on the assumption. Probe 82 drives a real streaming-input session, reads context usage before the boundary, ON the boundary (exactly where the fix reads) and one turn later, and cross-checks against the boundary's own pre_tokens/post_tokens. FIRST RUN: UNDETERMINED, no boundary. I added wire diagnostics rather than re-running blind, and the second run printed the cause: `Error during compaction: You've hit your weekly limit · resets 12am (Asia/Seoul)`. The compaction never ran. NOT A PROBE DEFECT and not a code defect — the OAuth subscription's weekly quota is exhausted, so every keyed live cell (including Task 13's) is blocked until the reset.
+- WHAT THE PROBE DID ESTABLISH despite the blocker: getContextUsage() is live-tracking, not snapshotted at session start — it read 17414 before the /compact turn and 17546 after one further turn, and its payload carries `categories`, `messageBreakdown`, `apiUsage` and `percentage`, i.e. it is computed from the current message set. That makes the fix's premise PLAUSIBLE but still INFERRED. Keeping the re-measure (the inference is reasonable and the reading demonstrably tracks live state), recorded as an unverified premise, with probe 82 ready to run unchanged the moment quota returns. Added to Task 13's live cells.
+
+## 2026-08-09 — probe 82 settled: the Task 8 premise is now VERIFIED, not inferred
+
+Subscription quota refilled overnight; re-ran `probes/probes/82-context-usage-after-compaction.ts`
+unchanged. This time the compaction ran and the boundary fired. Verdict: **the fix is correct** —
+`getContextUsage()` read on the `compact_boundary` frame (exactly where the shipped `/compact`
+re-measure reads) already reflects the shrunken context: 17852 total tokens before the compact turn,
+16970 on the boundary, 17276 one turn later. The boundary's own metadata said pre 17894 → post 1410;
+the ~15.5k gap between post_tokens and the usage call's total is the fixed system/tool overhead the
+usage call counts and post_tokens doesn't — two different numerators, which is precisely why the fix
+re-measures instead of deriving from the outcome (the comment in useChat.ts already said so; the probe
+now proves the half that was inference). Marked verified in the code comment. Probe-82's cell in
+Task 13's live matrix flips from "blocked" to "settled"; the remaining keyed cells stay queued for T13.
+
+## 2026-08-09 — Task 9 built (b74eca92e8); review + Task 10 pipelined
+
+Task 9 (`--continue` + the short-id-tolerant `--resume` resolver, W-S6) came back green on all three
+gates: new `cli/resolveResume.ts` with the four-stage resolution order and the three-outcome union
+(session/pending/unknown), the `-c/--continue` flag top-level on CcxInvocation, and three main-level
+refusals — the two briefed (with --resume, with a prompt) plus one the implementer argued for and I
+endorsed: `--continue` outside a plain foreground run, because `-p`/`--bg`/`--detachable` never reach
+the foreground path, so `ccx -c --bg task` would have silently started a FRESH session and reported
+success — the exact silent-drop class the task exists to remove. Pre-dispatch verification caught five
+plan drifts; the biggest two: there is NO help printer anywhere in src/cli (plan Step 7 had no target;
+confirmed harness/README documents the other CLI only), and `resolveTarget` is synchronous+throwing.
+Review dispatched (angles: sabotage-check, nonexistent-full-UUID leak, prefix-match vs the limit-30
+cwd-scoped listing, refusal reachability vs spawn.ts forwarding, pending reachability, TUI wiring).
+Task 10 impl pipelined in parallel — disjoint file sets (cli/ vs tui/), reviewer is read-only.
+
+Task 10 pre-grounding (controller, today): recovered upstream's widen semantics from the bundle —
+Ctrl+W gates on `git worktree list --porcelain` counting >1 (L35980/L476411), worktree axis starts
+narrowed, all-projects bypasses worktree narrowing (`R && !L && !u`); and a keyless probe proved the
+SDK's `includeWorktrees:false` really excludes worktree rows (default true). Both toggles have real
+backing; Ctrl+B stays a recorded divergence (CTRL-B-1). Also found: SessionPicker takes sessions as a
+prop — the zero-arg deps.listSessions loader in useChat must widen to carry scope; noted in dispatch.
+
+Task 11/12 pre-verification also done: T11's line drifts noted (host compact op :329, boundary branch
+:586, permanent append :825, spinner ChatApp:567); T12 has a real plan defect — the `sum()` helper it
+says to reuse at commands.ts:130 does not exist (aggregation is an inline loop in the /cost formatter),
+and useChat holds no cumulative output-token counter (turnTokens is per-turn) — the gate will need a
+`totalOutputTokens(usage)` export and a usage() fetch at picker-open. Corrections staged for dispatch.
+
+## 2026-08-09 — Task 10 built (3d965000db); Task 9 verdict FIX-FIRST, fix round dispatched
+
+Task 9's review was the strongest of the wave so far. Ten findings, three should-fix at the core:
+(1) the one "resolver" test passed with the resolver deleted — nothing pinned the unknown/pending arms;
+(2) resolveResumeArg was a static import while every sibling I/O seam rides MainDeps, making those arms
+untestable hermetically (reviewer measured 3.09s against the real ~/.claude); (3) the full-UUID
+pass-through's justifying comment was disproved on both halves — the real listing is GLOBAL not
+directory-scoped (4405 vs 671 rows), a foreign id does NOT resume (cwd-scoped reader returns 0
+messages), and an unknown full UUID lands in a fresh REPL at exit 0 behind one dim line — the quiet
+failure the task exists to remove. Plus: --resume unresolved on -p/--bg/--detachable (spawn forwards
+the raw short id to the engine); prompt-refusals fire AFTER the worktree is cut; a LIVE roster short id
+resolves into a second engine instead of pointing at attach; roster ambiguity reported as "not found".
+Fix round sent to the original implementer with decisions: seam + arm tests; full UUID validated
+against the CWD-scOPED listing (exit 1 on miss); prefix scan cwd-scoped, no limit; central resolution
+for all run paths writing the full id back into config.resume; refusals moved above ensureWorktree;
+new `live` outcome pointing at ccx attach; ambiguity rethrown; dead parseResumeIntent deleted if
+truly uncalled.
+
+Task 10 landed green (3d965000db): labels/footer per L476627, worktrees.ts with upstream's exact argv
+DI'd, scope in SessionPicker + widened loader in useChat, shared isPreviewMessage predicate, cancel
+line only on the Esc path (pickSession never routed through closePicker — my pre-dispatch worry didn't
+materialize). Implementer's honest flags now with the reviewer: the `[attachment]` row for image-only
+turns (invention vs faithful reading), the /continue side effect (narrowed default now governs it),
+and the machine-dependent hazard — ChatApp tests run the REAL git detector against this repo's two
+worktrees. Review dispatched with those three as named angles.
+
+## 2026-08-09 — Task 9 COMPLETE (b74eca92e8 + edd7081833)
+
+All nine fix items landed, each load-bearing rule mutation-tested by the fixer (delete → intended test
+fails). The fixes that mattered: the resolver is a MainDeps seam with the unknown/pending arms pinned
+hermetically; full UUIDs validate against the cwd-scoped listing (an unknown one now exits 1 instead of
+opening a fresh REPL at exit 0); resolution runs for ALL run paths and writes the full id back into
+config.resume (spawn/-p now forward the resolved id); prompt refusals fire before the worktree is cut,
+gated on a new foregroundRun predicate (the fixer correctly narrowed my "move up unconditionally" —
+`--bg --resume <id> "task"` is the resume-fork the suite pins and `-p --resume` is legitimate);
+a non-TERMINAL roster row returns the new `live` outcome pointing at ccx attach (exact mirror of
+prepareAttach's inverse rule — the two surfaces now cover every row with no overlap or gap); roster
+ambiguity rethrown; the subcommand guard arm pinned; dead parseResumeIntent deleted.
+
+Rolled to final review, none blocking: a full UUID naming a LIVE session still resolves to `session`
+(liveness is only checked in the roster branch); a crashed host's row reads `working` so its short id
+is pointed at attach, which fails with "no host listening" (fleet gc heals it; the full UUID resumes).
+
+## 2026-08-09 — Task 10 review: implementation faithful, three guards proven unable to fail
+
+The reviewer's verdict is the wave's recurring lesson in its purest form yet: every behavior the
+commit claims was verified correct (predicate port line-by-line faithful; the all-projects bypass
+confirmed against the SDK's own source — includeWorktrees is ignored when dir is absent, exactly
+upstream's `R && !L && !u`; /continue narrowing verified CORRECT against upstream's alias-file
+resolution, which never sweeps worktrees), but three of four guard tests were sabotage-proven vacuous:
+(1) the scope→options mapping had zero coverage — a fully INVERTED mapping passed 4561 tests;
+(2) the shared-predicate pin's fixture only held rows the old and new predicates agree on;
+(3) the A11 "never on a pick" half asserted on a transcript that replaceDocument had already wiped.
+Plus: test/tui now spawns real git (observed via PATH shim; no assertion flips today, but live and
+undefended), and the empty-state copy became wrong the moment Ctrl+A shipped (upstream splits
+narrowed/widened wording at L476609; our comment still claims the toggle doesn't exist).
+Fix round dispatched: four test repairs + the scope-aware empty state; spinner-cancel absence recorded
+as a comment. Notes ridden along for the divergence file at T13: scope-in-picker vs upstream's
+parent-held state; modeless search keeps Ctrl+A live while typing; [attachment] literal is ours
+(faithful decision, blank-text edge noted); worktrees.ts timeout pinned as constant not behavior.
+
+## 2026-08-09 — Task 10 COMPLETE (3d965000db + 9fb3f7f6ab)
+
+Fix round landed with per-item sabotage evidence: the inverted loader mapping now fails (a new
+`readSessions` seam sits UNDER the scope mapping — the structural reason nothing could see it before
+is that every test stubbed deps.listSessions, which replaces the mapping wholesale); the predicate pin
+carries the two disagreement shapes (image-only counted/dropped, meta-with-text drawn/excluded) and
+asserts rows one-for-one with an asymmetric fixture so wrong-drop-plus-wrong-add cannot cancel; the
+A11 pick test resumes the CURRENT session so the append branch preserves any wrongly-printed notice;
+18 call sites stub the worktree detector and an instrumented runner proved zero real git spawns across
+the whole TUI suite; the empty state is scope-aware per L476609 (worktree axis deliberately does not
+move the copy — it says nothing about which projects were searched) with the Ctrl+A hint recorded as
+living in our footer. keys-migration-dialogs pinned the old wording — updated as intended fallout.
+
+## 2026-08-09 — Task 11 built (02c346da50); review + Task 12 impl pipelined
+
+T11 landed green: compactionBar.ts with the theatre-labelled curve, CompactionRow modelled on RetryRow,
+ChatState.compacting set from the wire (auto path) and locally (typed /compact — whose boundary never
+reaches the client; the implementer's finally-clear is the correction to the plan's assumption that the
+boundary could clear it), belt-clear at turn end, slot gate widened to busy||compacting (typed /compact
+runs no turn — gating on busy alone would have shown nothing for the whole pass; pinned by test).
+Precedence retry > compacting > spinner, argued from the QA fleet's 72-second-outage lesson. One clock
+end to end via deps.now. Task 8's re-measure untouched. Review dispatched (angles: curve-value and
+monotonicity pins, canon transcription diff, lifecycle leak hunt incl. /clear-while-stuck, paneOwned
+interaction, second-compaction ratio reset, deletion completeness). Task 12 impl pipelined concurrently
+(reviewer read-only; T12 is the only writer). T12 dispatch carried the staged corrections: no sum()
+helper exists (export totalOutputTokens instead), no cumulative counter in useChat (fetch usage() in
+openModelPicker alongside capabilities, degrade to 0 on failure = no spurious dialog), ack lives in
+useChat stamped on accepted pick, confirm stays OUT of paneOwned (fixed height), settings route shares
+the gate.
+
+## 2026-08-09 — Task 12 built (4abcedd023); both reviews now in flight
+
+T12 landed green on top of T11: modelConfirmModel.ts (four-condition gate + verbatim copy),
+ModelSwitchConfirm.tsx (a screen the picker swaps to, upstream's shape — keeps the gate inside choose
+ahead of the prefs write, gives both routes the confirm for free, and makes decline restore the list
+with focus intact), totalOutputTokens exported beside foldByModel (deliberately NOT folded by
+canonicalModel — a total doesn't care which rows merge), ack ref in useChat stamped from the
+SNAPSHOTTED picker-state count on confirmed picks only (a fresh read could have moved and silenced a
+warning the user never saw). Implementer corrections: resolveModelAlias returns unknown input
+UNCHANGED (my note said undefined — wrong; behavior wanted is what it already does); gate compares
+sessionModel ?? current (after an `s` pick the session-only model is what the cache belongs to);
+no-model-known returns false (can't claim a difference you can't name). W-S9 red observed: 4 ordering
+tests failed pre-change, exactly the confirm-appearing cases. Review dispatched with the ack-lifecycle
+angle sharpened to Task 8's principle: does the ack ref outlive /clear/resume/rewind, and is that the
+same "measurement outliving the conversation" class?
+
+## 2026-08-09 — Task 11 review: transcription exact, one real leak found (replay)
+
+Reviewer verified every constant against the bundle (curve, widths, glyphs, margins, the
+percentage-vs-fraction split, the ellipsis appended by the spinner not the verb) and confirmed the
+architecture premise in host source (bare status frames die in the tap; compact op bypasses runTask).
+The real find: the wire arm is unguarded on ev.replay — follow() replays the last turn's buffer, so a
+turn interrupted mid-auto-compaction strands "Compacting conversation… 0%" forever on the next attach
+(no turn events arrive idle; the idle arm clears retryStatus but not compacting and wouldn't fire
+anyway). One-token fix + test. Also: the finally is unpinned (failure fake returns, never throws);
+paneOwned and clock-seam pins offered and taken; three comment corrections (a copied rationale that
+doesn't apply, a belt claim only true of the wire path, an unrecorded ACCENT-fill divergence from
+upstream's default-foreground pill). Ride-along for T13's divergence file: upstream's
+compactingHintText (the dim hint under the spinner, L408164) is unported — recorded so it isn't
+rediscovered as a bug. Fix round dispatched to the T11 implementer.
+
+## 2026-08-09 — Task 11 COMPLETE (02c346da50 + 4d4be2aa0d)
+
+Fix round landed with observed reds on all four sabotages: the replay guard (delivered replay:true
+frame stays clear, live frame still arms), the throwing-compact finally pin, the paneOwned pin
+(/compact held open on a gate + /help — row must vanish), and the clock-seam pin (injected clock at
+the stamp, +90s → 63%; both sabotage forms fail distinctly — raw Date.now clamps to 0 and never
+climbs, dropped now prop pins the bar at cap instantly). Comments corrected: no phantom two-setState
+race, belt claim scoped to the wire path with the accepted local edge recorded, ACCENT fill recorded
+as ours against upstream's default-foreground pill. Wave S is now 11/13 closed with only Task 12's
+review verdict and Task 13 outstanding.
+
+## 2026-08-09 — Task 12 review: the ack outlives the conversation — Task 8's lesson, fourth appearance
+
+The sharpened review angle paid off exactly as aimed: `cacheMissAckedAtOutputTokens` is a ref reset
+nowhere while /clear swaps the engine and restarts usage() at zero — and our `>=` (upstream: strict
+`===`) turns that stale stamp into blanket suppression of the cache warning for the whole fresh
+conversation until it out-produces the old one (reviewer demonstrated end to end: ack 500, /clear,
+200 fresh tokens → we stay silent, upstream warns). replaceDocument is the boundary Task 8 built for
+exactly this class and the ack wasn't getting the same treatment. Also from canon: upstream re-stamps
+the ack at compaction success ($$e — the cache is already lost, so no warning), which we didn't
+replicate. Fix round dispatched: strict equality, ref reset in replaceDocument (W-S5 citation),
+post-compact re-stamp on both paths (replay-guarded on the wire), render-pins for the body sentence
+and warning role (both deletable today with a green suite), gate fallback to the resolved running
+model when no catalog row matches, two comment corrections (snapshot-vs-fresh divergence named;
+the false "focus intact" claim). Clean angles included six proof-carrying sabotage reds and the
+sessionModel-first comparison being confirmed CANON, not an invention.
+
+## 2026-08-09 — Task 12 COMPLETE (4abcedd023 + aef08741e7); all 12 build tasks closed
+
+Fix round landed with observed reds throughout: strict equality (new unit case pins the
+count-moved-BELOW-ack direction), ack reset in replaceDocument beside the ctxPct reset (the same
+boundary, the same class — W-S5/Task 8 cited), stampAckAfterCompaction() on both compaction paths
+(fresh usage read; failed read leaves the ack alone — a guessed count either silences a real warning
+or raises a spurious one; wire path replay-guarded; three tests incl. replayed-boundary-stamps-nothing),
+render pins for the body sentence (real bold SGR asserted) and warning role (scoped to the rule line —
+Select's focused row legitimately wears permission, and dark-theme permission == remember by RGB),
+and the fallback rung `sessionModel ?? current ?? fallbackModel` restoring the gate for sessions
+pinned outside the alias catalog (fallback pinned as genuinely last). The implementer corrected its
+own earlier "focus intact" claim in the report. Wave S: 12/12 build tasks closed. Task 13 begins.
+
+## 2026-08-09 — Task 13 executed; the verification's own find fixed and live-confirmed (2d5984d5b0)
+
+Step 1: typecheck clean · 1654 unit · 2962 TUI (9 keyless skips) · build green. Step 2: ANCHORS-1
+re-run gate did not fire (SDK still 0.3.220). Step 3: all eight keyless cells pass (plan drift: A7's
+`-t "cache tokens"` names no test; the `cost:` family is the coverage). Step 4: every keyed live cell
+executed under an isolated /tmp HOME through the real pty (captures in the job dir; evidence + session
+ids written into the spec's Outcomes): A1 (rewind restore + memory check — THREE never leaked),
+A2 (compacted replay shows boundary + preserved tail only), A3 (all seven surfaces incl. Settings
+Stats after a turn), A4b (first-message restore → empty conversation, ctx chip dropped — Task 8's
+reset firing on the rewind path), A8 (both halves), A9 (five outcomes: prefix + roster-short resume,
+unknown/pending/live all loud), A10, A13 (success ✦ 22.6k → 2.1k AND the failure shape, bar torn down
+both ways), probe 82 (settled), keyed /cost (canonical folding).
+
+The pass's own yield: the resumed-idle emptiness defect — NINE surfaces (not two: rewind, stats,
+/status session row, /export, /session, /rename, /tag, /files, session-scoped history writes) all
+read a client id that only materializes mid-first-turn. Fixed at ONE writer: host.swapEngine remembers
+`resumedFrom` (cleared on fresh-conversation swaps — /clear and first-message restores don't publish a
+discarded id), `currentSessionId()` = engine id ?? resumedFrom, and follow()'s state replay heals the
+client for free. Probe-23 finding re-confirmed: a plain resume KEEPS the engine session id, so the
+fallback is the real id early, not a guess. Three sabotage forms each red exactly the intended tests.
+Live re-verified through the same pty flow that found it: `session 63aa1af7` printed and three anchors
+listed in a resumed session with zero live turns. Deliberately NOT changed: the fleet roster row's
+sessionId (feeds Task 9's sealed pending/live/unknown semantics — wants its own decision; recorded).
+
+Spec Outcomes & Retrospective written; coverage.md gained the combined Wave R + S entry (R's absence
+was a standing omission, noted as such). External whole-branch review launching against f099baf4fb.
+
+## 2026-08-09 — external whole-branch review returned three real findings; closing fix round dispatched
+
+codex (gpt-5.6-sol, xhigh, base f099baf4fb) found: (P1) a UUID/prefix naming a LIVE session's
+transcript matches the listing before the roster branch and boots a SECOND ENGINE over the live
+transcript — the exact residual rolled forward twice, now with a concrete fix shape (cross-check the
+resolved full id against the roster, return live for non-terminal rows); (P2) the widened picker's
+preview/resume/rename still act through the launch cwd, so an all-projects row from another project
+previews empty and resumes into "no history found" — a cross-task interaction (T10's widen × the
+cwd-scoped readers) that neither task's own review could see alone; (P2) a foreign-project roster
+short id resolves and then dies quietly in a fresh REPL — the quiet-failure class the resolver exists
+to remove, reachable through the one branch that skipped the cwd-scoped cross-check. All three
+verified real by the controller against the code; one fix round dispatched covering all three.
+Also: two background runs (the full suite, the first review attempt) were killed externally mid-run —
+the review rerun went through nohup-detached and completed; noting the pattern for future long runs.
+
+## 2026-08-09 — WAVE S CLOSED (72e683571c)
+
+The external review's three findings fixed in one round, each sabotage-verified: liveness
+cross-checked on EVERY resolution path (UUID, prefix, roster — a live transcript can no longer boot a
+second engine; crashed-host false-live accepted and documented as one failed attach vs a corrupted
+transcript); the widened picker's three actions carry the row's own cwd (and the fixer corrected my
+dispatch: the SDK's returned field is `cwd` — `projectPath` is discovery-internal and never escapes;
+verified against sdk.d.ts + sdk.mjs); foreign roster ids get a FOURTH outcome naming the actual
+project at exit 1 rather than a false "no conversation found" about a row `ccx agents` plainly lists.
+Gates: typecheck clean · 1669 unit · 2964 TUI. One live-only residual stated in code at pickSession
+(cross-project pick replays here rather than moving projects — engine-side resolution is unverifiable
+keyless; upstream ships the same widening).
+
+Wave S final: 13/13 tasks + the verification's own find + the external round. Spec Outcomes complete,
+coverage.md updated, memory written. main is ~120 commits ahead, unpushed (no push without explicit
+request). Wave C is the sprint's remaining wave.
+
+## 2026-08-09 — WAVE C OPENED: grounding round + spec
+
+Grounding per D9 (three parallel opus workers): bundle transcription (2,210 lines, ~397 citations,
+committed as a durable annex under docs/superpowers/specs/2026-08-09-wave-c-grounding/ — the job tmp
+dir is ephemeral and this wave's verbatim contracts are too large for the spec to carry), ccx pinning
+(two triage citation drifts corrected: args.ts:145 not :133; qa3-02 ALREADY FIXED by Wave T EP-T1 —
+do not re-spec), live probes 100/100b/100c (~$0.09). Twelve premises overturned before a line was
+written — the sprint's largest overturn count: Ctrl-C clears AND arms in one press; Esc-Esc clear is
+upstream canon WITH its own hint; Home/End/ctrl-arrows are input-layer not keymap on both sides; the
+follow-up suggestion is a main-model forked query rendered as the composer placeholder, SDK channel
+declared-but-dead headlessly, flag now GrowthBook-live (no disk cache exists — F6 recipe obsolete),
+adjudicated OFF by default; spinner tokens are an eased chars/4 estimate upstream; the engine
+auto-titles sessions headlessly (ai-title JSONL row via getSessionInfo).
+
+Spec authored born-landed: docs/superpowers/specs/2026-08-09-wave-c-chrome-composer-design.md —
+EP-C1 (footer + notification queue, P0 prerequisite) .. EP-C8, 15 acceptance cells, ten decisions.
+The two owner questions parked to this review land as overridable recommendations: REMOVE the ccx-only
+`#` memory mode; REMOVE the inline ctx%%/auto-compact/usageWarn/bg chips (info survives via
+statusLine payload, slash commands, and upstream's token-warning notification). Umbrella §9 ticked
+for T/R/S, §12 seeded. Spec-review round next, then the plan.
+
+## 2026-08-09 — Wave C spec review round (v2)
+
+Fable reviewer: 6 Important + 9 Minor, 0 Critical, all adopted. The two that mattered most: (1) the
+spec had put the ephemeral-notification slot in the footer row's right column where the live build
+renders it as an absolute overlay row above the composer — a plan built from v1 would have failed the
+A1 fixtures; (2) the billing-label claim overreached probe 28's evidence, and NEW probe 101 proved the
+overreach real — accountInfo() delivers only {apiProvider, tokenSource} headlessly, subscriptionType
+is declared-but-absent, tier labels unreachable. The wave's thirteenth declared≠reachable overturn,
+this one caught in review rather than grounding. Also pinned from the bundle at review time: the
+token-warning posting ladder (warn at auto-compact-ceiling − 20k tokens; ceiling = window × 0.8
+default; uOu L163990). Spec v2 committed; plan next.
+
+## 2026-08-09 — Wave C plan review round (plan v2, spec v3)
+
+Opus plan reviewer: 4 Critical + 14 Important + 13 Minor, all adopted. The Criticals: (1) plan v1's
+Task 11 assumed a setEffort that does not exist — NEW probe 102 settled the real mechanism,
+applyFlagSettings({effortLevel}), live mid-session, NO validation (ccx validates client-side), and
+the task now names the whole wire layer (chatSession/remote/chatAdapter/host) it must add; (2)
+deleting ChatStatusBar breaks three measured dialog chrome-row budgets (REWIND/SETTINGS/PERMISSIONS
+_CHROME_ROWS) that each count it as their one unconditional sibling — re-measure step added; (3+4)
+the single-owner rule was too narrow (useChat has EIGHT touchers, Task 11 mounts a dialog in
+ChatApp) — resolved by pinning strictly sequential numeric execution. Also: index.ts must NOT export
+TUI modules; four "existing" test paths didn't exist; Task 13's red gate was at the wrong layer
+(banner.ts renders what it's handed — the defect is main.ts:339/:372); A12's footer surface was
+unrunnable post-Task-2 (spec v3 repoints it to /status); keys-acceptance reads ChatStatusBar.tsx OFF
+DISK in its banned-chord sweep. Probe 102's own v1 bug recorded: an exhausted input generator closes
+the transport write side — setModel "failing" identically is what proved it was the probe, not the
+setter. Reviewer's meta-note worth keeping: where plan and annex disagreed, the annex was right
+every time.
+
+## 2026-08-09 — Wave C Task 1 complete (18617c4acf + 2772c33575, re-review approved)
+
+The notification queue + slot. Implementer clean first pass (21+6 tests, six sabotage runs); review
+went past the annex to the shipped 2.1.226 binary and caught two Important canon divergences the
+annex was silent on — invalidates must clear a matching CURRENT (not just queue entries), and a
+fold into current RESTARTS the timer (the port had pinned the opposite WITH a test). Both fixed with
+inverted-and-hardened tests (the fold fixture drops timeoutMs so restarting off the wrong entry
+still fails); head requeue, immediate-first branch order, pinned no-op dedup, silent no-op remove
+all aligned to upstream; replace-and-restart on same-key re-add kept as recorded divergence 4
+(upstream does it at the producer — remove-then-add, L496126-134). Re-review sabotaged all eight
+fixes individually (each kills exactly one test) plus a 400-op mixed sweep for timer/entry leaks.
+Two unpinned lines noted, neither load-bearing (overflowX unobservable via lastFrame; stopTimer
+defensive). Annex lesson: §C1.6's "drops matching entries" was ambiguous about WHICH collection —
+the reviewer resolving it against the shipped binary is the round's yield.
+
+## 2026-08-09 — Wave C Task 2 complete (ec31362afa, review approved)
+
+The footer rewrite — the wave's widest diff (28 new footer tests; suites 1693/2989 green). The
+plan's mandated geometry measurement CHANGED THE DESIGN: Ink 5.2.1 silently DROPS an absolute row
+whose -1 offset falls above the dynamic frame's first line — which is ccx's home state — so every
+hint would have vanished; the sanctioned in-flow fallback shipped (reviewer reproduced the
+measurement independently). qa6-01's core defect confirmed fixed live: composer block height
+constant across home/typing/busy/pasting/bash/plan/exit-armed at widths down to 12 columns. Six-mode
+chip table exact per §C4.c incl. three color corrections. Exit-arm keys are props; Footer.tsx joined
+the banned-chord sweep (sabotage-verified). Implementer deviations all endorsed by review: esc arms
+went to the queue NOW (the annex's own destination; the "no hint" intermediate would have deleted
+~40 observables), Task 1's useChat wiring built here (plan ambiguity), draft signal on the sync
+channel (fixed a one-frame stale-hint defect the effect channel caused). Six Minors, none blocking:
+(M1) report's concern #4 was FALSE — busy footer correctly shows chip-only, ledger notes so nobody
+"fixes" it; (M2) rewind arm shares the clear arm's notification key — split to escape-again-to-rewind
+in Task 4; (M3) ChatApp's Ctrl-C arm key is a literal, derive via formatBindings in Task 4; (M4)
+only the exit verb wired (detach wording for attached sessions — follow-up); (M5) double
+subscription useChat+composer — later consumer task collapses it; (M6) two overlong comment lines +
+a stale aria-hidden claim in modeTable. OWNERLESS ITEM ASSIGNED: the ← gesture wiring (open agents
+pane + ambiguity dance) → Task 4.
+
+## 2026-08-09 — Wave C Task 3 complete (64e8599b70 + b6aa20fc9c, review approved)
+
+Editor keys + the doublePress primitive. Home/End and ctrl-arrows wired at the INPUT layer (never
+the keymap — upstream's own architecture; reviewer verified no shadowing of the Transcript/Select
+home/end bindings via the useKeyFallback layering); word-forward now lands at next-word START with
+the alt+d/alt+f blast radius updated deliberately (10 observed reds incl. expected-3-to-be-4).
+Review found one behavioral Minor: forward motion parked on a paste-chip's opening bracket where
+upstream jumps the whole chip — the fix needed BOTH of upstream's nextWord chip clauses (the
+reviewer's one-liner satisfied only one acceptance case; the fixer caught that and said so). The
+undiscriminated 800ms window boundary got a fakeClock.jump helper (advance fires due timers first,
+making the boundary unreachable — instrument lesson). Remainders recorded in-code: cmd/super+arrow
+(parser decodes it; only KeyFlags projection missing), pageup/pagedown (need the popup guard).
+Task 4 caveats from review: dispose() deliberately does NOT notify onArmChange — callers that
+dispose while mounted own their own state; the 2000ms /clear window is a CALL-SITE argument.
+
+## 2026-08-10 — Wave C Task 4 complete (2752c5c463, review approved, no fix round)
+
+Ctrl-C both-at-once (clear + arm 800ms in ONE press, busy interrupts without clearing), all five
+arms rebuilt on createDoublePress with the five hand-rolled triples deleted, rewind arm on its own
+notification key, arm keys derived from the binding table (rebind test proves Alt-C renders), and
+the ← agents gesture wired (empty composer, doublePress, second press opens the bg pane; upstream's
+attach-ambiguity dance skipped as recorded divergence). Reviewer reproduced the 7 reds at the parent
+commit by name and re-ran both sabotages to exact counts; frame-level probe proved no draft+arm
+coexisting frame (the token channel costs no stale paint). Concern adjudications: zero-task ←
+gesture stays (gating would invent canon; the pane says "No tasks currently running" so nothing
+lies); no Esc hint overhang (upstream's 200ms is a side effect, not design); ← hint lifetime tied
+to its arm. MINORS FOR FINAL-REVIEW TRIAGE: (L1) remount-guard unpinned — add the defensive-path
+docblock clause or a remount test; (L2) window props captured at mount not press-time — docblock
+line; (L3) report overstates disarm breadth — no code change; (I1) SIXTH un-migrated arm found:
+useChat.ts:1759 killAgents timestamp-ref double-press with a hardcoded chord literal upstream
+derives (L499289) — good follow-up, useChat.ts not in the banned-chord sweep; (I2) ← gesture has no
+busy gate (probably right, undocumented); (I3) ESC_CLEAR_HINT_MS 1000 is unreachable as a timing —
+say so in the docblock.
+
+## 2026-08-10 — Wave C Task 5 complete (752e723a08 + 43307fe4c0, review approved)
+
+CLI surface: --version/-v (0.1.0 (cc-harness), package.json-read, survives the built artifact from a
+foreign cwd), commander-shaped --help (Usage/Arguments/Options/Commands, layout constants verified
+line-by-line), doctor (honest identity block, exit 0 unconditional), unknown flags exit 1 with the
+strict >0.4 suggestion gate (reviewer differentially FUZZED ccx's suggestSimilar against commander's
+own extracted from the bundle — 20,000 tokens, zero mismatches). Review found one Medium: the option
+sort key was BACKWARDS (short-first vs canon long-first) because the annex quoted compareOptions'
+wrapper but omitted its key function — the test had pinned the wrong order with a false citation.
+Fixed + annex patched with the missing quote (annex omissions propagate into pinned tests — the
+lesson). Also fixed: help/version now outrank unknown AND unsupported flags (commander's precedence,
+verified against installed 2.1.226), the term-overflow hanging-indent arm, the Arguments: section,
+and the reviewer's 4-line bidirectional drift guard (every parser case literal must be advertised in
+CCX_OPTIONS — passes with zero exceptions). Deferring the unknown-throw exposed a wrong-token blame
+in the excess-operand path; fixed to commander's check order. Suites: 1745 unit / 3009 tui.
+
+## 2026-08-10 — Wave C Task 6 complete (b9dffa463e + b11f1e858d, review approved)
+
+Spinner anatomy: eased chars/4 estimate (upstream's three easing rates ported, reconciled via
+meter() max-floor), ↓/↑ arrow by mode from liveTurn's wire-derived mode signal, phase ladder with
+exact thresholds, gerund re-pick on phase transitions, width-adaptive gates (16s quiet threshold —
+a quiet turn shows a bare gerund for 16s, canon but startling; pty cell in Task 15 will show it).
+Review found a MAJOR with the wave's best error chain: the elapsed segment ported $st (1m05s)
+because a STALE PRE-WAVE-C ccx HEADER COMMENT claimed that was upstream's spinner spelling — the
+grounding repeated it, the spec and plan mandated it, the implementer shipped it; the bundle says
+the spinner calls ra/formatDuration (1m 5s SPACED, L407895/L107029). Fixed: elapsed now calls
+format.ts formatDuration (verified line-by-line == ra), formatElapsed DELETED, goldens flipped,
+header rewritten, spec v4 + ccx-grounding + tui-ux.md all corrected (two more carriers found by
+grep). Fixer deviated from the reviewer's helper fix for good reason: excluding "Thinking" outright
+= ~5% flake (1-in-186 verb pick); excluded only the frozen-glyph `✻ Thinking…` combination instead,
+guarded by its own red-observed test. Also: vacuous pager test repointed to spinnerUp
+(sabotage-proven), invented 187th verb "Evaporating" removed, esc-to-interrupt moved to the footer
+hint list (canon on both surfaces per review adjudication; rebind-aware spelling is an improvement).
+Suites: 1745 unit / 3049 tui. Lesson (×2 this wave): documented-claims-about-upstream are testimony,
+not canon — the bundle settles, and stale comments propagate through grounding into pinned tests.
+
+## 2026-08-10 — Wave C Task 7 complete (9659db3786 + 4388c830fe, review approved)
+
+Duration row + chip pins. Row shape byte-equivalent to the shipped component (verb once per row,
+stored RenderLine so re-renders can't re-roll; spaced formatDuration per Task 6's correction). The
+review read the 2.1.226 binary and overturned BOTH of the implementer's inferred-from-silence
+claims: upstream ships a "Show turn duration" config row UNGATED (the repo's own qa4 frames had it
+— frames-qa4/qa4-settings-cc.txt:24), and upstream's emission is a finally gated only on
+!signal.aborted so an API-failure turn still prints ✻ Crunched for 0s under the red row. Both fixed;
+the false divergence notes deleted. Also fixed: mid-turn joiners no longer fabricate durations (the
+replay-marked turn:start clears the clock — the host.ts:501 rule honored); interrupt suppression
+validated and kept. Chip work: all six renders were already pinned by Task 2; the two REAL gaps
+(dontAsk color, rendered-chip-wears-its-color ANSI-aware pin) closed and sabotage-verified.
+Fold-run-breaker adjudicated coherent with upstream's structure (visible row breaks, hidden row is
+neutral — both pinned). Suites: 1758 unit / 3062 tui (one known pre-existing /copy flake, clean on
+isolated rerun). Lesson (×3 now): inferred-from-annex-silence claims about upstream are testimony —
+the binary settles; and the QA corpus already held the answer both times.
+
+## 2026-08-10 — Wave C Task 8 complete (97b1acb437 + 9f99708c06, review approved)
+
+Terminal title: OSC 0 BEL byte-pinned (constants + literal pinned against each other), ⠂/⠐ at
+960ms only-while-busy (armed()==0 at idle proven), dedupe, kill switch incl. the ""-falsy edge,
+clear on Ink teardown, REPL-only containment verified (no host/daemon path reaches the module).
+Direct-stdout adjudicated CORRECT with a sharper mechanism than the implementer wrote: a title tick
+through ResumeSafeStdout would be classified FOREIGN (non-newline-terminated) and clear the Wave R
+resize latches every 960ms — comment corrected. Review found the wave's sixth
+measurement-dies-with-its-conversation instance: aiTitle/renameTitle/the fetch latch survived
+resumeInto's session swap (old title kept forever, new title unfetchable — latch already true).
+Fixed at the swap beside the existing resets + mount-time fetch for resumed sessions (probes §(d):
+ai-title is a disk read), with the same-session-resume guard test pinning the reset's placement.
+Divergences authorized under D-C9 (ccx identity strings); SIGTERM whole-restore (raw mode + cursor
++ park + title) recorded as one follow-up ticket — patching the title alone at the signal would be
+the wrong seam. Suites: 1779 unit / 3076 tui.
+
+## 2026-08-10 — Wave C Task 9 complete (ca5b791c04 + 59ace50a8f, review approved)
+
+statusLine runner: resolveStatusLineConfig (field-drop .catch(void 0) on refreshInterval vs
+whole-object rejection on command/type — both directions pinned; a `timeout: 30` key is STRIPPED,
+pinning the no-invention adjudication the reviewer affirmed: §C2.1's schema has no timeout field,
+the 600s default lives in the generic hook runner), runStatusLine (all failure modes → silent
+undefined — the promise never binds reject; EPIPE-on-stdin guard; /bin/sh -c + stdin payload +
+SIGTERM on timeout/abort), createStatusLineDriver (mount undebounced, 300ms trailing-only debounce,
+poll ticks the DEBOUNCED fn per upstream Lc(B,…) — implementer's concern verified upstream-faithful
+against §C2.4's code quote, abort-previous, total dispose). Review Medium: driver had NO error
+boundary around the three caller-supplied closures — a buildPayload throw via the debounce timer
+and an onText throw both reproduced as process kills (the recurring bare-timer defect class,
+useChat.ts:941 comment). Fixed: try/catch both + rejection handler on the run chain, buildPayload
+moved BEFORE inflight.abort (ordering pinned). Lows fixed same commit: setTimeout overflow clamp
+(Infinity refreshInterval was a 1ms hot loop that also restarted the debounce forever) and the
+§C2.5 disableAllHooks guard ("Disable all hooks and statusLine execution") at
+resolveStatusLineConfig, === true strict. Recorded for final review: shellArgv reads
+process.platform directly (nit, win32 branch untestable from macOS); real-spawn test reports pass
+not skip on win32. THE FLAKE IS NAMED: useChat.test.tsx's OWN waitFor(cond, timeout=2000) at line
+35 (274 call sites) expires under machine load — /copy:1330 and the two /compact re-measure tests
+:2609/:2630 failed at 2034–2053ms in 2 of 4 back-to-back tui runs, all wall-clock budget not
+assertions; pre-existing, statusLine.ts unreachable from that suite. Cleanup ticket candidate:
+raise/make injectable that 2s budget. Suites: 1821 unit / 3081 tui.
+
+## 2026-08-10 — Wave C Task 10 complete (c2bf60e0ec, review approved, no fix round)
+
+statusLine payload + render. Payload key-list pinned exactly (11 keys; ten upstream keys incl.
+effort asserted ABSENT via `in` — Task 11 adds effort); `...x && {}` omission idiom;
+current_usage:null pre-first-turn. Render: dim forced in raw SGR bytes over the script's own ANSI
+(reviewer verified §C2.6's real mechanism — upstream PARSES spans and sets dim per span so the
+script's \x1b[0m never reaches the terminal; Ink dimColor can't reach that painted result, byte
+transform can; reuses the Line.tsx preStyled seam), per-line truncate at width−padding, SGR
+carry-forward, gap 2, all four visibility-guard branches pinned (bash mode, exit-armed, pasting,
+14-vs-15 boundary). suppressHint: `? for shortcuts` gone while configured. Wiring: settings read in
+chatMain.tsx NOT useChat (adjudicated correct — hook tests would read real ~/.claude otherwise;
+grep clean); four poke sites (delta effect, turn-end, refreshCtx, refreshUsage), no effort poke;
+mountRun once, unmount→dispose→abort→SIGTERM chain verified. Reviewer re-ran an ISOLATED sabotage
+(row-floor term alone) — one named test failed. Recorded for final review: Minor 1 —
+total_input_tokens and current_usage come from different sources (getContextUsage vs cumulative
+session.usage fold) so upstream's cross-field identity input==sum(current_usage inputs) is FALSE
+and the divergence note doesn't say so (fix: extend the note, or current_usage:null); Minor 2 —
+context_window_size is 0 for the whole first turn (refreshCtx only fires at turn end; upstream's is
+a static per-model lookup, never zero; capabilities().models at mount could close it); nits:
+DIVERGENCE label missing on 2 of 6 recorded divergences, thinkLevel rung-change spawns script on
+byte-identical payload, statusLineRows unmemoized, suppressHint formula inlined vs footerModel
+export (pre-existing Task 2), no test pins useChat-unmount→dispose edge, output-token fold
+duplicates commands.ts totalOutputTokens (leaf-module tradeoff, commented). Suites: 1833 unit /
+3092 tui, no flake hit.
+
+## 2026-08-10 — Wave C Task 11 complete (1ebe348c0b + ff5b55ba32, review approved)
+
+Effort surfaces + set_effort wire op end to end. Glyphs/copy byte-verified against §C6.1-C6.4
+(U+25CB/25D0/25CF/25C9/25C8, U+00B7 separators, xHigh casing, unsupported branch, max caveat,
+stepping wraps modulo SUPPORTED list). Wire: SettingsOps.setEffort → adapter → remote set_effort →
+host zod-enum op (only enum-payload op in the union — probe 102: SDK validates NOTHING) →
+applyFlagSettings({effortLevel}), committed to flagEffort only after engine accepts; REPLAYED on
+engine swap so resume doesn't silently revert effort (pinned in host-settings-ops resume test).
+/effort bogus → client gate, spy asserts NO frame built. 'max' session-scoped, nowhere to persist.
+statusLine payload gains effort in upstream's slot (between exceeds_200k_tokens and thinking —
+reviewer checked upstream's builder order); only Task 10 pin touched was the intended absence flip.
+Review Medium: divergence (a) comment INVENTED a departure — claimed upstream /effort is
+dialog-only; the 2.1.220 bundle itself has the four-way router (L447308-19: help/current/empty→
+dialog/level→apply) + arg grammar (L354228 argumentHint) + persistence (L354112). Fifth
+bundle-settles-testimony instance. Comment rewritten with six citations; real gaps named: ccx lacks
+auto/ultracode, persistence ("saved as your default"), help/current sub-verbs — candidate follow-up
+scope. Also fixed: hint mount post now gated on effortCapsSettled one-way latch (both fetch arms;
+set-AFTER-setEffortCaps ordering load-bearing) killing the 1-3s wrong-hint flash on effort-less
+models — reviewer proved optimism bought nothing (catalog transition restarted the 10s clock
+anyway); catalog-fails → hint still posts. Cross-pin test now real (tui array == args.ts domain ==
+validate.ts zod options; sabotage: adding auto to args failed only that). DBG-F2 scaffolding
+removed. Nits recorded for final review: dead `?? "high"` fallback in ChatApp effort dialog mount
+(disagrees with real default xhigh if ever reached); picker effort row has a third rendering state
+(vanishes when attached client knows no level — commented but not in divergence list); same-chunk
+stepping test is two writes with tick between (name overpromises; regression still pinned —
+sabotage verified). Implementer self-review caught ref-backed stepping defect pre-review. Suites:
+1837 unit / 3134 tui. Test-harness trap for later tasks: bare render() gives ChatApp NO input path
+(stdin.write silently dropped) — use renderWithKeymap(); composer caret is ❯+U+00A0 not ❯+space.
+
+## 2026-08-10 — Wave C Task 12 complete (03deb8fb66 + 7ac72123e4, review approved)
+
+The follow-up suggestion, off by default. §C5.3 prompt pinned byte-for-byte by a test that
+RE-EXTRACTS the annex block at read time (and settled the prompt at 32 lines — the plan/spec's "44"
+was a mis-count, both patched). Reviewer went past the annex to the 2.1.226 binary: all twelve
+transcribed post-filter rules char-identical to upstream's qGy INCLUDING order and the 17-word
+allowlist — and found a THIRTEENTH rule the annex missed (`done`, heads the array; no behavioral
+consequence — bare "done" also fails too_few_words — annex patched to record it). Review Medium: a
+dead warm suggester session was never replaced (submit rejects forever after engine death; feature
+silently stops until /clear — upstream can't have this, it forks per suggestion) — fixed, session
+nulled in catch with identity guard vs racing retire(), pinned by an always-throwing factory-count
+test (the old throws-once fixture passed either way — that was the gap). Also in the fix round:
+upstream's exact label-stripper regex recovered from the binary and transcribed verbatim
+(divergence note deleted — it's a transcription now; fixer re-verified provenance via strings at
+L359372), popup test renamed to the empty-buffer rule it actually pins (guard kept — upstream's
+clause equally redundant), suggestionEnabled thread pinned at ChatApp both polarities,
+disableProjectContext divergence labeled, tautological waitFor + wrong title fixed, double cast →
+typed return annotation, retire-on-disable pinned (was already implemented). Implementer's
+self-review caught the big one pre-review: bypassPermissions + allowedTools:[] would have handed
+the suggester the FULL tool preset with the broker silenced (resolveTools drops empty arrays) —
+shipped is upstream's real mechanism: default mode + deny-all broker "No tools needed for
+suggestion" (reviewer traced it to gate.ts:66, same message, tools sent never run). No /cost
+pollution (separate session, mechanically unreachable). Production factory still never executed
+keyless — the keyed live run at wave close (A9) is its verification, not a formality. Suites: 1897
+unit / 3156+1-flake tui (fixer stash-tested the flake on clean tree: 1-in-3 there too).
+
+## 2026-08-10 — Wave C Task 13 complete (9cbe14fe6f + 776c0bbc86, review approved)
+
+Banner truth. The one-expression fix landed where plan-review #11 said the defect was (main.ts call
+site — resolveModelAlias(model) ?? DEFAULTS.model, same expression initialModel uses, §C8.7 by
+construction); reviewer reproduced all 18 reds and ran three sabotages. Header ` ccx v{version} `
+from package.json (no literal), offset 3, <70-col drop. Billing mapping all four branches; probe
+101's OAuth verdict re-verified LIVE (exactly {apiProvider, tokenSource}) — the field ambiguity was
+the PROBE FILE's own doing (its redactor masked tokenSource and its VERDICT line printed the
+never-arriving apiKeySource; both patched so a rerun prints truth). Review Medium: the pre-paint
+accountInfo() await was NOT a control call — it's `(await this.initialization).account`, the init
+handshake, measured 1152ms cold / ~450ms warm of blank terminal per launch, unbounded on a
+live-but-mute CLI (the SDK bounds this same promise in its own warm-pool path) — fixed with a
+300ms Promise.race on an injected delay seam; lose ⇒ billing segment omitted, launch never pays
+for chrome (sabotage: bare await made the wedged-engine test time out at 120s). Also fixed: banner
+effort clause only when the launch EXPLICITLY named an effort (defaulted launch printed "with
+xHigh effort" even for haiku, whose catalog row has no effort axis — reviewer's live catalog dump);
+picker sibling-match keys off catalog resolvedModel (field was being DROPPED in useChat's mapper —
+now forwarded), §C8.6 fixtures are live rows pinning "Use the default model (currently Opus)";
+models.ts header corrected (opus→claude-opus-5 live, remap is no-op agreement now). Divergences
+settle at five, all labeled ('value:"default"' vs upstream null adjudicated sound — no second
+unwritten way to mean the same model; resolved-id-not-display-name sound — no catalog at seed
+time). Live-catalog fact for Task 11 follow-up: ABSENT supportsEffort is meaningful (haiku), not
+unknown — ModelPicker treats absence as supported. Suites: 1906 unit / 3172 tui.
+
+## 2026-08-10 — Wave C Task 14 complete (7891b46019 + 9ce73024c5, review approved)
+
+The removals + token-warning. `#` memory mode fully out (reviewer swept §qa1-10 AND grepped the
+tree — zero residue; the survivors are legitimately unrelated: species.ts's <user-memory-input>
+transcript rendering, the `remember` theme token ModelPicker/EffortDialog still use, the
+#-escape in fileOptions' rule grammar); `#note the /pla` now opens the catalog with query "pla",
+matching upstream's prompt|bash-only resolver. Union collapse real: modeOfDisplay deleted,
+composerMode the single derivation, tsc proves the InputMode narrowing propagated. Ladder shipped,
+then the review found the wave's SIXTH grounding overturn: the spec's ceiling (window×0.8, "from
+L164111-27") was a MIS-CITATION — the 0.2 fraction (Mds L164000) feeds Dds, compaction
+PRE-WARMING; the real ladder uOu L163990 uses Sfo(Tbe(...)) = window − min(maxOutputTokens,20000)
+− 13000 = window−33000 (saturating min; computable from getContextUsage().maxTokens, so the
+"one honest input" argument was moot). Corrected in code (ceiling 167k not 160k on 200k — ×0.8
+warned 7k early; fixer verified every bundle line incl. three citation refinements) and spec v5.
+Review HIGH: token-warning outlived its conversation — the 5h entry survived /clear/resume/rewind
+until the next completed turn (reviewer reproduced; the module's own docblock named the scenario
+but the arm wasn't wired to replaceDocument) — fixed beside setCtxPct(undefined); plan-usage
+warning deliberately survives (account-level). Also: usage-warning got the 5h timeout (8s default
+made a standing condition flash once and vanish; pre-Wave-C it was persistent chrome); single-slot
+starvation between the two 5h medium rows recorded as owner-taste knob, unresolved; remove-arm
+comment corrected (upstream HAS it — L489326 Tjt; the fixer's own citation corrections: Hli
+L488912, two-text choice L488935, Context-low arm L488945 gated on auto-compact DISABLED — ccx's
+zone split recorded as deliberate, no isAutoCompactEnabled flag surfaced); fold omission
+justified at post site (GLb = (_, arrival) => arrival — same-key re-add IS that). Negative-window
+guard added (stub maxTokens:100 fixtures would read "100% remaining" off a negative denominator).
+Noted for Task 15: "Context low (0% remaining)" at crossing is upstream's own clamp (L163991),
+faithful not a bug; coverage.md refresh owed by Task 15. Suites: 1913 unit / 3178 tui.
+
+## 2026-08-10 — Wave C Task 15 complete (evidence-only + 6e93d87689 fix; A1-A15 ALL PASS)
+
+Final verification, split keyless (implementer) / keyed (controller). Gates: typecheck clean, 1913
+unit / 3178+9skip tui, build clean. Keyless A1,A2,A3,A4,A7,A11,A13,A14,A15 all PASS (evidence
+$CLAUDE_JOB_DIR/tmp/waveC-A*.txt + frames-A*/). Keyed runs (OAuth, isolated /tmp HOMEs,
+drive-repl-args): A5 PASS — title ladder ✳ ccx → ⠂/⠐ 960ms busy alternation → ✳ {ai title} →
+cleared on exit, all in one OSC-0 capture. A6 PASS — estimate motion (↓4→21, ↓10→80 tokens),
+progressive parenthetical, and all FOUR thinking rungs (thinking → still thinking @13s → thinking
+more @23s → almost done thinking @59s). A8 PASS — ✻ Cooked for 4s after a turn; absent with
+prefs showTurnDuration:false. A9 PASS — live suggestion 3/3: the never-executed production factory
+(warm haiku + deny-all broker) produced two filter-passing suggestions from ONE warm session;
+abort clean. A10 PASS — /effort dialog stepping ◉ xHigh (default) → ● High (default marker
+correctly dropped) → ◐ Medium, Enter confirms, hint re-posts ◐ medium · /effort, /status shows
+effort medium (set_effort wire op end-to-end live). A12 PASS — banner `claude-opus-5 · Claude
+subscription` (probe-101 OAuth mapping) + /status + picker "Use the default model (currently
+Opus)" all agree. ONE FINDING fixed mid-task (6e93d87689): the Task 13 fix's 300ms accountInfo
+race deadline sat BELOW its own review's measured handshake (~450ms warm) — the billing label
+lost on every boot; raised to 1500ms with the measurement pinned in a test. Measured truth:
+host-path cold-fresh-HOME 1812ms (loses even 1500 — first-ever-launch omission, acceptable
+best-effort), warm 279ms (wins). The keyless implementer's phantom "API Usage Billing" sighting:
+job env is credential-clean; most plausible path is macOS Keychain (HOME isolation can't hide it)
++ a warm boot beating the old 300ms wire — keyless pty runs are NOT credential-isolated on this
+machine, worth remembering. Also keyed: all 9 test/tui/live e2e suites PASS. Suites: 1913 unit /
+3178 tui / build clean.
+
+## 2026-08-10 — WAVE C CLOSED (final review round 63f8ad697e; QA Sprint 1 complete)
+
+Wave close: spec Outcomes & Retrospective written; umbrella §9 Wave C ticked (all four waves T/R/S/C
+now shipped — QA Sprint 1 complete); coverage.md gains the F7-no-longer-not-started entry; tui-ux.md
+re-scored 76fa18a136 (§3 36.8%→62.5%, overall ~71%→~75%; §1/§4/§5 honestly DOWN — new surfaces
+brought named gaps; scorecard also now flags its own R/S staleness in the header); memory
+wave-c-chrome-composer-shipped written. Final whole-branch codex review (gpt-5.6-sol, base
+899b681d60): five findings, every one the wave's own measurement-dies-with-its-conversation lesson
+pointed back at the wave's new chrome — title + statusLine usage refs surviving /clear, Ctrl-C
+clear token lost across dialog remounts (consumed-token cursor now app-scoped in ChatApp),
+resumed-title lookup against the wrong project dir (dir threaded like getSessionMessages/rename
+already did), late title read winning the race (titleGen guard, the suggester's idiom). All five
+REPRODUCED red-first, fixed in one commit 63f8ad697e; replaceDocument is now the reset boundary for
+every chrome measurement Wave C added. Suites after: 1913 unit / 3184 tui. The /compact flake
+re-adjudicated by the fixer with a stash test: pre-existing (4/4 clean on stashed tree), 1 failure
+in 10 isolated runs under load. Recorded-not-fixed minors stand as the owner-knob list in the spec
+Outcomes. ~40 commits this wave, none pushed.
+Sweep #2: complete (2026-08-10) — six-agent recurring QA sweep against the shipped sprint (ccx @ d699e0839c, claude 2.1.226). 131 findings (51 fixed / 43 new / 33 persists / 4 regressed); both sweep-1 P1s confirmed dead with frames; one open P1 (s2qa5-21/22 /copy regression family). Delta triaged in docs/parity/qa-sweep-2-triage.md; qa-driver.md de-rotted (needle + 2.1.226 alt-screen caveat); umbrella §9 ticked — sprint definition of done fully met. Isolation held 6/6 (prefs mtime 1786340224 unchanged).

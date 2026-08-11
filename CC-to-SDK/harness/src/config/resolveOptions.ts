@@ -7,6 +7,7 @@ import { resolveTelemetryEnv } from "./telemetry.js";
 import { resolveTools } from "./tools.js";
 import { resolveAgents } from "./agents.js";
 import { resolveAutoModel } from "./autoModel.js";
+import { resolveModelAlias } from "./models.js";
 import { createPermissionGate } from "../permissions/gate.js";
 
 // Produces a plain object that is structurally the SDK `Options`.
@@ -42,9 +43,11 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   // entirely — it is NOT merged with process.env. Spread process.env first so our
   // provider flags/overrides augment (not erase) PATH/HOME/ANTHROPIC_API_KEY/etc.
   if (Object.keys(env).length) options.env = { ...process.env, ...env };
-  const model = config.model ?? DEFAULTS.model;
+  // Alias FIRST, then default: a tier name ("opus") becomes an explicit id here, so downstream — the auto
+  // gate below, the daemon roster, the status bar — never sees a word the SDK would resolve to an older model.
+  const model = resolveModelAlias(config.model) ?? DEFAULTS.model;
   options.model = model;
-  if (config.fallbackModel) options.fallbackModel = config.fallbackModel;
+  if (config.fallbackModel) options.fallbackModel = resolveModelAlias(config.fallbackModel);
   if (config.maxTurns !== undefined) options.maxTurns = config.maxTurns;
   const effort = config.effort ?? DEFAULTS.effort;
   if (effort) options.effort = effort;
@@ -56,9 +59,9 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.forwardSubagentText) options.forwardSubagentText = config.forwardSubagentText;
   const mode = config.permissionMode ?? DEFAULTS.permissionMode;
   if (mode) options.permissionMode = mode;
-  // `auto` is MODEL-GATED (Opus 4.6+/Sonnet 4.6). Force a supported model ONLY when the caller EXPLICITLY
-  // chose auto — do NOT run the gate when auto is merely the default, or an explicit non-auto-capable model
-  // (e.g. haiku) would be silently overridden to sonnet. The opus-4-8 default is itself auto-capable.
+  // `auto` is MODEL-GATED (see autoModel.ts's live-verified set). Force a supported model ONLY when the
+  // caller EXPLICITLY chose auto — do NOT run the gate when auto is merely the default, or an explicit
+  // non-auto-capable model (e.g. haiku) would be silently overridden to sonnet. The default is auto-capable.
   if (config.permissionMode === "auto") options.model = resolveAutoModel(model);
   // SDK contract: bypassPermissions REQUIRES allowDangerouslySkipPermissions. Centralized here.
   if (mode === "bypassPermissions") options.allowDangerouslySkipPermissions = true;
@@ -109,4 +112,12 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
  *  truth (spec: one mode field, seeded here so a fresh client's status bar never shows a placeholder). */
 export function resolvedPermissionMode(config: HarnessConfig): string {
   return String((resolveOptions(config) as { permissionMode?: string }).permissionMode ?? "default");
+}
+
+/** The model the engine will ACTUALLY run for this config, read back the same way — so a caller that has
+ *  to reason about model-gated behaviour (the host's plan-upgrade applier and `auto`) sees the alias
+ *  resolution, the DEFAULTS fallback and the explicit-auto swap above, not the raw config field. */
+export function resolvedModel(config: HarnessConfig): string | undefined {
+  const m = (resolveOptions(config) as { model?: unknown }).model;
+  return typeof m === "string" ? m : undefined;
 }

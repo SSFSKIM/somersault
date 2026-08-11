@@ -77,16 +77,16 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
     expect(record.sessionId).toBe("sess-late-getter");
   });
 
-  it("a status frame while planUpgradePending calls the setter exactly once", async () => {
+  it("a status frame while a plan upgrade is armed calls the setter exactly once, with the granted mode", async () => {
     const modes: string[] = [];
     const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
-    const record = mkRecord(session, { planUpgradePending: true });
+    const record = mkRecord(session, { planUpgradeMode: "acceptEdits" });
     installRouter(srv, record);
 
     push({ type: "system", subtype: "status", permissionMode: "plan" });
     await tick();
     expect(modes).toEqual(["acceptEdits"]);
-    expect(record.planUpgradePending).toBe(false);
+    expect(record.planUpgradeMode).toBeUndefined();
 
     // the flag is cleared after applying — a second status frame must not re-fire the setter
     push({ type: "system", subtype: "status", permissionMode: "acceptEdits" });
@@ -97,25 +97,25 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
   it("a status frame with no permissionMode does not apply an armed upgrade (the CLI's own flip has not been observed yet); a later one carrying permissionMode then applies it exactly once", async () => {
     const modes: string[] = [];
     const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
-    const record = mkRecord(session, { planUpgradePending: true });
+    const record = mkRecord(session, { planUpgradeMode: "acceptEdits" });
     installRouter(srv, record);
 
     // e.g. a compaction-only status frame (compact_result, no permissionMode) — see compaction/server.ts
     push({ type: "system", subtype: "status", compact_result: "success" });
     await tick();
     expect(modes).toEqual([]);
-    expect(record.planUpgradePending).toBe(true); // still armed — nothing consumed it
+    expect(record.planUpgradeMode).toBe("acceptEdits"); // still armed — nothing consumed it
 
     push({ type: "system", subtype: "status", permissionMode: "plan" });
     await tick();
     expect(modes).toEqual(["acceptEdits"]);
-    expect(record.planUpgradePending).toBe(false);
+    expect(record.planUpgradeMode).toBeUndefined();
   });
 
-  it("a status frame with planUpgradePending false calls nothing", async () => {
+  it("a status frame with nothing armed calls nothing", async () => {
     const modes: string[] = [];
     const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
-    const record = mkRecord(session, { planUpgradePending: false });
+    const record = mkRecord(session);
     installRouter(srv, record);
 
     push({ type: "system", subtype: "status", permissionMode: "plan" });
@@ -146,7 +146,7 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
   it("one route throwing does not starve the others on the same frame", async () => {
     const modes: string[] = [];
     const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
-    const record = mkRecord(session, { planUpgradePending: true });
+    const record = mkRecord(session, { planUpgradeMode: "acceptEdits" });
     // routeInit's very first statement reads record.sessionId; make that throw unconditionally so it fails
     // on ANY frame, independent of subtype — a stand-in for "a route blows up" that still lets a single
     // frame exercise both routes.
@@ -188,7 +188,7 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
     const modes: string[] = [];
     const { session, push } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
     const { srv, calls } = fakeSrv();
-    const record = mkRecord(session, { settings: { permissionMode: "plan" }, planUpgradePending: true });
+    const record = mkRecord(session, { settings: { permissionMode: "plan" }, planUpgradeMode: "acceptEdits" });
     installRouter(srv, record);
 
     push({ type: "system", subtype: "status", permissionMode: "plan" }); // echoes the mirror exactly
@@ -196,7 +196,7 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
 
     expect(calls.find((c) => c.method === "thread/settings/changed")).toBeUndefined(); // dedup still suppresses the broadcast
     expect(modes).toEqual(["acceptEdits"]); // but routeStatus's plan-upgrade consult still ran, independent of dedup
-    expect(record.planUpgradePending).toBe(false);
+    expect(record.planUpgradeMode).toBeUndefined();
   });
 
   it("a status frame with a NEW model updates the mirror and broadcasts source:'engine' (empirical: SDK status frames may never carry model; route stays harmless if never hit)", () => {

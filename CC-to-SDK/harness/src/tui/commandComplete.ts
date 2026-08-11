@@ -2,14 +2,15 @@
 // Mirrors fileComplete.ts (the @-mention ranker) so editor.ts can drive a / command popup the same way.
 import { rankCandidates } from "./fileComplete.js";
 
-export interface CommandEntry { name: string; description: string; argumentHint?: string; source: "local" | "catalog" }
+export interface CommandEntry { name: string; description: string; argumentHint?: string; source: "local" | "catalog"; aliases?: string[] }
 
 /** Normalize a raw capabilities().commands entry (object or bare string) to a CommandEntry; null on bad shape. */
 export function toCatalogEntry(raw: unknown): CommandEntry | null {
   const r = raw as any;
   const name = typeof r === "string" ? r : r?.name;
   if (!name || typeof name !== "string") return null;
-  return { name, description: typeof r?.description === "string" ? r.description : "", argumentHint: r?.argumentHint || undefined, source: "catalog" };
+  const aliases = Array.isArray(r?.aliases) ? r.aliases.filter((a: unknown): a is string => typeof a === "string" && a.length > 0) : [];
+  return { name, description: typeof r?.description === "string" ? r.description : "", argumentHint: r?.argumentHint || undefined, source: "catalog", ...(aliases.length ? { aliases } : {}) };
 }
 
 /** Merge local commands with the live catalog; local wins on a name collision; local-first order then catalog. */
@@ -18,9 +19,92 @@ export function mergeCommands(local: CommandEntry[], catalog: CommandEntry[]): C
   return [...local, ...catalog.filter((c) => !seen.has(c.name))];
 }
 
-/** Fuzzy-rank entries by query on the name; empty query → catalog order capped; reuses fileComplete's scorer. */
-export function rankCommands(entries: CommandEntry[], query: string, cap = 8): CommandEntry[] {
+/** Fuzzy-rank entries by query on the name; empty query → catalog order; reuses fileComplete's scorer.
+ *  `cap` defaults to NO truncation on purpose. The popup renders a scrolling 8-row window and arrow
+ *  selection ranges over the whole of `items`, so a cap here does not merely shorten the view — it makes the
+ *  tail of the catalog UNREACHABLE. With ~105 live commands, the old cap of 8 hid 90+ of them. */
+/** ALIASES ARE SEARCH KEYS, NOT ROWS (upstream `eRb`, L489928: `aliasKey: n.aliases` is one more weighted key
+ *  on the SAME fuse record). So every alias is scored as its own candidate string and then folded back onto
+ *  the entry that owns it: typing `undo` surfaces the one `/rewind` row, never a second row called `/undo`.
+ *  One candidate string can belong to more than one entry (two commands may claim the same alias, or a name
+ *  may equal another's alias), so the fold is one-to-many and every owner is surfaced. Ranking is NOT capped
+ *  before the fold — an alias hit and its own canonical row would each consume a slot there and the caller
+ *  would get fewer ROWS than it asked for; the cap applies to the deduped output, where the count is real. */
+export function rankCommands(entries: CommandEntry[], query: string, cap = entries.length): CommandEntry[] {
   if (!query) return entries.slice(0, cap);
-  const byName = new Map(entries.map((e) => [e.name, e]));
-  return rankCandidates(entries.map((e) => e.name), query, cap).map((c) => byName.get(c.path)).filter((e): e is CommandEntry => !!e);
+  const owners = new Map<string, CommandEntry[]>();
+  const add = (key: string, e: CommandEntry) => { const at = owners.get(key); if (at) at.push(e); else owners.set(key, [e]); };
+  for (const e of entries) { add(e.name, e); for (const a of e.aliases ?? []) add(a, e); }
+  const out: CommandEntry[] = [];
+  // `candidates.length`, EXPLICITLY: `rankCandidates`' own default cap is 50, and inheriting it would make
+  // the tail of a >50-command catalog unreachable — the exact failure this function's doc comment above is
+  // about. Caught by test, after the t10 review asked for a sharper cap fixture.
+  const candidates = [...owners.keys()];
+  for (const c of rankCandidates(candidates, query, candidates.length)) {
+    for (const e of owners.get(c.path) ?? []) if (!out.includes(e)) out.push(e);
+    if (out.length >= cap) break;
+  }
+  return out.slice(0, cap);
+}
+
+// ─── DG55: the kind a row carries into the popup's kind lane ─────────────────────────────────────────────
+/** `p9f`'s return type (bundle L489891). Five buckets, of which only two are ever COLOURED and one prints
+ *  nothing at all — see `kindLane` in suggestPopup.ts for what each becomes on screen. */
+export type CommandKind = "skill" | "config" | "action" | "info" | "agent";
+
+/** `ZLb` (bundle L489916) verbatim — upstream's hand-written name → bucket table, transcribed whole rather
+ *  than trimmed to the names we happen to ship, because the LIVE catalog is not a list we control: a skill or
+ *  plugin the engine reports tomorrow may be one of these names, and the day it is, upstream would class it
+ *  the same way. Written as four space-separated runs, one per bucket, which is the same data in a fifth of
+ *  the lines and reads as the four buckets it actually is. */
+const ZLb: Readonly<Record<Exclude<CommandKind, "skill">, string>> = {
+  config: "advisor agents auto-mode-setup autocompact brief channel chrome color config effort env experiments extra-usage fast focus goal hooks ide install-github-app install-slack-app issue keybindings mcp memory model output-style passes pause-memory permissions plan plugin powerup pride privacy-settings pro-trial-expired rate-limit-options remote-control remote-env sandbox scroll-speed setup-bedrock setup-vertex terminal-setup theme tui upgrade usage-credits vim voice web-setup wellbeing",
+  action: "add-dir ant-trace artifacts background branch btw bug cd clear compact copy debug-tool-call desktop exit export feedback heapdump design design-consent design-revoke design-login login logout import mock-limits oauth-refresh onboarding perf-issue radio reload-plugins reload-skills rename reset-limits resume simulate-usage rewind stickers stop teleport update",
+  info: "context diff help input-debug mobile recap release-notes render-debug session skill-doctor skills status usage version",
+  agent: "__remote-workflow workflow-launch-exec autofix-pr autopilot bugfix daemon dashboard docs fork subtask investigate schedule list-agents loops tasks ultraplan ultrareview workflows",
+};
+const KIND_BY_NAME = new Map<string, CommandKind>(
+  (Object.entries(ZLb) as [CommandKind, string][]).flatMap(([kind, names]) => names.split(" ").map((n) => [n, kind] as [string, CommandKind])),
+);
+
+/** `p9f` (bundle L489891) mapped onto `CommandEntry`, which — like `executesOnEnter` above — has no `type`:
+ *
+ *      function p9f(e) { if (e.type === "prompt") return "skill"; return ZLb[e.name] ?? "action" }
+ *
+ *  Upstream asks `type === "prompt"` FIRST and consults the table only for non-prompt commands. Ours asks the
+ *  TABLE first, and the swap is deliberate rather than sloppy, because the two discriminators are not equally
+ *  good here. `ZLb[name]` is a verbatim upstream fact about a specific name. Our stand-in for `type ===
+ *  "prompt"` is `source === "catalog"`, which is a much weaker proxy: it says only "the engine reported this
+ *  command to us", and probe 73's audit (docs/parity/command-coverage.md) found that while the live catalog is
+ *  mostly skills and plugins, it also carries ten of upstream's own client-side controls — `agents`, `color`,
+ *  `effort`, `extra-usage`, `fast`, `heapdump` and friends, every one of them `local`/`local-jsx` upstream and
+ *  every one of them in `ZLb`. Asking the proxy first would paint all ten `skill`. Asking the table first
+ *  paints them exactly as upstream does and still leaves the genuine prompt commands alone: `review` and
+ *  `doctor`, the two the same audit confirmed really are `type: "prompt"`, are absent from `ZLb` and fall
+ *  through to `skill`.
+ *
+ *  What the swap costs, and it is a LIVE cost rather than a hypothetical one: a skill NAMED one of these ~120
+ *  words gets upstream's bucket for that word instead of `skill`. This repo already has one — a `schedule`
+ *  skill, and `schedule` is in `ZLb`'s agent bucket, so its row reads `agent` where `skill` would be right.
+ *  That is one word and one colour on one lane; the alternative mis-paints ten names probe 73 actually
+ *  observed in the live catalog, so the trade still goes this way — but it is a known wrong row, not a
+ *  theoretical one.
+ *
+ *  Our locals take the else-arm whole: they are never prompt templates (the premise `executesOnEnter` already
+ *  rests on), so an unknown local name is `action` — which prints as seven blank columns, i.e. no claim. */
+export function commandKind(e: CommandEntry): CommandKind {
+  return KIND_BY_NAME.get(e.name) ?? (e.source === "catalog" ? "skill" : "action");
+}
+
+/** CM28's honest mapping of upstream's Enter rule onto `CommandEntry`, which has no `type`. `XJa`
+ *  (bundle L490110) inserts `/name ` and then executes it only when
+ *  `a.type !== "prompt" || (a.argNames ?? []).length === 0` — i.e. a slash command that is a PROMPT TEMPLATE
+ *  taking named arguments gets inserted and left for the user to fill in; everything else runs on the spot.
+ *
+ *  Our `CommandEntry` carries no `type` and no `argNames`, so the proxy (T6's catalog reality): a `local`
+ *  entry is one of our own built-ins, which are never prompt templates, so it always runs; a `catalog` entry
+ *  IS an SDK prompt command, and `argumentHint` is the only argument evidence it carries, so it runs unless
+ *  it declares one. Recorded as a mapping rather than a transcription because that is what it is. */
+export function executesOnEnter(e: CommandEntry): boolean {
+  return e.source === "local" || !e.argumentHint;
 }

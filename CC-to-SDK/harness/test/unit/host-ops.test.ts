@@ -54,6 +54,7 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   follow: (_deliver: (ev: HostEvent) => void) => () => {},
   control: async () => ({ ok: true }),
   resume: async () => {},
+  clear: async () => {},
   turnSeq: () => 0,
   tasks: () => [],
   background: async () => true,
@@ -61,6 +62,13 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   rewindAnchors: async () => [],
   rewindDryRun: async () => ({ canRewind: false }),
   rewind: async () => {},
+  getSettings: async () => ({}),
+  listDirs: () => [],
+  addDir: async () => {},
+  removeDir: async () => {},
+  setOutputStyle: async () => {}, setEffort: async () => {},
+  addRule: async () => {},
+  removeRule: async () => {},
   ...over,
 });
 
@@ -226,6 +234,16 @@ describe("host ops", () => {
   it("rejects malformed control ops", () => {
     for (const frame of [{ op: "set_permission_mode" }, { op: "set_thinking" }, { op: "mcp_reconnect" }, { op: "mcp_toggle", name: "x" }, { op: "resume" }])
       expect(hostOp.safeParse(frame).success).toBe(false);
+  });
+  // WAVE C TASK 11 (EP-C6): `set_effort` is the one op whose value domain the SCHEMA closes, and it closes it
+  // for a reason probe 102 measured — `applyFlagSettings({effortLevel})` accepts a bogus level SILENTLY, so
+  // the wire is the last checkpoint before an unvalidated string reaches the engine. ccx also validates
+  // client-side (useChat), which is what keeps a typo from ever becoming a frame; this is the belt.
+  it("set_effort accepts exactly the five levels and rejects everything else", () => {
+    for (const level of ["low", "medium", "high", "xhigh", "max"])
+      expect(hostOp.safeParse({ op: "set_effort", level }).success, level).toBe(true);
+    for (const frame of [{ op: "set_effort" }, { op: "set_effort", level: "bogus" }, { op: "set_effort", level: "" }, { op: "set_effort", level: 3 }])
+      expect(hostOp.safeParse(frame).success, JSON.stringify(frame)).toBe(false);
   });
 
   // GB T4: tasks/background/stop_task dispatch. `tasks` reads the host's OWN snapshot and never fails

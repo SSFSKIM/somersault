@@ -1,0 +1,40 @@
+ ❯ 2. Sonnet ✔                Sonnet 5 · Efficient for
+                              routine tasks
+ ↓ 3. Opus                   Opus 5 · Best for everyday,
+                             complex tasks
+    … +1 model
+
+ ◈ Max effort ←/→ to adjust
+ May use excessive tokens resulting in long response times
+❯ Reply with exactly: S2QA4-CCX-OK
+⏺ S2QA4-CCX-OK
+✻ Sautéed for 3s
+❯ /model
+❯ /resume
+Resume cancelled
+❯ /theme
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Choose the text style that looks best with your terminal                                                             │
+│ ❯ Auto (match terminal)                                                                                              │
+│   Dark mode                                                                                                          │
+│   Light mode                                                                                                         │
+│   Dark mode (colorblind-friendly)                                                                                    │
+│   Light mode (colorblind-friendly)                                                                                   │
+│                                                                                                                      │
+│ demo.js                                                                                                              │
+│  function greet() {                                                                                                  │
+│ -  console.log("Hello, World!");                                                                                     │
+│ +  console.log("Hello, Claude!");                                                                                    │
+│  }                                                                                                                   │
+│ Enter to select · Esc to cancel                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+

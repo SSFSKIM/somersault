@@ -1,0 +1,40 @@
+  98. multiprocessing - Parallelism using separate operating system processes.
+  99. concurrent.futures - High level pools for threads and processes.
+  100. asyncio - Asynchronous I/O with coroutines and event loops.
+  101. sched - General purpose event scheduler.
+  102. signal - Set handlers for asynchronous system signals.
+  103. select - Wait for I/O readiness on file descriptors.
+  104. selectors - High level I/O multiplexing built on select.
+  105. socket - Low level networking interface.
+  106. ssl - TLS wrapper for socket connections.
+  107. ipaddress - Manipulate IPv4 and IPv6 addresses and networks.
+  108. http - HTTP status codes, clients, and server building blocks.
+  109. urllib - Fetch and parse URLs over the network.
+  110. ftplib - FTP client protocol implementation.
+  111. smtplib - Send mail using the SMTP protocol.
+  112. email - Compose, parse, and manage email messages.
+  113. mimetypes - Guess media types from filenames.
+  114. html - Escape and unescape HTML markup.
+  115. xml.etree.ElementTree - Lightweight XML parsing and generation.
+  116. xmlrpc - XML-RPC client and server support.
+  117. webbrowser - Open documents in the user's web browser.
+  118. ast - Parse Python source into abstract syntax trees.
+  119. dis - Disassemble Python bytecode.
+  120. importlib - Programmatic access to the import system.
+❯ Run this exact bash command and then say DONE: seq 1 300 | sed "s/^/row /"
+⏺ Bash(seq 1 300 | sed "s/^/row /")
+  ⎿  row 1
+     row 2
+     row 3
+     … +297 lines (ctrl+o to expand)
+⏺ DONE
+❯ Think hard about whether 91 is prime, then answer in one word.
+⏺ Composite
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ⏎ send · backslash (\) + return (⏎) for newline · @ files · / commands · ! bash · ⇧Tab mode · ? help
+ Esc rewind · ? help
+model claude-opus-5  mode acceptEdits (⇧Tab to cycle)  think default  ctx 4%
+
+

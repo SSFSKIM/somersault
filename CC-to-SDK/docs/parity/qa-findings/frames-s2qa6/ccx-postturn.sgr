@@ -1,0 +1,40 @@
+[38;2;215;119;87m╭─── ccx v0.1.0 ──────────────────────────────────╮[39m
+[1m[38;2;215;119;87m│ ✻ Welcome to Claude Code                        │[0m
+[38;2;215;119;87m╰─────────────────────────────────────────────────╯[39m
+
+[2m  cwd    /private/tmp/s2qa6-uZ0gAX/proj-ccx-62TGG7[0m
+[2m  model  claude-opus-5   ·   mode  default[0m
+
+  Tips for getting started
+[2m  • Ask Claude to edit files, run commands, or explain code[0m
+[2m  • /help for commands · @ to reference files · ⇧Tab to change mode[0m
+[2m  • Esc to interrupt a response[0m
+
+[2mAuto mode lets Claude handle permission prompts automatically — Claude checks each tool call for risky actions and [0m
+[2mprompt injection before executing. Actions Claude identifies as safe are executed, while actions Claude identifies as [0m
+[2mrisky are blocked and Claude may try a different approach. Ideal for long-running tasks. Sessions are slightly more [0m
+[2mexpensive. Claude can make mistakes that allow harmful commands to run, it's recommended to only use in isolated [0m
+[2menvironments. Shift+Tab to change mode.[0m
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mWrite exactly 120 words about the history of lighthouses.                                                            [39m[49m
+[38;2;255;255;255m⏺ [39mLighthouses began in antiquity, when fires burned atop headlands to warn mariners of danger. The Pharos of
+Alexandria, built around 280 BCE, became one of the ancient world's wonders, guiding ships safely for centuries. Romans
+erected towers across their empire; the Tower of Hercules in Spain still operates today. Medieval Europe entrusted many
+lights to monks and guilds, burning wood or coal in open braziers. The eighteenth century brought sturdier engineering,
+notably John Smeaton's Eddystone tower, which used interlocking stone. Argand lamps and parabolic reflectors improved
+brightness, then Augustin-Jean Fresnel's stepped lens of 1822 transformed visibility, projecting beams far offshore.
+Electrification followed, and automation gradually replaced keepers. Today satellite navigation has diminished their
+role, yet lighthouses endure as cherished landmarks.
+[2m✻ Baked for 26s[0m
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ [7m [0m
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [38;2;153;153;153m⏸ manual mode on[2m[39m · ? for shortcuts[0m
+
+
+
+
+
+
+
+
+

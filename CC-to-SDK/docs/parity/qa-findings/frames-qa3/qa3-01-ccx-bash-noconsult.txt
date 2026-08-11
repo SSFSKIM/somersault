@@ -1,0 +1,40 @@
+[38;2;215;119;87m╭─────────────────────────────────────────────────╮[39m
+[1m[38;2;215;119;87m│ ✻ Welcome to Claude Code                        │[0m
+[38;2;215;119;87m╰─────────────────────────────────────────────────╯[39m
+
+[2m  cwd    /private/tmp/qa3-root/proj-ccx-8b1gAu[0m
+[2m  model  (default)   ·   mode  default[0m
+
+  Tips for getting started
+[2m  • Ask Claude to edit files, run commands, or explain code[0m
+[2m  • /help for commands · @ to reference files · ⇧Tab to change mode[0m
+[2m  • Esc to interrupt a response[0m
+
+[38;2;80;80;80m[48;2;55;55;55m❯ [38;2;255;255;255mRun the shell command: git init                                                                                      [39m[49m
+[38;2;255;255;255m⏺ [39mI'll run that for you.
+[38;2;78;186;101m⏺ [1m[39mBash[0m(git init)
+  ⎿  hint: Using 'master' as the name for the initial branch. This default branch name
+     hint: will change to "main" in Git 3.0. To configure the initial branch name
+     hint: to use in all of your new repositories, which will suppress this warning,
+     [2m… +11 lines (ctrl+o to expand)[0m
+[38;2;255;255;255m⏺ [39mDone. Git reported it [1mreinitialized an existing empty repository[0m at [38;2;177;185;249m/private/tmp/qa3-root/proj-ccx-8b1gAu/.git/[39m — so
+a [38;2;177;185;249m.git[39m directory was already there (empty, no commits); nothing was lost.
+
+  Two notes from the output:
+  - The initial branch is [38;2;177;185;249mmaster[39m. Git printed its usual hint that this default changes to [38;2;177;185;249mmain[39m in Git 3.0 — you can
+rename with [38;2;177;185;249mgit branch -m main[39m or set [38;2;177;185;249mgit config --global init.defaultBranch main[39m.
+  - Your git output is localized to Korean.
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ [7m [0m
+[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [2m⏎ send · backslash (\) + return (⏎) for newline · @ files · / commands · ! bash · ⇧Tab mode · ? help[0m
+ [2mEsc rewind · ? help[0m
+model [38;2;177;185;249mclaude-opus-5[39m  mode [38;2;177;185;249mauto[2m[39m (⇧Tab to cycle)[0m  think [38;2;175;135;255mdefault[39m  ctx 2%
+
+
+
+
+
+
+
+

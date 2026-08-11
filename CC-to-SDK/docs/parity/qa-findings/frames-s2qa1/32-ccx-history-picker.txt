@@ -1,0 +1,40 @@
+  • Esc to interrupt a response
+
+❯ /model
+❯ Reply with exactly: HIST-ONE
+⏺ HIST-ONE
+✻ Sautéed for 3s
+❯ Reply with exactly: HIST-TWO
+⏺ HIST-TWO
+✻ Baked for 2s
+❯ SE1
+⏺ I'm not sure what "SE1" refers to — could you say what you'd like me to do?
+✻ Brewed for 3s
+! echo S2QA1-BASH-OK
+  S2QA1-BASH-OK
+❯ /history
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Search prompts · everywhere                                                                                          │
+│ ›                                                                                                                    │
+│   0s /history            ╭──────────╮                                                                                │
+│   2m !echo S2QA1-BASH-OK │ /history │                                                                                │
+│   2m @src/utils/beta.ts  │          │                                                                                │
+│   3m CU1                 │          │                                                                                │
+│   3m SE2                 │          │                                                                                │
+│   3m SE1                 │          │                                                                                │
+│   3m AAA#                │          │                                                                                │
+│   4m AA\BB               ╰──────────╯                                                                                │
+│ ⏎ run · Tab/Esc edit · Ctrl-R next · Ctrl-S scope · Ctrl-C close                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+

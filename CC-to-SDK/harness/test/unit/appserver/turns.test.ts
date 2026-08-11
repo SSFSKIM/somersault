@@ -131,6 +131,52 @@ describe("appserver turns (Task 8)", () => {
     expect(parsed(s.lines).find((f) => f.id === 4).result.turn.status).toBe("inProgress");
   });
 
+  it("a submit that RESOLVES ERROR-TAGGED (Task 14: a terminal result frame that reported failure) broadcasts turn/completed{status:'failed', error} and finalizes its open tool call as failed", async () => {
+    // turn/completed is a ONE-SHOT broadcast — nothing later corrects it — so an error tag dropped here is
+    // a subscriber permanently told a dead API completed the turn. The error text survives only inside the
+    // assistant message items, which no status field points at.
+    const sessionFactory = () => ({
+      submit: async (_prompt: string, onMessage: (m: unknown) => void) => {
+        onMessage({ type: "assistant", message: { id: "msg1", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] } });
+        return { result: "Failed to authenticate. API Error: 401 probe 96 synthetic 401", error: { message: "Failed to authenticate. API Error: 401 probe 96 synthetic 401", terminalReason: "api_error", apiErrorStatus: 401 } };
+      },
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
+    expect(completed.params.turn).toEqual({ id: `turn_${threadId}_1`, status: "failed", error: "Failed to authenticate. API Error: 401 probe 96 synthetic 401" });
+    const tool = parsed(s.lines).filter((f) => f.method === "item/completed").map((f) => f.params.item).find((i: any) => i.type === "toolCall");
+    expect(tool.status).toBe("failed");
+    // busy still clears — a failed turn must not wedge the thread.
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "again" } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 4).result.turn.status).toBe("inProgress");
+  });
+
+  it("an INTERRUPT wins over an error tag on the same resolve — the client's own abort is the more specific cause", async () => {
+    let resolveSubmit!: (r: { result: unknown; error?: { message: string } }) => void;
+    const sessionFactory = () => ({
+      submit: (_p: string, _o: (m: unknown) => void) => new Promise<{ result: unknown; error?: { message: string } }>((resolve) => { resolveSubmit = resolve; }),
+      interrupt: async () => { resolveSubmit({ result: "x", error: { message: "aborted mid-stream" } }); return {}; },
+      dispose: async () => {},
+      onFrame: () => () => {},
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    send(c, { id: 4, method: "turn/interrupt", params: { threadId } });
+    await tick();
+    const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
+    expect(completed.params.turn).toEqual({ id: `turn_${threadId}_1`, status: "interrupted" });
+  });
+
   it("a submit that RESOLVES after interrupt() (the real engine's actual contract — session.ts's readLoop discards error_during_execution and resolves the waiter) completes as 'interrupted', not 'completed'", async () => {
     let resolveSubmit!: (r: { result: unknown }) => void;
     const sessionFactory = () => ({

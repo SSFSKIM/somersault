@@ -10,6 +10,12 @@ import type { SessionHostOpts, HostSession } from "../../src/host/host.js";
 import { remoteChatSession } from "../../src/client/chatAdapter.js";
 import { hostSocketPath } from "../../src/fleet/paths.js";
 import { readRoster } from "../../src/fleet/roster.js";
+import { replayDocument } from "../../src/tui/replay.js";
+import { projectCompact } from "../../src/tui/toolRenderer.js";
+import { READ_CALL, READ_RESULT_FLAT } from "../fixtures/f1-tool-transcript.js";
+
+const projectionOptions = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+const replayOptions = { id: "session-1", label: "fixture" };
 
 const fleets: string[] = [];
 const tmpFleet = () => { const d = mkdtempSync(join(tmpdir(), "ccx-attach-")); fleets.push(d); return d; };
@@ -96,6 +102,18 @@ describe("ccx attach — host + adapter over a real socket (Task 8)", () => {
       adapter.detach();
       await stopQuietly(host);
     }
+  });
+
+  // F1 Task 4: the disk half and the idle follow buffer now meet inside ONE retained document, and its
+  // identity dedup — not a "no start frame" guard — is what stops the same completed turn showing twice.
+  it("deduplicates a disk transcript against an idle follow buffer without needing turn:start", async () => {
+    const { host, session, path } = await startHost("a0000008");
+    const turn = host.runTask("go"); session.emit(READ_CALL); session.emit(READ_RESULT_FLAT); session.finish(); await turn;
+    const doc = replayDocument([READ_CALL, READ_RESULT_FLAT], replayOptions), adapter = remoteChatSession(path);
+    try {
+      await adapter.whenReady(); adapter.onSessionEvent((event) => { if (event.kind === "message") doc.appendSdk("host", event.data as Record<string, unknown>); });
+      expect(doc.toolEvents()).toHaveLength(1); expect(projectCompact(doc, projectionOptions).map((item) => JSON.stringify(item)).join("\n")).toContain("Read");
+    } finally { adapter.detach(); await stopQuietly(host); }
   });
 
   it("2. detach leaves everything: dispose() the adapter; the park is still pending on the host; a second adapter attaches and sees it again", async () => {

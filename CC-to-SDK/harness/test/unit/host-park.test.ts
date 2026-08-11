@@ -206,18 +206,18 @@ describe("host park policy", () => {
       await host.stop();
     });
 
-    it("plan_approve with acceptEdits sets planUpgradePending (consumed by the status-frame handler, Task 5)", async () => {
+    it("plan_approve arms the mode it GRANTED (consumed by the status-frame handler, Task 5)", async () => {
       const { host } = hostFor("bg"); await host.start();
       const d1 = host.broker().request({ toolName: "ExitPlanMode", input: {}, toolUseID: "p1", kind: "plan", signal: new AbortController().signal });
-      expect((host as any).planUpgradePending).toBe(false);
-      host.answer("p1", { kind: "plan_approve", acceptEdits: false }, "test");
+      expect((host as any).planUpgradeMode).toBeUndefined();
+      host.answer("p1", { kind: "plan_approve", mode: "default" }, "test");
       await d1;
-      expect((host as any).planUpgradePending).toBe(false);   // acceptEdits:false must NOT set it
+      expect((host as any).planUpgradeMode).toBeUndefined();   // the engine reaches `default` on its own
 
       const d2 = host.broker().request({ toolName: "ExitPlanMode", input: {}, toolUseID: "p2", kind: "plan", signal: new AbortController().signal });
-      host.answer("p2", { kind: "plan_approve", acceptEdits: true }, "test");
+      host.answer("p2", { kind: "plan_approve", mode: "bypassPermissions" }, "test");
       await d2;
-      expect((host as any).planUpgradePending).toBe(true);
+      expect((host as any).planUpgradeMode).toBe("bypassPermissions");
       await host.stop();
     });
 

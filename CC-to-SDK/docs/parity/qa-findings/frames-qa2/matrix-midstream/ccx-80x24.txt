@@ -1,0 +1,24 @@
+  formatted as "N. modulename - one short sentence".
+
+✶ Topsy-turvying… (0s · esc to interrupt)
+────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────
+❯ 
+      print("remainder:", a % b)
+      print("equal:", a == b)
+      print("both truthy:", bool(a and b))
+      print("member:", a in (1, 2, 3))
+      print("xor:", a ^ b)
+
+
+  describe(7, 2)
+✳ Topsy-turvying… (3s · esc to interrupt)
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+ ⏎ send · backslash (\) + return (⏎) for newline · @ files · / commands · !
+ bash · ⇧Tab mode · ? help
+ Esc interrupt
+model claude-opus-modeacceptEdit (⇧Tab to cycle  think        ctx 3  ⟳ streaming
+                                               default
+

@@ -25,24 +25,24 @@ function gatingQuery(hold: { call?: Promise<any> }): QueryFn {
 }
 
 describe("supervisor permission wiring", () => {
-  it("auto + unsupported model forces sonnet-4-6 and sets permissionMode; broker wired", async () => {
+  it("auto + unsupported model forces the auto default and sets permissionMode; broker wired", async () => {
     const cap: any[] = [];
     const sup = new DaemonSupervisor({ query: captureQuery(cap) }, { dir: tmp(), now: () => 0, idleTimeoutMs: 0 });
     const id = sup.spawn({ model: "claude-haiku-4-5-20251001", permissionMode: "auto" });
-    expect(cap[0].model).toBe("claude-sonnet-4-6");
+    expect(cap[0].model).toBe("claude-sonnet-5");
     expect(cap[0].permissionMode).toBe("auto");
     expect(typeof cap[0].canUseTool).toBe("function");
-    expect(sup.list().find((r) => r.id === id)!.model).toBe("claude-sonnet-4-6");
+    expect(sup.list().find((r) => r.id === id)!.model).toBe("claude-sonnet-5");
     await sup.shutdown();
   });
 
-  it("auto + no model → opus-4-8 (default); auto + supported preserved; non-auto leaves model + defaults mode to auto", async () => {
+  it("auto + no model → opus-5 (default); auto + supported preserved; non-auto leaves model + defaults mode to auto", async () => {
     const cap: any[] = [];
     const sup = new DaemonSupervisor({ query: captureQuery(cap) }, { dir: tmp(), now: () => 0, idleTimeoutMs: 0 });
     sup.spawn({ permissionMode: "auto" });
     sup.spawn({ model: "claude-opus-4-6", permissionMode: "auto" });
     sup.spawn({ model: "claude-haiku-4-5-20251001" });           // non-auto (explicit model)
-    expect(cap[0].model).toBe("claude-opus-4-8");                 // auto + no model → opus default (was sonnet)
+    expect(cap[0].model).toBe("claude-opus-5");                   // auto + no model → opus default (was sonnet)
     expect(cap[1].model).toBe("claude-opus-4-6");
     expect(cap[2].model).toBe("claude-haiku-4-5-20251001");       // explicit model preserved
     expect(cap[2].permissionMode).toBe("auto");                   // non-auto spawn now defaults to auto
@@ -58,7 +58,7 @@ describe("supervisor permission wiring", () => {
     expect(cap[0].systemPrompt.append).toContain("fork");
     expect(cap[0].settingSources).toEqual(["user", "project", "local"]);
     expect(cap[0].tools).toEqual({ type: "preset", preset: "claude_code" });
-    expect(cap[0].model).toBe("claude-opus-4-8");
+    expect(cap[0].model).toBe("claude-opus-5");
     expect(cap[0].permissionMode).toBe("auto");
     expect(typeof cap[0].canUseTool).toBe("function");           // daemon broker survives the factory overlay
     await sup.shutdown();
