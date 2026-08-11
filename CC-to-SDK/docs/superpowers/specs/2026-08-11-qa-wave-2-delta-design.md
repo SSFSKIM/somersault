@@ -249,6 +249,16 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
   affordance) rather than canon's full-screen picker takeover with its own footer — the takeover
   is a separate UI unit, backlog. Closes s2qa4-13 fully, s2qa4-14 partially; recorded in
   `tui-ux.md` at re-score.
+- **D-W11 [DECIDED, Task 6 review]** The statusLine boot run waits for the mount context read,
+  raced against a ~1500 ms cap. The reviewer measured `getContextUsage()` at ~1.2 s warm — four
+  times the debounce window — so "one boot run" and "real window at first paint" were mutually
+  impossible as shipped; gating the run on the read (capped) delivers both, at the cost of the
+  first row appearing ~1.5 s after mount (canon's is immediate because its window value is a
+  client-side constant; recorded divergence). Companion: `/status` awaits `refreshCtx()` itself —
+  a fresh explicit measurement is measure-then-show, consistent with Wave S, and it removes the
+  only user-visible trace of the mount-read-inside-statusLine coupling. *Rejected:* canon's
+  immediate undebounced boot run (two runs, first one lying zero — the filed defect); un-gating
+  the mount read (1.2 s of engine work on every boot for a row only /status shows).
 - **D-W10 [DECIDED, Task 3 review + bundle]** The exit arm's first press bumps the clear-draft
   token ONLY when the composer is the active surface. The Task 3 fall-through exposed that a
   Ctrl-C over an overlay silently cleared the parked draft (deferred to remount); canon's latch
