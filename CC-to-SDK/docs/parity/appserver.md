@@ -47,11 +47,20 @@ limit clamped to 500 + `warning`), `thread/compact/start` (compaction is a turn 
 spine), `turn/start`, `turn/interrupt`, `decision/list`, `decision/respond`, `thread/model/set`,
 `thread/permissionMode/set` (`auto` self-heals the model first), `thread/thinking/set`,
 `thread/settings/apply`, `thread/capabilities/read`, `thread/contextUsage/read`, `thread/usage/read`,
-`thread/init/read`, `account/read`, and M2b Wave 3's MCP quintet — `mcpServer/status/list` (un-chained
-read), `mcpServer/reconnect`, `mcpServer/toggle`, `mcpServer/set` (all three chain-scoped, and each
-pings `thread/capabilities/changed` on success since `mcpServers` is one of the four catalogs
+`thread/init/read`, `account/read`; then M2b Wave 3's three clusters, in the order `server.ts`'s table
+registers them. The **rewind trio** — `thread/rewind/anchors` (re-read every time, never cached),
+`thread/rewind/dryRun` (un-chained; normalizes the engine's throw-vs-return split into one
+`{canRewind}` shape), `thread/rewind` (busy-gated and park-gated at request arrival, then file restore
+on the live engine before the conversation swap, which bumps `record.epoch` and announces
+`thread/rewound`). The **MCP quintet** — `mcpServer/status/list` (un-chained read),
+`mcpServer/reconnect`, `mcpServer/toggle`, `mcpServer/set` (all three chain-scoped, and each pings
+`thread/capabilities/changed` on success since `mcpServers` is one of the four catalogs
 `thread/capabilities/read` replies), `mcpServer/permissionModeOverride/set` (chain-scoped, rules-layer
-only per probe 49 — no capabilities ping).
+only per probe 49 — no capabilities ping). The **background-task trio** — `task/list` (un-chained read
+of the engine's live task set, `{data, nextCursor}` envelope), `task/stop` and `turn/background` (both
+chain-scoped; `turn/background`'s `toolUseId` is optional and its reply carries the engine's boolean
+receipt verbatim). None of the three emits a notification of its own: the engine's own task frames
+already reach subscribers as `task/event` / `task/changed` through the Wave 1 frame router.
 
 **24 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized`, `warning`; server-scoped (via `initialize{watchThreads:true}`)
@@ -94,9 +103,11 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
    list (a documented omission; growing the host wire is named follow-up work).
 4. **`thread/stop`/`thread/attach` are the mirror of the inProcess-only rule** — they only make
    sense for a fleet-adopted thread, scored `fleet-only` here.
-5. **The task split:** `task/changed` + `task/event` **notifications** ship (the Wave 1 frame router
-   relays engine task frames), while the `task/list`/`task/stop`/`turn/background` **methods** stay
-   M2b. A row's status describes its *method*; the notification half is already live.
+5. **The task split is CLOSED as of M2b Wave 3** (kept at this number so older references still
+   resolve). Both halves now ship: the `task/changed` + `task/event` **notifications** from the Wave 1
+   frame router, and the `task/list`/`task/stop`/`turn/background` **methods** (`appserver/tasks.ts`),
+   which deliberately add no notifications of their own — a stop's outcome is reported by the engine's
+   own frames, not by the request that asked for it.
 6. **Nine host ops post-date the spec's 25-op inventory** (`clear`; W3 T1's `get_settings`,
    `list_dirs`, `add_dir`, `remove_dir`, `set_output_style`, `add_rule`, `remove_rule`; Wave C's
    `set_effort`). No protocol methods exist for them yet — the method names below are **proposed**,
@@ -130,9 +141,9 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `mcp_reconnect` | host/ops.ts | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `mcp_toggle` | host/ops.ts | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `resume` | host/ops.ts | `thread/resume` | both | shipped(M1) — via `resumeSession` (lib), see gap 2 |
-| `tasks` | host/ops.ts | `task/list` | both | planned(M2b) — `task/changed` notification ships (gap 5) |
-| `background` | host/ops.ts | `turn/background` | both | planned(M2b) |
-| `stop_task` | host/ops.ts | `task/stop` | both | planned(M2b) |
+| `tasks` | host/ops.ts | `task/list` | both | shipped(M2b) — un-chained read of the engine's live task set |
+| `background` | host/ops.ts | `turn/background` | both | shipped(M2b) — relays the engine's boolean receipt |
+| `stop_task` | host/ops.ts | `task/stop` | both | shipped(M2b) |
 | `rewind_anchors` | host/ops.ts | `thread/rewind/anchors` | both | shipped(M2b) |
 | `rewind_dryrun` | host/ops.ts | `thread/rewind/dryRun` | both | shipped(M2b) |
 | `rewind` | host/ops.ts | `thread/rewind` | both | shipped(M2b) — engine swap, host-order validation |
@@ -158,9 +169,9 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `context_usage` | bridge/types.ts | `thread/contextUsage/read` | inProcess | shipped(M2a) |
 | `account_info` | bridge/types.ts | `account/read` | inProcess | shipped(M2a) — see gap 3 |
 | `reinitialize` | bridge/types.ts | `thread/reinitialize` | inProcess | shipped(M2a) — busy-gated |
-| `background_tasks` | bridge/types.ts | `task/list` | inProcess | planned(M2b) — `task/changed` ships (gap 5) |
-| `stop_task` | bridge/types.ts | `task/stop` | inProcess | planned(M2b) |
-| `background_all` | bridge/types.ts | `turn/background` | inProcess | planned(M2b) |
+| `background_tasks` | bridge/types.ts | `task/list` | inProcess | shipped(M2b) |
+| `stop_task` | bridge/types.ts | `task/stop` | inProcess | shipped(M2b) |
+| `background_all` | bridge/types.ts | `turn/background` | inProcess | shipped(M2b) |
 
 ## Session store wrappers — `harness/src/sessions/index.ts` (7 tokens)
 
@@ -205,8 +216,8 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `toggleMcpServer` | sdk.d.ts (Query) | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `setMcpServers` | sdk.d.ts (Query) | `mcpServer/set` | inProcess | shipped(M2b) |
 | `streamInput` | sdk.d.ts (Query) | `turn/steer` *(X)* | inProcess | probe-gated — unprobed (D5) |
-| `stopTask` | sdk.d.ts (Query) | `task/stop` | both | planned(M2b) |
-| `backgroundTasks` | sdk.d.ts (Query) | `turn/background` | both | planned(M2b) |
+| `stopTask` | sdk.d.ts (Query) | `task/stop` | both | shipped(M2b) |
+| `backgroundTasks` | sdk.d.ts (Query) | `turn/background` | both | shipped(M2b) — optional `toolUseId`; absent = background them all |
 | `close` | sdk.d.ts (Query) | `thread/close` | both | shipped(M1)† |
 
 † Scored by the *method*, not the literal seam — `thread/close` works end to end through

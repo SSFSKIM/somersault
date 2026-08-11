@@ -71,6 +71,17 @@ export interface EngineSession {
   toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
   setMcpServers?(servers: Record<string, unknown>): Promise<{ added: string[]; removed: string[]; errors: Record<string, string> }>;
   setMcpPermissionModeOverride?(serverName: string, mode: string | null): Promise<unknown>;
+  /** Optional (the real lib Session has them — src/session/session.ts:191-196): M2b's background-task trio.
+   *  `stopTask`/`backgroundAll` reach the live transport (they throw once it is gone), while
+   *  `listBackgroundTasks` answers from the session's own level signal — the task set replaced wholesale by
+   *  each `system/background_tasks_changed` frame — so it stays answerable mid-turn. `backgroundAll`'s
+   *  boolean is a RECEIPT ("was anything backgrounded"), not a success flag, and an absent `toolUseId`
+   *  means "all in-flight foreground tasks" (Ctrl+B). The task-set shape is spelled structurally rather
+   *  than imported as `BackgroundTaskInfo`, matching this interface's other members: a DI fake satisfies it
+   *  without depending on the lib Session's module. */
+  stopTask?(taskId: string): Promise<void>;
+  backgroundAll?(toolUseId?: string): Promise<boolean>;
+  listBackgroundTasks?(): Promise<Array<{ task_id: string; task_type: string; description: string }>>;
   /** Optional (the real lib Session has it): true once the read loop has ended — the engine is gone.
    *  The ONLY dead-engine signal handlers may use (spec Wave 0: no message-matching, ever). */
   isEnded?(): boolean;

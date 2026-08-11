@@ -20,6 +20,7 @@ import { installRouter } from "./router.js";
 import { broadcastToWatchers, broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { rewindAnchors, rewindDryRun, threadRewind } from "./rewind.js";
 import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverrideSet } from "./mcp.js";
+import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
@@ -243,6 +244,9 @@ export class AppServer {
     "mcpServer/toggle": mcpToggle,
     "mcpServer/set": mcpSet,
     "mcpServer/permissionModeOverride/set": mcpPermissionModeOverrideSet,
+    "task/list": taskList,
+    "task/stop": taskStop,
+    "turn/background": turnBackground,
   };
 
   private readonly token: string;

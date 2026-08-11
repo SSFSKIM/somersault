@@ -8,6 +8,7 @@ import { decisionRespondParams, decisionListParams } from "./decisions.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.js";
 import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./mcp.js";
+import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
 
 export interface MethodSchema { params: z.ZodType }
 export const methodSchemas: Record<string, MethodSchema> = {
@@ -47,4 +48,7 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "mcpServer/toggle": { params: mcpToggleParams },
   "mcpServer/set": { params: mcpSetParams },
   "mcpServer/permissionModeOverride/set": { params: mcpOverrideParams },
+  "task/list": { params: taskListParams },
+  "task/stop": { params: taskStopParams },
+  "turn/background": { params: turnBackgroundParams },
 };
