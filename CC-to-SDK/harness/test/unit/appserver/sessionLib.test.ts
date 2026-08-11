@@ -8,9 +8,11 @@
 // offer one cannot be matched against a store row by definition. That is tested explicitly, not left
 // implicit in the happy-path cases.
 import { describe, it, expect } from "vitest";
-import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
+import { AppServer, threadView, type AppServerDeps } from "../../../src/appserver/server.js";
+import { storeOnlyView } from "../../../src/appserver/sessionLib.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
+import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -58,7 +60,27 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
     void srv;
   });
 
-  it("store-only rows project the same 14-field shape, with id=sessionId (no thr_ id) and status idle; pages with the merged-array cursor", async () => {
+  it("store-only rows project the EXACT field set a live threadView does — key-set equality, so the two cannot drift apart at any field count", async () => {
+    // The claim sessionLib.ts makes ("a client must not be able to tell a live row from a stored one by
+    // its shape alone") pinned as an equality rather than as a hand-listed field count: a field added to
+    // one projection and forgotten on the other fails HERE, whether the shape is at 13 fields or 15.
+    // Compared as OBJECTS, not as wire rows — JSON drops undefined-valued keys and the two views leave
+    // different fields undefined (a live row never has `preview`, a store row never has `origin`), so a
+    // wire-level comparison could only ever pin their intersection.
+    const { srv, lines, c } = boot();
+    init(c, 1);
+    const thread = await startThread(c, lines, 2);
+    const live = threadView(srv, srv.registry.get(thread.id)!);
+    const stored = storeOnlyView({ sessionId: "store-a", summary: "A", lastModified: 1_700_000_010_000, createdAt: 1_700_000_009_000, firstPrompt: "hi a" } as SDKSessionInfo);
+
+    expect(Object.keys(stored).sort()).toEqual(Object.keys(live).sort());
+    // and the one field whose store-side VALUE is a claim rather than a copy: a session this server never
+    // opened has no engine and no queue, so 0 is the fact, not a placeholder.
+    expect(stored.queueDepth).toBe(0);
+    expect(live.queueDepth).toBe(0);
+  });
+
+  it("store-only rows carry id=sessionId (no thr_ id), status idle and SECONDS timestamps; pages with the merged-array cursor", async () => {
     const { lines, c } = boot({
       // lastModified/createdAt are MILLISECONDS-since-epoch on SDKSessionInfo (per sdk.d.ts) — realistic
       // ms-scale values here (not small round numbers) so a /1000 unit bug would actually show up as a

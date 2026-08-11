@@ -285,7 +285,10 @@ command-list push — replace, don't merge; §13), `thread/name/updated`, `threa
 `thread/tokenUsage/updated` (per-turn result usage + context %), `thread/limits/updated`
 (limit/overage classification — sparse merge like Codex rate limits).
 Turn: `turn/started` `{turnId}`, `turn/completed` `{turnId, status, error?, truncated?}`,
-`turn/queued` `{threadId, turn: {id, status: "queued"}, position}` (added M2b — see Revision Notes),
+`turn/queued` `{threadId, turn: {id, status: "queued"}, position}` (added M2b — see Revision Notes;
+`position` is a per-emitter snapshot, not a subscription: the live broadcast carries the enqueue-time
+value while `thread/subscribe`'s replay carries the entry's current index, so the two can legitimately
+disagree for the same turn once an earlier entry is cancelled — consumers take the newer),
 `turn/todo/updated`.
 Item: `item/started`, `item/completed`, deltas per §5 table.
 Decision: `decision/requested`, `decision/resolved` (§6).

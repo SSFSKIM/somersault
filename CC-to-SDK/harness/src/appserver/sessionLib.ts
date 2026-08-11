@@ -65,12 +65,18 @@ function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRecord | 
  *  the fact, not a placeholder); `model`/`permissionMode`/`thinking`/`origin` have no store equivalent and
  *  stay `undefined` exactly as an un-configured registry row would read.
  *
+ *  EXPORTED for one reason: sessionLib.test.ts pins that claim by comparing this function's KEY SET
+ *  against a live `threadView`'s, which only an in-process call can do — the wire rows cannot be compared,
+ *  since JSON drops undefined-valued keys and the two views leave DIFFERENT fields undefined (a live row
+ *  never has `preview`, a store row never has `origin`), so a wire-level comparison could only ever pin
+ *  their intersection. Same reason `threadView` is exported from server.ts.
+ *
  *  UNIT NOTE (real bug caught in self-review, not just a style choice): `SDKSessionInfo.createdAt`/
  *  `lastModified` are documented milliseconds-since-epoch; `ThreadRecord.createdAt`/`updatedAt`
  *  (registry.ts) are explicitly unix SECONDS, and threadView passes those straight through. Without the
  *  /1000 below, a store-only row's timestamps would read ~1000x a live row's on the exact same wire
  *  field — wrong data, not just a cosmetic mismatch. */
-function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
+export function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
   return {
     id: info.sessionId,
     sessionId: info.sessionId,

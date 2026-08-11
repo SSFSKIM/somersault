@@ -605,6 +605,11 @@ document.getElementById("btnStartThread").onclick = async () => {
 // ---------------------------------------------------------------------------------------------
 const liveThreads = new Map(); // id -> view (server.ts's threadView / sessionLib.ts's storeOnlyView shape)
 let threadListCursor = null;
+// The ids the last thread/list walk actually returned. `liveThreads` only ever GROWS (rows are merged in,
+// never dropped), so a view left over from an earlier list is indistinguishable from a fresh one — and
+// panel F's queueDepth badge, whose whole job is to be honest about freshness, would happily show a stale
+// number as if it had just been read. Null until the first list.
+let lastListedIds = null;
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
@@ -665,6 +670,9 @@ async function refreshThreadList(more) {
   try {
     const r = await send("thread/list", params);
     for (const row of r.data) upsertLiveThread(row);
+    // Union while paging a single walk (every page of it was just fetched), replace when a walk restarts.
+    lastListedIds = more && lastListedIds ? lastListedIds : new Set();
+    for (const row of r.data) lastListedIds.add(row.id);
     threadListCursor = r.nextCursor;
     document.getElementById("btnMoreThreads").style.display = threadListCursor ? "" : "none";
     document.getElementById("btnMoreThreads").disabled = false;
@@ -1209,10 +1217,10 @@ function renderQueue() {
   const tbody = document.querySelector("#queueTable tbody");
   tbody.innerHTML = "";
   const id = activeId();
-  let shown = 0;
+  let stillQueued = 0;
   for (const [turnId, q] of queuedTurns) {
     if (q.threadId !== id) continue;
-    shown++;
+    if (q.status === "queued") stillQueued++;
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${esc(turnId)}</td><td>${esc(q.status)}</td><td>${esc(q.position)}</td><td></td>`;
     // Only a still-queued entry is cancellable by id: once it has started, the same turnId falls
@@ -1222,21 +1230,30 @@ function renderQueue() {
     }
     tbody.appendChild(tr);
   }
-  document.getElementById("queueNote").textContent = shown ? "" : "(no turn/queued seen yet for the active thread)";
+  // Gated on entries still QUEUED, not on rows rendered: terminal rows stay on screen as the queue's
+  // history, so counting them would make this note unreachable forever after the first completion.
+  document.getElementById("queueNote").textContent = stillQueued ? "" : "(nothing queued for the active thread right now)";
   renderQueueDepth();
 }
 
-/** The badge is a projection of the last `threadView` this console received (thread/list or
- *  thread/started) NEXT TO its own event-derived count — see the panel callout: `queueDepth` has no
- *  notification carrier, so the server number is only as fresh as the last list. Showing both is the
- *  honest rendering, and a disagreement after a refresh is a real finding rather than a redraw bug. */
+/** The badge is a projection of the last `threadView` this console received NEXT TO its own event-derived
+ *  count — see the panel callout: `queueDepth` has no notification carrier, so the server number is only
+ *  as fresh as the last list. Showing both is the honest rendering, and a disagreement after a refresh is
+ *  a real finding rather than a redraw bug.
+ *
+ *  Which is exactly why a view the last list did NOT return reads "(not in last page)" rather than its
+ *  old number: `thread/list` pages, `liveThreads` only grows, and a stale number rendered as if it were
+ *  fresh would manufacture the very disagreement the callout tells the operator to trust. */
 function renderQueueDepth() {
   const id = activeId();
   const view = liveThreads.get(id);
-  const reported = view && typeof view.queueDepth === "number" ? view.queueDepth : null;
+  const fresh = !lastListedIds || lastListedIds.has(id); // pre-first-list: nothing claims freshness either way
+  const reported = fresh && view && typeof view.queueDepth === "number" ? view.queueDepth : null;
   const local = [...queuedTurns.values()].filter((q) => q.threadId === id && q.status === "queued").length;
   const el = document.getElementById("queueDepthBadge");
-  el.textContent = `queueDepth ${reported === null ? "—" : reported} (server, as of last list) · ${local} queued here`;
+  const serverText = reported !== null ? `${reported} (server, as of last list)`
+    : view && !fresh ? "(not in last page — press Refresh)" : "—";
+  el.textContent = `queueDepth ${serverText} · ${local} queued here`;
   el.className = "badge " + (local || reported ? "active" : "idle");
 }
 
