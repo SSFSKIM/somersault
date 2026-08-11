@@ -24,9 +24,14 @@
 # under a 120 → 90 → 150 → 120 chain logged `resize 150`, `resize 120` and no 90. That reflow leaves real
 # residue on screen (a 30-cell tail of a 120-wide rule) and NOTHING in ccx can reach it: every repair here is
 # measured off widths the process observed, and this one it never saw. Repairing it would need a screen-level
-# wipe, which is the over-erase the whole wave refuses. The observable regime — a mouse drag, whose signals do
-# arrive individually, ~12 ms apart (measured) — is what `resizeRepaint.ts`'s settle window handles, and it is
-# pinned in test/unit/resize-repaint.test.ts rather than here.
+# wipe, which is the over-erase the whole wave refuses.
+#   WHAT IS LEFT IS THEREFORE A BOUNDED CLAIM, and the bound is not measured (fix round 1). The regime the
+# settle window handles is a drag whose legs the handler observes one at a time — a live mouse drag on a real
+# emulator, which is not scriptable from here and whose inter-signal spacing this repo has NOT measured (an
+# earlier "~12 ms apart (measured)" here had no recorded method and is withdrawn). The chained-tmux case above
+# is the counter-example in miniature: legs that land faster than the handler runs are never delivered, and
+# their residue is out of reach of any width-history repair. So s2qa2-07 is PARTIALLY addressed, with the
+# unreachable remainder named, and the reachable part pinned in test/unit/resize-repaint.test.ts, not here.
 #
 # WHY tmux AND NOT `scripts/capture-frames.py` (W-R2). pyte TRUNCATES long lines instead of reflowing them,
 # so the stale-rule remainder — the actual tell — never appears in a pyte frame. A green pyte run says
@@ -379,6 +384,80 @@ run_a5_cell() {
   record "a5" "$rc"
 }
 
+# ── the G1 cell: growing out of a HEIGHT-CLIPPED tall surface (W2 t7, s2qa2-05) ────────────────────────────
+# The other half of task 7, and the only place its grow edge is observable at all: the unit tests drive a FAKE
+# proxy, so they pin ChatApp's decision and can say nothing about whether the decision is ever reached on a
+# real terminal. The fix's first review found exactly that gap — the shipped edge read `tallWrites()` live from
+# a passive effect, which Ink's own synchronous repaint for the same SIGWINCH had already stood down.
+#
+# THE DEFECT. At 60x15 the `/model` picker's frame reaches the pane height, so Ink takes `ink.js:118`: it writes
+# `clearTerminal + fullStaticOutput + output` straight to stdout and log-update never sees it, leaving its
+# `previousLineCount` describing an older, shorter frame. Growing the pane lets the frame fit again, so the next
+# render goes back through log-update — which erases that stale count and paints below whatever it missed,
+# stranding the picker's top rows. The tell is the picker's own title appearing TWICE.
+#
+# THE PRECONDITION IS PROVABLE FROM OUTSIDE, WHICH IS WHY THIS CELL IS HONEST. "Did Ink take the tall branch"
+# is not visible in a pane capture — but its side effect is: the proxy strips `ESC[3J` from that chunk
+# (chatMain.tsx, "AND THE `ESC[3J` COMES OUT"), so the `fullStaticOutput` the same chunk carries APPENDS a
+# complete second copy of the session's committed transcript to SCROLLBACK. So the staged `/status` echo row,
+# counted over `capture-pane -S -`, goes from one to two the moment the branch fires. A run where it does not
+# fails the precondition rather than passing an assertion that could not have failed.
+#
+# AND IT HAS TEETH, MEASURED AS AN A/B ON THE SHIPPED BINARY. With the grow edge reading `tallWrites()` live
+# from the passive effect (the version this cell was written to falsify), the same sequence leaves `Select
+# model` on screen TWICE after the grow — the picker's title, subtitle and first rows stranded above Ink's new
+# frame, with the whole picker painted again below them. Reading the latch instead: once.
+run_g1_cell() {
+  local s="w2-t7-g1-$RUN_ID" rc=0 cap="$MATRIX_ROOT/cap-g1" hist="$MATRIX_ROOT/hist-g1" i=0 before=0 after=0 n=0 hold=0
+  echo "  cell g1: launch 60x15, open /model (frame is screen-tall) -> grow 60x40 -> 'Select model' exactly once"
+  launch "$s" 60 15 || { record "g1" 1; kill_cell "$s"; return; }
+  stage_content "$s" || { record "g1" 1; kill_cell "$s"; return; }
+  tmux capture-pane -t "$s" -p -S - > "$hist"
+  before=$(grep -cF "$CARET /status" "$hist")
+  # THE PICKER IS FOUND BY ITS FOOTER, NOT ITS TITLE. At 60x15 the title is exactly what the pane does NOT hold:
+  # the frame is taller than the pane, so `Select model` is off the top — which is the whole reason this cell
+  # exists, and why the post-grow assertion below is a count of 1 rather than a count that was already 1.
+  type_line "$s" "/model"
+  while [ "$i" -lt 40 ]; do
+    tmux capture-pane -t "$s" -p > "$cap"; grep -qF 'enter to set as default' "$cap" && break
+    sleep 0.25; i=$((i+1))
+  done
+  if ! grep -qF 'enter to set as default' "$cap"; then
+    echo "      FAIL g1 precondition: the /model picker never painted at 60x15"
+    sed 's/^/      | /' "$cap"; kill_cell "$s"; record "g1" 1; return
+  fi
+  # PRECONDITION 2 — the picker's frame actually took the tall branch (see the header). One extra copy of the
+  # committed transcript in scrollback per tall render; without one, the grow below has nothing to strand and a
+  # green assertion would prove nothing.
+  tmux capture-pane -t "$s" -p -S - > "$hist"
+  after=$(grep -cF "$CARET /status" "$hist")
+  if [ "$after" -le "$before" ]; then
+    echo "      FAIL g1 precondition: the picker frame did not take Ink's tall branch at 60x15 (scrollback copies of the staged row: $before -> $after) — nothing would be stranded by the grow"
+    kill_cell "$s"; record "g1" 1; return
+  fi
+  printf '      ok   %-28s picker up, tall branch taken (scrollback copies %s -> %s)\n' "g1 preconditions" "$before" "$after"
+  tmux resize-window -t "$s" -x 60 -y 40 || { echo "      FAIL resize-window failed"; kill_cell "$s"; record "g1" 1; return; }
+  # settle_frame's discipline, with this cell's own assertion: poll for a settled screen, never send a key while
+  # waiting (a keystroke forces a repaint that HIDES the residue), and take the verdict from the final capture.
+  i=0
+  while [ "$i" -lt 24 ]; do
+    tmux capture-pane -t "$s" -p > "$cap"
+    n=$(grep -cF 'Select model' "$cap")
+    if [ "$n" = 1 ]; then hold=$((hold+1)); [ "$hold" -ge 3 ] && break; else hold=0; fi
+    sleep 0.25; i=$((i+1))
+  done
+  tmux capture-pane -t "$s" -p > "$cap"
+  n=$(grep -cF 'Select model' "$cap")
+  if [ "$n" = 1 ]; then printf '      ok   %-28s Select model appears exactly once after the grow\n' "g1 grow 60x40"
+  else
+    printf '      FAIL %-28s Select model appears %s time(s) after the grow (want 1)\n' "g1 grow 60x40" "$n"
+    echo "      ── frame ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"; rc=1
+  fi
+  tmux send-keys -t "$s" Escape                        # close the picker before teardown
+  kill_cell "$s"
+  record "g1" "$rc"
+}
+
 # ── the live A3 cell: a resize DURING a streaming turn (Wave R task 6, qa2-09) ─────────────────────────────
 # `qa2-09` photographed up to FOUR `esc to interrupt` rows carrying THREE different elapsed times in one frame
 # after a mid-turn resize, and its claim that this self-heals at end of turn was refuted by measurement (spec
@@ -391,8 +470,20 @@ run_a5_cell() {
 # and skips (recording neither pass nor fail) when there is none. The component-level regression guard for the
 # same acceptance is `test/tui/resize-midturn.test.tsx`, which is keyless and runs in CI; it can prove that
 # ChatApp never mounts a second spinner, and cannot see repaint residue at all. This cell is the other half.
-spinner_rows() { grep -cF 'esc to interrupt' "$1"; }                        # spinner.ts:67's tail, verbatim
-elapsed_rows() { grep -cE '\(([0-9]+m )?[0-9]+s( · [0-9]+ tokens)? · esc to interrupt\)' "$1"; }   # …with its clock
+# ⚠ THESE TWO NEEDLES ARE STALE, AND THE CELL CANNOT PASS UNTIL THEY ARE RE-AUTHORED (found W2 t7 fix round 1,
+# the first run of this cell WITH a credential since Wave C — it skips keyless, which is why the rot survived
+# the two runs that reported 7/7). WAVE C TASK 6 rewrote the spinner tail to canon's `C0p`
+# (`({elapsed} · ↑ {N} tokens · {phase})`, spinner.ts:6-16) and MOVED the interrupt offer to the footer's hint
+# list (Footer.tsx:174-181, `⏸ manual mode on · esc to interrupt`). So `esc to interrupt` no longer appears on
+# the spinner row at all and DOES appear on the footer: `spinner_rows` now counts the footer, returns 1 the
+# instant a turn starts, and `settle_spinner` breaks out of its hold before the parenthetical clock exists —
+# measured on a live run, `escRows=1 elapsedRows=0` against a healthy build with one spinner up. Re-authoring
+# them means keying on the spinner GLYPH row (`SPINNER_FRAMES`, `{glyph} {verb}…`) and on the parenthetical's
+# own clock, and it needs its own live iteration (the segments are behind a width gate and a 16 s quiet
+# threshold, and the end-of-turn row must not read as an elapsed row) — which is a Wave C instrument repair,
+# not a task 7 one. Until then this cell fails for anyone who runs the matrix with a credential.
+spinner_rows() { grep -cF 'esc to interrupt' "$1"; }                        # ⚠ stale — see above
+elapsed_rows() { grep -cE '\(([0-9]+m )?[0-9]+s( · [0-9]+ tokens)? · esc to interrupt\)' "$1"; }   # ⚠ stale — see above
 # How many rows of the STREAMED REGION — everything ABOVE the composer's first rule — are wider than <width>.
 # Measured on the PRE-shrink capture, because `capture-pane` already folds every row to the pane width, so
 # SP-R0's "a line longer than the new width" can only be observed before the resize.
@@ -535,6 +626,7 @@ run_cell c4 120x40 100x40 90x40 80x40          # the accumulation cell (A2): thr
 run_cell h1 120x24 120x40                      # height-only control
 run_cell h2 80x40 80x15                        # height-only control
 run_a5_cell
+run_g1_cell                                    # W2 t7 (s2qa2-05): clip-then-grow out of Ink's tall branch
 run_a3_cell                                    # live (task 6, A3); skips cleanly with no credential
 
 PREFS_AFTER=$(prefs_stamp)

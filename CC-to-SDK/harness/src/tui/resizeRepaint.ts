@@ -41,9 +41,10 @@
 // abandoned the moment the terminal moves off the width it was measured at (`:191`), so a BURST — a drag that
 // crosses several widths before it settles — leaves every one of its legs uncorrected, and the residue they
 // stranded is permanent: nothing in the system ever looks above the current frame again. `correctionAtSettle` is
-// the second point: one bounded pass, once the drag has stopped for `RESIZE_SETTLE_MS`, measured off the LIVE
-// frame and DIRECTION-INDEPENDENT — a round-trip burst (120 → 90 → 150 → 120) nets no narrowing at all, so every
-// path that compares old against new declines while the 90 leg's residue is still on screen.
+// the second point: one bounded pass, once the drag has stopped for `RESIZE_SETTLE_MS`, and DIRECTION-INDEPENDENT
+// — a round-trip burst (120 → 90 → 150 → 120) nets no narrowing at all, so every path that compares old against
+// new declines while the 90 leg's residue is still on screen. It measures the SETTLED screen for everything the
+// settled screen can report, and remembers the narrowing as a PAIR (width and the frame that was on it).
 import stringWidth from "string-width";
 import type { ReflowVerdict } from "./reflowOracle.js";
 
@@ -148,11 +149,12 @@ export function correctionAfterRepaint(s: ResizeSample, verdict: ReflowVerdict, 
  *  probe (see `onResize`) — 80 ms is chosen only to outlast the gap between two signals of one drag. */
 export const RESIZE_SETTLE_MS = 80;
 
-/** What the SETTLED screen is, plus the one fact about the burst that the settled screen cannot report:
- *  `narrowest`, the narrowest width a NARROWING inside the burst landed on (`Infinity` for a burst that only
- *  grew). Everything else is read live at the moment the repair runs, which is the whole difference from the
- *  pre-burst `ResizeSample` this replaces — there is nothing here that can have gone stale. */
-export interface SettleSample { frame: string; parkedCol: number; width: number; narrowest: number; rows: number }
+/** What the SETTLED screen is (`frame`, `parkedCol`, `width`, `rows` — all read live at the moment the repair
+ *  runs), plus the one thing about the burst that the settled screen cannot report about itself: the narrowest
+ *  width a NARROWING inside it landed on (`Infinity` for a burst that only grew) AND THE FRAME THAT WAS ON
+ *  SCREEN THEN. Those two are ONE SAMPLE and are recorded together — a remembered width paired with whatever
+ *  frame happens to be live at settle time measures a re-wrap that never happened (fix round 1, finding 2). */
+export interface SettleSample { frame: string; frameAtNarrowest: string; parkedCol: number; width: number; narrowest: number; rows: number }
 
 /** THE BURST REPAIR (W2 t7), run once the drag has stopped for `RESIZE_SETTLE_MS`. It exists because every other
  *  path in this module is gated on a narrowing BETWEEN TWO ADJACENT SIGNALS, and a burst that ends where it began
@@ -161,22 +163,27 @@ export interface SettleSample { frame: string; parkedCol: number; width: number;
  *  abandoned by the `:191` guard the moment the terminal moves off the width it was measured at. The residue the
  *  90 leg left is on screen all the same, and nothing in the system ever looks above the current frame again.
  *  So this one is DIRECTION-INDEPENDENT: it does not compare old against new at all. It asks how much taller the
- *  frame ON SCREEN NOW would be at the narrowest width the burst crossed — those extra rows are rows that frame
- *  painted during the drag and Ink's logical-line erase never covered — erases them together with the frame and
- *  its park row, and writes the frame straight back, exactly as `correctionAfterRepaint` does and for the same
- *  reason (the bytes are the ones Ink last wrote, so log-update's counters still describe the screen).
+ *  frame that was ON SCREEN WHEN THE BURST NARROWED would have been at that narrowest width — those extra rows
+ *  are rows that frame painted during the drag and Ink's logical-line erase never covered — erases them together
+ *  with the frame that is on screen NOW and its park row, and writes that frame straight back, exactly as
+ *  `correctionAfterRepaint` does and for the same reason (the bytes are the ones Ink last wrote, so log-update's
+ *  counters still describe the screen).
  *  THE SAFETY ARGUMENT IS THE FILE'S, UNCHANGED (`:6-9`). Only a MEASURED `"reflow"` corrects; the erase is
- *  capped at the screen; and the depth is measured off the LIVE frame rather than a remembered one, so the
- *  stale-sample over-erase the `:191` guard exists for cannot arise here. Where it is wrong it is wrong SHORT:
- *  a burst with several shrinks strands more than one frame's worth and this claims only the deepest single
- *  excursion, which leaves a cosmetic row rather than eating a live one. */
+ *  capped at the screen; and — fix round 1, finding 2 — EACH TERM IS MEASURED OFF THE FRAME IT IS ABOUT, which
+ *  is `correctionAfterRepaint`'s split exactly: the residue off the REMEMBERED frame, the region off the LIVE
+ *  one. The shipped version paired the live frame with the remembered WIDTH, which moves the stale-sample
+ *  hazard the `:191` guard exists for rather than removing it: a streaming turn that grew the frame during the
+ *  drag scaled the claim with the wrong frame, and the reviewer drove 31 rows erased over 21 occupied and 0
+ *  owed — ten live viewport rows. Where this is wrong it is wrong SHORT: a burst with several shrinks strands
+ *  more than one frame's worth and this claims only the deepest single excursion, which leaves a cosmetic row
+ *  rather than eating a live one. */
 export function correctionAtSettle(s: SettleSample, verdict: ReflowVerdict | undefined): string {
   if (verdict !== "reflow" || !(s.width >= 2) || !(s.narrowest >= 2) || !(s.narrowest < s.width)) return "";
   // The park row is deliberately NOT in this difference: the proxy re-parks after every frame Ink wrote during
   // the drag, and `parkColumn` is always inside its own width, so that row was one row at every width the burst
   // visited. Measuring the LIVE park (117, chosen for 120) against 90 would claim a second row that was never
   // painted — an over-erase of exactly one row, the direction this file does not take.
-  const residue = physicalRows(s.frame, s.narrowest) - physicalRows(s.frame, s.width);
+  const residue = physicalRows(s.frameAtNarrowest, s.narrowest) - physicalRows(s.frameAtNarrowest, s.width);
   if (residue <= 0) return "";
   const erase = Math.min(residue + occupiedRows(s.frame, s.parkedCol, s.width), Math.max(1, s.rows));
   return eraseRows(erase) + s.frame;
@@ -231,20 +238,24 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
   // that only ever grew — and a grow strands nothing, because Ink erases the previous frame's LOGICAL line count,
   // which at a wider terminal is at least the rows that frame occupies.
   let narrowest = Infinity;
+  // …and the frame that was on screen at that narrowing. It is half of the same sample (`SettleSample`): the
+  // rows the leg stranded are rows THAT frame painted, and by settle time Ink may have replaced it with a
+  // taller one (a streaming turn) whose height has nothing to do with the leg.
+  let frameAtNarrowest: string | undefined;
   let settling: unknown;
   // …and the one case the window cannot answer by itself: the probe measuring THIS burst's shrink takes up to
   // 750 ms and the window is 80, so the verdict the repair needs routinely lands after it. The repair waits for
   // it rather than declining on it, and re-measures when it runs.
   let awaitingVerdict = false;
-  const endBurst = (): void => { narrowest = Infinity; awaitingVerdict = false; };
+  const endBurst = (): void => { narrowest = Infinity; frameAtNarrowest = undefined; awaitingVerdict = false; };
   /** The settle pass. Returns whether it emitted, because the probe's continuation must not ALSO emit: two
    *  erase-plus-frame writes in a row each move the frame up by their own residue, so the second one's erase
    *  lands on rows the first one just declared live. */
   const repairAtSettle = (): boolean => {
     const size = deps.size(), frame = deps.lastFrame();
-    if (!(narrowest < size.columns) || frame === undefined) { endBurst(); return false; }
+    if (!(narrowest < size.columns) || frame === undefined || frameAtNarrowest === undefined) { endBurst(); return false; }
     if (verdict === undefined) { if (probing) awaitingVerdict = true; else endBurst(); return false; }
-    const seq = correctionAtSettle({ frame, parkedCol: deps.parkedColumn(), width: size.columns, narrowest, rows: size.rows }, verdict);
+    const seq = correctionAtSettle({ frame, frameAtNarrowest, parkedCol: deps.parkedColumn(), width: size.columns, narrowest, rows: size.rows }, verdict);
     endBurst();
     if (!seq) return false;
     repaintSelf(seq);
@@ -253,6 +264,9 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
   const onResize = (): void => {
     const oldWidth = width, size = deps.size(), newWidth = size.columns;
     width = newWidth;
+    // Read BEFORE Ink has repainted (this listener is attached ahead of Ink's own — `ResizeRepaint.onResize`),
+    // so this is the frame the terminal is about to re-wrap, which is what both samples below are about.
+    const frame = deps.lastFrame(), parkedCol = deps.parkedColumn();
     // W2 t7 — REMEMBER THE NARROWING EVEN WHEN THE DRAG WALKS BACK OFF IT, and restart the window. Two clauses,
     // and both are refusals:
     //   · only a leg that actually NARROWED counts. A burst read as "narrower earlier than it is now" purely
@@ -264,11 +278,14 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     //     that was already corrected at its write is a double erase, i.e. an over-erase — so the pass only ever
     //     claims what went out unmeasured, which is exactly the burst the finding describes (the first shrink's
     //     probe is still in flight, so every leg of the drag falls through with `verdict === undefined`).
-    if (newWidth < oldWidth && verdict === undefined) narrowest = Math.min(narrowest, newWidth);
+    //   · and only a leg whose frame is RECORDED. With no frame there is no measurement to take, which is the
+    //     same refusal `lastFrame()` has always meant here.
+    if (newWidth < oldWidth && verdict === undefined && newWidth < narrowest && frame !== undefined) {
+      narrowest = newWidth; frameAtNarrowest = frame;
+    }
     if (settling !== undefined) disarm(settling);
     awaitingVerdict = false;                            // the drag is still going; the NEXT settle asks again
     settling = arm(() => { settling = undefined; repairAtSettle(); }, settleMs);
-    const frame = deps.lastFrame(), parkedCol = deps.parkedColumn();
     // THE MEASUREMENT IS NOT DEBOUNCED, AND CANNOT BE. `probeReflow` compares the cursor's reported column
     // against where the column it was parked in BEFORE this drag would have re-wrapped to — so it is only
     // answerable in the window between the terminal's reflow and Ink's repaint, which re-parks inside the new
@@ -283,7 +300,20 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     probing = true;
     void deps.probe({ colBefore: parkedCol, oldWidth, newWidth }).then((answer) => {
       probing = false;
-      if (answer !== "unknown") verdict = answer;
+      if (answer !== "unknown") {
+        verdict = answer;
+        // W2 t7 FIX ROUND 1 (finding 3) — AND THE BURST IS FORGOTTEN THE MOMENT THE VERDICT CACHES, UNLESS A
+        // WRITE HAS ALREADY GONE OUT UNCORRECTED. From here `frameWriteCorrection` runs inside every frame
+        // write Ink makes, and the FIRST write after a narrowing is measured against exactly the frame that
+        // narrowing remembers — so if that write has not landed yet, the corrector is about to claim these
+        // rows and the settle pass claiming them too is one erase run too many, over live transcript. A
+        // SIGWINCH does not imply a write (`throttledLog` defers, the dedupe drops), so "has one landed" is
+        // not inferable from the signals; the recorded frame's own identity is the observation, because the
+        // proxy records one per frame write. Unchanged frame ⇒ nothing under-erased yet ⇒ forget.
+        //   This subsumes the narrower guard that shipped (clear on an emitting first-shrink repair): an
+        // emission implies a cached "reflow", and by then Ink has repainted the leg it repairs.
+        if (deps.lastFrame() === frameAtNarrowest) endBurst();
+      }
       // W2 t7 — THE BURST REPAIR WAS WAITING ON EXACTLY THIS, and it is the better-informed of the two: it
       // measures the screen as it stands now, while everything below measures a sample taken before the drag
       // finished. If it emitted, this one must not — see `repairAtSettle`. If it declined, the sample below
@@ -299,9 +329,10 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
       if (deps.size().columns !== sample.newWidth) return;
       const seq = correctionAfterRepaint(sample, answer, deps.lastFrame(), deps.parkedColumn());
       // …and when it emits, the screen above the frame is clean and the burst has nothing left to claim (W2 t7).
-      // Without this, a probe that answers WHILE the drag is still running repairs the first leg here and the
-      // settle pass claims the same rows again 80 ms later — one erase too many, over live transcript.
-      if (seq) { narrowest = Infinity; repaintSelf(seq); }
+      // This is the branch the rule above deliberately KEEPS — Ink did repaint after the narrowing, so a real
+      // residue existed — and this write is what removes it. Without this, a probe that answers WHILE the drag
+      // is still running repairs the first leg here and the settle pass claims the same rows again 80 ms later.
+      if (seq) { endBurst(); repaintSelf(seq); }
     });
   };
   const stop = (): void => { if (settling !== undefined) { disarm(settling); settling = undefined; } endBurst(); };

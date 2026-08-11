@@ -45,6 +45,7 @@ import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { clearViewport } from "./clearViewport.js";
+import { physicalRows } from "./resizeRepaint.js";
 import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
 import { ChatComposer, composerOwns, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
@@ -164,7 +165,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   /** `fs` (see TYPING_IDLE_MS). */
   typingIdleMs?: number;
   suspend?: typeof suspendProcess;
-  resumeOutput?: { repaint: (runInkWrite: () => void) => void; tallWrites?: () => number; screenResynced?: () => void };
+  resumeOutput?: { repaint: (runInkWrite: () => void) => void; tallWrites?: () => number; screenResynced?: () => void;
+    /** W2 t7 — the one-shot "a tall write was outstanding when SIGWINCH arrived" latch, and the frame Ink last
+     *  wrote through log-update (i.e. its own `lastOutput`), which is what the forced repaint will push back. */
+    takeTallAtSignal?: () => boolean; lastFrame?: () => string | undefined };
   /** WAVE R TASK 8 — the viewport reset that recovers from Ink's tall-frame branch, defaulting to the real
    *  `clearViewport` over Ink's own stdout. A seam for the reason every other one here is: `ink-testing-library`
    *  renders with `debug: true`, whose stdout stub is not a tty, so the real reset short-circuits to `false` and
@@ -490,14 +494,19 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // history-vs-state lesson for the third time (spec Surprises 11): the count answers "is the screen in that
   // state now", and the pager answers "did the tall surface just come DOWN" — that one is an edge, and an edge
   // cannot be read off a level.
-  //   WAVE 2 TASK 7 (s2qa2-05) — AND THE REPAIR NOW HAS A SECOND EDGE, so the level check above is shared. What
-  // the two edges have in common is the only thing that makes the wipe safe: `tallWrites() > 0`, the proxy's
-  // report that the viewport still holds nothing but a tall chunk's own bytes. What they do not share is the
-  // event — one is a pager coming down, the other is the terminal growing under a tall surface that is still up.
-  const resyncTallScreen = (): void => {
+  //   WAVE 2 TASK 7 (s2qa2-05) — AND THE REPAIR NOW HAS A SECOND EDGE, so the WRITE is shared and the gates are
+  // not. Both edges answer the same question — is the viewport holding nothing but a tall chunk's own bytes —
+  // but they have to ask it at different instants, because Ink's repaint sits between them: the pager close is
+  // an event of the app's own and reads the count live, while the grow is an event of the TERMINAL's that Ink
+  // handles first, and by the time React runs the count it would read has already been stood down (see the
+  // second edge below). One shared `resyncViewportNow`; two gates, each measuring at the only moment it can.
+  const resyncViewportNow = (): void => {
     const output = resumeOutputRef.current;
-    if (!(output?.tallWrites?.() ?? 0)) return;
-    if ((resyncViewport ?? (() => clearViewport({ stdout, write })))()) output!.screenResynced?.();
+    if ((resyncViewport ?? (() => clearViewport({ stdout, write })))()) output?.screenResynced?.();
+  };
+  const resyncTallScreen = (): void => {
+    if (!(resumeOutputRef.current?.tallWrites?.() ?? 0)) return;
+    resyncViewportNow();
   };
   const resyncTallScreenRef = useRef(resyncTallScreen); resyncTallScreenRef.current = resyncTallScreen;
   const transcriptWasOpen = useRef(false);
@@ -517,18 +526,38 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // and needs a measurement to justify it, while `clearViewport` blanks the viewport and nothing else. Viewport-
   // bounded is scrollback-safe by construction, and the forced repaint through Ink's `writeToStdout`
   // (clearViewport.ts:40-56) leaves log-update's counters describing what it painted.
-  //   AND THE STAND-DOWN IS NOT LOOSENED. `tallWrites()` falls to 0 on any recorded frame write (chatMain.tsx:
-  // 134-149), so if Ink repaints an ordinary frame for the resize before this effect runs, the gate is false and
-  // the fragment survives. That is the under-erase side of a trade the t8 review already settled once with six
-  // destroyed transcript rows on the other side; it is not reopened here for a cosmetic row.
+  //   AND THE STAND-DOWN IS NOT LOOSENED — BUT THE FACT IS READ BEFORE INK CAN ERASE IT (fix round 1, finding 1).
+  // `tallWrites()` falls to 0 on any recorded frame write (chatMain.tsx:134-149), and the write that stands it
+  // down here is Ink's own synchronous handling of this same SIGWINCH (`ink.js:83` → `onRender`, which on a grow
+  // that lets the frame fit again goes out through log-update) — the very write that strands the header rows.
+  // React commits and flushes passive effects only afterwards, so a live read here is a read taken after the
+  // evidence was destroyed, and the shipped edge could not fire in the scenario it was written for. What runs
+  // FIRST is ccx's own resize listener (attached ahead of Ink's, chatMain.tsx's `onTerminalResize`), so the
+  // proxy latches the count there and this reads the latch, one-shot. The stand-down, and the t8 over-erase
+  // trade behind it, are exactly as they were.
+  //   AND THE REPAINT IS BOUNDED BY THE VIEWPORT IT REPAINTS INTO (finding 4). This is the first caller of
+  // `clearViewport` that can run while a tall surface is still up, and `writeToStdout` pushes Ink's `lastOutput`
+  // through log-update with Ink's own `outputHeight >= rows` check bypassed: a frame still taller than the pane
+  // would leave `previousLineCount` past the viewport's top, where log-update's next erase cannot reach. The
+  // proxy's recorded frame IS that `lastOutput` (recording one is what a log-update write means), so the fit is
+  // MEASURED. No recorded frame means Ink's last write bypassed log-update — the surface is still tall, Ink has
+  // just repainted the whole screen for the grow, and there is no stranded header to repair.
   //   AN EDGE, NOT A LEVEL, for the third time in this file: `size` only changes identity when the size actually
   // moved (`nextSize`), and the ref below makes the DIRECTION a transition. The first pass compares the mount
   // size with itself, so a boot into a short pane — where every frame goes tall and no recorded frame write ever
   // stands the count down — cannot fire it.
+  const resyncAfterGrow = (): void => {
+    const output = resumeOutputRef.current;
+    if (!output?.takeTallAtSignal?.()) return;                 // consumed whether or not the guards below pass
+    const frame = output.lastFrame?.();
+    if (frame === undefined || physicalRows(frame, size.columns) + 1 > size.rows) return;   // + the park row
+    resyncViewportNow();
+  };
+  const resyncAfterGrowRef = useRef(resyncAfterGrow); resyncAfterGrowRef.current = resyncAfterGrow;
   const sizeWasRef = useRef(size);
   useEffect(() => {
     const prev = sizeWasRef.current; sizeWasRef.current = size;
-    if (size.columns > prev.columns || size.rows > prev.rows) resyncTallScreenRef.current();
+    if (size.columns > prev.columns || size.rows > prev.rows) resyncAfterGrowRef.current();
   }, [size]);
   // Ctrl-O opens the pager (the PAGER owns closing it — Transcript's own ctrl+o → transcript:exit, task 7);
   // Ctrl-R/T/B are Composer-only. Ctrl-C is allowed from Composer and a visible decision dialog, but never

@@ -131,7 +131,7 @@ describe("correctionAfterRepaint — the first shrink, corrected once the async 
 // reaches above it.
 describe("correctionAtSettle — the burst repair, measured off the live frame once the drag stops", () => {
   const at = (over: Partial<SettleSample> = {}): SettleSample =>
-    ({ frame: SP_R0, parkedCol: 117, width: 120, narrowest: 90, rows: 40, ...over });
+    ({ frame: SP_R0, frameAtNarrowest: SP_R0, parkedCol: 117, width: 120, narrowest: 90, rows: 40, ...over });
 
   // SP_R0 is 7 physical rows at 120 (only the 200-cell line wraps, and not until 100) and 8 at 90, so one row of
   // it was left above Ink's erase by the 120 → 90 leg. The erase covers that row plus the frame and its park row
@@ -162,11 +162,27 @@ describe("correctionAtSettle — the burst repair, measured off the live frame o
 
   // A frame short enough to wrap the same way at both widths left nothing behind, whatever the drag did.
   it("emits nothing when the frame is no taller at the narrowest width than it is now", () => {
-    expect(correctionAtSettle(at({ frame: "one\ntwo\n" }), "reflow")).toBe("");
+    expect(correctionAtSettle(at({ frame: "one\ntwo\n", frameAtNarrowest: "one\ntwo\n" }), "reflow")).toBe("");
   });
 
   it("caps the erase at the rows on screen", () => {
     expect(correctionAtSettle(at({ rows: 5 }), "reflow")).toBe(inkEraseLines(5) + SP_R0);
+  });
+
+  // FIX ROUND 1, FINDING 2 — THE TWO TERMS COME OFF TWO DIFFERENT FRAMES, AND PAIRING THE LIVE ONE WITH THE
+  // REMEMBERED WIDTH IS AN OVER-ERASE. `narrowest` is a width the burst crossed up to 80 ms (or, on the
+  // awaiting-verdict path, up to 750 ms) earlier; the frame that was on screen then is the only frame whose
+  // re-wrap at that width stranded anything. A streaming turn grows the live frame during the drag, and the
+  // shipped version scaled the residue with it: reproduced through the driver at 31 rows erased over 21
+  // occupied and 0 owed. So the residue is measured off `frameAtNarrowest` and the region off the live frame,
+  // which is exactly `correctionAfterRepaint`'s split.
+  it("takes the residue from the frame that was on screen at the narrowing, not the frame that replaced it", () => {
+    const short = "composer\n";                                            // 1 row at 90 and at 120: strands nothing
+    const tall = ["z".repeat(200), "y", "x"].join("\n") + "\n";            // …and the turn streamed 3 → 5 rows since
+    expect(correctionAtSettle(at({ frame: tall, frameAtNarrowest: short }), "reflow")).toBe("");
+    // …and symmetrically, a live frame that SHRANK does not shrink the claim: the rows are the narrowing's.
+    expect(rowsCleared(correctionAtSettle(at({ frame: short, frameAtNarrowest: SP_R0 }), "reflow")))
+      .toBe(1 + occupiedRows(short, 117, 120));
   });
 });
 
@@ -196,6 +212,14 @@ describe("createResizeRepaint — the driver", () => {
     verdictNow = driver.verdict;
     return { driver, repainted, verdictAtRepaint, probes, timers,
       resize: (to: number) => { columns = to; driver.onResize(); parked = parkColumn(to); },
+      /** ONE LEG OF A REAL DRAG: the SIGWINCH, and then Ink's own synchronous repaint (`ink.js:83` `resized()`
+       *  → `onRender`, which runs inside the same signal). That write is the ONLY thing that can strand a row —
+       *  it erases the previous frame's LOGICAL line count and paints below whatever it missed — so a burst case
+       *  that omits it is modelling a screen with no residue on it at all (the module's own dedupe reasoning:
+       *  with no write, the old frame is simply on screen, re-wrapped whole). Which is why the burst cases below
+       *  drag rather than resize, and why `claims nothing until a write has actually under-erased` can use the
+       *  bare `resize` to mean the opposite. */
+      drag: (to: number, painted: string) => { columns = to; driver.onResize(); frame = painted; parked = parkColumn(to); },
       /** Ink repaints and the proxy re-parks on the new frame — the live state the async continuation has to read
        *  instead of the sample it took when SIGWINCH fired. */
       repaintedAs: (next: string) => { frame = next; parked = parkColumn(columns); },
@@ -325,16 +349,23 @@ describe("createResizeRepaint — the driver", () => {
   // path declines — the last leg is a GROW, and the probe's own sample was measured at 90 and is abandoned by
   // the `:191` size guard the moment the terminal moves off it — while the residue the 90 leg left is still on
   // screen and, before this task, stayed there for the life of the session.
+  // The frames Ink paints DURING the drag. Only two of them matter to the arithmetic: the one on screen when the
+  // burst narrowed (that is `SP_R0`, the rig's starting frame — the 90 leg's SIGWINCH arrives before Ink has
+  // repainted) and the one on screen when it settles.
+  const F90 = ["m".repeat(100), "n"].join("\n") + "\n";
+  const F150 = ["m".repeat(140), "n"].join("\n") + "\n";
+  const F120 = ["m".repeat(110), "n"].join("\n") + "\n";
+
   it("repairs a round-trip burst once, after the settle window, off the size it settled at", async () => {
     const r = rig();
-    r.resize(90); r.resize(150); r.resize(120);
+    r.drag(90, F90); r.drag(150, F150); r.drag(120, F120);
     await flush();
     expect(r.probes).toEqual([{ colBefore: 117, oldWidth: 120, newWidth: 90 }]);   // one probe for the one shrink
     expect(r.repainted).toEqual([]);                                    // …and its emission abandoned: 120 ≠ 90
     expect(r.settleWindow()).toBe(1);                                   // THE DEBOUNCE: three signals, one window
     expect(r.repainted.length).toBe(1);
-    expect(r.repainted[0]).toBe(correctionAtSettle({ frame: SP_R0, parkedCol: 117, width: 120, narrowest: 90, rows: 40 }, "reflow"));
-    expect(r.repainted[0]?.endsWith(SP_R0)).toBe(true);                 // the live frame goes straight back
+    expect(r.repainted[0]).toBe(correctionAtSettle({ frame: F120, frameAtNarrowest: SP_R0, parkedCol: 117, width: 120, narrowest: 90, rows: 40 }, "reflow"));
+    expect(r.repainted[0]?.endsWith(F120)).toBe(true);                  // the live frame goes straight back
     expect(r.verdictAtRepaint).toEqual([undefined]);                    // …and carries its own erase past the corrector
   });
 
@@ -343,24 +374,38 @@ describe("createResizeRepaint — the driver", () => {
   // it — and it re-measures when it runs, because that is the whole difference from the sample it replaces.
   it("waits for the in-flight verdict and repairs when it lands", async () => {
     const r = rig({ verdicts: [] });
-    r.resize(90); r.resize(150); r.resize(120);
+    r.drag(90, F90); r.drag(150, F150); r.drag(120, F120);
     expect(r.settleWindow()).toBe(1);
     expect(r.repainted).toEqual([]);                                    // nothing to correct WITH, yet
     r.settle("reflow");
     await flush();
     expect(r.repainted.length).toBe(1);
-    expect(r.repainted[0]?.endsWith(SP_R0)).toBe(true);
+    expect(r.repainted[0]?.endsWith(F120)).toBe(true);
   });
 
   // …and it is one repair or the other, never both. Two erase-plus-frame writes in a row each move the frame up
   // by their own residue, so the second one's erase lands on rows the first one just declared live.
   it("emits exactly once when the burst settles back on the width the sample was measured at", async () => {
     const r = rig({ verdicts: [] });
-    r.resize(90); r.resize(70); r.resize(90);
+    r.drag(90, F90); r.drag(70, SP_R0); r.drag(90, F90);
     expect(r.settleWindow()).toBe(1);
     r.settle("reflow");
     await flush();
     expect(r.repainted.length).toBe(1);
+  });
+
+  // FIX ROUND 1, FINDING 2, AT THE DRIVER — the reviewer's reproduction. The 90 leg happened while a one-row
+  // composer was on screen and stranded NOTHING; by the time the drag settled a streaming turn had grown the
+  // live frame to twenty rows. Measuring the remembered WIDTH against the LIVE frame claimed 31 rows over 21
+  // occupied and 0 owed — ten live viewport rows blanked, which is the direction `resizeRepaint.ts:6-9` forbids.
+  it("claims nothing when the frame that was on screen at the narrowing stranded nothing", async () => {
+    const short = "composer\n";
+    const streamed = [...Array(10).fill("z".repeat(150)), "tail"].join("\n") + "\n";
+    const r = rig({ frame: short });
+    r.drag(90, short); r.drag(150, short); r.drag(120, streamed);
+    await flush();
+    expect(r.settleWindow()).toBe(1);
+    expect(r.repainted).toEqual([]);
   });
 
   // A plain shrink is not a burst: it settles at its own narrowest, so there is nothing above the frame that the
@@ -432,6 +477,27 @@ describe("createResizeRepaint — the driver", () => {
     r.resize(150); r.resize(120);                                       // …and the drag carries on and lands back
     expect(r.settleWindow()).toBe(1);
     expect(r.repainted.length).toBe(1);
+  });
+
+  // FIX ROUND 1, FINDING 3 — THE THIRD BRANCH OF THE SAME HAZARD, and the one the shipped guard missed: the
+  // verdict lands mid-burst and the first-shrink repair DECLINES (its sample was measured at a width the drag
+  // has already left). A SIGWINCH does not imply an Ink write — `throttledLog` can defer one to its trailing
+  // timer — so a leg whose write has not landed yet has stranded NOTHING yet, and the write when it does land
+  // carries `frameWriteCorrection` against the frame this leg remembers. Claiming the leg here as well is that
+  // erase run twice, over rows the write-time corrector has already declared live.
+  //   The test for "has a write landed" is the recorded frame's own identity: the proxy records one per frame
+  // write, so a `lastFrame()` still equal to the frame remembered at the narrowing means nothing has under-
+  // erased since. That is also why the burst cases above `drag` instead of `resize`.
+  it("forgets a leg no write has under-erased yet, because the corrector now owns that write", async () => {
+    const r = rig();
+    r.resize(90);                                                       // SIGWINCH; Ink's write is deferred
+    r.resize(120);                                                      // …and the drag walks back off it
+    await flush();
+    expect(r.driver.verdict()).toBe("reflow");                          // the probe answered mid-burst…
+    expect(r.repainted).toEqual([]);                                    // …and its own emission was abandoned
+    r.repaintedAs(F120);                                                // Ink's deferred write lands, corrected AT the write
+    expect(r.settleWindow()).toBe(1);
+    expect(r.repainted).toEqual([]);                                    // so the pass must not claim it a second time
   });
 });
 

@@ -127,10 +127,23 @@ describe("terminal size is React state", () => {
   //   The repair is the same one, fed by a second edge. Both halves of the t8 argument are kept intact: the
   // `tallWrites() > 0` stand-down is untouched (loosening it is the over-erase that destroyed six live rows,
   // chatMain.tsx:134-149), and the trigger is an EDGE — the size actually moved upward — never a level.
+  //   AND THE FACT IT KEYS ON HAS TO BE LATCHED AT THE SIGNAL (fix round 1, finding 1). Ink's own resize handler
+  // is synchronous (`ink.js:83`) and runs BEFORE React commits, so on a grow that lets the frame fit again it
+  // writes an ordinary frame first — which is both the write that strands the picker's header AND the write that
+  // stands `tallWrites()` back to 0 (`chatMain.tsx`'s `record`). Read live from a passive effect the count is
+  // therefore zero in exactly the scenario this edge exists for. ccx's own resize listener is attached before
+  // `render()` and runs ahead of Ink's, so the fact is captured there and read here as a one-shot latch; the
+  // stand-down itself is untouched.
   describe("growing while a tall write is outstanding", () => {
+    /** The proxy's task-7 surface: the latch ccx's resize listener sets (`noteResizeSignal` → `takeTallAtSignal`)
+     *  and the recorded frame the height guard measures. `frame` is what Ink's ordinary write recorded on the
+     *  grow — 2 rows against the 24-row default pane, so the guard passes unless a case says otherwise. */
     const fakeProxy = () => {
-      const state = { tall: 0, resynced: 0 };
-      return { state, output: { repaint: (run: () => void) => run(), tallWrites: () => state.tall, screenResynced: () => { state.tall = 0; state.resynced += 1; } } };
+      const state = { tall: 0, resynced: 0, latched: false, frame: "one\ntwo\n" as string | undefined };
+      return { state, output: { repaint: (run: () => void) => run(), tallWrites: () => state.tall,
+        screenResynced: () => { state.tall = 0; state.resynced += 1; },
+        takeTallAtSignal: () => { const v = state.latched; state.latched = false; return v; },
+        lastFrame: () => state.frame } };
     };
     const mountWith = async (cols: () => number, resize: ReturnType<typeof fakeResize>, proxy: ReturnType<typeof fakeProxy>, resync: () => boolean) =>
       mount(<ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()}
@@ -142,7 +155,8 @@ describe("terminal size is React state", () => {
       const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
       const r = await mountWith(() => cols, resize, proxy, resync);
       proxy.state.tall = 1;                                          // the clipped picker took ink.js:118
-      expect(resync).not.toHaveBeenCalled();                         // …and nothing fires at mount, however it stands
+      proxy.state.latched = true;                                    // …and the signal caught it standing
+      expect(resync).not.toHaveBeenCalled();                         // an armed latch still does not fire at mount
       cols = 120;
       resize.fire();
       await tick();
@@ -152,28 +166,64 @@ describe("terminal size is React state", () => {
       r.unmount();
     });
 
+    // FIX ROUND 1, FINDING 1 — THE SCENARIO THE EDGE WAS WRITTEN FOR, AND THE ONE THE LIVE COUNT CANNOT SEE. Ink
+    // handles the same SIGWINCH synchronously and, on a grow that lets the frame fit, writes it through
+    // log-update: that write strands the picker's header AND stands `tallWrites()` back to 0, both before this
+    // passive effect runs. Reading the count live here is therefore reading it after the evidence was erased.
+    it("fires on the fact latched at the signal, even though the live count is already back to 0", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.latched = true;                                    // ccx's listener saw the tall write standing…
+      proxy.state.tall = 0;                                          // …and Ink's ordinary frame then stood it down
+      cols = 120;
+      resize.fire();
+      await tick();
+      expect(resync).toHaveBeenCalledTimes(1);
+      r.unmount();
+    });
+
+    // ONE-SHOT. The latch is a fact about ONE signal, so it is consumed when read: a drag that grows in five
+    // steps arms it on the first of them (the only one with a tall write outstanding) and resyncs once.
+    it("consumes the latch, so one tall episode resyncs once however many signals the drag emits", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.tall = 1; proxy.state.latched = true;
+      cols = 90; resize.fire(); await tick();
+      expect(resync).toHaveBeenCalledTimes(1);
+      expect(proxy.state.latched).toBe(false);                       // …consumed by that read
+      cols = 120; resize.fire(); await tick();                       // the drag keeps growing, nothing tall outstanding
+      cols = 150; resize.fire(); await tick();
+      expect(resync).toHaveBeenCalledTimes(1);
+      r.unmount();
+    });
+
     // The erase is viewport-bounded, but it is still an erase: on a NARROWING the residue is above the viewport's
-    // top as often as not, and Wave R's own corrector owns that direction at the write.
+    // top as often as not, and Wave R's own corrector owns that direction at the write. This is also the case
+    // that pins the direction ref (the identical-size case below is carried by `nextSize`'s dedupe, not by it).
     it("never fires on a shrink", async () => {
       let cols = 120;
       const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
       const r = await mountWith(() => cols, resize, proxy, resync);
-      proxy.state.tall = 1;
+      proxy.state.tall = 1; proxy.state.latched = true;
       cols = 60;
       resize.fire();
       await tick();
       expect(resync).not.toHaveBeenCalled();
       expect(proxy.state.tall).toBe(1);
+      expect(proxy.state.latched).toBe(true);                        // …and the shrink did not even consume it
       r.unmount();
     });
 
     // The t8 gate, unchanged and load-bearing: `clearViewport` blanks the whole viewport, which is safe only
     // while the viewport holds nothing but a tall chunk's own bytes. On an ordinary screen a grow is Ink's own
     // business and wiping it destroys live <Static> rows.
-    it("never fires when the proxy reports no tall write", async () => {
+    it("never fires when no tall write was outstanding when the signal arrived", async () => {
       let cols = 60;
       const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
       const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.tall = 1;                                          // a tall write since the signal is not the fact
       cols = 120;
       resize.fire();
       await tick();
@@ -181,18 +231,50 @@ describe("terminal size is React state", () => {
       r.unmount();
     });
 
-    // AN EDGE, NOT A LEVEL (ChatApp.tsx:466-480, the wave's history-vs-state lesson). "The terminal is wider than
-    // it was" is true forever after one grow; only the transition may fire. A resize that reports a size we
-    // already hold is not a transition, whatever the tall count does in the meantime.
-    it("does not fire again while the terminal simply stays large", async () => {
+    // FIX ROUND 1, FINDING 4 — THE BOUNDED HEIGHT GUARD. This edge is the first caller of `clearViewport` that
+    // can run while a tall surface is still up, and the forced repaint pushes Ink's `lastOutput` through
+    // log-update with Ink's own `outputHeight >= rows` check bypassed: a still-screen-tall frame would leave
+    // `previousLineCount` larger than the viewport, and log-update's next erase cannot walk that far. The frame
+    // the proxy recorded IS Ink's `lastOutput` (that is what a recorded frame write means), so the fit is
+    // measured rather than assumed — and no recorded frame at all means the last write bypassed log-update,
+    // i.e. the surface is still tall and there is nothing stranded to repair anyway.
+    it("declines when the frame Ink would repaint does not fit the viewport", async () => {
       let cols = 60;
       const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
       const r = await mountWith(() => cols, resize, proxy, resync);
-      proxy.state.tall = 1;
+      proxy.state.latched = true;
+      proxy.state.frame = Array.from({ length: 30 }, (_, i) => `row ${i}`).join("\n") + "\n";   // 30 rows, pane is 24
+      cols = 120;
+      resize.fire(); await tick();
+      expect(resync).not.toHaveBeenCalled();
+      r.unmount();
+    });
+
+    it("declines when the proxy has no recorded frame — Ink's last write bypassed log-update", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.tall = 1; proxy.state.latched = true;
+      proxy.state.frame = undefined;
+      cols = 120;
+      resize.fire(); await tick();
+      expect(resync).not.toHaveBeenCalled();
+      r.unmount();
+    });
+
+    // AN EDGE, NOT A LEVEL (ChatApp.tsx:466-480, the wave's history-vs-state lesson). "The terminal is wider than
+    // it was" is true forever after one grow; only the transition may fire. A resize that reports a size we
+    // already hold is not a transition, whatever the latch says — `nextSize` hands back the previous object, so
+    // the effect never re-runs. (The DIRECTION ref is what the shrink case above pins.)
+    it("treats an identical-size report as no transition, even with the latch armed", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.tall = 1; proxy.state.latched = true;
       cols = 120;
       resize.fire(); await tick();
       expect(resync).toHaveBeenCalledTimes(1);
-      proxy.state.tall = 1;                                          // another tall surface goes up…
+      proxy.state.tall = 1; proxy.state.latched = true;              // another tall surface goes up, another signal…
       resize.fire(); await tick();
       resize.fire(); await tick();                                   // …and the terminal reports its size again
       expect(resync).toHaveBeenCalledTimes(1);
@@ -206,7 +288,7 @@ describe("terminal size is React state", () => {
       let cols = 60;
       const resize = fakeResize(), proxy = fakeProxy();
       const r = await mountWith(() => cols, resize, proxy, () => false);
-      proxy.state.tall = 1;
+      proxy.state.tall = 1; proxy.state.latched = true;
       cols = 120;
       resize.fire();
       await tick();

@@ -159,6 +159,36 @@ describe("the tall-frame chunk resynchronizes the proxy's geometry", () => {
     out.stdout.write("the frame that closes the triple\n");             // …and the frame does clear it
     expect(out.tallWrites()).toBe(0);
   });
+
+  // W2 t7 FIX ROUND 1 (finding 1) — THE SAME FACT, LATCHED AHEAD OF THE WRITE THAT ERASES IT. On a grow that
+  // lets a clipped frame fit again, Ink's synchronous SIGWINCH handler writes that frame through log-update
+  // BEFORE React flushes passive effects: the count is 0 by the time the recovery looks, and that same write is
+  // what stranded the tall surface's header. ccx's own resize listener runs ahead of Ink's, so it records the
+  // fact there. The count itself is untouched — this only moves the READ earlier.
+  it("latches the tall state at the signal and survives the frame write that stands the count down", () => {
+    const { out } = proxyOn(120, 40);
+    out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
+    out.noteResizeSignal();                                             // ccx's listener, ahead of Ink's
+    out.stdout.write(eraseLines(2) + "the frame Ink writes for the resize\n");
+    expect(out.tallWrites()).toBe(0);                                   // …the live count is already gone
+    expect(out.takeTallAtSignal()).toBe(true);                          // …and the latch is not
+    expect(out.takeTallAtSignal()).toBe(false);                         // ONE-SHOT: a fact about one signal
+  });
+
+  it("latches nothing for a signal that arrives on an ordinary screen", () => {
+    const { out } = proxyOn(120, 40);
+    out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
+    out.stdout.write(eraseLines(2) + "an ordinary frame\n");
+    out.noteResizeSignal();                                             // the tall episode is already over
+    expect(out.takeTallAtSignal()).toBe(false);
+    // …and a stale latch cannot be inherited by a later signal: every signal re-states the fact.
+    out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
+    out.noteResizeSignal();
+    expect(out.takeTallAtSignal()).toBe(true);
+    out.stdout.write(eraseLines(2) + "an ordinary frame\n");
+    out.noteResizeSignal();
+    expect(out.takeTallAtSignal()).toBe(false);
+  });
 });
 
 describe("the tall-frame chunk keeps the terminal's scrollback", () => {

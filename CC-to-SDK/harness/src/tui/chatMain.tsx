@@ -66,6 +66,18 @@ export interface ResumeSafeStdout {
    *  third call IS a recorded frame write), kept because the acknowledgement is the caller's to make: a repaint
    *  that declined to write (no tty) must leave the count standing, and only the caller knows which it did. */
   screenResynced(): void;
+  /** W2 t7 (s2qa2-05) — THE SAME FACT, CAPTURED BEFORE INK CAN ERASE IT. `tallWrites()` reports current state,
+   *  and Ink's own SIGWINCH handler (`ink.js:83`, synchronous) runs between the signal and React's passive
+   *  effects: on a grow that lets a clipped frame fit again it writes that frame through log-update, which is
+   *  both the write that strands the tall surface's header rows and the RECORDED FRAME WRITE that stands the
+   *  count down. A consumer reading the count from an effect therefore reads 0 in exactly the case it needs a
+   *  1. So ccx's own resize listener — attached before `render()`, and therefore ahead of Ink's — calls
+   *  `noteResizeSignal()`, and the recovery reads the latch instead. The stand-down itself is NOT loosened
+   *  (`:135`-`:150`, the t8 over-erase); this only moves the READ to before the erasure. */
+  noteResizeSignal(): void;
+  /** …and it is one-shot: a fact about ONE signal, consumed by the reader so a later grow with nothing tall
+   *  outstanding cannot inherit it. */
+  takeTallAtSignal(): boolean;
   /** W-R t4b: the resize correction, applied to the write that would otherwise create residue. Called for every
    *  frame write that carries an erase prefix and has a recorded frame in front of it; whatever it returns is
    *  injected between that prefix and the body, inside the SAME write. Set once, from `runChatClient` — the proxy
@@ -104,6 +116,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   let dropped: string | undefined;               // …and the frame that erase threw away, for the restore check below
   let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
   let tall = 0;                                  // W-R t8: tall-frame chunks written since the screen was last in sync
+  let tallAtSignal = false;                      // W2 t7: …and whether one was outstanding when the last SIGWINCH arrived
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
   let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
@@ -302,6 +315,8 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     parkedColumn() { return parkedCol; },
     tallWrites() { return tall; },
     screenResynced() { tall = 0; },
+    noteResizeSignal() { tallAtSignal = tall > 0; },
+    takeTallAtSignal() { const was = tallAtSignal; tallAtSignal = false; return was; },
     setFrameCorrector(fn) { corrector = fn; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
@@ -405,7 +420,11 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // leave residue get the missing erase injected into the same chunk. The proxy is built before the resize
   // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument.
   output.setFrameCorrector((info) => frameWriteCorrection(info, resize.verdict()));
-  process.stdout.on("resize", resize.onResize);
+  // W2 t7 (s2qa2-05): THE ORDER IS THE WHOLE POINT OF DOING IT HERE. This listener is ahead of Ink's, so it is
+  // the last moment at which "a tall write is outstanding" is still true for the screen the user is looking at —
+  // Ink's own handler repaints synchronously on the next line of the same signal and stands the count down.
+  const onTerminalResize = (): void => { output.noteResizeSignal(); resize.onResize(); };
+  process.stdout.on("resize", onTerminalResize);
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
   // reasons: it is a process-level concern with a teardown obligation (the `finally` below clears the title
   // before the shell gets the terminal back), and its writes must bypass Ink entirely — a title escape is not
@@ -430,7 +449,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   bridge.bind(() => app.clear());
   try { await app.waitUntilExit(); }
   finally {
-    process.stdout.off("resize", resize.onResize);
+    process.stdout.off("resize", onTerminalResize);
     resize.stop();                       // W2 t7 — …and drop the settle window with it: it WRITES when it fires
     title.clear();                     // `a0u` (L148428) — hand the terminal back with an empty title
     // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our spaces.
