@@ -629,8 +629,9 @@ which are opportunistic.
   token-warning ceiling mis-citation; `#` memory mode and inline chips removed per D-C2/D-C3)
 - [x] Recurring sweep #2 run 2026-08-10 against the shipped sprint (ccx @ `d699e0839c`, all four
   waves), delta triaged in `docs/parity/qa-sweep-2-triage.md` — 131 findings: 51 fixed (both
-  sweep-1 P1s independently confirmed dead), 43 new, 33 persists, 4 regressed; one open P1
-  (`/copy` regression family, s2qa5-21/22). **Sprint definition of done (§3) fully met.**
+  sweep-1 P1s independently confirmed dead), 43 new, 33 persists, 4 regressed; no open P1 after
+  owner triage (the `/copy` regression family s2qa5-21/22 was filed P1, owner-demoted to P2
+  2026-08-11). **Sprint definition of done (§3) fully met.** Delta worklist → QA wave 2.
 
 ## §10 Decision Log *(living)*
 

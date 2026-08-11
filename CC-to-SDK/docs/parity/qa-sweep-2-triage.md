@@ -55,8 +55,9 @@ frames on file:
 
 ## 3 · Open worklist (ranked)
 
-### W1 · `/copy` is broken and violates the boundary rule — the sweep's only open P1
-- **s2qa5-21 (P1, regressed)** — fresh foreground session, two completed replies on screen:
+### W1 · `/copy` is broken and violates the boundary rule
+*(filed P1 by the fleet; owner-adjudicated **P2** 2026-08-11 — no open P1 remains in the sweep)*
+- **s2qa5-21 (P2, regressed)** — fresh foreground session, two completed replies on screen:
   `/copy` answers "nothing to copy".
 - **s2qa5-22 (P2, new)** — resumed session: `/copy` pins to the FIRST assistant message of the
   replay, never advances, and survives two `/clear` boundaries — cleared-conversation text lands on
