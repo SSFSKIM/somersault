@@ -8,7 +8,10 @@
 // turn stays genuinely in flight across ticks (the whole queue exists for that window), and `interrupt()`
 // RESOLVES the in-flight submit rather than rejecting it — the real engine's contract (session.ts's
 // readLoop discards error_during_execution and resolves the waiter; turns.ts's header records it).
-// `dispose()` awaits a real timer, as the real `input.close(); await this.done` does.
+// `dispose()` is `input.close(); await this.done` (session.ts:164): the read loop ends and its `finally`
+// REJECTS every still-pending waiter, so a close settles the in-flight turn by itself — and `submit()`
+// after that rejects immediately rather than parking a waiter nothing can drain (session.ts:124). The
+// close tests below rely on exactly that: no test hand-releases a turn the close already ended.
 import { describe, it, expect } from "vitest";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
@@ -29,27 +32,54 @@ interface QueueEngine {
   submits: string[];
   interrupts: number;
   disposed: number;
+  ended: boolean;
+  models: Array<string | undefined>;
   sessionId?: string;
   release(): void;
   submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
+  setModel(model?: string): Promise<void>;
   onFrame(cb: (m: unknown) => void): () => void;
 }
 
-function mkEngine(opts: { disposeImpl?: () => Promise<void> } = {}): QueueEngine {
-  const releases: Array<() => void> = [];
+/** A promise the test releases by hand — used to hold a chain-scoped settings op on "engine I/O" for as
+ *  long as the interleaving under test needs. */
+function mkGate(): { wait: Promise<void>; release: () => void } {
+  let release!: () => void;
+  return { wait: new Promise<void>((r) => { release = r; }), release };
+}
+
+function mkEngine(opts: { disposeImpl?: () => Promise<void>; setModelImpl?: () => Promise<void> } = {}): QueueEngine {
+  const pending: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
   const e: QueueEngine = {
     submits: [],
     interrupts: 0,
     disposed: 0,
+    ended: false,
+    models: [],
     sessionId: "sess-1",
-    submit: (prompt) => { e.submits.push(prompt); return new Promise<{ result: unknown }>((resolve) => { releases.push(() => resolve({ result: {} })); }); },
+    // session.ts:124 — once the read loop has ended, submit() rejects rather than parking a waiter that
+    // nothing will ever drain. A test asserting "no engine call after close" gets to assert on `submits`
+    // because THIS is what a real post-close submit would do.
+    submit: (prompt) => {
+      if (e.ended) return Promise.reject(new Error("session is not running"));
+      e.submits.push(prompt);
+      return new Promise<{ result: unknown }>((resolve, reject) => { pending.push({ resolve: () => resolve({ result: {} }), reject }); });
+    },
     interrupt: async () => { e.interrupts++; e.release(); return {}; },
-    dispose: () => { e.disposed++; return opts.disposeImpl ? opts.disposeImpl() : new Promise<void>((r) => setTimeout(r, 1)); },
+    // The real `input.close(); await this.done`: the read loop's `finally` rejects every still-pending
+    // waiter ("<label> disposed") before dispose resolves, so the close drives the in-flight turn's
+    // settle-and-drain itself.
+    dispose: () => {
+      e.disposed++; e.ended = true;
+      for (const p of pending.splice(0)) p.reject(new Error("session disposed"));
+      return opts.disposeImpl ? opts.disposeImpl() : new Promise<void>((r) => setTimeout(r, 1));
+    },
+    setModel: async (model) => { await opts.setModelImpl?.(); e.models.push(model); },
     onFrame: () => () => {},
     /** resolve the OLDEST still-pending submit — one engine turn finishing */
-    release: () => { releases.shift()?.(); },
+    release: () => { pending.shift()?.resolve(); },
   };
   return e;
 }
@@ -176,13 +206,15 @@ describe("turn queue (spec Wave 4)", () => {
     send(c, { id: 5, method: "thread/close", params: { threadId } });
     send(c, { id: 6, method: "turn/start", params: { threadId, input: "late", queue: true } });
     await settle();
-    engine.release(); // the first turn's engine call finally returns, after the close
-    await settle();
 
     expect(engine.submits).toEqual(["one"]); // the drained turn NEVER submitted
     expect(cancelledIds(s)).toEqual([`turn_${threadId}_2`]);
     expect(replyTo(s, 6).error.code).toBe(ERR.BUSY);
     expect(replyTo(s, 5).result).toEqual({ ok: true });
+    // the close settled the in-flight turn on its own — dispose() rejects the pending waiter, exactly as
+    // the real read loop's `finally` does, so the running turn is answered too and nothing is left in flight
+    expect(engine.disposed).toBe(1);
+    expect(notifs(s, "turn/completed").find((f) => f.params.turn.id === `turn_${threadId}_1`).params.turn.status).toBe("failed");
   });
 
   it("the drain-vs-close race: a settle racing a close finds the latch up and starts nothing — and parks the entry rather than dropping it", async () => {
@@ -274,10 +306,10 @@ describe("turn queue (spec Wave 4)", () => {
     await settle();
 
     expect(cancelledIds(s).sort()).toEqual(ids.map((t) => `turn_${t}_2`).sort());
-    // and the in-flight turns settling AFTER the shutdown start nothing on either engine
-    for (const e of engines) e.release();
-    await settle();
+    // the shutdown's dispose settled each in-flight turn (the read loop's `finally`), and that settle —
+    // landing after the latch went up — starts nothing on either engine
     expect(engines.map((e) => e.submits)).toEqual([["one"], ["one"]]);
+    expect(engines.map((e) => e.disposed)).toEqual([1, 1]);
   });
 
   it("a CLOSING thread refuses turn/start{queue:true} exactly as it refuses the unflagged call — its queue was already flushed, so a late enqueue would sit forever", async () => {
@@ -292,6 +324,108 @@ describe("turn queue (spec Wave 4)", () => {
     await settle();
     expect(replyTo(s, 5).error.code).toBe(ERR.BUSY);
     expect(replyTo(s, 5).error.message).toMatch(/closing/);
+  });
+
+  // The wire-reachable half of the closing latch (fix wave, reviewer-reproduced). `takeNext`'s check is
+  // taken at DRAIN time, but a turn's engine call is deferred into `record.chain` — and the chain can be
+  // parked on a settings op awaiting real engine I/O. `thread/close` latches and flushes underneath that
+  // park, so the callback wakes up owning a thread that is already being torn down. Both entry points into
+  // that callback are covered: the drained turn (id already on the wire) and a plain turn/start (its reply
+  // still owed). Without the callback's own re-read, both submit to a closing engine and their terminal
+  // event is broadcast after closeRecord dropped the record — i.e. never heard by anyone.
+  it("a DRAINED turn whose chain callback wakes AFTER thread/close submits nothing — it settles cancelled instead", async () => {
+    const gate = mkGate();
+    const engine = mkEngine({ setModelImpl: () => gate.wait });
+    const { s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    await tick();
+    const queuedId = replyTo(s, 4).result.turn.id;
+    // a chain-scoped settings op parked on engine I/O — everything queued behind it waits with it
+    send(c, { id: 5, method: "thread/model/set", params: { threadId, model: "opus" } });
+    await tick();
+
+    engine.release(); // turn 1 settles -> the drain claims the thread for turn 2, behind the parked setter
+    await settle();
+    expect(engine.submits).toEqual(["one"]);
+
+    send(c, { id: 6, method: "thread/close", params: { threadId } }); // latch + flush, synchronously
+    await settle();
+    gate.release(); // the setter answers; the drained turn's callback finally runs
+    await settle();
+
+    expect(engine.submits).toEqual(["one"]); // zero new submits after the close
+    expect(cancelledIds(s)).toEqual([queuedId]); // the claimed id still got its terminal event
+    expect(notifs(s, "turn/started").map((f) => f.params.turn.id)).toEqual([`turn_${threadId}_1`]);
+    expect(replyTo(s, 6).result).toEqual({ ok: true });
+  });
+
+  it("a PLAIN turn/start whose chain callback wakes AFTER thread/close submits nothing — its caller is replied the cancelled turn", async () => {
+    const gate = mkGate();
+    const engine = mkEngine({ setModelImpl: () => gate.wait });
+    const { s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    send(c, { id: 4, method: "thread/model/set", params: { threadId, model: "opus" } });
+    await tick();
+    engine.release(); // turn 1 completes — the thread is idle, so the next turn/start is accepted outright
+    await settle();
+
+    send(c, { id: 5, method: "turn/start", params: { threadId, input: "two" } });
+    await settle();
+    expect(engine.submits).toEqual(["one"]);
+    expect(replyTo(s, 5)).toBeUndefined(); // a plain turn/start's reply comes FROM the parked callback
+
+    send(c, { id: 6, method: "thread/close", params: { threadId } });
+    await settle();
+    gate.release();
+    await settle();
+
+    expect(engine.submits).toEqual(["one"]);
+    // Answered on the enqueue path's contract — the turn OBJECT carrying its terminal status, not an
+    // error: the reply is where a plain turn/start learns its id, and without it the broadcast below names
+    // a turn the caller cannot correlate.
+    expect(replyTo(s, 5).result).toEqual({ turn: { id: `turn_${threadId}_2`, status: "cancelled" } });
+    expect(cancelledIds(s)).toEqual([`turn_${threadId}_2`]);
+    expect(notifs(s, "turn/started").map((f) => f.params.turn.id)).toEqual([`turn_${threadId}_1`]);
+    expect(replyTo(s, 6).result).toEqual({ ok: true });
+  });
+
+  it("interrupt with BOTH turnId and cancelQueued flushes FIRST: the named entry reports cancelled and the whole flush rides along", async () => {
+    const engine = mkEngine();
+    const { srv, s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    send(c, { id: 5, method: "turn/start", params: { threadId, input: "three", queue: true } });
+    await tick();
+    const named = replyTo(s, 4).result.turn.id;
+
+    send(c, { id: 6, method: "turn/interrupt", params: { threadId, turnId: named, cancelQueued: true } });
+    await settle();
+
+    expect(replyTo(s, 6).result).toEqual({ interrupted: false, cancelled: [named], cancelledQueued: [`turn_${threadId}_2`, `turn_${threadId}_3`] });
+    expect(cancelledIds(s)).toEqual([`turn_${threadId}_2`, `turn_${threadId}_3`]); // the flush is NOT skipped by the by-id arm
+    expect(engine.interrupts).toBe(0); // naming a queued turn still never touches the engine
+    expect(srv.registry.get(threadId)!.queue).toEqual([]);
+  });
+
+  it("interrupt with cancelQueued and a turnId that is NOT queued interrupts the running turn and still reports the flush", async () => {
+    const engine = mkEngine();
+    const { s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "two", queue: true } });
+    await tick();
+
+    // the RUNNING turn's own id — not in the queue, so it falls through to the engine interrupt
+    send(c, { id: 5, method: "turn/interrupt", params: { threadId, turnId: `turn_${threadId}_1`, cancelQueued: true } });
+    await settle();
+
+    expect(replyTo(s, 5).result).toEqual({ interrupted: true, cancelledQueued: [`turn_${threadId}_2`] });
+    expect(engine.interrupts).toBe(1);
+    expect(notifs(s, "turn/completed").find((f) => f.params.turn.id === `turn_${threadId}_1`).params.turn.status).toBe("interrupted");
   });
 
   it("a SWAPPING thread refuses turn/start{queue:true} too — a swap never calls settleTurn, so an enqueue there would strand", async () => {

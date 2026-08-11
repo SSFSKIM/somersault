@@ -51,8 +51,9 @@ describe("appserver compact-as-turn (Task 11)", () => {
     const compactStartReply = parsed(s.lines).find((f) => f.id === 3);
     expect(compactStartReply.result.turn.status).toBe("inProgress");
     const turnId = compactStartReply.result.turn.id;
-    // Turn ids are minted in exactly one function (turns.ts's mintTurnId, beginTurn's only caller) — a
-    // compact turn's id must be in the SAME format turn/start produces, not a bespoke compact-only scheme.
+    // Turn ids are minted in exactly one function (registry.ts's mintTurnId — called by turns.ts's
+    // beginTurn and, since M2b Task 4, queue.ts's enqueueTurn) — a compact turn's id must be in the SAME
+    // format turn/start and a queued turn produce, not a bespoke compact-only scheme.
     expect(turnId).toBe(`turn_${threadId}_1`);
     expect(parsed(s.lines).find((f) => f.method === "turn/started")).toBeTruthy();
 

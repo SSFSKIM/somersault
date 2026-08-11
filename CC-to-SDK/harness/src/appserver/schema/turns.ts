@@ -7,5 +7,7 @@ export const turnStartParams = z.object({ threadId: z.string().min(1), input: z.
 /** `turnId`: address ONE turn. Naming a queued turn cancels just that entry and never touches the engine
  *  (spec D-M2-10 — ids are minted at enqueue precisely so an unstarted turn is addressable); an id that
  *  is not in the queue falls through to the ordinary interrupt of whatever is running. `cancelQueued` is
- *  Stop-means-stop-everything: flush the whole queue, then interrupt. */
+ *  Stop-means-stop-everything: flush the whole queue, then interrupt. BOTH together: the flush runs
+ *  first and `turnId` is resolved against its result — the receipt reports the named id under
+ *  `cancelled` and the flushed set under `cancelledQueued` (turns.ts). */
 export const turnInterruptParams = z.object({ threadId: z.string().min(1), cancelQueued: z.boolean().optional(), turnId: z.string().min(1).optional() });

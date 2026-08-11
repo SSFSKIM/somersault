@@ -171,6 +171,32 @@ export function beginTurn(
   // The chain still gates the submit work below so it stays ordered after any prior thread-scoped chain
   // item (e.g. a queued thread/close finishing its dispose first).
   record.chain = record.chain.then(() => {
+    // RE-READ the record before running anything. Every check above ran at request-arrival time, but this
+    // callback can sit behind a chain item awaiting real engine I/O (a settings setter, a compact), and the
+    // world moves while it waits: `thread/close` latches `closing` + flushes SYNCHRONOUSLY, so a turn
+    // claimed before that latch went up would otherwise submit to an engine the close is about to dispose —
+    // and its terminal event would be broadcast after closeRecord dropped the record, i.e. never heard.
+    // Same for a `turn/interrupt` that landed in the wait: starting engine work the client already stopped
+    // is work nobody asked for. Both settle the turn TERMINALLY here instead of running the runner:
+    //  - `closing` -> "cancelled", exactly what the close flush reports for the queued turns this one was
+    //    drained ahead of (queue.ts) — a turn withdrawn by the SERVER reads the same either way.
+    //  - `interruptRequested` -> "interrupted", the same status onSuccess/onFailure report for a turn the
+    //    CLIENT aborted, so the flag means one thing on every path out of beginTurn.
+    // `closing` wins when both hold, matching threadBusyReason's precedence (registry.ts).
+    // The reply follows the ENQUEUE-path contract rather than erroring: a queued turn is replied
+    // `{turn:{id,status:"queued"}}` and learns its terminal status by notification, so a still-waiting
+    // turn/start (or compact) caller likewise gets `{turn:{id,status}}` — an error would leave it holding
+    // no id to correlate the turn/completed below with, and a caller that DID get its id (the drain) is
+    // already served by the broadcast alone.
+    const stopped = record.closing ? "cancelled" : record.interruptRequested ? "interrupted" : undefined;
+    if (stopped) {
+      const turn0 = { id: turnId, status: stopped };
+      settleTurn(srv, record); // clears busy and drains the next queued turn (a no-op under the closing latch)
+      if (ctx && id !== undefined) ctx.peer.reply(id, { turn: turn0 });
+      srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: turn0 });
+      statusChanged(srv, record);
+      return;
+    }
     const turn = { id: turnId, status: "inProgress" };
     record.updatedAt = nowSec(); // a turn STARTING is activity too — not only its completion (settleTurn)
     if (ctx && id !== undefined) ctx.peer.reply(id, { turn });
@@ -301,17 +327,23 @@ export const turnInterrupt: Handler = async (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // Stop-means-stop-everything: the flush runs BEFORE the interrupt, because interrupting first makes the
+  // in-flight turn settle — and settleTurn drains the very queue this request is trying to empty. It also
+  // runs before the by-id arm below: with BOTH flags set, `cancelQueued` is honoured FIRST and `turnId` is
+  // then resolved AGAINST ITS RESULT. (The by-id arm used to return early and silently skip a flush the
+  // client had explicitly asked for — every other queued turn survived a "stop everything".)
+  const cancelledQueued = parsed.data.cancelQueued ? flushQueue(srv, record) : undefined;
   // Aimed at a QUEUED turn (spec D-M2-10): answered before the engine is touched at all — that turn has no
   // engine work to stop, and interrupting the RUNNING turn because a client cancelled a pending one would
-  // destroy work nobody asked to lose. An id that is not queued falls through unchanged (it names the
-  // running turn, or nothing).
-  if (parsed.data.turnId && cancelQueued(srv, record, parsed.data.turnId)) {
-    ctx.peer.reply(id, { interrupted: false, cancelled: [parsed.data.turnId] });
+  // destroy work nobody asked to lose. The named id counts as cancelled whether THIS call's flush took it
+  // or the by-id removal did, so the receipt reads the same for `{turnId}` and `{turnId, cancelQueued}` —
+  // the flush's ids just ride along in `cancelledQueued`. An id that is in neither falls through unchanged
+  // (it names the running turn, or nothing), carrying the flush's ids into that receipt instead.
+  const named = parsed.data.turnId;
+  if (named && (cancelledQueued?.includes(named) || cancelQueued(srv, record, named))) {
+    ctx.peer.reply(id, { interrupted: false, cancelled: [named], ...(cancelledQueued ? { cancelledQueued } : {}) });
     return;
   }
-  // Stop-means-stop-everything: the flush runs BEFORE the interrupt, because interrupting first makes the
-  // in-flight turn settle — and settleTurn drains the very queue this request is trying to empty.
-  const cancelledQueued = parsed.data.cancelQueued ? flushQueue(srv, record) : undefined;
   await requestInterrupt(record);
   ctx.peer.reply(id, cancelledQueued ? { interrupted: true, cancelledQueued } : { interrupted: true });
 };

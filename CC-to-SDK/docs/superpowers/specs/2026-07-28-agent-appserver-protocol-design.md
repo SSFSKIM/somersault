@@ -208,13 +208,24 @@ thread count; backs `collect()` snapshot).
 - `turn/start` — `{threadId, input: userMessage content[], settingsOverride?}` → `{turn}` with
   the seq-correlated id; busy-gated. Slash-catalog commands submit here as prompts (3-way dispatch
   stays client-side, as in the TUI).
-- `turn/interrupt` `{cancelQueued?: boolean}` — plain interrupt by default; `cancelQueued: true`
-  is **Stop-means-stop-everything**: it flushes the app-server's own `turn/queue` and interrupts
-  the engine. Halting the SDK while the server queue starts the next turn is exactly the failure
-  the SDK docstring warns about. **The SDK-side half is unreachable at 0.3.220** — `Query.interrupt()`
-  is zero-arg and no public method carries `cancel_queued` (see *Surprises & Discoveries*), so the
-  receipt reports only the server-side set (`cancelledQueued[]`); `cancelled[]`/`still_queued[]`
-  land when the SDK surfaces the option.
+- `turn/interrupt` `{turnId?: string, cancelQueued?: boolean}` — plain interrupt by default;
+  `cancelQueued: true` is **Stop-means-stop-everything**: it flushes the app-server's own
+  `turn/queue` and interrupts the engine. Halting the SDK while the server queue starts the next
+  turn is exactly the failure the SDK docstring warns about. **The SDK-side half is unreachable at
+  0.3.220** — `Query.interrupt()` is zero-arg and no public method carries `cancel_queued` (see
+  *Surprises & Discoveries*), so the receipt reports only the server-side set (`cancelledQueued[]`);
+  `cancelled[]`/`still_queued[]` land when the SDK surfaces the option.
+  `turnId` addresses **one** turn (D-M2-10; ids are minted at enqueue precisely so an unstarted turn
+  is addressable): naming a queued turn removes just that entry, completes it
+  `turn/completed {status:"cancelled"}` and replies `{interrupted: false, cancelled: [turnId]}` —
+  the engine is never touched, because interrupting the running turn to cancel a pending one
+  destroys work nobody asked to lose. An id that is not queued falls through to the ordinary
+  interrupt of whatever is running.
+  **Both flags together**: `cancelQueued` is processed **first** and `turnId` is resolved against its
+  result — so a named entry the flush already took still reports
+  `{interrupted: false, cancelled: [turnId], cancelledQueued: [...]}`, and a `turnId` that was not in
+  the queue falls through to the running-turn interrupt whose receipt carries `cancelledQueued` too.
+  (The by-id arm never silently skips a flush the client asked for.)
 - `turn/background` (Ctrl+B → `backgroundAll`), `turn/queue` *(X)* — server-side input queue
   mirroring the TUI's client-side queue; drains FIFO on idle.
 - `turn/steer` *(X)* — **probe-gated**: requires proving the unused SDK `streamInput` mid-turn
@@ -582,6 +593,18 @@ claim).
   enqueue) and a queued turn flushed by `thread/close`/`shutdown()`/`turn/interrupt{cancelQueued}` ends
   as `turn/completed {status:"cancelled"}` rather than never being heard from again. Foreseen as
   deviation (1) of the M2 design note above; recorded here as landed.
+  §7's `turn/interrupt` gains `turnId?` alongside `cancelQueued?` (both now spelled out there): a
+  queued turn is addressable by the id it was minted at enqueue, answered
+  `{interrupted: false, cancelled: [turnId]}` without touching the engine, and with **both** flags set
+  the flush runs first and the named id is resolved against its result (receipt carries
+  `cancelledQueued` either way).
+  `cancelled` also covers one turn that was never queued: a turn whose deferred engine call wakes to
+  find `thread/close` has latched (`beginTurn` re-reads the record before running the runner, so no
+  submit reaches a closing engine) settles `turn/completed {status:"cancelled"}` too — and a
+  `turn/start`/`thread/compact/start` caller still awaiting its reply gets the turn OBJECT carrying
+  that status, matching the enqueue path where a terminal status arrives by notification against an id
+  the client already holds. A turn stopped that way by a `turn/interrupt` instead reports
+  `interrupted`, the same status every other path reads off `interruptRequested`.
 
 - **Flagged addition (2026-08-11, as2b Task 1):** §8's Thread family gains `thread/rewound`
   `{threadId, sessionId}` — a rewind replaces the thread's engine and truncates its transcript, and
