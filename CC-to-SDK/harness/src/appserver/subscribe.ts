@@ -146,6 +146,17 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // Cursor GENERATION check before the no-session early return, not after (M2b Task 3b): a cursor minted
+  // at an earlier epoch is invalid whether or not the thread currently has a session, and `thread/clear`
+  // is the case that separates the two — it bumps the epoch AND leaves the record with no sessionId until
+  // the fresh conversation's init frame (a rewind, which retains its id, never reaches this ordering).
+  // Answering that cursor with an empty page would tell a client "you have read everything" about a walk
+  // the epoch bump actually invalidated, which is the exact silent-truncation this cursor scheme exists to
+  // prevent.
+  if (parsed.data.cursor && Number(parsed.data.cursor.split(":")[0]) !== record.epoch) {
+    ctx.peer.replyError(id, ERR.INVALID_PARAMS, "cursor invalidated by a rewind; re-read from the start");
+    return;
+  }
   if (!record.sessionId) { ctx.peer.reply(id, { data: [], nextCursor: null }); return; }
   const getMessages = srv.deps.getSessionMessages ?? defaultGetSessionMessages;
   const requested = parsed.data.limit;
@@ -159,12 +170,7 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
     return;
   }
 
-  const [epochStr, rowStr] = parsed.data.cursor.split(":");
-  if (Number(epochStr) !== record.epoch) {
-    ctx.peer.replyError(id, ERR.INVALID_PARAMS, "cursor invalidated by a rewind; re-read from the start");
-    return;
-  }
-  const cursorRow = Number(rowStr);
+  const cursorRow = Number(parsed.data.cursor.split(":")[1]); // the epoch half was validated above
   if (cursorRow <= 0) { ctx.peer.reply(id, { data: [], nextCursor: null }); return; }
 
   // The `4*limit` lookahead is a guess, and a guess can undershoot: two (or more) tools can be open

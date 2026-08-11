@@ -62,11 +62,28 @@ lib answers it from its cached task set with no engine round-trip, so the last k
 on a dead engine), `task/stop` and `turn/background` (both
 chain-scoped; `turn/background`'s `toolUseId` is optional and its reply carries the engine's boolean
 receipt verbatim). None of the three emits a notification of its own: the engine's own task frames
-already reach subscribers as `task/event` / `task/changed` through the Wave 1 frame router.
+already reach subscribers as `task/event` / `task/changed` through the Wave 1 frame router. Then the
+**settings-ops nonet** (gap 6, `appserver/settingsOps.ts`), in registration order —
+`thread/settings/read` (un-chained passthrough of the engine's untyped `get_settings`),
+`thread/directory/list` (un-chained; assembles cwd + the launch config's dirs + this thread's own
+grants, and is exempt from the `-33005` gate because it never reaches an engine),
+`thread/directory/add`, `thread/directory/remove`, `thread/permissionRule/add`,
+`thread/permissionRule/remove`, `thread/outputStyle/set`, `thread/effort/set` (all six chain-scoped
+over the per-record flag accumulator, committed only after `applyFlagSettings` accepts; an
+off-vocabulary effort level is refused `-32602` before the engine is touched) and `thread/clear` (the
+rewind gate order against a FRESH conversation — `resume`/`resumeAt` explicitly overridden, epoch
+bumped, `sessionId` dropped, `thread/rewound {cleared:true}` broadcast). Every engine swap — rewind's
+and clear's alike — re-pushes the settings mirror and the flag accumulator onto the replacement engine
+from the one shared seam (`rewind.ts`'s `swapEngine`), since a replacement is rebuilt from
+`record.config` and would otherwise silently revert every runtime write; a re-push the replacement
+rejects is reported as a `warning` to the thread's subscribers rather than failing the completed swap.
 
-**24 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
-connection-scoped `initialized`, `warning`; server-scoped (via `initialize{watchThreads:true}`)
-`thread/started`, `thread/deleted`; both-scoped `thread/closed`; thread-scoped
+**25 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
+connection-scoped `initialized` and `warning` (the latter also fans out to a thread's subscribers when
+a post-swap state re-push is rejected — the loss affects every attached client, not only the caller);
+server-scoped (via `initialize{watchThreads:true}`) `thread/started`, `thread/deleted`; both-scoped
+`thread/closed` and `thread/rewound` (`{threadId, sessionId}`, plus `cleared: true` and a null id when
+the swap was a `thread/clear`); thread-scoped
 `thread/status/changed` (`{state, waitingOn?}`), `thread/settings/changed` (client + engine legs,
 echo-deduped), `thread/name/updated`, `thread/capabilities/changed`, `thread/compacted`,
 `thread/tokenUsage/updated`, `thread/limits/updated`, `turn/started`, `turn/completed` (carries the
@@ -111,11 +128,15 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
    frame router, and the `task/list`/`task/stop`/`turn/background` **methods** (`appserver/tasks.ts`),
    which deliberately add no notifications of their own — a stop's outcome is reported by the engine's
    own frames, not by the request that asked for it.
-6. **Nine host ops post-date the spec's 25-op inventory** (`clear`; W3 T1's `get_settings`,
-   `list_dirs`, `add_dir`, `remove_dir`, `set_output_style`, `add_rule`, `remove_rule`; Wave C's
-   `set_effort`). No protocol methods exist for them yet — the method names below are **proposed**,
-   a flagged parent-spec §7 addition to be settled when their milestone (M2b unless noted) picks
-   them up.
+6. **CLOSED as of M2b Task 3b** (kept at this number so older references still resolve). The nine
+   host ops that post-dated the spec's 25-op inventory (`clear`; W3 T1's `get_settings`, `list_dirs`,
+   `add_dir`, `remove_dir`, `set_output_style`, `add_rule`, `remove_rule`; Wave C's `set_effort`) all
+   ship as protocol methods now (`appserver/settingsOps.ts`) — the names in the rows below are
+   registered, not proposed, and they land in the parent spec's §7 as a settled addition. Six of the
+   nine drive ONE engine primitive, `applyFlagSettings`, which replaces the dynamic flag layer wholesale
+   rather than merging a delta; the appserver therefore keeps a per-thread accumulator on the record
+   (`flagPerms`/`flagOutputStyle`/`flagEffort`, `host/host.ts`'s pattern) and writes to it only after
+   the engine accepts a push, so a rejected grant leaves nothing behind for a later replay to re-push.
 7. **The existing SDK-drift pass's own `Query`-method extraction over-counts by 5** (its `block()`
    helper ends on `"\n};"`, right for `type Options` but wrong for `interface Query`). It doesn't
    corrupt that pass's installed-vs-npm diff; the appserver pass re-parses `interface Query`
@@ -150,15 +171,15 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `rewind_anchors` | host/ops.ts | `thread/rewind/anchors` | both | shipped(M2b) |
 | `rewind_dryrun` | host/ops.ts | `thread/rewind/dryRun` | both | shipped(M2b) |
 | `rewind` | host/ops.ts | `thread/rewind` | both | shipped(M2b) — engine swap, host-order validation |
-| `clear` | host/ops.ts | `thread/clear` *(proposed)* | both | planned(M2b) — gap 6 |
-| `get_settings` | host/ops.ts | `thread/settings/read` *(proposed)* | both | planned(M2b) — gap 6 |
-| `list_dirs` | host/ops.ts | `thread/directory/list` *(proposed)* | both | planned(M2b) — gap 6 |
-| `add_dir` | host/ops.ts | `thread/directory/add` *(proposed; probe 5's `register_repo_root`)* | both | planned(M2b) — gap 6 |
-| `remove_dir` | host/ops.ts | `thread/directory/remove` *(proposed)* | both | planned(M2b) — gap 6 |
-| `set_output_style` | host/ops.ts | `thread/outputStyle/set` *(proposed)* | both | planned(M2b) — gap 6 |
-| `add_rule` | host/ops.ts | `thread/permissionRule/add` *(proposed)* | both | planned(M2b) — gap 6 |
-| `remove_rule` | host/ops.ts | `thread/permissionRule/remove` *(proposed)* | both | planned(M2b) — gap 6 |
-| `set_effort` | host/ops.ts | `thread/effort/set` *(proposed)* | both | planned(M2b) — gap 6 |
+| `clear` | host/ops.ts | `thread/clear` | both | shipped(M2b) — engine swap to a FRESH conversation, rewind's gate order |
+| `get_settings` | host/ops.ts | `thread/settings/read` | both | shipped(M2b) — untyped engine passthrough |
+| `list_dirs` | host/ops.ts | `thread/directory/list` | both | shipped(M2b) — three-source assembly; record-only, so exempt from the -33005 gate |
+| `add_dir` | host/ops.ts | `thread/directory/add` | both | shipped(M2b) — flag accumulator, commit-after-accept; supersedes probe 5's `register_repo_root` |
+| `remove_dir` | host/ops.ts | `thread/directory/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept |
+| `set_output_style` | host/ops.ts | `thread/outputStyle/set` | both | shipped(M2b) — flag accumulator, commit-after-accept |
+| `add_rule` | host/ops.ts | `thread/permissionRule/add` | both | shipped(M2b) — flag accumulator, commit-after-accept |
+| `remove_rule` | host/ops.ts | `thread/permissionRule/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept |
+| `set_effort` | host/ops.ts | `thread/effort/set` | both | shipped(M2b) — closed level enum, host/ops.ts's verbatim (probe 102) |
 
 ## ControlFrame — `harness/src/bridge/types.ts` (11 tokens)
 

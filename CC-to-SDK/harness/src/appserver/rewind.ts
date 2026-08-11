@@ -68,13 +68,10 @@ async function dryRunRewind(session: EngineSession, uuid: string): Promise<DryRu
  *  no-ops, exactly as on the `thread/resume` admission path). A swap that mints a NEW conversation passes
  *  `undefined` and lets the latch learn it off the first init frame.
  *
- *  NOT restored here, and not this function's to restore: whatever the thread ACCUMULATED on the outgoing
- *  engine after it was opened — flag settings pushed via `applyFlagSettings` (directories, rules, output
- *  style, effort), and a `model`/`permissionMode` a client moved at runtime. A replacement engine is a
- *  fresh CLI process with an empty flag layer, so all of it silently reverts to whatever `record.config`
- *  carried; host.ts solves this with a per-host accumulator it replays into every swap
- *  (`replayFlagState`), and the appserver's equivalent belongs with the task that builds that accumulator
- *  (M2b's settings-ops wave), not with a two-knob patch here that would look complete and not be. */
+ *  RESTORED here, by `repushThreadState` below: whatever the thread ACCUMULATED on the outgoing engine
+ *  after it was opened. A replacement engine is a fresh CLI process rebuilt from `record.config`, so
+ *  without the re-push every runtime write — a model or permission mode a client moved, the whole flag
+ *  layer — silently reverts to the launch values while the wire keeps announcing the new ones. */
 export async function swapEngine(
   srv: AppServer, record: ThreadRecord, makeReplacement: () => EngineSession, nextSessionId: string | undefined,
 ): Promise<void> {
@@ -89,6 +86,53 @@ export async function swapEngine(
   // exists in the transcript it is about to read.
   record.buffer = [];
   installRouter(srv, record);
+  await repushThreadState(srv, record);
+}
+
+/** Re-send everything the thread accumulated on the OUTGOING engine to the replacement — the appserver's
+ *  equivalent of `host/host.ts`'s `replayFlagState`, widened to the settings mirror. Called from inside
+ *  `swapEngine`, which is the single seam both `thread/rewind` and Task 3b's `thread/clear` go through, so
+ *  neither path can forget it and the two cannot drift.
+ *
+ *  Two layers, in this order:
+ *  1. the SETTINGS MIRROR (`record.settings`) — the model/permissionMode/thinkingTokens trio the wire
+ *     announces through `thread/settings/changed` and `threadView`. Re-pushing is what keeps that
+ *     announcement true; `permissionMode` is the security-relevant one, since a silent revert to the
+ *     launch mode is a thread that reports `acceptEdits` while the engine asks about every edit — or,
+ *     worse, the reverse. Values seeded from `record.config` are re-pushed too: they are already what the
+ *     replacement was built with, so the call is idempotent and cheap, and skipping them would mean
+ *     tracking which fields were client-written, a second piece of state to get wrong.
+ *  2. the FLAG LAYER (`record.flagPerms`/`flagOutputStyle`/`flagEffort`) — Task 3b's accumulator, pushed
+ *     as the same three `applyFlagSettings` calls host.ts makes, and only for the parts that hold
+ *     anything (an empty layer needs no push).
+ *
+ *  BEST EFFORT, never fatal. The swap has already happened by the time this runs — the outgoing engine is
+ *  disposed and the record holds the replacement — so a rejection here cannot be undone, and propagating
+ *  it would turn a completed swap into a reported failure with a live engine behind it. What must not
+ *  happen is silence: the state a client believes is in force would be gone with nothing saying so. So
+ *  each step is attempted independently and the losses are named in ONE `warning` — the same
+ *  `{code, message}` payload `AppServer.warn` sends, fanned to the thread's subscribers rather than to one
+ *  peer, because the lost state affects every attached client and not just whoever asked for the swap.
+ *
+ *  An ABSENT optional method is not a failure and raises no warning (the convention every handler here
+ *  follows): an engine build that has no `setModel` never had the value to lose. */
+async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<void> {
+  const s = record.session;
+  const lost: string[] = [];
+  const step = async (label: string, run: () => Promise<unknown>): Promise<void> => {
+    try { await run(); } catch { lost.push(label); }
+  };
+  const { model, permissionMode, thinkingTokens } = record.settings;
+  if (model !== undefined && s.setModel) await step("model", () => s.setModel!(model));
+  if (permissionMode !== undefined && s.setPermissionMode) await step("permissionMode", () => s.setPermissionMode!(permissionMode));
+  if (thinkingTokens !== undefined && s.setMaxThinkingTokens) await step("thinkingTokens", () => s.setMaxThinkingTokens!(thinkingTokens));
+  if (s.applyFlagSettings) {
+    const perms = record.flagPerms;
+    if (Object.values(perms).some((a) => a.length)) await step("permissions", () => s.applyFlagSettings!({ permissions: { ...perms } }));
+    if (record.flagOutputStyle) await step("outputStyle", () => s.applyFlagSettings!({ outputStyle: record.flagOutputStyle }));
+    if (record.flagEffort) await step("effortLevel", () => s.applyFlagSettings!({ effortLevel: record.flagEffort }));
+  }
+  if (lost.length) srv.broadcast(record.id, "warning", { code: "stateRepushFailed", message: `the replacement engine did not accept: ${lost.join(", ")}` });
 }
 
 export const rewindAnchors: Handler = async (srv, ctx, id, params) => {

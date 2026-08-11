@@ -37,6 +37,10 @@ export interface EngineSession {
   setModel?(model?: string): Promise<void>;
   setMaxThinkingTokens?(maxTokens: number | null): Promise<void>;
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
+  /** Optional (the real lib Session has it — src/session/session.ts's `getSettings`): M2b Task 3b's
+   *  `thread/settings/read`. An UNTYPED passthrough (probe 75 Q5) — the SDK answers a control request
+   *  whose shape it owns, so the appserver relays the value rather than projecting it. */
+  getSettings?(): Promise<unknown>;
   /** Optional (the real lib Session has it — src/session/session.ts:155-160,196-202): Task 10's five
    *  introspection reads. `usage()` wraps the SDK's own EXPERIMENTAL-prefixed method name
    *  (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`) behind this stable spelling — callers
@@ -137,6 +141,16 @@ export interface ThreadRecord {
   tags?: string[];                // Task 12: set only by thread/tag/set patching a live match (same as
                                   // `title` — the SDK's store model is a single nullable `tag`, wrapped
                                   // here as a one-element array to match parent §5's plural wire field)
+  /** The thread's own DYNAMIC FLAG LAYER — everything M2b Task 3b's settings ops have pushed through
+   *  `applyFlagSettings` since the engine was opened, mirroring `host/host.ts`'s per-host accumulator.
+   *  Two jobs, and the second is why it is state rather than a fire-and-forget call: `thread/directory/list`
+   *  reports the session-scoped grants as their own source, and every engine swap (rewind.ts's `swapEngine`)
+   *  REPLAYS the whole layer onto the replacement, which is a fresh CLI process with an empty one.
+   *  Each entry is written only AFTER the engine accepted the push (settingsOps.ts's commit-after-accept):
+   *  a phantom row here is a grant the replay would later hand an engine that never agreed to it. */
+  flagPerms: { allow: string[]; ask: string[]; deny: string[]; additionalDirectories: string[] };
+  flagOutputStyle?: string;
+  flagEffort?: string;
   closing?: boolean;            // set by M2b's close-drain queue while a close is in flight
   swapInFlight?: boolean;       // set by M2b's rewind while an engine swap is in flight
   epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
@@ -144,6 +158,11 @@ export interface ThreadRecord {
                                  // needs "am I still talking to the current engine" reads this, not a
                                  // second counter of its own
 }
+
+/** A record's flag layer at birth. A FUNCTION, not a shared constant: the four arrays are replaced
+ *  wholesale on every accepted push, but a shared literal would still let one thread's accumulator be
+ *  aliased by every other thread created before the first push. */
+export const emptyFlagPerms = (): ThreadRecord["flagPerms"] => ({ allow: [], ask: [], deny: [], additionalDirectories: [] });
 
 /** The ONE answer to "is this thread busy?" (spec D-M2-8). Gates never re-assemble these terms — every
  *  later gate (queue drain, close, rewind, compact) calls this instead. Precedence is deliberate: a

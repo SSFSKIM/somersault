@@ -9,6 +9,7 @@ import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApp
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.js";
 import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./mcp.js";
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
+import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
 
 export interface MethodSchema { params: z.ZodType }
 export const methodSchemas: Record<string, MethodSchema> = {
@@ -51,4 +52,13 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "task/list": { params: taskListParams },
   "task/stop": { params: taskStopParams },
   "turn/background": { params: turnBackgroundParams },
+  "thread/settings/read": { params: settingsReadParams },
+  "thread/directory/list": { params: directoryListParams },
+  "thread/directory/add": { params: directoryPathParams },
+  "thread/directory/remove": { params: directoryPathParams },
+  "thread/permissionRule/add": { params: permissionRuleParams },
+  "thread/permissionRule/remove": { params: permissionRuleParams },
+  "thread/outputStyle/set": { params: outputStyleSetParams },
+  "thread/effort/set": { params: effortSetParams },
+  "thread/clear": { params: threadClearParams },
 };

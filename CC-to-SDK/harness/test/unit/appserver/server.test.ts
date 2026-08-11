@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
-import { threadBusyReason, type ThreadRecord } from "../../../src/appserver/registry.js";
+import { emptyFlagPerms, threadBusyReason, type ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1", ...overrides });
@@ -243,7 +243,7 @@ describe("threadBusyReason (spec D-M2-8) — the ONE busy predicate", () => {
   const baseRecord = (overrides: Partial<ThreadRecord> = {}): ThreadRecord => ({
     id: "thr_x", origin: "inProcess", session: {} as any, unattended: "park", busy: false, turnSeq: 0,
     interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(),
-    createdAt: 0, updatedAt: 0, settings: {}, epoch: 0, ...overrides,
+    createdAt: 0, updatedAt: 0, settings: {}, flagPerms: emptyFlagPerms(), epoch: 0, ...overrides,
   });
   it("returns null for an idle record (nothing busy)", () => {
     expect(threadBusyReason(baseRecord())).toBeNull();
