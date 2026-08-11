@@ -296,12 +296,21 @@ function fakeRunner() {
 }
 
 describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () => {
-  it("mountRun runs IMMEDIATELY and undebounced, and a successful result reaches onText", async () => {
+  // W2 T6 FLIPPED THIS CELL. It used to read "mountRun runs IMMEDIATELY and undebounced" — upstream's own
+  // shape, and the reason ccx ran the script TWICE per boot: the immediate run published a payload built
+  // before the catalog, the host's first `state` frame, the effort capability and the mount-time context
+  // read had landed, and the deltas they caused re-ran it 300 ms later. `mountRun` now goes through the
+  // same trailing window, so a boot coalesces into ONE run carrying the settled state. See the interface
+  // doc on `StatusLineDriver.mountRun`.
+  it("mountRun coalesces the whole boot into ONE debounced run, and its result reaches onText", async () => {
     const clock = fakeClock(), r = fakeRunner();
-    const texts: string[] = [];
+    const texts: (string | undefined)[] = [];
     const d = createStatusLineDriver(CMD, () => "{payload}", (t) => { texts.push(t); }, { runStatusLine: r.run, ...clock.deps });
     d.mountRun();
-    expect(r.runs).toHaveLength(1);
+    expect(r.runs).toHaveLength(0);                       // not yet — the boot window is open
+    d.poke("model"); d.poke("state-delta");               // everything that lands while ccx boots
+    clock.advance(300);
+    expect(r.runs).toHaveLength(1);                       // …is ONE run, not one plus a correction
     expect(r.runs[0].payload).toBe("{payload}");
     r.runs[0].resolve("STATUS");
     await tick();
@@ -321,24 +330,51 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
     expect(r.runs).toHaveLength(1);
     d.dispose();
   });
-  it("an undefined result (any failure) leaves the previous text standing — onText is not called", async () => {
+  // W2 T6 / SPEC D-W6 FLIPPED THIS CELL TOO, and it is the one behaviour change a user sees. It used to
+  // read "an undefined result leaves the previous text standing — onText is not called", which is the
+  // reading Wave C took from an annex that says both things. The bundle settles it: `y0b` (L484821)
+  // forwards `undefined` to `onResult` unconditionally, `onResult` (L484883) writes it into state, and the
+  // slot collapses to `null` in the main-screen renderer (L484981). So a failing script REMOVES the row
+  // rather than leaving yesterday's text on screen pretending to be current.
+  it("an undefined result (any failure, and an exit-0 script that printed nothing) is PUBLISHED — the row comes down", async () => {
     const clock = fakeClock(), r = fakeRunner();
-    const texts: string[] = [];
+    const texts: (string | undefined)[] = [];
     const d = createStatusLineDriver(CMD, () => "{}", (t) => { texts.push(t); }, { runStatusLine: r.run, ...clock.deps });
-    d.mountRun();
+    d.mountRun(); clock.advance(300);
     r.runs[0].resolve("FIRST");
     await tick();
     d.poke("tokenUsage"); clock.advance(300);
     r.runs[1].resolve(undefined);
     await tick();
-    expect(texts).toEqual(["FIRST"]);
+    expect(texts).toEqual(["FIRST", undefined]);
+    // …and a later good run puts it back, so the row is a live reading rather than a one-way door.
+    d.poke("tokenUsage"); clock.advance(300);
+    r.runs[2].resolve("THIRD");
+    await tick();
+    expect(texts).toEqual(["FIRST", undefined, "THIRD"]);
+    d.dispose();
+  });
+  // The two generation guards are what keep the flip above safe: a SUPERSEDED run's late `undefined` must
+  // not take down the row its successor just wrote, and a result arriving after unmount must not be
+  // published at all. Both were load-bearing before only for text; now they are load-bearing for failure.
+  it("a SUPERSEDED run's late failure does not take down its successor's row", async () => {
+    const clock = fakeClock(), r = fakeRunner();
+    const texts: (string | undefined)[] = [];
+    const d = createStatusLineDriver(CMD, () => "{}", (t) => { texts.push(t); }, { runStatusLine: r.run, ...clock.deps });
+    d.mountRun(); clock.advance(300);
+    d.poke("model"); clock.advance(300);
+    expect(r.runs).toHaveLength(2);
+    r.runs[1].resolve("NEW");
+    r.runs[0].resolve(undefined);                          // the aborted predecessor, answering late
+    await tick();
+    expect(texts).toEqual(["NEW"]);
     d.dispose();
   });
   it("a new run aborts the in-flight predecessor, and the predecessor's late result is dropped", async () => {
     const clock = fakeClock(), r = fakeRunner();
-    const texts: string[] = [];
+    const texts: (string | undefined)[] = [];
     const d = createStatusLineDriver(CMD, () => "{}", (t) => { texts.push(t); }, { runStatusLine: r.run, ...clock.deps });
-    d.mountRun();
+    d.mountRun(); clock.advance(300);
     expect(r.runs[0].aborted()).toBe(false);
     d.poke("tokenUsage"); clock.advance(300);
     expect(r.runs).toHaveLength(2);
@@ -353,8 +389,9 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
     const clock = fakeClock(), r = fakeRunner();
     const d = createStatusLineDriver({ ...CMD, refreshInterval: 2 }, () => "{}", () => {}, { runStatusLine: r.run, ...clock.deps });
     d.mountRun();
-    expect(r.runs).toHaveLength(1);                       // the mount run
-    clock.advance(2000);
+    clock.advance(300);
+    expect(r.runs).toHaveLength(1);                       // the boot run, one debounce window in
+    clock.advance(1700);
     expect(r.runs).toHaveLength(1);                       // the tick only ARMED the 300 ms debounce (`Lc(B, …)`)
     clock.advance(300);
     expect(r.runs).toHaveLength(2);
@@ -372,9 +409,9 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
   });
   it("dispose cancels a pending debounce, stops the poll, aborts the in-flight run, and makes later pokes inert", async () => {
     const clock = fakeClock(), r = fakeRunner();
-    const texts: string[] = [];
+    const texts: (string | undefined)[] = [];
     const d = createStatusLineDriver({ ...CMD, refreshInterval: 1 }, () => "{}", (t) => { texts.push(t); }, { runStatusLine: r.run, ...clock.deps });
-    d.mountRun();
+    d.mountRun(); clock.advance(300);
     d.poke("tokenUsage");
     d.dispose();
     expect(r.runs[0].aborted()).toBe(true);
@@ -402,10 +439,10 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
   });
   it("a `buildPayload` that throws does NOT abort the run already in flight", async () => {
     const clock = fakeClock(), r = fakeRunner();
-    const texts: string[] = [];
+    const texts: (string | undefined)[] = [];
     let boom = false;
     const d = createStatusLineDriver(CMD, () => { if (boom) throw new Error("x"); return "{}"; }, (t) => { texts.push(t); }, { runStatusLine: r.run, ...clock.deps });
-    d.mountRun();
+    d.mountRun(); clock.advance(300);
     boom = true;
     d.poke("tokenUsage"); clock.advance(300);
     expect(r.runs[0].aborted()).toBe(false);               // killing a good run for a payload we never built is pure loss
@@ -416,11 +453,11 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
   });
   it("an `onText` that throws is swallowed — no unhandled rejection, and later runs still deliver", async () => {
     const clock = fakeClock();
-    const texts: string[] = [];
+    const texts: (string | undefined)[] = [];
     const run = (): Promise<string | undefined> => Promise.resolve("TEXT");
     let boom = true;
     const d = createStatusLineDriver(CMD, () => "{}", (t) => { texts.push(t); if (boom) throw new Error("setState after unmount"); }, { runStatusLine: run, ...clock.deps });
-    const seen = await watchRejections(async () => { d.mountRun(); await tick(); });
+    const seen = await watchRejections(async () => { d.mountRun(); clock.advance(300); await tick(); });
     expect(seen).toEqual([]);
     boom = false;
     d.poke("model"); clock.advance(300);
@@ -432,7 +469,7 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
     const clock = fakeClock();
     const run = (): Promise<string | undefined> => Promise.reject(new Error("someone rewrote runStatusLine"));
     const d = createStatusLineDriver(CMD, () => "{}", () => {}, { runStatusLine: run, ...clock.deps });
-    const seen = await watchRejections(async () => { d.mountRun(); await tick(); });
+    const seen = await watchRejections(async () => { d.mountRun(); clock.advance(300); await tick(); });
     expect(seen).toEqual([]);
     d.dispose();
   });
@@ -440,14 +477,14 @@ describe("createStatusLineDriver — annex §C2.4 (`b0b`'s four triggers)", () =
     const clock = fakeClock(), r = fakeRunner();
     const d = createStatusLineDriver({ ...CMD, refreshInterval: Infinity }, () => "{}", () => {}, { runStatusLine: r.run, ...clock.deps });
     d.mountRun();
-    expect(clock.delays).toEqual([2_147_483_647]);         // node clamps >2^31−1 to 1 ms — a hot loop that never updates
+    expect(clock.delays).toEqual([STATUS_LINE_DEBOUNCE_MS, 2_147_483_647]);   // node clamps >2^31−1 to 1 ms — a hot loop that never updates
     d.dispose();
   });
   it("the payload is rebuilt per run, so a run carries the state at ITS moment, not the driver's construction", () => {
     const clock = fakeClock(), r = fakeRunner();
     let n = 0;
     const d = createStatusLineDriver(CMD, () => `payload-${++n}`, () => {}, { runStatusLine: r.run, ...clock.deps });
-    d.mountRun();
+    d.mountRun(); clock.advance(300);
     d.poke("model"); clock.advance(300);
     expect(r.runs.map((x) => x.payload)).toEqual(["payload-1", "payload-2"]);
     d.dispose();
@@ -477,13 +514,27 @@ const FULL: StatusLineSnapshot = {
     model_usage: { "claude-opus-4-6": { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 900, cacheCreationInputTokens: 200 } } } },
   version: "9.9.9",
   effort: "xhigh",                                   // WAVE C TASK 11 — the conditional `effort` block (§C6/§C2.2)
+  // W2 T6 (EP-D4) — the two hook-fed identity fields and the rate-limit windows. All three arrive on a
+  // snapshot the mount site assembles; the builder's only job is the reshape.
+  transcriptPath: "/home/u/.claude/projects/-repo-app/sess-1.jsonl",
+  promptId: "11111111-2222-3333-4444-555555555555",
+};
+
+/** `FULL` plus a `session.usage()` reading that CAN see the plan windows. Kept separate because the
+ *  golden above is the shape a `claude setup-token` credential produces — no windows at all. */
+const FULL_RATED: StatusLineSnapshot = {
+  ...FULL,
+  usage: { ...FULL.usage, rate_limits_available: true,
+    rate_limits: { five_hour: { utilization: 42, resets_at: "2026-08-11T20:00:00Z" }, seven_day: { utilization: 7.5, resets_at: null } } },
 };
 
 describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
   it("is the golden object, field for field, when every input is present", () => {
     expect(buildStatusLinePayload(FULL)).toEqual({
       session_id: "sess-1",
+      transcript_path: "/home/u/.claude/projects/-repo-app/sess-1.jsonl",
       cwd: "/repo/app",
+      prompt_id: "11111111-2222-3333-4444-555555555555",
       session_name: "Fixing the parser",
       model: { id: "claude-opus-4-6", display_name: "Opus 4.6" },
       workspace: { current_dir: "/repo/app", project_dir: "/repo", added_dirs: ["/repo/docs"] },
@@ -496,6 +547,7 @@ describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
         used_percentage: 20, remaining_percentage: 80,
       },
       exceeds_200k_tokens: false,
+      fast_mode: false,
       effort: { level: "xhigh" },
       thinking: { enabled: true },
     });
@@ -504,14 +556,56 @@ describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
   // a block built off a value nothing sets would be a lie a script could read. It exists now, so the block is
   // present — CONDITIONALLY, exactly as upstream's `...Fk(y) && { effort: … }` is (a model without effort
   // support, or a client that has never been told a level, still carries no key).
-  it("carries exactly the spec's key set — `effort` included, and none of the blocks ccx has no producer for", () => {
+  // W2 T6 FLIPPED FOUR NAMES OUT OF THE ABSENT LIST AND INTO THE ORDER. The Wave C key set omitted
+  // `transcript_path`, `prompt_id`, `fast_mode` and `rate_limits` for reasons canon Q3 retired: the first
+  // two ride on every hook input, `fast_mode` is an unconditional boolean upstream, and `rate_limits` is
+  // already in ccx's hand (`session.usage()`). What stays out is what canon itself drops.
+  it("carries exactly canon's key set, in canon's own order — and none of the blocks canon drops", () => {
     // `toEqual` treats an `undefined` value as an absent key, so the key LIST is what pins "omitted, not null".
-    expect(Object.keys(buildStatusLinePayload(FULL))).toEqual([
-      "session_id", "cwd", "session_name", "model", "workspace", "version", "output_style", "cost",
-      "context_window", "exceeds_200k_tokens", "effort", "thinking",
+    expect(Object.keys(buildStatusLinePayload(FULL_RATED))).toEqual([
+      "session_id", "transcript_path", "cwd", "prompt_id", "session_name", "model", "workspace", "version",
+      "output_style", "cost", "context_window", "exceeds_200k_tokens", "fast_mode", "effort", "thinking",
+      "rate_limits",
     ]);
-    for (const absent of ["transcript_path", "prompt_id", "rate_limits", "vim", "fast_mode", "agent", "remote", "pr", "worktree"])
-      expect(absent in buildStatusLinePayload(FULL)).toBe(false);
+    // `permission_mode` is the one the hook-input shape declares and the payload does NOT carry: `H0b`
+    // calls `Kf()` with no arguments, so it (and `agent_id`) are `undefined` and JSON.stringify drops them.
+    for (const absent of ["permission_mode", "agent_id", "agent_type", "vim", "agent", "remote", "pr", "worktree"])
+      expect(absent in buildStatusLinePayload(FULL_RATED)).toBe(false);
+  });
+  it("`fast_mode` is an UNCONDITIONAL literal false — ccx exposes no fast-mode control, and canon never omits the key", () => {
+    expect(buildStatusLinePayload({ cwd: "/x", thinkingEnabled: false }).fast_mode).toBe(false);
+    expect("fast_mode" in buildStatusLinePayload({ cwd: "/x", thinkingEnabled: false })).toBe(true);
+  });
+  it("`transcript_path`/`prompt_id` are absent before the first prompt and present after it (canon's per-moment table)", () => {
+    const preTurn = buildStatusLinePayload({ cwd: "/x", thinkingEnabled: false, sessionId: "minted-uuid" });
+    expect("transcript_path" in preTurn).toBe(false);
+    expect("prompt_id" in preTurn).toBe(false);
+    expect(preTurn.session_id).toBe("minted-uuid");        // …but the identity is NEVER absent (D-W4)
+    const postTurn = buildStatusLinePayload({ cwd: "/x", thinkingEnabled: false, sessionId: "engine-id", transcriptPath: "/p.jsonl", promptId: "pid" });
+    expect(postTurn.transcript_path).toBe("/p.jsonl");
+    expect(postTurn.prompt_id).toBe("pid");
+  });
+  // THE UNIT PIN IS THE VERIFICATION for this block, and deliberately so: `rate_limits_available` is false
+  // under an API key AND under a `claude setup-token` OAuth token (no profile scope), which are the only two
+  // credentials this project has. No live cell can reach the populated arm, so the mapping is pinned here.
+  it("`rate_limits` maps the SDK's `utilization` onto canon's `used_percentage` WITHOUT rescaling", () => {
+    // The SDK declares utilization as "Percentage of the window used, 0-100" — canon's own `* 100` exists
+    // because ITS source is a 0-1 response header. Multiplying here would render 42% as 4200%.
+    expect(buildStatusLinePayload(FULL_RATED).rate_limits).toEqual({
+      five_hour: { used_percentage: 42, resets_at: "2026-08-11T20:00:00Z" },
+      seven_day: { used_percentage: 7.5, resets_at: null },
+    });
+  });
+  it("`rate_limits` is ABSENT under a credential that cannot see the buckets, and before the first reading", () => {
+    expect("rate_limits" in buildStatusLinePayload(FULL)).toBe(false);                       // no usage reading with windows
+    const blind = { ...FULL, usage: { ...FULL.usage, rate_limits_available: false, rate_limits: null } };
+    expect("rate_limits" in buildStatusLinePayload(blind)).toBe(false);                      // setup-token / API key
+    const empty = { ...FULL, usage: { ...FULL.usage, rate_limits_available: true, rate_limits: {} } };
+    expect("rate_limits" in buildStatusLinePayload(empty)).toBe(false);                      // available, no windows yet
+  });
+  it("`rate_limits` carries only the windows that answered — canon's own `...w.five_hour && {…}` spread", () => {
+    const one = { ...FULL, usage: { ...FULL.usage, rate_limits_available: true, rate_limits: { five_hour: { utilization: 3, resets_at: "z" }, seven_day: { utilization: null, resets_at: null } } } };
+    expect(buildStatusLinePayload(one).rate_limits).toEqual({ five_hour: { used_percentage: 3, resets_at: "z" } });
   });
   it("omits `effort` when the snapshot carries no level (an unsupported model, or a client never told one)", () => {
     const { effort: _drop, ...noEffort } = FULL;
@@ -523,7 +617,8 @@ describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
       total_input_tokens: 0, total_output_tokens: 0, context_window_size: 0,
       current_usage: null, used_percentage: null, remaining_percentage: null,
     });
-    expect("session_id" in p).toBe(false);            // no id until the engine hands one back
+    expect("session_id" in p).toBe(false);            // the BUILDER still omits what it is not given (useChat always gives one)
+    expect(p.fast_mode).toBe(false);
     expect("session_name" in p).toBe(false);
     expect(p.cost).toEqual({ total_cost_usd: 0, total_duration_ms: 0, total_api_duration_ms: 0, total_lines_added: 0, total_lines_removed: 0 });
     expect(p.model).toEqual({ id: "", display_name: "" });

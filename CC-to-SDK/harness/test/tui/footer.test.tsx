@@ -297,8 +297,17 @@ const waitFor = async (cond: () => boolean, timeout = 2000) => {
   for (;;) { if (cond()) return; if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 };
 
+/** W2 T6 — the boot run goes through the 300 ms window now (see `StatusLineDriver.mountRun`), and ccx's
+ *  boot is a handful of promises landing a tick apart, so "the boot has settled" is a few pumped windows
+ *  rather than one. Pumping the INJECTED clock keeps these tests off the wall clock exactly as before. */
+async function settleBoot(clock: { advance(ms: number): void }): Promise<void> {
+  for (let i = 0; i < 5; i++) { clock.advance(300); await new Promise((r) => setTimeout(r, 10)); }
+}
+
 describe("useChat drives the statusLine (annex §C2.4's triggers, over ccx's own deltas)", () => {
-  it("runs once undebounced at mount, publishes the text, and re-runs 300 ms after a thinking delta", async () => {
+  // W2 T6 retitled and re-shaped this cell: the mount run is DEBOUNCED now (it used to be immediate, which
+  // is what made a boot cost two runs), so the first text appears one window in rather than at once.
+  it("runs ONCE for the whole boot, publishes the text, and re-runs 300 ms after a thinking delta", async () => {
     const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: 4000, maxTokens: 200_000 }) });
     const clock = slClock(), runs: string[] = [];
     const api: { setThink?: (l: string) => Promise<void> } = {};
@@ -309,10 +318,15 @@ describe("useChat drives the statusLine (annex §C2.4's triggers, over ccx's own
       return <Text>[{c.state.statusLineText ?? "-"}]</Text>;
     }
     const { lastFrame } = render(<SLHost />);
+    await settleBoot(clock);
     await waitFor(() => (lastFrame() ?? "").includes("[SL#1]"));
+    expect(runs).toHaveLength(1);                    // the whole boot, coalesced (was: mount run + correction)
     const payload = JSON.parse(runs[0]);
     expect(payload).toMatchObject({ cwd: "/repo", model: { id: "claude-opus-4-6" }, thinking: { enabled: true }, workspace: { current_dir: "/repo" } });
     expect("effort" in payload).toBe(false);
+    // D-W8: the mount-time `getContextUsage()` means the BOOT payload already carries a real window, where
+    // it used to carry `context_window_size: 0` with both percentages null until the first turn ended.
+    expect(payload.context_window).toMatchObject({ context_window_size: 200_000, total_input_tokens: 4000, used_percentage: 2 });
 
     await api.setThink!("off");
     // The poke rides a React EFFECT (upstream's own delta list, not a per-setter call), so the debounce is
@@ -351,7 +365,8 @@ describe("useChat drives the statusLine (annex §C2.4's triggers, over ccx's own
     };
     const { unmount } = render(<SLHost />);
     try {
-      await waitFor(() => runs.length === 1);                    // mountRun
+      await settleBoot(clock);
+      await waitFor(() => runs.length === 1);                    // the boot, as one run
 
       api.run!("hello");                                          // one whole turn → both refreshers land + poke
       await pumpUntil(() => runs.some((p) => JSON.parse(p).cost.total_cost_usd === 4.25));

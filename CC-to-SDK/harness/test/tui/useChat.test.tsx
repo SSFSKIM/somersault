@@ -2940,3 +2940,175 @@ describe("the token-warning and usage-warning notifications", () => {
     await waitFor(() => frame(lastFrame).includes("n:none"));
   });
 });
+
+// ── WAVE 2 TASK 6 (EP-D4) — THE STATUS LINE'S MOUNT SITE ─────────────────────────────────────────────
+// The payload builder is pinned field-for-field in test/unit/statusline.test.ts; what only a MOUNTED hook
+// can answer is which ccx value reaches which field AT WHICH MOMENT, and how many times the script runs.
+// Every cell here drives the real driver through a FAKE RUNNER, so no shell is ever forked and the payload
+// each run carried is readable back as JSON.
+//
+// WHAT EACH CELL MEASURED BEFORE THE CHANGE (the negative pins this task started from, all run green
+// against the pre-change tree): the payload carried no `transcript_path`, no `prompt_id`, no `fast_mode`
+// and no `rate_limits`; `context_window.context_window_size` was 0 with both percentages null on every
+// pre-turn run; and a boot cost TWO runs of the script. They are flipped in place rather than deleted so
+// each arrival is a visible diff in this file's history.
+type StatusRun = { payload: any; resolve: (t: string | undefined) => void };
+function statusRunner() {
+  const runs: StatusRun[] = [];
+  const run = (_c: unknown, payload: string): Promise<string | undefined> =>
+    new Promise<string | undefined>((resolve) => { runs.push({ payload: JSON.parse(payload), resolve }); });
+  return { runs, run };
+}
+const STATUS_CFG = { type: "command" as const, command: "my-status" };
+// The driver's trailing debounce is 300 ms of REAL time here (the mount site owns no clock seam): a boot or
+// a turn is "settled" once a window and a half have passed with no further run.
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 500));
+/** The launch state a real `ccx` boot has: a model and a mode from the launch config, a catalog that answers
+ *  a tick later, and a host `state` frame. All four are deltas on the statusLine's own list, and they are
+ *  what used to turn one boot into two runs. */
+const bootCaps = { models: [{ value: "claude-opus-4-6", displayName: "Opus 4.6", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] }], commands: [], mcpServers: [] };
+
+describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () => {
+  /** One mounted hook with a statusLine configured, plus whatever launch state the cell needs. */
+  function mountStatus(fake: FakeRemote, r: { run: any }, extra: Record<string, unknown> = {}, latch?: any) {
+    function H() {
+      useChat(() => fake, { statusLine: STATUS_CFG, ...(latch ? { promptLatch: latch } : {}), ...extra } as any,
+        { statusLine: { runStatusLine: r.run } });
+      return <Text>ok</Text>;
+    }
+    return render(<H />);
+  }
+
+  it("a boot is ONE run and a turn is ONE refresh (s2qa6-22's real half)", async () => {
+    const r = statusRunner();
+    const fake = fakeRemote({ capabilities: () => bootCaps });
+    mountStatus(fake, r, { initialModel: "claude-opus-4-6", initialMode: "default", initialEffort: "high" });
+    fake.pushEvent({ kind: "state", status: { state: "idle", status: "idle", permissionMode: "acceptEdits" } } as any);
+    await settle();
+    expect(r.runs).toHaveLength(1);                       // was 2: the immediate mount run plus its correction
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "hi" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle();
+    expect(r.runs).toHaveLength(2);                       // turn end + both refreshers, coalesced into one
+  });
+
+  it("the boot payload carries a real context window (D-W8: the mount-time getContextUsage, probe 103)", async () => {
+    const r = statusRunner();
+    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: 12_000, maxTokens: 1_000_000 }) });
+    mountStatus(fake, r);
+    await settle();
+    // Was `{ context_window_size: 0, used_percentage: null, remaining_percentage: null }` on every run
+    // before the first turn ended, because `statusCtxRef` had only two writers.
+    expect(r.runs[0].payload.context_window).toMatchObject({
+      context_window_size: 1_000_000, total_input_tokens: 12_000, used_percentage: 1, remaining_percentage: 99,
+    });
+  });
+
+  it("`fast_mode` is on every payload, from the boot run on", async () => {
+    const r = statusRunner();
+    mountStatus(fakeRemote(), r);
+    await settle();
+    expect(r.runs[0].payload.fast_mode).toBe(false);
+  });
+
+  it("`rate_limits` rides through from session.usage() when the credential can see the windows", async () => {
+    const r = statusRunner();
+    const fake = fakeRemote({ usage: () => ({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 42, resets_at: "2026-08-11T20:00:00Z" } } }) });
+    mountStatus(fake, r);
+    await settle();
+    expect("rate_limits" in r.runs[0].payload).toBe(false);          // no usage reading yet — nothing to report
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle();
+    expect(r.runs[r.runs.length - 1].payload.rate_limits).toEqual({ five_hour: { used_percentage: 42, resets_at: "2026-08-11T20:00:00Z" } });
+  });
+
+  it("`rate_limits` stays absent under a credential that cannot see the buckets (this project's own)", async () => {
+    const r = statusRunner();
+    const fake = fakeRemote({ usage: () => ({ rate_limits_available: false, rate_limits: null }) });
+    mountStatus(fake, r);
+    await settle();
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle();
+    expect("rate_limits" in r.runs[r.runs.length - 1].payload).toBe(false);
+  });
+
+  // D-W4, THE NAMED IDENTITY SWAP. Pre-turn the payload carries a client-minted uuid and NO
+  // transcript_path; once the prompt hook has fired the engine's own id and its JSONL path are on the wire.
+  // The sequence is the pin, not either end of it.
+  it("session_id mints then reconciles: minted uuid + no transcript_path pre-turn, engine id + path after", async () => {
+    const r = statusRunner();
+    let facts: any = {};
+    const latch = { read: () => facts, clear: () => { facts = {}; }, hooks: () => ({}) };
+    const fake = fakeRemote({ sessionId: undefined });               // no engine id yet, as at a real launch
+    mountStatus(fake, r, {}, latch);
+    await settle();
+    const pre = r.runs[0].payload;
+    expect(pre.session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);      // a uuid, not null and not absent
+    expect("transcript_path" in pre).toBe(false);
+    (fake as any).sessionId = "engine-sess-9";                        // the SDK's first system/init frame
+    facts = { transcriptPath: "/home/u/.claude/projects/-repo/engine-sess-9.jsonl", promptId: "pid-1" };
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle();
+    const post = r.runs[r.runs.length - 1].payload;
+    expect(post.session_id).toBe("engine-sess-9");
+    expect(post.transcript_path).toBe("/home/u/.claude/projects/-repo/engine-sess-9.jsonl");
+    expect(post.prompt_id).toBe("pid-1");
+    expect(post.session_id).not.toBe(pre.session_id);                 // the swap is observable, by design
+  });
+
+  // D-W6 — the mount site's half of "failure removes the row". `Footer.tsx`'s `statusLineText !== undefined`
+  // guard is the render half and was already there (test/tui/footer.test.tsx pins the empty slot); what had
+  // to change is that a failure now REACHES the state at all.
+  it("a failing run clears statusLineText, and a later good run puts it back", async () => {
+    const r = statusRunner();
+    const api: { text?: () => string | undefined } = {};
+    const fake = fakeRemote();
+    function H() {
+      const c = useChat(() => fake, { statusLine: STATUS_CFG } as any, { statusLine: { runStatusLine: r.run } });
+      api.text = () => c.state.statusLineText;
+      return <Text>[{c.state.statusLineText ?? "NONE"}]</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await settle();
+    r.runs[0].resolve("~/repo (main)");
+    await waitFor(() => frame(lastFrame).includes("~/repo (main)"));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle();
+    r.runs[1].resolve(undefined);                                     // nonzero exit / timeout / empty stdout
+    await waitFor(() => frame(lastFrame).includes("[NONE]"));
+    expect(api.text!()).toBeUndefined();                              // was: the previous text stood forever
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+    await settle();
+    r.runs[2].resolve("back");
+    await waitFor(() => frame(lastFrame).includes("[back]"));
+  });
+
+  it("the conversation boundary mints a NEW id and drops the latch — never the discarded conversation's", async () => {
+    const r = statusRunner();
+    let facts: any = { transcriptPath: "/old.jsonl", promptId: "pid-old" };
+    const latch = { read: () => facts, clear: () => { facts = {}; }, hooks: () => ({}) };
+    const api: { run?: (s: string) => void } = {};
+    const fake = fakeRemote({ sessionId: "engine-sess-9", clearSession: async () => { (fake as any).sessionId = undefined; } });
+    function H() {
+      const c = useChat(() => fake, { statusLine: STATUS_CFG, promptLatch: latch } as any, { statusLine: { runStatusLine: r.run } });
+      api.run = c.submit;
+      return <Text>ok</Text>;
+    }
+    render(<H />);
+    await settle();
+    expect(r.runs[0].payload.session_id).toBe("engine-sess-9");
+    api.run!("/clear");
+    await settle();
+    const after = r.runs[r.runs.length - 1].payload;
+    expect(after.session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+    expect(after.session_id).not.toBe("engine-sess-9");               // not the conversation the user wiped
+    expect("transcript_path" in after).toBe(false);                   // canon's `Ot.promptId = null`, both keys
+    expect("prompt_id" in after).toBe(false);
+  });
+});

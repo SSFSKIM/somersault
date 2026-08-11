@@ -128,13 +128,15 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
   //     risk here for the same reason: three dialog height budgets already count the footer's one row
   //     (`rewindModel.REWIND_CHROME_ROWS` and friends), and this is a SECOND one they do not know about.
   //
-  // RECORDED DIVERGENCE (plan constraint 12): upstream renders `<Text>{" "}</Text>` — a RESERVED BLANK ROW —
-  // when a statusLine is configured but has produced no text yet, so the block does not grow by a line when
-  // the first run lands. ccx renders nothing, which is what Task 2 shipped and what its test pins. Keeping
-  // the blank would trade one visible jump (once, at startup, ~one command's latency) for a permanently
-  // taller footer in every session that configures a statusLine whose script is slow or broken — and the
-  // "broken" case is the one "every failure is silence" is built around. One term to add if that judgement
-  // ever flips.
+  // THE DIVERGENCE RECORDED HERE IN WAVE C IS RETIRED (W2 T6, canon Q4). It read "upstream renders a
+  // RESERVED BLANK ROW when a statusLine is configured but has produced no text yet"; the bundle shows the
+  // blank is gated on `ds()` (L484981) — the FULLSCREEN / alternate-screen predicate, not a statusLine
+  // concept. In the main-screen renderer, which is where ccx and canon both live by default, the slot
+  // renders `null` and the footer moves up. Rendering nothing IS canon here.
+  //   That gate now carries more weight than it did, because W2 T6 made a failing script take the row down
+  // (`statusLineText` returns to undefined) rather than leaving the last good line standing. So this
+  // condition is what implements "the row is removed on failure", and the layout does jump by one line when
+  // a script breaks — which is precisely what the sweep measured claude doing.
   const statusVisible = statusLineConfigured && statusLineText !== undefined && statusLineText !== ""
     && !bashMode && !exitArm && !pasting && rows >= STATUS_LINE_MIN_ROWS;
   // `g3f` (L484937): one `<Text dimColor wrap="truncate">` for a single line, a `flexDirection="column"` of

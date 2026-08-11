@@ -5,6 +5,7 @@
 // truth via state events), the bg-task panel, and idempotent teardown.
 import { useEffect, useRef, useState } from "react";
 import { useStdout } from "ink";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync as realWriteFileSync, readFileSync as realReadFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve as resolvePath } from "node:path";
@@ -66,6 +67,7 @@ import { substituteChips } from "./pasteChips.js";
 import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./queue.js";
 import { composerMode } from "./promptMode.js";
 import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRunStatusLine, type StatusLineConfig, type StatusLineDriver, type StatusLineDriverDeps, type StatusLineSnapshot, type StatusLineUsage } from "./statusLine.js";
+import type { PromptLatch } from "../hooks/promptLatch.js";
 import type { PastedMap } from "./editor.js";
 
 // F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
@@ -116,10 +118,11 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  repaints on it like every other live field (the repo has no `useSyncExternalStore` idiom). The store
    *  itself is the seam producers write through — `notify`/`dismissNotification` below. */
   notification: CcxNotification | null;
-  /** WAVE C TASK 10 (EP-C2b): the statusLine script's last SUCCESSFUL output, ANSI and all (`Footer.tsx`
-   *  does the dim-forcing). Undefined until the first run lands, and it never returns to undefined — a
-   *  failing run resolves `undefined` and the driver simply does not call back, so the row goes quietly
-   *  stale instead of blanking (statusLine.ts's header rule). */
+  /** WAVE C TASK 10 (EP-C2b): the statusLine script's last output, ANSI and all (`Footer.tsx` does the
+   *  dim-forcing). Undefined before the first run lands — and undefined AGAIN after any run that fails or
+   *  prints nothing: W2 T6 / spec D-W6 made failure remove the row, which is what canon does
+   *  (`onResult` writes the runner's `undefined` straight into state, L484883, and the slot collapses to
+   *  `null`, L484981). `Footer.tsx`'s existing `!== undefined` guard is the whole render half. */
   statusLineText?: string; }
 
 // Tab cycles these; bypassPermissions stays off-cycle (/yolo). Single source with settingsRows.ts's own
@@ -141,7 +144,12 @@ export function useChat(
      *  reason beyond symmetry: canon L154558 honours only the USER settings file, so resolving it here would
      *  mean every test that mounts this hook reading — and running the command out of — the developer's real
      *  `~/.claude/settings.json`. One production call site owns that read; nothing below ever touches disk. */
-    statusLine?: StatusLineConfig } = {},
+    statusLine?: StatusLineConfig;
+    /** WAVE 2 TASK 6 (EP-D4): the `UserPromptSubmit` latch that carries `transcript_path`/`prompt_id` from
+     *  the engine's hooks to the statusLine payload. Created and registered by whoever OWNS the engine —
+     *  `runForegroundImpl`, which builds the host config — so `ccx attach` passes none and both keys stay
+     *  absent. See `hooks/promptLatch.ts` for why a hook is the only route. */
+    promptLatch?: PromptLatch } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
@@ -662,6 +670,28 @@ export function useChat(
    *  scheduled by an explicit poke on the same line, so nothing goes stale for want of a render. */
   const statusCtxRef = useRef<{ totalTokens?: number; maxTokens?: number } | undefined>(undefined);
   const statusUsageRef = useRef<StatusLineUsage | undefined>(undefined);
+  /** WAVE 2 TASK 6 / SPEC D-W4 — `session_id`, MINT AND RECONCILE.
+   *
+   *  Canon's `session_id` is never null and never stale: `It()` reads a uuid minted into the initial state
+   *  object at process start (L1667), and `/clear` ROTATES it (`UHi()`, L1685 — the `095baa0c… → a02ce69d…`
+   *  the sweep watched). The id is therefore CLIENT-minted upstream, not engine-minted, which is why it can
+   *  exist before any engine does.
+   *
+   *  ccx's engine id cannot do that job on its own: the SDK hands one back only at the first `system/init`
+   *  frame (`session/session.ts`, mirrored by the adapter off the `state` event), and `/clear` deliberately
+   *  NULLS the adapter's copy (`chatAdapter.ts`, so a discarded conversation's id never reaches `/export`,
+   *  `/rename` or the wire). Reporting nothing at launch and nothing after a clear is the gap s2qa6-04
+   *  filed; reporting the OLD id would be the Wave S measurement-dies-with-its-conversation violation.
+   *
+   *  So: this ref is a client uuid minted at mount and re-minted at every `replaceDocument`, and the
+   *  snapshot below prefers the ENGINE's id whenever there is one. The observable sequence is a named
+   *  identity swap — pre-turn the payload carries the minted id, post-turn the engine's — and it is pinned
+   *  as such. WHAT IT MEANS TO A SCRIPT, stated plainly because it is a contract change: `session_id` is
+   *  "the identity of the conversation on screen", which BECOMES the engine's session id once one exists.
+   *  A script correlating the field with a `~/.claude/projects/**.jsonl` file should wait for a payload
+   *  that also carries `transcript_path`. */
+  const statusSessionIdRef = useRef<string>("");
+  if (!statusSessionIdRef.current) statusSessionIdRef.current = randomUUID();
   /** model id → the catalog's display name, harvested from the ONE `capabilities()` call the command palette
    *  already makes (below). Without it `display_name` could only repeat the id; with it the payload carries
    *  what a status line actually wants to print. Empty until that fetch lands, and empty forever if it fails. */
@@ -671,8 +701,17 @@ export function useChat(
   /** ccx state → the snapshot the payload builder reshapes. Rebuilt per RUN (the driver calls it inside
    *  `execute`), so a run always carries the state at its own moment. */
   function statusSnapshot(): StatusLineSnapshot {
+    // W2 T6: the two hook-fed facts. Absent before the first prompt of the conversation and absent again
+    // after a boundary clears the latch — `buildStatusLinePayload` spreads them conditionally, so the keys
+    // are genuinely missing rather than present-and-null.
+    const prompt = opts.promptLatch?.read() ?? {};
     return {
-      sessionId: session.sessionId,
+      // D-W4, mint and reconcile: the engine's id the moment there is one, this client's minted identity
+      // until then. Never the previous conversation's — `replaceDocument` re-mints on the same line it
+      // nulls the readings.
+      sessionId: session.sessionId ?? statusSessionIdRef.current,
+      ...(prompt.transcriptPath ? { transcriptPath: prompt.transcriptPath } : {}),
+      ...(prompt.promptId ? { promptId: prompt.promptId } : {}),
       // The same two rungs the terminal title reads (W-C T8): a `/rename` outranks the engine's ai-title.
       sessionName: renameTitle ?? aiTitle,
       cwd,
@@ -709,7 +748,30 @@ export function useChat(
       (text) => { if (!disposed.current) setStatusLineText(text); },
       { ...deps.statusLine, runStatusLine: run });
     statusDriverRef.current = driver;
-    driver.mountRun();                                    // §C2.4 trigger 1: immediate and UNDEBOUNCED
+    driver.mountRun();                                    // §C2.4 trigger 1 — see `mountRun`'s own doc (W2 T6)
+    // WAVE 2 TASK 6 / SPEC D-W8 — THE MOUNT-TIME CONTEXT READING, and the ONE extra read this task adds.
+    //
+    // `context_window_size` was 0 on every payload until the first turn ended, because `statusCtxRef` had
+    // exactly two writers (turn end and `/compact`) and a zero window nulls both percentages too. Canon
+    // reports the real window from frame one — for it the number is a MODEL PROPERTY (`XS(y, OA())`), not a
+    // measurement, and no SDK surface exposes that property to ccx: `ModelInfo` carries no context-window
+    // field, and `usage()`'s `contextWindow` only exists after a turn. The one route left is to MEASURE
+    // early, which probe 103 (`probes/probes/103-preturn-context-and-model-caps.ts`, run live) proved is
+    // available: `getContextUsage()` RESOLVES before the first turn with a real `maxTokens` and a
+    // near-zero `totalTokens`. The alternative — hardcoding 1000000 — would be a guess on the wire.
+    //
+    // AT MOUNT ONLY, and the boundary is deliberately NOT a second site. Wave S's rule stands: after
+    // `replaceDocument` the number stays hidden until the next turn measures a real one, because a
+    // conversation swap is exactly when a reading describes something that is gone — and a call issued at
+    // the boundary races the engine swap that boundary exists to perform, so it could answer for either
+    // conversation. s2qa5-10 (the post-`/clear` zero) stays in the backlog with that as its answer.
+    //
+    // Its poke lands inside the boot debounce window, so it costs no extra run; and because `refreshCtx`
+    // is the shared wrapper, the launch frame's `ctx N%` chip becomes honest at the same time. THAT IS A
+    // COUPLING WORTH NAMING: the chip now appears at launch in a session that configures a status line and
+    // not in one that does not. Un-gating the read would fix the asymmetry at the cost of one control
+    // round-trip on every boot — an owner call, recorded rather than taken here.
+    void refreshCtx();
     return () => { driver.dispose(); statusDriverRef.current = null; };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   // §C2.4 trigger 2, as upstream states it: ONE effect over the delta list (`L484891`), not a poke wired into
@@ -891,6 +953,14 @@ export function useChat(
     // OLD conversation's dollars, durations and token counts. Nulled, they report the honest "no reading yet"
     // shape the payload already has words for (`current_usage: null`, a zeroed `cost` block).
     statusCtxRef.current = undefined; statusUsageRef.current = undefined;
+    // W2 T6, THE SAME BOUNDARY AND THE SAME CLASS, for the three identity fields. `/clear` ROTATES the id
+    // upstream (`UHi()`, L1685) rather than dropping it, so a fresh mint here is canon's own behaviour and
+    // not a ccx invention — and it is what stops the adapter's now-null `sessionId` from leaving the field
+    // absent, or (worse) from falling back to the conversation the user just wiped. The latch goes with it
+    // because canon's `/clear` chain ends `Ot.promptId = null`: the prompt id and the JSONL path both
+    // describe a conversation that no longer exists. Both keys stay absent until the next prompt.
+    statusSessionIdRef.current = randomUUID();
+    opts.promptLatch?.clear();
     // FINAL REVIEW, FINDING 3 — and the title dies here too, not only in `resumeInto`. W-C T8's review put the
     // reset trio at the `/resume` swap, which is ONE of the four paths through this boundary; `/clear` came
     // through here without it, so the tab kept naming the conversation the user had just wiped and the

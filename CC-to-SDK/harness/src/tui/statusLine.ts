@@ -7,16 +7,21 @@
 // React or Ink.
 //
 // THE ONE THING TO UNDERSTAND ABOUT THIS FEATURE: **every failure is silence.** Nonzero exit, spawn failure,
-// timeout and thrown exception all produce `undefined`, and `undefined` means "leave the previous text
-// alone" — the user is never shown an error, a stack, or a blanked row, because the status line is chrome
-// and chrome that shouts about its own plumbing is worse than chrome that quietly goes stale. stderr exists
-// only for the debug log. This is upstream's design (`B8s` has one `try` and three silent returns), and it
-// is the reason `runStatusLine` NEVER rejects: a caller cannot forget to catch what is never thrown.
+// timeout and thrown exception all produce `undefined` — the user is never shown an error message or a
+// stack trace, because the status line is chrome and chrome that shouts about its own plumbing is worse
+// than chrome that says nothing. stderr exists only for the debug log. This is upstream's design (`B8s` has
+// one `try` and three silent returns), and it is the reason `runStatusLine` NEVER rejects: a caller cannot
+// forget to catch what is never thrown.
 //
-// ANNEX AMBIGUITY, RESOLVED. §C2.5 says both "the previous `statusLineText` is not overwritten" and
-// "`state.statusLineText` is set to that value including `undefined`". Those disagree; the first is the
-// observable behaviour QA-6 measured (a failing script leaves the row as it was), so `onText` here is called
-// ONLY with a string. Its signature makes the other reading unrepresentable.
+// WHAT SILENCE MEANS WAS DECIDED THE OTHER WAY IN WAVE 2 TASK 6 (s2qa6-06, canon Q4). §C2.5's annex says
+// both "the previous `statusLineText` is not overwritten" and "`state.statusLineText` is set to that value
+// including `undefined`"; Wave C read the ambiguity the first way and encoded it in the type. The 2.1.220
+// bundle settles it the second way and leaves no room: `y0b` (L484821) forwards the runner's `undefined` to
+// `onResult` UNCONDITIONALLY (the truthiness guard beside it gates telemetry, not the state write),
+// `onResult` (L484883) writes it straight into app state, and the render (L484981) collapses the slot to
+// `null` on a falsy `statusLineText` in the main-screen renderer. So the row is REMOVED on any failure —
+// and on a script that exits 0 with empty stdout, which reaches the same `undefined`. `onText` is therefore
+// called with `string | undefined`, and the caller's job is to publish whichever it gets.
 //
 // The timeout, the debounce and the poll all go through the `deps` seam (plan constraint 15) so the unit
 // tests drive a 600-second timeout and a 300 ms debounce in the same millisecond.
@@ -209,8 +214,18 @@ export interface StatusLineDriverDeps {
 const MAX_TIMER_MS = 2_147_483_647;
 
 export interface StatusLineDriver {
-  /** `useEffect(() => (M(), …), [])` (L484931) — ONE immediate, undebounced run, and the point at which the
-   *  `refreshInterval` poll (if any) starts ticking. */
+  /** `useEffect(() => (M(), …), [])` (L484931) — the boot run, and the point at which the `refreshInterval`
+   *  poll (if any) starts ticking.
+   *
+   *  IT GOES THROUGH THE DEBOUNCE, AND UPSTREAM'S DOES NOT (W2 T6, s2qa6-22's real half). Upstream can
+   *  afford an immediate undebounced run because at its mount every input the payload wants is already
+   *  known synchronously — `mainLoopModel`, `permissionMode`, the context window size are all local reads.
+   *  ccx's are not: the model catalog, the host's first `state` frame, the effort capability and the
+   *  mount-time `getContextUsage()` all land as promises a tick or two later, each one a delta on the same
+   *  list, so an immediate run published a knowably incomplete payload and was superseded ~300 ms later.
+   *  QA-6 measured exactly that: **two runs per boot** where canon runs once. Routing the boot through the
+   *  same trailing window makes the observable cadence canon's (one run per settled moment) at the cost of
+   *  ccx's first paint being one debounce late — which is nothing next to a script's own fork-and-exec. */
   mountRun(): void;
   /** Every state delta upstream lists at L484891 (`lastAssistantMessageId`, `tokenUsage`, `permissionMode`,
    *  `mainLoopModel`, `fastMode`, `effortValue`, `thinkingEnabled`, `prStatus`) funnels here. Debounced
@@ -223,8 +238,9 @@ export interface StatusLineDriver {
 }
 
 /** The cadence machine. `buildPayload` is called once per RUN (never once per driver), so a run always
- *  carries the state at its own moment; `onText` receives successful output only. */
-export function createStatusLineDriver(cfg: StatusLineConfig, buildPayload: () => string, onText: (t: string) => void, deps: StatusLineDriverDeps = {}): StatusLineDriver {
+ *  carries the state at its own moment; `onText` receives the run's OUTCOME — the script's text, or
+ *  `undefined` for every failure there is (see the file header: the row comes down). */
+export function createStatusLineDriver(cfg: StatusLineConfig, buildPayload: () => string, onText: (t: string | undefined) => void, deps: StatusLineDriverDeps = {}): StatusLineDriver {
   const run = deps.runStatusLine ?? runStatusLine;
   const arm = deps.setTimeout ?? ((fn: () => void, ms: number): unknown => { const h = setTimeout(fn, ms); h.unref?.(); return h; });
   const disarm = deps.clearTimeout ?? ((h: unknown): void => { clearTimeout(h as ReturnType<typeof setTimeout>); });
@@ -255,7 +271,10 @@ export function createStatusLineDriver(cfg: StatusLineConfig, buildPayload: () =
       // resolves with text), and `disposed` drops a result that arrives after unmount.
       if (disposed || mine !== generation) return;
       inflight = undefined;
-      if (text !== undefined) { try { onText(text); } catch (e) { debug(`StatusLine onText failed: ${e}`); } }
+      // W2 T6: `undefined` is PUBLISHED, not swallowed (`y0b` L484821 forwards it unconditionally). The two
+      // guards above are still the whole filter — a superseded run's late `undefined` must not take down a
+      // successor's good row.
+      try { onText(text); } catch (e) { debug(`StatusLine onText failed: ${e}`); }
     }, (e) => { debug(`StatusLine run rejected: ${e}`); });
   };
 
@@ -277,7 +296,7 @@ export function createStatusLineDriver(cfg: StatusLineConfig, buildPayload: () =
   return {
     mountRun(): void {
       if (disposed) return;
-      execute();
+      schedule();                                          // W2 T6 — see the interface doc: one run per boot
       if (pollTimer === undefined) armPoll();
     },
     poke(_reason: string): void { schedule(); },
@@ -300,17 +319,27 @@ export function createStatusLineDriver(cfg: StatusLineConfig, buildPayload: () =
 // visible in one function and pinned by one golden test, instead of being spread across `useChat`'s closure.
 //
 // WHAT IS BUILT AND WHAT IS NOT is the spec's EP-C2 decision, not a guess: "every field ccx can honestly
-// populate, omitting the conditional fields it cannot". Present: `session_id`, `cwd`, `session_name`,
-// `model`, `workspace`, `version`, `output_style`, `cost`, `context_window`, `exceeds_200k_tokens`,
-// `thinking`. Absent, each for a stated reason:
-//   · `transcript_path` / `prompt_id` — SDK-internal. The SDK owns the JSONL path and mints prompt ids
-//     inside the engine; ccx never sees either, and inventing a path a script might `cat` is worse than
-//     omitting one it can test for.
-//   · `rate_limits` — the credential-scope gap (qa5-12): the buckets are only readable on some auth paths.
-//   · `vim`, `fast_mode`, `agent`, `remote`, `pr`, `worktree` — no ccx counterpart exists to report.
-// Upstream's own `...x && {}` idiom is what keeps the two CONDITIONAL keys (`session_id`, `session_name`)
-// genuinely absent rather than present-and-`undefined`: `JSON.stringify` drops an `undefined` value, but a
-// script that reads the payload through anything else would see the key, and "absent" is the contract.
+// populate, omitting the conditional fields it cannot". WAVE 2 TASK 6 (EP-D4) re-asked that question of the
+// 2.1.220 builder itself (`H0b` L484844 over the shared prefix `Kf` L364980, adjudicated as canon Q3) and
+// four of the six stated reasons turned out to be stale. Present now: `session_id`, `transcript_path`,
+// `cwd`, `prompt_id`, `session_name`, `model`, `workspace`, `version`, `output_style`, `cost`,
+// `context_window`, `exceeds_200k_tokens`, `fast_mode`, `effort`, `thinking`, `rate_limits`. Still absent,
+// each for a reason that survived:
+//   · `permission_mode` — canon DROPS it. `H0b` calls `Kf()` bare, so `Kf`'s own `permission_mode`,
+//     `agent_id` and `effort` are `undefined` and `JSON.stringify` removes them. The hook-input shape
+//     declares the key; the statusLine payload does not carry it, and neither does this one.
+//   · `vim`, `agent`, `remote`, `pr`, `worktree` — no ccx counterpart exists to report.
+// Upstream's own `...x && {}` idiom is what keeps the CONDITIONAL keys genuinely absent rather than
+// present-and-`undefined`: `JSON.stringify` drops an `undefined` value, but a script that reads the payload
+// through anything else would see the key, and "absent" is the contract.
+//
+// THE THREE MOMENTS the conditional keys are pinned against (canon Q3's per-moment table) are first paint /
+// after a turn / after `/clear`, and ccx matches canon on all of them for `session_id` and `fast_mode`,
+// and matches it from the first turn on for `transcript_path` and `prompt_id`. The one recorded gap:
+// canon has `transcript_path` from process start (it DERIVES the path from the session id), while ccx
+// LEARNS it from a `UserPromptSubmit` hook and therefore has none before the first prompt of a
+// conversation. Deriving it would mean re-implementing the SDK's project-slug rule and handing a script a
+// path it may `cat`; an absent key a script can test for is the honest answer until the SDK exposes one.
 
 const require_ = createRequire(import.meta.url);
 /** ccx's own version — upstream hard-codes `"2.1.220"` here and we answer with ours (D-C9: shape fidelity,
@@ -331,14 +360,36 @@ export interface StatusLineUsage {
     total_lines_added?: number; total_lines_removed?: number;
     model_usage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number }>;
   };
+  /** W2 T6: `false` when plan rate limits do not apply at all — an API key, Bedrock/Vertex, or a token with
+   *  no profile scope (`claude setup-token`, which is THIS project's own credential). The SDK then sends
+   *  `rate_limits: null`, and the payload key is omitted. */
+  rate_limits_available?: boolean;
+  rate_limits?: Partial<Record<StatusLineRateWindow, { utilization?: number | null; resets_at?: string | null } | null>> | null;
 }
+
+/** The two windows canon's payload carries (`H0b`'s `k`). `session.usage()` returns more of them
+ *  (`seven_day_oauth_apps`, `seven_day_opus`, `seven_day_sonnet`, `model_scoped`, `extra_usage` — see
+ *  `usageFormat.ts`, which renders the lot); the STATUS LINE contract is these two, so a script's key set
+ *  cannot grow under it when the account gains a bucket. */
+export type StatusLineRateWindow = "five_hour" | "seven_day";
+const RATE_WINDOWS: readonly StatusLineRateWindow[] = ["five_hour", "seven_day"];
 
 /** ccx state at the moment of ONE run. Everything optional is optional because it genuinely may not exist
  *  yet — a session with no id (pre-first-turn), no model (an `attach` client that has not seen a turn end),
  *  no context reading and no usage reading. */
 export interface StatusLineSnapshot {
-  /** The engine's session id, once it has handed one back. */
+  /** The conversation's identity. W2 T6 / spec D-W4 made this MINT-AND-RECONCILE at the caller: a client
+   *  uuid at launch and at every conversation boundary, overwritten by the engine's own id the moment it
+   *  lands. It is therefore effectively always present from `useChat` — the conditional spread below stays
+   *  because the builder is a pure function other callers may hand a snapshot with nothing to say. */
   sessionId?: string;
+  /** W2 T6: the engine's JSONL path, latched from a `UserPromptSubmit` hook input (`BaseHookInput`). Absent
+   *  until the first prompt of the conversation — see the divergence note at the head of this section. */
+  transcriptPath?: string;
+  /** W2 T6: the hook input's `prompt_id`, the uuid correlating one prompt with everything it causes. Canon
+   *  drops the key until the first prompt and drops it AGAIN at `/clear` (`Ot.promptId = null`), which is
+   *  exactly what clearing the latch at the conversation boundary reproduces. */
+  promptId?: string;
   /** `/rename`'s title ?? the engine's ai-title (Wave C Task 8's two rungs). Absent → no `session_name` key. */
   sessionName?: string;
   cwd: string;
@@ -372,9 +423,16 @@ export interface StatusLineContextWindow {
   remaining_percentage: number | null;
 }
 
+export interface StatusLineRateLimits {
+  five_hour?: { used_percentage: number; resets_at: string | null };
+  seven_day?: { used_percentage: number; resets_at: string | null };
+}
+
 export interface StatusLinePayload {
   session_id?: string;
+  transcript_path?: string;
   cwd: string;
+  prompt_id?: string;
   session_name?: string;
   model: { id: string; display_name: string };
   workspace: { current_dir: string; project_dir: string; added_dirs: string[] };
@@ -383,8 +441,34 @@ export interface StatusLinePayload {
   cost: { total_cost_usd: number; total_duration_ms: number; total_api_duration_ms: number; total_lines_added: number; total_lines_removed: number };
   context_window: StatusLineContextWindow;
   exceeds_200k_tokens: boolean;
+  fast_mode: boolean;
   effort?: { level: "low" | "medium" | "high" | "xhigh" | "max" };
   thinking: { enabled: boolean };
+  rate_limits?: StatusLineRateLimits;
+}
+
+/** `H0b`'s `k` (L484844), over `session.usage()` instead of upstream's response-header cache.
+ *
+ *  ONE UNIT DIVERGENCE, and it is a correction rather than a drift: canon writes
+ *  `used_percentage: w.five_hour.utilization * 100` because ITS `utilization` comes from the
+ *  `anthropic-ratelimit-unified-5h-utilization` header as a 0-1 fraction. The SDK's control response
+ *  declares its own `utilization` as "Percentage of the window used, 0-100" (sdk.d.ts,
+ *  `SDKControlGetUsageResponse`), so multiplying here would render a 42% window as 4200%. `usageFormat.ts`
+ *  already learned this the hard way — its own comment forbids re-introducing unit inference. Same key,
+ *  same meaning, no scale factor.
+ *
+ *  Returns `undefined` — the key is OMITTED, canon's `...(k.five_hour || k.seven_day) && {…}` — when the
+ *  credential cannot see the buckets at all (`rate_limits_available === false`), when no reading has landed
+ *  yet, or when neither window carries a number. */
+function rateLimits(usage: StatusLineUsage | undefined): StatusLineRateLimits | undefined {
+  if (!usage || usage.rate_limits_available === false || !usage.rate_limits) return undefined;
+  const out: StatusLineRateLimits = {};
+  for (const key of RATE_WINDOWS) {
+    const w = usage.rate_limits[key];
+    if (typeof w?.utilization !== "number") continue;
+    out[key] = { used_percentage: w.utilization, resets_at: w.resets_at ?? null };
+  }
+  return out.five_hour || out.seven_day ? out : undefined;
 }
 
 /** `_0b` (L484843), over ccx's two readings instead of upstream's one.
@@ -431,9 +515,12 @@ export function buildStatusLinePayload(snapshot: StatusLineSnapshot): StatusLine
   const id = snapshot.model ?? "";
   const session = snapshot.usage?.session;
   const projectDir = snapshot.projectDir ?? snapshot.cwd;
+  const limits = rateLimits(snapshot.usage);
   return {
     ...(snapshot.sessionId ? { session_id: snapshot.sessionId } : {}),
+    ...(snapshot.transcriptPath ? { transcript_path: snapshot.transcriptPath } : {}),
     cwd: snapshot.cwd,
+    ...(snapshot.promptId ? { prompt_id: snapshot.promptId } : {}),
     ...(snapshot.sessionName ? { session_name: snapshot.sessionName } : {}),
     model: { id, display_name: snapshot.modelDisplayName ?? id },
     workspace: { current_dir: snapshot.cwd, project_dir: projectDir, added_dirs: [...(snapshot.addedDirs ?? [])] },
@@ -451,14 +538,20 @@ export function buildStatusLinePayload(snapshot: StatusLineSnapshot): StatusLine
     },
     context_window: contextWindow(snapshot),
     exceeds_200k_tokens: (snapshot.context?.totalTokens ?? 0) > STATUS_LINE_200K,
+    // W2 T6: upstream's own slot, filled with the only honest value. `fast_mode` is `Options.fastMode`
+    // (sdk.d.ts) and ccx exposes no control for it, so the session never runs in it — and canon emits the
+    // key UNCONDITIONALLY as a boolean (`r`, from `Ve(K => K.fastMode ?? !1)`), never omits it. A literal
+    // rather than a snapshot field precisely because there is nothing to snapshot: the day ccx wires
+    // `fastMode` into `resolveOptions` this becomes a real read with no consumer change.
+    fast_mode: false,
     // WAVE C TASK 11 (EP-C6): upstream's `...Fk(y) && { effort: { level: _5(y, p) } }` — CONDITIONAL, and in
-    // upstream's own slot (after `exceeds_200k_tokens`, before `thinking`; the `fast_mode` key that sits
-    // between them upstream is one of the blocks ccx has no producer for). The spread idiom is the same one
-    // the two conditional keys above use: a script's contract is that the key is ABSENT, not `null`, when the
-    // model has no effort axis — and `JSON.stringify` dropping an `undefined` value is not enough, because a
+    // upstream's own slot (after `fast_mode`, before `thinking`). The spread idiom is the same one the
+    // conditional keys above use: a script's contract is that the key is ABSENT, not `null`, when the model
+    // has no effort axis — and `JSON.stringify` dropping an `undefined` value is not enough, because a
     // consumer reading the object through anything else would still see the key.
     ...(snapshot.effort ? { effort: { level: snapshot.effort } } : {}),
     thinking: { enabled: snapshot.thinkingEnabled },
+    ...(limits ? { rate_limits: limits } : {}),
   };
 }
 

@@ -12,6 +12,7 @@ import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
+import type { PromptLatch } from "../hooks/promptLatch.js";
 import { turnDurationEnabled } from "./durationRow.js";
 import { promptSuggestionEnabled } from "./suggester.js";
 import { refreshExampleFiles } from "./placeholder.js";
@@ -31,7 +32,7 @@ export interface ChatClientOpts {
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;

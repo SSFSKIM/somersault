@@ -17,6 +17,8 @@ import { resolveModelAlias } from "../config/models.js";
 import { DEFAULTS } from "../config/types.js";
 import { resolvedPermissionMode } from "../config/resolveOptions.js";
 import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
+import { createPromptLatch } from "../hooks/promptLatch.js";
+import { mergeHooks } from "../hooks/merge.js";
 // Value import, and safe: prefs.ts is plain fs + the theme table, no React (main.ts stays React-free).
 import { loadPrefs as realLoadPrefs } from "../tui/prefs.js";
 import type { CcxPrefs } from "../tui/prefs.js";
@@ -381,8 +383,16 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // auto deliberately — a background run has nobody to ask.
   // ONE object, three readers: the host, the banner and hookOpts. Reading `inv.config` for the banner
   // instead would print "auto" (DEFAULTS) while the engine ran "default" — qa3-02 inverted.
+  // WAVE 2 TASK 6 (EP-D4): the statusLine payload's `transcript_path` / `prompt_id`. Both live only on hook
+  // inputs, so the REPL can only learn them from an engine it is in-process with — which is exactly this
+  // launch and not `ccx attach`. Registered on the host's config (it reaches the SDK through
+  // `resolveOptions`' `options.hooks`) and handed to the client as a plain shared object, the same bridge
+  // shape `chatMain`'s clear/notice bridges use. Merged rather than assigned so a caller-supplied
+  // `config.hooks` keeps its own `UserPromptSubmit` entries.
+  const promptLatch = createPromptLatch();
   const foregroundConfig = { ...hostConfig, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}),
-    permissionMode: inv.config.permissionMode ?? "default" };
+    permissionMode: inv.config.permissionMode ?? "default",
+    hooks: mergeHooks(hostConfig.hooks ?? {}, promptLatch.hooks()) };
   const host = deps.makeHost({
     short, name, cwd, kind: "interactive", detached: false,
     ...(inv.worktreePath ? { worktree: inv.worktreePath } : {}),
@@ -451,7 +461,7 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // be able to name the level the engine is ACTUALLY running at mount, before any turn or catalog fetch.
       // `ccx attach` (the other foreground path) passes none, and undefined there means no hint, which is
       // the honest answer for a client that never saw a launch config.
-      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}) },
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), promptLatch },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal);
