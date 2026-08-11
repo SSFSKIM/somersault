@@ -331,7 +331,41 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
   decision (approve-side feedback cannot reach the model through `canUseTool`) — restoring
   canon's copy would advertise a channel that silently drops the user's sentence.
 
-Pending — written at finish.
+## Outcomes & Retrospective
+
+**Shipped 2026-08-12.** Nine tasks + an acceptance fix wave + a codex-findings fix wave, all on
+main (wave range `c53702d6b5..f661b8eab4`, interleaved with the concurrent appserver session's
+commits). **All ten acceptance cells pass as written** — the keyed cells live over OAuth, clipboard
+saved/restored, isolation attested (prefs mtime byte-identical across every run). Final gates:
+unit 2296, tui 3268 / 9 skipped, build clean, resize matrix 8/8 (a3 keyless-skip, filed).
+
+**Worklist disposition:** W1 (both /copy cells), W2 (all four), W3, W4, W6 shipped; W5 shipped
+with s2qa2-07 honestly PARTIAL (drags faster than the handler observe strand residue no
+width-history repair reaches) and s2qa2-06 (transcript reflow) out of scope. Parity re-scored
+honest-flat at ~75% — the wave worked inside rows already marked built while naming four new gap
+rows (meta-frame raw text, bare-reject row copy, in-pane preview, `?`-overlay ctrl+c).
+
+**External review (gpt-5.6-sol, base c53702d6b5):** five findings. Three in wave code, all
+verified red-first and fixed (`c960f46bde`, `f661b8eab4`): the mount context read now dies with
+its conversation (generation-checked — the wave's own rule, found violated by its own code); the
+settle pass stays repairable when a monotonic burst ends at its deepest shrink (claims one
+excursion, under-erase side); the tall latch ORs observations and drains at every size React
+observes (codex's sticky shape and the reviewer's re-stating shape were BOTH wrong — the fix
+subsumes the two hazards each guarded). Two findings live in `src/appserver/` (owned by the
+concurrent session; handoff recorded in the ledger): engine swaps drop accepted MCP topology
+and overrides; the turn queue retains unbounded queued input.
+
+**Retrospective.** (1) Live acceptance caught two halves-shipped defects — A4's turn didn't end,
+A8's turn poked twice — that seven task reviews missed; the suite verifies the half you built.
+(2) Three reviewer/fixer overturns settled by mechanism, not authority: a reviewer proved the
+grow-edge fix couldn't fire (the gate and the damage come from the same write); a fixer proved
+the reviewer's prescribed one-liner deleted the feature (the reviewer withdrew); the codex fix
+wave proved BOTH prior latch shapes wrong. The wave's quality came from every party re-deriving
+the mechanism rather than deferring. (3) Instrument rot recurred twice more (a3's
+credential-gated invisibility; the W-S5 "flake" that was a wrapped needle) — the sweep's lesson
+generalizes: any assertion that reads a rendered frame instead of the projected document is
+measuring the instrument. (4) Fixture-derives-from-constant pins have no teeth; run the
+sabotage, don't read the test.
 
 ## Revision Notes
 
