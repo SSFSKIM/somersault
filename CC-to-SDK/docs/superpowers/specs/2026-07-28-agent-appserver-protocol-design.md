@@ -100,8 +100,9 @@ status, origin: "inProcess"|"fleet:<name>", createdAt, updatedAt, preview`.
 `ThreadStatus = idle | active{waitingOn: ("decision"|"input")[]} | disconnected | closed` —
 mirrors Codex's tagged `ThreadStatus` and our host's honest `busy()` vs projected `status()`.
 
-**Turn** = one host turn (`seq` today → `turn_<thread>_<n>`): `id, status: inProgress | completed
-| interrupted | failed, error?, startedAt, completedAt, usage?`.
+**Turn** = one host turn (`seq` today → `turn_<thread>_<n>`): `id, status: queued | inProgress |
+completed | interrupted | failed | cancelled, error?, startedAt, completedAt, usage?` (`queued` and
+`cancelled` added M2b — see Revision Notes).
 
 **Item** taxonomy — the structured transcript a web UI renders. Mapped from SDK frames; the
 mapping logic is **extracted from the TUI's pure reducers** (`liveTurn.ts`, `render.ts`,
@@ -574,6 +575,13 @@ claim).
   `toWireDecision`) at every site a decision reaches a client — `decision/requested`'s live
   broadcast, its subscribe-replay, and `decision/list`'s reply — rather than emitting both
   spellings. §6 above now describes the wire shape explicitly rather than naming the internal type.
+
+- **Flagged addition (2026-08-11, as2b Task 4):** §5's Turn status union gains `queued` and
+  `cancelled` — the server-side turn queue shipped, so a turn now exists on the wire before it starts
+  (`turn/start {queue:true}` replies `{queued:true, turn:{id,status:"queued"}, position}`, id minted at
+  enqueue) and a queued turn flushed by `thread/close`/`shutdown()`/`turn/interrupt{cancelQueued}` ends
+  as `turn/completed {status:"cancelled"}` rather than never being heard from again. Foreseen as
+  deviation (1) of the M2 design note above; recorded here as landed.
 
 - **Flagged addition (2026-08-11, as2b Task 1):** §8's Thread family gains `thread/rewound`
   `{threadId, sessionId}` — a rewind replaces the thread's engine and truncates its transcript, and

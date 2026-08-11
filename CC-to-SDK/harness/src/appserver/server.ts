@@ -10,6 +10,7 @@ import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
+import { flushQueue } from "./queue.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
 import { capabilitiesRead, contextUsageRead, usageRead, initRead, accountRead } from "./introspect.js";
@@ -146,7 +147,7 @@ export class AppServer {
       const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
       srv.decisions.set(threadId, dec);
       const nowS = nowSec();
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), flagPerms: emptyFlagPerms(), epoch: 0 };
+      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), flagPerms: emptyFlagPerms(), epoch: 0 };
       srv.registry.add(record);
       installRouter(srv, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
       ctx.peer.reply(id, { thread: threadView(srv, record) });
@@ -171,7 +172,13 @@ export class AppServer {
       // beginTurn's own busy gate (turns.ts): the dispose sits behind record.chain, so a compact/
       // reinitialize/turn arriving in that window would otherwise be admitted and run its engine call
       // against a record this close is already tearing down. threadBusyReason reads `closing` first.
+      // The flush is the latch's other half (M2b Wave 4, spec: "set the latch synchronously at request
+      // arrival … and flush the queue then and there"): every queued turn is answered `cancelled` here,
+      // in the same synchronous step, so nothing is left for a later settle to start and nothing is
+      // silently dropped. The two lines are a pair — the latch alone would strand the queue, the flush
+      // alone would let the next enqueue refill it.
       record.closing = true;
+      flushQueue(srv, record);
       record.chain = record.chain.then(async () => {
         try {
           await srv.closeRecord(record);
@@ -295,7 +302,7 @@ export class AppServer {
     // `config` is the FULL object the factory received (broker and `resume` included) — M2b's rewind swap
     // rebuilds the replacement engine from it, so anything dropped here is silently dropped by every later
     // swap too (registry.ts's field doc).
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: opts.resume, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), epoch: 0 };
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: opts.resume, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
@@ -352,6 +359,13 @@ export class AppServer {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     await Promise.all(this.registry.list().map((r) => {
+      // The same latch+flush pair thread/close raises, per record, BEFORE anything is awaited (M2b Wave 4):
+      // the server-wide `shuttingDown` flag above refuses new THREADS, but a turn/start on a thread that
+      // already exists is not an admission, and its queue would otherwise be drained by a settle landing
+      // during a slow dispose. Every queued turn is answered `cancelled` while its record is still in the
+      // registry — after closeRecord deletes it, broadcast() no-ops and the client would never hear.
+      r.closing = true;
+      flushQueue(this, r);
       r.chain = r.chain.then(async () => { if (this.registry.get(r.id)) await this.closeRecord(r); });
       return r.chain.catch(() => {});
     }));

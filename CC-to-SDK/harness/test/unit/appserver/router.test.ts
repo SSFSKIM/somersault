@@ -26,7 +26,7 @@ function fakeSession(overrides: Partial<EngineSession> = {}): { session: EngineS
 function mkRecord(session: EngineSession, extra: Partial<ThreadRecord> = {}): ThreadRecord {
   return {
     id: "t1", origin: "inProcess", session, unattended: "park", busy: false, turnSeq: 0,
-    interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(),
+    interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(),
     createdAt: 0, updatedAt: 0, settings: {}, flagPerms: emptyFlagPerms(), epoch: 0,
     ...extra,
   };

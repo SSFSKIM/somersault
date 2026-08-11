@@ -20,8 +20,9 @@
 >
 > **Status legend:** `shipped(M1)` — the core loop, live since 2026-07-29. `shipped(M2a)` — M2 waves
 > 0–2 (spine, settings + introspection, lifecycle + session library), reconciled with main's Wave T
-> wire shapes and merged 2026-08-11. `planned(M2b)` — named in the M2 spec's waves 3–4 (rewind, MCP,
-> tasks, queue) but not yet wired. `planned(M3)` — fleet/workspace surfaces. `probe-gated` — needs a
+> wire shapes and merged 2026-08-11. `shipped(M2b)` — M2 waves 3–4 (rewind, MCP, tasks, the gap-6
+> settings-ops nonet, and Wave 4's turn queue, which adds no method of its own — it rides `turn/start`'s
+> `queue` flag and `turn/interrupt`). `planned(M3)` — fleet/workspace surfaces. `probe-gated` — needs a
 > live probe before it can ship at all (D5 and the sessions-store note). `N/A` — no protocol method
 > backs this token by design.
 >
@@ -44,7 +45,9 @@ store, deduped on `sessionId`, live wins, cursor-paged), `thread/fork`, `thread/
 `thread/tag/set`, `thread/delete` (busy-guarded), `thread/close`, `thread/reinitialize` (busy-gated),
 `thread/subscribe`, `thread/unsubscribe`, `thread/read` (row-windowed, absolute-offset cursor,
 limit clamped to 500 + `warning`), `thread/compact/start` (compaction is a turn — same `beginTurn`
-spine), `turn/start`, `turn/interrupt`, `decision/list`, `decision/respond`, `thread/model/set`,
+spine), `turn/start` (Wave 4's `queue: true` flag enqueues instead of refusing when the thread is busy
+with a turn — see gap 1), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
+`decision/list`, `decision/respond`, `thread/model/set`,
 `thread/permissionMode/set` (`auto` self-heals the model first), `thread/thinking/set`,
 `thread/settings/apply`, `thread/capabilities/read`, `thread/contextUsage/read`, `thread/usage/read`,
 `thread/init/read`, `account/read`; then M2b Wave 3's three clusters, in the order `server.ts`'s table
@@ -114,9 +117,21 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 
 ## Notable gaps and discrepancies
 
-1. **`turn/interrupt`'s `cancelQueued` is inert.** Accepted on the wire, silently ignored —
-   `Query.interrupt()` is still zero-arg at SDK 0.3.220; the server-side turn queue that would give
-   it meaning is M2b Wave 4. Every row backed by `turn/interrupt` carries this qualifier.
+1. **CLOSED as of M2b Task 4** (kept at this number so older references still resolve).
+   `turn/interrupt`'s `cancelQueued` was inert through M1/M2a — accepted on the wire and silently
+   ignored — because there was no queue to flush. M2b Wave 4's server-side turn queue
+   (`appserver/queue.ts`) gives it one: `turn/start {queue:true}` on a thread busy **with a turn**
+   enqueues instead of refusing, minting the turn's id at enqueue time so the same id appears in the
+   reply, in any cancel receipt, and in the eventual `turn/started`. `cancelQueued: true` now flushes
+   that queue *before* interrupting (interrupting first would settle the running turn, and a settle is
+   what drains the queue) and reports the flushed ids as `{interrupted: true, cancelledQueued: [...]}`;
+   a `turnId` naming a queued entry cancels just that entry and never touches the engine
+   (`{interrupted: false, cancelled: [id]}`). Every flushed entry gets a terminal
+   `turn/completed {status:"cancelled"}` — a queued turn is never silently dropped. The **SDK-side** half
+   is still unreachable (`Query.interrupt()` remains zero-arg at 0.3.220), so the receipt reports the
+   server-side set only; `cancelled`/`still_queued` from the engine land if the SDK ever surfaces the
+   option. `thread/close` and `shutdown()` raise a `record.closing` latch and flush synchronously at
+   request arrival, and the drain re-checks that latch, so no engine call starts after a close begins.
 2. **`host/ops.ts` and `bridge/types.ts` are still not imported anywhere under `appserver/`.** All
    shipped methods reach the engine through `openSession`/`resumeSession` (lib) — the host-wire/
    bridge path activates when fleet adoption (`thread/attach`) lands in M3. Rows are scored by the
@@ -163,7 +178,7 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `pending` | host/ops.ts | `decision/list` | both | shipped(M1) |
 | `answer` | host/ops.ts | `decision/respond` | both | shipped(M1) — Wave T wire shapes (see above) |
 | `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) |
-| `interrupt` | host/ops.ts | `turn/interrupt` | both | shipped(M1) — `cancelQueued` inert (gap 1) |
+| `interrupt` | host/ops.ts | `turn/interrupt` | both | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
 | `follow` | host/ops.ts | `thread/subscribe` | both | shipped(M1) |
 | `unfollow` | host/ops.ts | `thread/unsubscribe` | both | shipped(M1) |
 | `set_model` | host/ops.ts | `thread/model/set` | both | shipped(M2a) |
@@ -201,7 +216,7 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `set_model` | bridge/types.ts | `thread/model/set` | inProcess | shipped(M2a) |
 | `set_permission_mode` | bridge/types.ts | `thread/permissionMode/set` | inProcess | shipped(M2a) |
 | `set_thinking` | bridge/types.ts | `thread/thinking/set` | inProcess | shipped(M2a) |
-| `interrupt` | bridge/types.ts | `turn/interrupt` | inProcess | shipped(M1) — `cancelQueued` inert (gap 1) |
+| `interrupt` | bridge/types.ts | `turn/interrupt` | inProcess | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
 | `context_usage` | bridge/types.ts | `thread/contextUsage/read` | inProcess | shipped(M2a) |
 | `account_info` | bridge/types.ts | `account/read` | inProcess | shipped(M2a) — see gap 3 |
 | `reinitialize` | bridge/types.ts | `thread/reinitialize` | inProcess | shipped(M2a) — busy-gated |
@@ -228,7 +243,7 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
-| `interrupt` | sdk.d.ts (Query) | `turn/interrupt` | both | shipped(M1) — `cancelQueued` inert (gap 1) |
+| `interrupt` | sdk.d.ts (Query) | `turn/interrupt` | both | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
 | `setPermissionMode` | sdk.d.ts (Query) | `thread/permissionMode/set` | both | shipped(M2a) |
 | `setMcpPermissionModeOverride` | sdk.d.ts (Query) | `mcpServer/permissionModeOverride/set` | inProcess | shipped(M2b) — rules-layer only (probe 49) |
 | `setModel` | sdk.d.ts (Query) | `thread/model/set` | both | shipped(M2a) |

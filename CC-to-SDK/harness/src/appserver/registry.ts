@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import type { Peer } from "./peer.js";
 import type { ItemEvent } from "./items/types.js";
+import type { QueuedTurn } from "./queue.js";
 import type { PlanGrantMode } from "../permissions/types.js";
 import type { TurnFailure } from "../session/turnResult.js";
 
@@ -151,7 +152,13 @@ export interface ThreadRecord {
   flagPerms: { allow: string[]; ask: string[]; deny: string[]; additionalDirectories: string[] };
   flagOutputStyle?: string;
   flagEffort?: string;
-  closing?: boolean;            // set by M2b's close-drain queue while a close is in flight
+  /** M2b Task 4's server-side turn queue: the turns a client asked to run AFTER the one in flight
+   *  (`turn/start {queue:true}`), FIFO, each already carrying the id it was minted at enqueue time.
+   *  Only queue.ts writes it — enqueue pushes, the drain shifts, close/interrupt flush. */
+  queue: QueuedTurn[];
+  closing?: boolean;            // set SYNCHRONOUSLY at request arrival by thread/close and shutdown()
+                                 // (server.ts) and never cleared — the latch M2b Task 4's queue drain
+                                 // checks so no engine call starts after a close began
   swapInFlight?: boolean;       // set by M2b's rewind while an engine swap is in flight
   epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
                                  // ONLY by M2b's rewind engine swap (spec D-M2-8) — every later task that
@@ -180,6 +187,16 @@ export function seedSettings(config: Record<string, unknown> | undefined): Threa
  *  wholesale on every accepted push, but a shared literal would still let one thread's accumulator be
  *  aliased by every other thread created before the first push. */
 export const emptyFlagPerms = (): ThreadRecord["flagPerms"] => ({ allow: [], ask: [], deny: [], additionalDirectories: [] });
+
+/** The ONE place a turn id is minted (spec Wave 4, external review): `beginTurn` (turns.ts) and the
+ *  queue's `enqueueTurn` (queue.ts) are its only callers, so `turn/start`, compact and a queued turn all
+ *  produce identical id formats off one counter — format drift between them surfaces far downstream, in
+ *  replay and the D10 stitch. It lives HERE, beside the `turnSeq` it advances, rather than in turns.ts:
+ *  queue.ts needs it too, and importing it from turns.ts (which imports queue.ts for the drain) would
+ *  make the two modules a cycle. */
+export function mintTurnId(record: ThreadRecord): string {
+  return `turn_${record.id}_${++record.turnSeq}`;
+}
 
 /** The ONE answer to "is this thread busy?" (spec D-M2-8). Gates never re-assemble these terms — every
  *  later gate (queue drain, close, rewind, compact) calls this instead. Precedence is deliberate: a

@@ -268,12 +268,15 @@ describe("appserver turns (Task 8)", () => {
     expect(completed.params.turn).toEqual({ id: `turn_${threadId}_1`, status: "interrupted" });
   });
 
-  it("turn/interrupt accepts cancelQueued without error and replies {interrupted:true} with no cancelled/stillQueued fields (SDK Query.interrupt is zero-arg at 0.3.220)", async () => {
+  it("turn/interrupt{cancelQueued} on a thread with nothing queued replies {interrupted:true, cancelledQueued: []} — the SERVER-side set only (SDK Query.interrupt is still zero-arg at 0.3.220, so no cancelled/stillQueued from the engine)", async () => {
+    // M2b Wave 4 (queue.test.ts owns the flush behavior): the flag stopped being inert when the
+    // server-side queue landed. The receipt now always carries the flushed set when the flag is present,
+    // empty included — a client must be able to tell "nothing was queued" from "the field is not supported".
     const { s, c, threadId } = await bootThread(fakeSession);
     send(c, { id: 3, method: "turn/interrupt", params: { threadId, cancelQueued: true } });
     await tick();
     const reply = parsed(s.lines).find((f) => f.id === 3);
-    expect(reply.result).toEqual({ interrupted: true });
+    expect(reply.result).toEqual({ interrupted: true, cancelledQueued: [] });
   });
 
   it("turn/start and turn/interrupt on an unknown thread are -33004", async () => {

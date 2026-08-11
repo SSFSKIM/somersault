@@ -242,7 +242,7 @@ describe("M2 error codes", () => {
 describe("threadBusyReason (spec D-M2-8) — the ONE busy predicate", () => {
   const baseRecord = (overrides: Partial<ThreadRecord> = {}): ThreadRecord => ({
     id: "thr_x", origin: "inProcess", session: {} as any, unattended: "park", busy: false, turnSeq: 0,
-    interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(),
+    interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(),
     createdAt: 0, updatedAt: 0, settings: {}, flagPerms: emptyFlagPerms(), epoch: 0, ...overrides,
   });
   it("returns null for an idle record (nothing busy)", () => {

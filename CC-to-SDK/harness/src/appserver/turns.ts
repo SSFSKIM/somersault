@@ -1,17 +1,20 @@
 // appserver/turns.ts — turn lifecycle (spec: Turn -> Item; item/started -> deltas -> item/completed).
 // Split out of server.ts per the plan's "extract before letting a hot file sprawl" rule. `turn/interrupt`:
 // SDK Query.interrupt() is zero-arg at 0.3.220 (Task 1 finding, verified twice against sdk.d.ts) — no
-// public method carries cancel_queued, and M1 has no server-side turn/queue (later milestone) to flush
-// anyway. `cancelQueued` is accepted on the wire and silently unused; Task 12 records the scorecard gap.
+// public method carries cancel_queued, so the SDK's OWN input queue stays unreachable. What
+// `cancelQueued` now flushes is this server's queue (M2b Wave 4, queue.ts): the receipt reports the
+// server-side set (`cancelledQueued`), and `cancelled`/`still_queued` land if the SDK ever surfaces the
+// option.
 import { randomUUID } from "node:crypto";
 import { ERR } from "./rpc.js";
 import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
-import { threadBusyReason, threadStatus } from "./registry.js";
+import { mintTurnId, threadBusyReason, threadStatus } from "./registry.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
+import { cancelQueued, enqueueTurn, flushQueue, takeNext, type QueuedTurn } from "./queue.js";
 import { turnStartParams, turnInterruptParams } from "./schema/turns.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
@@ -96,18 +99,30 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
  *  Also the turn half of `updatedAt` (registry.ts: "bumped on every settings/turn mutation"). Before this,
  *  only the settings legs bumped it, so a thread that had done nothing but run turns kept the timestamp it
  *  was created with — a recency-sorted thread list put the busiest thread at the bottom. */
-function settleTurn(record: ThreadRecord): void {
+function settleTurn(srv: AppServer, record: ThreadRecord): void {
   record.busy = false;
   record.turnStartedBroadcast = false;
   record.updatedAt = nowSec();
   void applyPlanUpgrade(record);
+  // The drain (M2b Wave 4): the thread just went idle, so the queue's head — if the closing latch is
+  // down and there is one — becomes the next turn. Synchronous, in the same step busy cleared, so a
+  // turn/start arriving in this tick still sees the thread claimed rather than jumping the queue.
+  const next = takeNext(record);
+  if (next) startQueuedTurn(srv, record, next);
 }
 
-/** The ONE place a turn id is minted (spec Wave 4, external review): `beginTurn` below is its only
- *  caller, so `turn/start`, compact, and M2b's queue drain all produce identical id formats — format
- *  drift between them surfaces far downstream in replay and the D10 stitch. */
-export function mintTurnId(record: ThreadRecord): string {
-  return `turn_${record.id}_${++record.turnSeq}`;
+/** Re-enters the same spine `turn/start` uses, with the id minted back at enqueue time and NO peer to
+ *  reply to — the enqueue already answered its caller. Everything a client sees from here on is
+ *  notifications (turn/started, items, turn/completed), which is exactly what a turn nobody is awaiting
+ *  should produce.
+ *
+ *  `beginTurn`'s own busy gate cannot refuse on this path, which is why its `false` is not handled here:
+ *  `busy` was cleared one statement earlier, `closing` was just checked by `takeNext`, and `swapping`
+ *  requires an idle thread to begin with (rewind.ts gates on the same predicate), so no reason can be up.
+ *  A silent refusal here would drop a turn a client was told was queued — the invariant `takeNext`'s latch
+ *  check and the flush exist to protect. */
+function startQueuedTurn(srv: AppServer, record: ThreadRecord, next: QueuedTurn): void {
+  beginTurn(srv, undefined, undefined, record, submitRunner(srv, record, next.input), next.id);
 }
 
 /** The busy-gate + mint + chain-callback spine `turnStart` and compact (`lifecycle.ts`'s
@@ -116,7 +131,10 @@ export function mintTurnId(record: ThreadRecord): string {
  *  `session.submit`; compact passes `session.compact`. Returns false when the busy gate refused (the
  *  caller already got its -33001 reply) — verbatim-moved from `turnStart`, condition for condition. */
 export function beginTurn(
-  srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord,
+  // ctx/id travel together and are BOTH absent for exactly one caller: the queue drain, whose turn was
+  // already replied to at enqueue time (queue.ts). Every reply below is guarded on them rather than on a
+  // stub peer, so a drained turn cannot accidentally answer someone else's request id.
+  srv: AppServer, ctx: ConnCtx | undefined, id: RequestId | undefined, record: ThreadRecord,
   // The runner resolves with the engine's own outcome when it has one — turnStart returns submit()'s
   // resolve so onSuccess below can read Wave T t14's additive `error` tag. A runner with no outcome to
   // report (compact) resolves void; onSuccess treats that as a clean completion.
@@ -132,7 +150,7 @@ export function beginTurn(
   // "swapping" are not the same refusal as "a turn is running", and a client that cannot tell them apart
   // retries a thread that is going away.
   const busyReason = threadBusyReason(record);
-  if (busyReason) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return false; }
+  if (busyReason) { if (ctx && id !== undefined) ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return false; }
   record.busy = true;
   // Both reset synchronously HERE — at request-arrival time, not deferred inside the chain callback
   // below — for the same same-tick reason as the busy gate above:
@@ -155,7 +173,7 @@ export function beginTurn(
   record.chain = record.chain.then(() => {
     const turn = { id: turnId, status: "inProgress" };
     record.updatedAt = nowSec(); // a turn STARTING is activity too — not only its completion (settleTurn)
-    ctx.peer.reply(id, { turn });
+    if (ctx && id !== undefined) ctx.peer.reply(id, { turn });
     statusChanged(srv, record);
     srv.broadcast(record.id, "turn/started", { threadId: record.id, turn });
     // Recorded AFTER the broadcast actually goes out, so a subscribe landing between turn/start's
@@ -167,7 +185,7 @@ export function beginTurn(
     const mapper = new TurnMapper(); // one instance per turn — dropped at completion, never reused
     const reportFailed = (err: unknown) => {
       emitItems(srv, record, turnId, mapper.finalize(true));
-      settleTurn(record);
+      settleTurn(srv, record);
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: String(err) } });
       statusChanged(srv, record);
     };
@@ -187,7 +205,7 @@ export function beginTurn(
       const interrupted = record.interruptRequested;
       const failure = interrupted ? undefined : outcome?.error;
       emitItems(srv, record, turnId, mapper.finalize(interrupted || failure !== undefined));
-      settleTurn(record);
+      settleTurn(srv, record);
       const turn2: Record<string, unknown> = { id: turnId, status: interrupted ? "interrupted" : failure ? "failed" : "completed" };
       if (failure) turn2.error = failure.message;
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: turn2 });
@@ -195,7 +213,7 @@ export function beginTurn(
     };
     const onFailure = (err: unknown) => {
       emitItems(srv, record, turnId, mapper.finalize(true));
-      settleTurn(record);
+      settleTurn(srv, record);
       const status = record.interruptRequested ? "interrupted" : "failed";
       const turn2: Record<string, unknown> = { id: turnId, status };
       if (status === "failed") turn2.error = String(err);
@@ -218,29 +236,55 @@ export function beginTurn(
   return true;
 }
 
-export const turnStart: Handler = (srv, ctx, id, params) => {
-  const parsed = turnStartParams.safeParse(params);
-  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-  const record = srv.registry.get(parsed.data.threadId);
-  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  // NOT `async`: a plain function so `record.session.submit(...)` throwing SYNCHRONOUSLY still propagates
-  // synchronously out of this runner call — exactly as it did in the pre-extraction code, where submit()
-  // was called directly inside beginTurn's (then turnStart's) own try. Wrapping this in `async`/`await`
-  // would have the JS engine itself absorb that synchronous throw into a REJECTED promise instead, routing
-  // it through onFailure (which consults interruptRequested) rather than the try/catch's reportFailed
-  // (which always reports "failed") — a real divergence for a turn/interrupt landing the same tick as a
-  // synchronously-throwing submit(). The submit promise is returned AS-IS so beginTurn's onSuccess can
-  // read Wave T t14's additive `error` tag off the resolve; a plain return never intercepts a
-  // synchronous throw.
-  beginTurn(srv, ctx, id, record, (turnId, mapper) => {
+/** The prompt-submitting runner, shared by `turn/start` and the queue drain — one input string in, the
+ *  engine call plus its live prompt echo out. Factored out so a drained turn is byte-for-byte the same
+ *  turn it would have been had the client sent it when the thread was idle.
+ *
+ *  The returned function is NOT `async`: a plain function so `record.session.submit(...)` throwing
+ *  SYNCHRONOUSLY still propagates synchronously out of the runner call — exactly as it did in the
+ *  pre-extraction code, where submit() was called directly inside beginTurn's own try. Wrapping it in
+ *  `async`/`await` would have the JS engine absorb that synchronous throw into a REJECTED promise instead,
+ *  routing it through onFailure (which consults interruptRequested) rather than the try/catch's
+ *  reportFailed (which always reports "failed") — a real divergence for a turn/interrupt landing the same
+ *  tick as a synchronously-throwing submit(). The submit promise is returned AS-IS so beginTurn's
+ *  onSuccess can read Wave T t14's additive `error` tag off the resolve. */
+function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
+  return (turnId: string, mapper: TurnMapper) => {
     // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
     // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
     // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
     // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
     const userUuid = randomUUID();
-    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(parsed.data.input, userUuid) }]);
-    return record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
-  });
+    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(input, userUuid) }]);
+    return record.session.submit(input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
+  };
+}
+
+export const turnStart: Handler = (srv, ctx, id, params) => {
+  const parsed = turnStartParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // The busy branch is resolved HERE rather than left to beginTurn's own gate, because `queue:true` turns
+  // one of its outcomes into an acceptance. Gated on the ONE predicate (spec D-M2-8), never a re-assembled
+  // condition — and the queue is offered for exactly one of its reasons:
+  //  - "turn": a turn is running and WILL settle, and settleTurn is what drains the queue. Enqueue.
+  //  - "closing": the queue was flushed at close and is never re-admitted (queue.ts) — an entry accepted
+  //    now would sit forever, so this refuses exactly as the unflagged call does.
+  //  - "swapping": an engine swap never runs settleTurn, so nothing would ever drain the entry either.
+  // Both refusals keep the reason on the wire: a client that cannot tell "retry in a moment" from "this
+  // thread is going away" retries the wrong one.
+  const busyReason = threadBusyReason(record);
+  if (busyReason) {
+    if (parsed.data.queue && busyReason === "turn") {
+      const q = enqueueTurn(record, parsed.data.input);
+      ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position });
+    } else {
+      ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`);
+    }
+    return;
+  }
+  beginTurn(srv, ctx, id, record, submitRunner(srv, record, parsed.data.input));
 };
 
 /** The ONE interrupt path — turn/interrupt and decision/respond's abortTurn both go through it. Setting
@@ -257,6 +301,17 @@ export const turnInterrupt: Handler = async (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // Aimed at a QUEUED turn (spec D-M2-10): answered before the engine is touched at all — that turn has no
+  // engine work to stop, and interrupting the RUNNING turn because a client cancelled a pending one would
+  // destroy work nobody asked to lose. An id that is not queued falls through unchanged (it names the
+  // running turn, or nothing).
+  if (parsed.data.turnId && cancelQueued(srv, record, parsed.data.turnId)) {
+    ctx.peer.reply(id, { interrupted: false, cancelled: [parsed.data.turnId] });
+    return;
+  }
+  // Stop-means-stop-everything: the flush runs BEFORE the interrupt, because interrupting first makes the
+  // in-flight turn settle — and settleTurn drains the very queue this request is trying to empty.
+  const cancelledQueued = parsed.data.cancelQueued ? flushQueue(srv, record) : undefined;
   await requestInterrupt(record);
-  ctx.peer.reply(id, { interrupted: true });
+  ctx.peer.reply(id, cancelledQueued ? { interrupted: true, cancelledQueued } : { interrupted: true });
 };
