@@ -143,6 +143,41 @@ describe("appserver thread teardown (C1/I7)", () => {
     expect(closed[0].params).toEqual({ threadId });
   });
 
+  it("thread/close latches record.closing SYNCHRONOUSLY, so a compact/reinitialize/turn arriving while the dispose is still in flight is refused -33001 (closing) and never reaches the engine", async () => {
+    // The dispose sits behind record.chain, and none of these three gates consult the chain — they gate on
+    // threadBusyReason. Without the latch each was admitted against a record already being torn down: the
+    // engine call ran, and its reply raced closeRecord's own.
+    let compactCalls = 0, reinitCalls = 0, submitCalls = 0;
+    const hanging = () => ({
+      submit: async () => { submitCalls++; return { result: {} }; },
+      interrupt: async () => ({}),
+      dispose: () => new Promise<void>(() => {}), // never resolves — the close stays in flight
+      onFrame: () => () => {},
+      compact: async () => { compactCalls++; return { ok: true }; },
+      reinitialize: async () => { reinitCalls++; return {}; },
+      sessionId: "sess-1",
+    });
+    const srv = new AppServer({}, { sessionFactory: hanging });
+    const s = mkSink(); const c = srv.connect(s.sink);
+    init(c, 1);
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(s.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(c, { id: 3, method: "thread/close", params: { threadId } });
+    send(c, { id: 4, method: "thread/compact/start", params: { threadId } });
+    send(c, { id: 5, method: "thread/reinitialize", params: { threadId } });
+    send(c, { id: 6, method: "turn/start", params: { threadId, input: "go" } });
+    await tick(); await tick();
+
+    for (const id of [4, 5, 6]) {
+      const err = parsed(s.lines).find((f) => f.id === id).error;
+      expect(err.code, `request ${id}`).toBe(-33001);
+      expect(err.message, `request ${id}`).toMatch(/closing/);
+    }
+    expect([compactCalls, reinitCalls, submitCalls]).toEqual([0, 0, 0]);
+  });
+
   it("thread/close still broadcasts thread/closed and drops the record when dispose() rejects", async () => {
     const failing = () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => { throw new Error("dispose boom"); }, onFrame: () => () => {}, sessionId: "sess-x" });
     const srv = new AppServer({}, { sessionFactory: failing });

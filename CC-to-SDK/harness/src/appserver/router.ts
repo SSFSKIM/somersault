@@ -3,9 +3,13 @@
 // each thread gets a single subscription with named routes, run in sequence, each in its own try/catch so
 // one throwing route cannot starve the others on the same frame. Task 8a moves in the two watchers that
 // pre-date this file (the init latch, the planUpgrade status-consult) with no observable behavior change;
-// Task 8b (this file) adds the remaining eight routes: the settings mirror (model/permissionMode, echo-
-// deduped), token usage, rate limits, background tasks, task notifications, capability pushes, todo
-// snapshots, and the compaction-boundary relay.
+// Task 8b (this file) adds the remaining routes: the settings mirror (model/permissionMode, echo-deduped),
+// token usage, rate limits, background tasks, task notifications, capability pushes and todo snapshots.
+//
+// `thread/compacted` used to be a route here too (off the raw system/compact_boundary frame) and is not
+// any more: the frame is a boundary marker, not a verdict, so it could not report a failed compaction at
+// all. That notification now goes out from lifecycle.ts, off the parsed outcome `compact()` resolves —
+// the rule being that a frame relay is only the right shape when the frame IS the payload.
 import type { ThreadRecord } from "./registry.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import { classifyLimitMessage } from "../limits/classify.js";
@@ -103,13 +107,6 @@ function routeSettingsMirror(srv: AppServer, record: ThreadRecord, frame: { type
     permissionMode: record.settings.permissionMode,
     thinkingTokens: record.settings.thinkingTokens,
   });
-}
-
-/** system/compact_boundary → thread/compacted (spec Wave 1 table, verbatim payload; Task 11 consumes).
- *  Condition and payload are both given directly by the brief's route table — nothing to infer. */
-function routeCompactBoundary(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string }): void {
-  if (frame?.type !== "system" || frame.subtype !== "compact_boundary") return;
-  srv.broadcast(record.id, "thread/compacted", { threadId: record.id, turnId: record.currentTurnId, outcome: frame });
 }
 
 /** `result` frames carrying `usage`/`modelUsage` → `thread/tokenUsage/updated {threadId, usage}`. Both
@@ -227,7 +224,6 @@ const ROUTES: ((srv: AppServer, record: ThreadRecord, frame: any) => void)[] = [
   routeInit,
   routeStatus,
   routeSettingsMirror,
-  routeCompactBoundary,
   routeTokenUsage,
   routeLimits,
   routeBackgroundTasks,

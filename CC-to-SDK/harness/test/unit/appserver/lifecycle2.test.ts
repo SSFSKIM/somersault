@@ -29,7 +29,7 @@ async function bootThread(sessionFactory: () => any) {
 }
 
 describe("appserver compact-as-turn (Task 11)", () => {
-  it("thread/compact/start claims the turn machinery: busy-gates a concurrent turn/start (-33001), broadcasts turn/started/turn/completed, and thread/compacted is observed for a compact_boundary frame arriving mid-compact", async () => {
+  it("thread/compact/start claims the turn machinery: busy-gates a concurrent turn/start (-33001), broadcasts turn/started/turn/completed, and thread/compacted carries the PARSED outcome compact() resolved — never the raw compact_boundary frame", async () => {
     let resolveCompact!: (v: unknown) => void;
     const cbs = new Set<(m: unknown) => void>();
     const sessionFactory = () => ({
@@ -39,6 +39,7 @@ describe("appserver compact-as-turn (Task 11)", () => {
       onFrame: (cb: (m: unknown) => void) => { cbs.add(cb); return () => cbs.delete(cb); },
       // engine-faithful: compact() is a genuine turn whose completion we control, same shape as submit()
       // in the other turn tests — we resolve it only after asserting the busy-during-compact behavior.
+      // The real one resolves the PARSED CompactOutcome (src/session/session.ts → parseCompactOutcome).
       compact: () => new Promise((resolve) => { resolveCompact = resolve; }),
       sessionId: "sess-1",
     });
@@ -60,17 +61,17 @@ describe("appserver compact-as-turn (Task 11)", () => {
     await tick();
     expect(parsed(s.lines).find((f) => f.id === 4).error.code).toBe(ERR.BUSY);
 
-    // a compact_boundary frame arrives mid-compact — frames arriving between turns, engine-faithful — and
-    // the router's existing compact_boundary route reports it, not the handler itself
-    const boundaryFrame = { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual" } };
-    for (const cb of [...cbs]) cb(boundaryFrame);
+    // the boundary FRAME arriving mid-compact is no longer relayed: it is a marker, not a verdict
+    for (const cb of [...cbs]) cb({ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual" } });
+    await tick();
+    expect(parsed(s.lines).some((f) => f.method === "thread/compacted")).toBe(false);
+
+    // compact() resolves — the outcome goes out, and the turn completes like any other
+    const outcome = { ok: true, result: "success", preTokens: 100, postTokens: 10 };
+    resolveCompact(outcome);
     await tick();
     const compacted = parsed(s.lines).find((f) => f.method === "thread/compacted");
-    expect(compacted.params).toEqual({ threadId, turnId, outcome: boundaryFrame });
-
-    // compact() resolves — the turn completes like any other
-    resolveCompact({ ok: true });
-    await tick();
+    expect(compacted.params).toEqual({ threadId, turnId, outcome });
     const completed = parsed(s.lines).find((f) => f.method === "turn/completed");
     expect(completed.params.turn).toEqual({ id: turnId, status: "completed" });
 
@@ -78,6 +79,28 @@ describe("appserver compact-as-turn (Task 11)", () => {
     send(c, { id: 5, method: "turn/start", params: { threadId, input: "y" } });
     await tick();
     expect(parsed(s.lines).find((f) => f.id === 5).result.turn.status).toBe("inProgress");
+  });
+
+  it("a compaction the engine REPORTED as failed still broadcasts thread/compacted, carrying {ok:false} — compact() resolves structured on an engine-level failure, only a transport error rejects", async () => {
+    const outcome = { ok: false, result: "failed", error: "compaction failed: context too small" };
+    const sessionFactory = () => ({
+      submit: async () => ({ result: {} }),
+      interrupt: async () => ({}),
+      dispose: async () => {},
+      onFrame: () => () => {},
+      compact: async () => outcome,
+      sessionId: "sess-1",
+    });
+    const { s, c, threadId } = await bootThread(sessionFactory);
+
+    send(c, { id: 3, method: "thread/compact/start", params: { threadId } });
+    await tick();
+    const turnId = parsed(s.lines).find((f) => f.id === 3).result.turn.id;
+
+    const compacted = parsed(s.lines).find((f) => f.method === "thread/compacted");
+    expect(compacted.params).toEqual({ threadId, turnId, outcome });
+    // the TURN still completed — a failed compaction is a reported outcome, not a failed turn
+    expect(parsed(s.lines).find((f) => f.method === "turn/completed").params.turn.status).toBe("completed");
   });
 
   it("a turn/start already in flight busy-gates a concurrent thread/compact/start the same way (-33001) — the gate is symmetric", async () => {

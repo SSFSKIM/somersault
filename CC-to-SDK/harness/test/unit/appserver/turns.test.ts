@@ -1,7 +1,7 @@
 // test/unit/appserver/turns.test.ts — Task 8: turn lifecycle + item streaming. Copies Task 6's
 // mkSink/send/parsed helpers (test/unit/appserver/server.test.ts) so this file reads standalone.
 import { describe, it, expect } from "vitest";
-import { AppServer } from "../../../src/appserver/server.js";
+import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
@@ -445,5 +445,35 @@ describe("appserver turns (Task 8)", () => {
     await tick();
     send(c, { id: 5, method: "thread/close", params: { threadId } });
     await tick(); await tick();
+  });
+
+  it("a turn bumps record.updatedAt at BOTH edges — a thread that has only ever run turns must not report the time it was created (merge review, finding 8)", async () => {
+    // updatedAt used to move only on a settings write, so a thread doing nothing but work looked idle
+    // since creation and sorted to the bottom of a recency-ordered picker.
+    let release!: () => void;
+    const inFlight = new Promise<void>((r) => { release = r; });
+    const sessionFactory = () => ({
+      submit: async () => { await inFlight; return { result: {} }; },
+      interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+    });
+    const { srv, s, c, threadId } = await bootThread(sessionFactory);
+    const record = srv.registry.get(threadId)!;
+    // Backdated rather than clock-compared: updatedAt is unix SECONDS, so a turn that starts and finishes
+    // inside one second is indistinguishable from a stale timestamp by value alone.
+    record.updatedAt = 0;
+
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    const atStart = record.updatedAt;
+    expect(atStart).toBeGreaterThan(0); // the turn STARTING is activity
+
+    record.updatedAt = 0;
+    release();
+    await tick();
+    expect(parsed(s.lines).find((f) => f.method === "turn/completed")).toBeTruthy();
+    expect(record.updatedAt).toBeGreaterThan(0); // and so is its completion
+
+    // and the wire projection a picker sorts on carries it, not just the record
+    expect(threadView(srv, record).updatedAt).toBe(record.updatedAt);
   });
 });

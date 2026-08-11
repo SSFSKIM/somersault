@@ -99,6 +99,17 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
+/** Methods still answerable when the thread's engine is dead (dispatch's -33005 gate). Two families:
+ *  close/read/subscribe/unsubscribe/decision-list, because closing and reading history are exactly what a
+ *  client does with a dead thread; and the store-only CRUD (sessionLib.ts), because renaming, tagging,
+ *  forking or deleting a persisted session never touches the engine at all — refusing them is refusing the
+ *  cleanup a client reaches for precisely when a thread has died. (thread/delete keeps its own live-guard,
+ *  which is about the session being LIVE, not about the engine being alive.) */
+const ENGINE_GONE_EXEMPT = new Set([
+  "thread/close", "thread/read", "thread/subscribe", "thread/unsubscribe", "decision/list",
+  "thread/name/set", "thread/tag/set", "thread/fork", "thread/delete",
+]);
+
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
 
 export class AppServer {
@@ -108,6 +119,13 @@ export class AppServer {
   private connSeq = 0;
   private startedAt = Date.now();
   private shuttingDown = false; // latched by shutdown(); refuses new thread admission (see shutdown())
+  /** Store sessionIds with a `thread/delete` in flight against them (sessionLib.ts owns the add/remove).
+   *  A store delete is the one op that awaits with nothing holding the session: without this reservation a
+   *  `thread/resume` (or a fork's own resume) admitted during that await would end up live on a session
+   *  whose history is being erased underneath it. `startThread` refuses admission against a reserved id;
+   *  the delete re-checks the live set after reserving, so whichever lands first wins and the other is
+   *  refused — never both. */
+  readonly deletingSessions = new Set<string>();
   private handlers: Record<string, Handler> = {
     "server/status": (srv, ctx, id) => {
       ctx.peer.reply(id, { uptimeMs: Date.now() - srv.startedAt, threads: srv.registry.list().length, listeners: srv.conns.size });
@@ -144,6 +162,11 @@ export class AppServer {
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
       const record = srv.registry.get(parsed.data.threadId);
       if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+      // Latched SYNCHRONOUSLY at request arrival, before the dispose is queued — same reasoning as
+      // beginTurn's own busy gate (turns.ts): the dispose sits behind record.chain, so a compact/
+      // reinitialize/turn arriving in that window would otherwise be admitted and run its engine call
+      // against a record this close is already tearing down. threadBusyReason reads `closing` first.
+      record.closing = true;
       record.chain = record.chain.then(async () => {
         try {
           await srv.closeRecord(record);
@@ -228,6 +251,9 @@ export class AppServer {
    *  instead of it being invisible to anything but the real default factory. */
   startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): void {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
+    // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
+    // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
+    if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
     const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId)), resume: opts.resume };
@@ -235,12 +261,23 @@ export class AppServer {
     const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
     this.decisions.set(threadId, dec);
     const nowS = nowSec();
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId ?? opts.resume, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), epoch: 0 };
+    // `sessionId` is stamped EAGERLY with the resume target, at registration, ahead of any frame: this is
+    // the one admission path where the registry legitimately knows the store id before the engine reports
+    // it (router.ts's init latch only confirms the same id later, and a getter read here would be
+    // undefined on a real engine anyway). The live-guard in sessionLib.ts is what needs it — a resume
+    // admitted this tick must already be findable by sessionId, or a concurrent thread/delete deletes the
+    // history out from under it.
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: opts.resume, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
     this.broadcastServer("thread/started", { thread: threadView(this, record) });
   }
+
+  /** The shutdown latch, readable by the handlers that create a thread out of band (sessionLib.ts's
+   *  thread/fork writes to the store BEFORE it reaches startThread's own refusal, so it has to consult
+   *  the latch itself — both before and after that write). */
+  get isShuttingDown(): boolean { return this.shuttingDown; }
 
   /** Tear one thread down: settle its parked decisions, dispose the engine, tell the thread's subscribers,
    *  drop the record. Shared by thread/close and shutdown().
@@ -360,6 +397,13 @@ export class AppServer {
     // `decision` is projected to the wire shape (toolUseId) — see broker.ts's toWireDecision.
     if (ev.type === "requested") this.broadcast(threadId, "decision/requested", { threadId, turnId: activeTurnId(this.registry.get(threadId)), decision: toWireDecision(ev.entry) });
     else this.broadcast(threadId, "decision/resolved", { threadId, toolUseId: ev.toolUseID, by: ev.by, answer: ev.outcome });
+    // `status.waitingOn` is part of the ONE status shape (registry.ts) and turns.ts already re-broadcasts
+    // it at every turn edge — but a park/answer moves it too, and without this a client that renders
+    // status (rather than tracking decision events itself) shows "active" through a park and stays stale
+    // until the turn ends. Computed AFTER the event has been applied, so `pendingDecisions` is current.
+    const record = this.registry.get(threadId);
+    if (!record) return;
+    this.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, this.pendingDecisions(threadId).length > 0) });
   }
 
   connect(sink: PeerSink): { peer: Peer; feed(chunk: string): void; close(): void } {
@@ -419,9 +463,7 @@ export class AppServer {
     const handler = Object.prototype.hasOwnProperty.call(this.handlers, method) ? this.handlers[method] : undefined;
     if (!handler) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, `Unknown method: ${method}`); return; }
     const goneBefore = this.engineGoneCode(params);
-    if (goneBefore !== undefined && method !== "thread/close" && method !== "thread/read" && method !== "thread/subscribe" && method !== "thread/unsubscribe" && method !== "decision/list") {
-      // close/read/subscribe/list stay answerable on a dead engine — closing and reading history are
-      // exactly what a client does with a dead thread. Everything else needs a live engine.
+    if (goneBefore !== undefined && !ENGINE_GONE_EXEMPT.has(method)) {
       ctx.peer.replyError(id, goneBefore, "Engine is gone (session ended)"); return;
     }
     try {

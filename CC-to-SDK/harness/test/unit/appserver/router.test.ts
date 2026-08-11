@@ -211,17 +211,15 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
     expect(calls.find((c) => c.method === "thread/settings/changed")?.params).toMatchObject({ source: "engine", model: "claude-b" });
   });
 
-  it("compact_boundary → thread/compacted with the current turnId", () => {
+  it("a compact_boundary frame is NOT relayed as thread/compacted — the boundary marker is not the outcome (lifecycle.ts broadcasts the parsed one)", () => {
     const { session, push } = fakeSession();
     const { srv, calls } = fakeSrv();
     const record = mkRecord(session, { currentTurnId: "turn-9" });
     installRouter(srv, record);
 
-    const frame = { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 100 } };
-    push(frame);
+    push({ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 100 } });
 
-    const evt = calls.find((c) => c.method === "thread/compacted");
-    expect(evt?.params).toEqual({ threadId: "t1", turnId: "turn-9", outcome: frame });
+    expect(calls.find((c) => c.method === "thread/compacted")).toBeUndefined();
   });
 
   it("a result frame with usage → thread/tokenUsage/updated", () => {

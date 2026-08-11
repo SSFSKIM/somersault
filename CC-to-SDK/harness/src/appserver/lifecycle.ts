@@ -4,9 +4,15 @@
 // machinery the thread would read idle while the engine is in fact turning: a concurrent turn/start would
 // be admitted and silently queue inside the engine, and a later milestone's queue drain would start turns
 // against a secretly busy engine. So compact busy-gates, mints a turn id, and broadcasts turn-started/
-// turn-completed exactly like `turn/start` — it does not itself emit `thread/compacted`; the per-thread
-// frame router's compact_boundary route (router.ts, Task 8b) already reports that boundary off the same
-// `record.currentTurnId` this spine sets.
+// turn-completed exactly like `turn/start`.
+//
+// `thread/compacted` is emitted HERE, off compact()'s own resolve, and no longer by the frame router: the
+// router only ever saw the raw `system/compact_boundary` FRAME, which is not the outcome — it carries no
+// verdict, so a compaction that FAILED (the engine's compact_error status) produced either a
+// success-shaped notification or, when no boundary frame was emitted at all, none whatsoever. `compact()`
+// (src/session/session.ts) resolves the PARSED CompactOutcome for both verdicts — only a transport error
+// rejects — so broadcasting on its settle is what makes the notification fire exactly once per compaction,
+// carrying `{ok:false}` when that is the truth.
 //
 // compact()'s waiter consumes the engine's own frames internally (unlike submit(), it takes no onMessage
 // callback) — any item events during compaction reach clients through the router's existing frame stream,
@@ -46,7 +52,9 @@ export const threadCompactStart: Handler = (srv: AppServer, ctx, id, params) => 
   // NOT `async` — same reasoning as turns.ts's turnStart runner: a plain function lets compact()
   // throwing SYNCHRONOUSLY propagate synchronously into beginTurn's try/catch (reportFailed), rather than
   // being absorbed into a rejected promise that would route through onFailure instead.
-  beginTurn(srv, ctx, id, record, () => record.session.compact!().then(() => {}));
+  beginTurn(srv, ctx, id, record, (turnId) => record.session.compact!().then((outcome) => {
+    srv.broadcast(record.id, "thread/compacted", { threadId: record.id, turnId, outcome });
+  }));
 };
 
 export const threadReinitialize: Handler = (srv: AppServer, ctx, id, params) => {

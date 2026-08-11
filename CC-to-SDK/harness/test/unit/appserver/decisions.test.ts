@@ -315,6 +315,46 @@ describe("appserver decisions (Task 7)", () => {
     expect(replayed.map((f) => f.params.turnId)).toEqual([`turn_${threadId}_1`, `turn_${threadId}_1`]);
   });
 
+  it("a park moves status.waitingOn to 'decision' live, and answering clears it while the turn is still running (merge review, finding 4)", async () => {
+    // Without this, `waitingOn` only ever appeared on a subscribe-time replay or at a turn edge: a client
+    // that renders thread status (rather than tracking decision events itself) showed a plain "active"
+    // thread for the whole time it was actually blocked waiting for that client's own answer.
+    let broker: any;
+    let releaseSubmit!: () => void;
+    const sessionFactory = (cfg: any) => {
+      broker = cfg.permissionBroker;
+      return {
+        submit: () => new Promise<{ result: unknown }>((resolve) => { releaseSubmit = () => resolve({ result: {} }); }),
+        interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+      };
+    };
+    const srv = new AppServer({}, { sessionFactory });
+    const a = mkSink(); const connA = srv.connect(a.sink);
+    init(connA, 1, "A");
+    send(connA, { id: 2, method: "thread/start", params: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
+    send(connA, { id: 3, method: "thread/subscribe", params: { threadId } });
+    send(connA, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await new Promise((r) => setTimeout(r, 0));
+    a.lines.length = 0;
+
+    broker.request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_w", signal: new AbortController().signal });
+    await new Promise((r) => setTimeout(r, 0));
+    const onPark = parsed(a.lines).filter((f) => f.method === "thread/status/changed");
+    expect(onPark).toHaveLength(1);
+    expect(onPark[0].params).toEqual({ threadId, status: { state: "active", waitingOn: "decision" } });
+
+    a.lines.length = 0;
+    send(connA, { id: 5, method: "decision/respond", params: { threadId, toolUseId: "toolu_w", answer: { kind: "allow_once" } } });
+    await new Promise((r) => setTimeout(r, 0));
+    const onAnswer = parsed(a.lines).filter((f) => f.method === "thread/status/changed");
+    expect(onAnswer).toHaveLength(1);
+    // the turn has NOT finished — only the park cleared, so the thread is active again with no waitingOn
+    expect(onAnswer[0].params).toEqual({ threadId, status: { state: "active" } });
+    releaseSubmit();
+  });
+
   it("an approved plan upgrades the SESSION's permission mode to the GRANTED mode when the engine's status frame lands", async () => {
     // decision/respond settled the broker and stopped there, so the RPC reported {ok:true} while the engine
     // stayed in the old mode and every later edit prompted again. host/host.ts's answer() is the reference:

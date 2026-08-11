@@ -235,6 +235,154 @@ describe("thread/delete (Task 12) — the live-guard (spec D-M2-7)", () => {
   });
 });
 
+describe("thread/delete ↔ thread/resume — the deletion reservation (merge review, finding 1)", () => {
+  it("stamps the RESUME TARGET as the record's sessionId at admission, before any frame — not whatever the engine object reports", async () => {
+    // The registry legitimately knows the store id here (the client just named it) and the live-guard
+    // below depends on it being visible immediately; the engine's own getter is undefined until its first
+    // init frame, so a record that waited for the engine would be un-guardable for its whole first turn.
+    const { srv, lines, c } = boot({ sessionFactory: () => fakeSession({ sessionId: "stale-engine-id" }) });
+    init(c, 1);
+    send(c, { id: 2, method: "thread/resume", params: { sessionId: "target-sess" } });
+    await tick();
+    const thread = parsed(lines).find((f) => f.id === 2).result.thread;
+    expect(thread.sessionId).toBe("target-sess");
+    expect(srv.registry.get(thread.id)!.sessionId).toBe("target-sess");
+  });
+
+  it("a thread/resume admitted in the SAME tick as a thread/delete for that session makes the delete refuse BUSY — the store row is never touched under a live engine", async () => {
+    const deleteCalls: string[] = [];
+    const { lines, c } = boot({
+      deleteSession: async (id) => { deleteCalls.push(id); },
+      sessionFactory: () => fakeSession({ sessionId: undefined }), // engine-faithful: no id until the first init frame
+    });
+    init(c, 1);
+    // Both frames arrive in one transport chunk — dispatched back-to-back with no microtask between them,
+    // which is exactly the window the eager stamp closes.
+    c.feed(JSON.stringify({ id: 2, method: "thread/resume", params: { sessionId: "sess-x" } }) + "\n" +
+           JSON.stringify({ id: 3, method: "thread/delete", params: { threadId: "sess-x" } }) + "\n");
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 2).result.thread.sessionId).toBe("sess-x"); // the resume won
+    expect(parsed(lines).find((f) => f.id === 3).error.code).toBe(ERR.BUSY);
+    expect(deleteCalls).toEqual([]);
+  });
+
+  it("a thread/resume landing WHILE a delete is in flight is refused -33001 'Session is being deleted', and admits no thread — the reverse order of the same race", async () => {
+    let releaseDelete!: () => void;
+    const { srv, lines, c } = boot({
+      deleteSession: async () => { await new Promise<void>((r) => { releaseDelete = r; }); },
+      sessionFactory: () => fakeSession({ sessionId: undefined }),
+    });
+    init(c, 1);
+    send(c, { id: 2, method: "thread/delete", params: { threadId: "sess-y" } });
+    await tick(); // the delete is now parked inside deps.deleteSession
+
+    send(c, { id: 3, method: "thread/resume", params: { sessionId: "sess-y" } });
+    await tick();
+    const err = parsed(lines).find((f) => f.id === 3).error;
+    expect(err.code).toBe(ERR.BUSY);
+    expect(err.message).toMatch(/being deleted/);
+    expect(srv.registry.list()).toHaveLength(0); // nothing admitted onto the session being erased
+
+    releaseDelete();
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 2).result).toEqual({ ok: true });
+
+    // the reservation is released once the delete settles — the same session id is resumable again
+    send(c, { id: 4, method: "thread/resume", params: { sessionId: "sess-y" } });
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 4).result.thread.sessionId).toBe("sess-y");
+  });
+
+  it("a FAILING delete releases the reservation too — a store error must not wedge the session unresumable", async () => {
+    const { lines, c } = boot({
+      deleteSession: async () => { throw new Error("store boom"); },
+      sessionFactory: () => fakeSession({ sessionId: undefined }),
+    });
+    init(c, 1);
+    send(c, { id: 2, method: "thread/delete", params: { threadId: "sess-z" } });
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 2).error.message).toMatch(/store boom/);
+
+    send(c, { id: 3, method: "thread/resume", params: { sessionId: "sess-z" } });
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 3).result.thread.sessionId).toBe("sess-z");
+  });
+});
+
+describe("thread/fork during shutdown (merge review, finding 5)", () => {
+  it("refuses -33007 without ever calling the store when the shutdown latch is already down", async () => {
+    const forkCalls: string[] = [];
+    const { srv, lines, c } = boot({ forkSession: async (id) => { forkCalls.push(id); return { sessionId: "forked" }; } });
+    init(c, 1);
+    await srv.shutdown();
+
+    send(c, { id: 2, method: "thread/fork", params: { threadId: "cold-sess" } });
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 2).error.code).toBe(ERR.SHUTTING_DOWN);
+    expect(forkCalls).toEqual([]);
+  });
+
+  it("a shutdown latching WHILE the fork's store write is in flight deletes the just-created fork and replies -33007 — no orphan row outlives the server", async () => {
+    let releaseFork!: (v: { sessionId: string }) => void;
+    const deleteCalls: string[] = [];
+    const { srv, lines, c } = boot({
+      forkSession: () => new Promise<{ sessionId: string }>((r) => { releaseFork = r; }),
+      deleteSession: async (id) => { deleteCalls.push(id); },
+    });
+    init(c, 1);
+    send(c, { id: 2, method: "thread/fork", params: { threadId: "cold-sess" } });
+    await tick(); // parked inside deps.forkSession
+
+    void srv.shutdown();          // the listener keeps accepting while shutdown awaits disposes
+    releaseFork({ sessionId: "orphan-fork" });
+    await tick();
+
+    expect(deleteCalls).toEqual(["orphan-fork"]); // the row the fork just wrote is undone
+    expect(parsed(lines).find((f) => f.id === 2).error.code).toBe(ERR.SHUTTING_DOWN);
+    expect(srv.registry.list()).toHaveLength(0);
+  });
+});
+
+describe("store-only CRUD on a dead engine (merge review, finding 6)", () => {
+  it("thread/name/set on a thr_ id whose engine has ended still reaches the store — renaming a persisted session never touches the engine", async () => {
+    const renameCalls: unknown[] = [];
+    const { srv, lines, c } = boot({
+      renameSession: async (id, title) => { renameCalls.push({ id, title }); },
+      sessionFactory: () => fakeSession({ isEnded: () => true }),
+    });
+    init(c, 1);
+    const thread = await startThread(c, lines, 2);
+
+    send(c, { id: 3, method: "thread/name/set", params: { threadId: thread.id, title: "Renamed after death" } });
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 3).result).toEqual({ ok: true });
+    expect(renameCalls).toEqual([{ id: "sess-1", title: "Renamed after death" }]);
+    expect(srv.registry.get(thread.id)!.title).toBe("Renamed after death");
+  });
+
+  it("thread/tag/set, thread/fork and thread/delete are answerable on a dead engine too; a turn is still -33005", async () => {
+    const { lines, c } = boot({
+      tagSession: async () => {}, forkSession: async () => ({ sessionId: "forked-dead" }), deleteSession: async () => {},
+      sessionFactory: () => fakeSession({ isEnded: () => true, sessionId: "sess-1" }),
+    });
+    init(c, 1);
+    const thread = await startThread(c, lines, 2);
+
+    send(c, { id: 3, method: "thread/tag/set", params: { threadId: thread.id, tag: "archive" } });
+    send(c, { id: 4, method: "thread/fork", params: { threadId: thread.id } });
+    send(c, { id: 5, method: "turn/start", params: { threadId: thread.id, input: "hi" } });
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 3).result).toEqual({ ok: true });
+    expect(parsed(lines).find((f) => f.id === 4).result.thread.sessionId).toBe("forked-dead");
+    expect(parsed(lines).find((f) => f.id === 5).error.code).toBe(ERR.ENGINE_GONE); // the engine-needing op still refuses
+
+    // delete refuses BUSY (the live-guard, not the dead-engine gate) — the record is still registered
+    send(c, { id: 6, method: "thread/delete", params: { threadId: thread.id } });
+    await tick();
+    expect(parsed(lines).find((f) => f.id === 6).error.code).toBe(ERR.BUSY);
+  });
+});
+
 describe("thread/name/set + thread/tag/set (Task 12) — safe pass-through on a live session (spec D-M2-7)", () => {
   it("rename calls deps.renameSession, patches the live record's title, and a subscriber gets thread/name/updated", async () => {
     const renameCalls: unknown[] = [];

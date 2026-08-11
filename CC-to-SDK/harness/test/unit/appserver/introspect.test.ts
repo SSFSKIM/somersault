@@ -56,6 +56,17 @@ describe("appserver introspection reads (Task 10)", () => {
     expect(reply.result).toEqual({ capabilities });
   });
 
+  it("thread/capabilities/read carries the engine's `agents` catalog through to the wire — the projection is verbatim, so a fourth catalog must not be dropped on the way out", async () => {
+    const capabilities = { models: ["opus"], commands: ["/compact"], mcpServers: [], agents: [{ name: "Explore" }] };
+    const session = Object.assign(fakeSession(), { capabilities: async () => capabilities });
+    const { a, connA, threadId } = await bootOneThread(() => session);
+
+    send(connA, { id: 3, method: "thread/capabilities/read", params: { threadId } });
+    await tick();
+
+    expect(parsed(a.lines).find((f) => f.id === 3).result.capabilities.agents).toEqual([{ name: "Explore" }]);
+  });
+
   it("thread/contextUsage/read replies { contextUsage } from the engine's value", async () => {
     const contextUsage = { usedTokens: 1000, maxTokens: 200000 };
     const session = Object.assign(fakeSession(), { getContextUsage: async () => contextUsage });

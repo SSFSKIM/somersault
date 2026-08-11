@@ -15,6 +15,7 @@ import { applyPlanUpgrade } from "./planUpgrade.js";
 import { turnStartParams, turnInterruptParams } from "./schema/turns.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
+const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/settings.ts — registry.ts's `updatedAt` is unix seconds, not ms
 
 /** TurnMapper mutates its Items IN PLACE (`item.text += delta`, a tool's status/result filled in when its
  *  tool_result lands, `aborted` stamped by finalize), so buffering the ItemEvent by reference means the
@@ -90,10 +91,15 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
 
 /** Turn-end belt for an approved plan_approve that settled but never saw the engine's own
  *  post-approval status frame (the turn ended first) — an approved upgrade must never stay unapplied.
- *  Fired on EVERY completion path below, a no-op unless one is armed (planUpgrade.ts). */
+ *  Fired on EVERY completion path below, a no-op unless one is armed (planUpgrade.ts).
+ *
+ *  Also the turn half of `updatedAt` (registry.ts: "bumped on every settings/turn mutation"). Before this,
+ *  only the settings legs bumped it, so a thread that had done nothing but run turns kept the timestamp it
+ *  was created with — a recency-sorted thread list put the busiest thread at the bottom. */
 function settleTurn(record: ThreadRecord): void {
   record.busy = false;
   record.turnStartedBroadcast = false;
+  record.updatedAt = nowSec();
   void applyPlanUpgrade(record);
 }
 
@@ -122,7 +128,11 @@ export function beginTurn(
   // thread already claimed even when `submit()` happens to settle within the same microtask batch
   // as the chain callback's return (its completion `.then` would otherwise clear `busy` before the
   // second request's chain-deferred check ever ran — proven by turns.test.ts's busy-gate case).
-  if (threadBusyReason(record)) { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); return false; }
+  // The reason is on the wire (same shape lifecycle.ts's reinitialize gate replies): "closing" and
+  // "swapping" are not the same refusal as "a turn is running", and a client that cannot tell them apart
+  // retries a thread that is going away.
+  const busyReason = threadBusyReason(record);
+  if (busyReason) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return false; }
   record.busy = true;
   // Both reset synchronously HERE — at request-arrival time, not deferred inside the chain callback
   // below — for the same same-tick reason as the busy gate above:
@@ -144,6 +154,7 @@ export function beginTurn(
   // item (e.g. a queued thread/close finishing its dispose first).
   record.chain = record.chain.then(() => {
     const turn = { id: turnId, status: "inProgress" };
+    record.updatedAt = nowSec(); // a turn STARTING is activity too — not only its completion (settleTurn)
     ctx.peer.reply(id, { turn });
     statusChanged(srv, record);
     srv.broadcast(record.id, "turn/started", { threadId: record.id, turn });

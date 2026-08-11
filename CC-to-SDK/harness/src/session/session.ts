@@ -248,12 +248,15 @@ export class Session implements ControllableSession {
     return fn.call(this.q, userMessageId, opts);
   }
 
-  async capabilities(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }> {
+  /** `agents` is the session's available SUBAGENTS (Query.supportedAgents) — the fourth catalog the SDK
+   *  exposes alongside models/commands/mcpServers, and the one a client needs to offer a subagent picker.
+   *  Same optional-call shape as the other three: an engine build without the method yields []. */
+  async capabilities(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[]; agents: unknown[] }> {
     const q = this.q as any;
-    const [models, commands, mcpServers] = await Promise.all([
-      q.supportedModels?.() ?? [], q.supportedCommands?.() ?? [], q.mcpServerStatus?.() ?? [],
+    const [models, commands, mcpServers, agents] = await Promise.all([
+      q.supportedModels?.() ?? [], q.supportedCommands?.() ?? [], q.mcpServerStatus?.() ?? [], q.supportedAgents?.() ?? [],
     ]);
-    return { models, commands, mcpServers };
+    return { models, commands, mcpServers, agents };
   }
 
   private async readLoop(): Promise<void> {

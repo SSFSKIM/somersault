@@ -116,6 +116,25 @@ describe("Session reinitialize + interrupt receipt (W1.2)", () => {
   });
 });
 
+describe("Session capabilities", () => {
+  it("reads FOUR catalogs, agents (supportedAgents) among them — a subagent picker has no other source", async () => {
+    const catalogQuery = ({ prompt }: any) => {
+      const it: any = (async function* () { for await (const t of prompt) yield { type: "result", subtype: "success", result: "did:" + t.message.content }; })();
+      it.supportedModels = async () => [{ value: "m1" }];
+      it.supportedCommands = async () => [{ name: "help" }];
+      it.mcpServerStatus = async () => [{ name: "cc-tasks" }];
+      it.supportedAgents = async () => [{ name: "Explore", description: "read-only search" }];
+      return it;
+    };
+    const s = new Session({ query: catalogQuery }, {});
+    expect(await s.capabilities()).toEqual({
+      models: [{ value: "m1" }], commands: [{ name: "help" }], mcpServers: [{ name: "cc-tasks" }],
+      agents: [{ name: "Explore", description: "read-only search" }],
+    });
+    await s.dispose();
+  });
+});
+
 describe("rewindSession (W1.1)", () => {
   it("passes resume + resumeSessionAt (in-place, no forkSession)", () => {
     const sink: any[] = [];

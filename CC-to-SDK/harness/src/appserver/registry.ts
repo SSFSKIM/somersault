@@ -40,8 +40,10 @@ export interface EngineSession {
   /** Optional (the real lib Session has it — src/session/session.ts:155-160,196-202): Task 10's five
    *  introspection reads. `usage()` wraps the SDK's own EXPERIMENTAL-prefixed method name
    *  (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`) behind this stable spelling — callers
-   *  here only ever see `usage`. */
-  capabilities?(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
+   *  here only ever see `usage`. `capabilities()` carries FOUR catalogs: `agents` (the SDK's
+   *  supportedAgents) rides along with models/commands/mcpServers, and since introspect.ts replies the
+   *  object verbatim, this type is what decides whether subagents reach the wire at all. */
+  capabilities?(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[]; agents: unknown[] }>;
   getContextUsage?(): Promise<unknown>;
   usage?(): Promise<unknown>;
   initializationResult?(): Promise<unknown>;

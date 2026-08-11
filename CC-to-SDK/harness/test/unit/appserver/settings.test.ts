@@ -13,6 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { THINK_LEVELS, thinkBudget } from "../../../src/tui/thinkLevels.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -161,6 +162,28 @@ describe("appserver settings setters (Task 9)", () => {
     expect(calls.setMaxThinkingTokens).toEqual([null]);
     const evt = parsed(a.lines).find((f) => f.method === "thread/settings/changed");
     expect(evt.params.thinkingTokens).toBeUndefined();
+  });
+
+  it("thread/thinking/set rejects a level outside the shared vocabulary with -32602 and never touches the engine — an unknown name used to resolve to budget 0 and silently disable thinking (merge review, finding 9)", async () => {
+    const calls = mkCalls();
+    const { a, connA, threadId } = await bootTwoSubscribers(() => fakeSession(calls));
+
+    send(connA, { id: 3, method: "thread/thinking/set", params: { threadId, level: "hgh" } });
+    await tick();
+
+    expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(ERR.INVALID_PARAMS);
+    expect(calls.setMaxThinkingTokens).toEqual([]);
+  });
+
+  it("every level in the shared THINK_LEVELS vocabulary is still accepted, each resolving to its own budget", async () => {
+    const calls = mkCalls();
+    const { a, connA, threadId } = await bootTwoSubscribers(() => fakeSession(calls));
+
+    for (const [i, level] of THINK_LEVELS.entries()) send(connA, { id: 10 + i, method: "thread/thinking/set", params: { threadId, level } });
+    await tick();
+
+    for (const [i] of THINK_LEVELS.entries()) expect(parsed(a.lines).find((f) => f.id === 10 + i).result, THINK_LEVELS[i]).toEqual({ ok: true });
+    expect(calls.setMaxThinkingTokens).toEqual(THINK_LEVELS.map((l) => thinkBudget(l)));
   });
 
   it("thread/settings/apply: applyFlagSettings called with the settings, no mirror field, no thread/settings/changed broadcast, reply ok", async () => {

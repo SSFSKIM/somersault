@@ -28,8 +28,10 @@ describe("DaemonSession control surface", () => {
     await s.setMaxThinkingTokens(0);
     await s.interrupt();
     expect(calls).toEqual([["setModel", "x"], ["setPermissionMode", "plan"], ["setMaxThinkingTokens", 0], ["interrupt"]]);
+    // `agents` is [] here, not missing: this fake Query has no supportedAgents, and every capabilities leg
+    // falls back to an empty catalog rather than dropping its key (a client reads four catalogs, always).
     expect(await s.capabilities()).toEqual({
-      models: [{ value: "m1", displayName: "M1" }], commands: [{ name: "help" }], mcpServers: [{ name: "cc-tasks" }],
+      models: [{ value: "m1", displayName: "M1" }], commands: [{ name: "help" }], mcpServers: [{ name: "cc-tasks" }], agents: [],
     });
     await s.dispose();
   });

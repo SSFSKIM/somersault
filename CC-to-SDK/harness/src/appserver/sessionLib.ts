@@ -15,7 +15,9 @@
 // be deleted out from under its own engine. `findLiveBySessionId` below is the one place that check is
 // made; thread/delete is the only op that consults it as a refusal — rename/tag pass through safely on a
 // live session (the store write is safe to make regardless; this handler just also keeps the in-memory
-// mirror in sync so a live thread's next view already reflects it).
+// mirror in sync so a live thread's next view already reflects it). "Live" includes a session admitted
+// while the delete is mid-flight, which no single check can see: thread/delete pairs the check with a
+// reservation (server.ts's `deletingSessions`) so admission and deletion cannot both win.
 import { ERR } from "./rpc.js";
 import type { ThreadRecord } from "./registry.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
@@ -132,9 +134,20 @@ export const threadFork: Handler = async (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const resolved = resolveThreadId(srv, parsed.data.threadId);
   if (!resolved.ok) { ctx.peer.replyError(id, resolved.code, resolved.message); return; }
+  // The shutdown latch is consulted TWICE, around the store write. This is the one admission path whose
+  // side effect lands before `startThread`'s own refusal is reached: startThread refusing a fork whose
+  // store copy already exists leaves an orphan session on disk that nothing in this process ever owned.
+  // Checking first skips the write entirely; re-checking after undoes it, since the latch can land while
+  // forkFn is in flight (shutdown() keeps accepting frames while it awaits a slow dispose).
+  if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
   try {
     const forkFn = srv.deps.forkSession ?? realForkSession;
     const result = await forkFn(resolved.sessionId, { upToMessageId: parsed.data.upToMessageId, title: parsed.data.title });
+    if (srv.isShuttingDown) {
+      await (srv.deps.deleteSession ?? realDeleteSession)(result.sessionId);
+      ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down");
+      return;
+    }
     srv.startThread(ctx, id, { resume: result.sessionId, unattended: parsed.data.unattended });
   } catch (e) {
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
@@ -151,14 +164,24 @@ export const threadDelete: Handler = async (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const resolved = resolveThreadId(srv, parsed.data.threadId);
   if (!resolved.ok) { ctx.peer.replyError(id, resolved.code, resolved.message); return; }
-  if (findLiveBySessionId(srv, resolved.sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Thread is live in this server — close it first"); return; }
+  // RESERVE FIRST, then check live (srv.deletingSessions): the live-check and the store delete cannot be
+  // one atomic step — the delete is awaited, and a thread/resume for this same session admitted during
+  // that await would come up live on a session whose history is being erased. The reservation is what
+  // startThread refuses against, so the two orders are the only two possible: reserved-then-resumed (the
+  // resume is refused) or resumed-then-reserved (this check finds it and refuses the delete, because
+  // startThread stamps the resume target eagerly). Released in `finally` — a failed delete must not
+  // reserve the id forever.
+  srv.deletingSessions.add(resolved.sessionId);
   try {
+    if (findLiveBySessionId(srv, resolved.sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Thread is live in this server — close it first"); return; }
     const deleteFn = srv.deps.deleteSession ?? realDeleteSession;
     await deleteFn(resolved.sessionId);
     ctx.peer.reply(id, { ok: true });
     srv.broadcastServer("thread/deleted", { sessionId: resolved.sessionId });
   } catch (e) {
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+  } finally {
+    srv.deletingSessions.delete(resolved.sessionId);
   }
 };
 
