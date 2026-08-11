@@ -9,7 +9,7 @@ import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { PendingDecision } from "../permissions/pending.js";
-import { turnStart, turnInterrupt, requestInterrupt } from "./turns.js";
+import { turnStart, turnInterrupt, turnSteer, requestInterrupt } from "./turns.js";
 import { flushQueue } from "./queue.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
@@ -23,6 +23,7 @@ import { rewindAnchors, rewindDryRun, threadRewind } from "./rewind.js";
 import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverrideSet } from "./mcp.js";
 import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
+import { pluginReload, skillReload } from "./reloads.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
@@ -260,6 +261,13 @@ export class AppServer {
     "thread/outputStyle/set": outputStyleSet,
     "thread/effort/set": effortSet,
     "thread/clear": threadClear,
+    // M2b Task 5's probe promotions, registered last as their own cluster (probes 103b/105). `turn/steer`
+    // is experimental-designated (X) — Task 6 adds the marker mechanism; it registers plainly here.
+    // `readFile` deliberately has no method: probe 104 found it callable but resolving null for an
+    // existing file AND for a missing path, so there is nothing to serve.
+    "turn/steer": turnSteer,
+    "plugin/reload": pluginReload,
+    "skill/reload": skillReload,
   };
 
   private readonly token: string;

@@ -82,7 +82,15 @@ from the one shared seam (`rewind.ts`'s `swapEngine`), since a replacement is re
 rejects never fails the completed swap; it is reported twice over instead — the mirror field is
 reconciled to what the replacement actually has (its `record.config` seed, or cleared when the config
 named none) and re-announced as `thread/settings/changed {source:"engine"}`, and the losses are named
-in one `warning {threadId, code:"stateRepushFailed"}` fanned to subscribers AND watchers.
+in one `warning {threadId, code:"stateRepushFailed"}` fanned to subscribers AND watchers. Registered
+last, as their own cluster, are Wave 4's **probe promotions** (`probes/probes/103b-streaminput-steer.ts`,
+`…/105-reload-plugins-skills.ts`) — `turn/steer` *(X)*, the one method whose busy gate is INVERTED
+(un-chained, and it requires the thread to be busy *with a turn*: an idle thread answers `-32602`
+"no turn in flight", while `closing`/`swapping` keep the ordinary `-33001` refusal), then
+`plugin/reload` and `skill/reload` (chain-scoped, `{ok:true}`, each pinging
+`thread/capabilities/changed` because probe 105 found a reload answers with a fresh catalog — a reload
+IS a capabilities refresh). `readFile` won no method at all: probe 104 found it callable but resolving
+null for an existing file and for a missing path alike.
 
 **25 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
@@ -257,16 +265,16 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `mcpServerStatus` | sdk.d.ts (Query) | `mcpServer/status/list` | both | shipped(M2b) |
 | `getContextUsage` | sdk.d.ts (Query) | `thread/contextUsage/read` | both | shipped(M2a) |
 | `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET` | sdk.d.ts (Query) | `thread/usage/read` | both | shipped(M2a) |
-| `readFile` | sdk.d.ts (Query) | `fs/read` *(X, M3)* | inProcess | probe-gated — unprobed |
-| `reloadPlugins` | sdk.d.ts (Query) | `plugin/reload` | inProcess | probe-gated — unprobed |
-| `reloadSkills` | sdk.d.ts (Query) | `skill/reload` | inProcess | probe-gated — unprobed |
+| `readFile` | sdk.d.ts (Query) | `fs/read` *(X, M3)* | inProcess | N/A — probe-dead (probe 104: resolves null for existing and missing paths at 0.3.220, `probes/probes/104-readfile.ts`; M3's `fs/read` cannot back onto this seam) |
+| `reloadPlugins` | sdk.d.ts (Query) | `plugin/reload` | inProcess | shipped(M2b) — probe 105 (`probes/probes/105-reload-plugins-skills.ts`); pings `thread/capabilities/changed` |
+| `reloadSkills` | sdk.d.ts (Query) | `skill/reload` | inProcess | shipped(M2b) — probe 105 (same file); pings `thread/capabilities/changed` |
 | `accountInfo` | sdk.d.ts (Query) | `account/read` | inProcess | shipped(M2a) — see gap 3 |
 | `rewindFiles` | sdk.d.ts (Query) | `thread/rewind` (+`/anchors`, `/dryRun`) | both | shipped(M2b) |
 | `seedReadState` | sdk.d.ts (Query) | N/A — internal plumbing | N/A | N/A |
 | `reconnectMcpServer` | sdk.d.ts (Query) | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `toggleMcpServer` | sdk.d.ts (Query) | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `setMcpServers` | sdk.d.ts (Query) | `mcpServer/set` | inProcess | shipped(M2b) |
-| `streamInput` | sdk.d.ts (Query) | `turn/steer` *(X)* | inProcess | probe-gated — unprobed (D5) |
+| `streamInput` | sdk.d.ts (Query) | `turn/steer` *(X)* | inProcess | shipped(M2b) — experimental; probe 103b (`probes/probes/103b-streaminput-steer.ts`) |
 | `stopTask` | sdk.d.ts (Query) | `task/stop` | both | shipped(M2b) |
 | `backgroundTasks` | sdk.d.ts (Query) | `turn/background` | both | shipped(M2b) — optional `toolUseId`; absent = background them all |
 | `close` | sdk.d.ts (Query) | `thread/close` | both | shipped(M1)† |
@@ -285,6 +293,7 @@ between waves.** Every landing wave flips a handful of rows, so a shipped/planne
 mid-milestone is stale within a day (the M2a lesson, restated). Between sweeps the authority is the
 drift gate: `node scripts/drift-check.mjs` prints the live registry count and fails when any row's
 status disagrees with the real surface, so the per-row `status` column above is the truth and the gate
-is what proves it. The three buckets no M2b wave touches are stable: `planned(M3)` 1 (`stop`),
-`probe-gated` 4 (`readFile`, `reloadPlugins`, `reloadSkills`, `streamInput`), `N/A` 1
-(`seedReadState`).
+is what proves it. Two buckets no later M2b wave touches are now stable: `planned(M3)` 1 (`stop`) and
+`N/A` 2 — `seedReadState` (internal plumbing) and `readFile` (probe-dead, see its row). The
+`probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
+2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.

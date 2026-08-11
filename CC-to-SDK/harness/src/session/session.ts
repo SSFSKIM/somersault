@@ -125,6 +125,30 @@ export class Session implements ControllableSession {
     return this.enqueueTurn(prompt, onMessage, "human", "normal", opts?.uuid);
   }
 
+  /** Mid-turn STEER (probe 103b, ALIVE): push a user message into the live prompt stream so the model
+   *  abandons what it is doing and follows the injection, WITHOUT registering a result waiter.
+   *
+   *  Deliberately not routed through `enqueueTurn`: that pairs every push with a waiter, and a steer has
+   *  no result of its own — it folds into the turn already in flight, whose waiter is the one that
+   *  settles. A waiter here would desync the FIFO: a uuid-less result goes to the waiter at the HEAD of
+   *  the queue, so a stale steer sitting there would swallow the result the next real turn earned (and
+   *  the frames routed to `waiters[0].onMessage` with it).
+   *
+   *  Same message shape and `human` provenance as `submit` (one builder, `userTurn`): a steer IS a human
+   *  input. Void: there is nothing to await — the push is synchronous and the outcome arrives as the
+   *  steered turn's own result.
+   *
+   *  Unverified, and only a live run can settle it: probe 103b proved the injection influences the
+   *  running turn but did not capture the result frame's `user_message_uuid`. `resultWaiter` scores a
+   *  present-but-unknown uuid as "no waiter" (uuid-bearing results are turn-owned, deliberately), so an
+   *  engine that correlated a steered turn's result to the STEER's uuid rather than the prompt's would
+   *  leave the turn unsettled. Fixing that on a guess would mean weakening turn-ownership for every
+   *  result, so it stays a live-acceptance question rather than a speculative widening here. */
+  steer(text: string): void {
+    this.assertRunning();
+    this.input.push(userTurn(text, randomUUID() as UserMessageUUID, "human"));
+  }
+
   /** Fixed route for host-generated follow-up turns; callers cannot choose another provenance class. */
   submitAutomatic(prompt: string, onMessage: (m: unknown) => void = () => {}): Promise<TurnOutcome> {
     if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
@@ -187,6 +211,12 @@ export class Session implements ControllableSession {
    *  unlike the cached initializationResult(). Probe 38: safe mid-session, even with a permission parked
    *  (the parked request is deduped, NOT redelivered to this process). */
   async reinitialize(): Promise<unknown> { this.assertRunning(); return this.callQValue("reinitialize"); }
+  /** Re-scan plugins / skills on the running CLI (probe 105: both ALIVE). Each answers with a FRESH
+   *  CATALOG — commands+agents+plugins+mcpServers for plugins, skills for skills — not a bare ack, so a
+   *  reload is a capabilities refresh and callers that mirror those catalogs must re-read them. Relayed
+   *  verbatim: the shape is the SDK's own. */
+  async reloadPlugins(): Promise<unknown> { this.assertRunning(); return this.callQValue("reloadPlugins"); }
+  async reloadSkills(): Promise<unknown> { this.assertRunning(); return this.callQValue("reloadSkills"); }
   /** Stop a running background task; the CLI emits task_notification{stopped} + a changed frame. */
   async stopTask(taskId: string): Promise<void> { this.assertRunning(); await this.callQ("stopTask", taskId); }
   /** Ctrl+B: background in-flight FOREGROUND tasks (all, or the one started by `toolUseId`). The blocked

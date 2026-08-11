@@ -87,6 +87,19 @@ export interface EngineSession {
   stopTask?(taskId: string): Promise<void>;
   backgroundAll?(toolUseId?: string): Promise<boolean>;
   listBackgroundTasks?(): Promise<Array<{ task_id: string; task_type: string; description: string }>>;
+  /** Optional (the real lib Session has it — src/session/session.ts's `steer`): M2b Task 5's `turn/steer`
+   *  (X), promoted from probe 103b. VOID and synchronous by design — the seam pushes a user message onto
+   *  the live prompt stream and there is nothing to await; the outcome is the steered turn's own result,
+   *  reported through the turn machinery that is already running. It deliberately registers no result
+   *  waiter, which is the whole reason it is its own seam rather than a `submit` (see that doc comment). */
+  steer?(text: string): void;
+  /** Optional (the real lib Session has them — src/session/session.ts's `reloadPlugins`/`reloadSkills`):
+   *  M2b Task 5's `plugin/reload` / `skill/reload`, promoted from probe 105 (both ALIVE). Each answers
+   *  with a FRESH CATALOG rather than an ack — a reload IS a capabilities refresh, which is why the
+   *  handlers ping `thread/capabilities/changed` — but the receipt shape is the SDK's own, so it is typed
+   *  `unknown` here and never re-projected onto the wire. */
+  reloadPlugins?(): Promise<unknown>;
+  reloadSkills?(): Promise<unknown>;
   /** Optional (the real lib Session has it): true once the read loop has ended — the engine is gone.
    *  The ONLY dead-engine signal handlers may use (spec Wave 0: no message-matching, ever). */
   isEnded?(): boolean;

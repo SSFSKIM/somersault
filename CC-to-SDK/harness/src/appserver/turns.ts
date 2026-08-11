@@ -15,7 +15,7 @@ import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import { cancelQueued, enqueueTurn, flushQueue, takeNext, type QueuedTurn } from "./queue.js";
-import { turnStartParams, turnInterruptParams } from "./schema/turns.js";
+import { turnStartParams, turnInterruptParams, turnSteerParams } from "./schema/turns.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/settings.ts — registry.ts's `updatedAt` is unix seconds, not ms
@@ -311,6 +311,52 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     return;
   }
   beginTurn(srv, ctx, id, record, submitRunner(srv, record, parsed.data.input));
+};
+
+/** `turn/steer` (X) — M2b Task 5, promoted from probe 103b (ALIVE: a mid-turn injection makes the model
+ *  abandon its remaining steps and follow the new instruction). The one method on this surface whose busy
+ *  gate is INVERTED: it requires a turn in flight, and it requires that the reason the thread is busy IS a
+ *  turn. Eligibility is computed off the same `threadBusyReason` split `turnStart`'s enqueue arm uses, for
+ *  the same reason — the three outcomes are genuinely different answers:
+ *   - "turn": the only steerable state. Steer it.
+ *   - "closing"/"swapping": the standard -33001 refusal, reason named. There IS no turn the injection
+ *     could reach (a swap has no engine yet, a close is disposing the one there was), and a client that
+ *     cannot tell this from "retry in a moment" retries a thread that is going away.
+ *   - idle: -32602 "no turn in flight" — the busy convention's inverse. Not -33001: nothing about the
+ *     thread is unavailable, the request simply has no referent.
+ *  The gate is checked BEFORE the engine method is resolved: eligibility is a property of the thread, not
+ *  of the engine build, so an idle thread answers the same way whichever engine is behind it.
+ *
+ *  UN-CHAINED, deliberately diverging from the mutation convention (settings.ts/mcp.ts/tasks.ts all
+ *  chain): a steer must reach a turn that is running RIGHT NOW, and a chain item parked on engine I/O
+ *  would hold it until after the turn it was aimed at is over — delivering the injection into the NEXT
+ *  turn, or into none. Nothing is lost by not chaining: the chain exists to serialize ops that mutate
+ *  thread state against each other, and this one mutates none — it pushes onto the engine's own input
+ *  queue, which is ordered by the engine. The rewind swap it might otherwise race is `swapping`, which
+ *  the gate above already refuses.
+ *
+ *  No notification: a steer is not a turn edge. The steered turn keeps running and reports itself through
+ *  the machinery already in flight — items, then one `turn/completed`. */
+export const turnSteer: Handler = (srv, ctx, id, params) => {
+  const parsed = turnSteerParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  const busyReason = threadBusyReason(record);
+  if (busyReason !== "turn") {
+    if (busyReason) ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`);
+    else ctx.peer.replyError(id, ERR.INVALID_PARAMS, "no turn in flight");
+    return;
+  }
+  // Resolved, never optional-called: `?.()` would reply {ok:true} for an injection no engine ever read
+  // (introspect.ts:36's convention, and mcp.ts/tasks.ts's).
+  const steer = record.session.steer?.bind(record.session);
+  if (!steer) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, "unsupported by this engine"); return; }
+  steer(parsed.data.input);
+  record.updatedAt = nowSec();
+  // {ok:true} means "the injection was pushed onto the live input stream", not "the model obeyed it" —
+  // whether it changed the turn's course is visible only in that turn's own output.
+  ctx.peer.reply(id, { ok: true });
 };
 
 /** The ONE interrupt path — turn/interrupt and decision/respond's abortTurn both go through it. Setting

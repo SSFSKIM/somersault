@@ -3,7 +3,7 @@
 import type { z } from "zod/v4";
 import { threadIdParams, initializeParams, serverStatusParams } from "./core.js";
 import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
-import { turnStartParams, turnInterruptParams } from "./turns.js";
+import { turnStartParams, turnInterruptParams, turnSteerParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.js";
@@ -61,4 +61,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/outputStyle/set": { params: outputStyleSetParams },
   "thread/effort/set": { params: effortSetParams },
   "thread/clear": { params: threadClearParams },
+  // Task 5's probe promotions. Both reloads take the bare `{threadId}` — no options exist to pass, the
+  // engine re-scans its whole plugin/skill set.
+  "turn/steer": { params: turnSteerParams },
+  "plugin/reload": { params: threadIdParams },
+  "skill/reload": { params: threadIdParams },
 };

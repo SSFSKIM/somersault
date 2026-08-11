@@ -11,3 +11,7 @@ export const turnStartParams = z.object({ threadId: z.string().min(1), input: z.
  *  first and `turnId` is resolved against its result — the receipt reports the named id under
  *  `cancelled` and the flushed set under `cancelledQueued` (turns.ts). */
 export const turnInterruptParams = z.object({ threadId: z.string().min(1), cancelQueued: z.boolean().optional(), turnId: z.string().min(1).optional() });
+/** `turn/steer` (X, probe 103b): mid-turn injection. No `turnId` — a steer aims at whatever is running
+ *  RIGHT NOW, and the thread can only be running one turn; naming an id would invite a client to steer a
+ *  turn that has already ended. `input` mirrors `turn/start`'s (a bare string, empty allowed). */
+export const turnSteerParams = z.object({ threadId: z.string().min(1), input: z.string() });
