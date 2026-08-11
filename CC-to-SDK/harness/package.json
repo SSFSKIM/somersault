@@ -28,14 +28,21 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./appserver": {
+      "types": "./dist/appserver/index.d.ts",
+      "import": "./dist/appserver/index.js"
+    },
+    "./appserver/schema/stable.json": "./schema/json/stable/appserver.json",
+    "./appserver/schema/experimental.json": "./schema/json/experimental/appserver.json"
   },
   "bin": {
     "cc-harness": "./dist/cli.js",
     "ccx": "./dist/cli/bin.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "schema"
   ],
   "engines": {
     "node": ">=18"

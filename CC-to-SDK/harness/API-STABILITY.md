@@ -58,3 +58,19 @@ The tiers below document intent, not enforced contracts. `stable` exports follow
 | `PermissionRequest` (type) | advanced-seam |
 | `PendingEntry` (type) | advanced-seam |
 | `DaemonClient.pendingPermissions()` / `DaemonClient.respondPermission()` | advanced-seam |
+
+## `cc-harness/appserver` (subpath export)
+
+The JSON-RPC hub, for an embedder hosting the app-server in its own process. Method-level stability is
+declared by the wire contract itself, not by this table: a method in `schema/stable/appserver.json` may be
+pinned, one in `schema/experimental/appserver.json` may change shape or disappear. The two artifacts are
+also reachable as `cc-harness/appserver/schema/{stable,experimental}.json` — those subpaths make the files
+resolvable (`createRequire(import.meta.url).resolve(...)` + `fs`); importing them as JSON modules is a
+Node-version question this package does not answer.
+
+| Export | Tier |
+|---|---|
+| `AppServer` | advanced-seam |
+| `listenWs` | advanced-seam |
+| `methodSchemas` | advanced-seam |
+| `AppServerDeps` / `WsListenOpts` / `MethodSchema` / `EngineSession` / `ThreadRecord` (types) | advanced-seam |
