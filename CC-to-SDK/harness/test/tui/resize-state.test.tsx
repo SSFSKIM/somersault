@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { ChatApp, nextSize } from "../../src/tui/ChatApp.js";
+import { createResumeSafeStdout } from "../../src/tui/chatMain.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 
@@ -212,7 +213,10 @@ describe("terminal size is React state", () => {
       await tick();
       expect(resync).not.toHaveBeenCalled();
       expect(proxy.state.tall).toBe(1);
-      expect(proxy.state.latched).toBe(true);                        // …and the shrink did not even consume it
+      // …and it DRAINS the latch on its way past (external review, finding C). The latch spans the signals
+      // since React last observed the size, so a shrink React has now observed ends the burst it describes:
+      // left standing, a much later grow on an ordinary screen would inherit it and wipe live rows.
+      expect(proxy.state.latched).toBe(false);
       r.unmount();
     });
 
@@ -279,6 +283,60 @@ describe("terminal size is React state", () => {
       resize.fire(); await tick();                                   // …and the terminal reports its size again
       expect(resync).toHaveBeenCalledTimes(1);
       expect(proxy.state.tall).toBe(1);
+      r.unmount();
+    });
+
+    // ── EXTERNAL REVIEW (codex, finding C) — MORE THAN ONE SIGNAL PER FLUSH ─────────────────────────────
+    // The two cases below drive the REAL proxy rather than `fakeProxy`, because what is under test is the
+    // latch's own arithmetic against React's batching, and a fake that models the latch cannot fail for the
+    // reason the real one does. `fire()` here is `chatMain.tsx`'s `onTerminalResize` verbatim: ccx's listener
+    // (the proxy's latch) and then Ink's/React's, in that order.
+    /** A tall chunk (`ink.js:118-122`) on screen, then the frame Ink writes for a grow that lets it fit —
+     *  the write that strands the tall surface's header AND stands `tallWrites()` back to 0. */
+    const TALL = "\x1b[2J\x1b[3J\x1b[H" + "scrollback\n" + "picker\n";
+    const FITS = "\x1b[2K\x1b[G" + "one\ntwo\n";
+    const realProxy = (columns: number) => {
+      const screen = { isTTY: true, columns, rows: 24, write: () => true };
+      return { screen, out: createResumeSafeStdout(screen as never) };
+    };
+
+    // A drag emits SIGWINCHes faster than React flushes passive effects, and only the FIRST of them can see
+    // the tall write standing: Ink handles each signal synchronously and its fitting frame stands the count
+    // down before the second signal arrives. A latch that re-states itself at every signal therefore reports
+    // `false` to the one effect that runs for the whole burst, and the header the grow stranded is left on
+    // screen for the life of the session. The latch describes the SIGNALS SINCE REACT LAST OBSERVED THE SIZE,
+    // not the last of them.
+    it("resyncs when two grow signals share one flush and only the first saw the tall write", async () => {
+      const { screen, out } = realProxy(60);
+      const resize = fakeResize(), resync = vi.fn(() => true);
+      const fire = (to: number) => { screen.columns = to; out.noteResizeSignal(); resize.fire(); };
+      const r = await mountWith(() => screen.columns, resize, { state: { resynced: 0 }, output: out } as never, resync);
+      out.stdout.write(TALL);                                        // the clipped picker took ink.js:118
+      fire(90);                                                      // …and this signal catches it standing
+      out.stdout.write(FITS);                                        // Ink's own synchronous handling, same signal
+      fire(120);                                                     // …and the drag keeps going, before React runs
+      await tick();
+      expect(resync).toHaveBeenCalledTimes(1);                       // was 0: the second signal re-stated the fact away
+      r.unmount();
+    });
+
+    // …AND THE CARRY IS BOUNDED BY THAT SAME SENTENCE, which is what keeps this off the sticky form the task
+    // review rejected. A latch that only ever ORed would survive an arbitrary run of later signals and fire a
+    // viewport wipe on an ordinary screen — the t8 over-erase, six live transcript rows. Every size React
+    // observes CONSUMES it, shrink included, so the burst it describes can never outlive the flush that saw it.
+    it("does not resync on a later grow when the shrink React already observed drained the latch", async () => {
+      const { screen, out } = realProxy(120);
+      const resize = fakeResize(), resync = vi.fn(() => true);
+      const fire = (to: number) => { screen.columns = to; out.noteResizeSignal(); resize.fire(); };
+      const r = await mountWith(() => screen.columns, resize, { state: { resynced: 0 }, output: out } as never, resync);
+      out.stdout.write(TALL);
+      fire(60);                                                      // a SHRINK with the tall write outstanding
+      await tick();
+      expect(resync).not.toHaveBeenCalled();                         // the direction gate: never on a narrowing
+      out.stdout.write(FITS);                                        // …the screen goes back in sync on its own…
+      fire(120);                                                     // …and an ordinary grow must not inherit that latch
+      await tick();
+      expect(resync).not.toHaveBeenCalled();
       r.unmount();
     });
 

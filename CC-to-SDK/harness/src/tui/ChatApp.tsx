@@ -546,10 +546,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // moved (`nextSize`), and the ref below makes the DIRECTION a transition. The first pass compares the mount
   // size with itself, so a boot into a short pane — where every frame goes tall and no recorded frame write ever
   // stands the count down — cannot fire it.
-  const resyncAfterGrow = (): void => {
-    const output = resumeOutputRef.current;
-    if (!output?.takeTallAtSignal?.()) return;                 // consumed whether or not the guards below pass
-    const frame = output.lastFrame?.();
+  //   …AND THE LATCH IS DRAINED BY THE OBSERVATION, NOT BY THE GROW (external review, finding C). The fact it
+  // carries is "a tall write was outstanding at some signal since React last saw the size" — a burst, because
+  // a drag emits several signals per flush and only the first can catch the count standing. Accumulating them
+  // is what makes the batched grow fire at all; consuming at EVERY observed size is what stops the
+  // accumulation from outliving its burst. A shrink React has already seen must therefore drain it too: left
+  // standing there, a much later grow on an ordinary screen would inherit it and wipe live rows (the t8
+  // over-erase). Both halves are one sentence — the latch never describes signals React has already answered.
+  const resyncAfterGrow = (tallAtSignal: boolean): void => {
+    if (!tallAtSignal) return;
+    const frame = resumeOutputRef.current?.lastFrame?.();
     if (frame === undefined || physicalRows(frame, size.columns) + 1 > size.rows) return;   // + the park row
     resyncViewportNow();
   };
@@ -557,7 +563,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const sizeWasRef = useRef(size);
   useEffect(() => {
     const prev = sizeWasRef.current; sizeWasRef.current = size;
-    if (size.columns > prev.columns || size.rows > prev.rows) resyncAfterGrowRef.current();
+    const tallAtSignal = resumeOutputRef.current?.takeTallAtSignal?.() ?? false;
+    if (size.columns > prev.columns || size.rows > prev.rows) resyncAfterGrowRef.current(tallAtSignal);
   }, [size]);
   // Ctrl-O opens the pager (the PAGER owns closing it — Transcript's own ctrl+o → transcript:exit, task 7);
   // Ctrl-R/T/B are Composer-only. Ctrl-C is allowed from Composer and a visible decision dialog, but never

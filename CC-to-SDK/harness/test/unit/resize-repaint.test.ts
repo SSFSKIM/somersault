@@ -522,6 +522,59 @@ describe("createResizeRepaint — the driver", () => {
     expect(r.settleWindow()).toBe(1);
     expect(r.repainted).toEqual([]);
   });
+
+  // EXTERNAL REVIEW (codex, finding B) — THE BURST THAT STOPS AT ITS OWN DEEPEST SHRINK. 120 → 100 → 80 is a
+  // monotonic drag, so the width it settles at IS `narrowest`, and every path declined: the settle pass read
+  // `narrowest < width` as "nothing above the frame" and ended the burst, and the probe's own sample was
+  // measured at 100 and abandoned by the `:191` size guard. Both legs went out unmeasured (the verdict is still
+  // in flight for the whole drag) and their residue was permanent.
+  //   The screen at settle is the FIRST SHRINK'S SCREEN, arriving late: nothing has re-wrapped since the leg
+  // that stranded the rows, so the measurement is `correctionAfterRepaint`'s exactly — the remembered frame's
+  // region at the width it is still on, less Ink's erase — and not the re-wrap difference `correctionAtSettle`
+  // takes when the drag walked back to a wider width.
+  const F80 = ["m".repeat(70), "n"].join("\n") + "\n";
+  it("repairs a monotonic burst that settles at its own narrowest, once the verdict lands", async () => {
+    const r = rig({ verdicts: [] });
+    r.drag(100, F100); r.drag(80, F80);                                 // two legs, one probe, no verdict yet
+    expect(r.probes).toEqual([{ colBefore: 117, oldWidth: 120, newWidth: 100 }]);
+    expect(r.settleWindow()).toBe(1);
+    expect(r.repainted).toEqual([]);                                    // nothing to correct WITH, yet — the pass waits
+    r.settle("reflow");
+    await flush();
+    expect(r.repainted.length).toBe(1);
+    // The deepest leg, measured off the frame that was on screen when the drag reached 80 (F100, parked for the
+    // 100 it was painted at) and written back with the frame that is there now.
+    expect(r.repainted[0]).toBe(correctionAfterRepaint({ frame: F100, parkedCol: parkColumn(100), oldWidth: 100, newWidth: 80, rows: 40 }, "reflow", F80, parkColumn(80)));
+    expect(r.repainted[0]?.endsWith(F80)).toBe(true);
+    expect(r.verdictAtRepaint).toEqual([undefined]);                    // …and it carries its own erase past the corrector
+  });
+
+  // …and ONCE. The probe's own continuation would emit for the 100 leg too if the settle pass had not already
+  // claimed the region: two erase-plus-frame writes in a row each move the frame up by their own residue.
+  it("emits exactly once for a monotonic burst whose probe answers before the window", async () => {
+    const r = rig();                                                    // the verdict resolves on the first flush
+    r.drag(100, F100); r.drag(80, F80);
+    await flush();
+    expect(r.repainted).toEqual([]);                                    // the sample was measured at 100; the screen is 80
+    expect(r.settleWindow()).toBe(1);
+    expect(r.repainted.length).toBe(1);
+    expect(r.repainted[0]?.endsWith(F80)).toBe(true);
+  });
+
+  // THE REFUSAL THAT SURVIVES THE FIX. A monotonic burst on a terminal that has ALREADY been measured is
+  // corrected at each of its writes, so the pass must still claim nothing — `onResize` ends the burst on any
+  // narrowing once a verdict is cached, and reaching the settle-at-narrowest branch with a live burst is what
+  // that rule prevents.
+  it("still claims nothing from a monotonic burst on a measured terminal", async () => {
+    const r = rig();
+    r.resize(90);
+    await vi.waitFor(() => expect(r.driver.verdict()).toBe("reflow"));
+    r.settleWindow();
+    const before = r.repainted.length;
+    r.drag(80, F80); r.drag(70, F80);
+    expect(r.settleWindow()).toBe(1);
+    expect(r.repainted.length).toBe(before);
+  });
 });
 
 // The other half of the wiring: the cursor has to already be past the new right edge when SIGWINCH arrives, and

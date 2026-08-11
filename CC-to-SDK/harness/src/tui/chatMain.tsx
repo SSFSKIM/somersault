@@ -73,10 +73,18 @@ export interface ResumeSafeStdout {
    *  count down. A consumer reading the count from an effect therefore reads 0 in exactly the case it needs a
    *  1. So ccx's own resize listener — attached before `render()`, and therefore ahead of Ink's — calls
    *  `noteResizeSignal()`, and the recovery reads the latch instead. The stand-down itself is NOT loosened
-   *  (`:135`-`:150`, the t8 over-erase); this only moves the READ to before the erasure. */
+   *  (`:135`-`:150`, the t8 over-erase); this only moves the READ to before the erasure.
+   *    IT SPANS THE SIGNALS OF ONE FLUSH, NOT THE LAST OF THEM (external review, finding C). A drag emits
+   *  SIGWINCHes faster than React flushes passive effects, and only the FIRST of a burst can see the tall write
+   *  standing — Ink handles each signal synchronously and its fitting frame stands the count down before the
+   *  next one arrives. Re-stating the fact at every signal therefore reported `false` to the one effect that
+   *  ran for the whole burst. So the observations accumulate; what bounds them is the READ (see below), not a
+   *  reset here. */
   noteResizeSignal(): void;
-  /** …and it is one-shot: a fact about ONE signal, consumed by the reader so a later grow with nothing tall
-   *  outstanding cannot inherit it. */
+  /** …and it is one-shot: a fact about the signals since the reader last looked, consumed when it looks. THAT
+   *  is what keeps the accumulation above from becoming a latch that outlives its burst and fires a viewport
+   *  wipe on an ordinary screen (the t8 over-erase): ChatApp consumes on every size it observes, a shrink
+   *  included, so nothing survives a flush that saw it. */
   takeTallAtSignal(): boolean;
   /** W-R t4b: the resize correction, applied to the write that would otherwise create residue. Called for every
    *  frame write that carries an erase prefix and has a recorded frame in front of it; whatever it returns is
@@ -116,7 +124,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   let dropped: string | undefined;               // …and the frame that erase threw away, for the restore check below
   let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
   let tall = 0;                                  // W-R t8: tall-frame chunks written since the screen was last in sync
-  let tallAtSignal = false;                      // W2 t7: …and whether one was outstanding when the last SIGWINCH arrived
+  let tallAtSignal = false;                      // W2 t7: …and whether one was outstanding at any SIGWINCH since the last read
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
   let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
@@ -315,7 +323,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     parkedColumn() { return parkedCol; },
     tallWrites() { return tall; },
     screenResynced() { tall = 0; },
-    noteResizeSignal() { tallAtSignal = tall > 0; },
+    noteResizeSignal() { tallAtSignal ||= tall > 0; },   // accumulates over the burst; the READ is what clears it
     takeTallAtSignal() { const was = tallAtSignal; tallAtSignal = false; return was; },
     setFrameCorrector(fn) { corrector = fn; },
     repaint(runInkWrite) {

@@ -45,6 +45,9 @@
 // — a round-trip burst (120 → 90 → 150 → 120) nets no narrowing at all, so every path that compares old against
 // new declines while the 90 leg's residue is still on screen. It measures the SETTLED screen for everything the
 // settled screen can report, and remembers the narrowing as a PAIR (width and the frame that was on it).
+//   A MONOTONIC burst (120 → 100 → 80) stops ON its narrowing instead of walking back off it, and that pass runs
+// `correctionAfterRepaint` rather than `correctionAtSettle` — the same repair, arriving late, because nothing has
+// re-wrapped since the leg that stranded the rows. See `repairAtSettle`.
 import stringWidth from "string-width";
 import type { ReflowVerdict } from "./reflowOracle.js";
 
@@ -247,6 +250,10 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
   // rows the leg stranded are rows THAT frame painted, and by settle time Ink may have replaced it with a
   // taller one (a streaming turn) whose height has nothing to do with the leg.
   let frameAtNarrowest: string | undefined;
+  // …and the two remaining terms of that same sample, needed only by the settle-AT-narrowest branch below (see
+  // `repairAtSettle`), which measures the leg exactly as `correctionAfterRepaint` measures a first shrink: the
+  // width the frame was displayed at before this leg re-wrapped it, and the park that was on it then.
+  let widthBeforeNarrowest = 0, parkedColAtNarrowest = 0;
   let settling: unknown;
   // …and the one case the window cannot answer by itself: the probe measuring THIS burst's shrink takes up to
   // 750 ms and the window is 80, so the verdict the repair needs routinely lands after it. The repair waits for
@@ -258,9 +265,26 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
    *  lands on rows the first one just declared live. */
   const repairAtSettle = (): boolean => {
     const size = deps.size(), frame = deps.lastFrame();
-    if (!(narrowest < size.columns) || frame === undefined || frameAtNarrowest === undefined) { endBurst(); return false; }
+    if (!(narrowest <= size.columns) || frame === undefined || frameAtNarrowest === undefined) { endBurst(); return false; }
     if (verdict === undefined) { if (probing) awaitingVerdict = true; else endBurst(); return false; }
-    const seq = correctionAtSettle({ frame, frameAtNarrowest, parkedCol: deps.parkedColumn(), width: size.columns, narrowest, rows: size.rows }, verdict);
+    // TWO MEASUREMENTS, ONE PER SHAPE OF BURST, and the width the drag stopped at is what tells them apart
+    // (external review, finding B). A drag that walked BACK off its narrowing settles wider than it: the rows
+    // it stranded have re-wrapped since, and what survives of them is the re-wrap DIFFERENCE
+    // `correctionAtSettle` takes. A MONOTONIC drag — 120 → 100 → 80 — stops at `narrowest`, so nothing has
+    // re-wrapped since the leg that stranded the rows and the screen is a first shrink's screen arriving late:
+    // that difference is zero by construction (same frame, same width, twice) and the honest measurement is
+    // `correctionAfterRepaint`'s — the remembered frame's region at the width it is STILL on, less Ink's own
+    // erase. It used to be refused outright (`narrowest < size.columns`), which left both legs of every
+    // monotonic burst permanent: the probe covering them is still in flight for the whole drag, and its sample
+    // is abandoned the moment the second leg moves the terminal off the width it was measured at (`:191`).
+    //   ONE EXCURSION EITHER WAY, which is the file's standing under-erase residual (`:176`-`:179`) and not a
+    // new one: a burst with several unmeasured legs stranded more than one frame's worth, and this claims the
+    // deepest — the leg `frameAtNarrowest` belongs to — leaving the shallower ones cosmetic rather than
+    // summing terms measured off frames that are no longer anywhere on screen.
+    const seq = narrowest < size.columns
+      ? correctionAtSettle({ frame, frameAtNarrowest, parkedCol: deps.parkedColumn(), width: size.columns, narrowest, rows: size.rows }, verdict)
+      : correctionAfterRepaint({ frame: frameAtNarrowest, parkedCol: parkedColAtNarrowest, oldWidth: widthBeforeNarrowest, newWidth: narrowest, rows: size.rows },
+        verdict, frame, deps.parkedColumn());
     endBurst();
     if (!seq) return false;
     repaintSelf(seq);
@@ -291,7 +315,7 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     // the rows that lie inside that retained residue — so keeping the pass alive claims them twice.
     if (newWidth < oldWidth) {
       if (verdict !== undefined) endBurst();
-      else if (newWidth < narrowest && frame !== undefined) { narrowest = newWidth; frameAtNarrowest = frame; }
+      else if (newWidth < narrowest && frame !== undefined) { narrowest = newWidth; frameAtNarrowest = frame; widthBeforeNarrowest = oldWidth; parkedColAtNarrowest = parkedCol; }
     }
     if (settling !== undefined) disarm(settling);
     awaitingVerdict = false;                            // the drag is still going; the NEXT settle asks again
