@@ -107,15 +107,21 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
-/** Methods still answerable when the thread's engine is dead (dispatch's -33005 gate). Two families:
+/** Methods still answerable when the thread's engine is dead (dispatch's -33005 gate). The invariant is
+ *  "answerable without live transport", not "is a read" — three families:
  *  close/read/subscribe/unsubscribe/decision-list, because closing and reading history are exactly what a
- *  client does with a dead thread; and the store-only CRUD (sessionLib.ts), because renaming, tagging,
+ *  client does with a dead thread; the store-only CRUD (sessionLib.ts), because renaming, tagging,
  *  forking or deleting a persisted session never touches the engine at all — refusing them is refusing the
- *  cleanup a client reaches for precisely when a thread has died. (thread/delete keeps its own live-guard,
- *  which is about the session being LIVE, not about the engine being alive.) */
+ *  cleanup a client reaches for precisely when a thread has died (thread/delete keeps its own live-guard,
+ *  which is about the session being LIVE, not about the engine being alive); and `task/list`, because the
+ *  real `Session.listBackgroundTasks` returns the cached `_bgTasks` level signal with no engine round-trip
+ *  (session/session.ts) — the last known task set stays answerable forever, which is exactly what a client
+ *  reconciling a dead thread wants. Exemption is not a promise the call cannot fail: an engine that DOES
+ *  throw still lands in dispatch's post-handler catch, which re-checks engineGone and maps it there. */
 const ENGINE_GONE_EXEMPT = new Set([
   "thread/close", "thread/read", "thread/subscribe", "thread/unsubscribe", "decision/list",
   "thread/name/set", "thread/tag/set", "thread/fork", "thread/delete",
+  "task/list",
 ]);
 
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;

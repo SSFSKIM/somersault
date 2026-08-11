@@ -57,7 +57,9 @@ on the live engine before the conversation swap, which bumps `record.epoch` and 
 `thread/capabilities/changed` on success since `mcpServers` is one of the four catalogs
 `thread/capabilities/read` replies), `mcpServer/permissionModeOverride/set` (chain-scoped, rules-layer
 only per probe 49 — no capabilities ping). The **background-task trio** — `task/list` (un-chained read
-of the engine's live task set, `{data, nextCursor}` envelope), `task/stop` and `turn/background` (both
+of the engine's live task set, `{data, nextCursor}` envelope; exempt from the `-33005` gate because the
+lib answers it from its cached task set with no engine round-trip, so the last known set stays readable
+on a dead engine), `task/stop` and `turn/background` (both
 chain-scoped; `turn/background`'s `toolUseId` is optional and its reply carries the engine's boolean
 receipt verbatim). None of the three emits a notification of its own: the engine's own task frames
 already reach subscribers as `task/event` / `task/changed` through the Wave 1 frame router.
@@ -81,7 +83,8 @@ frame router's status route (D-M2-6 architecture, t10 semantics).
 **Error codes** (`rpc.ts`): the five JSON-RPC codes, `-32001 OVERLOADED` (defined, never emitted —
 no backpressure source exists yet), `-33001 BUSY`, `-33002 ALREADY_SETTLED` (carries `data.by`),
 `-33003 UNAUTHENTICATED`, `-33004 THREAD_NOT_FOUND`, `-33005 ENGINE_GONE` (dispatch-level gate via
-`isEnded()`; close/read/subscribe/unsubscribe/decision-list stay answerable on a dead engine),
+`isEnded()`; the exempt set is everything answerable without live transport —
+close/read/subscribe/unsubscribe/decision-list, the store-only session CRUD, and `task/list`),
 `-33006 UNSUPPORTED_FOR_ORIGIN` (defined, unemittable until M3), `-33007 SHUTTING_DOWN`.
 
 **Transport** is WebSocket only (`transport/ws.ts`): loopback default, Bearer-token `initialize`
@@ -141,7 +144,7 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `mcp_reconnect` | host/ops.ts | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `mcp_toggle` | host/ops.ts | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `resume` | host/ops.ts | `thread/resume` | both | shipped(M1) — via `resumeSession` (lib), see gap 2 |
-| `tasks` | host/ops.ts | `task/list` | both | shipped(M2b) — un-chained read of the engine's live task set |
+| `tasks` | host/ops.ts | `task/list` | both | shipped(M2b) — un-chained read of the engine's live task set; answerable on a dead engine (cached set) |
 | `background` | host/ops.ts | `turn/background` | both | shipped(M2b) — relays the engine's boolean receipt |
 | `stop_task` | host/ops.ts | `task/stop` | both | shipped(M2b) |
 | `rewind_anchors` | host/ops.ts | `thread/rewind/anchors` | both | shipped(M2b) |

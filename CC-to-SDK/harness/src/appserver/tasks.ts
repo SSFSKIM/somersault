@@ -19,7 +19,10 @@
 // serialize against each other and against every other chain-scoped op on the same thread. Chaining does
 // NOT delay them for the duration of a running turn: `beginTurn` (turns.ts) does not return its submit
 // promise into `record.chain`, so the chain is free again as soon as the turn has started — which is what
-// makes a Ctrl+B-shaped `turn/background` reach the engine mid-turn, as it must.
+// makes a Ctrl+B-shaped `turn/background` reach the engine mid-turn, as it must. This does leave
+// `turn/background` asymmetric with the un-chained `turn/interrupt`: a chain item wedged ahead of it parks
+// the backgrounding, where an interrupt would still land. Accepted — chain scope is what keeps it from
+// racing rewind's engine swap, and the op it competes with there is the swap itself.
 //
 // Every handler resolves its engine method FIRST and answers -32601 when it is absent, the same convention
 // introspect.ts:36 and mcp.ts use: `EngineSession` declares these optional because a future non-inProcess

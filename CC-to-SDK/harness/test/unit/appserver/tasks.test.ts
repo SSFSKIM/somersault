@@ -101,6 +101,25 @@ describe("appserver background tasks (M2b Task 3)", () => {
     expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(ERR.THREAD_NOT_FOUND);
   });
 
+  it("task/list propagates a THROWING but alive engine as -32603 with the engine's own message", async () => {
+    // The exemption below is not a claim the call cannot fail: task/list is un-chained, so its rejection is
+    // the handler promise dispatch awaits, and dispatch's post-handler catch re-checks engineGone — alive,
+    // so it maps to INTERNAL (server.ts's dispatch catch). This is the graceful-degradation path a
+    // hypothetical engine-reaching listBackgroundTasks would take.
+    const session = Object.assign(fakeSession(mkCalls()), {
+      isEnded: () => false,
+      listBackgroundTasks: async () => { throw new Error("Session is not running"); },
+    });
+    const { a, connA, threadId } = await bootOneThread(() => session);
+
+    send(connA, { id: 3, method: "task/list", params: { threadId } });
+    await tick();
+
+    const reply = parsed(a.lines).find((f) => f.id === 3);
+    expect(reply.error.code).toBe(ERR.INTERNAL);
+    expect(reply.error.message).toBe("Session is not running");
+  });
+
   it("task/stop passes the taskId to the engine and replies {ok:true}", async () => {
     const calls = mkCalls();
     const { a, connA, threadId } = await bootOneThread(() => fakeSession(calls));
@@ -206,18 +225,74 @@ describe("appserver background tasks (M2b Task 3)", () => {
     expect(parsed(a.lines).find((f) => f.id === 4).result).toEqual({ data: tasks, nextCursor: null });
   });
 
-  it("a dead engine (isEnded true) answers -33005 via the dispatch guard, proving it covers these new methods too", async () => {
+  it("a dead engine (isEnded true) answers -33005 for the two MUTATIONS via the dispatch guard", async () => {
     let ended = false;
     const session = Object.assign(fakeSession(mkCalls()), { isEnded: () => ended });
     const { a, connA, threadId } = await bootOneThread(() => session);
     ended = true;
 
-    send(connA, { id: 3, method: "task/list", params: { threadId } });
     send(connA, { id: 4, method: "task/stop", params: { threadId, taskId: "t-1" } });
     send(connA, { id: 5, method: "turn/background", params: { threadId } });
     await tick();
 
-    for (const id of [3, 4, 5]) expect(parsed(a.lines).find((f) => f.id === id).error.code).toBe(ERR.ENGINE_GONE);
+    for (const id of [4, 5]) expect(parsed(a.lines).find((f) => f.id === id).error.code).toBe(ERR.ENGINE_GONE);
+  });
+
+  it("task/list is EXEMPT from the dead-engine gate — the cached task set is still the answer after the engine dies", async () => {
+    // The exempt set's invariant is "answerable without live transport", not "is a read": the real
+    // `Session.listBackgroundTasks` returns the cached `_bgTasks` level signal with no engine round-trip
+    // (session/session.ts), so the last known set is readable forever — and reconciling what a dead thread
+    // left running is exactly when a client asks. Nothing is degraded by the exemption: an implementation
+    // that DID reach a dead transport would throw, and the throw still lands in dispatch's post-handler
+    // engineGone re-check (the -32603/-33005 split the throwing case above and this one bracket).
+    const tasks: Task[] = [{ task_id: "t-1", task_type: "bash", description: "npm test" }];
+    let ended = false;
+    const session = Object.assign(fakeSession(mkCalls(), { tasks }), { isEnded: () => ended });
+    const { a, connA, threadId } = await bootOneThread(() => session);
+    ended = true;
+
+    send(connA, { id: 3, method: "task/list", params: { threadId } });
+    await tick();
+
+    expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ data: tasks, nextCursor: null });
+  });
+
+  // Backdated rather than clock-compared: updatedAt is unix SECONDS, so an op that arrives and settles
+  // inside the same second as thread/start is indistinguishable from a stale timestamp by value alone
+  // (turns.test.ts's convention for the same assertion).
+  it("task/stop success bumps record.updatedAt — stopping a task is thread activity", async () => {
+    const { srv, connA, threadId } = await bootOneThread(() => fakeSession(mkCalls()));
+    const record = srv.registry.get(threadId)!;
+    record.updatedAt = 0;
+
+    send(connA, { id: 3, method: "task/stop", params: { threadId, taskId: "t-1" } });
+    await tick();
+
+    expect(record.updatedAt).toBeGreaterThan(0);
+  });
+
+  it("turn/background success bumps record.updatedAt, including on a FALSE receipt — the engine was still asked", async () => {
+    const { srv, a, connA, threadId } = await bootOneThread(() => fakeSession(mkCalls(), { backgroundReceipt: false }));
+    const record = srv.registry.get(threadId)!;
+    record.updatedAt = 0;
+
+    send(connA, { id: 3, method: "turn/background", params: { threadId } });
+    await tick();
+
+    expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ backgrounded: false });
+    expect(record.updatedAt).toBeGreaterThan(0);
+  });
+
+  it("a FAILED mutation does not bump updatedAt — the timestamp tracks work the engine accepted", async () => {
+    const { srv, a, connA, threadId } = await bootOneThread(() => Object.assign(fakeSession(mkCalls(), { throwStop: "no such task" }), { isEnded: () => false }));
+    const record = srv.registry.get(threadId)!;
+    record.updatedAt = 0;
+
+    send(connA, { id: 3, method: "task/stop", params: { threadId, taskId: "t-nope" } });
+    await tick();
+
+    expect(parsed(a.lines).find((f) => f.id === 3).error.code).toBe(ERR.INTERNAL);
+    expect(record.updatedAt).toBe(0);
   });
 });
 
