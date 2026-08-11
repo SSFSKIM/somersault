@@ -220,7 +220,7 @@ describe("appserver settings setters (Task 9)", () => {
     send(connA, { id: 3, method: "thread/permissionMode/set", params: { threadId, mode: "auto" } });
     await tick();
 
-    expect(calls.setModel).toEqual(["claude-sonnet-4-6"]); // the heal's setModel ran and succeeded
+    expect(calls.setModel).toEqual(["claude-sonnet-5"]); // the heal's setModel ran and succeeded
     expect(calls.setPermissionMode).toEqual(["auto"]); // then setPermissionMode ran and rejected
 
     const reply = parsed(a.lines).find((f) => f.id === 3);
@@ -229,13 +229,13 @@ describe("appserver settings setters (Task 9)", () => {
     for (const lines of [a.lines, b.lines]) {
       const evt = parsed(lines).find((f) => f.method === "thread/settings/changed");
       expect(evt).toBeTruthy(); // the genuine model change was NOT silently dropped
-      expect(evt.params).toMatchObject({ threadId, source: "client", model: "claude-sonnet-4-6" });
+      expect(evt.params).toMatchObject({ threadId, source: "client", model: "claude-sonnet-5" });
     }
 
     send(connA, { id: 4, method: "thread/list", params: {} });
     await tick();
     const view = parsed(a.lines).find((f) => f.id === 4).result.data.find((t: any) => t.id === threadId);
-    expect(view.model).toBe("claude-sonnet-4-6"); // mirror reflects the real (healed) engine model
+    expect(view.model).toBe("claude-sonnet-5"); // mirror reflects the real (healed) engine model
     expect(view.permissionMode).toBe("default"); // mirror does NOT reflect the rejected permissionMode change
   });
 
@@ -283,12 +283,12 @@ describe("appserver settings setters (Task 9)", () => {
     send(connA, { id: 3, method: "thread/permissionMode/set", params: { threadId, mode: "auto" } });
     await tick();
 
-    expect(order).toEqual(["setModel:claude-sonnet-4-6", "setPermissionMode:auto"]); // healed model first
-    expect(calls.setModel).toEqual(["claude-sonnet-4-6"]);
+    expect(order).toEqual(["setModel:claude-sonnet-5", "setPermissionMode:auto"]); // healed model first
+    expect(calls.setModel).toEqual(["claude-sonnet-5"]);
     expect(calls.setPermissionMode).toEqual(["auto"]);
 
     const evt = parsed(a.lines).find((f) => f.method === "thread/settings/changed");
-    expect(evt.params).toEqual({ threadId, source: "client", model: "claude-sonnet-4-6", permissionMode: "auto", thinkingTokens: undefined });
+    expect(evt.params).toEqual({ threadId, source: "client", model: "claude-sonnet-5", permissionMode: "auto", thinkingTokens: undefined });
     expect(evt.params.source).not.toBe("engine");
   });
 

@@ -111,7 +111,10 @@ export function mintTurnId(record: ThreadRecord): string {
  *  caller already got its -33001 reply) — verbatim-moved from `turnStart`, condition for condition. */
 export function beginTurn(
   srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord,
-  runner: (turnId: string, mapper: TurnMapper) => Promise<void>,
+  // The runner resolves with the engine's own outcome when it has one — turnStart returns submit()'s
+  // resolve so onSuccess below can read Wave T t14's additive `error` tag. A runner with no outcome to
+  // report (compact) resolves void; onSuccess treats that as a clean completion.
+  runner: (turnId: string, mapper: TurnMapper) => Promise<{ error?: { message: string } } | void>,
   presetTurnId?: string, // M2b's queue drain passes the id minted at enqueue; otherwise mintTurnId()
 ): boolean {
   // Gate synchronously, at request-arrival time — NOT deferred inside the chain callback below. A
@@ -169,7 +172,7 @@ export function beginTurn(
     //    ONE-SHOT broadcast that nothing later overwrites, so dropping the tag here permanently tells every
     //    subscriber a dead API completed the turn — and finalizes its open tool items `completed` too.
     // Interrupt wins when both hold: the client's own abort is the more specific cause of the failure.
-    const onSuccess = (outcome: { error?: { message: string } }) => {
+    const onSuccess = (outcome: { error?: { message: string } } | void) => {
       const interrupted = record.interruptRequested;
       const failure = interrupted ? undefined : outcome?.error;
       emitItems(srv, record, turnId, mapper.finalize(interrupted || failure !== undefined));
@@ -215,8 +218,9 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   // would have the JS engine itself absorb that synchronous throw into a REJECTED promise instead, routing
   // it through onFailure (which consults interruptRequested) rather than the try/catch's reportFailed
   // (which always reports "failed") — a real divergence for a turn/interrupt landing the same tick as a
-  // synchronously-throwing submit(). `.then(() => {})` only adapts submit()'s `Promise<{result}>` down to
-  // the runner's `Promise<void>` contract; it never intercepts a synchronous throw.
+  // synchronously-throwing submit(). The submit promise is returned AS-IS so beginTurn's onSuccess can
+  // read Wave T t14's additive `error` tag off the resolve; a plain return never intercepts a
+  // synchronous throw.
   beginTurn(srv, ctx, id, record, (turnId, mapper) => {
     // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
     // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
@@ -224,7 +228,7 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
     const userUuid = randomUUID();
     emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(parsed.data.input, userUuid) }]);
-    return record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid }).then(() => {});
+    return record.session.submit(parsed.data.input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
   });
 };
 
