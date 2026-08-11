@@ -249,6 +249,14 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
   affordance) rather than canon's full-screen picker takeover with its own footer — the takeover
   is a separate UI unit, backlog. Closes s2qa4-13 fully, s2qa4-14 partially; recorded in
   `tui-ux.md` at re-score.
+- **D-W10 [DECIDED, Task 3 review + bundle]** The exit arm's first press bumps the clear-draft
+  token ONLY when the composer is the active surface. The Task 3 fall-through exposed that a
+  Ctrl-C over an overlay silently cleared the parked draft (deferred to remount); canon's latch
+  (`Pee` L183445 / `h5u` L183477) passes no first-press callback — over any dialog the first
+  press arms and does nothing else, and draft clearing belongs to the focused composer's own
+  gesture. Applies uniformly, including the parked decision dialogs that had always fired the
+  bump (same divergence, older). *Rejected:* keep-the-bump (ccx-only behavior a user can't see
+  happen and never chose).
 
 ## Surprises & Discoveries *(living)*
 
@@ -264,6 +272,13 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
 - The controller re-verified the effort-staging bundle citation before speccing; the second
   grounding agent had called ccx's live-apply "a sourced 2.1.220 decision" — the source was wrong,
   the same mis-citation class as Wave C's token-warning ceiling.
+- Task 1 fix: the SDK session store STRIPS `isApiErrorMessage`/`error`/`apiErrorStatus` from
+  persisted rows — a flag filter on the resume path would have been dead code. The surviving
+  discriminator is `message.model === "<synthetic>"`, which is the CLI's own "not a real reply"
+  predicate (all four mint sites verified in 2.1.227). Declared ≠ persisted.
+- Task 3 exposed a second-order defect its own fix created reach for: the fall-through made the
+  global arm's first-press draft-clear fire over overlays. The bundle settled it (D-W10) — the
+  reviewer's "should be an explicit choice" instinct was exactly right.
 
 ## Outcomes & Retrospective
 
