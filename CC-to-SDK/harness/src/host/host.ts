@@ -10,6 +10,7 @@ import { isAutoSupportedModel, resolveAutoModel } from "../config/autoModel.js";
 import { resolveModelAlias } from "../config/models.js";
 import type { HarnessConfig } from "../config/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
+import type { TurnFailure } from "../session/turnResult.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { getSessionMessages as realGetMessages } from "../sessions/index.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../session/chatSession.js";
@@ -371,7 +372,13 @@ export class SessionHost {
     // (Over the socket JSON.stringify would drop the undefined key anyway; in-process followers get the
     // object itself, and this host serves both.)
     const result = (outcome as { result?: unknown } | undefined)?.result;
-    this.emit({ kind: "turn", phase: "end", seq, ...(result === undefined ? {} : { result }) });
+    // The soft-failure tag rides the same frame, on the same conditional-spread rule. A turn that reached a
+    // terminal `is_error` result RESOLVED carrying it (session.ts:32) — it did not throw, so the catch arm's
+    // `error` never fires and shipping `result` alone would report this turn as a clean completion (fleet's
+    // turn/completed reads exactly this to say `status:"failed"`). Both fields travel together deliberately:
+    // a failed outcome still has a result value.
+    const failure = (outcome as { error?: TurnFailure } | undefined)?.error;
+    this.emit({ kind: "turn", phase: "end", seq, ...(result === undefined ? {} : { result }), ...(failure === undefined ? {} : { failure }) });
   }
 
   /** Dispatch one A2b control op onto the underlying session. Every member is OPTIONAL on HostSession,

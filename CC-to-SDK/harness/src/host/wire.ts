@@ -1,6 +1,7 @@
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
+import type { TurnFailure } from "../session/turnResult.js";
 import type { HostStatus } from "./ops.js";
 
 /** Server-pushed frames. A reply is NOT one of these: replies keep A1's bare `{ok:…}` shape so a host
@@ -48,7 +49,13 @@ export type HostEvent =
   // frames on a following client and zero carrying one. Optional because a pre-M3 host emits none, because a
   // turn can legitimately end without one (an errored result subtype carries no text), and because it never
   // travels with `error`: a turn that threw produced no result to send.
-  | { kind: "turn"; phase: "start" | "end"; seq?: number; result?: unknown; error?: string; truncated?: boolean };
+  // `failure` (§1a-f) is the SOFT tag of a turn that RESOLVED reporting failure — a terminal `is_error`
+  // result resolves the submit waiter carrying `TurnFailure` (session.ts:32) rather than throwing, so
+  // `error?: string` (thrown turns, and ONLY thrown turns) can never describe it. The three fields'
+  // pairings are the contract: `error` travels with neither of the other two, while `result` and
+  // `failure` CAN travel together — a failed outcome still has a result value. Optional for the same
+  // reason as `result`: a pre-M3 host emits none, and a healthy turn has no tag to send.
+  | { kind: "turn"; phase: "start" | "end"; seq?: number; result?: unknown; failure?: TurnFailure; error?: string; truncated?: boolean };
 
 export type HostFrame = ({ t: "event" } & HostEvent) | ({ t?: undefined } & Record<string, unknown>);
 

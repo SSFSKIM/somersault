@@ -353,6 +353,33 @@ describe("§1a-f — a following client reads the turn result off `turn` end", (
     conn.close();
   });
 
+  // The SOFT-failure half. A turn that reaches a terminal `is_error` result RESOLVES carrying
+  // `error: TurnFailure` (session.ts:32) instead of throwing, so the wire's `error?: string` — which
+  // means "submit threw" and nothing else — can never describe it. Ship the outcome's tag as `failure`
+  // or a fleet thread reads a soft-failed turn as a clean completion (appserver/turns.ts reads
+  // `outcome.error` to broadcast `turn/completed {status:"failed"}`).
+  it("a RESOLVED-but-failed turn carries BOTH `result` and the `failure` tag, and no `error`", async () => {
+    const failure = { message: "API Error: Unable to connect to API (ConnectionRefused)", terminalReason: "api_error", apiErrorStatus: 401 };
+    const { path } = await startHost({ submitOutcome: () => ({ result: "text", error: failure }) });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello" })).toMatchObject({ ok: true });
+    const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+    expect(end.result).toBe("text");                    // a failed outcome still has a result value
+    expect(end.failure).toEqual(failure);               // …structure intact across JSON
+    expect(Object.keys(end)).not.toContain("error");    // `error` is thrown-turns-only, and this one resolved
+    conn.close();
+  });
+
+  it("a healthy turn carries NO `failure` key — absent, not present-and-null", async () => {
+    const { path } = await startHost({ submitOutcome: () => ({ result: "ok" }) });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello" })).toMatchObject({ ok: true });
+    const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
+    expect(end.result).toBe("ok");
+    expect(Object.keys(end)).not.toContain("failure");
+    conn.close();
+  });
+
   it("a FAILED turn ends with its error and NO result — a turn that threw produced none to carry", async () => {
     const { path } = await startHost({ submitOutcome: () => { throw new Error("engine exploded"); } });
     const conn = await followed(path);
@@ -360,6 +387,8 @@ describe("§1a-f — a following client reads the turn result off `turn` end", (
     const end = await conn.waitFor((f) => f.t === "event" && f.kind === "turn" && f.phase === "end");
     expect(end.error).toBe("engine exploded");
     expect(Object.keys(end)).not.toContain("result");
+    // …nor a `failure`: a throw produced no outcome at all, so there is no soft tag to read off one.
+    expect(Object.keys(end)).not.toContain("failure");
     // …and exactly ONE end frame: the catch's emission is terminal (it rethrows), so a failed turn must
     // not also produce the success-path end that would blank the error a follower just read.
     await new Promise((r) => setTimeout(r, 30));
