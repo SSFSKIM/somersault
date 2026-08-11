@@ -1,5 +1,9 @@
 # Agent app-server M2b — rewind + MCP + tasks + queue + probes + consumability (waves 3–4) Implementation Plan
 
+> **COMPLETED 2026-08-11** — all 10 tasks (1, 2, 3, 3b, 4, 5, 6, 7, 8, 9) plus the spec's five
+> acceptance criteria; commits span `bfcbe7ee0e..HEAD`. Outcome and evidence:
+> [the spec's `## Outcomes & Retrospective`](../specs/2026-07-30-agent-appserver-m2-design.md#outcomes--retrospective).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use doperpowers:subagent-driven-development (recommended) or doperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Waves 3–4 of the M2 spec ([`docs/superpowers/specs/2026-07-30-agent-appserver-m2-design.md`](../specs/2026-07-30-agent-appserver-m2-design.md)): the rewind trio, the MCP quintet, background tasks, the turn queue with its closing latch, the five remaining probes, schema generation + `--emit-schema` + the `cc-harness/appserver` subpath export, the finished console, and the spec's full acceptance.
@@ -106,10 +110,10 @@ export const rewindParams = z.object({ threadId: z.string().min(1), uuid: z.stri
   - `thread/rewind` — chain-scoped, and in order: (1) busy/park gates: `threadBusyReason(record)` non-null → `-33001` (the message names the reason); `srv.pendingDecisions(record.id).length` → `-33001` `"a decision is pending — answer it first"`; no `record.sessionId` → `-33005`. (2) `scope !== "code" && !prevUuid` → `-32602` `"no conversation anchor before the first prompt — code-only rewind is available"`. (3) `record.swapInFlight = true` in a try/finally. (4) `scope !== "conversation"`: dryRun first, refuse on `!canRewind`, then real `session.rewind(uuid)`. (5) `scope !== "code"`: **engine swap** — `record.epoch += 1` FIRST (spec D-M2-8: the bump is what makes the old engine's late frames inert and every outstanding `thread/read` cursor invalid; doing it before dispose means a frame emitted during dispose is already stale), then `record.routerOff?.()`, `await record.session.dispose()` — **wait**: the old engine may hold parked decisions; there are none (gate 1 refused if any) and no turn is in flight (busy gate), so dispose is safe — then `record.session = deps.resumeAtFactory(sessionId, prevUuid, originalConfig)`, `installRouter(srv, record)`, and — **corrected post-review 2026-08-11** — `record.sessionId` is RETAINED across a rewind swap, not cleared: `rewindSession` keeps the same session id (session/index.ts doc), clearing it would make `thread/read`'s empty-page early-return swallow the mandated stale-cursor `-32602`, and an unstamped window would let a racing `thread/delete` erase the live session's history (`findLiveBySessionId` matches on it). `swapEngine(nextSessionId)` takes the post-swap id as a parameter — rewind passes the same id; Task 3b's `thread/clear` passes `undefined` (a fresh conversation genuinely has no id until its init frame). `record.turnSeq` keeps counting (turn ids stay unique). Store the thread's ORIGINAL config on the record at start/resume time (`ThreadRecord` gains `config?: Record<string, unknown>` — set it in `startThread`) so the swap can rebuild. (6) Broadcast `thread/rewound { threadId, sessionId }` to subscribers AND watchers; reply `{ ok: true, sessionId }`.
 - `thread/rewound` is a NEW notification — add to the parent §8 list via its Revision Notes (one line, flagged — the host's `rewound` event is the precedent).
 
-- [ ] **Step 1: Failing tests** — anchors maps a fake transcript through `rewindAnchorsFrom` (one prompt row + one phantom row → one anchor); dryRun normalizes a THROWING fake to `{canRewind:false}`; rewind refuses while busy (`-33001`), while parked (`-33001`), and `both`-scope with null prevUuid (`-32602`) — each BEFORE the fake's `rewind` was called (assert call count 0); happy-path `both`: fake's rewind called with (uuid, {dryRun:true}) then (uuid), old session disposed, factory called with (sessionId, prevUuid, config), router reinstalled (new fake's onFrame subscribed), `thread/rewound` observed; `turn/start` during a hung swap (factory returns a pending promise — engine-faithful) → `-33001`; **a frame pushed by the OLD fake engine after the swap changes nothing** (its router was installed at the previous epoch — assert no `thread/settings/changed` and no mirror write); **a `thread/read` cursor minted before the rewind now replies `-32602`**.
-- [ ] **Step 2:** Run — FAIL. **Step 3:** implement. **Step 4:** PASS + whole suite green.
-- [ ] **Step 5: Sabotage-verify** two guards, reporting the observed failure output for each: (a) the validation-before-side-effects guard — move the prevUuid check after the file restore; the "call count 0" test FAILS; restore. (b) the epoch bump — delete `record.epoch += 1`; the stale-old-engine-frame test FAILS; restore.
-- [ ] **Step 6: Commit** — `git commit -m "feat(as2b): rewind trio — anchors/dryRun/rewind with engine swap, host-order validation (Wave 3)"`.
+- [x] **Step 1: Failing tests** — anchors maps a fake transcript through `rewindAnchorsFrom` (one prompt row + one phantom row → one anchor); dryRun normalizes a THROWING fake to `{canRewind:false}`; rewind refuses while busy (`-33001`), while parked (`-33001`), and `both`-scope with null prevUuid (`-32602`) — each BEFORE the fake's `rewind` was called (assert call count 0); happy-path `both`: fake's rewind called with (uuid, {dryRun:true}) then (uuid), old session disposed, factory called with (sessionId, prevUuid, config), router reinstalled (new fake's onFrame subscribed), `thread/rewound` observed; `turn/start` during a hung swap (factory returns a pending promise — engine-faithful) → `-33001`; **a frame pushed by the OLD fake engine after the swap changes nothing** (its router was installed at the previous epoch — assert no `thread/settings/changed` and no mirror write); **a `thread/read` cursor minted before the rewind now replies `-32602`**.
+- [x] **Step 2:** Run — FAIL. **Step 3:** implement. **Step 4:** PASS + whole suite green.
+- [x] **Step 5: Sabotage-verify** two guards, reporting the observed failure output for each: (a) the validation-before-side-effects guard — move the prevUuid check after the file restore; the "call count 0" test FAILS; restore. (b) the epoch bump — delete `record.epoch += 1`; the stale-old-engine-frame test FAILS; restore.
+- [x] **Step 6: Commit** — `git commit -m "feat(as2b): rewind trio — anchors/dryRun/rewind with engine swap, host-order validation (Wave 3)"`.
 
 ---
 
@@ -146,9 +150,9 @@ export const mcpOverrideParams = z.object({ threadId: z.string().min(1), name: z
   - `mcpServer/permissionModeOverride/set` → `{ok: true}` (rules-layer only — doc-comment probe 49's caveat).
 - All five register in `methodSchemas`.
 
-- [ ] **Step 1: Failing tests** — status returns the fake's array; reconnect on a THROWING fake (message `"SDK servers should be handled in print.ts"`) replies code `-32602` carrying that message; toggle passes `(name, enabled)` through; set replies the receipt object; override passes `null` through (clear-pin).
-- [ ] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite + typecheck.
-- [ ] **Step 5: Commit** — `git commit -m "feat(as2b): MCP quintet — status/reconnect/toggle/set/permissionModeOverride (Wave 3)"`.
+- [x] **Step 1: Failing tests** — status returns the fake's array; reconnect on a THROWING fake (message `"SDK servers should be handled in print.ts"`) replies code `-32602` carrying that message; toggle passes `(name, enabled)` through; set replies the receipt object; override passes `null` through (clear-pin).
+- [x] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite + typecheck.
+- [x] **Step 5: Commit** — `git commit -m "feat(as2b): MCP quintet — status/reconnect/toggle/set/permissionModeOverride (Wave 3)"`.
 
 ---
 
@@ -175,9 +179,9 @@ export const turnBackgroundParams = z.object({ threadId: z.string().min(1), tool
 ```
 - Handlers: `task/list` → `{ data, nextCursor: null }`; `task/stop` → `{ok: true}` (the CLI's own `task_notification{stopped}` + changed frame arrive via M2a's router as `task/event` + `task/changed` — nothing more to emit here, doc-comment it); `turn/background` → `{ backgrounded: <the boolean receipt> }`.
 
-- [ ] **Step 1: Failing tests** — list returns the fake's snapshot; stop passes taskId; background passes optional toolUseId and returns the receipt; the ROUTER (already shipped) turns a `background_tasks_changed` frame into `task/changed` — one integration-style assertion wiring a real router over the tasks fake to prove the cluster is complete without new notification code.
-- [ ] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite green.
-- [ ] **Step 5: Commit** — `git commit -m "feat(as2b): background tasks — task/list, task/stop, turn/background (Wave 3)"`.
+- [x] **Step 1: Failing tests** — list returns the fake's snapshot; stop passes taskId; background passes optional toolUseId and returns the receipt; the ROUTER (already shipped) turns a `background_tasks_changed` frame into `task/changed` — one integration-style assertion wiring a real router over the tasks fake to prove the cluster is complete without new notification code.
+- [x] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite green.
+- [x] **Step 5: Commit** — `git commit -m "feat(as2b): background tasks — task/list, task/stop, turn/background (Wave 3)"`.
 
 ---
 
@@ -208,10 +212,10 @@ retry-safety semantics carry their own tests — an extraction is a named M3 opt
 
 All nine register in `methodSchemas`. Mutations bump `record.updatedAt`.
 
-- [ ] **Step 1: Failing tests** — settings/read passthrough + `-32601`; directory add→list round-trip shows all three sources; a REJECTING fake (`applyFlagSettings` throws) leaves the accumulator unchanged (retry-safety — assert a retry pushes the same delta, not a doubled one); rule add/remove for each behavior; effort enum refuses an unknown level with `-32602` before the engine is touched; clear: swap observed (factory called with no resume), accumulator re-pushed onto the NEW fake, `thread/rewound{cleared:true}` observed, epoch bumped, stale pre-clear `thread/read` cursor → `-32602`.
-- [ ] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite + typecheck.
-- [ ] **Step 5: Sabotage-verify** the commit-after-accept guard: move the accumulator write BEFORE the `applyFlagSettings` await in `addDir`'s handler; the retry-safety test FAILS; restore, report the observed output.
-- [ ] **Step 6: Commit** — `git commit -m "feat(as2b): settings-ops nonet — dirs/rules/outputStyle/effort/clear over the flag accumulator (gap 6)"`.
+- [x] **Step 1: Failing tests** — settings/read passthrough + `-32601`; directory add→list round-trip shows all three sources; a REJECTING fake (`applyFlagSettings` throws) leaves the accumulator unchanged (retry-safety — assert a retry pushes the same delta, not a doubled one); rule add/remove for each behavior; effort enum refuses an unknown level with `-32602` before the engine is touched; clear: swap observed (factory called with no resume), accumulator re-pushed onto the NEW fake, `thread/rewound{cleared:true}` observed, epoch bumped, stale pre-clear `thread/read` cursor → `-32602`.
+- [x] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite + typecheck.
+- [x] **Step 5: Sabotage-verify** the commit-after-accept guard: move the accumulator write BEFORE the `applyFlagSettings` await in `addDir`'s handler; the retry-safety test FAILS; restore, report the observed output.
+- [x] **Step 6: Commit** — `git commit -m "feat(as2b): settings-ops nonet — dirs/rules/outputStyle/effort/clear over the flag accumulator (gap 6)"`.
 
 ---
 
@@ -282,7 +286,7 @@ export function takeNext(record: ThreadRecord): QueuedTurn | undefined {
   - `turn/interrupt` carrying a `turnId` that names a QUEUED entry (spec D-M2-10): `if (parsed.data.turnId && cancelQueued(srv, record, parsed.data.turnId)) { ctx.peer.reply(id, { interrupted: false, cancelled: [parsed.data.turnId] }); return; }` — checked BEFORE touching the engine, since a queued turn has no engine work to interrupt. `turnInterruptParams` gains `turnId: z.string().min(1).optional()`; an unknown id falls through to the existing running-turn behavior unchanged.
 - `server.ts` changes: `thread/close` **already sets `record.closing = true` synchronously** (de-rot item 2 — the fix-wave latch); add `flushQueue(srv, record);` immediately after that existing line. `shutdown()` gains the same pair per record before awaiting chains (check whether the fix wave already latches there too — extend, don't duplicate).
 
-- [ ] **Step 1: Failing tests** (the spec's transition table, one test per transition):
+- [x] **Step 1: Failing tests** (the spec's transition table, one test per transition):
 
 ```typescript
 describe("turn queue (spec Wave 4)", () => {
@@ -303,9 +307,9 @@ describe("turn queue (spec Wave 4)", () => {
 });
 ```
 
-- [ ] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + whole suite green.
-- [ ] **Step 5: Sabotage-verify BOTH latch guards** — (a) remove `record.closing = true` from thread/close: the no-engine-call-after-close test FAILS; (b) remove the `closing` check in `takeNext`: the race test FAILS. Restore both; report both observed failures.
-- [ ] **Step 6: Commit** — `git commit -m "feat(as2b): turn queue — enqueue-minted ids, FIFO drain, closing latch, cancelQueued flush (Wave 4)"`.
+- [x] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + whole suite green.
+- [x] **Step 5: Sabotage-verify BOTH latch guards** — (a) remove `record.closing = true` from thread/close: the no-engine-call-after-close test FAILS; (b) remove the `closing` check in `takeNext`: the race test FAILS. Restore both; report both observed failures.
+- [x] **Step 6: Commit** — `git commit -m "feat(as2b): turn queue — enqueue-minted ids, FIFO drain, closing latch, cancelQueued flush (Wave 4)"`.
 
 ---
 
@@ -332,7 +336,7 @@ Each probe: build → controller runs keyed → record verdict in the spec → a
 - Any DEAD → the method is NOT added; `methodSchemas` untouched; scorecard row N/A-dead citing the probe file (Task 9 flips it — the staleness gate polices the flip).
 - readFile — **no method either way** (spec: M3 `fs/read` backing knowledge only).
 
-- [ ] **Step 1:** Write the three probe files. **Step 2 (controller):** run each keyed, capture JSON verdicts. **Step 3:** record all verdicts (incl. the supersession note) in the spec's Surprises section. **Step 4:** implement the ALIVE promotions (unit-tested, no live). **Step 5:** `npm run test:unit` green. **Step 6: Commit** — `git commit -m "probe(as2b): probes 103-105 verdicts + alive-surface promotions (steer/reloads per verdict)"`.
+- [x] **Step 1:** Write the three probe files. **Step 2 (controller):** run each keyed, capture JSON verdicts. **Step 3:** record all verdicts (incl. the supersession note) in the spec's Surprises section. **Step 4:** implement the ALIVE promotions (unit-tested, no live). **Step 5:** `npm run test:unit` green. **Step 6: Commit** — `git commit -m "probe(as2b): probes 103-105 verdicts + alive-surface promotions (steer/reloads per verdict)"`.
 
 ---
 
@@ -343,7 +347,7 @@ Each probe: build → controller runs keyed → record verdict in the spec → a
 - Modify: `src/appserver/schema/index.ts` (entries gain `experimental?: true` on X methods: `turn/steer` if alive; queue-flagged turnStart stays stable — the FLAG is experimental but the method is stable; doc-comment. Task 3b's `thread/directory/add` is STABLE — it ships over the proven applyFlagSettings seam, not a probe-gated one), `src/cli/serveMain.ts` + `src/cli/args.ts` (`--emit-schema DIR`), `package.json` (`"emit-schema": "node scripts/emit-appserver-schema.mjs"` script — NO new dependency, de-rot header), `../scripts/drift-check.mjs` (round-trip entry)
 - Test: `test/unit/appserver/schemaGen.test.ts`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```typescript
 // Round-trip: regenerating must reproduce the vendored artifacts byte-for-byte, and every registered
@@ -361,9 +365,9 @@ it("vendored schema artifacts match a fresh generation", () => {
 it("every methodSchemas entry lands in exactly one artifact and every artifact is draft-7", ...);
 ```
 
-- [ ] **Step 2:** FAIL. **Step 3:** implement the generator — walks `methodSchemas` (dynamic-import of the built TS via tsx), converts each params schema via zod v4's **native `z.toJSONSchema(schema, { target: "draft-7" })`** (verified: emits `$schema: draft-07`; no new dependency), writes `{ $schema: "http://json-schema.org/draft-07/schema#", methods: { <name>: {...} } }` per artifact set, `--stdout` mode for the test. `--emit-schema DIR` in serveMain: before binding, if the flag is present, run the same generation into DIR and exit 0. Add a drift-check entry **extending the existing staleness block** (`bfcbe7ee0e` — reuse its `liveMethods` set, don't re-parse): the appserver pass additionally fails when a `methodSchemas` key has no scorecard row naming it in some row's protocol-method column (the "zero schema-less methods" acceptance gate; the staleness block already enforces the shipped↔registered direction per row).
-- [ ] **Step 4:** Generate + commit artifacts; tests PASS; `node ../scripts/drift-check.mjs --json` exit 0.
-- [ ] **Step 5: Commit** — `git commit -m "feat(as2b): schema generation — draft-7 artifacts, --emit-schema, round-trip drift gate (§9)"`.
+- [x] **Step 2:** FAIL. **Step 3:** implement the generator — walks `methodSchemas` (dynamic-import of the built TS via tsx), converts each params schema via zod v4's **native `z.toJSONSchema(schema, { target: "draft-7" })`** (verified: emits `$schema: draft-07`; no new dependency), writes `{ $schema: "http://json-schema.org/draft-07/schema#", methods: { <name>: {...} } }` per artifact set, `--stdout` mode for the test. `--emit-schema DIR` in serveMain: before binding, if the flag is present, run the same generation into DIR and exit 0. Add a drift-check entry **extending the existing staleness block** (`bfcbe7ee0e` — reuse its `liveMethods` set, don't re-parse): the appserver pass additionally fails when a `methodSchemas` key has no scorecard row naming it in some row's protocol-method column (the "zero schema-less methods" acceptance gate; the staleness block already enforces the shipped↔registered direction per row).
+- [x] **Step 4:** Generate + commit artifacts; tests PASS; `node ../scripts/drift-check.mjs --json` exit 0.
+- [x] **Step 5: Commit** — `git commit -m "feat(as2b): schema generation — draft-7 artifacts, --emit-schema, round-trip drift gate (§9)"`.
 
 ---
 
@@ -373,9 +377,9 @@ it("every methodSchemas entry lands in exactly one artifact and every artifact i
 - Modify: `package.json` (`exports` gains `"./appserver"`), `src/appserver/index.ts` (create: the public surface), `scripts/verify-package.mjs` consumers if the verify script asserts export maps
 - Test: `test/unit/appserver/exports.test.ts`
 
-- [ ] **Step 1: Failing test** — dynamic-import the subpath through the package name (vitest alias or relative dist check; simplest: import `src/appserver/index.js` and assert the exact export set `{ AppServer, listenWs, methodSchemas }` plus type-only re-exports compile via typecheck).
-- [ ] **Step 2:** FAIL. **Step 3:** create `src/appserver/index.ts` exporting `AppServer`, `listenWs`, `methodSchemas`, and types (`ThreadRecord`, `EngineSession`, `WsListenOpts`); add `"./appserver": { "types": "./dist/appserver/index.d.ts", "import": "./dist/appserver/index.js" }` to `package.json` exports. Run `npm run build && npm run verify:pack` — green.
-- [ ] **Step 4:** PASS. **Step 5: Commit** — `git commit -m "feat(as2b): cc-harness/appserver subpath export (gap 11 — shapes settled)"`.
+- [x] **Step 1: Failing test** — dynamic-import the subpath through the package name (vitest alias or relative dist check; simplest: import `src/appserver/index.js` and assert the exact export set `{ AppServer, listenWs, methodSchemas }` plus type-only re-exports compile via typecheck).
+- [x] **Step 2:** FAIL. **Step 3:** create `src/appserver/index.ts` exporting `AppServer`, `listenWs`, `methodSchemas`, and types (`ThreadRecord`, `EngineSession`, `WsListenOpts`); add `"./appserver": { "types": "./dist/appserver/index.d.ts", "import": "./dist/appserver/index.js" }` to `package.json` exports. Run `npm run build && npm run verify:pack` — green.
+- [x] **Step 4:** PASS. **Step 5: Commit** — `git commit -m "feat(as2b): cc-harness/appserver subpath export (gap 11 — shapes settled)"`.
 
 ---
 
@@ -386,7 +390,7 @@ it("every methodSchemas entry lands in exactly one artifact and every artifact i
 
 Panel 4 (rewind/MCP/tasks/settings-ops): anchors list with per-anchor dryRun + rewind buttons (scope select both/conversation/code) + a clear button; MCP status table with reconnect/toggle buttons; task list with stop + background-all buttons; a settings-ops strip (directory list + add/remove, effort select, output-style input — Task 3b's nonet exercised by a foreign consumer). Panel 5 (queue): prompt input with a "queue" checkbox, queued-turn list updating from `turn/started`/`turn/completed` (including `cancelled`), stop button sending `turn/interrupt {cancelQueued: true}`. No tests (spec).
 
-- [ ] **Step 1:** Implement. **Step 2: Commit** — `git commit -m "feat(as2b): console panels — rewind/MCP/tasks + queue (waves 3-4)"`.
+- [x] **Step 1:** Implement. **Step 2: Commit** — `git commit -m "feat(as2b): console panels — rewind/MCP/tasks + queue (waves 3-4)"`.
 
 ---
 
@@ -398,12 +402,12 @@ Panel 4 (rewind/MCP/tasks/settings-ops): anchors list with per-anchor dryRun + r
 
 The spec's `## Acceptance (behavior-phrased)` section, executed as written:
 
-- [ ] **Step 1 (acceptance 1):** Run `npm test` from `CC-to-SDK/harness` — green — and `node scripts/drift-check.mjs --json` (repo `CC-to-SDK/`) — "exits 0 with the appserver pass listing zero missing rows and zero schema-less methods."
-- [ ] **Step 2 (acceptance 2, controller):** write the acceptance live test so one keyed run performs the spec's full sequence (plus one Task-3b leg: `thread/effort/set` accepted → `thread/settings/read` returns — and `thread/directory/list` shows the cwd row): "`initialize{watchThreads:true}` → `thread/start` → observe `thread/started` → `thread/model/set` → observe `thread/settings/changed` with `source:"client"` → `thread/thinking/set` → `thread/capabilities/read` returns non-empty models + commands → turn with a file write → decision park shows `status.waitingOn === "decision"` → respond → `thread/usage/read` + `thread/contextUsage/read` return numbers → `thread/rewind/dryRun` against the turn's anchor succeeds → `mcpServer/status/list` returns → `turn/start{queue:true}` while busy returns `{queued: true, turn}` whose id later appears in `turn/started` when it drains → `thread/compact/start` completes and `thread/compacted` carries an outcome → `thread/fork` yields a distinct thread whose `thread/read` shares item ids with the parent → `thread/close`. Each observation is an assertion, not a log line." Run keyed — PASS.
-- [ ] **Step 3 (acceptance 5, controller):** already asserted inside the live script (second client observes the first's model/set as settings/changed) — confirm the assertion exists and passed.
-- [ ] **Step 4 (acceptance 3):** scorecard sweep — "every non-fleet row reads shipped or N/A-with-evidence; probe rows cite their probe file by name." Flip the waves 3–4 rows (rewind trio, MCP 5, tasks 3, the gap-6 nonet, queue, steer/reloads per verdict, probe N/A rows). The staleness gate (`bfcbe7ee0e`) makes a missed or premature flip a red gate, so `node scripts/drift-check.mjs` exit 0 IS the sweep's proof.
-- [ ] **Step 5 (acceptance 4, controller):** console smoke — every panel of `tools/appserver-console.html` performs its wave's operations against a live `ccx serve` (manual; record the outcome in the task report).
-- [ ] **Step 6:** refresh `docs/parity/coverage.md` domain 10; write the spec's `## Outcomes & Retrospective`; final commit:
+- [x] **Step 1 (acceptance 1):** Run `npm test` from `CC-to-SDK/harness` — green — and `node scripts/drift-check.mjs --json` (repo `CC-to-SDK/`) — "exits 0 with the appserver pass listing zero missing rows and zero schema-less methods."
+- [x] **Step 2 (acceptance 2, controller):** write the acceptance live test so one keyed run performs the spec's full sequence (plus one Task-3b leg: `thread/effort/set` accepted → `thread/settings/read` returns — and `thread/directory/list` shows the cwd row): "`initialize{watchThreads:true}` → `thread/start` → observe `thread/started` → `thread/model/set` → observe `thread/settings/changed` with `source:"client"` → `thread/thinking/set` → `thread/capabilities/read` returns non-empty models + commands → turn with a file write → decision park shows `status.waitingOn === "decision"` → respond → `thread/usage/read` + `thread/contextUsage/read` return numbers → `thread/rewind/dryRun` against the turn's anchor succeeds → `mcpServer/status/list` returns → `turn/start{queue:true}` while busy returns `{queued: true, turn}` whose id later appears in `turn/started` when it drains → `thread/compact/start` completes and `thread/compacted` carries an outcome → `thread/fork` yields a distinct thread whose `thread/read` shares item ids with the parent → `thread/close`. Each observation is an assertion, not a log line." Run keyed — PASS.
+- [x] **Step 3 (acceptance 5, controller):** already asserted inside the live script (second client observes the first's model/set as settings/changed) — confirm the assertion exists and passed.
+- [x] **Step 4 (acceptance 3):** scorecard sweep — "every non-fleet row reads shipped or N/A-with-evidence; probe rows cite their probe file by name." Flip the waves 3–4 rows (rewind trio, MCP 5, tasks 3, the gap-6 nonet, queue, steer/reloads per verdict, probe N/A rows). The staleness gate (`bfcbe7ee0e`) makes a missed or premature flip a red gate, so `node scripts/drift-check.mjs` exit 0 IS the sweep's proof.
+- [x] **Step 5 (acceptance 4, controller):** console smoke — every panel of `tools/appserver-console.html` performs its wave's operations against a live `ccx serve` (manual; record the outcome in the task report).
+- [x] **Step 6:** refresh `docs/parity/coverage.md` domain 10; write the spec's `## Outcomes & Retrospective`; final commit:
 
 ```bash
 git add -A

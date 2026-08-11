@@ -414,7 +414,83 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped 2026-08-11. The milestone's claim — a full control plane over an in-process SDK engine — is
+met and machine-checked: 51 registered methods, 26 notifications, 79 of the scorecard's 82 seam rows
+reading shipped.** M2a (waves 0–2, Tasks 1–15) merged first (`0a5bb43e90`, green-up `a479c98230`,
+nine-finding merge review `393bc38086`); M2b (waves 3–4, Tasks 1–9 plus the de-rot's Task 3b) ran
+`bfcbe7ee0e..HEAD`. Every task shipped test-first and closed with an external-style independent review
+plus a fix wave; the reviews are where the milestone earned most of its correctness.
+
+**The two review-caught saves worth naming**, both reproduced on the wire rather than argued from
+reading:
+
+- **Task 4, the close window** (`022a3ba9b9`). `beginTurn`'s chain callback fired the runner without
+  re-reading the record. `takeNext` checks the closing latch at *drain* time, but the engine call is
+  deferred into `record.chain`: park it behind a settings op awaiting real engine I/O, let
+  `thread/close` latch and flush underneath it, and the callback submitted to a closing engine whose
+  terminal event was then broadcast after `closeRecord` had deleted the record — so the broadcast
+  no-oped and the client heard nothing at all. The callback now re-reads and settles the turn
+  terminally (`closing` → `cancelled`, `interruptRequested` → `interrupted`, closing winning when both
+  hold). Same wave fixed `turn/interrupt` with *both* `turnId` and `cancelQueued`, where the by-id arm
+  returned early and silently skipped the flush.
+- **The steer window** (`7e2d891c6e`). `turn/steer`'s inverted busy gate was `busyReason === "turn"`,
+  and busy alone is not enough. `beginTurn` latches busy synchronously at request arrival but issues
+  `submit()` later, from its chain callback, so there is a real window — a same-chunk
+  `turn/start`+`turn/steer` pair, or any turn whose callback is parked behind an earlier op awaiting
+  engine I/O — in which the thread reads busy-with-a-turn while the prompt is not yet on the engine's
+  input queue. A steer admitted there is un-chained by design and therefore *overtakes the prompt*: the
+  engine reads the injection first and the turn is steered before it exists. The gate is now
+  `record.busy && record.turnStartedBroadcast`, the flag raised in the same synchronous step that calls
+  the runner. The live `unmatchedResults` counter added alongside it is what let the acceptance *prove*
+  the steer correlation rather than assume it.
+
+**Acceptance.** All five criteria met. (1) Suite green (2260+ tests), typecheck, build and
+`verify:pack` green, `node scripts/drift-check.mjs` exit 0. (2) **Live control-plane run 2 (keyed):
+14/14 assertions PASSED in 48s** over the full sequence — watcher events, decision park and respond,
+usage/context numbers, rewind anchors + `dryRun`, `mcpServer/status/list`, queue enqueue → `turn/queued`
+→ drain, steer, compact with an outcome, fork sharing item ids, `thread/clear` →
+`thread/rewound {cleared:true}`, clean close and shutdown with zero leaked registry entries. Run 1's
+single failure produced the launch-time-only `bypassPermissions` finding recorded in Surprises above.
+(3) Scorecard swept, with the recomputed per-status tallies in `docs/parity/appserver.md` § Totals.
+(4) **Console smoke: PASS, zero runtime JS errors** across the waves-3–4 panels driven live in a
+browser against `ccx serve`, including the rewind refusal path and both queue-depth freshness states;
+four panels predating the smoke's scope (`server/status`, `thread/read`, `decision/list`,
+`thread/settings/apply`) are recorded as not exercised rather than implied. (5) The two-client
+observation is asserted inside the live script and passed.
+
+**The four probe verdicts** (Task 5, keyed at SDK 0.3.220) settled the last open scope question:
+`streamInput` **ALIVE** (mid-turn injection steers a running turn — and the probe-craft lesson that a
+steer probe needs a turn with real wall-clock length, not a long prompt) → `turn/steer`;
+`reloadPlugins` and `reloadSkills` **both ALIVE with catalog receipts** — a reload *is* a capabilities
+refresh, which is why both ping `thread/capabilities/changed` → `plugin/reload`, `skill/reload`;
+`readFile` **callable but dead** (null for an existing file and a missing path alike) → `N/A`, and M3's
+`fs/read` cannot back onto it. Probe 5 (`register_repo_root`) was superseded rather than run:
+`thread/directory/add` ships over the `applyFlagSettings` seam production already uses.
+
+**What M2 leaves open.**
+
+- **M3 — fleet and workspace.** `thread/attach`/`thread/stop` are the only non-shipped scorecard rows.
+  Until adoption lands, every registered thread is `inProcess`, `-33006 unsupportedForOrigin` stays
+  defined-but-unemitted, and `host/ops.ts`/`bridge/types.ts` remain unimported under `appserver/`
+  (scorecard gaps 2–4). The workspace surfaces `fs/*` and `shellCommand` are M3 by D-M2-2, and `fs/read`
+  now starts from a known-dead seam.
+- **Three deliberately recorded decisions, not defects** (scorecard gaps 8–10). A cleared thread keeps
+  the `title` and `tags` of the conversation it dropped (a product question, deferred rather than
+  guessed). The flag accumulator *keeps* grants a replacement engine refused during the post-swap
+  re-push, asymmetric with the settings mirror which reconciles — so the layer can over-report versus
+  engine reality and **the `warning` is the signal, not the list**. And a factory throw inside
+  `swapEngine` leaves the record holding a disposed engine: it reads honestly (`-33005` everywhere) and
+  never wedges at "swapping", but there is no way back short of `thread/close` + `thread/resume`. The
+  fix is a re-open path, which wants the same admission machinery fleet adoption is bringing.
+- **The M2a → M2b lesson, and it is the durable one.** M2a's own incident was that 15 methods shipped
+  while their scorecard rows still read `planned(M2)` — for twelve days, with the drift gate green the
+  whole time, because the gate only ever checked that a walked token *had* a row, never that the row
+  told the truth. The staleness pass added in `bfcbe7ee0e` turned that class of rot into a per-task red
+  build, and the Task 6 bijection pass then caught what neither doc-side check could see: three
+  registered, dispatchable, schema-published methods (`initialize`, `server/status`, `thread/start`)
+  that no walker could ever produce a row for. Generalizing past this milestone: a coverage document is
+  only as honest as the direction its checker walks, and every direction it does not walk is a place
+  the claim can quietly go false.
 
 ## Revision Notes
 

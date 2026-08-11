@@ -342,12 +342,60 @@ name: there is no upstream token to put in it.
 all rowed above — plus the 3 server-origin rows just above, which no walker produces, for **82 rows**
 in all.
 
-**Per-status row tallies are recomputed once, at the M2b close-out sweep (Task 9) — not carried here
-between waves.** Every landing wave flips a handful of rows, so a shipped/planned split written down
-mid-milestone is stale within a day (the M2a lesson, restated). Between sweeps the authority is the
-drift gate: `node scripts/drift-check.mjs` prints the live registry count and fails when any row's
-status disagrees with the real surface, so the per-row `status` column above is the truth and the gate
-is what proves it. Two buckets no later M2b wave touches are now stable: `planned(M3)` 1 (`stop`) and
-`N/A` 2 — `seedReadState` (internal plumbing) and `readFile` (probe-dead, see its row). The
+**Per-status row tallies, recomputed at the M2b close-out sweep (Task 9, 2026-08-11)** by rewalking the
+five tables above. They are a snapshot, not a running total: every landing wave flips a handful of rows,
+so a shipped/planned split written down mid-milestone is stale within a day (the M2a lesson, restated).
+Between sweeps the authority is the per-row `status` column and the drift gate that proves it, never
+this block.
+
+| status | host ops (34) | ControlFrame (11) | session wrappers (7) | Query (27) | server-origin (3) | all 82 rows |
+|---|---|---|---|---|---|---|
+| shipped(M1) | 8 | 1 | 1 | 2 | 3 | 15 |
+| shipped(M2a) | 7 | 7 | 6 | 12 | — | 32 |
+| shipped(M2b) | 18 | 3 | — | 11 | — | 32 |
+| planned(M3) | 1 | — | — | — | — | 1 |
+| probe-gated | — | — | — | — | — | 0 |
+| N/A | — | — | — | 2 | — | 2 |
+
+**79 of the 82 rows read shipped.** The three that do not are the whole remainder: `stop`
+(`planned(M3)`, the one `fleet-only` row — gap 4), and the two `N/A` rows, `seedReadState` (internal
+plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
 `probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
+Origin scope splits **56 `both` / 21 `inProcess` / 1 `fleet-only` / 4 `N/A`** across the same 82 rows.
+
+**The live surface those rows cover: 51 registered methods and 26 notifications.** 51 is the size of
+`appserver/schema/index.ts`'s `methodSchemas` — the number `scripts/drift-check.mjs` prints on every run
+("every row status matches the live surface (N registered methods)") — and 26 is the notification list in
+"Shipped, per the code" above, each of whose names appears as a literal under `appserver/`. Both are
+recorded here as of the close-out sweep and are expected to age; the script is what is current.
+
+**The gate now enforces all three directions**, which is why a hand-carried total is safe to write down
+at a sweep and unsafe to trust between them: *presence* (every walked token has a row — the original
+D11 pass), *staleness* (a `shipped(...)` row's wire name must exist under `appserver/`, and a
+`planned(...)`/`probe-gated` name must not be registered — added `bfcbe7ee0e` after the M2a incident),
+and *bijection* (every registered method is named by some row — the M2b Task 6 "zero schema-less
+methods" pass, which is what surfaced the three server-origin rows). `node scripts/drift-check.mjs`
+exits 0 with all three empty.
+
+## Acceptance evidence (2026-08-11)
+
+- **Live control-plane acceptance (keyed), run 2: 14/14 assertions PASSED in 48s** — the spec's full
+  §Acceptance-2 sequence end to end: watcher events, a second client observing the first's write as
+  `thread/settings/changed {source:"client"}`, decision park and respond, usage/context numbers, rewind
+  anchors + `dryRun`, `mcpServer/status/list`, queue enqueue → `turn/queued` → drain, `turn/steer`,
+  `thread/compact/start` with an outcome, `thread/fork` sharing item ids with the parent,
+  `thread/clear` → `thread/rewound {cleared:true}`, and a clean close + shutdown leaving zero registry
+  entries. **Steer evidence:** `unmatchedResults` 0, the injection obeyed, and the result correlated to
+  the *prompt's* uuid — the open correlation question settled in the safe direction. Run 1's single
+  failure is the launch-time-only `bypassPermissions` finding recorded in the spec's Surprises.
+- **Console smoke (`tools/appserver-console.html`, browser-driven): PASS, zero runtime JS errors.**
+  Exercised live against `ccx serve`: initialize with the watcher stream, `thread/start` with a
+  15-field `threadView` (including `queueDepth`), subscribe plus a full turn item stream,
+  `thread/permissionMode/set` repainting from the notification, the rewind anchors table and its
+  refusal path (`-32602` with no anchor), `mcpServer/set`, `task/list`, `thread/directory/list` + `add`,
+  the queue panel in both freshness states with `cancelQueued`, and `thread/clear`. Not exercised, and
+  stated rather than implied: `server/status`, `thread/read`, `decision/list`,
+  `thread/settings/apply` (panels A–D predate the smoke's scope), the per-anchor dry-run button
+  (live-proven in the acceptance instead), and `task/changed` repaint (no background task arose;
+  router-tested in unit).
