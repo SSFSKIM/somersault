@@ -52,12 +52,28 @@ describe("gate outcome mapping", () => {
     const r1 = await gateWith({ kind: "plan_reject", feedback: "also plan a README" })("ExitPlanMode", {}, opts);
     expect(r1).toEqual({ behavior: "deny", message: "also plan a README", interrupt: undefined });
     const r2 = await gateWith({ kind: "plan_reject", feedback: "  " })("ExitPlanMode", {}, opts) as any;
-    expect(r2.message).toBe("User rejected the plan. Continue planning.");
+    expect(r2.message).toBe("User rejected the plan.");
+  });
+
+  // Wave 2 t2 (s2qa3-12). The deny `message` is read by the MODEL, so anything the gate writes there is a
+  // sentence the human never said, attributed to them. `Continue planning.` was exactly that: an imperative
+  // the model duly obeyed, so a plan rejected in silence turned into another round of planning instead of a
+  // stop. The fallback stays descriptive — it reports what happened and issues no instruction — and the whole
+  // imperative clause is pinned ABSENT so it cannot creep back under a reword.
+  it("puts no words in the user's mouth: the bare plan reject reports, it does not instruct", async () => {
+    for (const outcome of [{ kind: "plan_reject" as const }, { kind: "plan_reject" as const, feedback: "   " }, { kind: "deny" as const }]) {
+      const m = ((await gateWith(outcome)("ExitPlanMode", {}, opts)) as any).message as string;
+      expect(m).toBe("User rejected the plan.");
+      expect(m).not.toMatch(/continue planning/i);
+    }
+    // The human's OWN words are still forwarded whole — including ones that happen to be imperative.
+    const mine = ((await gateWith({ kind: "plan_reject", feedback: "Continue planning." })("ExitPlanMode", {}, opts)) as any).message;
+    expect(mine).toBe("Continue planning.");
   });
 
   it("bare deny gets kind-specific copy (spec: composed in the gate)", async () => {
     expect(((await gateWith({ kind: "deny" })("AskUserQuestion", {}, opts)) as any).message).toBe("No user is available to answer.");
-    expect(((await gateWith({ kind: "deny" })("ExitPlanMode", {}, opts)) as any).message).toBe("User rejected the plan. Continue planning.");
+    expect(((await gateWith({ kind: "deny" })("ExitPlanMode", {}, opts)) as any).message).toBe("User rejected the plan.");
     expect(((await gateWith({ kind: "deny" })("Bash", {}, opts)) as any).message).toBe("User denied Bash");
   });
 

@@ -14,11 +14,15 @@
 // an untouched field silently selects the row, which on the No end is a deny with no message. Upstream can
 // afford that because it pairs the field with a visible `tab / amend` hint; this harness shipped the
 // fall-through without the hint, and QA (qa3-04) read Tab as "open me a text box" and then lost the tool to
-// an Enter they never meant as an answer. Without the flag the empty Enter reaches `Select`'s `onCancel`,
-// and every consult body spends its cancel on `escapeFeedbackMode` first (`GenericPermission.tsx:74` and
-// its four twins) — so the row collapses, the dialog stays open, and NOTHING is decided. Note this is the
-// rows' divergence alone: `bashOptions.ts`'s editable-prefix row keeps the flag, where an empty prefix
-// genuinely means something (L505212-17).
+// an Enter they never meant as an answer. Without the flag the empty Enter decides NOTHING — the dialog
+// stays open and no message is sent. Note this is the rows' divergence alone: `bashOptions.ts`'s
+// editable-prefix row keeps the flag, where an empty prefix genuinely means something (L505212-17).
+//
+// WAVE 2 t2 (s2qa3-10) kept that rule and moved where the empty Enter LANDS. t3 let it fall through to
+// `Select`'s `onCancel`, which every consult body spends on `escapeFeedbackMode` first — so the field the
+// human had just opened folded shut under them, and the next sweep read Tab-then-Enter as "the amendment was
+// reverted, and then the tool was denied". The bodies now hand `Select` an `onEmptySubmit` (Select.tsx),
+// which holds the row open and raises the footer's nudge instead. Esc keeps its own two-step, unchanged.
 //
 // One divergence from `$Qf`'s shape, and it is our `Select`'s: upstream hangs a per-option `onChange` on
 // each input row, ours streams the text back through the single `Select` `onChange(value, inputText)`. The

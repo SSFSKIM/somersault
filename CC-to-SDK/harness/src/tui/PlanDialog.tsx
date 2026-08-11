@@ -295,8 +295,10 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   /** `xnl` (L500995) — the Select's `onCancel`, which upstream answers with a bare `{behavior:"deny"}`. TWO
    *  keys land here and both mean the same thing: Esc, and Enter on an EMPTY keep-planning row (`RLe` sends
    *  an empty submit to onCancel unless the option sets `allowEmptySubmitToCancel`, L397113-118, and this
-   *  option deliberately does not). The gate turns a feedback-less reject into "User rejected the plan.
-   *  Continue planning." */
+   *  option deliberately does not — nor does this body supply the `onEmptySubmit` the five consult dialogs
+   *  use, because here the empty Enter IS a decision and upstream's is the same one). The gate reports a
+   *  feedback-less reject as "User rejected the plan." and issues the model no instruction of its own
+   *  (gate.ts, wave 2 t2). */
   const cancel = () => onDecision({ kind: "plan_reject" });
 
   /** `tYf` L501051: adopt the editor's text only when it came back non-null AND actually changed

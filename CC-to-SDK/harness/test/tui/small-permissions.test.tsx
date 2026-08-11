@@ -273,8 +273,14 @@ describe("<GenericPermission> (`Gal` L506118-260)", () => {
   // Wave T t3, from QA repro qa3-04: Tab reads as "open me a text box", so the Enter that follows an EMPTY
   // box must not be an answer. It used to be — the row carried `allowEmptySubmitToCancel`, which carries the
   // empty submit through to `onChange` and denied the tool with no message and no visible cause. Without the
-  // flag the empty Enter is `Select`'s cancel, and this body already spends its cancel on `escapeFeedbackMode`.
-  it("an EMPTY Enter on the No feedback row decides NOTHING — it just closes the field (qa3-04)", async () => {
+  // flag the empty Enter reaches `Select`'s empty-submit branch, and NOTHING is decided.
+  //
+  // WAVE 2 t2 (s2qa3-10) amends where that empty Enter LANDS, not what it decides. t3 spent it on `onCancel`,
+  // which every body spends on `escapeFeedbackMode` — so the field the human had just opened folded shut under
+  // them, and the next sweep read the pair of keypresses as "the amendment was reverted and then the tool was
+  // denied". The rule survives (an empty Enter still answers nothing); the verb changes: `onEmptySubmit` keeps
+  // the row open and says why the key did nothing.
+  it("an EMPTY Enter on the No feedback row decides nothing AND keeps the field open, nudging (s2qa3-10)", async () => {
     const v = await mountGeneric(mcpReq());
     v.stdin.write("\x1b[B"); await tick();
     v.stdin.write("\x1b[B"); await tick();                        // focus No
@@ -283,12 +289,31 @@ describe("<GenericPermission> (`Gal` L506118-260)", () => {
     v.stdin.write("\r"); await tick();
     expect(v.got).toEqual([]);                                    // NOT the bare deny it used to be
     expect(v.frame()).toContain("Do you want to proceed?");       // and the dialog is still up
-    expect(v.frame()).toContain("3. No");                         // the row went back to a plain one
-    // The field still works — the no-op is about EMPTY, not about the row.
-    v.stdin.write("\t"); await tick();
+    expect(v.frame()).toContain("and tell Claude what to do differently");   // …with the field STILL open
+    expect(v.frame()).toContain("type a message, or esc to cancel");
+    expect(v.frame()).toContain("enter send · esc cancel");
+    // The field still works — the no-op is about EMPTY, not about the row — and typing retires the nudge.
     await type(v.stdin, "use the other tool");
+    expect(v.frame()).not.toContain("type a message, or esc to cancel");
     v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
     expect(v.got[0]).toEqual({ kind: "deny", feedback: "use the other tool" });
+  });
+
+  // The escape hatch the nudge names has to be real: Esc from the nudged row leaves input mode (t3's ordering)
+  // and a SECOND Esc denies. Two keys, two jobs — and the nudge does not survive the collapse.
+  it("Esc from a nudged feedback row backs out of the field first, and only then denies", async () => {
+    const v = await mountGeneric(mcpReq());
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\x1b[B"); await tick();
+    v.stdin.write("\t"); await tick();
+    v.stdin.write("\r"); await tick();
+    expect(v.frame()).toContain("type a message, or esc to cancel");
+    v.stdin.write("\x1b"); await tick();
+    expect(v.got).toEqual([]);
+    expect(v.frame()).not.toContain("type a message, or esc to cancel");
+    expect(v.frame()).not.toContain("and tell Claude what to do differently");   // back to a plain row
+    v.stdin.write("\x1b"); await waitFor(() => v.got.length === 1);
+    expect(v.got[0]).toEqual({ kind: "deny" });
   });
 
   // `Select.tsx`'s digit path reads the same flag, so t3's defect had a second door: a digit aimed at an empty
@@ -359,4 +384,36 @@ describe("PermissionDialog — the registry is complete", () => {
       expect(f).not.toContain("this session");                    // the old `allow_always` row's wording
     }
   });
+});
+
+// ── Wave 2 t2 (s2qa3-10): the empty-submit nudge is wired in EVERY consult body ────────────────────────
+// The wiring is five identical `onEmptySubmit`/`nudge` pairs, which is exactly the shape wave T's footer bug
+// had: `inputMode={inputFocused}` could be dropped from all five at once and the whole suite stayed green,
+// because each body's own suite only pinned the state it opened in. This sweep is the guard — it drives the
+// key through each body rather than trusting that the one worked example generalised. Bash and File have
+// their own copies in their own suites (their option lists are too specific to reach from here).
+describe("the empty-submit nudge reaches every body that has a feedback row", () => {
+  const bodies: [string, () => Promise<{ stdin: { write: (s: string) => void }; got: PermissionDecision[]; frame: () => string }>][] = [
+    ["Skill", () => mountSkill(skillReq("brainstorming"))],
+    ["Monitor", () => mountMonitor(monitorReq({ command: "tail -f log" }))],
+    ["Generic", () => mountGeneric(mcpReq())],
+  ];
+
+  for (const [name, open] of bodies) {
+    it(`${name}: Tab then an empty Enter holds the field open and nudges, and never decides`, async () => {
+      const v = await open();
+      v.stdin.write("\x1b[F"); await tick();                      // End → the No row is always last (`$Qf`)
+      v.stdin.write("\t"); await tick();
+      expect(v.frame()).toContain("and tell Claude what to do differently");
+      v.stdin.write("\r"); await tick();
+      expect(v.got).toEqual([]);
+      expect(v.frame()).toContain("and tell Claude what to do differently");
+      expect(v.frame()).toContain("type a message, or esc to cancel");
+      expect(v.frame()).toContain("enter send · esc cancel");
+      await type(v.stdin, "no thanks");
+      expect(v.frame()).not.toContain("type a message, or esc to cancel");
+      v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
+      expect(v.got[0]).toEqual({ kind: "deny", feedback: "no thanks" });
+    });
+  }
 });

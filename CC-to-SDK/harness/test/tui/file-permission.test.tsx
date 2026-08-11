@@ -302,6 +302,25 @@ describe("<FilePermission> — the key contract", () => {
     v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
     expect(v.got[0]).toEqual({ kind: "deny", feedback: "edit the other file" });
   });
+
+  // Wave 2 t2 (s2qa3-10). The other half of the same field: an Enter with nothing in it. It still answers
+  // nothing (wave T t3's rule), but it no longer spends `Select`'s `onCancel` — which this body spends on
+  // leaving input mode, so the field used to fold shut and read as a reverted amendment. The row now stays
+  // and the footer says why. Pinned here because this body's wiring is its own copy of the same four props.
+  it("an EMPTY Enter on the No field keeps it open and nudges instead of collapsing it", async () => {
+    const v = await mount(edit);
+    v.stdin.write("\x1b[F"); await tick();                       // End → the No row is always last (`$Qf`)
+    v.stdin.write("\t"); await tick();
+    v.stdin.write("\r"); await tick();
+    expect(v.got).toEqual([]);
+    expect(plain(v.frame())).toContain("and tell Claude what to do differently");
+    expect(plain(v.frame())).toContain("type a message, or esc to cancel");
+    expect(plain(v.frame())).toContain("enter send \u00b7 esc cancel");
+    await type(v.stdin, "not this file");
+    expect(plain(v.frame())).not.toContain("type a message, or esc to cancel");
+    v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
+    expect(v.got[0]).toEqual({ kind: "deny", feedback: "not this file" });
+  });
 });
 
 describe("<FilePermission> — the session grant (probe 78, `vem` L505845)", () => {

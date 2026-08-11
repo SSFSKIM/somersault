@@ -369,6 +369,30 @@ describe("<Select> input rows (RLe, L396465-396652)", () => {
     expect(cancelled).toBe(1);
   });
 
+  // Wave 2 t2 (s2qa3-10). The empty submit's DESTINATION becomes a caller's choice. `onCancel` is still the
+  // default — every non-dialog Select keeps upstream's behaviour untouched — but a caller that has its own
+  // meaning for Esc (the five consult bodies spend theirs on leaving input mode) can no longer have Enter
+  // silently borrow it. The row is handed over so a caller with two feedback ends knows which one nudged.
+  it("routes an EMPTY submit to onEmptySubmit when supplied, with the row, and never to onCancel", async () => {
+    let cancelled = 0;
+    const empties: string[] = [];
+    const got: [string, string | undefined][] = [];
+    const r = await mount(<Select options={withInput()} onChange={(v, t) => got.push([v, t])} onCancel={() => { cancelled++; }} onEmptySubmit={(o) => empties.push(o.value)} rows={40} columns={100} />);
+    r.stdin.write("j");
+    await waitFor(() => pointerRow(frame(r.lastFrame)) === 1);
+    r.stdin.write("\r");
+    await waitFor(() => empties.length === 1);
+    expect(empties).toEqual(["note"]);
+    expect(cancelled).toBe(0);                                      // Enter stopped borrowing Esc's channel
+    expect(got).toEqual([]);
+    // …and it is EMPTY that routes there: text still submits, and Esc still cancels.
+    r.stdin.write("hi"); await tick();
+    r.stdin.write("\r");
+    await waitFor(() => got.length === 1);
+    expect(got[0]).toEqual(["note", "hi"]);
+    expect(empties).toEqual(["note"]);
+  });
+
   it("a digit landing on an input row focuses it when empty, and submits it when it already has text (L396772-396782)", async () => {
     const got: [string, string | undefined][] = [];
     const r = await mount(<Select options={withInput()} onChange={(v, t) => got.push([v, t])} onCancel={noop} rows={40} columns={100} />);

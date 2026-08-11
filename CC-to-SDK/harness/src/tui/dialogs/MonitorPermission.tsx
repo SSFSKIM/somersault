@@ -66,6 +66,9 @@ export function MonitorPermission({ req, onDecision }: {
   // Mirrored off `Select`'s `onInputChange` (t5), and a REF for the same-chunk reason GenericPermission spells
   // out: `x` then `up` in one chunk must not read the field as still empty.
   const feedbackText = useRef("");
+  // Wave 2 t2 (s2qa3-10): an empty Enter on the open feedback row answers nothing (t3's rule, unchanged) but
+  // now SAYS so instead of folding the row shut. See GenericPermission.tsx for the full note.
+  const [nudge, setNudge] = useState(false);
   const options = monitorOptions({ suggestions, feedback });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -92,12 +95,13 @@ export function MonitorPermission({ req, onDecision }: {
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
           // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
           onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
-          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
+          onInputChange={(value, text) => { setNudge(false); if (value === "no") feedbackText.current = text; }}
+          onEmptySubmit={() => setNudge(true)}
           onInputModeToggle={(value) => { if (isAmendableRow(value)) setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} />
+      <ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} nudge={nudge && inputFocused && isAmendableRow(focus)} />
     </DialogFrame>
   );
 }

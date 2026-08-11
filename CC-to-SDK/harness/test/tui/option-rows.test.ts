@@ -31,9 +31,10 @@ describe("yesRow / noRow", () => {
 
   // Wave T t3 (qa3-04). The flag's name is inverted from its effect: `allowEmptySubmitToCancel: true` means
   // "carry the empty submit to `onChange`", and carrying it is what turned Tab-then-Enter into a silent deny.
-  // Dropping it routes the empty Enter to `Select`'s `onCancel`, which every consult body already spends on
-  // `escapeFeedbackMode` — the row collapses, no decision is sent. Pinned as an ABSENCE, not a `false`: the
-  // property must not be on the object at all, since `Select` only tests it for truthiness.
+  // Dropping it keeps the empty Enter out of `onChange` entirely, so no decision is sent — wave 2 t2 then
+  // routed that empty Enter to the bodies' `onEmptySubmit` (it used to borrow `onCancel`), which changes what
+  // the human SEES and not what the rows carry. Pinned as an ABSENCE, not a `false`: the property must not be
+  // on the object at all, since `Select` only tests it for truthiness.
   it("carry NO empty-submit flag, so an empty Enter never reaches `onChange` (W-T6/W-T17)", () => {
     expect(yesRow(true)).not.toHaveProperty("allowEmptySubmitToCancel");
     expect(noRow(true)).not.toHaveProperty("allowEmptySubmitToCancel");

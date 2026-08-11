@@ -52,6 +52,12 @@ export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
   // one stdin chunk parses into several events with no render between them, so a same-chunk `x` + `up` read
   // off a render closure would still see the empty field and collapse a row that just got its first letter.
   const feedbackText = useRef("");
+  // Wave 2 t2 (s2qa3-10): an empty Enter on the open feedback row answers nothing (t3's rule, unchanged) but
+  // now SAYS so instead of folding the row shut. Cleared the moment the field is typed into, and shown only
+  // while the AMENDABLE row is still the focused input — so a collapse or a focus move retires it by
+  // construction, and the nudge can never appear over a different text row (BashPermission's editable-prefix
+  // row is one, and there an empty Enter genuinely IS an answer: it carries the flag this row declines).
+  const [nudge, setNudge] = useState(false);
   const options = genericOptions({ userFacingName: req.toolName, cwd, feedback });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -79,12 +85,13 @@ export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
           // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
           onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
-          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
+          onInputChange={(value, text) => { setNudge(false); if (value === "no") feedbackText.current = text; }}
+          onEmptySubmit={() => setNudge(true)}
           onInputModeToggle={(value) => { if (isAmendableRow(value)) setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} />
+      <ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} nudge={nudge && inputFocused && isAmendableRow(focus)} />
     </DialogFrame>
   );
 }

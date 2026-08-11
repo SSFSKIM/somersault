@@ -80,6 +80,15 @@ export interface SelectProps {
   defaultValue?: string;
   defaultFocusValue?: string;
   onInputModeToggle?: (value: string) => void;
+  /** Enter on an input row whose text is EMPTY, when the row has no `allowEmptySubmitToCancel` (wave 2 t2,
+   *  s2qa3-10). Upstream has no such hook — its feedback rows carry the flag, so an empty Enter is an answer
+   *  there and never reaches this branch at all. ccx declines that answer (optionRows.ts records why), which
+   *  left the empty Enter falling through to `onCancel` — and a caller whose Esc means something of its own
+   *  then had Enter silently performing it. The five consult bodies spend Esc on leaving input mode, so QA's
+   *  Tab-then-Enter folded the field shut under them and read as a reverted amendment. Absent, the fall-through
+   *  to `onCancel` stands, which is exactly upstream's behaviour for every list that never asked. The ROW is
+   *  handed over, not just its value: a caller with two feedback ends has to know which one submitted empty. */
+  onEmptySubmit?: (row: SelectOption) => void;
   /** An input row's text, reported on every mutation of it (wave T t5). Upstream needs no such prop — its
    *  rows carry a per-option `onChange` (L396607) and the host owns the text — but ours keeps it privately in
    *  `inputs` and publishes it only on submit, which leaves a caller unable to answer "is this field empty".
@@ -141,7 +150,7 @@ export function InputText({ text, cursor, placeholder }: { text: string; cursor:
 
 export function Select({
   options, onChange, onCancel, hideIndexes = false, visibleOptionCount = VISIBLE_OPTION_COUNT,
-  inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle, onInputChange, onFocus, onUnhandledKey,
+  inlineDescriptions = false, highlightText, defaultValue, defaultFocusValue, onInputModeToggle, onEmptySubmit, onInputChange, onFocus, onUnhandledKey,
   onViewChange, rowHeight,
   rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80, focusColor = "suggestion",
   context = "Select",
@@ -214,10 +223,14 @@ export function Select({
     if (!row || row.disabled === true) return;
     setValue(row.value); onChange(row.value);
   };
-  /** L397113-397118 / L397229-397232: empty submits cancel unless the option opts out. */
+  /** L397113-397118 / L397229-397232: empty submits cancel unless the option opts out — or unless the caller
+   *  claimed the empty submit for itself (`onEmptySubmit`, wave 2 t2). The digit path below deliberately does
+   *  NOT route there: L396772-782 already gives an empty digit-hit its own non-answer (focus the row). */
   const submitInput = (o: SelectOption) => {
     const text = textOf(o);
-    if (text.trim() || o.allowEmptySubmitToCancel) onChange(o.value, text); else onCancel();
+    if (text.trim() || o.allowEmptySubmitToCancel) onChange(o.value, text);
+    else if (onEmptySubmit) onEmptySubmit(o);
+    else onCancel();
   };
   /** L396768-396785: a digit on a normal row picks it; on an input row it submits when the row already holds
    *  text (or may submit empty) and otherwise just moves the cursor into it. */

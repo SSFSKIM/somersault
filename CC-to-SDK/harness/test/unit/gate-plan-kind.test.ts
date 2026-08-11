@@ -46,7 +46,7 @@ describe("the gate's plan routing end to end", () => {
 
   it("SHOWS the degradation a rename would cause: the deny copy stops being the plan family's", async () => {
     const plan = await createPermissionGate({ request: async () => ({ kind: "deny" }) })("ExitPlanMode", {}, opts) as { message: string };
-    expect(plan.message).toBe("User rejected the plan. Continue planning.");
+    expect(plan.message).toBe("User rejected the plan.");
     const renamed = await createPermissionGate({ request: async () => ({ kind: "deny" }) })("ExitPlanModeV3", {}, opts) as { message: string };
     expect(renamed.message).toBe("User denied ExitPlanModeV3");                          // the generic copy
   });

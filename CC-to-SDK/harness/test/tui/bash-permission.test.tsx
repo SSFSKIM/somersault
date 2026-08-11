@@ -204,7 +204,7 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     expect(footer()).toEqual(["esc cancel · tab amend"]);         // …the one row that answers Tab
     v.stdin.write("\t"); await tick();                            // …and turn it into a field
     expect(plain(v.frame())).toContain("and tell Claude what to do differently");
-    expect(footer()).toEqual(["esc cancel"]);
+    expect(footer()).toEqual(["enter send · esc cancel"]);        // wave 2 t2: the field states its own contract
     // and the hint comes back with the row: Esc leaves input mode, the plain row returns, so does the hint.
     v.stdin.write("\x1b"); await tick();
     expect(footer()).toEqual(["esc cancel · tab amend"]);
@@ -212,6 +212,27 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     v.stdin.write("\x1b[A"); await tick();
     expect(footer()).toEqual(["esc cancel"]);
     expect(v.got).toEqual([]);
+  });
+
+  // Wave 2 t2 (s2qa3-10). The empty Enter used to spend `Select`'s `onCancel`, which this body spends on
+  // leaving input mode — so the field folded shut and QA read the pair of keys as a reverted amendment
+  // followed by a deny. `onEmptySubmit` gives Enter its own channel: the row stays, the footer explains.
+  it("an empty Enter on the No field holds it open and nudges, and NEVER touches the prefix row's own Enter", async () => {
+    const v = await mount(req("npm run build", { suggestions: [bashRule("npm run *")] }));
+    v.stdin.write("\x1b[F"); await tick();                        // End → the No row is always last (`$Qf`)
+    v.stdin.write("\t"); await tick();
+    v.stdin.write("\r"); await tick();
+    expect(v.got).toEqual([]);
+    expect(plain(v.frame())).toContain("and tell Claude what to do differently");
+    expect(plain(v.frame())).toContain("type a message, or esc to cancel");
+    expect(plain(v.frame())).toContain("enter send \u00b7 esc cancel");
+    // The nudge belongs to the FEEDBACK row alone. The editable-prefix row is a text row too, but it keeps
+    // `allowEmptySubmitToCancel`, so an empty Enter there IS an answer and advertising otherwise would lie.
+    v.stdin.write("\x1b"); await tick();                          // Esc: leave input mode, cursor stays on No…
+    v.stdin.write("\x1b[A"); await tick();                        // …then UP onto the prefix row, a text row
+    expect(plain(v.frame())).toContain("2. Yes, and don\u2019t ask again for: npm run *");
+    expect(plain(v.frame())).toContain("enter send \u00b7 esc cancel");   // it IS an input row…
+    expect(plain(v.frame())).not.toContain("type a message, or esc to cancel");   // …and it never nudges
   });
 
   it("Tab does nothing on the Yes row — the allow side has no feedback channel (T3)", async () => {

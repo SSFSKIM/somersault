@@ -77,6 +77,9 @@ export function BashPermission({ req, onDecision, cwd = process.cwd(), explainCo
   // one stdin chunk parses into several events with no render between them, so a same-chunk `x` + `up` read
   // off a render closure would still see the empty field and collapse a row that just got its first letter.
   const feedbackText = useRef("");
+  // Wave 2 t2 (s2qa3-10): an empty Enter on the open feedback row answers nothing (t3's rule, unchanged) but
+  // now SAYS so instead of folding the row shut. See GenericPermission.tsx for the full note.
+  const [nudge, setNudge] = useState(false);
   const options = bashOptions({ command, suggestions, feedback, cwd });
   const [focus, setFocus] = useState<string>(options[0]!.value);
   const inputFocused = options.find((o) => o.value === focus)?.type === "input";
@@ -128,12 +131,13 @@ export function BashPermission({ req, onDecision, cwd = process.cwd(), explainCo
           onCancel={() => { const next = escapeFeedbackMode(feedback); if (next) setFeedback(next); else onDecision({ kind: "deny" }); }}
           // Leaving an EMPTY feedback row puts the plain row back (L505162-169); one holding text stays open.
           onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
-          onInputChange={(value, text) => { if (value === "no") feedbackText.current = text; }}
+          onInputChange={(value, text) => { setNudge(false); if (value === "no") feedbackText.current = text; }}
+          onEmptySubmit={() => setNudge(true)}
           onInputModeToggle={(value) => { if (isAmendableRow(value)) setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
-      <ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} explain={explainCommand ? (explainVisible ? "hide" : "explain") : undefined} />
+      <ConsultFooter amendable={isAmendableRow(focus)} inputMode={inputFocused} nudge={nudge && inputFocused && isAmendableRow(focus)} explain={explainCommand ? (explainVisible ? "hide" : "explain") : undefined} />
     </DialogFrame>
   );
 }

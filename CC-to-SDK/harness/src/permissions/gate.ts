@@ -26,11 +26,20 @@ export function routeDecisionKind(toolName: string): DecisionKind {
   return toolName === "AskUserQuestion" ? "question" : toolName === "ExitPlanMode" ? "plan" : "permission";
 }
 
+/** The feedback-less plan rejection, in one place because both arms below reach it. */
+const PLAN_REJECTED = "User rejected the plan.";
+
 /** Kind-specific copy for a bare {kind:"deny"} (system teardown, zero-connection rule, broker failure).
- *  Composed HERE because the gate owns the deny message and knows the routing (spec, error-handling §). */
+ *  Composed HERE because the gate owns the deny message and knows the routing (spec, error-handling §).
+ *
+ *  WAVE 2 t2 (s2qa3-12). Whatever this returns is read by the MODEL as the human's own words, so the copy
+ *  may REPORT but must never INSTRUCT. The plan arm used to end `Continue planning.` — an invented imperative
+ *  the model duly obeyed, so a plan rejected in silence produced another round of planning rather than a stop,
+ *  and the human was quoted issuing an order they never gave. `message` is required by sdk.d.ts's deny arm
+ *  (`PermissionResult`, no optional spelling), so the honest floor is a bare statement of what happened. */
 function denyMessage(kind: DecisionKind, toolName: string): string {
   return kind === "question" ? "No user is available to answer."
-    : kind === "plan" ? "User rejected the plan. Continue planning."
+    : kind === "plan" ? PLAN_REJECTED
     : `User denied ${toolName}`;
 }
 
@@ -65,7 +74,9 @@ export function createPermissionGate(broker: PermissionBroker): CanUseTool {
     // zero-connection rule, a broker failure) falls back to the kind-specific copy.
     if (d.kind === "deny") return { behavior: "deny", message: d.feedback?.trim() || denyMessage(kind, toolName), interrupt: options.signal?.aborted || undefined };
     if (d.kind === "question_answer") return { behavior: "allow", updatedInput: { ...input, answers: d.answers, ...(d.response ? { response: d.response } : {}) } };
-    if (d.kind === "plan_reject") return { behavior: "deny", message: d.feedback?.trim() || "User rejected the plan. Continue planning.", interrupt: options.signal?.aborted || undefined };
+    // Same rule as `denyMessage`'s plan arm and the same sentence: the human's typed feedback rides verbatim,
+    // and its ABSENCE is reported, never filled in with an instruction they did not give (wave 2 t2, s2qa3-12).
+    if (d.kind === "plan_reject") return { behavior: "deny", message: d.feedback?.trim() || PLAN_REJECTED, interrupt: options.signal?.aborted || undefined };
     // `plan` is the DG34 edit: the human opened the plan in $EDITOR from the dialog and the text they saved
     // is what the approve consumes. Upstream REPLACES the whole input with `{plan}` there and sends `{}` when
     // untouched (`lYf` L500722); we merge instead, so a future ExitPlanMode argument we do not know about
