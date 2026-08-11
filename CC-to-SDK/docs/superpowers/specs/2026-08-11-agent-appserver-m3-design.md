@@ -1,6 +1,7 @@
 # Agent app server M3 — fleet adoption, workspace, shell (design)
 
-**Date:** 2026-08-11 · **Status:** approved (design presented and confirmed; controlled track)
+**Date:** 2026-08-11 · **Status:** approved (design presented and confirmed; controlled track;
+independent review folded in — see Revision Notes)
 **Parent:** `2026-07-30-agent-appserver-m2-design.md` (M1+M2 complete: 51 methods / 26 notifications,
 all-inProcess) · **Scorecard:** `docs/parity/appserver.md`
 
@@ -18,38 +19,53 @@ future spec work.
 
 ## Research ground (what the design stands on)
 
-Two mapping reports (2026-08-11, this repo) plus the Codex v2 reference. Load-bearing facts:
+Two mapping reports (2026-08-11, this repo), the Codex v2 reference, and an independent spec review
+that verified every load-bearing claim against code. Load-bearing facts:
 
 1. **Two unrelated "daemons" exist; the fleet is NOT `src/daemon/`.** The ccx fleet is one process
    per session (`src/cli/spawn.ts:42-71`), each with its own UDS (`~/.claude/ccx/run/<pid>.sock`,
-   `src/fleet/paths.ts:31-33`) speaking the 44-op host wire (`src/host/ops.ts:35-86`), roster rows at
+   `src/fleet/paths.ts:31-33`) speaking the 34-op host wire (`src/host/ops.ts:35-86`), roster rows at
    `~/.claude/ccx/roster/<short>.json`, live state derived at read time (`src/fleet/index.ts:24-39` —
    "live is asked, terminal is recorded"). `src/daemon/` is the retiring `cc-harness` supervisor and
    M3 does not touch it.
 2. **The host wire is rich.** Beyond lifecycle it carries ops for rewind (anchors/dryrun/rewind),
    tasks (tasks/background/stop_task), MCP (status/reconnect/toggle), compact, usage, context_usage,
-   capabilities, setters (set_model/set_permission_mode/set_thinking), and the full settings/flag
-   nonet (get_settings, list_dirs, add_dir, remove_dir, set_output_style, set_effort, add_rule,
-   remove_rule — never busy-gated). The **host owns the flag accumulator** and replays it across its
-   own swaps (`host/host.ts:432-437`) — so a fleet bridge forwards and never keeps a second copy.
+   capabilities, setters (set_model/set_permission_mode/set_thinking), `clear`, and the eight
+   flag-layer ops (get_settings, list_dirs, add_dir, remove_dir, set_output_style, set_effort,
+   add_rule, remove_rule — never busy-gated; the scorecard's gap-6 "nonet" is these eight *methods
+   plus `thread/clear`*). The **host owns the flag accumulator** and replays it across its own swaps
+   (`host/host.ts:432-437`) — so a fleet bridge forwards and never keeps a second copy.
 3. **An engine-shaped façade over the host socket already exists** — `RemoteChatSession`
    (`src/client/remote.ts:50-231`) + `chatAdapter` (`src/client/chatAdapter.ts`), with the
-   turn-seq/ends-before-waiter ledger pattern the fleet engine needs. `EngineSession`
-   (`appserver/registry.ts:20-107`) is structural with 4 required members, designed for a second
-   implementation. `ThreadOrigin` is a single-member union (`registry.ts:10`); `-33006`'s emit
-   sites are already commented in place (`settings.ts:134`, `mcp.ts:104`, `mcp.ts:127`).
+   turn-seq/ends-before-waiter ledger pattern the fleet engine needs — and `chatAdapter.submit`
+   **already captures the result-type SDK frame from `{kind:"message"}` frames in shipped `ccx
+   attach` use** (`chatAdapter.ts:107`), so result delivery over the wire is production-proven, not
+   an open premise. `EngineSession` (`appserver/registry.ts:20-107`) is structural with 4 required
+   members, designed for a second implementation. `ThreadOrigin` is a single-member union
+   (`registry.ts:10`); `-33006`'s emit sites are already commented in place (`settings.ts:134`,
+   `mcp.ts:104`, `mcp.ts:127`).
 4. **Follow is replay-first with a fixed order** (`host/host.ts:513-546`): turn-start (if
    in-flight) → buffered messages (`replay: true`, `stream_event` partials excluded) → parked
-   decisions → task snapshot → state. Attach's transcript comes from disk (`src/cli/attach.ts:19-35`);
-   probe 62 proved disk and socket do not overlap (no uuid-dedup layer needed).
-5. **Codex v2 reference shapes** (`app-server-protocol/src/protocol/`): `fs/readFile {path}` →
+   decisions → task snapshot → state. A truncated-buffer replay emits a **seq-less**
+   `{kind:"turn", phase:"start", truncated:true}` marker (`host.ts:524`, `wire.ts:39`). Attach's
+   transcript comes from disk (`src/cli/attach.ts:19-35`); probe 62 proved disk and socket do not
+   overlap (no uuid-dedup layer needed).
+5. **Host wire facts the bridge must respect** (review-verified): only `rewind()` emits the
+   `rewound` event today — `resumeSession`/`clearSession` swap silently (`host.ts:392-427`, `:705`);
+   the `prompt` op carries no uuid (`ops.ts:42`); busy refusal is `{ok:false, error:"busy"}`
+   (`host/server.ts:167`); `answer()` reports a lost race as `{ok:true, alreadyAnsweredBy}` — not a
+   refusal (`host.ts:754-774`); `HostStatus` carries only state/status/waitingFor/sessionId/
+   permissionMode (`ops.ts:4`); host `capabilities` returns 3 of the 4 engine catalogs
+   (`host.ts:54`); the `turn start` event is written *before* the prompt reply that carries the seq
+   (`host.ts:290-293` vs `server.ts:166-172`).
+6. **Codex v2 reference shapes** (`app-server-protocol/src/protocol/`): `fs/readFile {path}` →
    `{dataBase64}` — server-side, sandbox-None, whole file, absolute path; `fuzzyFileSearch
    {query, roots, cancellationToken?}` → ≤50 scored matches, empty query → `[]`, fs failure → empty
    (never an RPC error); `thread/shellCommand {threadId, command}` — deliberately **unsandboxed**
    shell string whose output streams into the turn; resume-of-a-running-thread = atomic
    rejoin-and-replay; interrupts are per-turn from any subscribed connection; only one process holds
    a thread for writing (`-32600` for the second — their analog of our `-33006` split).
-6. **SDK 0.3.227 delta is five declared properties, zero export changes.** `resumeDropsTurn` is a
+7. **SDK 0.3.227 delta is five declared properties, zero export changes.** `resumeDropsTurn` is a
    truncating-resume validator (fork-time check that discarded entries all belong to the named
    turn) — a **rewind** hardening, not an attach primitive. `crossSessionInbound`, `dialogExpiry`,
    `awsPairs`, `forceLoginGatewayUrl`: CLI settings/auth knobs, recorded, no action.
@@ -57,9 +73,10 @@ Two mapping reports (2026-08-11, this repo) plus the Codex v2 reference. Load-be
 ## Scope
 
 **In:** fleet adoption (`thread/attach`, `thread/stop`, `fleet/list`, origin widening, the full
-bridge, `-33006` activation), workspace (`fs/read`, `fs/search`), `thread/shellCommand`,
-`thread/reopen` (gap 10), SDK 0.3.227 bump (+ `resumeDropsTurn` adoption in the rewind seam),
-schema/console/scorecard/drift-gate follow-through, keyed live acceptance.
+bridge, `-33006` activation, four additive host-wire revisions — §1a), workspace (`fs/read`,
+`fs/search`), `thread/shellCommand`, `thread/reopen` (gap 10), SDK 0.3.227 bump (+
+`resumeDropsTurn` adoption in the rewind seam), schema/console/scorecard/drift-gate follow-through,
+keyed live acceptance.
 
 **Out (recorded, future):** Codex's sandboxed `command/exec` + `process/*` families (PTY streaming,
 stdin/resize/terminate follow-ups); `fs` write/watch families; content (grep) search; a backpressure
@@ -70,78 +87,157 @@ reverse-request domains; any change to `src/daemon/`.
 
 ### §1 Fleet adoption
 
-**`FleetEngineSession`** (new module, `appserver/fleetEngine.ts`) implements `EngineSession` over
-the host socket:
+#### §1a Parent (host-wire) revisions carried by M3
+
+The independent review found four places where bridging *around* the wire would encode a lie the
+wire could cheaply stop telling. The host is in-repo, so M3 carries four **additive** host-side
+revisions (each with its own host-side unit coverage; all optional-field or new-emission — no
+existing client breaks):
+
+- **(a) Every engine swap announces.** `SessionHost.swapEngine` emits the existing `rewound` event
+  (with `cleared?:true` for clear, sessionId when known) so foreign `/resume` and `/clear` reach
+  followers — today only `rewind()` announces, and a foreign swap would replace the conversation
+  under the app server with no epoch bump.
+- **(b) The `prompt` op gains an optional `uuid`**, plumbed through to `Session.submit`'s existing
+  `{uuid}` opt — preserving the user-item id stitch (`registry.ts:20-28`) on fleet threads, which is
+  impossible with an unstamped prompt.
+- **(c) `HostStatus` gains optional `model` and `thinkingTokens`, and `set_model`/`set_thinking`
+  emit a `state` event** (today they emit nothing — a foreign client's model change could never
+  reach a mirror).
+- **(d) The host `capabilities` op returns the `agents` catalog** (fourth of the engine's four —
+  today it returns three, and fleet `thread/capabilities/read` would silently lose subagents).
+
+#### §1b `FleetEngineSession`
+
+New module (`appserver/fleetEngine.ts`) implementing `EngineSession` over the host socket:
 
 | `EngineSession` member | backing |
 |---|---|
-| `submit(prompt, onMessage, {uuid})` | `prompt` op → `{accepted, seq}`; refuse busy on `accepted:false`; settle on the seq-matched `turn end` event (ends-before-waiter ledger, `chatAdapter.ts` pattern); `onMessage` fed from `{kind:"message"}` frames in the seq window; `result` captured from the result-type SDK frame (probe P106) |
+| `submit(prompt, onMessage, {uuid})` | `prompt` op (now uuid-stamped, §1a-b) → success reply `{ok, accepted, seq}` (`host/server.ts:171`) or busy refusal `{ok:false, error:"busy"}` → mapped `-33001`; settle on the seq-matched `turn end` event (ends-before-waiter ledger, `chatAdapter.ts` pattern); `onMessage` fed from `{kind:"message"}` frames in the seq window; `result` captured from the result-type SDK frame (production-proven, `chatAdapter.ts:107`; probe leg confirms) |
 | `interrupt()` | `interrupt` op |
 | `dispose()` | `detach` — the host lives on (close ≠ stop) |
 | `onFrame(cb)` | `{kind:"message"}` and `{kind:"task"}` frames → the existing router |
 | `isEnded()` | socket-close latch |
 | `sessionId` | from `state` / roster row |
-| optional members | present exactly where a host op exists: `rewind` trio, `stopTask`/`backgroundAll`/`listBackgroundTasks`, `mcpServerStatus`/`reconnectMcpServer`/`toggleMcpServer`, `compact`, `usage`, `getContextUsage`, `capabilities`, `setModel`/`setPermissionMode`/`setMaxThinkingTokens`, `getSettings`, `applyFlagSettings` (forwarded per-op — see below); **absent**: `steer`, `setMcpServers`, `setMcpPermissionModeOverride`, `reloadPlugins`, `reloadSkills`, `reinitialize` |
+| optional members **present** | `stopTask`/`backgroundAll`/`listBackgroundTasks`, `mcpServerStatus`/`reconnectMcpServer`/`toggleMcpServer`, `compact`, `usage`, `getContextUsage`, `capabilities`, `setModel`/`setPermissionMode`/`setMaxThinkingTokens`, `getSettings` |
+| optional members **absent** | `steer`, `setMcpServers`, `setMcpPermissionModeOverride`, `reloadPlugins`, `reloadSkills`, `reinitialize`, `applyFlagSettings`, `rewind` — absence is *not* how fleet refusal happens (refusal precedence below); `rewind`'s absence means the **handler's fleet branch** forwards the host op directly (§1d) |
+
+**Fleet turn identity is derived, not minted.** All fleet turn ids derive deterministically from the
+host seq (e.g. `t<seq>@<epoch>`); `mintTurnId` is never called for fleet threads. This closes the
+own-vs-foreign race (the `turn start` event beats the prompt reply carrying the seq — a
+mint-on-foreign-start bridge would misclassify its own turn) and makes foreign turns first-class:
+any seq-bearing `turn start` broadcasts `turn/started`; the turn view carries no initiator claim.
+**Seq-less turn frames (truncated-buffer replay markers) are never busy-tracking inputs.**
 
 Host-**synthesized** frames (`state`, `decision`, `decision_settled`, `rewound`, `turn`,
 `tasks_changed`) are control signals, not SDK messages: a fleet-specific layer beside the router
 consumes them —
 
-- `turn` (phase start/end, seq) → busy tracking + `turn/started`/`turn/completed` broadcast. Turns
-  originated by *other* clients (or the session's own REPL user) mint a turnId keyed by seq, so
-  foreign turns are first-class on our wire; the turn view carries no initiator claim.
+- `turn` (phase start/end, seq) → busy tracking + `turn/started`/`turn/completed` broadcast (per
+  the derivation rule above).
 - `decision` → parks on the app-server wire as usual, **but as a view of the host's park**:
   `decision/respond` forwards to the host `answer` op (outcome vocabularies map 1:1 — both sides
-  derive from the same park model: allow_once/allow_with_updates/allow_always/deny/question_answer/
-  plan_approve/plan_reject). First-answer-wins stays host-side; a losing race maps the host refusal
-  to `-33002 ALREADY_SETTLED`. `decision_settled` (settled by anyone) broadcasts `decision/settled`
-  with the host's `by` attribution. The app server **never settles a fleet decision locally.**
-- `state` → settings-mirror updates (permissionMode, sessionId) + `thread/status/changed`.
-- `rewound` → a host-side engine swap happened (another client's resume/clear/rewind): bump
-  `record.epoch`, reconcile sessionId, broadcast `thread/rewound` — the established resync signal.
+  derive from the same park model). **Receipt mapping is exact:** `{ok:true, alreadyAnsweredBy}` →
+  `-33002 ALREADY_SETTLED` with `data.by`; `{ok:false}` "no parked request" → the same not-found
+  error the local path answers; kind-mismatch → `-32602`. First-answer-wins stays host-side;
+  `decision_settled` (settled by anyone) broadcasts `decision/settled` with the host's `by`
+  attribution. The app server **never settles a fleet decision locally.**
+- `state` → settings-mirror updates (permissionMode, sessionId, and — §1a-c — model/thinkingTokens)
+  + `thread/status/changed`; `thread/settings/changed` when a mirrored knob moved.
+- `rewound` → a host-side engine swap happened (any client's resume/clear/rewind — §1a-a makes all
+  three announce): bump `record.epoch`, reconcile sessionId, broadcast `thread/rewound`.
 - `tasks_changed` → `task/changed`.
 
-**Flag layer:** fleet records leave `flagPerms`/`flagOutputStyle`/`flagEffort` untouched. The nonet
-forwards per-op (`add_dir`, `set_effort`, …) and `thread/settings/read` forwards `get_settings` —
-the host is the single owner of accumulator truth, and `repushThreadState` never runs for fleet
-threads (the host does its own replay across its own swaps).
+**Flag layer:** fleet records leave `flagPerms`/`flagOutputStyle`/`flagEffort` untouched. The eight
+flag ops forward per-op (`add_dir`, `set_effort`, …) and `thread/settings/read` forwards
+`get_settings` — the host is the single owner of accumulator truth, and `repushThreadState` never
+runs for fleet threads (the host does its own replay across its own swaps). `thread/settings/apply`
+has **no** fleet backing (no host op carries an arbitrary flag-settings object) and answers `-33006`
+— the emit site `settings.ts:134` anticipated.
 
 **Origin:** `ThreadOrigin` widens to `"inProcess" | "fleet"` — the compiler surfaces every site
 needing a branch. `threadView` already carries `origin`; it gains `cwd` (both origins) and, for
 fleet, the roster `short` + `name`.
 
+#### §1c Refusals
+
 **`-33006 UNSUPPORTED_FOR_ORIGIN` activates** for fleet threads exactly where the wire lacks an op:
 `turn/steer`, `turn/start {queue:true}` (the server queue rides ownership of the engine chain,
-which fleet threads don't have; retrying over `accepted:false` would be race-prone against other
-clients), `mcp/servers/set`, `mcp/permissionOverride/set`, `plugin/reload`, `skill/reload`,
-`thread/reinitialize` (no host passthrough op), `thread/resume` (spawn-from-transcript semantics do
-not apply to a live foreign engine), and `thread/reopen` (the host owns its engine lifecycle).
+which fleet threads don't have; retrying over busy refusals would be race-prone against other
+clients), `thread/settings/apply`, `mcp/servers/set`, `mcp/permissionOverride/set`,
+`plugin/reload`, `skill/reload`, `thread/reinitialize`, `account/read`, `thread/init/read` (no host
+`account`/`init` ops — scorecard gap 3), and `thread/reopen` (the host owns its engine lifecycle).
 **Refusal precedence:** for fleet threads the origin gate answers `-33006` *before* the
 absent-optional-member convention can produce `-32601` — a wire-gap refusal reads as origin-scoped,
 never as an engine-capability accident.
 
-**New methods:**
+**`thread/resume` is NOT origin-gated** (it creates a new thread from a sessionId; there is no
+record to gate on). The real hazard is forking a second engine over a live conversation: the
+handler gains a **live-session guard** — a sessionId that belongs to a live roster row or an
+attached fleet record refuses with `-32602` ("sessionId belongs to a running fleet session; use
+thread/attach").
 
-- **`fleet/list {}`** → roster-derived rows via `collectFleet`: `{short, name, kind, state, pid,
-  cwd, sessionId?, startedAt, endedAt?, threadId?}` — `threadId` present when this server has the
-  session attached. Terminal rows are listed (they carry outcome) but refuse attach.
-- **`thread/attach {target}`** — `target: string`, resolved in CLI-parity order: roster short id
-  first, then numeric pid, then sessionId uuid → resolves the roster row (the
-  `prepareAttach` rule: terminal rows refused), dials the socket, sends `follow`, seeds the
-  transcript from disk (`getSessionMessages`) exactly as `ccx attach` does — the follow replay
-  covers the live turn with no overlap — and registers a record with `origin:"fleet"`. Reply:
-  `threadView`; broadcast: `thread/started`. Attaching a target this server already holds returns
-  the existing thread (idempotent), mirroring Codex's rejoin. Failures: `-33008 ATTACH_FAILED`
-  (unknown target, terminal row, dead socket), `-32602` malformed target.
+#### §1d Orchestrating handlers get explicit fleet branches
+
+Three inProcess handlers *orchestrate* rather than forward, and their fleet arms are branches with
+different event-driven semantics — this is where the bridge is NOT transparent:
+
+- **`thread/rewind`** (fleet): forwards the host `rewind_anchors`/`rewind_dryrun`/`rewind` ops
+  verbatim — the host op carries `{uuid, prevUuid, scope}`, which the `EngineSession.rewind`
+  optional member cannot express, hence the member stays absent and the handler branches. No local
+  `swapEngine`, no `repushThreadState` (the host swaps and replays its own state); epoch bump +
+  `thread/rewound` broadcast ride the host's `rewound` event (§1a-a), not the local swap path.
+- **`thread/clear`** (fleet): forwards the host `clear` op; same event-driven resync.
+- **`thread/compact/start`** (fleet): forwards the bare host `compact` op. **Recorded deviation:**
+  inProcess compact rides the turn machinery (busy + `turn/started`/`turn/completed` — M2's
+  decision); the host op has no turn events and the host stays promptable mid-compact. Synthesizing
+  a local turn would fabricate busy state other clients don't observe, so the deviation stands;
+  `thread/compacted` still reaches the wire (the compact-boundary frame arrives as a message frame
+  through the router).
+
+#### §1e New methods
+
+- **`fleet/list {}`** → rows from a **roster + projection join** (`RosterRow` fields + derived live
+  state — `AgentsRow` alone lacks short/pid/kind/startedAt): `{short, name, kind, state, pid, cwd,
+  sessionId?, startedAt, endedAt?, unresponsive?, threadId?}` — `threadId` present when this server
+  has the session attached. Terminal rows are listed (they carry outcome) but refuse attach;
+  `unresponsive` rows (live pid, dead socket) are listed and an attach attempt fails naturally
+  (`-33008`).
+- **`thread/attach {target}`** — `target: string`, resolved by the CLI's actual rule
+  (`src/cli/lifecycle.ts:15-27`): a simultaneous filter on roster `short` | `sessionId` | `name`;
+  zero matches or a terminal/unreachable target → `-33008 ATTACH_FAILED`; **multiple matches →
+  `-33008` with the match list in `data`** (CLI parity: ambiguity is an error, not a precedence).
+  On success: dial the socket, send `follow`, seed the transcript from disk (`getSessionMessages`)
+  exactly as `ccx attach` does — the follow replay covers the live turn with no overlap — and
+  register a record with `origin:"fleet"`. Reply: `threadView`; broadcast: `thread/started`.
+  Attaching a target this server already holds returns the existing thread (idempotent), mirroring
+  Codex's rejoin. Settings mirror seeds from `status` + `get_settings` at attach (and stays fresh
+  via `state` events, §1a-c).
 - **`thread/stop {threadId}`** → the host `stop` op (interrupt → bounded dispose → roster finalize →
   socket close). The record closes; broadcast `thread/closed {reason:"stopped"}`. On an inProcess
   thread `thread/stop` behaves as `thread/close` does today (dispose our own engine) — one method,
   origin-appropriate meaning, matching the scorecard's gap-4 framing.
 
+#### §1f Release, death, and reads
+
 **`thread/close` on a fleet thread = detach** (unfollow + socket close, host lives on) — the
-asymmetry that made `thread/stop` a separate method. `thread/read` for fleet threads serves disk
-transcript entries + the live buffer under the same epoch-qualified cursor scheme (the attach
-`initialEntries` model). Settings mirror seeds from `status` + `get_settings` at attach.
+asymmetry that made `thread/stop` a separate method. On detach, parked decision *views* are dropped
+**silently** — no `decision/resolved` broadcast, because the decisions remain live host-side and
+announcing a settlement that didn't happen would lie to watchers (fleet-aware branch in the close
+teardown).
+
+**Socket death** (host crash, kill, network loss) is a specified sequence, in order: (1) the
+in-flight submit waiter (if any) settles → `turn/completed {status:"failed"}` with a
+connection-lost error; (2) busy clears; (3) parked decision views drop silently (as above — the
+host may be dead or alive; the app server cannot know and must not claim); (4) `isEnded` latches —
+subsequent methods answer `-33005`; (5) broadcasts: `warning {code:"fleetConnectionLost"}` +
+`thread/status/changed`. Recovery is `thread/close` + a fresh `thread/attach` (if the host still
+lives); `thread/reopen` stays `-33006` for fleet — the host owns its engine.
+
+**`thread/read` on a fleet thread is disk-only** — persisted transcript rows under the same
+epoch-qualified cursor scheme; the live half of the world travels via subscribe replay, exactly as
+inProcess (mixing the live buffer into an absolute-offset cursor would double-count rows once the
+turn persists). The uuid stitch survives via §1a-b (uuid-stamped prompts).
 
 ### §2 Workspace: `fs/read`, `fs/search`
 
@@ -165,23 +261,28 @@ sandbox-None server-side; the SDK `readFile` seam is probe-dead, probe 104, and 
 
 `{threadId, command}` → `{code, output, timedOut?}` over the existing `runBash` primitive
 (`src/tui/bash.ts` — full shell string, 30 s timeout, 4 MiB combined-output cap, never rejects),
-executed in the **thread's cwd** (record config cwd for inProcess; roster cwd for fleet — same
-machine, guaranteed by the UDS transport). Output returns to the calling client only; conversation
-state untouched. **Recorded deviation from Codex**, whose `thread/shellCommand` streams output into
-the turn so the model sees it — ours matches the TUI's display-only `!cmd` semantics (user-confirmed
-fork). Unsandboxed by design, like Codex's. Busy is allowed (the TUI permits `!` mid-turn); the
-command runs concurrently with the engine.
+executed in the **thread's cwd** (record config cwd for inProcess, falling back to the server
+process cwd when the config named none; roster cwd for fleet — same machine, guaranteed by the UDS
+transport). Output returns to the calling client only; conversation state untouched. **Recorded
+deviation from Codex**, whose `thread/shellCommand` streams output into the turn so the model sees
+it — ours matches the TUI's display-only `!cmd` semantics (user-confirmed fork). Unsandboxed by
+design, like Codex's. Busy is allowed (the TUI permits `!` mid-turn); the command runs concurrently
+with the engine.
 
 ### §4 `thread/reopen` (gap 10)
 
 Client-driven recovery for a record whose engine is dead (`isEnded()` — the factory-throw wedge or
 any future death): rebuild from `record.config` + `resume` of the retained sessionId through the
 same `swapEngine` machinery with a tolerate-dead-dispose guard (disposing an already-ended engine
-is a no-op, not an error). Post-swap `repushThreadState` runs as for rewind/clear. Emits
-`thread/rewound {sessionId}` — the established "engine swapped, resync" signal (epoch bumps,
-cursors invalidate). Refusals: `-33001` busy/closing/swapping, `-33006` fleet, and — when the
-engine is *alive* — `-32602` ("engine is not dead; nothing to reopen"), so reopen can't be used as
-a covert restart. Closes scorecard gap 10.
+is a no-op, not an error). **`thread/reopen` joins `ENGINE_GONE_EXEMPT`** — the dispatch-level
+`-33005` gate would otherwise make the method unreachable exactly when it is legal; the
+alive-engine refusal happens in the handler, after the exemption. A record with **no retained
+sessionId** (engine died before the first init frame) reopens as a fresh conversation from
+`record.config` — documented, and the resulting `thread/rewound {sessionId}` carries the new id.
+Post-swap `repushThreadState` runs as for rewind/clear. Emits `thread/rewound {sessionId}` — the
+established "engine swapped, resync" signal (epoch bumps, cursors invalidate). Refusals: `-33001`
+busy/closing/swapping, `-33006` fleet, and — when the engine is *alive* — `-32602` ("engine is not
+dead; nothing to reopen"), so reopen can't be used as a covert restart. Closes scorecard gap 10.
 
 ### §5 Wave 0 — SDK 0.3.227 bump
 
@@ -195,11 +296,14 @@ notes, no action.
 
 Methods **51 → 58**: `fleet/list`, `thread/attach`, `thread/stop`, `thread/reopen`,
 `thread/shellCommand`, `fs/read`, `fs/search` — all **stable** (turn/steer remains the sole
-experimental). Notifications **26, unchanged** — fleet threads reuse `thread/started`,
-`thread/status/changed`, `thread/rewound`, `thread/closed`, `turn/*`, `decision/*`, `task/*`.
-New error code: **`-33008 ATTACH_FAILED`**. `-33006` becomes emittable (scorecard rows flip from
-defined-unemitted). Schema artifacts regenerate; `methodSchemas` gains seven entries; the drift
-gate's bijection pass forces seven new scorecard rows in the same change.
+experimental). Notification **count 26, unchanged**; one payload moves: `thread/closed` gains an
+optional `reason` field (additive — schema artifact and scorecard row update in the same change).
+New error code: **`-33008 ATTACH_FAILED`** (carries the ambiguity match list in `data` when that is
+the failure). `-33006` becomes emittable (scorecard rows flip from defined-unemitted). Host wire:
+four additive revisions (§1a) — `rewound` from all swap paths, `prompt.uuid`, `HostStatus.model`/
+`thinkingTokens` + setter `state` emissions, `capabilities.agents`. Schema artifacts regenerate;
+`methodSchemas` gains seven entries; the drift gate's bijection pass forces seven new scorecard
+rows in the same change.
 
 ## Testing & acceptance
 
@@ -208,27 +312,38 @@ a **real `HostServer` over a real UDS with a stubbed engine behind it** — actu
 replay ordering, first-answer-wins, busy gating — no API key. An engine-faithful fake host harness
 (`test/appserver/fakeHost.ts` or similar) becomes the fleet analog of the existing engine fakes.
 
-**Premise probes (run before the plan hardens; numbers = next free in the corpus at execution):**
+**Premise probe (run before the plan hardens; number = next free in the corpus at execution):**
 
-- **P106 — result frame reaches followers.** Does the host's `{kind:"message"}` stream include the
-  SDK result-type message (the buffer excludes only `stream_event` partials)? Drives whether
-  `FleetEngineSession.submit` captures a real result or synthesizes a minimal one from the turn-end
-  event. Either way the design stands; the probe picks the arm.
-- **P107 — mid-turn attach + answer forwarding.** Attach while a turn is in flight: verify the
-  replay order and seq correlation live; park a permission on the host, answer over the wire from a
-  second client, verify first-answer-wins receipt shapes and `decision_settled` attribution.
+- **P106 — mid-turn attach, result delivery, answer forwarding.** One probe, three confirmations:
+  attach while a turn is in flight and verify the replay order + seq correlation live; confirm the
+  result-type SDK frame arrives over `{kind:"message"}` (production-implied by
+  `chatAdapter.ts:107`; this makes it evidence); park a permission on the host, answer over the
+  wire from a second client, and capture the exact receipt shapes (`{ok:true, alreadyAnsweredBy}`
+  losing race, kind-mismatch, no-parked) plus `decision_settled` attribution.
 
-**Unit surface:** FleetEngineSession over the fake host (submit/settle/foreign-turn/interrupt/
-detach/socket-death); decision forwarding incl. the losing race; -33006 matrix per method × origin;
-fs/read caps + fs/search degradation; shellCommand cwd resolution both origins; reopen (dead-engine
-guard, alive-engine refusal, post-reopen repush); origin-widening exhaustiveness (typecheck).
+**Unit surface:** FleetEngineSession over the fake host (submit/settle, foreign-turn derivation,
+own-vs-foreign under the start-before-reply race, seq-less replay markers ignored for busy,
+interrupt, detach, socket-death sequence incl. silent view drop + `warning` + waiter settlement);
+decision forwarding incl. the exact receipt mapping; the `-33006` matrix per method × origin (incl.
+`account/read`, `thread/init/read`, `thread/settings/apply`); `thread/resume` live-session guard;
+foreign-swap resync (host-side `resume`/`clear`/`rewind` each produce epoch bump + `thread/rewound`);
+settings-mirror seed (`status` + `get_settings`) and `state`-event freshness (model/thinking);
+`fleet/list` row shape incl. `unresponsive` and terminal rows; fleet `thread/read` disk-only paging
++ uuid stitch; attach ambiguity → `-33008` with match list; fs/read caps + fs/search degradation;
+shellCommand cwd resolution both origins + no-cwd fallback; reopen (dead-engine guard, alive-engine
+refusal, `ENGINE_GONE_EXEMPT` membership, no-sessionId fresh-reopen, post-reopen repush); origin-
+widening exhaustiveness (typecheck). Host-side units for the four §1a revisions (swap announces,
+prompt uuid plumb, status fields + setter emissions, agents catalog).
 
 **Keyed live acceptance (one scenario, M2-style):** spawn a real detached ccx session → `fleet/list`
 shows it → `thread/attach` → drive a turn through the app server → park a permission and answer it
-from a second WS client → interrupt a turn → `fs/search` + `fs/read` on the repo → `thread/shellCommand`
-→ `thread/close` (detach; host survives, verified by re-attach) → `thread/stop` (roster finalizes).
-Plus a reopen leg on an inProcess thread. Console smoke: new fleet panel (list/attach/stop) and
-workspace panel (search/read/shell) driven in a browser with zero JS errors.
+from a second WS client → interrupt a turn → **foreign-swap leg:** a second host client issues
+`resume` or `clear` directly on the host socket; assert `thread/rewound` + epoch bump on the app
+server wire → fleet `thread/read` pages the transcript → `fs/search` + `fs/read` on the repo →
+`thread/shellCommand` → `thread/close` (detach; host survives, verified by re-attach) →
+`thread/stop` (roster finalizes). Plus a reopen leg on an inProcess thread. Console smoke: new
+fleet panel (list/attach/stop) and workspace panel (search/read/shell) driven in a browser with
+zero JS errors.
 
 **Docs/gates:** scorecard rows for the seven methods; origin-scope column made real (gap 4 closes,
 gap 2 closes — `host/ops.ts` becomes imported under `appserver/`, gap 10 closes); coverage.md
@@ -236,9 +351,9 @@ refresh; drift gate (presence + staleness + bijection) green per task.
 
 ## Delegated unknowns (empirical residue)
 
-P106 (result frame), P107 (replay/receipt shapes), live `stop` receipt behavior vs. socket close
+P106's receipt shapes and replay-order confirmation, live `stop` receipt behavior vs. socket-close
 race, and whether `get_settings` over the wire returns everything the mirror seed needs — all
-answered by probes/implementation contact, none architectural.
+answered by the probe/implementation contact, none architectural.
 
 ## Decision Log
 
@@ -249,9 +364,11 @@ answered by probes/implementation contact, none architectural.
   2026-08-11): matches the TUI's display-only `!cmd`. *Rejected:* Codex-faithful stream-into-turn —
   mutates conversation state as a side effect, needs idle/busy branching, and has no fleet path
   (steer is wire-absent), so fleet threads would refuse it anyway.
-- **D-M3-3 — attach is its own method; resume keeps shipped semantics.** Codex merges
-  attach into `thread/resume`; ours has shipped spawn-from-transcript meaning. *Rejected:*
-  overloading resume — silently changes a shipped method's contract.
+- **D-M3-3 — attach is its own method; resume keeps shipped semantics + gains the live-session
+  guard.** Codex merges attach into `thread/resume`; ours has shipped spawn-from-transcript meaning,
+  and resuming a live fleet session's id would fork a second engine over one conversation.
+  *Rejected:* overloading resume — silently changes a shipped method's contract; origin-gating
+  resume — unimplementable (no record to gate on).
 - **D-M3-4 — the app server is a follower, never a second engine owner.** Decisions forward to the
   host park; the flag accumulator stays host-side; queue/steer refuse. *Rejected:* mirroring park
   state or accumulator state server-side — the M2b external review already showed what a
@@ -269,6 +386,16 @@ answered by probes/implementation contact, none architectural.
   `thread/shellCommand` covers the escape-hatch need; PTY streaming is a milestone of its own.
 - **D-M3-9 — SDK bump is Wave 0** (ritual + `resumeDropsTurn` rewind adoption), not a design
   dependency — the delta contains no attach primitive.
+- **D-M3-10 — fix the wire, don't bridge around it** (review fold-in, 2026-08-11): four additive
+  host-wire revisions (§1a) instead of bridge-side workarounds. *Rejected:* silent-foreign-swap
+  tolerance, uuid-less fleet transcripts, a permanently stale model mirror, a three-catalog
+  capabilities read — each encodes a lie the in-repo wire could cheaply stop telling.
+- **D-M3-11 — fleet turn ids derive from the host seq; `mintTurnId` never runs for fleet threads**
+  (review fold-in): closes the start-before-reply own-vs-foreign race deterministically.
+  *Rejected:* hold-foreign-minting-while-prompt-in-flight — a lock where a naming scheme suffices.
+- **D-M3-12 — fleet `thread/read` is disk-only** (review fold-in): symmetric with inProcess (live
+  half via subscribe replay). *Rejected:* disk + live-buffer merge — double-counts rows under an
+  absolute-offset cursor once the turn persists.
 
 ## Surprises & Discoveries
 
@@ -276,11 +403,18 @@ answered by probes/implementation contact, none architectural.
   fleet is per-session processes + per-session sockets (`src/fleet/` + `src/host/`); `src/daemon/`
   is the retiring `cc-harness` supervisor. "Attach to the fleet" therefore means dialing a
   session's own socket as another follower — there is no central daemon to integrate with.
-- **The host wire is far richer than the fleet-adoption framing assumed** (44 ops incl. rewind,
-  tasks, MCP, the flag nonet) — which is what made the full bridge (D-M3-1) cheap: the feared
+- **The host wire is far richer than the fleet-adoption framing assumed** (34 ops incl. rewind,
+  tasks, MCP, the flag layer) — which is what made the full bridge (D-M3-1) cheap: the feared
   two-accumulator drift dissolves because the host owns the accumulator and the bridge forwards.
 - **`resumeDropsTurn` is a rewind validator, not an attach primitive** — the 0.3.227 loose end
   reclassified from "maybe fleet-relevant" to a Wave-0 hardening of the existing rewind seam.
+- **The independent spec review's structural finding:** the host wire is a transparent backing for
+  *forwarding* handlers but not for *orchestrating* ones (rewind/clear swaps, compact-as-turn,
+  own-turn minting) — those needed explicit fleet branches with event-driven semantics (§1d), and
+  three of its "bridge can't know" holes were really "the wire doesn't say yet" holes (§1a).
+- **P106's core premise was pre-answered by shipped code** — `chatAdapter.submit` already captures
+  the result frame in production `ccx attach` use; the probe demoted from open question to
+  evidence-capture (receipt shapes, replay order).
 - *(during execution — append here)*
 
 ## Outcomes & Retrospective
@@ -292,3 +426,12 @@ Pending — written at finish.
 - 2026-08-11 — initial version (brainstorm: full bridge and shellCommand-as-RPC confirmed by the
   user; controlled track confirmed). Research ground: two mapping reports (harness fleet
   architecture; Codex v2 fleet/workspace surface), SDK 0.3.227 delta check.
+- 2026-08-11 — independent (Fable) spec review folded in: 13 Important + 9 Minor findings, all
+  accepted except P106-as-open-premise (demoted to confirmation — shipped `chatAdapter` already
+  proves result delivery). Structural additions: §1a (four additive host-wire revisions), §1c
+  refusal corrections (`thread/settings/apply`/`account/read`/`thread/init/read` in; `thread/resume`
+  out, replaced by the live-session guard), §1d (explicit fleet branches for rewind/clear/compact),
+  §1f (socket-death sequence, silent view drop, disk-only fleet reads), D-M3-10/11/12; attach
+  target resolution corrected to real CLI parity (simultaneous filter, ambiguity error); `fleet/list`
+  row sourced from a roster+projection join; 34-op wire count corrected; foreign-swap resync and
+  fleet-read legs added to unit + acceptance coverage.
