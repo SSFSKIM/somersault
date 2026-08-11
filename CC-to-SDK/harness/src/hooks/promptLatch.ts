@@ -12,7 +12,7 @@
 // later than canon's `transcript_path` — the recorded divergence, stated in `statusLine.ts`.
 //
 // LIVE-VERIFIED, not inferred from `sdk.d.ts`: probe 104
-// (`probes/probes/104-userpromptsubmit-transcript-path.ts`) registers this exact hook shape through
+// (`probes/probes/104b-userpromptsubmit-transcript-path.ts`) registers this exact hook shape through
 // `Options.hooks` and prints what arrives — keys `cwd, hook_event_name, permission_mode, prompt,
 // prompt_id, session_id, transcript_path`, with `transcript_path` a real
 // `~/.claude/projects/<slug>/<id>.jsonl` and `prompt_id` a uuid. Both strings, on the first prompt.

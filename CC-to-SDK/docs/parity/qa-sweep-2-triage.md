@@ -135,7 +135,7 @@ s2qa4-20 (idle-chrome surface). **Newly named:** `/effort`'s Esc prints nothing 
 
 **STATUS (wave 2, Task 6 + the acceptance fix).** s2qa6-04 SHIPPED — `transcript_path` and `prompt_id`
 latch off the headless-firing `UserPromptSubmit` hook (probe
-`104-userpromptsubmit-transcript-path.ts`; both absent pre-first-turn, since `SessionStart` is dormant
+`104b-userpromptsubmit-transcript-path.ts`; both absent pre-first-turn, since `SessionStart` is dormant
 headlessly — accepted and documented), and `session_id` is mint-and-reconcile, so it is never null.
 s2qa6-05 SHIPPED except its `context_window_size` half's boundary case: `fast_mode`, `rate_limits` and a
 real window at first paint all ship, but there is deliberately **no boundary read** (D-W8 — it would
