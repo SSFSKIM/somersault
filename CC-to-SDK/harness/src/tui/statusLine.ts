@@ -36,6 +36,17 @@ export const STATUS_LINE_DEBOUNCE_MS = 300;
  *  it with is in SECONDS (`D = e.timeout ? e.timeout * 1000 : xm`, L365222) — but `statusLine`'s own schema has
  *  no `timeout` key, so that override is unreachable here and this constant is the only value in play. */
 export const STATUS_LINE_TIMEOUT_MS = 600_000;
+/** W2 T6 FIX / SPEC D-W11 — the ceiling on the mount-time `getContextUsage()` the BOOT run waits for.
+ *
+ *  Sized off a measurement, exactly as `ACCOUNT_LABEL_BUDGET_MS` (`cli/main.ts`) is: the Task 6 review timed
+ *  `getContextUsage()` at **~1.2 s warm** — four times the 300 ms debounce — so the shipped shape (fire the
+ *  read, run the boot on the debounce) could only ever be TWO runs, the first of them carrying
+ *  `context_window_size: 0`. Gating the boot run on the read fixes that; racing the gate against this cap is
+ *  what stops a control call that never answers from suppressing the row for the rest of the session.
+ *  1500 ms because it clears the measured warm case with room for a cold one and matches the one other
+ *  first-paint budget in the codebase. The cost when the cap is LOST is the honest one: the boot run goes out
+ *  with a zero window, and the first turn end corrects it. */
+export const STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS = 1500;
 
 /** Annex §C2.1 verbatim in shape. `hideVimModeIndicator` is ACCEPTED AND IGNORED: it hides upstream's
  *  `-- INSERT --` row, and ccx has no vim mode to indicate (Footer.tsx records the same absence). Parsing it
@@ -225,7 +236,14 @@ export interface StatusLineDriver {
    *  list, so an immediate run published a knowably incomplete payload and was superseded ~300 ms later.
    *  QA-6 measured exactly that: **two runs per boot** where canon runs once. Routing the boot through the
    *  same trailing window makes the observable cadence canon's (one run per settled moment) at the cost of
-   *  ccx's first paint being one debounce late — which is nothing next to a script's own fork-and-exec. */
+   *  ccx's first paint being one debounce late — which is nothing next to a script's own fork-and-exec.
+   *
+   *  THE DEBOUNCE ALONE WAS NOT ENOUGH (Task 6 review, spec D-W11). The slowest of those late inputs is the
+   *  mount-time `getContextUsage()`, measured at ~1.2 s warm against a 300 ms window — so a real boot still
+   *  produced two runs, the first with a zero context window. The MOUNT SITE therefore does not call this at
+   *  mount: it calls it when the context read resolves, or when `STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS`
+   *  expires, whichever comes first. Everything about the cadence machine stays here; the one thing the
+   *  driver cannot know is which of the caller's promises the boot is actually waiting on. */
   mountRun(): void;
   /** Every state delta upstream lists at L484891 (`lastAssistantMessageId`, `tokenUsage`, `permissionMode`,
    *  `mainLoopModel`, `fastMode`, `effortValue`, `thinkingEnabled`, `prStatus`) funnels here. Debounced
@@ -433,6 +451,11 @@ export interface StatusLinePayload {
   transcript_path?: string;
   cwd: string;
   prompt_id?: string;
+  /** Canon's own slot, which is HERE and not down beside `fast_mode` (Task 6 review, MINOR 3): `mh()`'s
+   *  object literal owns the `effort` key immediately after `prompt_id`, and the later `...Fk(y) && {…}`
+   *  spread that fills it in updates the VALUE at the existing key rather than appending a new one — so
+   *  canon's emitted order puts it fourth. Verified against the shipped 2.1.220 bundle. */
+  effort?: { level: "low" | "medium" | "high" | "xhigh" | "max" };
   session_name?: string;
   model: { id: string; display_name: string };
   workspace: { current_dir: string; project_dir: string; added_dirs: string[] };
@@ -442,7 +465,6 @@ export interface StatusLinePayload {
   context_window: StatusLineContextWindow;
   exceeds_200k_tokens: boolean;
   fast_mode: boolean;
-  effort?: { level: "low" | "medium" | "high" | "xhigh" | "max" };
   thinking: { enabled: boolean };
   rate_limits?: StatusLineRateLimits;
 }
@@ -457,9 +479,18 @@ export interface StatusLinePayload {
  *  already learned this the hard way — its own comment forbids re-introducing unit inference. Same key,
  *  same meaning, no scale factor.
  *
- *  Returns `undefined` — the key is OMITTED, canon's `...(k.five_hour || k.seven_day) && {…}` — when the
+ *  THE WHOLE-BLOCK GATE IS CANON'S: the key is OMITTED — `...(k.five_hour || k.seven_day) && {…}` — when the
  *  credential cannot see the buckets at all (`rate_limits_available === false`), when no reading has landed
- *  yet, or when neither window carries a number. */
+ *  yet, or when neither window has anything to say.
+ *
+ *  THE PER-WINDOW GATE IS A NAMED DIVERGENCE (Task 6 review, MINOR 4), not canon's own spread. Canon gates
+ *  each window on the window OBJECT's truthiness and then reads `utilization` out of it, so a window that is
+ *  present with a `null` reading emits `used_percentage: 0` — a real 0% and "we have not been told" printed
+ *  identically, and 0% is the reading a script is most likely to act on ("plenty of headroom"). ccx gates on
+ *  `typeof utilization === "number"` instead, so an unread window is ABSENT rather than a fabricated zero.
+ *  That is the same hidden-until-measured rule Wave S applied to the context percentage, and it is kept
+ *  deliberately: the payload's contract already lets a script test for an absent key, and there is no way for
+ *  it to test a zero that means "unknown". */
 function rateLimits(usage: StatusLineUsage | undefined): StatusLineRateLimits | undefined {
   if (!usage || usage.rate_limits_available === false || !usage.rate_limits) return undefined;
   const out: StatusLineRateLimits = {};
@@ -521,6 +552,14 @@ export function buildStatusLinePayload(snapshot: StatusLineSnapshot): StatusLine
     ...(snapshot.transcriptPath ? { transcript_path: snapshot.transcriptPath } : {}),
     cwd: snapshot.cwd,
     ...(snapshot.promptId ? { prompt_id: snapshot.promptId } : {}),
+    // WAVE C TASK 11 (EP-C6): upstream's `...Fk(y) && { effort: { level: _5(y, p) } }` — CONDITIONAL, and in
+    // upstream's own slot, which the Task 6 review corrected to HERE: `mh()`'s literal declares `effort`
+    // right after `prompt_id`, and the conditional spread that fills it updates that key's value rather than
+    // moving it to the end. The spread idiom is the same one the conditional keys above use: a script's
+    // contract is that the key is ABSENT, not `null`, when the model has no effort axis — and
+    // `JSON.stringify` dropping an `undefined` value is not enough, because a consumer reading the object
+    // through anything else would still see the key.
+    ...(snapshot.effort ? { effort: { level: snapshot.effort } } : {}),
     ...(snapshot.sessionName ? { session_name: snapshot.sessionName } : {}),
     model: { id, display_name: snapshot.modelDisplayName ?? id },
     workspace: { current_dir: snapshot.cwd, project_dir: projectDir, added_dirs: [...(snapshot.addedDirs ?? [])] },
@@ -544,12 +583,6 @@ export function buildStatusLinePayload(snapshot: StatusLineSnapshot): StatusLine
     // rather than a snapshot field precisely because there is nothing to snapshot: the day ccx wires
     // `fastMode` into `resolveOptions` this becomes a real read with no consumer change.
     fast_mode: false,
-    // WAVE C TASK 11 (EP-C6): upstream's `...Fk(y) && { effort: { level: _5(y, p) } }` — CONDITIONAL, and in
-    // upstream's own slot (after `fast_mode`, before `thinking`). The spread idiom is the same one the
-    // conditional keys above use: a script's contract is that the key is ABSENT, not `null`, when the model
-    // has no effort axis — and `JSON.stringify` dropping an `undefined` value is not enough, because a
-    // consumer reading the object through anything else would still see the key.
-    ...(snapshot.effort ? { effort: { level: snapshot.effort } } : {}),
     thinking: { enabled: snapshot.thinkingEnabled },
     ...(limits ? { rate_limits: limits } : {}),
   };

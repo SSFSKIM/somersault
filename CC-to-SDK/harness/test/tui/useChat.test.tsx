@@ -2590,7 +2590,13 @@ describe("useChat: F3 final review", () => {
 // renders a microtask BEFORE the measurement refreshCtx triggers lands, so the poll is what closes that gap.
 const reply = (p: string) => [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `re: ${p}` }] } }];
 describe("W-S5: the context percentage never outlives the conversation it measured", () => {
-  it("/clear hides the measured percentage — /status too — and the next turn end measures a fresh one (A8)", async () => {
+  // W2 T6's fix round (D-W11) changed what `/status` does at the second half of this cell and NOT what the
+  // rule is. `/status` used to render `ctxPct` and therefore showed nothing after a `/clear`; it now takes
+  // its own reading. That is still "the measurement dies with its conversation" — what A8 forbids is the
+  // number 5, measured before the wipe, surviving it. A freshly measured 42 is the new conversation's own
+  // answer, and asserting on the VALUE is a strictly stronger pin than asserting the row is absent: a build
+  // that resurrected the stale reading fails here naming the number it wrongly kept.
+  it("/clear hides the measured percentage — /status re-measures rather than resurrecting it — and the next turn end measures its own (A8)", async () => {
     let ctx = { totalTokens: 5, maxTokens: 100 };
     const fake = fakeRemote({ getContextUsage: async () => ctx, submitMessages: reply });
     const api: { run?: (s: string) => void } = {};
@@ -2600,17 +2606,18 @@ describe("W-S5: the context percentage never outlives the conversation it measur
     api.run!("hi");                                                     // a real turn — its end is what measures the context
     await waitFor(() => frame(lastFrame).includes("ctx:5"));
     api.run!("/status");
-    await waitFor(() => flat(lastFrame).includes("context 5% used"));   // /status reads the same state
+    await waitFor(() => flat(lastFrame).includes("context 5% used"));   // the conversation's own reading
     ctx = { totalTokens: 42, maxTokens: 100 };                          // the NEXT measurement differs from the stale one
     api.run!("/clear");
     await waitFor(() => !frame(lastFrame).includes("Status"));          // the document wipe landed
     expect(frame(lastFrame)).toContain("ctx:-");                        // half one: the chip is gone
     api.run!("/status");
-    await waitFor(() => frame(lastFrame).includes("Status"));
-    expect(flat(lastFrame)).not.toContain("% used");                    // …and so is the /status row
+    await waitFor(() => flat(lastFrame).includes("context 42% used"));  // …and /status answers with a NEW reading
+    expect(flat(lastFrame)).not.toContain("context 5% used");           // never the wiped conversation's
+    ctx = { totalTokens: 73, maxTokens: 100 };                          // a third value, so the turn's own measurement is named
     api.run!("second");
     await waitFor(() => frame(lastFrame).includes("re: second"));       // the second turn's REPLY, then the measurement
-    await expect.poll(() => frame(lastFrame)).toContain("ctx:42");      // it triggers — a retry that fails with the VALUE
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:73");      // it triggers — a retry that fails with the VALUE
   });
 
   it("/resume onto a DIFFERENT session drops the previous session's percentage, and the first turn there measures its own (A8)", async () => {
@@ -2960,9 +2967,36 @@ function statusRunner() {
   return { runs, run };
 }
 const STATUS_CFG = { type: "command" as const, command: "my-status" };
-// The driver's trailing debounce is 300 ms of REAL time here (the mount site owns no clock seam): a boot or
-// a turn is "settled" once a window and a half have passed with no further run.
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 500));
+/** THE CLOCK SEAM (fix round, MINOR 5). Both timers the mount site owns — the driver's 300 ms trailing
+ *  debounce and the 1500 ms mount-read cap — are armed through `deps.statusLine`'s `setTimeout`/
+ *  `clearTimeout`, the same pair `test/tui/footer.test.tsx` has always injected. These cells used to sleep
+ *  500 ms of REAL time each, eight of them, for ~8.6 s of suite time that pinned nothing virtual time
+ *  cannot; and the cap is 1500 ms, which real sleeps could not have afforded to drive at all. */
+function slClock() {
+  let now = 0, seq = 0;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  return {
+    deps: {
+      setTimeout: (fn: () => void, ms: number) => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
+      clearTimeout: (h: unknown) => { timers.delete(h as number); },
+    },
+    now: () => now,
+    advance(ms: number) {
+      now += ms;
+      for (const [id, t] of [...timers].sort((a, b) => a[1].at - b[1].at)) if (t.at <= now) { timers.delete(id); t.fn(); }
+    },
+  };
+}
+type SlClock = ReturnType<typeof slClock>;
+/** Flush the real microtask/promise queue, then move VIRTUAL time on — repeatedly, because a boot is a chain
+ *  of promises with timers between them (the mount read resolves, and only then does the boot run's window
+ *  open). Eight windows = 2400 virtual ms, which clears the worst case the mount site can produce: the
+ *  1500 ms cap with a full debounce behind it. */
+async function settle(clock: SlClock, windows = 8): Promise<void> {
+  for (let i = 0; i < windows; i++) { await new Promise((r) => setTimeout(r, 1)); clock.advance(300); }
+  await new Promise((r) => setTimeout(r, 1));
+}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-/;
 /** The launch state a real `ccx` boot has: a model and a mode from the launch config, a catalog that answers
  *  a tick later, and a host `state` frame. All four are deltas on the statusLine's own list, and they are
  *  what used to turn one boot into two runs. */
@@ -2970,68 +3004,85 @@ const bootCaps = { models: [{ value: "claude-opus-4-6", displayName: "Opus 4.6",
 
 describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () => {
   /** One mounted hook with a statusLine configured, plus whatever launch state the cell needs. */
-  function mountStatus(fake: FakeRemote, r: { run: any }, extra: Record<string, unknown> = {}, latch?: any) {
+  function mountStatus(fake: FakeRemote, r: { run: any }, clock: SlClock, extra: Record<string, unknown> = {}, latch?: any) {
     function H() {
       useChat(() => fake, { statusLine: STATUS_CFG, ...(latch ? { promptLatch: latch } : {}), ...extra } as any,
-        { statusLine: { runStatusLine: r.run } });
+        { statusLine: { runStatusLine: r.run, ...clock.deps } });
       return <Text>ok</Text>;
     }
     return render(<H />);
   }
 
-  it("a boot is ONE run and a turn is ONE refresh (s2qa6-22's real half)", async () => {
-    const r = statusRunner();
-    const fake = fakeRemote({ capabilities: () => bootCaps });
-    mountStatus(fake, r, { initialModel: "claude-opus-4-6", initialMode: "default", initialEffort: "high" });
-    fake.pushEvent({ kind: "state", status: { state: "idle", status: "idle", permissionMode: "acceptEdits" } } as any);
-    await settle();
-    expect(r.runs).toHaveLength(1);                       // was 2: the immediate mount run plus its correction
-    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
-    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "hi" }] } } });
-    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await settle();
-    expect(r.runs).toHaveLength(2);                       // turn end + both refreshers, coalesced into one
-  });
+  // ── THE BOOT GATE (fix round MAJOR 1, spec D-W11) ────────────────────────────────────────────────────
+  // The shipped shape fired the context read and the boot run independently and hoped the 300 ms debounce
+  // outlasted the read. The review timed the read at ~1.2 s warm, so it did not: a live boot ran the script
+  // twice and the first payload carried `context_window_size: 0`. The run now WAITS for the read, capped.
+  // Both outcomes of that race are driven here, because only the pair proves the gate is a race and not a
+  // sleep: the read winning must produce one run with a real window, the cap winning one run with a zero.
 
-  it("the boot payload carries a real context window (D-W8: the mount-time getContextUsage, probe 103)", async () => {
-    const r = statusRunner();
-    const fake = fakeRemote({ getContextUsage: () => ({ totalTokens: 12_000, maxTokens: 1_000_000 }) });
-    mountStatus(fake, r);
-    await settle();
-    // Was `{ context_window_size: 0, used_percentage: null, remaining_percentage: null }` on every run
-    // before the first turn ended, because `statusCtxRef` had only two writers.
+  it("the boot run waits for the mount context read — nothing runs until it lands, then ONE run with a real window", async () => {
+    const clock = slClock(), r = statusRunner();
+    let landRead!: (u: unknown) => void;
+    const reading = new Promise<unknown>((res) => { landRead = res; });
+    const fake = fakeRemote({ capabilities: () => bootCaps, getContextUsage: () => reading });
+    mountStatus(fake, r, clock, { initialModel: "claude-opus-4-6", initialMode: "default", initialEffort: "high" });
+    // A real boot delta, landing WHILE the read is still out — the case that made the old shape run early.
+    fake.pushEvent({ kind: "state", status: { state: "idle", status: "idle", permissionMode: "acceptEdits" } } as any);
+    await settle(clock, 3);                               // 900 virtual ms: three whole debounce windows
+    expect(r.runs).toHaveLength(0);                       // was: a run at +300 ms carrying a zero window
+    landRead({ totalTokens: 12_000, maxTokens: 1_000_000 });
+    await settle(clock, 2);
+    expect(r.runs).toHaveLength(1);                       // was 2: the early run plus its correction
     expect(r.runs[0].payload.context_window).toMatchObject({
       context_window_size: 1_000_000, total_input_tokens: 12_000, used_percentage: 1, remaining_percentage: 99,
     });
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "hi" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle(clock, 2);
+    expect(r.runs).toHaveLength(2);                       // turn end + both refreshers, coalesced into one
+  });
+
+  it("a context read that never answers cannot suppress the row forever: the cap fires, one run, zero window", async () => {
+    const clock = slClock(), r = statusRunner();
+    const fake = fakeRemote({ getContextUsage: () => new Promise(() => {}) });   // a control call that hangs
+    mountStatus(fake, r, clock);
+    await settle(clock, 3);                               // 900 ms — still inside STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS
+    expect(r.runs).toHaveLength(0);
+    await settle(clock, 4);                               // past 1500 ms: the cap wins the race
+    expect(r.runs).toHaveLength(1);
+    // The honest fallback, and the reason the cap is not simply an unbounded await: the row appears with the
+    // zero window it used to have and the first turn end corrects it.
+    expect(r.runs[0].payload.context_window).toMatchObject({ context_window_size: 0, used_percentage: null, remaining_percentage: null });
   });
 
   it("`fast_mode` is on every payload, from the boot run on", async () => {
-    const r = statusRunner();
-    mountStatus(fakeRemote(), r);
-    await settle();
+    const clock = slClock(), r = statusRunner();
+    mountStatus(fakeRemote(), r, clock);
+    await settle(clock);
     expect(r.runs[0].payload.fast_mode).toBe(false);
   });
 
   it("`rate_limits` rides through from session.usage() when the credential can see the windows", async () => {
-    const r = statusRunner();
+    const clock = slClock(), r = statusRunner();
     const fake = fakeRemote({ usage: () => ({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 42, resets_at: "2026-08-11T20:00:00Z" } } }) });
-    mountStatus(fake, r);
-    await settle();
+    mountStatus(fake, r, clock);
+    await settle(clock);
     expect("rate_limits" in r.runs[0].payload).toBe(false);          // no usage reading yet — nothing to report
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await settle();
+    await settle(clock);
     expect(r.runs[r.runs.length - 1].payload.rate_limits).toEqual({ five_hour: { used_percentage: 42, resets_at: "2026-08-11T20:00:00Z" } });
   });
 
   it("`rate_limits` stays absent under a credential that cannot see the buckets (this project's own)", async () => {
-    const r = statusRunner();
+    const clock = slClock(), r = statusRunner();
     const fake = fakeRemote({ usage: () => ({ rate_limits_available: false, rate_limits: null }) });
-    mountStatus(fake, r);
-    await settle();
+    mountStatus(fake, r, clock);
+    await settle(clock);
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await settle();
+    await settle(clock);
     expect("rate_limits" in r.runs[r.runs.length - 1].payload).toBe(false);
   });
 
@@ -3039,20 +3090,20 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
   // transcript_path; once the prompt hook has fired the engine's own id and its JSONL path are on the wire.
   // The sequence is the pin, not either end of it.
   it("session_id mints then reconciles: minted uuid + no transcript_path pre-turn, engine id + path after", async () => {
-    const r = statusRunner();
+    const clock = slClock(), r = statusRunner();
     let facts: any = {};
     const latch = { read: () => facts, clear: () => { facts = {}; }, hooks: () => ({}) };
     const fake = fakeRemote({ sessionId: undefined });               // no engine id yet, as at a real launch
-    mountStatus(fake, r, {}, latch);
-    await settle();
+    mountStatus(fake, r, clock, {}, latch);
+    await settle(clock);
     const pre = r.runs[0].payload;
-    expect(pre.session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);      // a uuid, not null and not absent
+    expect(pre.session_id).toMatch(UUID_RE);                          // a uuid, not null and not absent
     expect("transcript_path" in pre).toBe(false);
     (fake as any).sessionId = "engine-sess-9";                        // the SDK's first system/init frame
     facts = { transcriptPath: "/home/u/.claude/projects/-repo/engine-sess-9.jsonl", promptId: "pid-1" };
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await settle();
+    await settle(clock);
     const post = r.runs[r.runs.length - 1].payload;
     expect(post.session_id).toBe("engine-sess-9");
     expect(post.transcript_path).toBe("/home/u/.claude/projects/-repo/engine-sess-9.jsonl");
@@ -3064,51 +3115,95 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
   // guard is the render half and was already there (test/tui/footer.test.tsx pins the empty slot); what had
   // to change is that a failure now REACHES the state at all.
   it("a failing run clears statusLineText, and a later good run puts it back", async () => {
-    const r = statusRunner();
+    const clock = slClock(), r = statusRunner();
     const api: { text?: () => string | undefined } = {};
     const fake = fakeRemote();
     function H() {
-      const c = useChat(() => fake, { statusLine: STATUS_CFG } as any, { statusLine: { runStatusLine: r.run } });
+      const c = useChat(() => fake, { statusLine: STATUS_CFG } as any, { statusLine: { runStatusLine: r.run, ...clock.deps } });
       api.text = () => c.state.statusLineText;
       return <Text>[{c.state.statusLineText ?? "NONE"}]</Text>;
     }
     const { lastFrame } = render(<H />);
-    await settle();
+    await settle(clock);
     r.runs[0].resolve("~/repo (main)");
     await waitFor(() => frame(lastFrame).includes("~/repo (main)"));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await settle();
+    await settle(clock);
     r.runs[1].resolve(undefined);                                     // nonzero exit / timeout / empty stdout
     await waitFor(() => frame(lastFrame).includes("[NONE]"));
     expect(api.text!()).toBeUndefined();                              // was: the previous text stood forever
     fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
     fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
-    await settle();
+    await settle(clock);
     r.runs[2].resolve("back");
     await waitFor(() => frame(lastFrame).includes("[back]"));
   });
 
   it("the conversation boundary mints a NEW id and drops the latch — never the discarded conversation's", async () => {
-    const r = statusRunner();
+    const clock = slClock(), r = statusRunner();
     let facts: any = { transcriptPath: "/old.jsonl", promptId: "pid-old" };
     const latch = { read: () => facts, clear: () => { facts = {}; }, hooks: () => ({}) };
     const api: { run?: (s: string) => void } = {};
     const fake = fakeRemote({ sessionId: "engine-sess-9", clearSession: async () => { (fake as any).sessionId = undefined; } });
     function H() {
-      const c = useChat(() => fake, { statusLine: STATUS_CFG, promptLatch: latch } as any, { statusLine: { runStatusLine: r.run } });
+      const c = useChat(() => fake, { statusLine: STATUS_CFG, promptLatch: latch } as any, { statusLine: { runStatusLine: r.run, ...clock.deps } });
       api.run = c.submit;
       return <Text>ok</Text>;
     }
     render(<H />);
-    await settle();
+    await settle(clock);
     expect(r.runs[0].payload.session_id).toBe("engine-sess-9");
     api.run!("/clear");
-    await settle();
+    await settle(clock);
     const after = r.runs[r.runs.length - 1].payload;
-    expect(after.session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+    expect(after.session_id).toMatch(UUID_RE);
     expect(after.session_id).not.toBe("engine-sess-9");               // not the conversation the user wiped
     expect("transcript_path" in after).toBe(false);                   // canon's `Ot.promptId = null`, both keys
     expect("prompt_id" in after).toBe(false);
+  });
+
+  // FIX ROUND, MINOR 2 — the cell above cannot see the RE-mint. Its session had an engine id, so deleting
+  // `statusSessionIdRef.current = randomUUID()` from `replaceDocument` leaves the MOUNT mint standing, and
+  // the mount mint is already a uuid that differs from `engine-sess-9`: the assertions pass on a build with
+  // no boundary re-mint at all. This session never has an engine id, so the mint is the field's only writer
+  // and the two mints are the only two values it can hold — which makes "they differ" the pin, and deleting
+  // the boundary line the thing that reddens it.
+  it("the boundary RE-mints: the id after /clear is a SECOND uuid, not the one minted at mount (D-W4)", async () => {
+    const clock = slClock(), r = statusRunner();
+    const api: { run?: (s: string) => void } = {};
+    const fake = fakeRemote({ sessionId: undefined, clearSession: async () => {} });
+    function H() {
+      const c = useChat(() => fake, { statusLine: STATUS_CFG } as any, { statusLine: { runStatusLine: r.run, ...clock.deps } });
+      api.run = c.submit;
+      return <Text>ok</Text>;
+    }
+    render(<H />);
+    await settle(clock);
+    const mintedAtMount = r.runs[0].payload.session_id;
+    expect(mintedAtMount).toMatch(UUID_RE);
+    api.run!("/clear");
+    await settle(clock);
+    const afterClear = r.runs[r.runs.length - 1].payload.session_id;
+    expect(afterClear).toMatch(UUID_RE);                              // still an identity, never absent
+    expect(afterClear).not.toBe(mintedAtMount);                       // canon's `UHi()` rotation, reproduced
+  });
+});
+
+// D-W11's COMPANION (fix round, owner-call 1): `/status` MEASURES ITS OWN READING. It used to render
+// `ctxPct`, whose only writer was the turn-end refresh — so before the first turn the context row was
+// missing from the one command whose whole job is "what is the state of this session right now", and
+// whether it was missing depended on something the user cannot see: the statusLine mount effect's context
+// read was the only other producer, and it only runs when a status line happens to be configured.
+// Measure-then-show, which is Wave S's rule rather than an exception to it (see the W-S5 block above).
+describe("/status takes its own context measurement (W2 T6 fix, D-W11)", () => {
+  it("shows a context row on a FRESH mount — no statusLine configured, no turn yet", async () => {
+    const fake = fakeRemote({ getContextUsage: async () => ({ totalTokens: 25, maxTokens: 100 }) });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { clearViewport: () => {} }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/status");                                              // the first thing this session ever does
+    await waitFor(() => flat(lastFrame).includes("context 25% used"));  // was: no context row at all pre-turn
   });
 });

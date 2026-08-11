@@ -562,9 +562,12 @@ describe("buildStatusLinePayload (annex §C2.2-§C2.3)", () => {
   // already in ccx's hand (`session.usage()`). What stays out is what canon itself drops.
   it("carries exactly canon's key set, in canon's own order — and none of the blocks canon drops", () => {
     // `toEqual` treats an `undefined` value as an absent key, so the key LIST is what pins "omitted, not null".
+    // `effort` sits FOURTH, not down beside `fast_mode` (Task 6 review MINOR 3): canon's `mh()` literal
+    // declares the key immediately after `prompt_id`, and the conditional spread that fills it in updates
+    // that key's value rather than appending it — checked against the shipped 2.1.220 bundle.
     expect(Object.keys(buildStatusLinePayload(FULL_RATED))).toEqual([
-      "session_id", "transcript_path", "cwd", "prompt_id", "session_name", "model", "workspace", "version",
-      "output_style", "cost", "context_window", "exceeds_200k_tokens", "fast_mode", "effort", "thinking",
+      "session_id", "transcript_path", "cwd", "prompt_id", "effort", "session_name", "model", "workspace",
+      "version", "output_style", "cost", "context_window", "exceeds_200k_tokens", "fast_mode", "thinking",
       "rate_limits",
     ]);
     // `permission_mode` is the one the hook-input shape declares and the payload does NOT carry: `H0b`

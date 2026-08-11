@@ -66,7 +66,7 @@ import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
 import { substituteChips } from "./pasteChips.js";
 import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./queue.js";
 import { composerMode } from "./promptMode.js";
-import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRunStatusLine, type StatusLineConfig, type StatusLineDriver, type StatusLineDriverDeps, type StatusLineSnapshot, type StatusLineUsage } from "./statusLine.js";
+import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRunStatusLine, STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS, type StatusLineConfig, type StatusLineDriver, type StatusLineDriverDeps, type StatusLineSnapshot, type StatusLineUsage } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
 import type { PastedMap } from "./editor.js";
 
@@ -747,8 +747,6 @@ export function useChat(
       () => JSON.stringify(buildStatusLinePayload(statusSnapshotRef.current())),
       (text) => { if (!disposed.current) setStatusLineText(text); },
       { ...deps.statusLine, runStatusLine: run });
-    statusDriverRef.current = driver;
-    driver.mountRun();                                    // §C2.4 trigger 1 — see `mountRun`'s own doc (W2 T6)
     // WAVE 2 TASK 6 / SPEC D-W8 — THE MOUNT-TIME CONTEXT READING, and the ONE extra read this task adds.
     //
     // `context_window_size` was 0 on every payload until the first turn ended, because `statusCtxRef` had
@@ -766,13 +764,38 @@ export function useChat(
     // the boundary races the engine swap that boundary exists to perform, so it could answer for either
     // conversation. s2qa5-10 (the post-`/clear` zero) stays in the backlog with that as its answer.
     //
-    // Its poke lands inside the boot debounce window, so it costs no extra run; and because `refreshCtx`
-    // is the shared wrapper, the launch frame's `ctx N%` chip becomes honest at the same time. THAT IS A
-    // COUPLING WORTH NAMING: the chip now appears at launch in a session that configures a status line and
-    // not in one that does not. Un-gating the read would fix the asymmetry at the cost of one control
-    // round-trip on every boot — an owner call, recorded rather than taken here.
-    void refreshCtx();
-    return () => { driver.dispose(); statusDriverRef.current = null; };
+    // THE BOOT RUN WAITS FOR THAT READ, RACED AGAINST A CAP (Task 6 review MAJOR 1, spec D-W11). Shipping
+    // the read as a fire-and-forget beside an already-debounced `mountRun()` was not enough: the review timed
+    // `getContextUsage()` at ~1.2 s warm, four times the 300 ms window, so a live boot ran the script TWICE
+    // and the first payload carried the `context_window_size: 0` this whole step exists to remove. Gating the
+    // boot run on the read gives back the one-run cadence AND a real window; racing the gate against
+    // `STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS` is what stops a control call that never answers from suppressing
+    // the row for the rest of the session — the cap losing means the boot run goes out with the zero window
+    // it used to have, and the first turn end corrects it. Canon needs none of this because its window size
+    // is a client-side model constant; that difference is the recorded divergence, and its price is a first
+    // status row up to ~1.5 s after mount.
+    //   THE DRIVER IS PUBLISHED AT THE SAME MOMENT, and that is what makes "one boot run" true rather than
+    // merely likely. `statusDriverRef` is what `pokeStatusLine` writes through, and ccx's boot deltas — the
+    // catalog settling `effortSupported`, the host's first `state` frame moving `mode` — each poke on their
+    // own schedule. Left attached during a 1.2 s read, any one of them opens a 300 ms window of its own and
+    // fires the very run (zero window, then corrected) this gate exists to prevent. Dropped instead: the
+    // boot run that follows is built from the snapshot at ITS moment, so every delta that landed while the
+    // gate was shut is already in it, and nothing is lost but the row appearing a few hundred ms sooner.
+    const armCap = deps.statusLine?.setTimeout ?? ((fn: () => void, ms: number): unknown => { const h = setTimeout(fn, ms); h.unref?.(); return h; });
+    const disarmCap = deps.statusLine?.clearTimeout ?? ((h: unknown): void => { clearTimeout(h as ReturnType<typeof setTimeout>); });
+    let capTimer: unknown, unmounted = false;
+    const capped = new Promise<void>((resolve) => { capTimer = armCap(() => { capTimer = undefined; resolve(); }, STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS); });
+    void Promise.race([refreshCtx(), capped]).then(() => {
+      if (capTimer !== undefined) { disarmCap(capTimer); capTimer = undefined; }
+      if (unmounted) return;                              // a hook torn down mid-read leaves the ref null
+      statusDriverRef.current = driver;                   // the gate opens: pokes reach the driver from here
+      driver.mountRun();                                  // §C2.4 trigger 1 — see `mountRun`'s own doc (W2 T6)
+    });
+    // Because `refreshCtx` is the shared wrapper, the launch frame's `ctx N%` chip becomes honest at the same
+    // time — but ONLY in a session that configures a status line, which used to be a visible asymmetry. It no
+    // longer is: `/status` measures for itself (D-W11's companion, at the command switch below), so the one
+    // surface that shows the number pre-first-turn shows it either way.
+    return () => { unmounted = true; if (capTimer !== undefined) { disarmCap(capTimer); capTimer = undefined; } driver.dispose(); statusDriverRef.current = null; };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   // §C2.4 trigger 2, as upstream states it: ONE effect over the delta list (`L484891`), not a poke wired into
   // each setter. Same reason upstream chose it — `mode` alone has three writers (Shift+Tab, `/config`, the
@@ -1317,16 +1340,22 @@ export function useChat(
     return () => { cancelled = true; };
   }, [session]);
 
-  async function refreshCtx() {
+  /** RETURNS THE PERCENTAGE IT JUST MEASURED (W2 T6 fix, D-W11), because `setCtxPct` cannot answer a caller
+   *  in the same tick — React state is read from the render that follows, and `/status` builds its lines
+   *  inside the awaiting call. `undefined` for every non-answer there is: a failed read, a reading with no
+   *  window, and a hook that has been disposed under it. */
+  async function refreshCtx(): Promise<number | undefined> {
     try {
       const u = (await session.getContextUsage()) as { totalTokens?: number; maxTokens?: number };
-      if (disposed.current) return;
-      if (u?.maxTokens) setCtxPct(Math.round(((u.totalTokens ?? 0) / u.maxTokens) * 100));
+      if (disposed.current) return undefined;
+      const pct = u?.maxTokens ? Math.round(((u.totalTokens ?? 0) / u.maxTokens) * 100) : undefined;
+      if (pct !== undefined) setCtxPct(pct);
       // W-C T10: the same reading is the status line's `context_window`, and the poke is upstream's
       // `tokenUsage` delta by another name — this is the moment the number ccx reports actually moved.
       if (u) { statusCtxRef.current = { totalTokens: u.totalTokens, maxTokens: u.maxTokens }; pokeStatusLine("context"); }
       postTokenWarning(u?.totalTokens, u?.maxTokens);
-    } catch { /* best-effort */ }
+      return pct;
+    } catch { /* best-effort */ return undefined; }
   }
   /** WAVE C TASK 14 (spec D-C3): the context-pressure ladder, posted HERE because this is the one place the
    *  number is re-measured — turn end, and the `/compact` arm which awaits this same function. `ctx N%` and
@@ -1515,8 +1544,20 @@ export function useChat(
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
         case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
         case "status": {
-          const u = await session.usage().catch(() => undefined);
-          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
+          // W2 T6 FIX / SPEC D-W11 — `/status` MEASURES FOR ITSELF, beside the `usage()` call it already
+          // makes. `ctxPct` has one other writer, the turn-end refresh, so before the first turn (and after
+          // every `/clear`, resume and rewind, which drop it by Wave S's rule) the context row was simply
+          // missing from a command whose entire job is to answer "what is the state of this session right
+          // now" — and it was missing or not depending on whether a status line happened to be configured,
+          // since that mount effect was the only other reader. This is MEASURE-THEN-SHOW and therefore
+          // Wave S's rule rather than an exception to it: what W-S5 forbids is a number that outlived the
+          // conversation it described, and this is a fresh reading of the conversation on screen. It costs
+          // one control round-trip on an explicitly-typed command.
+          //   The Settings dialog's Status tab (`fetchSettingsStatus`) still renders the last measurement
+          // instead of taking its own; only `/status` was the filed surface, and the divergence is recorded
+          // there rather than fixed by drive-by.
+          const [u, measured] = await Promise.all([session.usage().catch(() => undefined), refreshCtx()]);
+          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct: measured ?? ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
           break;
         }
         case "usage": append(formatUsage(await session.usage())); break;
@@ -2108,9 +2149,13 @@ export function useChat(
     try { mergeSettingsFile("localSettings", cwd, (current) => ({ ...(current && typeof current === "object" ? current : {}), outputStyle: id }), deps.settingsFileDeps); } catch { /* best-effort — no visible error line, mirrors theme's own silent persistence */ }
     if (hasSettingsOps(session)) await session.setOutputStyle(id).catch(() => {});
   }
-  // The Settings dialog's Status/Usage/Stats tabs — mirror the /status, /usage, /stats cases exactly
+  // The Settings dialog's Status/Usage/Stats tabs — mirror the /status, /usage, /stats cases
   // (formatStatus/formatUsage/formatStats), just returning lines instead of appending them: the dialog
   // renders them itself, read-only.
+  //   ONE DIFFERENCE SINCE W2 T6's FIX ROUND: `/status` re-measures the context (D-W11) and this tab does
+  // not — it renders whatever `ctxPct` last measured, so pre-first-turn its context row is absent where
+  // `/status`' is present. `/status` was the filed surface and the only one adjudicated; extending the extra
+  // round-trip to the dialog is a decision of its own, not a consistency chore to do in passing.
   async function fetchSettingsStatus(): Promise<RenderLine[]> {
     const u = await session.usage().catch(() => undefined);
     return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
