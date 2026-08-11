@@ -51,7 +51,11 @@ export interface AppServerDeps {
   // `sessionFactory` above because it takes the resume anchor as an argument rather than a bare config,
   // and because a test overriding one has no reason to be forced into overriding the other. Defaulted at
   // its call site (rewind.ts) to the same openSession-with-resumeAt primitive rewindSession uses.
-  resumeAtFactory?: (sessionId: string, resumeAt: string, config: Record<string, unknown>) => EngineSession;
+  // `droppedTurnUuid` (M3 Wave 0) is the prompt uuid of the turn the truncation throws away — the
+  // request's own `uuid`, since the rewind resumes at `prevUuid`. It rides beside the anchor rather than
+  // inside `config` because it is derived per-rewind from the request, exactly as `resumeAt` is, while
+  // `config` is the thread's unchanging start config.
+  resumeAtFactory?: (sessionId: string, resumeAt: string, droppedTurnUuid: string, config: Record<string, unknown>) => EngineSession;
 }
 export interface ConnCtx {
   peer: Peer;

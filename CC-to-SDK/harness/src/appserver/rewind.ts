@@ -31,9 +31,17 @@ const defaultGetSessionMessages = (sessionId: string): Promise<unknown[]> => sdk
 /** The default replacement-engine factory: the SAME primitive `src/session/index.ts`'s `rewindSession`
  *  uses (`openSession({...config, resume, resumeAt})`), rather than calling `rewindSession` itself, so a
  *  DI'd factory in a test observes `resume`/`resumeAt` on an ordinary config object exactly as the real
- *  one does — the reasoning server.ts's `startThread` records for folding `resume` into the config. */
-const defaultResumeAtFactory = (sessionId: string, resumeAt: string, config: Record<string, unknown>): EngineSession =>
-  openSession({ ...(config as OpenSessionConfig), resume: sessionId, resumeAt } as OpenSessionConfig);
+ *  one does — the reasoning server.ts's `startThread` records for folding `resume` into the config.
+ *  `droppedTurnUuid` maps to the SDK's `resumeDropsTurn` (M3 Wave 0): the truncation now DECLARES which
+ *  turn it discards, so the CLI refuses the fork when the discarded range holds anything that turn did
+ *  not produce — a queued message the engine absorbed after the client read its anchors. A refusal is
+ *  NOT raised here: it is an `error_during_execution` result frame the replacement engine emits, so the
+ *  swap has already completed and `thread/rewind` has already replied `ok` by the time it lands, and the
+ *  client sees it as the next turn on this thread failing with a `Resume rejected by
+ *  --resume-drops-turn:` message. Deterministic — retrying that turn re-refuses forever; recovery is a
+ *  fresh swap WITHOUT the guard, which nothing here does yet (M3 open follow-up). */
+const defaultResumeAtFactory = (sessionId: string, resumeAt: string, droppedTurnUuid: string, config: Record<string, unknown>): EngineSession =>
+  openSession({ ...(config as OpenSessionConfig), resume: sessionId, resumeAt, droppedTurnUuid } as OpenSessionConfig);
 
 interface DryRunResult { canRewind: boolean; error?: string }
 
@@ -260,7 +268,10 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
         // thread/rewind/anchors would answer empty until the next turn, and sessionLib.ts's live-guard
         // would stop finding this thread, letting a concurrent thread/delete erase the history out from
         // under a live engine.
-        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, record.config ?? {}), sessionId);
+        // `uuid` is the turn the truncation DISCARDS (the resume anchor is `prevUuid`, the entry before
+        // it), which is exactly what `resumeDropsTurn` names — the value is already in hand, so the guard
+        // costs nothing and catches the one thing the client's anchor list cannot show it.
+        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, uuid, record.config ?? {}), sessionId);
       }
       record.updatedAt = nowSec(); // a rewind is a mutation like any other (registry.ts's updatedAt contract)
       // Both scopes at once: the thread's own subscribers, and every server-scoped watcher — a rewind

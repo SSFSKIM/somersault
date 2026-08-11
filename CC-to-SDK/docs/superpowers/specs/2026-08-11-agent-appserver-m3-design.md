@@ -446,6 +446,13 @@ answered by the probe/implementation contact, none architectural.
   the result frame in production `ccx attach` use; the probe demoted from open question to
   evidence-capture (receipt shapes, replay order).
 - *(during execution — append here)*
+- **Drift ritual (Task 1, SDK bump landed):** the 0.3.220 → 0.3.227 delta is five added declared
+  properties and nothing else — `awsPairs`, `crossSessionInbound`, `dialogExpiry`,
+  `forceLoginGatewayUrl` (all nested in the CLI settings/auth schemas, hence invisible to
+  `drift-check.mjs`, whose `Options` scan is top-level only) and `resumeDropsTurn` (the sole top-level
+  `Options` addition, and the only one adopted — the rewind-seam guard); zero changes to `Query`
+  methods, the `SDKMessage` union, or exported names, with the drift gate green (installed IS npm HEAD,
+  no appserver-scorecard drift).
 
 ## Outcomes & Retrospective
 

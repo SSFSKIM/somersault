@@ -257,16 +257,16 @@ describe("appserver thread/rewind refusals (M2b Task 1)", () => {
 });
 
 describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
-  it("scope 'both': dry run then the real restore on the LIVE engine, then the swap — epoch bumped, old router off, old engine disposed, resumeAtFactory called with (sessionId, prevUuid, the thread's ORIGINAL config), router reinstalled on the replacement, thread/rewound to subscribers AND watchers", async () => {
+  it("scope 'both': dry run then the real restore on the LIVE engine, then the swap — epoch bumped, old router off, old engine disposed, resumeAtFactory called with (sessionId, prevUuid, the discarded turn's uuid, the thread's ORIGINAL config), router reinstalled on the replacement, thread/rewound to subscribers AND watchers", async () => {
     const oldEngine = mkEngine({ sessionId: "sess-1" });
     const newEngine = mkEngine({}); // a fresh engine's sessionId getter is undefined until its first init frame
-    const factoryCalls: Array<[string, string, Record<string, unknown>]> = [];
+    const factoryCalls: Array<[string, string, string, Record<string, unknown>]> = [];
     const { s, w, c, threadId, srv, startConfigs } = await bootThread({
       session: () => oldEngine,
       config: { model: "claude-opus-4-8", cwd: "/tmp/proj" },
       watcher: true,
       deps: {
-        resumeAtFactory: (sid: string, at: string, cfg: Record<string, unknown>) => { factoryCalls.push([sid, at, cfg]); return newEngine; },
+        resumeAtFactory: (sid: string, at: string, dropped: string, cfg: Record<string, unknown>) => { factoryCalls.push([sid, at, dropped, cfg]); return newEngine; },
       },
     });
     const epochBefore = srv.registry.get(threadId)!.epoch;
@@ -284,9 +284,12 @@ describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
     expect(record.session).toBe(newEngine);
     expect(newEngine.live.size).toBe(1);        // the router was reinstalled on the replacement
     expect(factoryCalls).toHaveLength(1);
-    const [sid, at, cfg] = factoryCalls[0];
+    const [sid, at, dropped, cfg] = factoryCalls[0];
     expect(sid).toBe("sess-1");
     expect(at).toBe("u1");
+    // M3 Wave 0: the request's `uuid` IS the discarded turn's prompt — the rewind resumes at `prevUuid`
+    // and throws away the turn `uuid` opened — so it rides along as the SDK's `resumeDropsTurn` guard.
+    expect(dropped).toBe("u2");
     // the thread's ORIGINAL start config — including the decision broker, or the replacement engine would
     // park nothing and every later tool call would bypass this server's permission surface entirely
     expect(cfg.model).toBe("claude-opus-4-8");

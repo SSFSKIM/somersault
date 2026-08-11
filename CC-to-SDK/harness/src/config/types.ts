@@ -90,6 +90,13 @@ export interface HarnessConfig {
   // so one anchor serves both). WITHOUT forkSession this is DESTRUCTIVE: same session_id, and the
   // persisted transcript is truncated at the anchor. With forkSession: non-destructive branch (new id).
   resumeAt?: string;                       // SDK resumeSessionAt; use with `resume`
+  // SDK 0.3.227 `resumeDropsTurn` — with `resumeAt`, names the PROMPT uuid of the turn the truncation
+  // discards, and the CLI then refuses at fork time if anything past the anchor belongs to some other turn
+  // (a queued user message the session absorbed mid-turn, a transcript append). The refusal arrives as an
+  // `error_during_execution` result whose message starts `Resume rejected by --resume-drops-turn:` and is
+  // DETERMINISTIC — recover by resuming plainly, never by retrying the same fork. Omit for the unvalidated
+  // truncation. Print/headless lane only (which is the only lane this harness drives).
+  droppedTurnUuid?: string;                // SDK resumeDropsTurn; use with `resumeAt`
   forkSession?: boolean;                   // branch into a NEW session id instead of resuming in place
   persistSession?: boolean;                // default SDK-true; false = ephemeral (no disk persistence)
   sessionStore?: SessionStore;             // BYO transcript-mirror backend (advanced; pure passthrough)

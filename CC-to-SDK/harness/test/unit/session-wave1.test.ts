@@ -153,4 +153,16 @@ describe("rewindSession (W1.1)", () => {
     expect(sink[0].fork).toBeUndefined();
     void s.dispose();
   });
+  // M3 Wave 0 (SDK 0.3.227): the truncating rewind can NAME the turn it discards, and the CLI then
+  // refuses at fork time if anything else sits past the anchor. Opt-in — omitted, the resume keeps the
+  // unvalidated truncation, so the key must be genuinely ABSENT rather than undefined-valued.
+  it("droppedTurnUuid → resumeDropsTurn; omitted, the key is absent (unvalidated truncation)", () => {
+    const sink: any[] = [];
+    const capture = ({ prompt, options }: any) => { sink.push(options); return (async function* () { for await (const _t of prompt) yield { type: "result", result: "ok" }; })(); };
+    const guarded = rewindSession("sid-1", "uuid-9", { droppedTurnUuid: "drop-1" }, { query: capture });
+    expect(sink[0].resumeDropsTurn).toBe("drop-1");
+    const plain = rewindSession("sid-1", "uuid-9", {}, { query: capture });
+    expect("resumeDropsTurn" in sink[1]).toBe(false);
+    void guarded.dispose(); void plain.dispose();
+  });
 });
