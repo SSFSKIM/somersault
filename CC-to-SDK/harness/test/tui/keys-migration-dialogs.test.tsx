@@ -305,6 +305,16 @@ describe("F6 task 2b — QuestionDialog's Other row keeps every decision key lit
 // no keys at all, a swallow). These drive the REAL ChatApp so that the replacement is tested where the
 // deletion happened, not just in the table.
 const ROOT_GLOBALS = ["\x12", "\x0f", "\x14", "\x02", "\x03", "\x1bp", "\x1bt"];   // ctrl+r/o/t/b/c, alt+p, alt+t
+/** WAVE 2 TASK 3 (EP-D2c; s2qa4-11) — ctrl+c LEFT that list for the overlay surfaces. It was the one root
+ *  global whose unbind cost the user something they could not get back: the double-press exit arm lives on
+ *  `app:interrupt` in `Global`, an explicit unbind resolves `{type:"unbound"}` and `dispatch` treats that as
+ *  CONSUMED, so a `/model` picker or a `/config` list made Ctrl-C Ctrl-C a no-op — the REPL reads raw stdin,
+ *  so there is no SIGINT underneath it either. Canon binds the 800 ms latch on the dialog's own scope
+ *  (L184112/L183445) and exits on the second press. The other six keys OPEN something over a surface that
+ *  already owns the screen and stay unbound; ctrl+c ends the process, which no surface owns.
+ *    A surface that SWALLOWS (the ⏪ restoring hold) is a different mechanism and still eats all seven — it
+ *  runs before context resolution, so it keeps the full list. */
+const OVERLAY_INERT = ROOT_GLOBALS.filter((k) => k !== "\x03");
 /** The panel's pending row. Ink lays the row out by MEASURED width and `◻` measures two columns while
  *  printing as one, so the gutter between glyph and subject is one space or two — every assertion below goes
  *  through this regex rather than a literal (F6 T13). */
@@ -343,11 +353,15 @@ async function armTodoRow(fake: { pushEvent: (ev: HostEvent) => void }, stdin: {
  *  the todo panel and a resurrected Ctrl-B may re-open a panel that is already open — neither moves any of
  *  them. So the loop ALSO pins the whole frame against the pre-loop snapshot: an inert key changes nothing at
  *  all, which is a claim every single-key regression has to break. Callers seed a todo first (see `seedTodo`)
- *  so that "nothing changed" has something to say about Ctrl-T. */
-async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, lastFrame: () => string | undefined, marker: string) {
+ *  so that "nothing changed" has something to say about Ctrl-T.
+ *
+ *  `keys` defaults to the OVERLAY set (Wave 2 t3: ctrl+c is no longer inert over an overlay — see
+ *  `OVERLAY_INERT`, and the positive pin in the Wave 2 task 3 block below). The swallow case passes
+ *  `ROOT_GLOBALS` explicitly, because a swallow really does eat all seven. */
+async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, lastFrame: () => string | undefined, marker: string, keys: readonly string[] = OVERLAY_INERT) {
   const before = frame(lastFrame);
   expect(before, "the marker must be on screen before the loop starts").toContain(marker);
-  for (const k of ROOT_GLOBALS) {
+  for (const k of keys) {
     stdin.write(k);
     await new Promise((r) => setTimeout(r, 20));
     const f = frame(lastFrame), at = `after ${JSON.stringify(k)}`;
@@ -361,6 +375,78 @@ async function eachRootGlobalIsInert(stdin: { write: (s: string) => void }, last
     expect(f, at).toBe(before);                                       // …and nothing else moved either
   }
 }
+
+// ── WAVE 2 TASK 3 (EP-D2c; s2qa4-11) — THE ONE ROOT GLOBAL AN OVERLAY DOES NOT OWN.
+// QA drove `/model`, pressed Ctrl-C twice, and nothing happened — no exit, and no hint that anything had been
+// heard. Two layers, both repaired here and both pinned below:
+//   1. the KEYMAP. Six overlay contexts carried `"ctrl+c": null`; `resolveKey` answers an explicit unbind with
+//      `{type:"unbound"}` and `dispatch` treats that as CONSUMED, so the press never reached `app:interrupt`
+//      in `Global` and never reached the 800 ms double-press arm behind it. The REPL reads raw stdin, so
+//      `\x03` is a keystroke and not a signal — there was no SIGINT path underneath to catch it either.
+//   2. the FOOTER. `ChatApp`'s exit-arm slot was gated on `!paneOwned`, so even an armed exit printed nothing
+//      while a pane-owning surface (`/model`, `/config`, `/resume`, the rewind picker, `/help`) was up.
+// Canon does both: the dialog scopes bind the exit latch themselves (L184112/L183445) and the second press
+// inside the window exits. The five other root globals stay unbound over an overlay — they OPEN a surface on
+// top of one that already owns the screen — and the decision dialogs, which have always kept ctrl+c live
+// deliberately, are unchanged (the F6 T2 block immediately below still passes untouched).
+describe("Wave 2 task 3 — ctrl+c falls through an overlay to the exit arm", () => {
+  const modelRemote = () => fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
+  const openSlash = (cmd: string, marker: string) => async (stdin: { write: (s: string) => void }, lastFrame: () => string | undefined) => {
+    stdin.write(cmd); await waitFor(() => frame(lastFrame).includes(cmd));
+    stdin.write("\r");                                            // separate write: "text\r" in one chunk reads as a paste
+    await waitFor(() => frame(lastFrame).includes(marker));
+  };
+  /** Three overlays, three different reasons the arm was unreachable:
+   *   · the bg tasks panel is a bare `Select` and is NOT `paneOwned` — only the keymap null stood in the way;
+   *   · `/config` is `Settings` AND `paneOwned` — it needed the footer gate relaxed as well;
+   *   · `/model` is `Select` + `ModelPicker` and `paneOwned` — the surface the QA report actually drove. */
+  const OVERLAYS: { name: string; marker: string; session: () => ReturnType<typeof fakeRemote>;
+    open: (stdin: { write: (s: string) => void }, lastFrame: () => string | undefined) => Promise<void> }[] = [
+    { name: "the bg tasks panel (Select)", marker: "No tasks currently running", session: () => fakeRemote(),
+      open: async (stdin, lastFrame) => { stdin.write("\x02"); await waitFor(() => frame(lastFrame).includes("No tasks currently running")); } },
+    { name: "/config (Settings)", marker: "Default permission mode", session: () => fakeRemote(),
+      open: openSlash("/config", "Default permission mode") },
+    { name: "/model (Select + ModelPicker)", marker: "Select model", session: modelRemote,
+      open: openSlash("/model", "Select model") },
+  ];
+
+  it.each(OVERLAYS)("$name: Ctrl-C arms the exit hint and the surface stays up", async ({ marker, session, open }) => {
+    const fake = session();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    await open(stdin, lastFrame);
+    stdin.write("\x03");
+    await waitFor(() => frame(lastFrame).includes("Press Ctrl-C again to exit"));
+    expect(frame(lastFrame), "the overlay keeps the screen — the first press only arms").toContain(marker);
+  });
+
+  // The half the hint cannot prove: the SECOND press has to reach `exitRef` and take the app down. `disposed`
+  // is the unmount signal (useChat disposes the session in its `[session]` cleanup), which is a positive fact
+  // rather than the "a later keystroke does not render" inference the composer-side cases have to settle for.
+  it.each(OVERLAYS)("$name: a second Ctrl-C inside the window exits", async ({ session, open }) => {
+    const fake = session();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    await open(stdin, lastFrame);
+    expect(fake.disposed, "still mounted before the two presses").toBe(0);
+    stdin.write("\x03"); await new Promise((r) => setTimeout(r, 20));   // well inside the 800 ms arm window
+    stdin.write("\x03");
+    await waitFor(() => fake.disposed === 1);
+  });
+
+  // The two surfaces that OWN ctrl+c keep it: the pager rebinds it to `transcript:exit` and the inline history
+  // search to `historySearch:cancel`, and neither may start arming an exit instead (bindings.ts leaves both
+  // alone). Driven here rather than asserted off the table because the table half already passes vacuously.
+  it("the transcript pager still exits on Ctrl-C rather than arming", async () => {
+    const fake = fakeRemote();
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("\x0f"); await waitFor(() => frame(lastFrame).includes("Transcript"));
+    stdin.write("\x03"); await waitFor(() => !frame(lastFrame).includes("Transcript"));
+    expect(frame(lastFrame)).not.toContain("Press Ctrl-C again to exit");
+    expect(fake.disposed, "…and it closed the pager, not the app").toBe(0);
+  });
+});
 
 // F6 T2 review, Important 1 — the DECISION half of the same gate, driven through the real ChatApp. The four
 // surfaces above are OVERLAYS and must be deaf; a dialog answering the MODEL is the opposite and must stay
@@ -517,7 +603,7 @@ describe("F2 task 8 — the deleted gatedRef, replaced by the table (driven thro
     stdin.write("k");    await waitFor(() => frame(lastFrame).includes("❯"));
     stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("Confirm you want to restore"));
     stdin.write("\r");   await waitFor(() => frame(lastFrame).includes("restoring"));
-    await eachRootGlobalIsInert(stdin, lastFrame, "restoring");
+    await eachRootGlobalIsInert(stdin, lastFrame, "restoring", ROOT_GLOBALS);   // a swallow eats ctrl+c too
     // …and the keys the hold must eat that are nobody's global: escape, enter, and the Task chord.
     for (const k of ["\x1b", "\r", "\x18\x02"]) { stdin.write(k); await new Promise((r) => setTimeout(r, 20)); }
     expect(frame(lastFrame)).toContain("restoring");

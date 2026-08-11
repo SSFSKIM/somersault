@@ -958,9 +958,19 @@ describe("<ChatApp>", () => {
       fake.parkPermission({ sessionId: "s", toolUseID: `hidden-${testCase.name}`, toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
       view.stdin.write("\x03");                                // Ctrl-C belongs to the visible surface, never hidden pending
       await new Promise((r) => setTimeout(r, 20));
-      expect(frame(view.lastFrame)).not.toContain("Press Ctrl-C again to exit");
-      if (testCase.closesOnCtrlC) await waitFor(() => frame(view.lastFrame).includes("Edit file"));
-      else {
+      if (testCase.closesOnCtrlC) {
+        // HistorySearch REBINDS ctrl+c to `historySearch:cancel`, so the press closes the overlay on the spot
+        // and never reaches an exit arm. That surface owns the key and keeps owning it.
+        expect(frame(view.lastFrame)).not.toContain("Press Ctrl-C again to exit");
+        await waitFor(() => frame(view.lastFrame).includes("Edit file"));
+      } else {
+        // WAVE 2 TASK 3 (EP-D2c; s2qa4-11) — these three overlays USED to unbind ctrl+c, and this line used to
+        // read `not.toContain(...)`. The unbind is gone (CTRL-C-FALLS-THROUGH in bindings.ts), so the press now
+        // falls through to Global's exit arm. That does not weaken what this case is for: the arm is the APP's,
+        // the parked Edit is still parked and still invisible, the visible overlay still owns the screen, and it
+        // still closes by its own Escape — which is the whole claim, now stated directly instead of by proxy.
+        expect(frame(view.lastFrame)).toContain("Press Ctrl-C again to exit");
+        expect(frame(view.lastFrame)).not.toContain("Edit file");
         expect(frame(view.lastFrame)).toContain(testCase.name);
         view.stdin.write("\x1b");                              // visible overlay closes by its own Escape handler
         await waitFor(() => frame(view.lastFrame).includes("Edit file"));

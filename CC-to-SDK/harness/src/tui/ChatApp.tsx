@@ -924,6 +924,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           own ctrl+c arm, and the composer's ctrl+d arm arriving through `footerState`. Ctrl-C wins when both
           are up, because it is the one that ends the process rather than the session.
 
+          WAVE 2 TASK 3 (EP-D2c; s2qa4-11) — THE EXIT ARM IGNORES `paneOwned`, alone among this file's armed
+          hints. It used to read `exitArmed && !paneOwned`, and that gate is what QA saw as "no hint ever
+          appears while a dialog is mounted": with the keymap half fixed the press now arms from inside
+          `/model`, `/config`, `/resume`, the rewind picker and `/help`, and the gate would have hidden the
+          one line saying so — an armed 800 ms window the user cannot see is worse than no arm at all, because
+          the second press then looks like it came from nowhere. `escArmVisible` above KEEPS its `!paneOwned`
+          (it posts to the notification queue, which a pane-owning surface really does cover, and Esc-Esc
+          opens a picker rather than ending the process); this slot is the footer's own row, drawn
+          unconditionally under every surface, so there is nothing for it to collide with.
+
           `Press Esc again to rewind` HAS NO ROW HERE, deliberately (plan constraint 12): upstream carries that
           class of affordance as a QUEUE entry, not a persistent line (annex §C1.6), and since Wave C Task 4
           both esc arms post there — this one on `escape-again-to-rewind`, the composer's clear arm on
@@ -933,7 +943,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         draftNonEmpty={draftNonEmpty} isInputEmpty={!draftNonEmpty}
         searching={footerState.searching} pasting={footerState.pasting}
         pasteExpandHint={footerState.pasteExpandHint} bashMode={footerState.bashMode}
-        exitArm={exitArmed && !paneOwned ? EXIT_ARM_CTRL_C : footerState.exitArm}
+        exitArm={exitArmed ? EXIT_ARM_CTRL_C : footerState.exitArm}
         // WAVE C TASK 10 (EP-C2b) — the statusLine, now real. CONFIGURED and TEXT are separate facts and
         // arrive from separate places on purpose: the setting is resolved once at launch (chatMain, the only
         // reader of the user settings file), and the text is whatever the driver's last SUCCESSFUL run

@@ -109,8 +109,13 @@ describe("reserved keys", () => {
     expect(reservedCollisions(DEFAULT_BINDINGS).sort()).toEqual([...GRANDFATHERED].sort()));
   it("the collision check bites — a new reserved binding is caught", () =>
     expect(reservedCollisions([{ context: "Select", bindings: { "ctrl+\\": "select:cancel" } }])).toEqual(["Select ctrl+\\"]));
+  // Wave 2 t3 re-grounded this case on `Confirmation ctrl+d`, which the real table still writes. It used to
+  // construct `Select ctrl+c: null` — a shape the table no longer has anywhere (CTRL-C-FALLS-THROUGH), and a
+  // synthetic fixture that has drifted off the code it stands for is the kind of pin that goes on passing
+  // while the property it names quietly stops being true. GRANDFATHERED above is untouched by that removal:
+  // `reservedCollisions` only ever reported non-null bindings, so deleting six nulls adds and removes nothing.
   it("an explicit unbind of a reserved key is not a collision", () =>
-    expect(reservedCollisions([{ context: "Select", bindings: { "ctrl+c": null } }])).toEqual([]));
+    expect(reservedCollisions([{ context: "Confirmation", bindings: { "ctrl+d": null } }])).toEqual([]));
 });
 
 describe("no key is bound twice inside one context", () => {
@@ -127,11 +132,24 @@ describe("no key is bound twice inside one context", () => {
 // them all. Null here means "this Global binding does not reach this context" — today's truth, not a redesign.
 describe("overlay gating, expressed as null bindings", () => {
   const GLOBAL_KEYS = ["ctrl+c", "ctrl+d", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b"];
+  /** WAVE 2 TASK 3 (EP-D2c; s2qa4-11) — the five an overlay may eat. `ctrl+c` left the set: it does not OPEN
+   *  a surface over one that already owns the screen, it is the exit gesture, and an unbind is CONSUMED, so
+   *  nulling it deleted the double-press exit arm rather than localising it. See `CTRL-C-FALLS-THROUGH` in
+   *  bindings.ts, and the behaviour half in keys-migration-dialogs.test.tsx's "Wave 2 task 3" block. */
+  const SUPPRESSIBLE = GLOBAL_KEYS.filter((k) => k !== "ctrl+c");
   it("Global binds exactly the six keys the owner gate arbitrates", () =>
     expect(Object.keys(block("Global").bindings).sort()).toEqual([...GLOBAL_KEYS].sort()));
-  it.each(["Select", "Settings", "MessageSelector"])("%s is an overlay owner: every Global key is unbound", (context) => {
+  it.each(["Select", "Settings", "MessageSelector", "Help", "EffortDialog"])("%s is an overlay owner: every suppressible Global key is unbound", (context) => {
     const b = block(context).bindings;
-    for (const k of GLOBAL_KEYS) expect(b[k], `${context} ${k} must be null`).toBeNull();
+    for (const k of SUPPRESSIBLE) expect(b[k], `${context} ${k} must be null`).toBeNull();
+  });
+  // The negative half, and the one that carries Wave 2 t3: an overlay must not bind ctrl+c AT ALL — not to an
+  // action (nothing here owns the exit gesture) and above all not to `null`, which resolves `{type:"unbound"}`
+  // and stops the walk before `Global`'s `app:interrupt` is ever reached. `Transcript` and `HistorySearch` are
+  // deliberately absent from this list: they REBIND the key to their own exit/cancel, which is a different
+  // claim, pinned by their own cases below.
+  it.each(["Select", "Settings", "MessageSelector", "Help", "EffortDialog", "SessionPicker"])("%s must not touch ctrl+c — the exit arm has to reach Global", (context) => {
+    expect("ctrl+c" in block(context).bindings, `${context} must leave ctrl+c to Global`).toBe(false);
   });
   // t8 review, Minor B: `Task` stays pushed for the whole turn and sits BELOW any overlay, so unbinding plain
   // ctrl+b without its chord alias left `ctrl+x ctrl+b` still backgrounding the turn from inside the bg panel
@@ -177,7 +195,7 @@ describe("overlay gating, expressed as null bindings", () => {
   // stages unmount that list. ctrl+r is REBOUND (HistorySearch's precedent) because the surface owns the key.
   it("SessionPicker is an overlay owner that rebinds ctrl+r to its own rename", () => {
     const b = block("SessionPicker").bindings;
-    for (const k of ["ctrl+c", "ctrl+d", "ctrl+o", "ctrl+t", "ctrl+b", "ctrl+x ctrl+b", "alt+p", "alt+t"])
+    for (const k of ["ctrl+d", "ctrl+o", "ctrl+t", "ctrl+b", "ctrl+x ctrl+b", "alt+p", "alt+t"])
       expect(b[k], `SessionPicker ${k} must be null`).toBeNull();
     expect(b["ctrl+r"]).toBe("sessionPicker:rename");
     expect(b["space"]).toBe("sessionPicker:preview");
@@ -203,7 +221,8 @@ describe("overlay gating, expressed as null bindings", () => {
     expect(b["right"]).toBe("modelPicker:increaseEffort");
     expect(b["enter"]).toBe("select:accept");
     expect(b["escape"]).toBe("select:cancel");
-    for (const k of ["ctrl+c", "ctrl+d", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b", "alt+p", "alt+t", "ctrl+x ctrl+b"])
+    // Wave 2 t3: `ctrl+c` left this loop — it is pinned ABSENT above instead, with the other five overlays.
+    for (const k of ["ctrl+d", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b", "alt+p", "alt+t", "ctrl+x ctrl+b"])
       expect(b[k], `EffortDialog ${k} must be null`).toBeNull();
   });
   it("HistorySearch is an overlay owner too, but rebinds ctrl+r/ctrl+c instead of unbinding them", () => {

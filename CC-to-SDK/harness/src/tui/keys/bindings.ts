@@ -30,6 +30,24 @@ export const VALID_CONTEXTS: readonly KeyContextName[] = ["Global", "Chat", "Aut
 /** One context's bindings. `string` = an action name from `VALID_ACTIONS`; `null` = unbound in this context. */
 export interface ContextBindings { context: KeyContextName; bindings: Record<string, string | null> }
 
+// ── CTRL-C-FALLS-THROUGH (Wave 2 task 3, EP-D2c; s2qa4-11). The overlay suppression sets below are five root
+// globals, not six: `ctrl+c` is NOT among them, and no context may re-add it as a null.
+//
+// The other five OPEN a surface (history search, the pager, the todo panel, the bg panel, the model picker)
+// on top of one that already owns the screen, so an overlay is right to eat them. `ctrl+c` does not open
+// anything — it is the exit gesture, bound in `Global` to `app:interrupt`, whose handler runs ChatApp's
+// 800 ms double-press arm. Unbinding it did not "keep the key local", it DELETED the only way out: an
+// explicit unbind resolves `{type:"unbound"}` and `KeymapProvider`'s dispatch treats that as CONSUMED, so it
+// reaches no lower scope and no fallback — and because the REPL reads raw stdin, `\x03` is a keystroke rather
+// than a signal, so there is no SIGINT underneath to catch what the table dropped. Ctrl-C Ctrl-C over
+// `/model` was simply a no-op. Canon binds the same latch on the dialog's own scope (L184112/L183445) and
+// exits on the second press inside the window.
+//   Consistent with the two blocks that already said so: `Confirmation` and `SelectDecision` both leave
+// `ctrl+c` deliberately ABSENT so it stays live over a parked decision. This makes the overlays agree.
+//   `Transcript` and `HistorySearch` are the exception and stay as they are: they REBIND ctrl+c
+// (`transcript:exit` / `historySearch:cancel`) because those surfaces genuinely own the key — a binding
+// shadows Global exactly as an unbind did, and closing the surface is the local meaning of the gesture.
+
 export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   { context: "Global", bindings: {
     "ctrl+c": "app:interrupt",          // arm/double-press exit semantics live in the handler (F0)
@@ -62,11 +80,11 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // redundant. `/help`'s dialog cannot swallow — `swallowContexts` (registry.ts) resolves the swallower as the
   // INNERMOST live scope, and that dialog mounts `Tabs` and `Select` inside itself, so a swallow there would
   // leave only the tab strip's four keys live and eat its own Escape. It is an "overlay" owner like Settings
-  // and Select, so it takes their suppression set instead: six root globals plus the two Chat keys whose scope
-  // survives one passive flush, plus ctrl+b's chord alias.
+  // and Select, so it takes their suppression set instead: FIVE root globals (see CTRL-C-FALLS-THROUGH below)
+  // plus the two Chat keys whose scope survives one passive flush, plus ctrl+b's chord alias.
   { context: "Help", bindings: {
     "escape": "help:dismiss",
-    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null, "ctrl+x ctrl+b": null,
   }},
   { context: "Transcript", bindings: {
@@ -116,8 +134,9 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "escape": "messageSelector:dismiss",
     "ctrl+up": "select:first", "shift+up": "select:first", "alt+up": "select:first", "shift+k": "select:first",          // KB14, retargeted (F6 T10)
     "ctrl+down": "select:last", "shift+down": "select:last", "alt+down": "select:last", "shift+j": "select:last",        // KB14, retargeted (F6 T10)
-    // RewindPicker is an "overlay" owner (state.rewindPicker.open) — same total suppression as Select/Settings.
-    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    // RewindPicker is an "overlay" owner (state.rewindPicker.open) — same suppression as Select/Settings, minus
+    // ctrl+c (CTRL-C-FALLS-THROUGH).
+    "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
     "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it (final review; see Select)
   }},
@@ -139,11 +158,12 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // `select:first`/`select:last` — the dialog has one value, not a list, so there is no `Select` inside it to
   // answer them and no ambiguity in borrowing the names.
   //   It DOES need the suppression block the ModelPicker block can do without, and that is the whole reason
-  // the two differ: with no inner `Select` mounted, nothing else in this dialog kills the six root globals.
+  // the two differ: with no inner `Select` mounted, nothing else in this dialog kills the root globals.
+  // (ctrl+c is not one of them any more — CTRL-C-FALLS-THROUGH.)
   { context: "EffortDialog", bindings: {
     "left": "modelPicker:decreaseEffort", "right": "modelPicker:increaseEffort",
     "enter": "select:accept", "escape": "select:cancel",
-    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
     "ctrl+x ctrl+b": null,          // …and ctrl+b's chord alias with it
   }},
@@ -173,8 +193,9 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+a": "sessionPicker:allProjects", "ctrl+w": "sessionPicker:allWorktrees",
     // An overlay owner, like Select/Settings/MessageSelector — and it needs its OWN copy of the suppression
     // rather than leaning on the inner Select's, because rename and preview unmount that Select. ctrl+r is
-    // REBOUND above rather than nulled (HistorySearch's precedent, same reasoning: the surface owns the key).
-    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+b": null,
+    // REBOUND above rather than nulled (HistorySearch's precedent, same reasoning: the surface owns the key);
+    // ctrl+c is absent for the opposite reason — nobody here owns it (CTRL-C-FALLS-THROUGH).
+    "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,
     "ctrl+x ctrl+b": null,
   }},
@@ -184,9 +205,12 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "enter": "select:accept", "escape": "select:cancel",
     "pageup": "select:pageUp", "pagedown": "select:pageDown", "home": "select:first", "end": "select:last",  // NEW (KB15)
     // The list overlays (SessionPicker, ModelPicker, BgTasksPanel…) are all "overlay" owners: ChatApp.tsx:145
-    // returns before every root global, so none of Global's six reaches them. ctrl+d has no root handler at all —
-    // its owner check is the composer's (ChatComposer.tsx:165), and the composer is unmounted behind an overlay.
-    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    // returned before every root global, so none of Global's six reached them. FIVE of the six still do not —
+    // ctrl+c is the exception the block above names (CTRL-C-FALLS-THROUGH), and it was the expensive one: this
+    // context is pushed by EVERY list in the app, so its null is what made Ctrl-C Ctrl-C a no-op over `/model`.
+    // ctrl+d has no root handler at all — its owner check is the composer's (ChatComposer.tsx:165), and the
+    // composer is unmounted behind an overlay.
+    "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
     // …and ctrl+b's CHORD ALIAS with it (t8 review). `Task` stays pushed for the whole turn and sits below
     // every overlay, so unbinding only the plain key left `ctrl+x ctrl+b` backgrounding the turn from inside
@@ -266,8 +290,9 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "escape": "confirm:no", "up": "select:previous", "down": "select:next", "k": "select:previous",
     "j": "select:next", "ctrl+p": "select:previous", "ctrl+n": "select:next",
     "space": "select:accept", "enter": "select:accept", "/": "settings:search",
-    // SettingsDialog (with PermissionsDialog/ThemeDialog/AddDirDialog) is an "overlay" owner — same suppression.
-    "ctrl+c": null, "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
+    // SettingsDialog (with PermissionsDialog/ThemeDialog/AddDirDialog) is an "overlay" owner — same suppression,
+    // ctrl+c excepted (CTRL-C-FALLS-THROUGH).
+    "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null,   // same passive-flush sub-tick hole as Transcript's (t7 review)
     "ctrl+x ctrl+b": null,          // ctrl+b's chord alias, dead here for the same reason (see Select)
   }},
