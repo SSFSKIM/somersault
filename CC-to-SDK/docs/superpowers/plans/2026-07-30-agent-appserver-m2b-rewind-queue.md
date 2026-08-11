@@ -6,7 +6,49 @@
 
 **Architecture:** Continues Plan 1's (`2026-07-30-agent-appserver-m2a-spine-controls.md`) module pattern: one handler module per cluster (`rewind.ts`, `mcp.ts`, `tasks.ts`, `queue.ts`), schemas in `appserver/schema/`, notifications through `Peer.notify` only. **Prerequisite: every M2a task is merged and green** — this plan consumes `beginTurn`, the frame router, `fanout.ts`, the schema registry, and the widened `EngineSession` without re-explaining them.
 
-**Tech Stack:** TypeScript (ESM, NodeNext), zod v4, vitest, `ws`, `zod-to-json-schema` (draft-7 output — the ONE new dependency, Task 6). All commands run from `CC-to-SDK/harness/`.
+**Tech Stack:** TypeScript (ESM, NodeNext), zod v4, vitest, `ws`. **No new dependency** — zod v4's
+native `z.toJSONSchema(schema, { target: "draft-7" })` replaces the originally planned
+`zod-to-json-schema` (verified against the installed zod ^4.0.0). All commands run from
+`CC-to-SDK/harness/`.
+
+## De-rot addendum (2026-08-11 — the plan was written 2026-07-30 against the pre-merge tree)
+
+M2a merged to main 2026-08-11 (merge `0a5bb43e90`, green-up `a479c98230`, nine-finding fix wave
+`393bc38086`). The fix wave **pre-built several M2b mechanisms** — implementers must extend, not
+re-create:
+
+1. **`beginTurn` already takes `presetTurnId?`** (`turns.ts`) — Task 4 uses it, doesn't add it.
+2. **`thread/close` already sets `record.closing = true` synchronously at request arrival**
+   (`server.ts`, the fix-wave latch) and `threadBusyReason` already returns
+   `"closing"`/`"swapping"`. Task 4's server.ts change reduces to adding the queue flush beside the
+   existing latch (+ the same pair in `shutdown()`); Task 1 sets `swapInFlight`, it doesn't declare it.
+3. **`registry.ts` already declares `closing?`, `swapInFlight?`, `epoch`** with doc-comments naming
+   this plan as their setter. `ThreadRecord` does NOT yet store the full original start config —
+   Task 1's `config?` addition stands.
+4. **Source line citations have drifted** (e.g. `session.ts:184` rewind is now ~:244; MCP members
+   ~:222-239; task members ~:191-196; host rewind order `host.ts:459-500` is now ~:500+). Trust the
+   member *names*, grep at implementation time.
+5. **Probes renumbered 71–74 → 103–105** (the probe corpus reached 102 during the TUI-clone/QA
+   waves), and **the `register_repo_root` probe is DROPPED**: `thread/directory/add` ships over the
+   `applyFlagSettings{permissions.additionalDirectories}` seam `host.ts` `addDir` already uses in
+   production — the alternate SDK control request no longer gates any method (recorded in the spec's
+   Surprises as superseded-not-probed). Task 5 is rewritten below accordingly.
+6. **NEW Task 3b** — the host wire grew 9 ops during the TUI-clone waves (`clear`, `get_settings`,
+   `list_dirs`, `add_dir`, `remove_dir`, `set_output_style`, `add_rule`, `remove_rule`,
+   `set_effort`); the rewalked scorecard labels their proposed methods `planned(M2b)` (gap 6), so
+   M2b's own acceptance ("every non-fleet row reads shipped or N/A") is unreachable without them.
+   Task 3b below covers the nonet.
+7. **The drift gate now fails on status staleness** (`bfcbe7ee0e`): shipping a method without
+   flipping its scorecard row — or flipping a row for an unshipped method — turns the gate red.
+   Task 9's scorecard sweep is therefore *enforced*, not just requested; Task 6's registry↔scorecard
+   bijection entry extends the same pass.
+8. **Wire-shape canon is main's Wave T** (plan_approve carries the granted-mode enum;
+   `decisionOutcomeParams` includes `allow_with_updates`/`updatedInput`/deny-`feedback`;
+   `turn/completed` carries the `error` tag via the widened runner contract). Nothing in this plan
+   may reintroduce the old branch shapes.
+9. **Task 9's live file**: the M2a smoke lives at `test/live/appserver-m2-router-smoke.test.ts`
+   (not `appserver-m2.test.ts`); the full acceptance run goes in a NEW
+   `test/live/appserver-m2-acceptance.test.ts`.
 
 ## Global Constraints
 
@@ -27,11 +69,14 @@ harness/src/appserver/
   rewind.ts        # thread/rewind/anchors, /dryRun, /rewind (engine-swap path)
   mcp.ts           # mcpServer/status/list, reconnect, toggle, set, permissionModeOverride/set
   tasks.ts         # task/list, task/stop, turn/background
+  settingsOps.ts   # Task 3b: the host-wire nonet — clear, settings/read, directory/*, outputStyle,
+                   #   permissionRule/*, effort (per-record flag accumulator over applyFlagSettings)
   queue.ts         # QueuedTurn type + enqueue/flush/drain (state machine, one module)
-  schema/mcp.ts    # mcp params · schema/rewind.ts · schema/tasks.ts (registered in schema/index.ts)
+  schema/mcp.ts    # mcp params · schema/rewind.ts · schema/tasks.ts · schema/settingsOps.ts
+                   #   (all registered in schema/index.ts)
 harness/scripts/emit-appserver-schema.mjs   # generator (also invoked by `ccx serve --emit-schema`)
 harness/schema/json/{stable,experimental}/  # vendored artifacts (generated, committed)
-CC-to-SDK/probes/probes/71..74-*.ts           # the five spike files
+CC-to-SDK/probes/probes/103..105-*.ts       # the three spike files (see de-rot item 5)
 harness/tools/appserver-console.html        # panels 4-5 added
 ```
 
@@ -136,6 +181,40 @@ export const turnBackgroundParams = z.object({ threadId: z.string().min(1), tool
 
 ---
 
+### Task 3b: Settings-ops nonet (`settingsOps.ts`) — the gap-6 host ops (de-rot item 6)
+
+Nine methods over seams that already exist. The engine primitive for six of them is
+`applyFlagSettings` (already on `EngineSession`, shipped as `thread/settings/apply`); the host wire's
+proven pattern is `host/host.ts:442-510` — **per-session accumulator state, committed only AFTER the
+engine accepts** (retry-safety: a rejected push must not leave a phantom entry a later replay
+re-pushes). Mirror that pattern appserver-locally on the record; do NOT refactor `host.ts` (its
+retry-safety semantics carry their own tests — an extraction is a named M3 option, not this task).
+
+**Depends on Task 1** (`thread/clear` reuses the rewind engine-swap machinery).
+
+**Files:**
+- Create: `src/appserver/settingsOps.ts`, `src/appserver/schema/settingsOps.ts`
+- Modify: `src/appserver/registry.ts` (record gains `flagPerms: { allow: string[]; ask: string[]; deny: string[]; additionalDirectories: string[] }`, `flagOutputStyle?`, `flagEffort?` — initialized empty at record creation), `src/appserver/server.ts` (handler table), `src/appserver/schema/index.ts`
+- Test: `test/unit/appserver/settingsOps.test.ts`
+
+**Methods** (all `{threadId, ...}`; mutations chain-scoped, reads un-chained):
+- `thread/settings/read` → `session.getSettings()` passthrough; missing member → `-32601` (the introspection convention).
+- `thread/directory/list` → assembled like `host.listDirs`: `{path: record.cwd, source:"cwd"}` + the start config's `additionalDirectories` as `"launch"` + the accumulator's as `"session"`; `{ data, nextCursor: null }`.
+- `thread/directory/add {path}` / `thread/directory/remove {path}` → accumulator + `applyFlagSettings({permissions: {...next}})`, commit-after-accept; add dedups (idempotent re-add replies ok without a push).
+- `thread/permissionRule/add {behavior, rule}` / `thread/permissionRule/remove {behavior, rule}` → same accumulator discipline; `behavior: z.enum(["allow","ask","deny"])`.
+- `thread/outputStyle/set {style}` → `applyFlagSettings({outputStyle: style})`, commit-after.
+- `thread/effort/set {level}` → `applyFlagSettings({effortLevel: level})`; `level` enum mirrors `host/ops.ts`'s `set_effort` enum EXACTLY (read it at implementation time — probe 102 canon: the SDK validates nothing, the wire must).
+- `thread/clear` → busy/park gates as `thread/rewind` (Task 1's order), then the Task-1 swap machinery with a FRESH factory call (`resume: undefined, resumeAt: undefined` — `host.clearSession`'s explicit-override lesson: the stored start config may carry a `resume` key that must be overridden, not omitted); epoch bump + router reinstall + `record.sessionId = undefined` identical to rewind; accumulator state SURVIVES (host precedent: flag settings are re-pushed onto the fresh engine — replay `flagPerms`/`flagOutputStyle`/`flagEffort` via `applyFlagSettings` after the swap); broadcast `thread/rewound { threadId, sessionId, cleared: true }` (W-S8 host precedent: a clear IS a rewind broadcast carrying `cleared`).
+
+All nine register in `methodSchemas`. Mutations bump `record.updatedAt`.
+
+- [ ] **Step 1: Failing tests** — settings/read passthrough + `-32601`; directory add→list round-trip shows all three sources; a REJECTING fake (`applyFlagSettings` throws) leaves the accumulator unchanged (retry-safety — assert a retry pushes the same delta, not a doubled one); rule add/remove for each behavior; effort enum refuses an unknown level with `-32602` before the engine is touched; clear: swap observed (factory called with no resume), accumulator re-pushed onto the NEW fake, `thread/rewound{cleared:true}` observed, epoch bumped, stale pre-clear `thread/read` cursor → `-32602`.
+- [ ] **Step 2:** FAIL. **Step 3:** implement. **Step 4:** PASS + suite + typecheck.
+- [ ] **Step 5: Sabotage-verify** the commit-after-accept guard: move the accumulator write BEFORE the `applyFlagSettings` await in `addDir`'s handler; the retry-safety test FAILS; restore, report the observed output.
+- [ ] **Step 6: Commit** — `git commit -m "feat(as2b): settings-ops nonet — dirs/rules/outputStyle/effort/clear over the flag accumulator (gap 6)"`.
+
+---
+
 ### Task 4: Turn queue + closing latch (`queue.ts`)
 
 The concurrency-shaped task — states and transitions fixed here, per the spec's pinned mechanism.
@@ -197,11 +276,11 @@ export function takeNext(record: ThreadRecord): QueuedTurn | undefined {
 ```
 - `turns.ts` changes:
   - `turnStart`'s busy refusal becomes (gated on the one predicate, never a re-assembled condition — spec D-M2-8): `if (threadBusyReason(record)) { if (parsed.data.queue) { const q = enqueueTurn(record, parsed.data.input); ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position }); } else { ctx.peer.replyError(id, ERR.BUSY, "Thread is busy"); } return; }`.
-  - `beginTurn` gains an optional `presetTurnId?: string` — when present, uses it instead of minting (the drain path's pre-minted id); the mint line becomes `const turnId = presetTurnId ?? mintTurnId(record);` (M2a Task 11 extracted `mintTurnId`; nothing else in the codebase composes a turn id).
+  - `beginTurn` **already has** `presetTurnId?: string` and the `const turnId = presetTurnId ?? mintTurnId(record);` line (de-rot item 1 — the fix wave pre-built the seam). The drain path just passes it; no `beginTurn` signature change.
   - `settleTurn(record)` gains a `srv` param and, after `applyPlanUpgrade`: `const next = takeNext(record); if (next) startQueuedTurn(srv, record, next);` where `startQueuedTurn` re-enters the spine with `presetTurnId: next.id` and a null peer-reply (the enqueue already replied — the chain callback's `ctx.peer.reply` is skipped via an optional ctx; make `beginTurn`'s ctx/id params optional and guard the reply).
   - `turn/interrupt` with `cancelQueued: true`: `const cancelledQueued = flushQueue(srv, record);` BEFORE `requestInterrupt`, reply `{ interrupted: true, cancelledQueued }`.
   - `turn/interrupt` carrying a `turnId` that names a QUEUED entry (spec D-M2-10): `if (parsed.data.turnId && cancelQueued(srv, record, parsed.data.turnId)) { ctx.peer.reply(id, { interrupted: false, cancelled: [parsed.data.turnId] }); return; }` — checked BEFORE touching the engine, since a queued turn has no engine work to interrupt. `turnInterruptParams` gains `turnId: z.string().min(1).optional()`; an unknown id falls through to the existing running-turn behavior unchanged.
-- `server.ts` changes: `thread/close` handler sets `record.closing = true; flushQueue(srv, record);` synchronously before the chain hop. `shutdown()` does the same per record before awaiting chains.
+- `server.ts` changes: `thread/close` **already sets `record.closing = true` synchronously** (de-rot item 2 — the fix-wave latch); add `flushQueue(srv, record);` immediately after that existing line. `shutdown()` gains the same pair per record before awaiting chains (check whether the fix wave already latches there too — extend, don't duplicate).
 
 - [ ] **Step 1: Failing tests** (the spec's transition table, one test per transition):
 
@@ -230,27 +309,30 @@ describe("turn queue (spec Wave 4)", () => {
 
 ---
 
-### Task 5: Probes 1–5 = files 71–74 (spikes, controller-run)
+### Task 5: Probes = files 103–105 (spikes, controller-run; renumbered per de-rot item 5)
 
 **Files:**
-- Create: `probes/probes/71-streaminput-steer.ts`, `probes/probes/72-readfile.ts`, `probes/probes/73-reload-plugins-skills.ts` (probes 3+4 share a file — same shape), `probes/probes/74-register-repo-root.ts`
+- Create: `probes/probes/103-streaminput-steer.ts`, `probes/probes/104-readfile.ts`, `probes/probes/105-reload-plugins-skills.ts` (reloads share a file — same shape)
 - Modify (verdict-dependent): spec `## Surprises & Discoveries`
+
+**Dropped: the `register_repo_root` probe.** `thread/directory/add` ships in Task 3b over the
+`applyFlagSettings{permissions.additionalDirectories}` seam `host.ts` `addDir` uses in production —
+no method is gated on the alternate SDK control request anymore. Record in the spec's Surprises:
+"probe 5 superseded, not run; `register_repo_root` remains unprobed knowledge (M3 `fs/*` may revisit)."
 
 Each probe: build → controller runs keyed → record verdict in the spec → apply the spec's promote-or-discard row. Probe shapes (all follow the 69-transcript-at-park skeleton — `query()` with `settingSources: []`, haiku, `bypassPermissions`):
 
-1. **probe-71 (steer):** start a turn with a long multi-step prompt ("count to 30 slowly, one number per line"); 2s in, call `q.streamInput({ type: "user", message: { role: "user", content: "STOP COUNTING and instead reply exactly: steered" }, ... })` if the method exists (log `typeof q.streamInput`); observe whether the assistant's subsequent output reflects the injection. Verdict ALIVE requires: method exists AND the injected text influenced the same turn.
-2. **probe-72 (readFile):** write a tmp file; call `q.readFile(path)` (log existence + result/throw).
-3. **probe-73 (reloads):** call `q.reloadPlugins()` then `q.reloadSkills()` (log existence + result/throw each).
-4. **probe-74 (register_repo_root):** locate the control-request surface on Query (`sdk.d.ts` names it — log `typeof q.registerRepoRoot` and any request-shaped escape hatch); attempt with a second tmp git dir; verdict by result + any `DirectoryAdded` hook frame observed.
+1. **probe-103 (steer):** start a turn with a long multi-step prompt ("count to 30 slowly, one number per line"); 2s in, call `q.streamInput({ type: "user", message: { role: "user", content: "STOP COUNTING and instead reply exactly: steered" }, ... })` if the method exists (log `typeof q.streamInput`); observe whether the assistant's subsequent output reflects the injection. Verdict ALIVE requires: method exists AND the injected text influenced the same turn.
+2. **probe-104 (readFile):** write a tmp file; call `q.readFile(path)` (log existence + result/throw).
+3. **probe-105 (reloads):** call `q.reloadPlugins()` then `q.reloadSkills()` (log existence + result/throw each).
 
 **Promotion tasks (write only the ALIVE ones, per recorded verdicts):**
 - Steer ALIVE → lib seam `Session.steer(text: string): void` (push a user message into `this.input` WITHOUT a waiter — doc-comment why: `enqueueTurn` pairs every push with a waiter and a steer must not desync the FIFO), `EngineSession.steer?`, method `turn/steer {threadId, input}` (X) — busy-REQUIRED (`-33001` inverse: steering an idle thread is `-32602 "no turn in flight"`), schema + registry + unit tests (fake asserts no waiter added).
 - reloadPlugins/reloadSkills ALIVE → `plugin/reload` / `skill/reload` thin chain-scoped handlers `{ok: true}` + schemas + tests.
-- register_repo_root ALIVE → `thread/directory/add {threadId, path}` (X) + schema + test.
-- Any DEAD → the method is NOT added; `methodSchemas` untouched; scorecard row N/A-dead citing the probe file (Task 9 flips it).
+- Any DEAD → the method is NOT added; `methodSchemas` untouched; scorecard row N/A-dead citing the probe file (Task 9 flips it — the staleness gate polices the flip).
 - readFile — **no method either way** (spec: M3 `fs/read` backing knowledge only).
 
-- [ ] **Step 1:** Write the four probe files. **Step 2 (controller):** run each keyed, capture JSON verdicts. **Step 3:** record all verdicts in the spec's Surprises section. **Step 4:** implement the ALIVE promotions (unit-tested, no live). **Step 5:** `npm run test:unit` green. **Step 6: Commit** — `git commit -m "probe(as2b): probes 71-74 verdicts + alive-surface promotions (steer/reloads/directory-add per verdict)"`.
+- [ ] **Step 1:** Write the three probe files. **Step 2 (controller):** run each keyed, capture JSON verdicts. **Step 3:** record all verdicts (incl. the supersession note) in the spec's Surprises section. **Step 4:** implement the ALIVE promotions (unit-tested, no live). **Step 5:** `npm run test:unit` green. **Step 6: Commit** — `git commit -m "probe(as2b): probes 103-105 verdicts + alive-surface promotions (steer/reloads per verdict)"`.
 
 ---
 
@@ -258,7 +340,7 @@ Each probe: build → controller runs keyed → record verdict in the spec → a
 
 **Files:**
 - Create: `scripts/emit-appserver-schema.mjs`, `schema/json/stable/appserver.json`, `schema/json/experimental/appserver.json` (generated, committed)
-- Modify: `src/appserver/schema/index.ts` (entries gain `experimental?: true` on X methods: `turn/steer`, `thread/directory/add` if alive; queue-flagged turnStart stays stable — the FLAG is experimental but the method is stable; doc-comment), `src/cli/serveMain.ts` + `src/cli/args.ts` (`--emit-schema DIR`), `package.json` (add `zod-to-json-schema` dep + `"emit-schema": "node scripts/emit-appserver-schema.mjs"` script), `../scripts/drift-check.mjs` (round-trip entry)
+- Modify: `src/appserver/schema/index.ts` (entries gain `experimental?: true` on X methods: `turn/steer` if alive; queue-flagged turnStart stays stable — the FLAG is experimental but the method is stable; doc-comment. Task 3b's `thread/directory/add` is STABLE — it ships over the proven applyFlagSettings seam, not a probe-gated one), `src/cli/serveMain.ts` + `src/cli/args.ts` (`--emit-schema DIR`), `package.json` (`"emit-schema": "node scripts/emit-appserver-schema.mjs"` script — NO new dependency, de-rot header), `../scripts/drift-check.mjs` (round-trip entry)
 - Test: `test/unit/appserver/schemaGen.test.ts`
 
 - [ ] **Step 1: Failing test**
@@ -279,7 +361,7 @@ it("vendored schema artifacts match a fresh generation", () => {
 it("every methodSchemas entry lands in exactly one artifact and every artifact is draft-7", ...);
 ```
 
-- [ ] **Step 2:** FAIL. **Step 3:** implement the generator — walks `methodSchemas` (dynamic-import of the built TS via tsx), converts each params schema via `zod-to-json-schema` with `{ target: "jsonSchema7" }` (the draft-7 constraint), writes `{ $schema: "http://json-schema.org/draft-07/schema#", methods: { <name>: {...} } }` per artifact set, `--stdout` mode for the test. `--emit-schema DIR` in serveMain: before binding, if the flag is present, run the same generation into DIR and exit 0. Add a drift-check entry: the appserver pass additionally fails when a `methodSchemas` key has no scorecard row or a shipped scorecard row has no `methodSchemas` key (the "zero schema-less methods" acceptance gate).
+- [ ] **Step 2:** FAIL. **Step 3:** implement the generator — walks `methodSchemas` (dynamic-import of the built TS via tsx), converts each params schema via zod v4's **native `z.toJSONSchema(schema, { target: "draft-7" })`** (verified: emits `$schema: draft-07`; no new dependency), writes `{ $schema: "http://json-schema.org/draft-07/schema#", methods: { <name>: {...} } }` per artifact set, `--stdout` mode for the test. `--emit-schema DIR` in serveMain: before binding, if the flag is present, run the same generation into DIR and exit 0. Add a drift-check entry **extending the existing staleness block** (`bfcbe7ee0e` — reuse its `liveMethods` set, don't re-parse): the appserver pass additionally fails when a `methodSchemas` key has no scorecard row naming it in some row's protocol-method column (the "zero schema-less methods" acceptance gate; the staleness block already enforces the shipped↔registered direction per row).
 - [ ] **Step 4:** Generate + commit artifacts; tests PASS; `node ../scripts/drift-check.mjs --json` exit 0.
 - [ ] **Step 5: Commit** — `git commit -m "feat(as2b): schema generation — draft-7 artifacts, --emit-schema, round-trip drift gate (§9)"`.
 
@@ -302,7 +384,7 @@ it("every methodSchemas entry lands in exactly one artifact and every artifact i
 **Files:**
 - Modify: `tools/appserver-console.html`
 
-Panel 4 (rewind/MCP/tasks): anchors list with per-anchor dryRun + rewind buttons (scope select both/conversation/code); MCP status table with reconnect/toggle buttons; task list with stop + background-all buttons. Panel 5 (queue): prompt input with a "queue" checkbox, queued-turn list updating from `turn/started`/`turn/completed` (including `cancelled`), stop button sending `turn/interrupt {cancelQueued: true}`. No tests (spec).
+Panel 4 (rewind/MCP/tasks/settings-ops): anchors list with per-anchor dryRun + rewind buttons (scope select both/conversation/code) + a clear button; MCP status table with reconnect/toggle buttons; task list with stop + background-all buttons; a settings-ops strip (directory list + add/remove, effort select, output-style input — Task 3b's nonet exercised by a foreign consumer). Panel 5 (queue): prompt input with a "queue" checkbox, queued-turn list updating from `turn/started`/`turn/completed` (including `cancelled`), stop button sending `turn/interrupt {cancelQueued: true}`. No tests (spec).
 
 - [ ] **Step 1:** Implement. **Step 2: Commit** — `git commit -m "feat(as2b): console panels — rewind/MCP/tasks + queue (waves 3-4)"`.
 
@@ -311,14 +393,15 @@ Panel 4 (rewind/MCP/tasks): anchors list with per-anchor dryRun + rewind buttons
 ### Task 9: M2 final verification — the spec's acceptance, verbatim
 
 **Files:**
-- Modify: `test/live/appserver-m2.test.ts` (extend with waves 3–4), `docs/parity/appserver.md`, `docs/parity/coverage.md`, spec `## Outcomes & Retrospective`
+- Create: `test/live/appserver-m2-acceptance.test.ts` (the full sequence — the M2a smoke at `test/live/appserver-m2-router-smoke.test.ts` stays as-is, de-rot item 9)
+- Modify: `docs/parity/appserver.md`, `docs/parity/coverage.md`, spec `## Outcomes & Retrospective`
 
 The spec's `## Acceptance (behavior-phrased)` section, executed as written:
 
 - [ ] **Step 1 (acceptance 1):** Run `npm test` from `CC-to-SDK/harness` — green — and `node scripts/drift-check.mjs --json` (repo `CC-to-SDK/`) — "exits 0 with the appserver pass listing zero missing rows and zero schema-less methods."
-- [ ] **Step 2 (acceptance 2, controller):** extend the live script with the waves 3–4 legs so the one keyed run performs the spec's full sequence: "`initialize{watchThreads:true}` → `thread/start` → observe `thread/started` → `thread/model/set` → observe `thread/settings/changed` with `source:"client"` → `thread/thinking/set` → `thread/capabilities/read` returns non-empty models + commands → turn with a file write → decision park shows `status.waitingOn === "decision"` → respond → `thread/usage/read` + `thread/contextUsage/read` return numbers → `thread/rewind/dryRun` against the turn's anchor succeeds → `mcpServer/status/list` returns → `turn/start{queue:true}` while busy returns `{queued: true, turn}` whose id later appears in `turn/started` when it drains → `thread/compact/start` completes and `thread/compacted` carries an outcome → `thread/fork` yields a distinct thread whose `thread/read` shares item ids with the parent → `thread/close`. Each observation is an assertion, not a log line." Run keyed — PASS.
+- [ ] **Step 2 (acceptance 2, controller):** write the acceptance live test so one keyed run performs the spec's full sequence (plus one Task-3b leg: `thread/effort/set` accepted → `thread/settings/read` returns — and `thread/directory/list` shows the cwd row): "`initialize{watchThreads:true}` → `thread/start` → observe `thread/started` → `thread/model/set` → observe `thread/settings/changed` with `source:"client"` → `thread/thinking/set` → `thread/capabilities/read` returns non-empty models + commands → turn with a file write → decision park shows `status.waitingOn === "decision"` → respond → `thread/usage/read` + `thread/contextUsage/read` return numbers → `thread/rewind/dryRun` against the turn's anchor succeeds → `mcpServer/status/list` returns → `turn/start{queue:true}` while busy returns `{queued: true, turn}` whose id later appears in `turn/started` when it drains → `thread/compact/start` completes and `thread/compacted` carries an outcome → `thread/fork` yields a distinct thread whose `thread/read` shares item ids with the parent → `thread/close`. Each observation is an assertion, not a log line." Run keyed — PASS.
 - [ ] **Step 3 (acceptance 5, controller):** already asserted inside the live script (second client observes the first's model/set as settings/changed) — confirm the assertion exists and passed.
-- [ ] **Step 4 (acceptance 3):** scorecard sweep — "every non-fleet row reads shipped or N/A-with-evidence; the six probe rows cite their probe file by name." Flip the waves 3–4 rows (rewind trio, MCP 5, tasks 3, queue, steer/reloads/directory-add per verdict, probe N/A rows). `node scripts/drift-check.mjs` exit 0.
+- [ ] **Step 4 (acceptance 3):** scorecard sweep — "every non-fleet row reads shipped or N/A-with-evidence; probe rows cite their probe file by name." Flip the waves 3–4 rows (rewind trio, MCP 5, tasks 3, the gap-6 nonet, queue, steer/reloads per verdict, probe N/A rows). The staleness gate (`bfcbe7ee0e`) makes a missed or premature flip a red gate, so `node scripts/drift-check.mjs` exit 0 IS the sweep's proof.
 - [ ] **Step 5 (acceptance 4, controller):** console smoke — every panel of `tools/appserver-console.html` performs its wave's operations against a live `ccx serve` (manual; record the outcome in the task report).
 - [ ] **Step 6:** refresh `docs/parity/coverage.md` domain 10; write the spec's `## Outcomes & Retrospective`; final commit:
 
@@ -331,7 +414,7 @@ git commit -m "test(as2b): M2 acceptance — full live control-plane run, scorec
 
 ## Execution notes for the controller
 
-- Task order: 1 → 2 → 3 → 4 are independent of each other EXCEPT 4 (queue) touches `turns.ts`/`server.ts` shared with 1's busy-gate change — run 1 before 4; 2 and 3 can interleave anywhere before 9. Task 5's probes can run (controller) any time; its promotions before 6. 6 → 7 → 8 → 9 strictly ordered.
+- Task order: 1 → 2 → 3 → 3b → 4: 2 and 3 are independent and can interleave anywhere before 9; **3b depends on 1** (clear reuses the rewind swap machinery); 4 (queue) touches `turns.ts`/`server.ts` shared with 1's busy-gate usage — run 1 before 4; 3b and 4 both add record fields in `registry.ts` (mechanical merge, but sequence them to avoid churn). Task 5's probes can run (controller) any time; its promotions before 6. 6 → 7 → 8 → 9 strictly ordered.
 - Probes and every keyed live run are controller-executed. Implementers never source `.env`.
 - Task 4's review lens: the two sabotage-verified latch guards — demand the observed failure output in the report.
 - After Task 9, run the finishing-a-development-branch flow (external `codex exec review` on the merge commit is the standing final ritual).

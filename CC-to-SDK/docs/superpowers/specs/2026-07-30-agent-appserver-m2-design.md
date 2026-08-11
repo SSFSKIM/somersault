@@ -394,6 +394,20 @@ Pending — written at finish.
   subscribers must be told to rebuild — the host's `rewound` event is the precedent); flagged as a
   parent-§8 addition. Plans: `docs/superpowers/plans/2026-07-30-agent-appserver-m2a-spine-controls.md`
   (Tasks 1–15, waves 0–2), `…-m2b-rewind-queue.md` (Tasks 1–9, waves 3–4).
+- 2026-08-11 — M2b plan de-rotted post-merge (M2a merged `0a5bb43e90` + nine-finding fix wave
+  `393bc38086`; see the plan's De-rot addendum). Scope changes, flagged here: (1) **Wave 3 gains the
+  gap-6 nonet** (plan Task 3b) — the host wire grew 9 ops during the TUI-clone waves (`clear`,
+  `get_settings`, `list_dirs`, `add_dir`, `remove_dir`, `set_output_style`, `add_rule`,
+  `remove_rule`, `set_effort`); their protocol methods (`thread/clear`, `thread/settings/read`,
+  `thread/directory/list|add|remove`, `thread/outputStyle/set`, `thread/permissionRule/add|remove`,
+  `thread/effort/set`) ship in M2b over the `applyFlagSettings` accumulator pattern (`host.ts`
+  precedent) and the rewind swap machinery (`thread/clear` broadcasts `thread/rewound{cleared:true}`,
+  the W-S8 host precedent) — a parent-§7 addition, settled as promised by scorecard gap 6.
+  (2) **Wave 4's probe 5 (`register_repo_root`) is superseded, not run** — `thread/directory/add`
+  ships over the proven `applyFlagSettings` seam; the control request remains unprobed knowledge for
+  M3 `fs/*`. Probes renumbered 103–105. (3) Schema generation uses zod v4's native `z.toJSONSchema`
+  (draft-7 target) — the planned `zod-to-json-schema` dependency is dropped. (4) The drift gate now
+  fails on scorecard status staleness (`bfcbe7ee0e`), making acceptance 3's sweep machine-enforced.
 - 2026-07-30 — second independent plan review folded in (mid-execution, after M2a Task 2), all nine
   findings accepted: (1) `threadBusyReason` single predicate + (2) `record.epoch` for the router's
   stale-frame drop → new Wave-0 bullet and D-M2-8; (3) the rewind × cursor interaction is now
