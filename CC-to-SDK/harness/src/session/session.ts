@@ -49,6 +49,7 @@ export class Session implements ControllableSession {
   private _limit?: LimitState;             // state-of-last-signal (result / rate_limit_event); cleared by a clean one
   private _bgTasks: BackgroundTaskInfo[] = []; // LEVEL signal: REPLACED wholesale on each background_tasks_changed
   private _mirrorErrors: MirrorErrorInfo[] = []; // EVENT log: appended per mirror_error frame (bounded, last 50)
+  private _unmatchedResults = 0;           // COUNTER: result frames no waiter claimed (see the getter)
   private frameCbs = new Set<(m: unknown) => void>();
 
   constructor(deps: SessionDeps, options: Record<string, unknown>, sessionOpts: SessionOpts = {}) {
@@ -75,6 +76,14 @@ export class Session implements ControllableSession {
   get backgroundTasks(): BackgroundTaskInfo[] { return this._bgTasks; }
   /** Dropped sessionStore mirror batches (W3.3) — empty means the external mirror is loss-free so far. */
   get mirrorErrors(): MirrorErrorInfo[] { return this._mirrorErrors; }
+  /** Result frames the read loop dropped because `resultWaiter` matched none of them (M2b Task 5 review).
+   *  Nonzero means a turn was told nothing: whatever the frame settled, it was not the promise a caller is
+   *  holding, so the symptom downstream is a thread that stays busy forever with no diagnostic anywhere.
+   *  The known open question this exists to make visible: `steer()` pushes a user message with its own
+   *  uuid, and probe 103b never captured which uuid a steered turn's result carries — if the engine
+   *  correlates it to the STEER's, this counter is what says so instead of the appserver just hanging.
+   *  Settled by the M2b Task 9 live acceptance run; until then, a nonzero value is the flag. */
+  get unmatchedResults(): number { return this._unmatchedResults; }
 
   /** Queue a turn + its waiter. Every turn keeps its fixed input provenance so its result cannot settle a
    *  waiter owned by another origin class. `uuid` is the appserver-only seam (Task 6/gap 6, see
@@ -312,7 +321,8 @@ export class Session implements ControllableSession {
           const failure = turnFailureOf(mm);   // is_error / api_error_status — never subtype (probe 96)
           waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output, ...(failure ? { error: failure } : {}) });
           if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.enqueueCompact("auto-continuation", () => {}).catch(() => {}); }
-        } else if (mm.type !== "result") this.waiters[0]?.onMessage(m);
+        } else if (mm.type === "result") this._unmatchedResults++; // dropped, but no longer traceless (see the getter)
+        else this.waiters[0]?.onMessage(m);
       }
     } finally {
       this.ended = true;

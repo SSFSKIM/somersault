@@ -82,6 +82,28 @@ describe("Session.steer (probe 103b ALIVE)", () => {
     await s.dispose();
   });
 
+  it("counts an unmatched result instead of dropping it silently — the steer-correlation bad case leaves a trace", async () => {
+    // `resultWaiter` scores a present-but-unknown uuid as "no waiter" (uuid-bearing results are turn-owned
+    // by design), so if a steered turn's result ever came back correlated to the STEER's uuid the real turn
+    // would hang. The frame is still skipped — the counter is a diagnostic, not a second correlation path.
+    const r = rig();
+    const s = new Session({ query: r.query }, {});
+    const turn = s.submit("count to 30");
+    s.steer("stop counting");
+    await tick();
+    expect(s.unmatchedResults).toBe(0);
+
+    r.emit(result(r.pushes[1].uuid, "steered", "human")); // the steer's own uuid — matches no waiter
+    await tick();
+    expect(s.unmatchedResults).toBe(1);
+
+    // Skipped, not consumed: the turn's own result still settles it, unchanged.
+    r.emit(result(r.pushes[0].uuid, "counted"));
+    await expect(turn).resolves.toMatchObject({ result: "counted" });
+    expect(s.unmatchedResults).toBe(1);
+    await s.dispose();
+  });
+
   it("throws once the query has ended, like every other control seam", async () => {
     const r = rig();
     const s = new Session({ query: r.query }, {}, { label: "sess" });

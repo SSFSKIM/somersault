@@ -327,6 +327,20 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
  *  The gate is checked BEFORE the engine method is resolved: eligibility is a property of the thread, not
  *  of the engine build, so an idle thread answers the same way whichever engine is behind it.
  *
+ *  `busy` ALONE IS NOT ENOUGH, and the extra term is the whole correctness of this method (review
+ *  finding). `beginTurn` latches `busy` synchronously at request arrival but issues `submit()` later,
+ *  from its chain callback — so there is a real window in which the thread reads busy-with-a-turn while
+ *  the prompt has not been pushed onto the engine's input queue yet. It is not theoretical: a same-chunk
+ *  `turn/start`+`turn/steer` pair (Peer.feed handles multi-frame chunks) sits in it, and so does any
+ *  turn whose chain callback is parked behind an earlier op awaiting engine I/O — `plugin/reload` on
+ *  this very surface will do it. An un-chained steer admitted there pushes AHEAD of the prompt: the
+ *  engine reads the steer first and the turn is steered before it exists. So the gate is
+ *  `record.busy && record.turnStartedBroadcast` — the same arrival-vs-chain latch subscribe.ts's replay
+ *  uses. That flag is raised inside the chain callback, in the SAME synchronous step that then calls the
+ *  runner, so nothing can be dispatched between the two: true means the prompt is on the engine's queue.
+ *  An early steer is refused "no turn in flight", which is the honest answer — at that instant there is
+ *  not one yet.
+ *
  *  UN-CHAINED, deliberately diverging from the mutation convention (settings.ts/mcp.ts/tasks.ts all
  *  chain): a steer must reach a turn that is running RIGHT NOW, and a chain item parked on engine I/O
  *  would hold it until after the turn it was aimed at is over — delivering the injection into the NEXT
@@ -343,11 +357,10 @@ export const turnSteer: Handler = (srv, ctx, id, params) => {
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   const busyReason = threadBusyReason(record);
-  if (busyReason !== "turn") {
-    if (busyReason) ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`);
-    else ctx.peer.replyError(id, ERR.INVALID_PARAMS, "no turn in flight");
-    return;
-  }
+  if (busyReason && busyReason !== "turn") { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return; }
+  // `turnStartedBroadcast`, not `busy` alone — see the header: busy latches at arrival, the prompt is
+  // pushed later from the chain, and a steer admitted in that window overtakes it.
+  if (!(record.busy && record.turnStartedBroadcast)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "no turn in flight"); return; }
   // Resolved, never optional-called: `?.()` would reply {ok:true} for an injection no engine ever read
   // (introspect.ts:36's convention, and mcp.ts/tasks.ts's).
   const steer = record.session.steer?.bind(record.session);

@@ -7,9 +7,11 @@
 // mirroring it into a second payload shape would give clients two sources for one catalog that drift
 // apart. What the receipt DOES settle is that a reload is a capabilities refresh, so each handler pings
 // `thread/capabilities/changed` after replying — reply first, ping second, exactly as lifecycle.ts's
-// reinitialize and mcp.ts's three topology mutations do. (`skills` is not one of the four catalogs
-// `capabilities()` returns today, but a skill set is reached through the same commands/agents surface the
-// ping tells clients to re-read, and one rule for both reloads beats a split nobody can predict.)
+// reinitialize and mcp.ts's three topology mutations do. `skills` is not one of the four catalogs
+// `capabilities()` returns, but the ping is right for BOTH reloads on evidence, not symmetry: probe 105's
+// captured catalog shows skill-backed commands in the COMMANDS surface (the same names appear in that
+// payload's commands list and its skills list), so a skills reload changes what `supportedCommands`
+// returns — which is precisely what the ping tells clients to re-read.
 //
 // Chain-scoped, mirroring settings.ts/mcp.ts/tasks.ts: a reload replaces the engine's live command and
 // agent tables, so it must not interleave with another op mutating the same session. The engine method is

@@ -212,6 +212,60 @@ describe("turn/steer (X) — busy-REQUIRED, and only for a TURN", () => {
     await settle();
   });
 
+  it("is REFUSED in the arrival-vs-chain window: a turn parked behind engine I/O has no prompt to steer yet", async () => {
+    // The review finding. `beginTurn` latches `busy` synchronously at turn/start's arrival but issues
+    // submit() later, from its chain callback — so a turn whose callback is parked behind an earlier op
+    // awaiting engine I/O reads busy-with-a-turn while the engine has NOT been given the prompt. A steer
+    // admitted there is pushed onto the engine's input queue AHEAD of the prompt.
+    let release!: () => void;
+    const engine = mkEngine({ setModelImpl: () => new Promise<void>((r) => { release = r; }) });
+    const { srv, s, c, threadId } = await boot(engine);
+
+    send(c, { id: 3, method: "thread/model/set", params: { threadId, model: "opus" } });
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: "count to 30" } });
+    await tick();
+    // The turn OWNS the thread (busy latched at arrival) but its prompt is still parked on the chain.
+    expect(srv.registry.get(threadId)!.busy).toBe(true);
+    expect(engine.submits).toEqual([]);
+
+    send(c, { id: 5, method: "turn/steer", params: { threadId, input: "stop counting" } });
+    await tick();
+
+    const reply = replyTo(s, 5);
+    expect(reply.error.code).toBe(ERR.INVALID_PARAMS);
+    expect(reply.error.message).toBe("no turn in flight");
+    expect(engine.steers).toEqual([]);   // nothing reached the engine's input queue
+
+    release();
+    await settle();
+    // Engine order is the prompt and only the prompt — the refused steer never queued behind or ahead of it.
+    expect(engine.submits).toEqual(["count to 30"]);
+    expect(engine.steers).toEqual([]);
+  });
+
+  it("is REFUSED when it arrives in the SAME transport chunk as the turn/start that claimed the thread", async () => {
+    // Peer.feed explicitly supports multi-frame chunks, so both requests dispatch synchronously before
+    // beginTurn's chain callback (a microtask) has run: busy is true, the prompt is not pushed.
+    const engine = mkEngine();
+    const { s, c, threadId } = await boot(engine);
+
+    c.feed(JSON.stringify({ id: 3, method: "turn/start", params: { threadId, input: "count to 30" } }) + "\n"
+      + JSON.stringify({ id: 4, method: "turn/steer", params: { threadId, input: "stop counting" } }) + "\n");
+    await tick();
+
+    const reply = replyTo(s, 4);
+    expect(reply.error.code).toBe(ERR.INVALID_PARAMS);
+    expect(reply.error.message).toBe("no turn in flight");
+    expect(engine.submits).toEqual(["count to 30"]);
+    expect(engine.steers).toEqual([]);
+
+    // And once the turn is really running, the same steer lands — the refusal is about the window, not the method.
+    send(c, { id: 5, method: "turn/steer", params: { threadId, input: "stop counting" } });
+    await tick();
+    expect(replyTo(s, 5).result).toEqual({ ok: true });
+    expect(engine.steers).toEqual(["stop counting"]);
+  });
+
   it("emits no notification of its own — the steered turn's own frames are the only report", async () => {
     const engine = mkEngine();
     const { s, c, threadId } = await withTurnInFlight(engine);
