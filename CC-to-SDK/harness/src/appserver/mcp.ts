@@ -22,6 +22,16 @@
 // clients re-read, the payload never carries the catalog). `permissionModeOverride/set` does NOT ping —
 // it moves a rules-layer knob that the capabilities payload does not carry — and neither does the read.
 //
+// THE THREE STATE-CARRYING MUTATIONS ALSO ACCUMULATE (fix wave 1). `toggle`, `set` and the override each
+// leave a lasting fact about this thread's topology, and an engine swap (rewind.ts's `swapEngine`, reached
+// by both `thread/rewind` and `thread/clear`) rebuilds the engine from `record.config` — so without a
+// record of what was pushed, every swap silently reverts the thread to its launch topology. Each therefore
+// writes registry.ts's MCP accumulator (`mcpServersSet`/`mcpToggles`/`mcpOverrides`) which
+// `repushThreadState` replays onto the replacement, and each writes it ONLY AFTER the engine accepted,
+// exactly as settingsOps.ts's flag layer does and for the same reason: the accumulator is what the swap
+// seam replays, so a phantom row is a push no client made and no engine approved. `reconnect` is the one
+// that accumulates NOTHING — it is a transient action against a topology it does not change.
+//
 // Every handler resolves its engine method FIRST and answers -32601 when it is absent, the same
 // convention introspect.ts:36 uses: `EngineSession` declares these optional because a future non-
 // inProcess engine will not have them, and an optional-call (`?.()`) that silently succeeds would reply
@@ -86,6 +96,7 @@ export const mcpToggle: Handler = (srv, ctx, id, params) => {
     if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }
     try {
       await fn(parsed.data.name, parsed.data.enabled);
+      record.mcpToggles[parsed.data.name] = parsed.data.enabled; // COMMIT-AFTER-ACCEPT — see the module header
       record.updatedAt = nowSec();
       ctx.peer.reply(id, { ok: true });
       pingCapabilities(srv, record.id); // an enabled/disabled server is a different capabilities catalog
@@ -110,6 +121,12 @@ export const mcpSet: Handler = (srv, ctx, id, params) => {
     if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }
     try {
       const receipt = await fn(parsed.data.servers);
+      record.mcpServersSet = parsed.data.servers; // COMMIT-AFTER-ACCEPT — see the module header
+      // A WHOLESALE replacement removed every server the new set does not name, so the two refining maps
+      // are pruned to it: replaying a toggle or an override for a server the topology no longer contains
+      // is a push against a name no engine has.
+      for (const name of Object.keys(record.mcpToggles)) if (!(name in parsed.data.servers)) delete record.mcpToggles[name];
+      for (const name of Object.keys(record.mcpOverrides)) if (!(name in parsed.data.servers)) delete record.mcpOverrides[name];
       record.updatedAt = nowSec();
       ctx.peer.reply(id, receipt); // the engine's {added, removed, errors} receipt, verbatim
       pingCapabilities(srv, record.id); // wholesale replacement of the server set — the biggest catalog change of the three
@@ -133,6 +150,10 @@ export const mcpPermissionModeOverrideSet: Handler = (srv, ctx, id, params) => {
     if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }
     try {
       await fn(parsed.data.name, parsed.data.mode);
+      // COMMIT-AFTER-ACCEPT, with the schema's required-but-nullable `mode` read as it is defined: a null
+      // CLEARS the pin, so it DELETES the row rather than storing a null a replay would push back.
+      if (parsed.data.mode === null) delete record.mcpOverrides[parsed.data.name];
+      else record.mcpOverrides[parsed.data.name] = parsed.data.mode;
       record.updatedAt = nowSec();
       // NO thread/capabilities/changed ping: this is the rules layer (probe 49), and the capabilities
       // payload carries no per-server permission override — nothing a client would re-read has changed.

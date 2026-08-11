@@ -27,7 +27,7 @@ function mkRecord(session: EngineSession, extra: Partial<ThreadRecord> = {}): Th
   return {
     id: "t1", origin: "inProcess", session, unattended: "park", busy: false, turnSeq: 0,
     interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(),
-    createdAt: 0, updatedAt: 0, settings: {}, flagPerms: emptyFlagPerms(), epoch: 0,
+    createdAt: 0, updatedAt: 0, settings: {}, flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
     ...extra,
   };
 }

@@ -170,6 +170,21 @@ export interface ThreadRecord {
   flagPerms: { allow: string[]; ask: string[]; deny: string[]; additionalDirectories: string[] };
   flagOutputStyle?: string;
   flagEffort?: string;
+  /** The thread's own RUNTIME MCP TOPOLOGY — everything `mcpServer/set`, `mcpServer/toggle` and
+   *  `mcpServer/permissionModeOverride/set` (mcp.ts) have pushed since the engine was opened. It exists for
+   *  the same one reason the flag layer above does: a replacement engine is rebuilt from `record.config`,
+   *  so without a REPLAY (rewind.ts's `repushThreadState`) a swap silently reverts the thread to its
+   *  launch topology — servers a client added gone, disabled servers back, pins evaporated. Written only
+   *  AFTER the engine accepted the push, by the same commit-after-accept rule (a phantom row here is a
+   *  server the replay would later hand an engine that never agreed to it). inProcess-only in practice:
+   *  `set` and the override are origin-refused for fleet threads, whose engine is the host's anyway.
+   *
+   *  `mcpServersSet` is the last ACCEPTED wholesale `servers` value — the base the other two refine, which
+   *  is why the replay pushes it first and why an accepted `set` PRUNES the two maps to the names it
+   *  carries (a toggle for a server the new topology does not contain is a push no engine can honour). */
+  mcpServersSet?: Record<string, unknown>;
+  mcpToggles: Record<string, boolean>;   // name -> enabled
+  mcpOverrides: Record<string, string>;  // name -> permission mode; a `null` mode DELETES the entry (clears the pin)
   /** M2b Task 4's server-side turn queue: the turns a client asked to run AFTER the one in flight
    *  (`turn/start {queue:true}`), FIFO, each already carrying the id it was minted at enqueue time.
    *  Only queue.ts writes it — enqueue pushes, the drain shifts, close/interrupt flush. */

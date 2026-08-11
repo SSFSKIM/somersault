@@ -48,7 +48,7 @@ function addRecord(srv: AppServer, origin: "inProcess" | "fleet", session: Recor
     id, origin, session, unattended: "park", busy: false, turnSeq: 0, interruptRequested: false,
     buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(),
     sessionId: session.sessionId as string | undefined, createdAt: now, updatedAt: now,
-    settings: {}, flagPerms: emptyFlagPerms(), epoch: 0, ...over,
+    settings: {}, flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0, ...over,
   } as unknown as ThreadRecord;
   srv.registry.add(record);
   return id;

@@ -38,6 +38,9 @@ interface FakeEngine {
   modelCalls: (string | undefined)[];
   modeCalls: string[];
   thinkingCalls: (number | null)[];
+  mcpSetCalls: Record<string, unknown>[];
+  mcpToggleCalls: [string, boolean][];
+  mcpOverrideCalls: [string, string | null][];
   disposed: number;
   live: Set<(m: unknown) => void>;
   captured: ((m: unknown) => void)[];
@@ -51,6 +54,9 @@ interface FakeEngine {
   setModel?(model?: string): Promise<void>;
   setPermissionMode?(mode: string): Promise<void>;
   setMaxThinkingTokens?(n: number | null): Promise<void>;
+  setMcpServers?(servers: Record<string, unknown>): Promise<{ added: string[]; removed: string[]; errors: Record<string, string> }>;
+  toggleMcpServer?(name: string, enabled: boolean): Promise<void>;
+  setMcpPermissionModeOverride?(name: string, mode: string | null): Promise<unknown>;
   isEnded?(): boolean;
 }
 
@@ -62,6 +68,9 @@ function mkEngine(opts: {
   noGetSettings?: boolean;
   /** omit setModel/setPermissionMode/setMaxThinkingTokens — the post-swap re-push must SKIP, not throw. */
   noSetters?: boolean;
+  /** omit the three MCP topology methods — an engine build with no runtime MCP surface at all, which the
+   *  re-push must likewise SKIP rather than count as a loss (the standing absent-optional convention). */
+  noMcp?: boolean;
   settings?: unknown;
   /** what `applyFlagSettings` does; the call is recorded either way (before this runs). */
   flagImpl?: (settings: Record<string, unknown>) => Promise<void>;
@@ -77,6 +86,7 @@ function mkEngine(opts: {
   const e: FakeEngine = {
     sessionId: opts.sessionId,
     flagCalls: [], modelCalls: [], modeCalls: [], thinkingCalls: [],
+    mcpSetCalls: [], mcpToggleCalls: [], mcpOverrideCalls: [],
     disposed: 0,
     live, captured,
     push: (frame) => { for (const cb of [...live]) cb(frame); },
@@ -94,6 +104,13 @@ function mkEngine(opts: {
     e.setModel = async (m) => { e.modelCalls.push(m); };
     e.setPermissionMode = async (m) => { e.modeCalls.push(m); };
     e.setMaxThinkingTokens = async (n) => { e.thinkingCalls.push(n); };
+  }
+  if (!opts.noMcp) {
+    // The receipt shape mcp.ts relays verbatim — a fake that answered a bare `undefined` would put a
+    // result-less frame on the wire, which is not what a real `setMcpServers` does.
+    e.setMcpServers = async (servers) => { e.mcpSetCalls.push(servers); return { added: Object.keys(servers), removed: [], errors: {} }; };
+    e.toggleMcpServer = async (name, enabled) => { e.mcpToggleCalls.push([name, enabled]); };
+    e.setMcpPermissionModeOverride = async (name, mode) => { e.mcpOverrideCalls.push([name, mode]); return {}; };
   }
   return e;
 }
@@ -924,5 +941,169 @@ describe("appserver post-swap state re-push (M2b Task 3b, both swap paths)", () 
     expect(notifs(s.lines, "thread/settings/changed")).toEqual([]);
     expect(notifs(s.lines, "warning")).toEqual([]);
     expect(srv.registry.get(threadId)!.settings.permissionMode).toBe("plan");
+  });
+});
+
+// Fix wave 1, F1: the RUNTIME MCP TOPOLOGY is a third accumulator, and it reaches a replacement engine by
+// exactly the mechanism the flag layer does. Before this, `mcpServer/set`/`toggle`/`permissionModeOverride`
+// pushed straight to the engine and committed nothing, so every swap silently reverted the thread to its
+// config-built topology — servers a client added gone, disabled servers back, pins evaporated — with the
+// `lost` mechanism never seeing them, i.e. in silence.
+describe("appserver runtime MCP topology across engine swaps (fix wave 1 F1)", () => {
+  it("a CLEAR swap replays the accepted topology — servers, toggles and overrides — and pings capabilities once for it", async () => {
+    const fresh = mkEngine({});
+    const { s, c, threadId } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+
+    send(c, { id: 3, method: "mcpServer/set", params: { threadId, servers: { fs: { command: "node" }, git: { command: "git" } } } });
+    send(c, { id: 4, method: "mcpServer/toggle", params: { threadId, name: "git", enabled: false } });
+    send(c, { id: 5, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "fs", mode: "acceptEdits" } });
+    await settle();
+    s.lines.length = 0; // the mutations' OWN capability pings are not what this asserts — the replay's is
+
+    send(c, { id: 6, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    // Set FIRST: it is the wholesale base the other two refine.
+    expect(fresh.mcpSetCalls).toEqual([{ fs: { command: "node" }, git: { command: "git" } }]);
+    expect(fresh.mcpToggleCalls).toEqual([["git", false]]);
+    expect(fresh.mcpOverrideCalls).toEqual([["fs", "acceptEdits"]]);
+    // ONE ping for the whole replay: the replacement's catalog moved relative to the init it announced.
+    expect(notifs(s.lines, "thread/capabilities/changed")).toHaveLength(1);
+    expect(notifs(s.lines, "warning")).toEqual([]);
+  });
+
+  it("a REWIND swap replays it too — one seam, so the two swap paths cannot drift", async () => {
+    const fresh = mkEngine({});
+    const { s, c, threadId } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" })], deps: { resumeAtFactory: () => fresh } });
+
+    send(c, { id: 3, method: "mcpServer/toggle", params: { threadId, name: "git", enabled: false } });
+    await settle();
+
+    send(c, { id: 4, method: "thread/rewind", params: { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await settle();
+
+    expect(reply(s.lines, 4).result).toEqual({ ok: true, sessionId: "s1" });
+    expect(fresh.mcpToggleCalls).toEqual([["git", false]]);
+  });
+
+  it("a replacement whose setMcpServers REJECTS clears that accumulator, names the label in the SINGLE warning, and a later swap replays nothing", async () => {
+    const bad = mkEngine({});
+    bad.setMcpServers = async () => { throw new Error("engine refused the topology"); };
+    const later = mkEngine({});
+    const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), bad, later] });
+
+    send(c, { id: 3, method: "mcpServer/set", params: { threadId, servers: { fs: { command: "node" } } } });
+    await settle();
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(reply(s.lines, 4).result.ok).toBe(true);       // best effort: a refused replay never fails the swap
+    const warnings = notifs(s.lines, "warning");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].params.code).toBe("stateRepushFailed");
+    expect(warnings[0].params.message).toContain("mcpServers");
+    // Reconciled to the replacement's reality — its topology is the one `record.config` built.
+    expect(srv.registry.get(threadId)!.mcpServersSet).toBeUndefined();
+
+    send(c, { id: 5, method: "thread/clear", params: { threadId } });
+    await settle();
+    expect(later.mcpSetCalls).toEqual([]);                // nothing accumulated, so nothing replayed
+  });
+
+  it("a rejected toggle replay clears the toggles and leaves the accepted server set alone — the labels reconcile independently", async () => {
+    const bad = mkEngine({});
+    bad.toggleMcpServer = async () => { throw new Error("engine refused the toggle"); };
+    const later = mkEngine({});
+    const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), bad, later] });
+
+    send(c, { id: 3, method: "mcpServer/set", params: { threadId, servers: { git: { command: "git" } } } });
+    send(c, { id: 4, method: "mcpServer/toggle", params: { threadId, name: "git", enabled: false } });
+    await settle();
+
+    send(c, { id: 5, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(notifs(s.lines, "warning")[0].params.message).toContain("mcpToggles");
+    expect(srv.registry.get(threadId)!.mcpToggles).toEqual({});
+    expect(srv.registry.get(threadId)!.mcpServersSet).toEqual({ git: { command: "git" } }); // accepted, so kept
+
+    send(c, { id: 6, method: "thread/clear", params: { threadId } });
+    await settle();
+    expect(later.mcpSetCalls).toEqual([{ git: { command: "git" } }]);
+    expect(later.mcpToggleCalls).toEqual([]);
+  });
+
+  it("a wholesale mcpServer/set PRUNES toggles and overrides for servers the new set no longer names; the survivors still replay", async () => {
+    const fresh = mkEngine({});
+    const { c, threadId } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+
+    send(c, { id: 3, method: "mcpServer/set", params: { threadId, servers: { fs: {}, git: {} } } });
+    send(c, { id: 4, method: "mcpServer/toggle", params: { threadId, name: "fs", enabled: false } });
+    send(c, { id: 5, method: "mcpServer/toggle", params: { threadId, name: "git", enabled: false } });
+    send(c, { id: 6, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "fs", mode: "acceptEdits" } });
+    send(c, { id: 7, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "git", mode: "plan" } });
+    await settle();
+    // the wholesale replacement that drops `git` entirely
+    send(c, { id: 8, method: "mcpServer/set", params: { threadId, servers: { fs: {} } } });
+    await settle();
+
+    send(c, { id: 9, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(fresh.mcpSetCalls).toEqual([{ fs: {} }]);
+    expect(fresh.mcpToggleCalls).toEqual([["fs", false]]);        // no push for a server no topology contains
+    expect(fresh.mcpOverrideCalls).toEqual([["fs", "acceptEdits"]]);
+  });
+
+  it("an override with mode:null DELETES the pin — a later swap replays nothing for that name, and an override-only layer never pings", async () => {
+    const fresh = mkEngine({});
+    const { s, c, threadId } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+
+    send(c, { id: 3, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "fs", mode: "acceptEdits" } });
+    send(c, { id: 4, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "git", mode: "plan" } });
+    send(c, { id: 5, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "fs", mode: null } });
+    await settle();
+    s.lines.length = 0;
+
+    send(c, { id: 6, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(fresh.mcpOverrideCalls).toEqual([["git", "plan"]]);
+    // The rules layer is not a catalog (mcp.ts's own rule): an override-only replay changes nothing a
+    // client would re-read.
+    expect(notifs(s.lines, "thread/capabilities/changed")).toEqual([]);
+  });
+
+  it("a replacement engine MISSING the MCP methods is skipped silently — an absent optional method never had the state to lose", async () => {
+    const fresh = mkEngine({ noMcp: true });
+    const { s, c, threadId, srv } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), fresh] });
+
+    send(c, { id: 3, method: "mcpServer/set", params: { threadId, servers: { fs: {} } } });
+    send(c, { id: 4, method: "mcpServer/toggle", params: { threadId, name: "fs", enabled: false } });
+    await settle();
+
+    send(c, { id: 5, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(reply(s.lines, 5).result.ok).toBe(true);
+    expect(notifs(s.lines, "warning")).toEqual([]);        // no warning, and no reconcile either
+    expect(srv.registry.get(threadId)!.mcpServersSet).toEqual({ fs: {} });
+  });
+
+  it("a REJECTED mutation commits nothing: the swap must not replay a topology the engine refused", async () => {
+    const engine = mkEngine({ sessionId: "s1" });
+    engine.setMcpServers = async () => { throw new Error("no such server"); };
+    const fresh = mkEngine({});
+    const { s, c, threadId } = await bootThread({ sessions: [engine, fresh] });
+
+    send(c, { id: 3, method: "mcpServer/set", params: { threadId, servers: { fs: {} } } });
+    await settle();
+    expect(reply(s.lines, 3).error.code).toBe(ERR.INTERNAL);
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(fresh.mcpSetCalls).toEqual([]);
   });
 });

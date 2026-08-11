@@ -79,7 +79,8 @@ async function dryRunRewind(session: EngineSession, uuid: string): Promise<DryRu
  *  RESTORED here, by `repushThreadState` below: whatever the thread ACCUMULATED on the outgoing engine
  *  after it was opened. A replacement engine is a fresh CLI process rebuilt from `record.config`, so
  *  without the re-push every runtime write — a model or permission mode a client moved, the whole flag
- *  layer — silently reverts to the launch values while the wire keeps announcing the new ones. */
+ *  layer, the runtime MCP topology — silently reverts to the launch values while the wire keeps
+ *  announcing the new ones. */
 export async function swapEngine(
   srv: AppServer, record: ThreadRecord, makeReplacement: () => EngineSession, nextSessionId: string | undefined,
 ): Promise<void> {
@@ -102,7 +103,7 @@ export async function swapEngine(
  *  `swapEngine`, which is the single seam both `thread/rewind` and Task 3b's `thread/clear` go through, so
  *  neither path can forget it and the two cannot drift.
  *
- *  Two layers, in this order:
+ *  Three layers, in this order:
  *  1. the SETTINGS MIRROR (`record.settings`) — the model/permissionMode/thinkingTokens trio the wire
  *     announces through `thread/settings/changed` and `threadView`. Re-pushing is what keeps that
  *     announcement true; `permissionMode` is the security-relevant one, since a silent revert to the
@@ -113,6 +114,13 @@ export async function swapEngine(
  *  2. the FLAG LAYER (`record.flagPerms`/`flagOutputStyle`/`flagEffort`) — Task 3b's accumulator, pushed
  *     as the same three `applyFlagSettings` calls host.ts makes, and only for the parts that hold
  *     anything (an empty layer needs no push).
+ *  3. the MCP LAYER (`record.mcpServersSet`/`mcpToggles`/`mcpOverrides`) — mcp.ts's accumulator, pushed
+ *     as at most three labelled steps. The wholesale SET goes first because it is the base the other two
+ *     refine; the toggles and the overrides then each replay as ONE step looping their entries, so a
+ *     partially-applied map reconciles as a unit rather than leaving the record half-true. A replay that
+ *     ran and succeeded also PINGS `thread/capabilities/changed` for the set/toggle halves: the
+ *     replacement's server catalog now differs from the one its own init announced, which is exactly what
+ *     that ping means everywhere else (mcp.ts). The override half never pings — rules layer, no catalog.
  *
  *  BEST EFFORT, never fatal. The swap has already happened by the time this runs — the outgoing engine is
  *  disposed and the record holds the replacement — so a rejection here cannot be undone, and propagating
@@ -155,6 +163,19 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
     if (record.flagOutputStyle) await step("outputStyle", () => s.applyFlagSettings!({ outputStyle: record.flagOutputStyle }));
     if (record.flagEffort) await step("effortLevel", () => s.applyFlagSettings!({ effortLevel: record.flagEffort }));
   }
+  // The MCP layer, set first (the wholesale base the other two refine). `catalogMoved` gates the one ping
+  // below: it is set INSIDE each step, after the pushes, so a step that threw leaves it as it was.
+  let catalogMoved = false;
+  const servers = record.mcpServersSet;
+  if (servers !== undefined && s.setMcpServers) await step("mcpServers", async () => { await s.setMcpServers!(servers); catalogMoved = true; });
+  const toggles = Object.entries(record.mcpToggles);
+  if (toggles.length && s.toggleMcpServer) {
+    await step("mcpToggles", async () => { for (const [name, enabled] of toggles) await s.toggleMcpServer!(name, enabled); catalogMoved = true; });
+  }
+  const overrides = Object.entries(record.mcpOverrides);
+  if (overrides.length && s.setMcpPermissionModeOverride) {
+    await step("mcpOverrides", async () => { for (const [name, mode] of overrides) await s.setMcpPermissionModeOverride!(name, mode); });
+  }
   // Reconciliation FIRST, then the warning: by the time a client is told what was lost, the state it will
   // re-read already tells the truth. A step whose mirror value already equals the seed changed nothing —
   // the engine has that value either way — so it is named in the warning without moving the mirror.
@@ -186,6 +207,15 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
   if (lost.includes("permissions")) record.flagPerms = emptyFlagPerms();
   if (lost.includes("outputStyle")) record.flagOutputStyle = undefined;
   if (lost.includes("effortLevel")) record.flagEffort = undefined;
+  // The MCP layer reconciles by the same rule, label by label: the replacement's real topology is the one
+  // `record.config` built it with, so a refused label has nothing left to carry — and, as with the flag
+  // layer, a stale row would be silently re-pushed onto every LATER replacement too.
+  if (lost.includes("mcpServers")) record.mcpServersSet = undefined;
+  if (lost.includes("mcpToggles")) record.mcpToggles = {};
+  if (lost.includes("mcpOverrides")) record.mcpOverrides = {};
+  // The catalog the replacement announced at init is not the one it is running now — the same fact
+  // mcp.ts's own set/toggle handlers ping for, so it rides the identical bare `{threadId}` payload.
+  if (catalogMoved) srv.broadcast(record.id, "thread/capabilities/changed", { threadId: record.id });
   if (lost.length) {
     broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "warning", {
       threadId: record.id, code: "stateRepushFailed", message: `the replacement engine did not accept: ${lost.join(", ")}`,
