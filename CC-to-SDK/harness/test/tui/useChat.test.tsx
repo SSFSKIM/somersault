@@ -2687,15 +2687,22 @@ describe("W-S5: the context percentage never outlives the conversation it measur
       getContextUsage: async () => ctx, submitMessages: reply,
       compact: async () => { ctx = { totalTokens: 12, maxTokens: 100 }; return { ok: true, preTokens: 90000, postTokens: 12000 }; },
     });
-    const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const api: { run?: (s: string) => void; text?: () => string } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.text = () => allText(c); return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("hi");
     await waitFor(() => frame(lastFrame).includes("ctx:90"));           // a real, near-full reading to invalidate
     api.run!("/compact");
-    await waitFor(() => frame(lastFrame).includes("✦ compacted"));      // the outcome line — again, not the assertion
-    await expect.poll(() => frame(lastFrame)).toContain("ctx:12");
+    // WAIT ON THE PROJECTION, NOT THE FRAME (wave 2 acceptance, gate flake). This wait timed out in 2 runs
+    // in 5 — and at 20 s as readily as at 2 s, so it was never the budget. The row IS there; the frame spells
+    // it `✦  compacted` because Ink wraps this single joined <Text> at the viewport edge and `frame` turns
+    // the inserted newline into a second space. WHERE it wraps moves run to run, because the duration row
+    // above it is `pickTurnVerb()` — a `Math.random()` pick whose verbs differ in length ("Baked" vs
+    // "Crunched"), which slides every later column by up to three. The projected transcript has no viewport
+    // and no wrap, so the needle means what it says.
+    await waitFor(() => api.text!().includes("✦ compacted"));           // the outcome line — again, not the assertion
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:12");      // safe on the frame: it is at column 0
     expect(frame(lastFrame)).not.toContain("ctx:90");
   });
 
@@ -2708,14 +2715,14 @@ describe("W-S5: the context percentage never outlives the conversation it measur
       getContextUsage: async () => { if (!ctx) throw new Error("context unavailable"); return ctx; }, submitMessages: reply,
       compact: async () => { ctx = undefined; return { ok: true, preTokens: 90000, postTokens: 12000 }; },
     });
-    const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const api: { run?: (s: string) => void; text?: () => string } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.text = () => allText(c); return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("hi");
     await waitFor(() => frame(lastFrame).includes("ctx:90"));
     api.run!("/compact");
-    await waitFor(() => frame(lastFrame).includes("✦ compacted"));
+    await waitFor(() => api.text!().includes("✦ compacted"));           // the projection, not the wrapped frame — see above
     await expect.poll(() => frame(lastFrame)).toContain("ctx:-");
   });
 
@@ -3041,6 +3048,47 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await settle(clock, 2);
     expect(r.runs).toHaveLength(2);                       // turn end + both refreshers, coalesced into one
+  });
+
+  // ── WAVE 2 ACCEPTANCE A8 — ONE REFRESH PER TURN, AND IT IS THE ONE THAT CARRIES THE NEW NUMBERS ──────
+  // The cell above proves the turn-end coalescing with a fake whose readings resolve in the same microtask.
+  // A real session's do not: `getContextUsage()` and `usage()` are control round-trips measured at ~1.2 s,
+  // four times the 300 ms window, so the live cadence was a turn-end run carrying the PREVIOUS turn's cost
+  // and a second run once the readings landed. Deferring the readings past the window is the whole fix's
+  // test: it reproduces the live shape that instant fakes hide.
+  it("A8: a turn refreshes ONCE even when the readings land after the debounce window, and that run carries them", async () => {
+    const clock = slClock(), r = statusRunner();
+    let ctxCalls = 0;
+    let landCtx!: (u: unknown) => void, landUsage!: (u: unknown) => void;
+    let facts: any = {};
+    const latch = { read: () => facts, clear: () => { facts = {}; }, hooks: () => ({}) };
+    const fake = fakeRemote({
+      // The MOUNT read answers at once (the boot gate has its own cells); the TURN-END read is the slow one.
+      getContextUsage: () => (++ctxCalls === 1
+        ? Promise.resolve({ totalTokens: 12_000, maxTokens: 1_000_000 })
+        : new Promise((res) => { landCtx = res; })),
+      usage: () => new Promise((res) => { landUsage = res; }),
+    });
+    mountStatus(fake, r, clock, {}, latch);
+    await settle(clock, 2);
+    expect(r.runs).toHaveLength(1);                                   // boot: one run, as EP-D4 already had it
+    expect(r.runs[0].payload.cost.total_cost_usd).toBe(0);
+
+    facts = { transcriptPath: "/home/u/.claude/projects/-repo/s.jsonl", promptId: "pid-turn-1" };
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle(clock, 3);                                           // 900 ms with both readings still out
+    expect(r.runs).toHaveLength(1);                                   // was 2: a run with the OLD cost and the new prompt_id
+
+    landCtx({ totalTokens: 22_690, maxTokens: 1_000_000 });
+    landUsage({ session: { total_cost_usd: 0.0664025, model_usage: { m: { outputTokens: 21 } } } });
+    await settle(clock, 2);
+    expect(r.runs).toHaveLength(2);                                   // the turn's ONE refresh
+    const refresh = r.runs[1].payload;
+    expect(refresh.cost.total_cost_usd).toBe(0.0664025);              // updated, not the previous total
+    expect(refresh.context_window.total_output_tokens).toBe(21);
+    expect(refresh.prompt_id).toBe("pid-turn-1");                     // and still the turn's own prompt id
+    expect(refresh.transcript_path).toBe("/home/u/.claude/projects/-repo/s.jsonl");
   });
 
   it("a context read that never answers cannot suppress the row forever: the cap fires, one run, zero window", async () => {

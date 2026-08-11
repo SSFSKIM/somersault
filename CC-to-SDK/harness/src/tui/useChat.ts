@@ -1245,12 +1245,9 @@ export function useChat(
         // ends a turn of its own, and that turn end takes the bar down before `session.compact()` returns.
         // Narrow (it needs a submit during the pass), harmless (the `finally` then no-ops on an already-clear
         // state, and the `✦ compacted N → M` row still lands), and not worth a second flag to prevent.
-        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
-        // W-C T10: upstream's `lastAssistantMessageId` delta. The two refreshers above poke on their own
-        // completion, but only if they SUCCEED — and a turn that ran is news for the payload either way
-        // (the model may have changed under it, `session_name` may have just been minted). The 300 ms
-        // debounce coalesces this with whichever of the two lands first, so it costs no extra run.
-        pokeStatusLine("turn-end");
+        // W-C T10 / W2 A8: the two refreshers AND the status line's one refresh for this turn — see
+        // `statusRefreshAfterTurn`, which owns the ordering that makes it one run rather than two.
+        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void statusRefreshAfterTurn(); drainNext();
         // W-C T12 (EP-C5), annex §C5.2: `acd(d, c?.lastResult)` — FIRE AND FORGET, at the end of an assistant
         // turn, after the last tool round-trip. Not a `useEffect`, not idle-based, no debounce and no
         // cooldown; the eligibility chain inside is the only thing that declines.
@@ -1344,7 +1341,7 @@ export function useChat(
    *  in the same tick — React state is read from the render that follows, and `/status` builds its lines
    *  inside the awaiting call. `undefined` for every non-answer there is: a failed read, a reading with no
    *  window, and a hook that has been disposed under it. */
-  async function refreshCtx(): Promise<number | undefined> {
+  async function refreshCtx(opts: { quiet?: boolean } = {}): Promise<number | undefined> {
     try {
       const u = (await session.getContextUsage()) as { totalTokens?: number; maxTokens?: number };
       if (disposed.current) return undefined;
@@ -1352,7 +1349,8 @@ export function useChat(
       if (pct !== undefined) setCtxPct(pct);
       // W-C T10: the same reading is the status line's `context_window`, and the poke is upstream's
       // `tokenUsage` delta by another name — this is the moment the number ccx reports actually moved.
-      if (u) { statusCtxRef.current = { totalTokens: u.totalTokens, maxTokens: u.maxTokens }; pokeStatusLine("context"); }
+      // `quiet` is the turn-end caller alone (`statusRefreshAfterTurn`), which pokes once for both readings.
+      if (u) { statusCtxRef.current = { totalTokens: u.totalTokens, maxTokens: u.maxTokens }; if (!opts.quiet) pokeStatusLine("context"); }
       postTokenWarning(u?.totalTokens, u?.maxTokens);
       return pct;
     } catch { /* best-effort */ return undefined; }
@@ -1386,13 +1384,32 @@ export function useChat(
   }
   // Fire-and-forget at turn-end only — never poll (spec's no-polling rule). Drives the plan-usage warning;
   // /status and /usage fetch usage() directly themselves and don't route through this.
-  async function refreshUsage() {
+  async function refreshUsage(opts: { quiet?: boolean } = {}) {
     try {
       const u = await session.usage();
-      if (!disposed.current) { postUsageWarning(usageWarning(u)); statusUsageRef.current = u as StatusLineUsage; pokeStatusLine("usage"); }   // W-C T10: `cost` + `current_usage`
+      if (!disposed.current) { postUsageWarning(usageWarning(u)); statusUsageRef.current = u as StatusLineUsage; if (!opts.quiet) pokeStatusLine("usage"); }   // W-C T10: `cost` + `current_usage`
       return u;
     }
     catch { return undefined; }
+  }
+  /** WAVE 2 ACCEPTANCE A8 — a turn's ONE status-line refresh, and the reason the two refreshers above have
+   *  a `quiet` arm at all.
+   *
+   *  EP-D4 asked for "a boot produces one run and a turn one refresh". The boot half landed in W2 T6; the
+   *  turn half did not, and the measurement says why: the turn-end poke and the two readings it wants were
+   *  fired in the same statement, so the 300 ms debounce expired long before either control round-trip
+   *  answered (~1.2 s warm, the same number that forced the boot gate). Every turn therefore ran the user's
+   *  script TWICE — once carrying the PREVIOUS turn's `cost`/`context_window`, once with the real ones. The
+   *  unit fakes could not see it because their readings resolve in the same microtask as the poke.
+   *
+   *  So the poke WAITS for both readings and the readings stay quiet until it does. `allSettled`, because a
+   *  reading that fails is not a reason to withhold the turn's refresh — the payload simply carries the last
+   *  numbers it had, which is what it did before either call existed. No cap here (unlike the boot gate): a
+   *  control call that never answers costs this turn its refresh and nothing else — the poke is local to this
+   *  function, every other trigger still reaches the driver, and the next turn end tries again. */
+  async function statusRefreshAfterTurn(): Promise<void> {
+    await Promise.allSettled([refreshCtx({ quiet: true }), refreshUsage({ quiet: true })]);
+    pokeStatusLine("turn-end");
   }
   /** WAVE C TASK 14 (spec D-C3): `usageWarning()`'s text, on the queue instead of on the retired bar. ONLY ON
    *  CHANGE — see `usageWarnRef`. `undefined` means the warning stopped applying (a rolled-over window), and
