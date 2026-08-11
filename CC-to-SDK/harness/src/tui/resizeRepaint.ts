@@ -34,6 +34,17 @@
 // prefix, and the width is read live. A deduped write needs no correction (the re-wrapped old frame is simply on
 // screen, whole); a deferred write is corrected against the width that is true when it lands. Bursts stop being
 // a case at all.
+//   AND WHAT THAT COSTS, NOW THAT THE CORRECTOR IS ALWAYS ON (qa2-09 review, minor 4 — read this before
+// touching `frameWriteCorrection`'s width clause). Admitting the level-width write (`width <= widthAtPaint`,
+// see there) admits EVERY steady-state write too: outside a drag a frame is re-written at the width it was
+// painted at, so on a measured terminal with a cached `"reflow"` the corrector now evaluates on every frame
+// write for the life of the session, not once per shrink. The behaviour is right — log-update erases LOGICAL
+// lines, so a frame carrying a wrapped line genuinely under-erases and the extra row genuinely is stale — but
+// the exposure changed shape: a `string-width`-versus-terminal disagreement (a glyph this process measures at
+// one cell and the emulator paints at two, or the reverse) used to cost one row ONCE PER SHRINK and now costs
+// one row PER WRITE, roughly eight a second while a spinner runs. The live evidence against it misfiring is the
+// a3 matrix cell, whose `contentAboveFrame` held at 10 across 120 → 80 → 100 and through a full streaming turn
+// — one emulator (tmux 3.7b), three widths, one content shape. A wider terminal corpus is what would settle it.
 // TWO EMISSION POINTS SURVIVE HERE, and both are about the window in which the terminal is not yet MEASURED.
 // At a session's FIRST shrink the verdict is still unknown when Ink writes, so THOSE WRITES — plural, and that
 // is the whole of qa2-09 — go out uncorrected, and `correctionAfterRepaint` repairs the screen once the probe
@@ -43,7 +54,7 @@
 // taken at the signal could describe. Every later shrink is a property of a TERMINAL already measured, so the
 // write-time corrector has its verdict.
 //   …EXCEPT WHEN THE DRAG DOES NOT STOP (W2 t7, s2qa2-07). One probe may be in flight at a time and its sample is
-// abandoned the moment the terminal moves off the width it was measured at (`:191`), so a BURST — a drag that
+// abandoned the moment the terminal moves off the width it was measured at (`:460`), so a BURST — a drag that
 // crosses several widths before it settles — leaves every one of its legs uncorrected, and the residue they
 // stranded is permanent: nothing in the system ever looks above the current frame again. `correctionAtSettle` is
 // the second point: one bounded pass, once the drag has stopped for `RESIZE_SETTLE_MS`, and DIRECTION-INDEPENDENT
@@ -188,8 +199,10 @@ export interface SettleSample { frame: string; frameAtNarrowest: string; parkedC
 /** THE BURST REPAIR (W2 t7), run once the drag has stopped for `RESIZE_SETTLE_MS`. It exists because every other
  *  path in this module is gated on a narrowing BETWEEN TWO ADJACENT SIGNALS, and a burst that ends where it began
  *  — 120 → 90 → 150 → 120, the finding's own sequence — contains no such pair at settle time: `onResize` refuses
- *  (`newWidth < oldWidth`), `frameWriteCorrection` refuses (`width < widthAtPaint`), and the probe's sample is
- *  abandoned by the `:191` guard the moment the terminal moves off the width it was measured at. The residue the
+ *  (`newWidth < oldWidth`), `frameWriteCorrection` has no verdict to correct any of those writes WITH (a burst
+ *  that needs this pass is by construction the unmeasured window — and the clause that used to refuse them
+ *  outright, `width < widthAtPaint`, is gone; qa2-09 narrowed it to a grow), and the probe's sample is
+ *  abandoned by the `:460` guard the moment the terminal moves off the width it was measured at. The residue the
  *  90 leg left is on screen all the same, and nothing in the system ever looks above the current frame again.
  *  So this one is DIRECTION-INDEPENDENT: it does not compare old against new at all. It asks how much taller the
  *  frame that was ON SCREEN WHEN THE BURST NARROWED would have been at that narrowest width — those extra rows
@@ -197,11 +210,11 @@ export interface SettleSample { frame: string; frameAtNarrowest: string; parkedC
  *  with the frame that is on screen NOW and its park row, and writes that frame straight back, exactly as
  *  `correctionAfterRepaint` does and for the same reason (the bytes are the ones Ink last wrote, so log-update's
  *  counters still describe the screen).
- *  THE SAFETY ARGUMENT IS THE FILE'S, UNCHANGED (`:6-9`). Only a MEASURED `"reflow"` corrects; the erase is
+ *  THE SAFETY ARGUMENT IS THE FILE'S, UNCHANGED (`:6`-`:11`). Only a MEASURED `"reflow"` corrects; the erase is
  *  capped at the screen; and — fix round 1, finding 2 — EACH TERM IS MEASURED OFF THE FRAME IT IS ABOUT, which
  *  is `correctionAfterRepaint`'s split exactly: the residue off the REMEMBERED frame, the region off the LIVE
  *  one. The shipped version paired the live frame with the remembered WIDTH, which moves the stale-sample
- *  hazard the `:191` guard exists for rather than removing it: a streaming turn that grew the frame during the
+ *  hazard the `:460` guard exists for rather than removing it: a streaming turn that grew the frame during the
  *  drag scaled the claim with the wrong frame, and the reviewer drove 31 rows erased over 21 occupied and 0
  *  owed — ten live viewport rows. Where this is wrong it is wrong SHORT: a burst with several shrinks strands
  *  more than one frame's worth and this claims only the deepest single excursion, which leaves a cosmetic row
@@ -210,7 +223,7 @@ export interface SettleSample { frame: string; frameAtNarrowest: string; parkedC
  *  ALREADY been measured, a burst leg whose frame write took Ink's tall-frame (`clearTerminal`) branch or was
  *  deduped away is out of this pass's reach by construction — `onResize` ends the burst on any narrowing once a
  *  verdict is cached, on the argument that every write from there is corrected at the write, and those two are
- *  the writes that are not. Cosmetic, and on the side of the asymmetry at `:6-9`. */
+ *  the writes that are not. Cosmetic, and on the side of the asymmetry at `:6`-`:11`. */
 export function correctionAtSettle(s: SettleSample, verdict: ReflowVerdict | undefined): string {
   if (verdict !== "reflow" || !(s.width >= 2) || !(s.narrowest >= 2) || !(s.narrowest < s.width)) return "";
   // The park row is deliberately NOT in this difference: the proxy re-parks after every frame Ink wrote during
@@ -298,7 +311,13 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
   // the burst. …and the detach count as it stood at the narrowing, which is what says the rows are still where
   // they were counted (`ResizeRepaintDeps.detached`).
   let stranded = 0, detachedAtNarrowing = 0;
-  const strandedNow = (): number => ((deps.detached?.() ?? 0) === detachedAtNarrowing ? stranded : 0);
+  /** HAS THE SCREEN BEEN RE-LAID SINCE THE ROWS WERE COUNTED — the refusal, hoisted out of `strandedNow` because
+   *  it is not only about the count (review of the qa2-09 fix, blocker 1). `correctionAtSettle` derives its own
+   *  residue from the remembered frame and never reads `stranded` at all, so gating only the count left that
+   *  branch erasing `residue` rows above the live frame after a `<Static>` commit — the one failure class
+   *  `:6`-`:11` calls fatal. Every repair asks this first now, whatever it goes on to measure. */
+  const screenMoved = (): boolean => (deps.detached?.() ?? 0) !== detachedAtNarrowing;
+  const strandedNow = (): number => (screenMoved() ? 0 : stranded);
   let settling: unknown;
   // …and the one case the window cannot answer by itself: the probe measuring THIS burst's shrink takes up to
   // 750 ms and the window is 80, so the verdict the repair needs routinely lands after it. The repair waits for
@@ -312,6 +331,10 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
    *  count exists is here: the frame that was on screen, the park that was under it and the width they were both
    *  standing on are all facts at this instant and none of them survive to the repair. */
   const frameWrite = (info: FrameWriteInfo): string => {
+    // …and that first reset is REDUNDANT TODAY, deliberately kept (review of the qa2-09 fix, minor 3). Both
+    // `repaintSelf` call sites run `endBurst()` before they write, and `endBurst` already zeroes the count, so
+    // sabotaging this line reddens nothing. It stands as defence against a reordering that writes first: the
+    // rows the chunk's own erase just cleared would otherwise still be owed to whatever repairs next.
     if (selfWriting) { stranded = 0; return ""; }
     const seq = frameWriteCorrection(info, verdict);
     if (!seq && narrowest !== Infinity) stranded += Math.max(0, writeShortfall(info));
@@ -321,6 +344,12 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
    *  erase-plus-frame writes in a row each move the frame up by their own residue, so the second one's erase
    *  lands on rows the first one just declared live. */
   const repairAtSettle = (): boolean => {
+    // BEFORE THE BRANCH CHOOSES, because both branches erase above the live frame and only one of them was
+    // covered. A commit that lands BEFORE the verdict already ends the burst (`strandedNow()` reads 0 at the
+    // probe's continuation); one that lands AFTER it and inside the remaining window reached this pass with
+    // nothing looking, and the drag shapes that get here are ordinary ones — 120 → 90 → 150 → 120 on an
+    // unmeasured terminal, with the probe answering at 12 ms against an 80 ms window.
+    if (screenMoved()) { endBurst(); return false; }
     const size = deps.size(), frame = deps.lastFrame();
     if (!(narrowest <= size.columns) || frame === undefined || frameAtNarrowest === undefined) { endBurst(); return false; }
     if (verdict === undefined) { if (probing) awaitingVerdict = true; else endBurst(); return false; }
@@ -333,9 +362,9 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     // `correctionAfterRepaint`'s — the remembered frame's region at the width it is STILL on, less Ink's own
     // erase. It used to be refused outright (`narrowest < size.columns`), which left both legs of every
     // monotonic burst permanent: the probe covering them is still in flight for the whole drag, and its sample
-    // is abandoned the moment the second leg moves the terminal off the width it was measured at (`:191`).
+    // is abandoned the moment the second leg moves the terminal off the width it was measured at (`:460`).
     //   ONE EXCURSION EITHER WAY on the round-trip branch, which is the file's standing under-erase residual
-    // (`:176`-`:179`) and not a new one: it claims the deepest leg — the one `frameAtNarrowest` belongs to —
+    // (`:219`-`:221`) and not a new one: it claims the deepest leg — the one `frameAtNarrowest` belongs to —
     // rather than summing re-wrap differences off frames that are no longer anywhere on screen. The monotonic
     // branch has no such gap: every leg's writes are counted where they happened, and a row stranded by an
     // earlier leg has only SPLIT since (the drag only ever narrowed), so the sum is short rather than long.
@@ -414,8 +443,12 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
       }
       // W2 t7 — THE BURST REPAIR WAS WAITING ON EXACTLY THIS, and it is the better-informed of the two: it
       // measures the screen as it stands now, while everything below measures a sample taken before the drag
-      // finished. If it emitted, this one must not — see `repairAtSettle`. If it declined, the sample below
-      // still has its own guard and may be the correction this shrink needs.
+      // finished. IT IS THE ONLY ONE THAT CAN EMIT ONCE IT HAS RUN, either way (review of the qa2-09 fix,
+      // minor 5): `repairAtSettle` ends the burst unconditionally, and ending it zeroes the count the path
+      // below claims from — so a pass that declined has still CONSUMED the count, and the sample below can only
+      // be reached by a continuation the settle window never woke. That is the safe direction and it is a
+      // behaviour change from the parent commit, where a declining pass left the direct path a live claim
+      // (120 → 90 → 70 → 90 emitted 7 rows there and now emits nothing).
       if (awaitingVerdict) { awaitingVerdict = false; if (repairAtSettle()) return; }
       // THE VERDICT SURVIVES A LATER DRAG; THE MEASUREMENT DOES NOT. `probeReflow` waits up to 750 ms, and every
       // row count in `sample` was taken at `sample.newWidth`. If the terminal has been dragged again since, the

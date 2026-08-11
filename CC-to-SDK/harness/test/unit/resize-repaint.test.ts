@@ -438,6 +438,34 @@ describe("createResizeRepaint — the driver", () => {
     expect(r.repainted).toEqual([]);
   });
 
+  // …AND THE SETTLE PASS DIES WITH THE SCREEN IT MEASURED, ON BOTH OF ITS BRANCHES (qa2-09 review, blocker 1).
+  // The ORDERING is the whole case: a <Static> commit BEFORE the verdict is already refused (`strandedNow()`
+  // reads 0 and the burst ends there), but a commit AFTER it and before the window fires used to reach
+  // `correctionAtSettle`, which never consulted the detach count at all. That branch's erase is
+  // `residue + occupiedRows(liveFrame)`, i.e. `residue` rows ABOVE the live frame unconditionally — and the
+  // commit has just pushed committed transcript into exactly those rows. Measured on the unguarded build:
+  // `eraseRows(4) + F120` where the live frame and its park own 3. The ordering is the normal one, not the rare
+  // one: the probe answers in about 12 ms against an 80 ms window.
+  it("claims nothing at settle when a <Static> commit lands after the verdict", async () => {
+    const r = rig({ verdicts: [] });
+    r.drag(90, F90); r.drag(150, F150); r.drag(120, F120);
+    r.settle("reflow");
+    await flush();
+    expect(r.repainted).toEqual([]);                                    // the direct path stands down: 120 ≠ 90
+    r.detach();                                                         // …and the commit lands inside the window
+    expect(r.settleWindow()).toBe(1);
+    expect(r.repainted).toEqual([]);
+    // …and the SAME sequence without the commit still repairs, so what declines above is the guard and not a
+    // burst that had already died of something else.
+    const c = rig({ verdicts: [] });
+    c.drag(90, F90); c.drag(150, F150); c.drag(120, F120);
+    c.settle("reflow");
+    await flush();
+    expect(c.settleWindow()).toBe(1);
+    expect(c.repainted.length).toBe(1);
+    expect(c.repainted[0]?.endsWith(F120)).toBe(true);
+  });
+
   // A plain shrink is not a burst: it settles at its own narrowest, so there is nothing above the frame that the
   // frame does not already cover, and the async first-shrink repair (or the write-time corrector after it) owns
   // the leg. The settle pass must add nothing — a second erase here is the over-erase the wave exists to prevent.
@@ -888,6 +916,28 @@ describe("the writes between a first shrink and its verdict", () => {
     r.out.stdout.write("⏺ committed prose\n");                  // …the <Static> chunk…
     r.out.stdout.write(AT80);                                   // …and the frame under it, with no prefix at all
     expect(r.out.lastFrame()).toBe(AT80);                       // a frame IS recorded, so this is not lastFrame's refusal
+    r.chunks.length = 0;
+    r.answers("reflow");
+    await flush();
+    expect(repair(r.chunks)).toBeUndefined();
+  });
+
+  // …AND THE OTHER HALF OF THE SAME COUNT: Ink's TALL-FRAME branch, which `\x1b[2J`-blanks the screen and
+  // replays `fullStaticOutput` over it (`ink.js`'s `clearTerminal` + static replay + the frame). Nothing above
+  // the live frame is where it was counted — the rows were not pushed down, they were wiped and re-laid — so
+  // the count is just as dead as it is after a <Static> commit, and this is the branch nothing pinned (review
+  // of 37da19c052, blocker 2: dropping `detached += 1` from the `\x1b[2J` arm of `record` left the whole seam
+  // green). Unguarded, the repair emits an 11-row erase over a screen the replay had already repainted.
+  it("claims nothing when Ink's tall-frame clear has blanked and replayed the screen", async () => {
+    const r = rig();
+    r.out.stdout.write(AT120);
+    r.terminal.columns = 80;
+    r.driver.onResize();
+    r.out.stdout.write(inkEraseLines(7) + STALE80);             // the uncorrected resize repaint, stranding 4 + 1
+    r.out.stdout.write("\x1b[2J\x1b[3J\x1b[H");                 // Ink's tall branch: clearTerminal…
+    r.out.stdout.write("⏺ the whole transcript, replayed\n");   // …fullStaticOutput…
+    r.out.stdout.write(AT80);                                   // …and the frame, which re-records lastFrame()
+    expect(r.out.lastFrame()).toBe(AT80);                       // …so again this is not lastFrame's refusal
     r.chunks.length = 0;
     r.answers("reflow");
     await flush();
