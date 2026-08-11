@@ -48,7 +48,10 @@ function mount(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
       {...(props.effort !== undefined ? { effort: props.effort } : {})}
       {...(props.defaultEffort !== undefined ? { defaultEffort: props.defaultEffort } : {})}
       {...(props.onEffortChange !== undefined ? { onEffortChange: props.onEffortChange } : {})}
-      onPick={(m, o) => picked.push({ model: m.value, saveDefault: o.saveDefault, ...(o.confirmed ? { confirmed: true } : {}) })}
+      /* The caller's own `onPick` runs AFTER the recorder, as a second observer: the recorder flattens the
+         opts (so the `toEqual`s below stay readable), and a test that needs the raw opts — or the ORDER the
+         effort write and the pick fired in — passes its own. */
+      onPick={(m, o) => { picked.push({ model: m.value, saveDefault: o.saveDefault, ...(o.confirmed ? { confirmed: true } : {}) }); props.onPick?.(m, o); }}
       onCancel={() => { cancelled = true; }}
       savePrefs={(patch) => saved.push(patch)}
       rows={40} columns={100}
@@ -566,6 +569,63 @@ describe("ModelPicker — the effort row (§C6.3, L441142)", () => {
     expect(r.picked).toEqual([{ model: "opus", saveDefault: false }]);
   });
 
+  // ── W2 T5 FIX (review M1): the commit is guarded on the PICKED model's axis, not on the dirty bit alone.
+  // `nvn`'s `mOH` (L441087) is `XXe && cva && Fk(cva) && ovn !== "ultracode" ? ovn : void 0` — the dirty
+  // flag AND `Fk(cva)`, the effort support of `cva`, the model being handed back. Staging on a model that
+  // has the axis and then walking onto one that does not therefore carries NOTHING out: the level the
+  // arrows moved belonged to the row they moved on, and on this surface (`skipSettingsWrite`, L471450) that
+  // rider is the only effort canon commits at all.
+  it("a level staged on a model WITH the axis is not committed onto a model without one", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("Max effort"));
+    r.stdin.write("\x1b[B");                                                  // ↓ → Haiku 4.5, no effort axis
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Effort not supported"));
+    r.stdin.write("\r");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.steps).toEqual([]);                                              // no applyEffort, no wire op
+    expect(r.picked).toEqual([{ model: "haiku", saveDefault: true }]);
+  });
+
+  // The other side of the same `mOH`: on a model that HAS the axis the level rides out WITH the pick, in the
+  // pick's own opts, which is what lets the confirmation notice name it (L471428-471429).
+  it("the committed level rides out in `onPick`'s opts, with the model", async () => {
+    const seen: { saveDefault: boolean; confirmed?: boolean; effort?: string }[] = [];
+    const r = mountEffort({ onPick: (_m, o) => { seen.push(o); } } as never);
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    r.stdin.write("\r");
+    await waitFor(() => r.picked.length > 0);
+    expect(seen).toEqual([{ saveDefault: true, effort: "xhigh" }]);
+    // …and an undirtied pick carries no rider at all, so the notice says nothing about effort.
+    const q = mountEffort({ onPick: (_m, o) => { seen.push(o); } } as never);
+    await waitFor(() => frame(q.lastFrame).includes("Opus 5"));
+    await tick();
+    q.stdin.write("\r");
+    await waitFor(() => q.picked.length > 0);
+    expect(seen[1]).toEqual({ saveDefault: true });
+  });
+
+  // The ORDERING `commit` declares load-bearing, pinned rather than asserted in a comment: every caller
+  // unmounts the picker inside `onPick`, so an effort write placed after it would be stranded. Without this
+  // test the whole suite stays green with the two statements swapped.
+  it("writes the effort BEFORE calling onPick — the caller unmounts us in there", async () => {
+    const order: string[] = [];
+    const r = mount({
+      models: EFFORT_MODELS, current: "opus", effort: "high", defaultEffort: "high",
+      onEffortChange: () => { order.push("effort"); }, onPick: () => { order.push("pick"); },
+    } as never);
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    r.stdin.write("\r");
+    await waitFor(() => order.length === 2);
+    expect(order).toEqual(["effort", "pick"]);
+  });
+
   it("the switch confirm holds the effort with the pick: a decline commits nothing, the accept commits once", async () => {
     const r = mountEffort({ outputTokens: 500 } as never);                    // T12's gate armed
     await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
@@ -599,5 +659,20 @@ describe("formatModelSet — the confirmation notice (L471427)", () => {
     expect(saved!.segments![1]).toEqual({ text: "Opus 5", bold: true });
     const [session] = formatModelSet("Haiku 4.5", false);
     expect(session!.segments!.map((s) => s.text).join("")).toBe("Set model to Haiku 4.5 for this session only");
+  });
+
+  // W2 T5 FIX (review L4). `y` (L471428-471429) appends `with ${bold(A)} effort` to the SAME sentence when
+  // the pick carried an effort — after the default/session tail, and spelling the level RAW as the wire
+  // takes it. Without it the picker's transaction left no transcript record of the level it committed: the
+  // decaying chip was the only witness, and it is gone in ten seconds.
+  it("appends canon's ` with <level> effort` clause when the pick carried one", () => {
+    const [withEffort] = formatModelSet("Opus 5", true, "max");
+    expect(withEffort!.segments!.map((s) => s.text).join(""))
+      .toBe("Set model to Opus 5 and saved as your default for new sessions with max effort");
+    expect(withEffort!.segments!.slice(-3)).toEqual([{ text: " with " }, { text: "max", bold: true }, { text: " effort" }]);
+    const [sessionOnly] = formatModelSet("Sonnet 5", false, "low");
+    expect(sessionOnly!.segments!.map((s) => s.text).join("")).toBe("Set model to Sonnet 5 for this session only with low effort");
+    // …and a pick that carried none says nothing about effort at all.
+    expect(formatModelSet("Opus 5", true)[0]!.segments!.map((s) => s.text).join("")).not.toContain("effort");
   });
 });

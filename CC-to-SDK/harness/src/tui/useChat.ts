@@ -393,6 +393,14 @@ export function useChat(
   // nothing on a FAILED fetch either, because failure settles the latch too.
   const effortSupported: boolean | undefined = effortCap === undefined ? undefined : effortCap.supportsEffort === true;
   const effortLevels: readonly EffortLevel[] = effortCap?.levels ?? EFFORT_LEVELS;
+  /** W2 T5 (review M2) — THE ONE CAPABILITY GATE EVERY REPORTING SURFACE READS. Both `/status` call sites
+   *  spread this; the statusLine payload below applies the same rule inline (its shape is a flat `effort`
+   *  key, not this pair). They disagreed before: the payload was gated and `/status` was not, so on a model
+   *  the catalog says has no effort axis a script printed no block and `/status` printed a row.
+   *  `effortSupported === false` is the ONLY thing that drops the row — an unanswered catalog is unknown
+   *  support, and `formatStatus`'s own `default` fallback covers a session that has no level yet. */
+  const statusEffort = (): { effort?: EffortLevel; effortSupported?: false } =>
+    effortSupported === false ? { effortSupported: false } : (effort ? { effort } : {});
   /** DIVERGENCE: upstream's `(default)` clause compares the level against the MODEL's default — `I5t`, off
    *  its own per-model registry (`_5(model, value)` falls back to `high`, L76470). The SDK catalog exposes
    *  `supportsEffort`/`supportedEffortLevels` and no default at all, so ccx compares against its own
@@ -679,8 +687,9 @@ export function useChat(
       // `f !== !1`, the same two-valued question asked of a richer setting.
       thinkingEnabled: thinkLevel !== "off",
       // W-C T11: upstream's `...Fk(y) && { effort: … }` guard, expressed as an absence. A model the catalog
-      // has SAID has no effort axis reports no block at all — same rule the hint follows one screen up, so
-      // the row a script prints and the hint the user sees can never disagree.
+      // has SAID has no effort axis reports no block at all — same rule the hint follows one screen up, and
+      // (since review M2) the same rule `/status` follows through `statusEffort`, so the row a script prints
+      // and the row the user reads can never disagree.
       ...(effort && effortSupported !== false ? { effort } : {}),
       context: statusCtxRef.current,
       usage: statusUsageRef.current,
@@ -1437,7 +1446,7 @@ export function useChat(
         case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
         case "status": {
           const u = await session.usage().catch(() => undefined);
-          append(formatStatus({ model, mode, thinkLevel, ...(effort ? { effort } : {}), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
+          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
           break;
         }
         case "usage": append(formatUsage(await session.usage())); break;
@@ -1783,7 +1792,7 @@ export function useChat(
   /** `saveDefault` is the picker's Enter-vs-`s` split (DG46). The prefs write itself already happened inside
    *  the picker (it owns the `s` key, so it is the only place that knows); what reaches here is which of the
    *  two confirmation sentences is true, and whether a session-only override is now in force. */
-  function pickModel(m: ModelInfo, opts: { saveDefault?: boolean; confirmed?: boolean } = {}) {
+  function pickModel(m: ModelInfo, opts: { saveDefault?: boolean; confirmed?: boolean; effort?: EffortLevel } = {}) {
     if (disposed.current) return;
     const saveDefault = opts.saveDefault !== false;
     sessionModelRef.current = saveDefault ? undefined : m.value;
@@ -1818,7 +1827,10 @@ export function useChat(
     // L471427's confirmation, which REPLACED `model → X` on this path: the picker's whole point is the
     // default-vs-session split, and the old line could not say which had happened. `/model <name>` (no
     // picker, no split) still prints `formatModel`.
-    if (!fromSettings) append(formatModelSet(m.displayName ?? m.value, saveDefault));
+    //   W2 T5 (review L4): `opts.effort` is the level that rode out WITH this pick — `nvn`'s `mOH`, already
+    // APPLIED by the picker through `onEffortChange`/`applyEffort` before it called us. It reaches here only
+    // so the sentence can name it (L471428-471429); a pick that carried none appends no clause.
+    if (!fromSettings) append(formatModelSet(m.displayName ?? m.value, saveDefault, opts.effort));
     void session.setModel(v).catch(() => {});
   }
 
@@ -2031,7 +2043,7 @@ export function useChat(
   // renders them itself, read-only.
   async function fetchSettingsStatus(): Promise<RenderLine[]> {
     const u = await session.usage().catch(() => undefined);
-    return formatStatus({ model, mode, thinkLevel, ...(effort ? { effort } : {}), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
+    return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
   }
   async function fetchSettingsUsage(): Promise<RenderLine[]> { return formatUsage(await session.usage()); }
   async function fetchSettingsStats(): Promise<RenderLine[]> {

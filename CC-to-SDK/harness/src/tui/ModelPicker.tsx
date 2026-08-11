@@ -82,15 +82,19 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
    *  wrong about upstream, not merely different from it. `zAe` seeds the level into LOCAL state once at
    *  mount (L440938); `lOH` (L441052) — the ←/→ handler — writes `$PH` (that local value) and `IAI(!0)` (a
    *  dirty flag) and NEVER the app-state setter; and the single commit is `nvn` (L441077), reached from the
-   *  Select's `onChange` (Enter) or the `s` chord and GUARDED on that dirty flag. Esc is a no-op by
-   *  construction: no path outside those two writes anything. §C6.3's footer says only "←/→ to adjust"
-   *  because the dialog's own Enter carries the effort out WITH the model, not because a step is the whole
-   *  gesture. The fleet found ccx's live-apply as s2qa4-05 (stepped level survived Esc; `/status` reported
-   *  a level the user cancelled). */
+   *  Select's `onChange` (Enter) or the `s` chord and guarded on TWO conditions, not one — the dirty flag AND
+   *  the PICKED model's own effort axis (`mOH`, L441087; `commit` below carries the citation). Esc is a
+   *  no-op by construction: no path outside those two writes anything. §C6.3's footer says only "←/→ to
+   *  adjust" because the dialog's own Enter carries the effort out WITH the model, not because a step is the
+   *  whole gesture. The fleet found ccx's live-apply as s2qa4-05 (stepped level survived Esc; `/status`
+   *  reported a level the user cancelled). */
   effort?: EffortLevel;
   defaultEffort?: EffortLevel;
   onEffortChange?: (level: EffortLevel) => void;
-  onPick: (m: ModelInfo, opts: { saveDefault: boolean; confirmed?: boolean }) => void;
+  /** `effort` is the level that rode out WITH this pick, present only when one did (`nvn`'s `mOH`). The
+   *  caller has nothing to apply — `onEffortChange` fired first and did that — it is what lets the
+   *  confirmation notice name the level (L471428-471429). */
+  onPick: (m: ModelInfo, opts: { saveDefault: boolean; confirmed?: boolean; effort?: EffortLevel }) => void;
   onCancel: () => void;
   savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void;
   rows?: number; columns?: number;
@@ -129,6 +133,12 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
   // guard has: a step out and back (→ then ←) lands on the level the picker opened with, and re-firing the
   // op for it would re-post the decaying hint and re-hit the wire for a no-op edit.
   const dirtyRef = useRef(false);
+  // W2 T5 (s2qa4-06): POLARITY. Support is stated positively by the live catalog or it is not there at all
+  // (probe 103 — see `supportsEffort` above), so `undefined` means locked, exactly as haiku's row means it.
+  // Declared here rather than beside `stepBy` because `commit` is the other caller and reads it of the
+  // PICKED row, where `stepBy` reads it of the FOCUSED one — the two are the same question asked of two
+  // different models, and they must not drift apart.
+  const effortSupported = (row: ModelInfo | undefined): boolean => row?.supportsEffort === true;
 
   const commit = (m: ModelInfo, saveDefault: boolean, confirmed: boolean) => {
     // The write goes FIRST, so a caller that unmounts the picker inside `onPick` (every caller does) cannot
@@ -137,16 +147,26 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
     // BEST-EFFORT, like every other prefs writer (ChatApp's `app:toggleTodos`): KeymapProvider does not catch
     // what an action handler throws, so an unwritable prefs dir would take the whole REPL down on Enter.
     if (saveDefault) { try { savePrefs({ model: m.value }); } catch { /* prefs are best-effort */ } }
-    // W2 T5: `nvn`'s dirty-guarded write (L441077). THIS is the whole commit surface of the effort
-    // transaction, and it sits here rather than in each key handler because all THREE paths that can end the
-    // picker with a pick funnel through `commit`: the Select's Enter and the `s` chord (both via `choose`)
-    // and the T12 switch-confirm's accept. A declined confirm returns to the list without passing here, so
-    // the staged level and the dirty flag survive it — the pick was refused, not the edit.
+    // W2 T5: `nvn`'s guarded write (L441077). THIS is the whole commit surface of the effort transaction,
+    // and it sits here rather than in each key handler because all THREE paths that can end the picker with
+    // a pick funnel through `commit`: the Select's Enter and the `s` chord (both via `choose`) and the T12
+    // switch-confirm's accept. A declined confirm returns to the list without passing here, so the staged
+    // level and the dirty flag survive it — the pick was refused, not the edit.
+    //   THE GUARD IS `mOH` (L441087), and it has TWO conditions:
+    //   `XXe && cva && Fk(cva) && ovn !== "ultracode" ? ovn : void 0` — dirty (`XXe`) AND the effort support
+    // of `cva`, THE MODEL BEING PICKED. Not the focused one the arrows moved on: stage `max` on Opus, arrow
+    // down onto Haiku and Enter, and the level belongs to a model that has no axis to put it on. The dirty
+    // bit alone (what this shipped as, review M1) fired the setter and a wire op for exactly that. The
+    // `ultracode` rung is upstream's seven-level domain and has no ccx spelling (see `commands.ts`).
+    //   On this surface that rider is the ONLY effort canon commits: `/model` constructs `zAe` with
+    // `skipSettingsWrite` (L471450), which is the flag that skips `nvn`'s own settings write, leaving
+    // L471422's conditional `AGr(A)` as the whole application path.
     // Before `onPick`, which unmounts us: the effort belongs to the same gesture as the model, and a parent
-    // that tears the picker down inside `onPick` must not be able to strand it.
-    const staged = stagedRef.current;
-    if (dirtyRef.current && onEffortChange && staged) { dirtyRef.current = false; onEffortChange(staged); }
-    onPick(m, { saveDefault, ...(confirmed ? { confirmed: true } : {}) });
+    // that tears the picker down inside `onPick` must not be able to strand it. Pinned, not merely stated —
+    // `model-picker.test.tsx` fails on the two statements swapped.
+    const carried = dirtyRef.current && effortSupported(m) && onEffortChange ? stagedRef.current : undefined;
+    if (carried && onEffortChange) onEffortChange(carried);
+    onPick(m, { saveDefault, ...(confirmed ? { confirmed: true } : {}), ...(carried ? { effort: carried } : {}) });
   };
 
   const choose = (value: string, saveDefault: boolean) => {
@@ -170,9 +190,6 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
   // its `s` key acts on. Read through the focus REF and not the rendered row for the reason the `s` handler
   // does: `↓→` can arrive in one stdin chunk with no render between the two dispatches.
   const rowOf = (value: string): ModelInfo | undefined => models.find((m) => m.value === value);
-  // W2 T5 (s2qa4-06): POLARITY. Support is stated positively by the live catalog or it is not there at all
-  // (probe 103 — see `supportsEffort` above), so `undefined` means locked, exactly as haiku's row means it.
-  const effortSupported = (row: ModelInfo | undefined): boolean => row?.supportsEffort === true;
   const stepBy = (delta: 1 | -1): void => {
     // Three ways to be inert, all of them "there is nothing here to adjust": no parent listening (nothing to
     // commit TO, so staging would be a control that lies), the confirm screen has replaced the list (same

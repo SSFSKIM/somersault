@@ -271,6 +271,17 @@ describe("formatStatus", () => {
   it("falls back to `default` when nothing has set one", () => {
     expect(formatStatus({ mode: "default" }).map((l) => l.text)).toContain("  effort     default");
   });
+  // W2 T5 FIX (review M2). The statusLine PAYLOAD has always been capability-gated — a model the catalog
+  // said has no effort axis reports no effort block at all — and `/status` was not, so on haiku a script
+  // printed nothing while the dialog printed a row. The gate is the same one, threaded in here. NB the two
+  // absences stay distinct: no AXIS drops the row, no VALUE YET (`ccx attach`, which never learns a launch
+  // level) keeps it with the `default` fallback above.
+  it("drops the row entirely when the catalog says the model has no effort axis", () => {
+    const lines = formatStatus({ mode: "default", effort: "high", effortSupported: false }).map((l) => l.text);
+    expect(lines.some((t) => t.includes("effort"))).toBe(false);
+    expect(lines).toContain("  thinking   default");                     // …and the rest of the block is untouched
+    expect(formatStatus({ mode: "default", effort: "high", effortSupported: true }).map((l) => l.text)).toContain("  effort     high");
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -492,6 +503,9 @@ describe("the /model picker's effort row (s2qa4-05)", () => {
     await waitFor(() => calls.length > 0);
     await settle();
     expect(calls).toEqual(["max"]);
+    // W2 T5 FIX (review L4): the notice NAMES the level that rode out with the model (L471428-471429).
+    // The chip decays in ten seconds; this row is the transcript's only lasting record of the change.
+    expect(flat(r.lastFrame)).toContain("Set model to Opus 5 and saved as your default for new sessions with max effort");
     await runCommand(r, "/status");
     await waitFor(() => flat(r.lastFrame).includes("effort max"));
   });
@@ -512,5 +526,45 @@ describe("the /model picker's effort row (s2qa4-05)", () => {
     r.stdin.write("\r");
     await waitFor(() => !flat(r.lastFrame).includes(MODEL_FOOTER));
     expect(calls).toEqual([]);
+  });
+
+  // W2 T5 FIX (review M1), the app-level repro of the component pin in `model-picker.test.tsx`: the arrows
+  // move on a model that HAS the axis, the pick lands on one that does not, and nothing about effort may
+  // leave the picker — no `set_effort` on the wire, and no effort clause in the notice.
+  it("stepping on Opus and picking Haiku fires no wire op and names no effort in the notice", async () => {
+    const calls: string[] = [];
+    const r = mountApp({ effortCalls: calls, initialEffort: "high" });
+    await openPickerAndStepTwice(r);
+    r.stdin.write("\x1b[B");                                            // ↓ → Haiku 4.5
+    await waitFor(() => flat(r.lastFrame).includes(effortUnsupportedText("Haiku 4.5")));
+    r.stdin.write("\r");
+    await waitFor(() => !flat(r.lastFrame).includes(MODEL_FOOTER));
+    await settle();
+    expect(calls).toEqual([]);
+    expect(flat(r.lastFrame)).toContain("Set model to Haiku 4.5 and saved as your default for new sessions");
+    // Not "the frame has no `effort` in it" — the §C6.2 hint is still on screen from the Opus mount. The
+    // claim is about the NOTICE: no level rode out, so no clause was appended to it.
+    expect(flat(r.lastFrame)).not.toContain("with max effort");
+  });
+});
+
+// W2 T5 FIX (review M2) — `/status` reads the SAME capability gate the statusLine payload does. The two
+// surfaces report one fact and must not be able to disagree about it.
+describe("/status on a model with no effort axis (review M2)", () => {
+  it("prints no effort row at all", async () => {
+    const r = mountApp({ effortCalls: [], initialEffort: "high", initialModel: "haiku" });
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await settle();                                                     // let the catalog land
+    await runCommand(r, "/status");
+    await waitFor(() => flat(r.lastFrame).includes("thinking"));
+    expect(flat(r.lastFrame)).not.toContain("effort");
+  });
+
+  it("…and still prints it on a model that has one", async () => {
+    const r = mountApp({ effortCalls: [], initialEffort: "high", initialModel: "claude-opus-5" });
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await settle();
+    await runCommand(r, "/status");
+    await waitFor(() => flat(r.lastFrame).includes("effort high"));
   });
 });

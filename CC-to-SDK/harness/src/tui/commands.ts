@@ -151,10 +151,17 @@ export function formatModel(next?: string, current?: string): RenderLine[] {
  *  has no default-vs-session distinction to report. */
 export const SET_MODEL_DEFAULT_TAIL = " and saved as your default for new sessions";
 export const SET_MODEL_SESSION_TAIL = " for this session only";
-export function formatModelSet(name: string, saveDefault: boolean): RenderLine[] {
+/** W2 T5 (review L4) — the third clause, `y` L471428-471429:
+ *  `if (A !== void 0) k += \` with ${vt.bold(A)} effort\`` — appended AFTER the default/session tail, to the
+ *  same sentence, and only when the pick carried a level out with it (`nvn`'s `mOH`; the picker's `commit`
+ *  is the only thing that decides that). The level is spelled RAW/lowercase, as `formatEffortSet` spells it
+ *  and as the wire takes it. Without this clause the picker's effort transaction left no transcript record
+ *  at all: the decaying chip was the only witness, and it is gone in ten seconds. */
+export function formatModelSet(name: string, saveDefault: boolean, effort?: string): RenderLine[] {
   return [{ text: "", segments: [
     { text: "Set model to " }, { text: name, bold: true },
     { text: saveDefault ? SET_MODEL_DEFAULT_TAIL : SET_MODEL_SESSION_TAIL },
+    ...(effort ? [{ text: " with " }, { text: effort, bold: true }, { text: " effort" }] : []),
   ] }];
 }
 export function formatThink(next?: string, current?: string): RenderLine[] {
@@ -277,17 +284,23 @@ export function formatCost(u: SessionUsage): RenderLine[] {
 }
 
 /** `/status` — a one-glance snapshot of the live session (purely local state, no SDK call). */
-export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; effort?: string; ctxPct?: number; sessionId?: string; cwd?: string; usage?: string }): RenderLine[] {
+export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; effort?: string; effortSupported?: boolean; ctxPct?: number; sessionId?: string; cwd?: string; usage?: string }): RenderLine[] {
   const out: RenderLine[] = [
     { text: "Status", bold: true },
     { text: `  model      ${s.model ?? "(default)"}`, dim: true },
     { text: `  mode       ${s.mode}`, dim: true },
     { text: `  thinking   ${s.thinkLevel ?? "default"}`, dim: true },
-    // W-C T11 (EP-C6) — EP-C6's acceptance reads the effort here. UNCONDITIONAL with a `default` fallback,
-    // exactly like the `thinking` row above it and for the same reason: a session always has SOME effort in
-    // force (ccx's launch default if nothing set one), so an omitted row would read as "no such axis".
-    { text: `  effort     ${s.effort ?? "default"}`, dim: true },
   ];
+  // W-C T11 (EP-C6) — EP-C6's acceptance reads the effort here, with a `default` fallback exactly like the
+  // `thinking` row above it and for the same reason: a session always has SOME effort in force (ccx's launch
+  // default if nothing set one), so an omitted row would read as "no such axis".
+  //   W2 T5 (review M2) ADDED THE ONE CASE WHERE THAT READING IS TRUE, and gated the row on it. The
+  // statusLine PAYLOAD was already gated (`useChat`'s `effort && effortSupported !== false`, upstream's
+  // `...Fk(y) && { effort: … }`), so on a model the catalog says has no effort axis a script printed no
+  // block while this row printed a level — one fact, two surfaces, disagreeing. The two absences stay
+  // distinct: no AXIS (`effortSupported === false`) drops the row; no VALUE YET (`ccx attach`, which never
+  // learns a launch level, on a model that does have the axis) keeps it and says `default`.
+  if (s.effortSupported !== false) out.push({ text: `  effort     ${s.effort ?? "default"}`, dim: true });
   if (s.ctxPct != null) out.push({ text: `  context    ${s.ctxPct}% used`, dim: true });
   if (s.cwd) out.push({ text: `  cwd        ${s.cwd}`, dim: true });
   if (s.sessionId) out.push({ text: `  session    ${s.sessionId.slice(0, 8)}`, dim: true });
