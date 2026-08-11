@@ -17,7 +17,8 @@ import { threadCompactStart, threadReinitialize } from "./lifecycle.js";
 import { threadList, threadFork, threadNameSet, threadTagSet, threadDelete } from "./sessionLib.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
-import { broadcastToWatchers } from "./fanout.js";
+import { broadcastToWatchers, broadcastToSubscribersAndWatchers } from "./fanout.js";
+import { rewindAnchors, rewindDryRun, threadRewind } from "./rewind.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
@@ -41,6 +42,11 @@ export interface AppServerDeps {
   renameSession?: (id: string, title: string) => Promise<void>;
   tagSession?: (id: string, tag: string | null) => Promise<void>;
   deleteSession?: (id: string) => Promise<void>;
+  // M2b Task 1: the replacement-engine factory rewind's conversation swap opens — separate from
+  // `sessionFactory` above because it takes the resume anchor as an argument rather than a bare config,
+  // and because a test overriding one has no reason to be forced into overriding the other. Defaulted at
+  // its call site (rewind.ts) to the same openSession-with-resumeAt primitive rewindSession uses.
+  resumeAtFactory?: (sessionId: string, resumeAt: string, config: Record<string, unknown>) => EngineSession;
 }
 export interface ConnCtx {
   peer: Peer;
@@ -141,7 +147,7 @@ export class AppServer {
       const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
       srv.decisions.set(threadId, dec);
       const nowS = nowSec();
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), epoch: 0 };
+      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), epoch: 0 };
       srv.registry.add(record);
       installRouter(srv, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
       ctx.peer.reply(id, { thread: threadView(srv, record) });
@@ -228,6 +234,9 @@ export class AppServer {
     "account/read": accountRead,
     "thread/compact/start": threadCompactStart,
     "thread/reinitialize": threadReinitialize,
+    "thread/rewind/anchors": rewindAnchors,
+    "thread/rewind/dryRun": rewindDryRun,
+    "thread/rewind": threadRewind,
   };
 
   private readonly token: string;
@@ -267,7 +276,10 @@ export class AppServer {
     // undefined on a real engine anyway). The live-guard in sessionLib.ts is what needs it — a resume
     // admitted this tick must already be findable by sessionId, or a concurrent thread/delete deletes the
     // history out from under it.
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: opts.resume, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), epoch: 0 };
+    // `config` is the FULL object the factory received (broker and `resume` included) — M2b's rewind swap
+    // rebuilds the replacement engine from it, so anything dropped here is silently dropped by every later
+    // swap too (registry.ts's field doc).
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: opts.resume, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
@@ -297,13 +309,9 @@ export class AppServer {
     try {
       await record.session.dispose();
     } finally {
-      // thread/closed reaches BOTH this thread's subscribers and every server-scoped watcher (Task 5) —
-      // deduped by Peer identity, since a connection that is both a subscriber and a watcher must receive
-      // exactly one frame, not two (fanout.ts's orthogonality rule, applied at the one place two fan-out
-      // scopes actually overlap in M2).
-      const targets = new Set<Peer>(record.subscribers);
-      for (const w of this.watchers()) targets.add(w.peer);
-      for (const peer of targets) { try { peer.notify("thread/closed", { threadId: record.id }); } catch { /* one target's failure is not another's */ } }
+      // thread/closed reaches BOTH this thread's subscribers and every server-scoped watcher (Task 5),
+      // deduped by Peer identity — fanout.ts owns that rule now that M2b's thread/rewound needs it too.
+      broadcastToSubscribersAndWatchers(record.subscribers, this.watchers(), "thread/closed", { threadId: record.id });
       this.decisions.delete(record.id);
       this.registry.delete(record.id);
     }

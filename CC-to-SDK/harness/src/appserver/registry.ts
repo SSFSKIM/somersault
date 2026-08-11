@@ -56,6 +56,11 @@ export interface EngineSession {
    *  payload; the handler also pings `thread/capabilities/changed` since a reinit refreshes that mirror
    *  too. */
   reinitialize?(): Promise<unknown>;
+  /** Optional (the real lib Session has it — src/session/session.ts's `rewind`): M2b's rewind trio. ONE
+   *  method serves both halves of the file-checkpoint restore — `{dryRun:true}` asks whether the restore
+   *  can happen, the bare call performs it — and it needs the LIVE transport, so it is always driven on
+   *  the engine that is about to be replaced, never on the one that replaces it (probe 68d). */
+  rewind?(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown>;
   /** Optional (the real lib Session has it): true once the read loop has ended — the engine is gone.
    *  The ONLY dead-engine signal handlers may use (spec Wave 0: no message-matching, ever). */
   isEnded?(): boolean;
@@ -94,6 +99,12 @@ export interface ThreadRecord {
   routerOff?: () => void;       // unsubscribes the ONE per-thread frame router (router.ts, Task 8a,
                                  // spec D-M2-6) — closeRecord calls this before disposing the engine
   sessionId?: string;
+  config?: Record<string, unknown>; // the FULL config this thread's engine was opened with (broker
+                                 // included) — stamped once at thread/start|resume and never rewritten.
+                                 // M2b's engine swap (rewind.ts) rebuilds the replacement engine from it:
+                                 // without it a swapped thread silently loses its model, cwd and — worst —
+                                 // its decision broker, so every later tool call would bypass this
+                                 // server's permission surface entirely
   createdAt: number;            // unix seconds
   updatedAt: number;            // unix seconds — bumped on every settings/turn mutation (Task 8's setters)
   cwd?: string;                 // seeded from the start config; surfaced on threadView

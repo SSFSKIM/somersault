@@ -268,7 +268,7 @@ Thread: `thread/started`, `thread/status/changed`, `thread/settings/changed` (mo
 thinking — one notification, write-back-sourced so *any* client sees another client's change:
 the dashboard-live-state precedent), `thread/capabilities/changed` (the SDK's mid-session
 command-list push — replace, don't merge; §13), `thread/name/updated`, `thread/deleted`,
-`thread/closed`,
+`thread/closed`, `thread/rewound` `{threadId, sessionId}` (added M2b — see Revision Notes),
 `thread/tokenUsage/updated` (per-turn result usage + context %), `thread/limits/updated`
 (limit/overage classification — sparse merge like Codex rate limits).
 Turn: `turn/started` `{turnId}`, `turn/completed` `{turnId, status, error?, truncated?}`,
@@ -574,3 +574,9 @@ claim).
   `toWireDecision`) at every site a decision reaches a client — `decision/requested`'s live
   broadcast, its subscribe-replay, and `decision/list`'s reply — rather than emitting both
   spellings. §6 above now describes the wire shape explicitly rather than naming the internal type.
+
+- **Flagged addition (2026-08-11, as2b Task 1):** §8's Thread family gains `thread/rewound`
+  `{threadId, sessionId}` — a rewind replaces the thread's engine and truncates its transcript, and
+  no existing notification says so; the shipped host's own `rewound` event is the precedent. It
+  reaches BOTH the thread's subscribers and every server-scoped watcher (deduped by peer, like
+  `thread/closed`), since a rewind changes what the thread IS.

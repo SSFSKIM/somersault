@@ -6,6 +6,7 @@ import { threadStartParams, threadResumeParams, threadReadParams, threadListPara
 import { turnStartParams, turnInterruptParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
+import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.js";
 
 export interface MethodSchema { params: z.ZodType }
 export const methodSchemas: Record<string, MethodSchema> = {
@@ -37,4 +38,7 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/name/set": { params: threadNameSetParams },
   "thread/tag/set": { params: threadTagSetParams },
   "thread/delete": { params: threadDeleteParams },
+  "thread/rewind/anchors": { params: rewindAnchorsParams },
+  "thread/rewind/dryRun": { params: rewindDryRunParams },
+  "thread/rewind": { params: rewindParams },
 };
