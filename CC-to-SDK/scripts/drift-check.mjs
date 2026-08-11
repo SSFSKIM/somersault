@@ -5,7 +5,7 @@
 //   node scripts/drift-check.mjs [--json]
 // Prints an actionable added/removed report per surface; exits 0 (a report, not a gate).
 // The full ritual (docs sweep + probe re-runs) is docs/parity/drift-ritual.md.
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -119,12 +119,49 @@ for (const [source, walk] of Object.entries(appserverSources)) {
   for (const t of tokens) if (!scorecardRows.has(`${source}::${t}`)) appserverMissing.push(`${source}::${t}`);
 }
 
+// ---- Appserver staleness pass: row PRESENCE (above) is not row TRUTH. The M2a incident: 15 methods
+// shipped while their rows read planned(M2) for twelve days, and this gate stayed green — it only ever
+// checked that walked tokens HAD rows, never that a row's status matched the code. Two checks, each
+// direction using the set that makes it fail loud without being trippable:
+//   - a `shipped(...)` row's wire name must exist in the code — union of the method registry
+//     (schema/index.ts methodSchemas, which pins every dispatchable method) and a broad wire-name-shaped
+//     string-literal scan over appserver/**/*.ts (notifications have no registry; emission helpers vary,
+//     so the scan is anchored on the names, not the call sites);
+//   - a `planned(...)`/`probe-gated` row's wire name must NOT be in the method registry — registry ONLY,
+//     so a planned name quoted in a comment or an error message cannot false-trip the gate. (A planned
+//     NOTIFICATION that starts firing is invisible to this check — acceptable: notifications ship with
+//     their methods, and the method row catches it.)
+const liveMethods = new Set(
+  [...readFileSync(join(root, "harness", "src", "appserver", "schema", "index.ts"), "utf8")
+    .matchAll(/["']([^"']+)["']:\s*\{\s*params/g)].map((m) => m[1]),
+);
+if (!liveMethods.size) { console.error(`PARSE FAILURE: appserver staleness pass extracted 0 methods from schema/index.ts — fix the regexes in this script before trusting any verdict.`); process.exit(2); }
+const appserverDir = join(root, "harness", "src", "appserver");
+const liveWireStrings = new Set(readdirSync(appserverDir, { recursive: true })
+  .filter((f) => f.endsWith(".ts"))
+  .flatMap((f) => [...readFileSync(join(appserverDir, f), "utf8")
+    .matchAll(/["']([a-z][a-zA-Z]*(?:\/[a-zA-Z]+)+)["']/g)].map((m) => m[1])));
+const wireNameRe = /^[a-z][a-zA-Z]*(?:\/[a-zA-Z]+)+$/;
+const appserverStale = [];
+const statusRows = [...readFileSync(scorecardPath, "utf8")
+  .matchAll(/^\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/gm)];
+if (!statusRows.length) { console.error(`PARSE FAILURE: appserver staleness pass parsed 0 scorecard rows — fix the regexes in this script before trusting any verdict.`); process.exit(2); }
+for (const [, token, source, methodCol, , status] of statusRows) {
+  const name = (methodCol.match(/`([^`]+)`/) || [])[1];
+  if (!name || !wireNameRe.test(name)) continue; // N/A rows and non-wire-shaped columns have no status to verify
+  if (/^shipped/.test(status) && !liveMethods.has(name) && !liveWireStrings.has(name)) {
+    appserverStale.push(`${source}::${token} → ${name} claims "${status}" but the name exists nowhere under appserver/`);
+  } else if (/^(planned|probe-gated)/.test(status) && liveMethods.has(name)) {
+    appserverStale.push(`${source}::${token} → ${name} claims "${status}" but the method is registered in schema/index.ts`);
+  }
+}
+
 const report = {
   package: PKG, installed: installedVersion, head: headVersion, drift: diff(installed, head),
-  appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, missing: appserverMissing },
+  appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, missing: appserverMissing, stale: appserverStale },
 };
-// The gate's verdict travels with the JSON too: exit 1 on a missing row, exactly as the text mode does.
-if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(appserverMissing.length ? 1 : 0); }
+// The gate's verdict travels with the JSON too: exit 1 on a missing or stale row, exactly as the text mode does.
+if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(appserverMissing.length || appserverStale.length ? 1 : 0); }
 
 console.log(`${PKG}: installed ${installedVersion} vs npm HEAD ${headVersion}\n`);
 let any = false;
@@ -150,4 +187,12 @@ if (appserverMissing.length) {
   process.exitCode = 1;
 } else {
   console.log(`  every walked token has a scorecard row — no drift`);
+}
+if (appserverStale.length) {
+  console.error(`\nFAIL: scorecard row status contradicts the code (${appserverStale.length}):`);
+  for (const s of appserverStale) console.error(`  ${s}`);
+  console.error(`Rewalk the statuses in docs/parity/appserver.md — a stale status is the gate's whole reason to exist.`);
+  process.exitCode = 1;
+} else {
+  console.log(`  every row status matches the live surface (${liveMethods.size} registered methods) — no staleness`);
 }
