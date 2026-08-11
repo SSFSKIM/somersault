@@ -142,3 +142,12 @@ fleet roster (s2qa5-05); roster `state:"working"` for idle sessions persists (s2
    scope. Future briefs should note it; the operator's clipboard was overwritten this sweep.
 4. Fleet mechanics held: six agents in parallel on one tmux server, prefix-scoped sessions,
    individual kills, zero cross-agent interference, zero real-`~/.claude` writes.
+5. **Resize-matrix cell `a3` is dead — Wave C instrument repair, still open.** Found during wave
+   2's Task 7 fix round, the first keyed matrix run since Wave C: a3 skips keyless, so nobody had
+   run it live since Wave C Task 6 replaced the spinner tail (canon `C0p`: no interrupt offer in
+   the parenthetical) and moved `esc to interrupt` to the footer hint list. a3's
+   `spinner_rows`/`elapsed_rows` needles now count the footer and match nothing, failing a healthy
+   build. Mechanism documented in the matrix script above the two functions (re-review verified it
+   at source). Re-authoring needs its own live iteration against a streaming turn (spinner glyph
+   row + clock behind a width gate and 16 s quiet threshold) — same rot class as item 2: the
+   instrument rots under the code it verifies, and credential-gated cells rot invisibly.
