@@ -3244,6 +3244,49 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
     expect(afterClear).toMatch(UUID_RE);                              // still an identity, never absent
     expect(afterClear).not.toBe(mintedAtMount);                       // canon's `UHi()` rotation, reproduced
   });
+
+  // ── EXTERNAL REVIEW (codex, finding A) — THE LOSING SIDE OF THE MOUNT RACE ───────────────────────────
+  // The boot gate races a control read against a 1500 ms cap, and BOTH sides of that race outlive the thing
+  // they were about. The read is a second-scale round trip: `--resume`, `--continue` and `/clear` can all
+  // replace the conversation while it is still out, and `refreshCtx` wrote its answer against whatever
+  // conversation was on screen when it landed — W-S5's rule (`replaceDocument` above) inverted, with the
+  // number arriving AFTER the boundary cleared it instead of surviving across it. And when the CAP wins the
+  // read still lands later, still pokes, and turns the one boot run D-W11 exists to guarantee into two.
+  it("a mount read that lands after /clear writes NOTHING — not the chip, not the payload, not the warning", async () => {
+    const clock = slClock(), r = statusRunner();
+    let landRead!: (u: unknown) => void;
+    const reading = new Promise<unknown>((res) => { landRead = res; });
+    const fake = fakeRemote({ getContextUsage: () => reading, clearSession: async () => {} });
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, { statusLine: STATUS_CFG } as any, { statusLine: { runStatusLine: r.run, ...clock.deps }, clearViewport: () => {} });
+      api.run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} notif:{c.state.notification?.text ?? "-"}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await settle(clock, 1);
+    api.run!("/clear");                                               // the conversation the read describes is gone
+    await settle(clock, 1);                                           // …600 virtual ms, still inside the cap
+    landRead({ totalTokens: 95_000, maxTokens: 100_000 });            // …and only now does the boot read answer
+    await settle(clock, 2);
+    expect(frame(lastFrame)).toContain("ctx:-");                      // was: ctx:95, measured against the wiped one
+    expect(frame(lastFrame)).not.toContain("Context low");            // …and the row replaceDocument just removed
+    expect(r.runs).toHaveLength(1);                                   // the gate still opens: a boot run happened
+    expect(r.runs[0].payload.context_window.context_window_size).toBe(0);   // …carrying no reading at all
+  });
+
+  it("a read that lands after the CAP has already run the boot script does not run it a second time", async () => {
+    const clock = slClock(), r = statusRunner();
+    let landRead!: (u: unknown) => void;
+    const fake = fakeRemote({ getContextUsage: () => new Promise((res) => { landRead = res; }) });
+    mountStatus(fake, r, clock);
+    await settle(clock, 7);                                           // past 1500 ms: the cap wins, one run, zero window
+    expect(r.runs).toHaveLength(1);
+    expect(r.runs[0].payload.context_window.context_window_size).toBe(0);
+    landRead({ totalTokens: 12_000, maxTokens: 1_000_000 });          // …and the slow read answers behind it
+    await settle(clock, 3);
+    expect(r.runs).toHaveLength(1);                                   // was 2: the boot run, then its correction
+  });
 });
 
 // D-W11's COMPANION (fix round, owner-call 1): `/status` MEASURES ITS OWN READING. It used to render

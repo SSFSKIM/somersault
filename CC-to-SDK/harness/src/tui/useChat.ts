@@ -789,7 +789,12 @@ export function useChat(
     const disarmCap = deps.statusLine?.clearTimeout ?? ((h: unknown): void => { clearTimeout(h as ReturnType<typeof setTimeout>); });
     let capTimer: unknown, unmounted = false;
     const capped = new Promise<void>((resolve) => { capTimer = armCap(() => { capTimer = undefined; resolve(); }, STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS); });
-    void Promise.race([refreshCtx(), capped]).then(() => {
+    //   AND THE READ IS QUIET, WHICHEVER SIDE WINS (external review, finding A). `refreshCtx`'s own poke is
+    // dropped while the gate is shut (the driver is not published yet), but the CAP publishes it — so a read
+    // that answers after the cap poked the driver it had just been handed, and the boot the gate exists to
+    // hold to one run went out as two: the zero-window row, then its correction. The reading is still kept;
+    // it reaches the payload through the next trigger, exactly as the cap's own comment above promises.
+    void Promise.race([refreshCtx({ quiet: true }), capped]).then(() => {
       if (capTimer !== undefined) { disarmCap(capTimer); capTimer = undefined; }
       if (unmounted) return;                              // a hook torn down mid-read leaves the ref null
       statusDriverRef.current = driver;                   // the gate opens: pokes reach the driver from here
@@ -1352,9 +1357,17 @@ export function useChat(
    *  inside the awaiting call. `undefined` for every non-answer there is: a failed read, a reading with no
    *  window, and a hook that has been disposed under it. */
   async function refreshCtx(opts: { quiet?: boolean } = {}): Promise<number | undefined> {
+    // …AND IT ANSWERS FOR THE CONVERSATION IT ASKED ABOUT, OR NOT AT ALL (external review, finding A). This is
+    // a control round-trip measured at ~1.2 s, and the boundary can land inside it: the mount read (D-W11
+    // below) races `--resume`/`--continue`, and a turn-end read races `/clear`. Every write below is one
+    // `replaceDocument` has just cleared for the W-S5 reason — the chip, the payload's `context_window`, the
+    // `token-warning` row — so a late answer re-posts them ABOUT A CONVERSATION THAT IS GONE, which is the same
+    // rule inverted rather than a new one. The document generation is the boundary's own counter, so every
+    // caller inherits the check and a fifth one cannot forget it.
+    const gen = docEpoch.current;
     try {
       const u = (await session.getContextUsage()) as { totalTokens?: number; maxTokens?: number };
-      if (disposed.current) return undefined;
+      if (disposed.current || docEpoch.current !== gen) return undefined;
       const pct = u?.maxTokens ? Math.round(((u.totalTokens ?? 0) / u.maxTokens) * 100) : undefined;
       if (pct !== undefined) setCtxPct(pct);
       // W-C T10: the same reading is the status line's `context_window`, and the poke is upstream's
