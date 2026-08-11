@@ -415,5 +415,24 @@ describe("the empty-submit nudge reaches every body that has a feedback row", ()
       v.stdin.write("\r"); await waitFor(() => v.got.length === 1);
       expect(v.got[0]).toEqual({ kind: "deny", feedback: "no thanks" });
     });
+
+    // WAVE 2 t2 REVIEW (I-1). The nudge is an answer to a keystroke, not a property of the row: it may only
+    // be on screen because THIS field's last Enter was empty. It was raised as state and retired only by
+    // typing, so Esc/focus-move/collapse hid the line without lowering the flag — and the next Tab back into
+    // the row repainted a warning about an Enter the human never pressed. Reopening the field reopens it clean.
+    it(`${name}: a later Tab back into the row opens a clean field — the nudge does not become chrome`, async () => {
+      const v = await open();
+      v.stdin.write("\x1b[F"); await tick();                      // End → the No row
+      v.stdin.write("\t"); await tick();
+      v.stdin.write("\r"); await tick();                          // the empty Enter that earns the nudge
+      expect(v.frame()).toContain("type a message, or esc to cancel");
+      v.stdin.write("\x1b"); await tick();                        // Esc collapses the field…
+      expect(v.frame()).not.toContain("and tell Claude what to do differently");
+      v.stdin.write("\t"); await tick();                          // …and Tab opens a FRESH one
+      expect(v.frame()).toContain("and tell Claude what to do differently");
+      expect(v.frame()).not.toContain("type a message, or esc to cancel");
+      expect(v.frame()).toContain("enter send · esc cancel");     // the field's own contract still shows
+      expect(v.got).toEqual([]);
+    });
   }
 });

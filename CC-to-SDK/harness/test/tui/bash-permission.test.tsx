@@ -235,6 +235,27 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     expect(plain(v.frame())).not.toContain("type a message, or esc to cancel");   // …and it never nudges
   });
 
+  // WAVE 2 t2 REVIEW (I-1), the same defect from Bash's side, where the walk away from the row is a real one:
+  // the nudge was raised as state and retired only by typing, so Esc + a trip up to the prefix row and back
+  // only HID it. Tabbing the feedback row open again then repainted the warning with no Enter behind it —
+  // in the one body where the neighbouring text row's empty Enter genuinely IS an answer, i.e. where a stale
+  // warning is most likely to be read as being about that row. Reopening a field reopens it clean.
+  it("does not repaint a stale nudge when the feedback row is reopened later", async () => {
+    const v = await mount(req("npm run build", { suggestions: [bashRule("npm run *")] }));
+    v.stdin.write("\x1b[F"); await tick();                        // End → the No row
+    v.stdin.write("\t"); await tick();
+    v.stdin.write("\r"); await tick();                            // the empty Enter that earns the nudge
+    expect(plain(v.frame())).toContain("type a message, or esc to cancel");
+    v.stdin.write("\x1b"); await tick();                          // Esc leaves input mode, the row collapses
+    v.stdin.write("\x1b[A"); await tick();                        // up onto the editable-prefix row…
+    v.stdin.write("\x1b[B"); await tick();                        // …and back down onto No
+    v.stdin.write("\t"); await tick();                            // reopen the field: a fresh one
+    expect(plain(v.frame())).toContain("and tell Claude what to do differently");
+    expect(plain(v.frame())).not.toContain("type a message, or esc to cancel");
+    expect(plain(v.frame())).toContain("enter send · esc cancel");
+    expect(v.got).toEqual([]);
+  });
+
   it("Tab does nothing on the Yes row — the allow side has no feedback channel (T3)", async () => {
     const v = await mount(req("ls"));
     v.stdin.write("\t"); await tick();

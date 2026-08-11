@@ -97,7 +97,7 @@ export function MonitorPermission({ req, onDecision }: {
           onFocus={(value) => { setFocus(value); setFeedback((m) => collapseOnFocusChange(m, value, feedbackText.current.trim() === "")); }}
           onInputChange={(value, text) => { setNudge(false); if (value === "no") feedbackText.current = text; }}
           onEmptySubmit={() => setNudge(true)}
-          onInputModeToggle={(value) => { if (isAmendableRow(value)) setFeedback(toggleFeedbackMode(feedback, value)); }}
+          onInputModeToggle={(value) => { setNudge(false); if (isAmendableRow(value)) setFeedback(toggleFeedbackMode(feedback, value)); }}
           onUnhandledKey={(e) => { const d = legacyKeyDecision(e); if (d) onDecision(d); }}
         />
       </Box>
