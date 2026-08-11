@@ -41,7 +41,10 @@ Build:
    `parent_tool_use_id: null` so the suite pins the wire shape, not the omission.
 
 Target semantics (canon L444892): newest non-error assistant message of the live conversation;
-`/clear` empties it. Ship 1+2 together — either alone leaves half the family standing.
+`/clear` empties it. Ship 1+2 together — either alone leaves half the family standing. Fold: the
+empty-state string becomes canon's `No assistant message to copy` (ccx says `nothing to copy`).
+Parked, recorded: canon's `/copy N` over a 20-deep list (L444892/445068) — a separate feature,
+backlog.
 
 ### EP-D2 · Dialog input integrity (s2qa3-10, s2qa3-12, s2qa4-11, s2qa3-11)
 
@@ -51,10 +54,17 @@ the rule; stop spending it on the wrong verb: add an `onEmptySubmit` seam to `Se
 `onCancel`), have the five consult bodies leave the row open with a one-line nudge, and while
 `inputMode` is on the footer advertises the real contract (`enter send · esc cancel`).
 
-**(b) Plan option 3.** Canon (L500713): an inline input row inside the dialog; submitted text →
-deny-with-feedback, empty → bare deny. ccx implements the inline row and the text path verbatim;
-the empty-Enter path follows ccx's (a) rule — nudge, not silent deny. **Documented divergence**
-(D-W2 below), same rationale as Wave T t3.
+**(b) Plan reject speaks for itself.** Spec-review overturn: ccx already ships canon's inline row
+verbatim (`PlanDialog.tsx:144` — placeholder, description, text→`plan_reject`-with-feedback,
+empty→cancel→bare deny all match L500713/500973/500991). The real defect is downstream: on a
+feedback-less reject the gate **fabricates** `"User rejected the plan. Continue planning."`
+(`gate.ts:33` and `:68`) — a phrase that exists nowhere in the bundle — and the model reads it as
+an instruction and keeps streaming, which is exactly what the sweep filmed. Build: drop the
+fabricated sentence from both arms; a bare plan reject carries canon's shape (no feedback). If the
+SDK's deny type requires a `message`, use a descriptive non-imperative one (`"User rejected the
+plan."`), never an instruction. Observable: the turn ends; no model follow-up paragraph. The plan
+dialog's empty-Enter stays canon's bare-deny (it is the ordinary "keep planning" verb, not a
+silent permission deny — D-W2 does not apply here).
 
 **(c) Double Ctrl-C over a dialog.** Overlay contexts explicitly unbind `ctrl+c` and unbound =
 consumed (`bindings.ts:189` et al., resolver:75, KeymapProvider:176), so the exit arm at
@@ -81,11 +91,15 @@ straight to `session.setEffort` per keypress (ModelPicker.tsx:145-156 → useCha
 its support gate treats absent `supportsEffort` as supported — and the live catalog **omits the
 field for haiku** (probe 103), so the gate never fires.
 
-Build: stage-commit-discard in ModelPicker (seed at open, commit via the existing apply path on
-Enter/model-select, discard on Esc/cancel); flip the gate polarity (absent/false → unsupported)
-and drive it from `supportedModels()`'s `supportsEffort`/`supportedEffortLevels`; render the
-canon lock row. Fold: `/effort <level>` prints a `⎿`-gutter confirmation (canon has one;
-s2qa4-10) instead of applying silently.
+Build: stage-commit-discard in ModelPicker (seed at open; ←/→ writes local state behind a dirty
+flag; commit via the existing apply path, **guarded on the dirty flag**, on all THREE commit
+paths — Enter/model-select, the `s` this-session chord if present, and the `ModelSwitchConfirm`
+accept at `ModelPicker.tsx:174`; Esc/cancel discards). Flip the gate polarity (absent/false →
+unsupported) driven from the **already-threaded live catalog** (`session.capabilities().models`,
+`useChat.ts:1731/1741` — NOT a new `supportedModels()` call). The lock row itself already exists
+and keys off the focused row (`EffortRow.tsx:32-38`, `ModelPicker.tsx:210-214`) — the change is
+polarity only, at `ModelPicker.tsx:144` and `useChat.ts:387`. Fold: `/effort <level>` prints a
+`⎿`-gutter confirmation (canon has one; s2qa4-10) instead of applying silently.
 
 ### EP-D4 · statusLine stdin contract (s2qa6-04, s2qa6-05, s2qa6-06; folds s2qa5-10)
 
@@ -95,10 +109,10 @@ Canon payload is 12 always + 9 conditional fields (L484846). ccx's gaps, per-fie
 | field | build |
 |---|---|
 | `transcript_path`, `prompt_id` | latch from headless-firing hooks (`UserPromptSubmit`) into refs beside `statusCtxRef`; cleared at `replaceDocument`. Absent pre-first-turn (SessionStart is dormant headlessly) — accepted, documented. |
-| `session_id` | mint-and-reconcile: client uuid at mount and at every `replaceDocument` boundary, overwritten by the engine id when `system/init` lands. Never null, boundary-fresh, eventually real (canon's id is client-minted; D-W4). |
+| `session_id` | mint-and-reconcile: client uuid at mount and at every `replaceDocument` boundary, overwritten by the engine id when `system/init` lands. Never null, boundary-fresh, eventually real (canon's id is client-minted; D-W4). **Named cost:** the id changes identity once per conversation (mint → engine), and pre-turn payloads carry an id but no `transcript_path` — a script keying on `session_id` sees the swap. A8 pins what a script observes across it. |
 | `fast_mode` | literal `false` in upstream's slot (ccx exposes no fast-mode control; canon emits `false` too). |
-| `rate_limits` | passthrough from `statusUsageRef` (already fetched), emitted only when `rate_limits_available !== false`; map SDK `utilization` → canon `used_percentage`. |
-| `context_window_size` | one `getContextUsage()` at mount and at the boundary (probe 103: resolves pre-turn with real numbers) — kills the `0` first paint AND gives `/status` its context row after a boundary (s2qa5-10 fold). |
+| `rate_limits` | passthrough from `statusUsageRef` (already fetched), emitted only when `rate_limits_available !== false`; map SDK `utilization` → canon `used_percentage`. **Unverifiable live under this project's credentials** (`rate_limits_available` is false under both an API key and a setup-token OAuth token) — ships with a unit-level pin on the mapping instead of a live cell. |
+| `context_window_size` | one `getContextUsage()` **at mount only** (probe 103: resolves pre-turn with real numbers) — kills the `0` first paint. **No boundary read** (D-W8): Wave S deliberately hides the number after `replaceDocument` until the next turn measures a real one (`useChat.ts:818-820`), and a boundary-time call can race the engine swap probe 103 never tested. The s2qa5-10 fold is withdrawn — it returns to the backlog. |
 
 **Failure semantics — canon overrules Wave C:** 2.1.220 removes the row when the command fails
 (L484981); ccx's keep-last-good was a decision made off sweep-1 testimony. Reverse it: widen
@@ -107,7 +121,12 @@ drops the row on `undefined`.
 
 **No-change verdicts (recorded, not built):** styling stays SGR 2 dim — ccx already matches canon
 (L484986; the sweep compared 2.1.226's grey). Refresh triggers stay turn-boundary-only — canon has
-no Ctrl-C/resize trigger (L484930); s2qa6-22 is 2.1.226 drift, parked.
+no Ctrl-C/resize trigger (L484930); s2qa6-22 is 2.1.226 drift, parked. ccx's `refreshInterval` IS
+implemented (`statusLine.ts:273-274`) — the grounding's contrary claim is wrong; nobody "fixes" it.
+
+**One trigger gap IS built** (spec-review finding 5, from the grounding's own Q4): ccx fires the
+command twice at startup and again at turn start where canon runs once per moment — dedupe so a
+boot produces one run and a turn one refresh; A8 asserts the run count.
 
 ### EP-D5 · Repaint round two (s2qa2-07, s2qa2-05)
 
@@ -115,15 +134,20 @@ no Ctrl-C/resize trigger (L484930); s2qa6-22 is 2.1.226 drift, parked.
 narrowing-only, and its async repair deliberately bails when the size moved again
 (`resizeRepaint.ts:191`) — in a burst that guard is always true, so residue is permanent. Build:
 trailing debounce (~80 ms) at the signal so `old→new` spans the settled pair, plus one bounded
-post-settle repair pass measured against the frame true at that moment. No grow-direction erase,
-no wider regions — the over-erase safety argument stands.
+post-settle repair pass that is a **new, direction-independent function measured off the live
+frame at settle time** — NOT `correctionAfterRepaint` with a fresh sample (spec-review finding 4:
+a round-trip burst like 120→90→150→120 nets `old === new`, so every narrowing-gated path
+early-returns while the intermediate shrinks' residue is real). Erase stays viewport-bounded — the
+over-erase safety argument stands.
 
 **(b) Stale picker header on grow.** At 60×15 Ink takes its tall-frame branch (bypasses
 log-update); the only resync is gated on the pager closing (`ChatApp.tsx:482-488` — a named
-residual), and `tallWrites` stands down before the user grows. Build the safer variant from
-grounding: on a grow with a known `"reflow"` verdict, issue viewport-only `eraseViewport(rows)` +
-forced repaint through `clearViewport.ts:40-56` — scrollback-safe by construction, keeps
-log-update honest, stays an edge not a level.
+residual), and `tallWrites` stands down before the user grows. Build: on the grow edge while a
+tall write is outstanding, issue viewport-only `eraseViewport(rows)` + forced repaint through
+`clearViewport.ts:40-56` — scrollback-safe by construction, keeps log-update honest, stays an
+edge not a level. **No reflow-verdict precondition** (spec-review finding 3: the verdict is only
+ever set on a narrowing, so a grow-only session would never qualify; `eraseViewport` doesn't need
+the verdict's erase-depth bound because viewport-only cannot over-erase).
 
 **Parked out of this wave:** s2qa2-06 (history reflow on width change). Every honest fix inside
 the Ink `<Static>` renderer either duplicates the transcript into scrollback per reflow or
@@ -135,11 +159,14 @@ just made more urgent. Owner question, not a wave task (D-W5).
 
 The preview prints raw persisted row text, bypassing the species router (`sessionPickerModel.ts:
 172-193`) — hence the leaked `<command-name>`/`<local-command-stdout>` envelopes. Canon (L476605)
-renders the session as a real transcript, envelopes unwrapped. The picker already fetches the full
-message array; `replayDocument(msgs, {id, width})` + `projectCompact(document, ctx)` are the exact
-primitives the replay path uses. Build the right version: render the projection's tail into the
-pane under the existing `PREVIEW_ROWS` budget with a `↓` remainder affordance. Doing 14 deletes 13;
-the count-vs-rows invariant (`isPreviewMessage` as the single predicate) must survive.
+**replaces the picker with a full-screen rendered transcript** under its own footer. The picker
+already fetches the full message array; `replayDocument(msgs, {id, width})` +
+`projectCompact(document, ctx)` are the exact primitives the replay path uses. Build: render the
+projection's tail into the existing pane under the `PREVIEW_ROWS` budget with a `↓` remainder
+affordance. **Documented divergence (D-W9):** in-pane tail instead of canon's full-screen
+takeover — this closes s2qa4-13 fully and s2qa4-14 partially; the takeover is a separate UI unit
+left in the backlog. The count-vs-rows invariant (`isPreviewMessage` as the single predicate)
+must survive, and A10 asserts it.
 
 ---
 
@@ -149,8 +176,8 @@ the count-vs-rows invariant (`isPreviewMessage` as the single predicate) must su
 - s2qa6-22 refresh triggers, s2qa6-23 styling → 2.1.226 drift / already-matching (no change).
 - `ultracode` effort level → exists in 220 behind the Workflows gate (L441199/76284 — sweep's
   "2.1.226 addition" label corrected); ccx has no Workflows surface; parked.
-- The P3/P4 tail of the triage stays in the backlog except the two named folds (s2qa4-10,
-  s2qa5-10).
+- The P3/P4 tail of the triage stays in the backlog except the named fold (s2qa4-10). Newly
+  backlogged at spec review: s2qa5-10 (D-W8), `/copy N`, the full-screen preview takeover (D-W9).
 
 ## Acceptance
 
@@ -159,36 +186,43 @@ each shipped finding's **sweep repro re-run** in the isolated-HOME tmux harness
 (`docs/parity/qa-driver.md`; ready-needle `⏸ manual mode on`):
 
 - A1 `/copy` after two live replies copies the newest reply (fresh session, keyed).
-- A2 resumed session: `/copy` advances with new replies; after `/clear`, `/copy` says nothing to
-  copy (no cleared text on the clipboard).
+- A2 resumed session: `/copy` advances with new replies; after `/clear`, `/copy` reports the
+  empty state (canon copy) and no cleared text reaches the clipboard.
 - A3 permission dialog: Tab-amend, type text, Enter → deny-with-feedback reaches the model;
   Tab-amend, Enter empty → row stays open with a nudge, footer shows `enter send · esc cancel`.
-- A4 plan dialog option 3 with text → deny+feedback; canon furniture intact.
+- A4 plan dialog: option 3 with text → deny carrying the feedback; option 3 empty Enter → bare
+  deny and the turn ENDS — no model follow-up paragraph, no `Continue planning` text anywhere.
 - A5 `/model` open → Ctrl-C Ctrl-C exits ccx with status 0; hint visible over the dialog.
 - A6 bypass consent accept → no `CLAUDE_SDK_*` text anywhere in the frame.
 - A7 `/model` effort row: ←/→ then Esc → effort unchanged (`/status`); ←/→ then Enter → applied.
   Cursor on Haiku → lock row, arrows inert. `/effort high` prints a `⎿` confirmation.
 - A8 statusLine probe script dumping its stdin JSON: first paint has non-zero
-  `context_window_size` and a non-null `session_id`; after a turn, `transcript_path` and
-  `prompt_id` present; failing command (`exit 1`) takes the row down.
+  `context_window_size`, a non-null `session_id`, and `fast_mode: false`; after a turn,
+  `transcript_path` and `prompt_id` present and `session_id` now equals the engine id (the
+  mint→engine swap is pinned as-observed); boot produces exactly ONE run and a turn exactly one
+  refresh; failing command (`exit 1`) takes the row down.
 - A9 resize burst (three rapid `resize-window` calls): settled frame has exactly one composer
   block, zero stale rules. Picker at 60×15 → grow to 120×40: `Select model` appears exactly once.
 - A10 `/resume` preview renders transcript rows — no raw `<command-name>`/`<local-command-stdout>`
-  anywhere in the pane.
+  anywhere in the pane — and the message count still agrees with `isPreviewMessage` (the
+  count-vs-rows invariant).
 
 Keyless cells run under pty isolation; keyed cells (A1/A2/A7 apply-path, A8 turn fields) over the
-OAuth token per `CC-to-SDK/.env` rules.
+OAuth token per `CC-to-SDK/.env` rules. **Clipboard hazard (triage §5.3):** A1/A2 write the
+operator's real system clipboard, which `HOME` isolation cannot scope — the runner saves and
+restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
 
 ## Decision Log
 
 - **D-W1 [DECIDED-AUTO]** Guard fix is falsiness, not `!== null`, matching every other nested-frame
   reader in the tree; fixtures pinned to the wire shape. *Rejected:* schema-validating the frame
   (heavier, protects nothing extra).
-- **D-W2 [DECIDED]** Empty-Enter on a feedback/amend row nudges and stays open — uniformly, incl.
-  plan option 3 — diverging from canon's empty→bare-deny. Rationale: Wave T t3's rule (no silent
-  deny with no message) is a deliberate safety divergence already shipped; splitting behavior by
-  dialog would be worse than either uniform rule. *Rejected:* full canon match (reintroduces the
-  silent empty deny t3 outlawed).
+- **D-W2 [DECIDED, narrowed at spec review]** Empty-Enter nudge applies to **consult amend rows
+  only** (permission dialogs), where an empty submit would be a silent deny-without-message (Wave
+  T t3's rule). The plan dialog keeps canon's empty→bare-deny — there the empty Enter IS the
+  ordinary "keep planning" verb, and removing it would leave Esc-Esc as the only rejection path.
+  *Rejected:* the v1 uniform-nudge rule (spec-review finding 6: it deleted canon's only bare-deny
+  verb on the plan dialog).
 - **D-W3 [DECIDED-AUTO]** Suppress SDK warnings at the process warning channel, not by dropping
   `canUseTool` — the option-level fix leaves bypass launches permanently brokerless after a
   runtime mode step-down (host.ts:619 is reachable from the ladder). *Rejected:* option-level fix
@@ -204,8 +238,17 @@ OAuth token per `CC-to-SDK/.env` rules.
 - **D-W6 [DECIDED-AUTO]** statusLine failure semantics flip to canon (row removed). Wave C's
   keep-last-good was decided off sweep-1 testimony; the bundle settles it (L484981). The reserved
   blank pre-first-run row stays out (separate recorded divergence, unchanged).
-- **D-W7 [DECIDED-AUTO]** Preview fix is the full transcript-tail render (14), not the cheap tag
-  strip (13) — the strip would be deleted by the real fix and the primitives already exist.
+- **D-W7 [DECIDED-AUTO]** Preview fix is the transcript-tail render, not the cheap tag strip —
+  the strip would be deleted by the real fix and the primitives already exist.
+- **D-W8 [DECIDED, spec review]** No `getContextUsage()` at the `replaceDocument` boundary — only
+  at mount. The boundary read would silently reverse Wave S's hidden-until-measured rule
+  (`useChat.ts:818-820`) and can race the engine swap, which probe 103 never tested. s2qa5-10
+  returns to the backlog. *Rejected:* boundary read sequenced after `system/init` (deferrable
+  complexity; turn-end already restores the row).
+- **D-W9 [DECIDED, spec review]** Resume preview renders in-pane (tail, `PREVIEW_ROWS`, `↓`
+  affordance) rather than canon's full-screen picker takeover with its own footer — the takeover
+  is a separate UI unit, backlog. Closes s2qa4-13 fully, s2qa4-14 partially; recorded in
+  `tui-ux.md` at re-score.
 
 ## Surprises & Discoveries *(living)*
 
@@ -229,3 +272,14 @@ Pending — written at finish.
 ## Revision Notes
 
 - v1 (2026-08-11): authored post-grounding; probe 103 run first (live-probe-first).
+- v2 (2026-08-11, spec review — 12 findings, all adopted): EP-D2(b) rewritten — the inline plan
+  row already ships; the defect is gate.ts's fabricated `Continue planning.` string (Critical 1;
+  the sweep's "rejects immediately" observation was the model obeying the invented instruction).
+  D-W2 narrowed to consult rows (finding 6). Boundary context read dropped, D-W8 (Critical 2).
+  Grow-edge resync loses its verdict precondition (finding 3); post-settle repair declared
+  direction-independent (finding 4). Startup double-fire dedupe added; refreshInterval
+  already-implemented noted (finding 5). D-W4 identity-swap cost named + A8 pin (finding 7).
+  D-W9 in-pane preview divergence recorded (finding 8). Canon /copy empty-string + /copy N
+  disposition (finding 9). EP-D3 corrected to capabilities().models / polarity-only / three
+  commit paths (finding 10). rate_limits unit-pin note (finding 11). Clipboard save/restore in
+  acceptance (finding 12).
