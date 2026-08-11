@@ -67,8 +67,114 @@ describe("fakeHost", () => {
     c.send({ op: "follow" });
     await c.until(3);
     expect(c.frames.map((f) => f.kind ?? "reply")).toEqual(["message", "state", "reply"]);
-    expect(c.frames[1]).toMatchObject({ kind: "state", status: { state: "working", status: "idle" } });
+    // permissionMode is ALWAYS on a status (host.ts:144 `private mode = "default"`, spread into both arms
+    // at :892) — a client mirror that never sees one has nothing to render, seeded or not.
+    expect(c.frames[1]).toMatchObject({ kind: "state", status: { state: "working", status: "idle", permissionMode: "default" } });
     c.close();
+  });
+
+  it("park emits the decision AND the state that flips a follower to blocked", async () => {
+    fh = await startFakeHost();
+    const c = dial(fh.socketPath); await c.ready;
+    c.send({ op: "follow" }); await c.until(2);                       // state + reply
+    fh.park({ toolUseID: "tu-1", toolName: "Bash" });
+    await c.until(4);
+    // host.ts:818-819 — the broker emits the entry, then UNCONDITIONALLY the state carrying waitingFor.
+    expect(c.frames.slice(2).map((f) => f.kind)).toEqual(["decision", "state"]);
+    expect(c.frames[2]).toMatchObject({ kind: "decision", entry: { toolUseID: "tu-1", toolName: "Bash" } });
+    expect(c.frames[3]).toMatchObject({ kind: "state", status: { state: "blocked", status: "idle", waitingFor: "permission:Bash" } });
+    c.close();
+  });
+
+  it("interrupt settles every parked decision as the system — and emits nothing else", async () => {
+    fh = await startFakeHost();
+    const c = dial(fh.socketPath); await c.ready;
+    c.send({ op: "follow" }); await c.until(2);
+    fh.park({ toolUseID: "tu-1", toolName: "Bash" });
+    fh.park({ toolUseID: "tu-2", toolName: "AskUserQuestion", kind: "question" });
+    await c.until(6);                                                 // decision + state, twice
+    c.send({ op: "interrupt", id: 3 });
+    await c.until(9);
+    // host.ts:922 → settleParkedForSystem (:871-879): one BARE system deny per parked entry, in park
+    // order, and NO state frame — that path emits the settlements alone.
+    expect(c.frames.slice(6).map((f) => f.kind ?? "reply")).toEqual(["decision_settled", "decision_settled", "reply"]);
+    expect(c.frames[6]).toEqual({ t: "event", kind: "decision_settled", toolUseID: "tu-1", by: "system", decision: "deny" });
+    expect(c.frames[7]).toEqual({ t: "event", kind: "decision_settled", toolUseID: "tu-2", by: "system", decision: "deny" });
+    expect(c.frames[8]).toEqual({ ok: true, id: 3 });
+    // settled, not merely announced: the registry is empty and a late answerer is told who got there first
+    c.send({ op: "pending", id: 4 }); await c.until(10);
+    expect(c.frames[9]).toEqual({ ok: true, pending: [], id: 4 });
+    c.send({ op: "answer", toolUseID: "tu-1", by: "alice", decision: "allow_once", id: 5 }); await c.until(11);
+    expect(c.frames[10]).toEqual({ ok: true, alreadyAnsweredBy: "system", id: 5 });
+    c.close();
+  });
+
+  it("resume replays the swapEngine burst in source order", async () => {
+    fh = await startFakeHost();
+    fh.emitMessage({ type: "assistant", n: 1 });
+    fh.emitTasksChanged([{ task_id: "bg-1" }]);
+    const c = dial(fh.socketPath); await c.ready;
+    c.send({ op: "follow" }); await c.until(4);                       // message + tasks_changed + state + reply
+    c.send({ op: "resume", sessionId: "s-9", id: 7 });
+    await c.until(8);
+    // host.ts:499-513 — tasks_changed (emptied) → state → rewound, with the reply after all three.
+    expect(c.frames.slice(4).map((f) => f.kind ?? "reply")).toEqual(["tasks_changed", "state", "rewound", "reply"]);
+    expect(c.frames[4]).toEqual({ t: "event", kind: "tasks_changed", tasks: [] });
+    // `resumedFrom = extra.resume` is written BEFORE the state emit (:463 vs :501), so this frame already
+    // reports the conversation the swap opened on.
+    expect(c.frames[5]).toMatchObject({ kind: "state", status: { sessionId: "s-9" } });
+    expect(c.frames[6]).toEqual({ t: "event", kind: "rewound", sessionId: "s-9" });
+    expect(c.frames[7]).toEqual({ ok: true, id: 7 });
+    // the swap reset the turn buffer with everything else session-scoped (:488): nothing left to replay
+    const c2 = dial(fh.socketPath); await c2.ready;
+    c2.send({ op: "follow" }); await c2.until(2);
+    expect(c2.frames.map((f) => f.kind ?? "reply")).toEqual(["state", "reply"]);
+    c.close(); c2.close();
+  });
+
+  it("clear swaps to a FRESH conversation: same burst, rewound carries `cleared` and no id", async () => {
+    fh = await startFakeHost({ status: { sessionId: "s-1" } });
+    const c = dial(fh.socketPath); await c.ready;
+    c.send({ op: "follow" }); await c.until(2);
+    c.send({ op: "clear", id: 8 });
+    await c.until(6);
+    expect(c.frames.slice(2).map((f) => f.kind ?? "reply")).toEqual(["tasks_changed", "state", "rewound", "reply"]);
+    // /clear passes `resume: undefined` (host.ts:594), which CLEARS resumedFrom — publishing the discarded
+    // conversation's id is how a follower re-renders the transcript just thrown away (:461-463).
+    expect(c.frames[3].status.sessionId).toBeUndefined();
+    expect(c.frames[4]).toEqual({ t: "event", kind: "rewound", cleared: true });
+    c.close();
+  });
+
+  it("a new turn clears the settled-by receipts along with the turn buffer", async () => {
+    fh = await startFakeHost();
+    fh.park({ toolUseID: "tu-1", toolName: "Bash" });
+    fh.settle("tu-1", "alice", { kind: "allow_once" });
+    const c = dial(fh.socketPath); await c.ready;
+    c.send({ op: "answer", toolUseID: "tu-1", by: "bob", decision: "allow_once", id: 1 }); await c.until(1);
+    expect(c.frames[0]).toEqual({ ok: true, alreadyAnsweredBy: "alice", id: 1 });
+    fh.beginTurn(2);                                                  // runTask resets BOTH (host.ts:308)
+    c.send({ op: "answer", toolUseID: "tu-1", by: "bob", decision: "allow_once", id: 2 }); await c.until(2);
+    expect(c.frames[1]).toEqual({ ok: false, error: "no parked request tu-1", id: 2 });
+    c.close();
+  });
+
+  it("a stream_event partial fans out live but is NEVER replayed", async () => {
+    fh = await startFakeHost({ busy: true });
+    const c = dial(fh.socketPath); await c.ready;
+    c.send({ op: "follow" }); await c.until(3);                       // turn + state + reply
+    fh.emitMessage({ type: "stream_event", event: { delta: "hi" } });
+    fh.emitMessage({ type: "assistant", n: 1 });
+    await c.until(5);
+    expect(c.frames.slice(3).map((f) => f.kind)).toEqual(["message", "message"]);
+    expect(c.frames[3]).toMatchObject({ kind: "message", data: { type: "stream_event" } });
+    // host.ts:333 — partials are kept OUT of the turn buffer, so a late follower is replayed the
+    // completed message alone (P106: a mid-turn attach must not be handed deltas it missed).
+    const c2 = dial(fh.socketPath); await c2.ready;
+    c2.send({ op: "follow" }); await c2.until(4);
+    expect(c2.frames.map((f) => f.kind ?? "reply")).toEqual(["turn", "message", "state", "reply"]);
+    expect(c2.frames[1]).toMatchObject({ kind: "message", data: { type: "assistant", n: 1 }, replay: true });
+    c.close(); c2.close();
   });
 
   it("prompt records {text, uuid} and opens the turn BEFORE the reply carries its seq", async () => {
@@ -145,10 +251,10 @@ describe("fakeHost", () => {
     // the park is gone, so status leaves `blocked`
     expect(c.frames[4]).toMatchObject({ kind: "state", status: { state: "working" } });
     // a settlement with no payload is the SYSTEM shape: a bare deny, no `answer` key
-    fh.park({ toolUseID: "tu-2", toolName: "Bash" });
+    fh.park({ toolUseID: "tu-2", toolName: "Bash" });                // decision + state (see the park case)
     fh.settle("tu-2", "system");
-    await c.until(8);
-    expect(c.frames[6]).toEqual({ t: "event", kind: "decision_settled", toolUseID: "tu-2", by: "system", decision: "deny" });
+    await c.until(9);
+    expect(c.frames[7]).toEqual({ t: "event", kind: "decision_settled", toolUseID: "tu-2", by: "system", decision: "deny" });
     c.close();
   });
 

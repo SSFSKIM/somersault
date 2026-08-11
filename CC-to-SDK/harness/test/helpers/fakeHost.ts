@@ -7,10 +7,15 @@
 //  1. The WIRE is copied, never invented. Frame shapes come from `src/host/wire.ts`, the follow replay
 //     order and the answer receipts from `src/host/host.ts` (cited at each site) and from P106's live
 //     recording (2026-08-11). Where production stays SILENT — the `stop` op — so does this.
-//  2. ENGINE behaviour is not modelled. Ops whose real effects come from the SDK session (interrupt,
-//     resume, clear, rewind) are recorded and acknowledged; the frames they would produce are the
-//     test's to emit, via the `emit*`/`beginTurn`/`endTurn`/`settle` controls. A fake that guessed at
-//     engine consequences would be asserting its own fiction.
+//  2. The HOST half of an op is MODELLED; the ENGINE half is the test's. Every frame a real host emits
+//     from its own code, with no engine answer in between, happens here: park's decision+state
+//     (host.ts:818-819), interrupt's system settlements (:922 → :871-879) and the swap burst that resume
+//     and clear both ride (:499-513). What only an engine can produce — a turn's messages and its end
+//     frame (including the throw an interrupt provokes), task lifecycle frames — stays the test's, via
+//     the `emit*`/`beginTurn`/`endTurn`/`settle` controls: a fake that guessed at those would assert its
+//     own fiction and six suites would assert it back. `rewind` is the one deliberate gap: its host half
+//     is gated on a dry run only an engine can answer (:756-797), so it is recorded alone, and a case
+//     that needs its swap burst drives `emitTasksChanged`/`setStatus`/`emitRewound` itself.
 import { HostServer } from "../../src/host/server.js";
 import type { HostHandlers } from "../../src/host/server.js";
 import type { HostEvent } from "../../src/host/wire.js";
@@ -30,8 +35,9 @@ export type PendingDecisionLike = Partial<PendingDecision> & { toolUseID: string
 export interface FakeHostOpts {
   /** Start with a turn already in flight (seq 1) — the mid-turn attach every fleet task exercises. */
   busy?: boolean;
-  /** Seeds the settings mirror (`permissionMode`/`model`/`thinkingTokens`) and, if given, overrides the
-   *  derived `state`/`status`. Same overlay `setStatus` patches into later. */
+  /** Seeds the settings mirror (`permissionMode`/`model`/`thinkingTokens`) and the conversation id, and,
+   *  if given, overrides the derived `state`/`status`. Same overlay `setStatus` patches into later — and
+   *  the same one the setter ops and the resume/clear swap write their own truth into. */
   status?: Partial<HostStatus>;
   short?: string; name?: string; cwd?: string;
   /** The pid the socket path is keyed by — `hostSocketPath(pid, env)`, exactly as a real host keys its
@@ -57,8 +63,10 @@ export interface FakeHostControls {
    *  `result` and `failure` describe a turn that RESOLVED and may travel together. */
   endTurn(seq: number, opts?: { error?: string; result?: unknown; failure?: TurnFailure }): void;
   park(entry: PendingDecisionLike): void;
-  /** Settle a park host-side. With an `answer` this is the human path (§1a-e: the whole outcome travels);
-   *  without one it is the system path — a bare deny, no `answer` key (host.ts's settleParkedForSystem). */
+  /** Settle a park host-side, decision_settled then state. With an `answer` this is the human path
+   *  (§1a-e: the whole outcome travels, host.ts:860-861); without one it is the SDK-ABORT path — a bare
+   *  deny plus state, host.ts's onAutoSettle (:128-132). NOT interrupt's settlement: that one emits the
+   *  bare deny ALONE (settleParkedForSystem) and the `interrupt` op reproduces it. */
   settle(toolUseID: string, by: string, answer?: DecisionOutcome): void;
   setStatus(patch: Partial<HostStatus>): void;
   emitRewound(p: { sessionId?: string; prevUuid?: string; cleared?: true }): void;
@@ -122,14 +130,17 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   const replies: Record<string, unknown> = {};
   const record = (op: string, ...args: unknown[]): void => { ops.push(op); opCalls.push({ op, args }); };
 
-  /** host.ts's status(): a park projects as blocked/idle, and the settings mirror rides BOTH arms. An
-   *  explicit `setStatus` patch wins over the derivation — it is the test saying so. */
+  /** host.ts's status() (:884-895): a park projects as blocked/idle, and the settings mirror rides BOTH
+   *  arms. `permissionMode` is never absent from a real one — `private mode = "default"` (:144), seeded
+   *  from the launch config in start() and spread into both arms at :892 — while `model`/`thinkingTokens`
+   *  ARE omitted until set, so a mirror can tell "unset" from a value the host invented. An explicit
+   *  `setStatus` patch wins over the derivation: it is the test saying so. */
   const status = (): HostStatus => {
     const first = parked[0];
     const derived: HostStatus = first
       ? { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}` }
       : { state: "working", status: busy ? "busy" : "idle" };
-    return { ...derived, ...patch };
+    return { ...derived, permissionMode: "default", ...patch };
   };
 
   // One follower's failure is that follower's problem (host.ts's deliver()).
@@ -137,14 +148,46 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   const emit = (ev: HostEvent): void => { for (const cb of [...followers]) deliver(cb, ev); };
   const pushState = (): void => emit({ kind: "state", status: status() });
 
-  const beginTurn = (n: number): void => { busy = true; seq = n; buffered.length = 0; emit({ kind: "turn", phase: "start", seq: n }); };
+  // BOTH the turn buffer and the settled-by receipts reset before the start frame (host.ts:308) — a
+  // receipt that outlived its turn answers a stale client `alreadyAnsweredBy` where the real host says
+  // `no parked request <id>`.
+  const beginTurn = (n: number): void => { busy = true; seq = n; buffered.length = 0; settledBy.clear(); emit({ kind: "turn", phase: "start", seq: n }); };
+
+  /** host.ts's settleParkedForSystem (:871-879), the path `interrupt` (:922) and teardown both take:
+   *  `denyAll()` settles straight into the registry, so the host emits one BARE deny per entry itself —
+   *  in park order, with no `answer` payload (a system deny has none the kind string drops) and, unlike
+   *  answer() (:860-861), NO trailing `state`. Reproduced, not tidied: a follower learns the turn is over
+   *  from the end frame the engine's throw produces, and a fake that pushed `state` here would green a
+   *  client that never reads one. */
+  const settleParkedForSystem = (): void => {
+    for (const e of parked.splice(0, parked.length)) {
+      settledBy.set(e.toolUseID, "system");
+      emit({ kind: "decision_settled", toolUseID: e.toolUseID, by: "system", decision: "deny" });
+    }
+  };
+
+  /** host.ts's swapEngine (:456-513), host half: the frames every engine swap owes its followers, in
+   *  source order — the emptied task snapshot (:499), the state that republishes the settings mirror and
+   *  the new conversation id (:501), and `rewound` LAST, after the old engine is gone (:512-513).
+   *  Everything session-scoped resets with the swap (:488). `resumedFrom = extra.resume` is written first
+   *  (:463), which is why a resume's frames name the resumed conversation while /clear's name none: the
+   *  fresh engine has minted no id yet, so the resume target IS currentSessionId() — and a /clear that
+   *  left the discarded id standing is how a follower re-renders the transcript just thrown away. */
+  const swapEngine = (resume: string | undefined, announce: { prevUuid?: string; cleared?: true } = {}): void => {
+    if (resume === undefined) delete patch.sessionId; else patch.sessionId = resume;
+    buffered.length = 0; settledBy.clear();
+    tasks = []; emit({ kind: "tasks_changed", tasks });
+    pushState();
+    emit({ kind: "rewound", ...(patch.sessionId ? { sessionId: patch.sessionId } : {}), ...announce });
+  };
 
   const settle = (toolUseID: string, by: string, answer?: DecisionOutcome): void => {
     const i = parked.findIndex((e) => e.toolUseID === toolUseID);
     if (i >= 0) parked.splice(i, 1);
     settledBy.set(toolUseID, by);
     // The whole outcome travels when there is one (§1a-e); a system deny has no payload the kind string
-    // drops, so it ships without an `answer` key at all.
+    // drops, so it ships without an `answer` key at all — the onAutoSettle shape (host.ts:128-132), which
+    // pushes state after it. Interrupt's own settlement does not; see settleParkedForSystem below.
     emit(answer ? { kind: "decision_settled", toolUseID, by, decision: answer.kind, answer } : { kind: "decision_settled", toolUseID, by, decision: "deny" });
     pushState();
   };
@@ -176,7 +219,9 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     // runTask bumps the seq and emits `start` SYNCHRONOUSLY, before its first await — which is what makes
     // the seq the server puts in the prompt reply (read after this call) this turn's own.
     prompt: async (text, uuid) => { record("prompt", text, uuid); promptCalls.push({ text, ...(uuid ? { uuid } : {}) }); beginTurn(seq + 1); },
-    interrupt: async () => { record("interrupt"); },
+    // The turn's own end frame is NOT emitted here: it comes from the SDK stream throwing under the
+    // interrupt (host.ts's runTask catch arm, :363) — engine-mediated, so the test emits it via endTurn.
+    interrupt: async () => { record("interrupt"); settleParkedForSystem(); },
     follow: (sink) => {
       record("follow");
       // REPLAY ORDER, copied from host.ts's follow() (SessionHost.follow, ~:600-633 at 48aa3285f3):
@@ -201,8 +246,10 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
       if (op.op === "set_thinking") { patch.thinkingTokens = op.maxTokens ?? undefined; pushState(); return { ok: true }; }
       return (replies[op.op] as Record<string, unknown> | undefined) ?? CONTROL_DEFAULTS[op.op] ?? { ok: true };
     },
-    resume: async (sessionId) => { record("resume", sessionId); },
-    clear: async () => { record("clear"); },
+    // Both go through the ONE swap seam the real host has (resumeSession :580-585, clearSession :591-596),
+    // so both put the same burst on the wire — differing only in what `rewound` announces.
+    resume: async (sessionId) => { record("resume", sessionId); swapEngine(sessionId); },
+    clear: async () => { record("clear"); swapEngine(undefined, { cleared: true }); },
     turnSeq: () => seq,
     tasks: () => { record("tasks"); return tasks; },
     background: async () => { record("background"); return true; },
@@ -225,7 +272,10 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
 
   return {
     socketPath, row, promptCalls, ops, opCalls, replies,
-    emitMessage: (m) => { buffered.push(m); emit({ kind: "message", data: m }); },
+    // A `stream_event` partial fans out LIVE but is deliberately kept out of the replay buffer
+    // (host.ts:333, P106-measured): thousands of token deltas would evict the turn's real frames, and a
+    // late follower cannot use a delta it missed anyway — the completed message supersedes them all.
+    emitMessage: (m) => { if ((m as { type?: unknown } | null)?.type !== "stream_event") buffered.push(m); emit({ kind: "message", data: m }); },
     emitTask: (t) => emit({ kind: "task", data: t }),
     emitTasksChanged: (next) => { tasks = next as BackgroundTaskInfo[]; emit({ kind: "tasks_changed", tasks }); },
     beginTurn,
@@ -242,7 +292,11 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     park: (e) => {
       const entry: PendingDecision = { sessionId: "s-fake", toolName: "Bash", kind: "permission", input: {}, createdAt: Date.now(), ...e };
       parked.push(entry);
-      emit({ kind: "decision", entry });               // park emits the entry alone (host.ts's broker)
+      // TWO frames, in this order (host.ts's broker, :818-819): the entry, then — unconditionally — the
+      // state that carries `waitingFor`. The second is what flips a follower's mirror to blocked; a park
+      // that emitted the entry alone would leave every attached client reading the host as idle.
+      emit({ kind: "decision", entry });
+      pushState();
     },
     settle,
     setStatus: (p) => { Object.assign(patch, p); pushState(); },
