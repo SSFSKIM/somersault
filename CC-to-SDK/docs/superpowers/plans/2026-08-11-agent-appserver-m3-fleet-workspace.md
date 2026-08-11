@@ -67,10 +67,12 @@ dependency.**
 
 **Files:**
 - Modify: `package.json` (`"@anthropic-ai/claude-agent-sdk": "^0.3.227"`), `package-lock.json`
-  (via `npm install`), `src/session/index.ts` (rewind seam), spec `## Surprises & Discoveries`
-  (drift notes)
+  (via `npm install`), `src/session/index.ts` (rewind seam), `src/appserver/rewind.ts` +
+  `src/appserver/server.ts` (the `resumeAtFactory` widening — see below), spec
+  `## Surprises & Discoveries` (drift notes)
 - Test: extend `test/unit/session-factories.test.ts` (or the file that covers `rewindSession` —
-  find it with `grep -rl rewindSession test/unit`)
+  find it with `grep -rl rewindSession test/unit`) AND the appserver rewind test (factory-path
+  assertion)
 
 **Interfaces:**
 - `rewindSession(id, messageId, opts)` currently builds `{resume: id, resumeAt: messageId, forkSession?}`
@@ -79,12 +81,13 @@ dependency.**
   truncating resume discards; the CLI refuses at fork time if trailing entries belong to another
   turn — refusal arrives as `error_during_execution` whose message starts
   `Resume rejected by --resume-drops-turn:`).
-- Callers: `grep -rn "rewindSession\|resumeAtFactory" src/ | grep -v test`. The app-server rewind
-  path (`server.ts`'s `resumeAtFactory` default and `rewind.ts`) passes the dropped turn's prompt
-  uuid **where it already holds one** (the rewind target's `uuid` param IS the anchor being cut
-  back to; the dropped-turn uuid is the anchor *after* it when the caller knows it — if no caller
-  has it cheaply, plumb the opt but leave call sites unchanged and record that in the spec's
-  Surprises; do NOT invent a transcript scan).
+- **The value is already in hand** (adversarial-review correction — do not skip this): the
+  app-server rewind resumes at `prevUuid` and DISCARDS the turn whose prompt is the request's
+  `uuid` — so `uuid` IS the `resumeDropsTurn` value. Widen `AppServerDeps.resumeAtFactory` to
+  `(sessionId, resumeAt, droppedTurnUuid, config) => EngineSession` (default maps
+  `droppedTurnUuid` → `resumeDropsTurn` in the open config), and `rewind.ts`'s conversation-scope
+  swap passes the request `uuid`. Test the FULL factory path (a wire-level rewind on a fake
+  records the factory args), not only `rewindSession` in isolation.
 
 - [ ] **Step 1:** `npm install @anthropic-ai/claude-agent-sdk@^0.3.227` — then `npx vitest run`
   + `npm run typecheck` to catch any declared-surface break (expected: none; delta is five
@@ -113,12 +116,14 @@ frame/reply shape changes, only new optional fields and new emissions.**
   find it: `grep -rl "HostServer" test/ | head`)
 
 **Interfaces:**
-- **(a) swap announces:** `SessionHost.swapEngine` (`host.ts:392-427`) emits the existing `rewound`
-  event after installing the replacement: resume path → `{kind:"rewound", sessionId}` (the resumed
-  id), clear path → `{kind:"rewound", cleared:true}` (sessionId omitted — a fresh conversation has
-  none until init; `wire.ts:13-39` already types both fields optional). `rewind()`'s own emission
-  (`host.ts:705`) is untouched — do not double-emit on the rewind path (rewind does not go through
-  `swapEngine`; verify by reading, note in test).
+- **(a) swap announces — single owner (adversarial-review correction):** `rewind()` DOES call
+  `swapEngine` (`host.ts:699-700`) and then emits `rewound` itself (`:705`) — so the emission
+  MOVES INTO `swapEngine`, which gains an announce payload from its caller
+  (`swapEngine(extra, announce?: { prevUuid?: string; cleared?: true })`): resume passes nothing
+  (→ `{kind:"rewound", sessionId}`), clear passes `{cleared:true}`, rewind passes its current
+  extras (`prevUuid` or `cleared`), and **the `host.ts:705` emission is DELETED**. Exactly one
+  `rewound` per swap — test asserts event COUNT === 1 for resume, for clear, AND for a
+  conversation-scope rewind.
 - **(b) prompt uuid:** `hostOp`'s `prompt` member (`ops.ts:42`) gains `uuid: z.string().min(1).optional()`;
   `server.ts`'s prompt dispatch (`:166-172`) passes it through; `SessionHost`'s run path hands it to
   `Session.submit`'s existing `{uuid}` opt (trace `runTask` from `host.ts:290`). `RemoteChatSession.prompt`
@@ -133,14 +138,22 @@ frame/reply shape changes, only new optional fields and new emissions.**
   `capabilities()` provides (`appserver/registry.ts:51` names the four; the underlying
   `Session.capabilities` already returns them — the host was dropping one; verify and forward
   verbatim).
+- **(e) `decision_settled` carries the structured answer:** the event (`wire.ts`) gains an
+  optional `answer` field holding the same structured outcome object the `answer` op received —
+  today only the kind string survives, and a foreign client's settlement could not reconstruct
+  the app server's `decision/resolved.answer` payload. Plumb from the `answer` handler through
+  `PendingDecisions`' settle path to the emission.
 
 - [ ] **Step 1: Failing tests** (drive a real `HostServer` over a UDS with a stubbed session, the
-  existing host-test pattern): (a) `resume` op → a `{kind:"rewound", sessionId}` event reaches a
-  follower; `clear` op → `{kind:"rewound", cleared:true}` with NO sessionId key; (b) `prompt` op
-  with `uuid:"u-1"` → the stub session's `submit` receives `{uuid:"u-1"}`; without uuid → opts
-  carry no uuid key; (c) `status` reply carries `model` from the stub; `set_model` op → a follower
-  receives a `state` event whose status carries the new model; (d) `capabilities` reply contains
-  the stub's `agents` catalog verbatim.
+  existing host-test pattern): (a) `resume` op → EXACTLY ONE `{kind:"rewound", sessionId}` event
+  reaches a follower; `clear` op → exactly one `{kind:"rewound", cleared:true}` with NO sessionId
+  key; a conversation-scope `rewind` op → exactly one `rewound` (count assertion — the
+  double-announce tripwire); (b) `prompt` op with `uuid:"u-1"` → the stub session's `submit`
+  receives `{uuid:"u-1"}`; without uuid → opts carry no uuid key; (c) `status` reply carries
+  `model` from the stub; `set_model` op → a follower receives a `state` event whose status carries
+  the new model; (d) `capabilities` reply contains the stub's `agents` catalog verbatim; (e) an
+  `answer` op with a structured outcome → the `decision_settled` event carries that outcome object
+  under `answer`.
 - [ ] **Step 2:** FAIL → implement → PASS + whole suite (the TUI's own host tests must stay green —
   additive means additive) + typecheck.
 - [ ] **Step 3: Sabotage-verify** (a): comment out the swapEngine `rewound` emission — the resume
@@ -166,11 +179,14 @@ frame/reply shape changes, only new optional fields and new emissions.**
   carry `{matches}` — Task 7).
 - **The origin gate:** one helper in `registry.ts` —
   ```typescript
-  const FLEET_UNSUPPORTED = new Set(["turn/steer", "thread/settings/apply", "mcp/servers/set",
-    "mcp/permissionOverride/set", "plugin/reload", "skill/reload", "thread/reinitialize",
-    "account/read", "thread/init/read", "thread/reopen"]);
+  const FLEET_UNSUPPORTED = new Set(["turn/steer", "thread/settings/apply", "mcpServer/set",
+    "mcpServer/permissionModeOverride/set", "plugin/reload", "skill/reload",
+    "thread/reinitialize", "account/read", "thread/init/read"]);
   export function originRefusal(record: ThreadRecord, method: string): RpcError | null
   ```
+  (`mcpServer/*` are the REGISTERED keys — `schema/index.ts:55-56`; the spec's earlier
+  `mcp/servers/set` spelling was wrong. **`thread/reopen` is NOT in the set yet** — its schema
+  registers in Task 14, and the subset tripwire below would fail; Task 14 adds it there.)
   consulted in dispatch **before** the absent-member `-32601` mapping and before handler entry
   (find the single dispatch seam in `server.ts` where the method table routes thread-scoped
   calls — the `-33005` gate at `server.ts:517` is the model). Message:
@@ -265,8 +281,12 @@ export async function startFakeHost(opts?: { busy?: boolean; status?: Partial<Ho
   `prompt` (or `{ok:false, error:"busy"}` when busy), implements `answer` with first-answer-wins +
   the three receipt shapes from P106's recorded verdicts, `follow` with the replay order from
   `host.ts:513-546` (turn-start-if-busy → buffered `replay:true` messages → parked decisions →
-  tasks → state), and records every op. Follow-replay fidelity is the harness's whole value — copy
-  the order from `host.ts`, cite it in a comment.
+  tasks → state), and records every op. `settle(toolUseID, by, answer)` includes the structured
+  `answer` in `decision_settled` (§1a-e shape). **`stop` reproduces production ordering: it closes
+  every socket WITHOUT sending a reply** (the real `SessionHost.stop` tears sockets down before
+  the handler could respond — a stop-ACK fake would be a false-green model; Task 9 depends on this
+  fidelity). Follow-replay fidelity is the harness's whole value — copy the order from `host.ts`,
+  cite it in a comment.
 
 - [ ] **Step 1: Failing self-test** — start; raw-dial; `follow` while `busy:true` yields exactly
   the documented order; `prompt` records `{text, uuid}`; `close()` ends the socket (client sees
@@ -288,10 +308,13 @@ export async function startFakeHost(opts?: { busy?: boolean; status?: Partial<Ho
 export interface FleetEngineEvents {                 // consumed by Task 7's fleet layer
   onTurn(cb: (e: { phase: "start" | "end"; seq: number; error?: string }) => void): () => void;
   onDecision(cb: (e: unknown) => void): () => void;
-  onDecisionSettled(cb: (e: { toolUseID: string; by: string; decision: string }) => void): () => void;
+  onDecisionSettled(cb: (e: { toolUseID: string; by: string; decision: string; answer?: unknown }) => void): () => void;
+  onTasksChanged(cb: (tasks: unknown[]) => void): () => void;   // host tasks_changed → task/changed
   onState(cb: (s: HostStatusLike) => void): () => void;
   onRewound(cb: (e: { sessionId?: string; cleared?: true }) => void): () => void;
   onSocketDeath(cb: () => void): () => void;
+  activate(): void;   // release buffered events — call AFTER all listeners are installed (Task 7)
+  expectDeath(): void; // pre-latch: the next socket close is client-requested (thread/stop) — suppress the death sequence
 }
 export interface FleetEngineSession extends EngineSession, FleetEngineEvents {
   readonly kind: "fleet";
@@ -327,7 +350,11 @@ export async function connectFleetEngine(socketPath: string): Promise<FleetEngin
   marker) does NOT open a waiter and a later real turn works; messages reach `onMessage` only
   within the window; onFrame sees message+task frames but NOT decision/state frames; interrupt
   sends the op; dispose sends `unfollow` and never `stop` (assert on `ops`); socket `close()`
-  latches `isEnded` and fires `onSocketDeath`; forwarded member `usage()` maps the fake's reply.
+  latches `isEnded` and fires `onSocketDeath`; **events received before `activate()` are buffered
+  and delivered in order after it** (park a decision pre-activate, listener installed
+  post-connect, entry arrives on activate); **`expectDeath()` then socket close → `isEnded`
+  latches but `onSocketDeath` does NOT fire** (the thread/stop suppression seam); `tasks_changed`
+  reaches `onTasksChanged`; forwarded member `usage()` maps the fake's reply.
 - [ ] **Step 2:** FAIL → implement → PASS + suite + typecheck.
 - [ ] **Step 3: Sabotage-verify** the ledger: make settle require reply-before-end ordering — the
   race test FAILS (hangs → timeout); restore. Report output.
@@ -360,17 +387,33 @@ export const threadAttachParams = z.object({ target: z.string().min(1) });
 - **`thread/attach {target}`** (spec §1e, exact): resolve against roster rows with the CLI's
   simultaneous filter (`src/cli/lifecycle.ts:15-27`): `short === t || sessionId === t || name === t`.
   Zero matches → `-33008` `"no fleet session matches <t>"`; multiple → `-33008` with
-  `data.matches = [{short, name}]`; terminal row → `-33008` `"session already ended"`. Already
+  `data.matches = [{short, name}]`; terminal row → `-33008` `"session already ended"`. **Admission is reserved and activated** (adversarial-review additions, spec §1e): an
+  attach-in-flight `Map<short, Promise<ThreadRecord>>` reservation makes concurrent attaches for
+  one target collapse onto one admission (second caller awaits the first's promise; reservation
+  cleaned up in `finally` so a failed attach doesn't poison the target). Already
   attached (a registry record with this short) → return that record's `threadView` (idempotent —
   no new record, no notification). Else: `connectFleetEngine(hostSocketPath(row.pid))` (path from
-  `src/fleet/paths.ts:31-33`) — dial failure → `-33008` with the socket error; seed transcript
-  from disk (`getSessionMessages(row.sessionId)`, `src/sessions/` — skip when no sessionId yet)
-  into the record's read substrate the same way `thread/resume` seeds history (read `startThread`
-  and mirror); register record `{origin:"fleet", short, name, cwd: row.cwd, sessionId: row.sessionId}`;
-  wire the fleet event layer:
+  `src/fleet/paths.ts:31-33`) — dial failure → `-33008` with the socket error. The engine BUFFERS
+  every inbound event until `activate()` (Task 6's contract): install ALL listeners (below), seed
+  the transcript from disk (`getSessionMessages(row.sessionId)`, `src/sessions/` — skip when no
+  sessionId yet) into the record's read substrate the same way `thread/resume` seeds history
+  (read `startThread` and mirror), register the record
+  `{origin:"fleet", short, name, cwd: row.cwd, sessionId: row.sessionId}`, THEN `activate()` — so
+  a follow replay emitted synchronously at follow time (turn-start, buffered messages, parked
+  decisions, task snapshot, state) lands with every listener live and never precedes
+  `thread/started`.
+  **The fleet event layer is the SOLE turn-lifecycle owner** (own + foreign): `turns.ts`'s fleet
+  branch runs its gates and calls `submit`, but never calls `mintTurnId`, never sets busy, never
+  broadcasts — all lifecycle rides `onTurn`. Wire the fleet event layer:
   - `onTurn` start → derive `turnId = "t" + seq + "@e" + record.epoch`, set busy, broadcast
-    `turn/started`; end → settle + `turn/completed` (status from `error` presence; interrupts
-    arrive as host-side turn ends — no local status synthesis).
+    `turn/started` — for OWN turns too (submit correlates its seq from the prompt reply; the
+    request reply carries the derived id). end → settle + `turn/completed` (status from `error`
+    presence; interrupts arrive as host-side turn ends — no local status synthesis). Exactly ONE
+    started/completed pair per turn, own or foreign.
+  - **Foreign-turn itemization:** message frames inside a foreign turn window run through the
+    SAME `TurnMapper` machinery own turns use (one mapper instance per turn window, fed from
+    `{kind:"message"}` frames), so item notifications fire regardless of who started the turn.
+  - `onTasksChanged` → broadcast the existing `task/changed` snapshot.
   - `onState` → mirror updates (permissionMode/model/thinkingTokens/sessionId) +
     `thread/status/changed` + `thread/settings/changed` when a mirrored knob moved.
   - `onRewound` → `record.epoch += 1`, reconcile `record.sessionId`, broadcast `thread/rewound`.
@@ -389,8 +432,16 @@ export const threadAttachParams = z.object({ target: z.string().min(1) });
   data; terminal row → `-33008`; dead socket → `-33008`; an `unresponsive` row (live pid, no
   socket) appears in fleet/list with the flag and its attach fails `-33008`; happy path → record registered with
   origin/cwd/short, `thread/started` observed, mirror seeded from fake status (model present);
-  idempotent re-attach returns the same threadId with no second notification; foreign turn (fake
-  `beginTurn(7)` unprompted) → `turn/started` with `t7@e0`; fake `emitRewound({sessionId:"s2"})` →
+  idempotent re-attach returns the same threadId with no second notification; **TWO SIMULTANEOUS
+  attaches for one target → one record, one `thread/started`, both replies carry the same
+  threadId** (the reservation test); **attach to a BUSY fake with buffered messages + a parked
+  decision → the replayed turn-start sets busy, replayed messages arrive, the decision view
+  parks, the task snapshot lands — nothing lost, nothing before `thread/started`** (the
+  activation test); own turn via `turn/start` → exactly ONE `turn/started`/`turn/completed` pair
+  (count === 1 each), the reply's turnId matches the derived `t<seq>@e0`, and NO `mintTurnId`
+  call (spy); foreign turn (fake `beginTurn(7)` unprompted) → `turn/started` with `t7@e0` AND its
+  message frames produce item notifications (the itemization test); fake `tasks_changed` →
+  `task/changed` on the wire; fake `emitRewound({sessionId:"s2"})` →
   epoch bump + `thread/rewound` + cursor invalidation (mint a read cursor pre-rewound, expect
   `-32602` after).
 - [ ] **Step 2:** FAIL → implement → PASS + suite + typecheck + **drift gate green** (from
@@ -418,6 +469,10 @@ export const threadAttachParams = z.object({ target: z.string().min(1) });
   `toolUseID` as the decision id and the host entry's kind/payload mapped to the wire's decision
   shape (read the local park's entry builder and mirror its fields; the vocabularies are 1:1 —
   spec §1b). Broadcast the same `decision/requested`-family notification the local park uses.
+  **The settle broadcast is the EXISTING `decision/resolved {threadId, toolUseId, by, answer}`**
+  (`server.ts:450`) — no new notification name; the `answer` payload comes from the host
+  `decision_settled.answer` field (§1a-e), which carries the structured outcome even when a
+  foreign host client won the race.
 - `decision/respond` on a fleet thread: forward via `answer`; map receipts exactly (spec §1b):
   `{ok:true, alreadyAnsweredBy}` → `-33002` with `data.by`; `{ok:false}` "no parked request" → the
   local path's not-found error (read what the local handler answers for an unknown id and match
@@ -425,12 +480,14 @@ export const threadAttachParams = z.object({ target: z.string().min(1) });
   the local success reply shape. **Never settle the local view from the respond path** — removal
   happens only when `decision_settled` arrives (single source of truth; the winning respond will
   observe its own settle event).
-- `onDecisionSettled` → drop the view + broadcast `decision/settled` with `by` from the host.
+- `onDecisionSettled` → drop the view + broadcast `decision/resolved` with the host's `by` and
+  structured `answer` (existing payload shape — assert equality with a local-thread resolve).
 
 - [ ] **Step 1: Failing tests** (fakeHost): fake `park(entry)` → `decision/requested` on the wire
   with the host toolUseID as id; respond → fake receives the `answer` op with the structured
   outcome AND the local view is still parked until fake `settle(...)` fires (assert
-  decision-list non-empty between); settle → `decision/settled {by:"fh-user"}` + view gone; lost
+  decision-list non-empty between); settle with a structured answer → `decision/resolved` carrying
+  `by:"fh-user"` AND that exact `answer` object + view gone; lost
   race (fake replies `alreadyAnsweredBy:"other"`) → `-33002` with `data.by === "other"`; no-parked
   reply → the not-found error code the local path uses (assert equality with a local-thread
   unknown-id respond); wrong-kind → `-32602` carrying the fake's message.
@@ -452,10 +509,16 @@ export const threadAttachParams = z.object({ target: z.string().min(1) });
 
 **Interfaces:**
 - Schema: `export const threadStopParams = z.object({ threadId: z.string().min(1) });`
-- **`thread/stop`**: fleet → send `{op:"stop"}` (await receipt), then close the record;
-  broadcast `thread/closed {threadId, reason:"stopped"}`. inProcess → exactly `thread/close`'s
-  behavior (share the close path; reason `"stopped"`). `thread/closed` payload gains OPTIONAL
-  `reason` (schema artifact updates here; count unchanged).
+- **`thread/stop`**: fleet → **EOF is the contract, not a receipt** (adversarial-review
+  correction: the real `SessionHost.stop` destroys every socket before its handler could reply —
+  the existing attach client ignores `stopHost()` rejection for exactly this reason): call
+  `engine.expectDeath()` FIRST (suppresses Task 9's death sequence for this client-requested
+  death), write `{op:"stop"}`, treat socket EOF as expected completion, then poll the roster row
+  terminal (250 ms steps, 5 s cap — timeout → `-33008`-class error naming the stuck state,
+  record NOT closed), then close the record; broadcast `thread/closed {threadId,
+  reason:"stopped"}`. inProcess → exactly `thread/close`'s behavior (share the close path; reason
+  `"stopped"`). `thread/closed` payload gains OPTIONAL `reason` (schema artifact updates here;
+  count unchanged).
 - **`thread/close` fleet branch = detach**: `dispose()` (unfollow + socket close — Task 6 already
   guarantees never-`stop`), and the teardown **skips** the local decision-settlement broadcast for
   fleet records: views drop silently, no `decision/resolved`-family notification (spec §1f — the
@@ -467,9 +530,13 @@ export const threadAttachParams = z.object({ target: z.string().min(1) });
   (4) `isEnded` latched (already); (5) broadcast `warning {code:"fleetConnectionLost"}` +
   `thread/status/changed`. Record stays (a zombie answering `-33005`) until `thread/close`.
 
-- [ ] **Step 1: Failing tests** (fakeHost): stop sends the op and broadcasts
-  `thread/closed {reason:"stopped"}`; close on fleet sends `unfollow` but NEVER `stop` (ops
-  assert) and emits NO decision-settlement notification while a view is parked (watch the wire);
+- [ ] **Step 1: Failing tests** (fakeHost — whose `stop` closes sockets WITHOUT replying, Task 5):
+  stop completes despite no reply (EOF path), finalizes after the roster row is written terminal
+  (the test writes it after a delay), broadcasts `thread/closed {reason:"stopped"}`, and emits NO
+  `fleetConnectionLost` warning and NO failed-turn broadcast (the expected-death latch); a stop
+  whose roster row never turns terminal errors without closing the record; close on fleet sends
+  `unfollow` but NEVER `stop` (ops assert) and emits NO decision-settlement notification while a
+  view is parked (watch the wire);
   the same close on an inProcess record still settles its local parks (regression guard — assert
   the existing behavior); socket death mid-turn: fake `close()` during an open submit →
   `turn/completed {status:"failed"}` then `warning {code:"fleetConnectionLost"}` then
@@ -640,8 +707,10 @@ export const fsSearchParams = z.object({
 
 **Interfaces:**
 - Schema: `export const reopenParams = z.object({ threadId: z.string().min(1) });`
-- Handler (spec §4 exact, ordered): (1) fleet → `-33006` (Task 3's set already contains it —
-  verify, don't re-add). (2) **`ENGINE_GONE_EXEMPT` membership** — add `"thread/reopen"` to the
+- Handler (spec §4 exact, ordered): (1) fleet → `-33006` — **THIS task adds `"thread/reopen"` to
+  `FLEET_UNSUPPORTED`** (deferred from Task 3 because the subset tripwire requires the schema to
+  exist, which this task registers; extend the Task-3 matrix test here). (2)
+  **`ENGINE_GONE_EXEMPT` membership** — add `"thread/reopen"` to the
   exemption set at the dispatch `-33005` gate (`server.ts:517,538` region) or the method is
   unreachable exactly when legal. (3) chain-scoped; `threadBusyReason` non-null → `-33001`.
   (4) engine ALIVE (`!session.isEnded?.()`) → `-32602` `"engine is not dead; nothing to reopen"`.
@@ -722,7 +791,8 @@ export const fsSearchParams = z.object({
 - [ ] **Step 1:** Write the scenario (spec §Testing verbatim): spawn a real detached ccx session
   (the CLI spawn seam, scratch cwd) → `fleet/list` shows it → `thread/attach` → drive a turn
   through the app server (assert `turn/started`/`turn/completed` + result content) → park a
-  permission; answer from a SECOND WS client; assert `decision/settled` with attribution → start
+  permission; answer from a SECOND WS client; assert `decision/resolved` with attribution AND the
+  structured `answer` payload (the §1a-e field, live) → start
   + interrupt a turn → **foreign-swap leg:** a raw host-socket client issues `clear` (or `resume`)
   directly; assert `thread/rewound` + epoch-invalidated cursor on the app-server wire → fleet
   `thread/read` pages the transcript → `fs/search` finds a repo file; `fs/read` round-trips it →
