@@ -115,6 +115,14 @@ client breaks):
   ONLY route: `Session`'s read loop resolves a `result` frame into the submit waiter and never
   passes it to `onMessage` (`session.ts:313-325`), so no `{kind:"message"}` frame can ever carry
   one — the wire cannot be bridged around here.
+  The SOFT-FAILURE tag rides along (Task 2b review, 2026-08-12): a turn that reaches a terminal
+  `is_error` result RESOLVES with `error: TurnFailure` (`session.ts:32`) rather than throwing, and
+  the wire's existing `error?: string` means only "the turn threw" — so turn-end gains a second
+  additive field `failure?: TurnFailure` for the resolved-but-failed case. Without it §1b's
+  `submit` would report a soft-failed turn as a clean completion (`turns.ts:232-236` reads
+  `outcome.error` to broadcast `turn/completed {status:"failed"}`). `result` and `failure` CAN
+  travel together (a failed outcome still has a result value); `error` still never travels with
+  either.
 - **(e) `decision_settled` carries the full structured answer.** Today the event carries only the
   answer-kind string (`wire.ts`), which cannot reconstruct the shipped `decision/resolved`
   notification's `answer` payload when the settlement was won by another host client. The event
@@ -128,7 +136,7 @@ New module (`appserver/fleetEngine.ts`) implementing `EngineSession` over the ho
 
 | `EngineSession` member | backing |
 |---|---|
-| `submit(prompt, onMessage, {uuid})` | `prompt` op (now uuid-stamped, §1a-b) → success reply `{ok, accepted, seq}` (`host/server.ts:171`) or busy refusal `{ok:false, error:"busy"}` → mapped `-33001`; settle on the seq-matched `turn end` event (ends-before-waiter ledger, `chatAdapter.ts` pattern); `onMessage` fed from `{kind:"message"}` frames in the seq window; **`result` read off the turn-end event** (§1a-f — P106 proved no message frame ever carries one) |
+| `submit(prompt, onMessage, {uuid})` | `prompt` op (now uuid-stamped, §1a-b) → success reply `{ok, accepted, seq}` (`host/server.ts:171`) or busy refusal `{ok:false, error:"busy"}` → mapped `-33001`; settle on the seq-matched `turn end` event (ends-before-waiter ledger, `chatAdapter.ts` pattern); `onMessage` fed from `{kind:"message"}` frames in the seq window; **`result` read off the turn-end event, `error` off its `failure` tag** (§1a-f — P106 proved no message frame ever carries one; the soft-failure tag is what makes `turn/completed {status:"failed"}` reachable for fleet) |
 | `interrupt()` | `interrupt` op |
 | `dispose()` | `detach` — the host lives on (close ≠ stop) |
 | `onFrame(cb)` | `{kind:"message"}` and `{kind:"task"}` frames → the existing router |
@@ -527,3 +535,11 @@ Pending — written at finish.
   joins the gate at registration time; attach gains the concurrency reservation + activation
   protocol; stop's contract is EOF-not-receipt with an expected-death latch; `resumeDropsTurn`'s
   value identified as the rewind `uuid` param itself; `tasks_changed` bridging made explicit.
+- **2026-08-12 (Task 2b review fold).** §1a-(f) widened: turn-end also carries
+  `failure?: TurnFailure` — the SOFT-failure tag of a resolved-but-failed outcome (`is_error`
+  terminal result resolves, never throws; `session.ts:32`). Found by the Task 2b reviewer:
+  shipping `result` alone would make §1b's `submit` report soft-failed turns as clean completions,
+  because `turns.ts` reads `outcome.error` to broadcast `turn/completed {status:"failed"}`. The
+  wire's existing `error?: string` is thrown-turns only and keeps that meaning; the two never
+  travel together, while `result` and `failure` can. §1b's submit row updated to read `error` off
+  the `failure` tag.
