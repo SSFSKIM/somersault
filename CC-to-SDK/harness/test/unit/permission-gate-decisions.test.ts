@@ -71,6 +71,33 @@ describe("gate outcome mapping", () => {
     expect(mine).toBe("Continue planning.");
   });
 
+  // WAVE 2 ACCEPTANCE A4. Reporting instead of instructing (the test above) stopped the harness ordering
+  // another planning round, but nothing then STOPPED THE TURN, so the model volunteered a "what would you
+  // like changed?" paragraph of its own and the human who had said nothing got asked again. Upstream's
+  // bare rejection ends the turn. `interrupt` is the deny arm's own field (sdk.d.ts `PermissionResult`) and
+  // probe 106 measured what it does: zero assistant blocks after the deny, `result/error_during_execution`,
+  // and the session alive for the next prompt with its id unchanged.
+  //   THE SPLIT IS THE WHOLE POINT. Silence is a full stop; a typed sentence is a continuation the human
+  // asked for, so only the BARE arm interrupts — the with-feedback arm must keep flowing into the model.
+  it("A4: a BARE plan rejection ends the turn (interrupt), a rejection WITH feedback does not", async () => {
+    for (const outcome of [{ kind: "plan_reject" as const }, { kind: "plan_reject" as const, feedback: "   " }]) {
+      const bare = await gateWith(outcome)("ExitPlanMode", {}, opts) as any;
+      expect(bare.interrupt).toBe(true);
+      expect(bare.message).toBe("User rejected the plan.");
+    }
+    const withText = await gateWith({ kind: "plan_reject", feedback: "use argparse only" })("ExitPlanMode", {}, opts) as any;
+    expect(withText.interrupt).toBeUndefined();
+    expect(withText.message).toBe("use argparse only");
+  });
+
+  // The neighbours stay put: only the PLAN family reads silence as a full stop. A bare tool denial is an
+  // answer to one tool call and the turn goes on around it, which is upstream's behaviour and ccx's today.
+  it("A4 scope: a bare permission/question deny does NOT interrupt", async () => {
+    expect(((await gateWith({ kind: "deny" })("Bash", {}, opts)) as any).interrupt).toBeUndefined();
+    expect(((await gateWith({ kind: "deny" })("AskUserQuestion", {}, opts)) as any).interrupt).toBeUndefined();
+    expect(((await gateWith({ kind: "deny" })("ExitPlanMode", {}, opts)) as any).interrupt).toBeUndefined();
+  });
+
   it("bare deny gets kind-specific copy (spec: composed in the gate)", async () => {
     expect(((await gateWith({ kind: "deny" })("AskUserQuestion", {}, opts)) as any).message).toBe("No user is available to answer.");
     expect(((await gateWith({ kind: "deny" })("ExitPlanMode", {}, opts)) as any).message).toBe("User rejected the plan.");
