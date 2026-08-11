@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 import { main } from "./main.js";
+import { installWarningChannel } from "./warningChannel.js";
+
+/** BEFORE anything else in the program: the SDK's `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` warning fires at query
+ *  construction, and Node's default listener would print it over the Ink frame (s2qa3-11). Installed at the
+ *  top of the entry, so it is in place ahead of every mount and every query — including the `--__host` child,
+ *  which re-enters through this same file. */
+installWarningChannel();
 
 /** Exit only once stdout has actually drained. `process.exit()` discards writes still queued on a PIPE,
  *  and every consumer reads us through one (`claude agents --json --all | python3`) — a truncated
