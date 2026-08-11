@@ -5,8 +5,10 @@
 //
 // THE ONE RULE. Under-erasing leaves today's cosmetic defect; over-erasing walks up into live transcript rows and
 // destroys the user's session (SP-R0 lost six). So nothing here corrects optimistically: a correction is emitted
-// only for a MEASURED `"reflow"` (`reflowOracle.probeReflow`), only on a genuine narrowing, and only when there is
-// a recorded frame to measure. `"unknown"` behaves exactly like `"truncate"` — emit nothing.
+// only for a MEASURED `"reflow"` (`reflowOracle.probeReflow`), never on a grow, only when there is a recorded
+// frame to measure, and only for rows a write was WATCHED to leave — never for rows a resize was expected to
+// produce (qa2-09; see `writeShortfall` and `correctionAfterRepaint`). `"unknown"` behaves exactly like
+// `"truncate"` — emit nothing.
 //
 // WHY THE CURSOR IS PARKED, AND WHAT PARKING COSTS. The oracle can only answer when the cursor sits PAST the new
 // right edge, and the new width is not known until the resize has already happened — so the cursor must be parked
@@ -33,10 +35,13 @@
 // screen, whole); a deferred write is corrected against the width that is true when it lands. Bursts stop being
 // a case at all.
 // TWO EMISSION POINTS SURVIVE HERE, and both are about the window in which the terminal is not yet MEASURED.
-// At a session's FIRST shrink the verdict is still unknown when Ink writes, so that one write goes out
-// uncorrected and `correctionAfterRepaint` repairs the screen once the probe answers: erase the residue AND the
-// frame Ink just painted, then write that frame straight back, in one chunk. Every later shrink is a property of
-// a TERMINAL already measured, so the write-time corrector has its verdict.
+// At a session's FIRST shrink the verdict is still unknown when Ink writes, so THOSE WRITES — plural, and that
+// is the whole of qa2-09 — go out uncorrected, and `correctionAfterRepaint` repairs the screen once the probe
+// answers: erase what they stranded AND the frame that is on screen now, then write that frame straight back, in
+// one chunk. How much they stranded is counted at the writes themselves and nowhere else (`frameWrite`), because
+// a live turn puts several between the signal and the answer and only the first of them is anything a sample
+// taken at the signal could describe. Every later shrink is a property of a TERMINAL already measured, so the
+// write-time corrector has its verdict.
 //   …EXCEPT WHEN THE DRAG DOES NOT STOP (W2 t7, s2qa2-07). One probe may be in flight at a time and its sample is
 // abandoned the moment the terminal moves off the width it was measured at (`:191`), so a BURST — a drag that
 // crosses several widths before it settles — leaves every one of its legs uncorrected, and the residue they
@@ -62,7 +67,9 @@ export function physicalRows(frame: string, width: number): number {
 }
 
 /** How many rows Ink will erase before its next repaint: its `previousLineCount`, which is exactly the recorded
- *  frame's own `split("\n").length` (the frame is stored as Ink wrote it, trailing newline included). */
+ *  frame's own `split("\n").length` (the frame is stored as Ink wrote it, trailing newline included). Nothing
+ *  here calls it — `FrameWriteInfo.inkErases` arrives counted out of the write's own prefix — but it is the
+ *  definition that count is held to, and the one the tests count with. */
 export function inkErases(frame: string): number { return frame.split("\n").length; }
 
 /** `ansiEscapes.eraseLines(n)`, byte for byte: a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It clears n rows
@@ -93,18 +100,12 @@ export function occupiedRows(frame: string, parkedCol: number, width: number): n
   return physicalRows(frame, width) + Math.max(1, Math.ceil(Math.max(0, parkedCol) / width));
 }
 
-/** What the resize listener knows synchronously, before Ink has repainted: the frame that is currently painted,
- *  the column it parked the cursor in, the widths either side of the drag, and the screen height. */
-export interface ResizeSample { frame: string; parkedCol: number; oldWidth: number; newWidth: number; rows: number }
-
-/** The region that must end up clear: everything from the top of the painted frame through the cursor's row,
- *  measured at the NEW width. Capped at the screen — the cap is a bound on a miscalculation, NOT what makes the
- *  erase safe (a recorded frame taller than the live region would still over-erase inside the cap). What makes it
- *  safe is upstream: `createResumeSafeStdout` drops the recorded frame the moment an erase-only write puts it off
- *  screen, so `lastFrame()` is `undefined` and nothing here is emitted at all. */
-function regionRows(s: ResizeSample): number {
-  return Math.min(occupiedRows(s.frame, s.parkedCol, s.newWidth), Math.max(1, s.rows));
-}
+/** THE DRAG, as the resize listener sees it synchronously, before Ink has repainted: the widths either side of
+ *  it and the screen height. It used to carry the painted frame and its park too, because the repair below
+ *  PREDICTED from them how much Ink's next write would fail to erase; that prediction is now a measurement
+ *  taken at the writes themselves (`writeShortfall`), and a prediction nobody reads is a prediction that can
+ *  silently stop matching the screen (it did: qa2-09). */
+export interface ResizeSample { oldWidth: number; newWidth: number; rows: number }
 
 /** True only for a genuine narrowing with a measured reflow — every other combination emits nothing. */
 function corrects(s: ResizeSample, verdict: ReflowVerdict): boolean {
@@ -117,33 +118,58 @@ function corrects(s: ResizeSample, verdict: ReflowVerdict): boolean {
 export interface FrameWriteInfo { inkErases: number; prevFrame: string; parkedCol: number;
   widthAtPaint: number; width: number; rows: number }
 
-/** THE CORRECTION, INJECTED BETWEEN INK'S ERASE PREFIX AND THE BODY OF THE WRITE THAT NEEDS IT. Ink's prefix
- *  clears `inkErases` rows and leaves the cursor at column 1 of the topmost of them; the frame it is replacing
- *  actually occupies more rows than that at the LIVE width, and the difference is the residue. `eraseRows(
- *  shortfall + 1)` re-clears that topmost row plus `shortfall` above it, so the two runs cover exactly
- *  `inkErases + shortfall` distinct rows and the body paints from the region's true top.
+/** ROWS THIS WRITE IS ABOUT TO STRAND, and the one measurement everything below is built on. The frame being
+ *  replaced owns `occupiedRows` rows at the LIVE width (itself plus the padded park row, both re-wrapped there);
+ *  Ink's prefix clears `inkErases` of them, counting up from the cursor. The difference is what stays on screen,
+ *  above whatever this write paints. Capped at the screen — a bound on a miscalculation, not what makes an erase
+ *  safe. Zero or less means Ink's own `previousLineCount` already covers the region. */
+export function writeShortfall(info: FrameWriteInfo): number {
+  return Math.min(occupiedRows(info.prevFrame, info.parkedCol, info.width), Math.max(1, info.rows)) - info.inkErases;
+}
+
+/** THE CORRECTION, INJECTED BETWEEN INK'S ERASE PREFIX AND THE BODY OF THE WRITE THAT NEEDS IT. `eraseRows(
+ *  shortfall + 1)` re-clears the topmost row Ink's prefix reached plus `shortfall` above it, so the two runs
+ *  cover exactly `inkErases + shortfall` distinct rows and the body paints from the region's true top.
  *  The refusals are the whole safety argument (over-erase destroys the session, under-erase costs a cosmetic
- *  row): only a MEASURED `"reflow"` corrects, only when this frame was painted at a wider terminal than the one
- *  it is being re-written into, and never off a width the arithmetic cannot be trusted on — `stdout.columns` is 0
- *  off a tty, and `ceil(n / 0)` is Infinity, which the screen cap would silently turn into a full-screen erase. */
+ *  row): only a MEASURED `"reflow"` corrects, never off a width the arithmetic cannot be trusted on
+ *  (`stdout.columns` is 0 off a tty, and `ceil(n / 0)` is Infinity, which the screen cap would silently turn
+ *  into a full-screen erase), and never on a GROW — reflow can only merge rows there, so nothing is owed.
+ *    THE LEVEL-WIDTH WRITE IS NOT A GROW, AND REFUSING IT WAS THE qa2-09 BUG. This clause used to be
+ *  `width < widthAtPaint`: "a frame re-written at the width it was painted at cannot have re-wrapped." Measured
+ *  on the live binary, that premise is false for exactly one frame per resize, and it is the one that matters.
+ *  Ink's SIGWINCH handler (`ink.js:83`) re-renders the OLD React tree at the new terminal width, so that frame's
+ *  CONTENT is still laid out for the old one and a line of it over-runs the new width — plain autowrap, no
+ *  reflow involved: measured at 120 → 80, eight logical lines occupying nine physical rows. Ink then records
+ *  nine as its `previousLineCount`, and the next write — the caught-up layout, 6 ms later — erases nine of the
+ *  ten rows that frame and its park own, stranding its TOP row. That row is a spinner row on a live turn, which
+ *  is the qa2-09 photograph. Every other path declines it (the frame was painted at the live width, so nothing
+ *  gated on a narrowing sees anything), so this is the only place it can be reached. What is claimed here was
+ *  never the narrowing; it is `writeShortfall > 0`. */
 export function frameWriteCorrection(info: FrameWriteInfo, verdict: ReflowVerdict | undefined): string {
-  if (verdict !== "reflow" || !(info.width >= 2) || !(info.width < info.widthAtPaint)) return "";
-  const region = Math.min(occupiedRows(info.prevFrame, info.parkedCol, info.width), Math.max(1, info.rows));
-  const shortfall = region - info.inkErases;
+  if (verdict !== "reflow" || !(info.width >= 2) || !(info.width <= info.widthAtPaint)) return "";
+  const shortfall = writeShortfall(info);
   return shortfall > 0 ? eraseRows(shortfall + 1) : "";                   // no residue → nothing to correct
 }
 
-/** THE CORRECTION FOR A SESSION'S FIRST SHRINK, once the async verdict lands. Ink has already repainted and the
- *  proxy has already re-parked, so the screen is now `residue · newFrame · parked cursor row` and the cursor is at
- *  the bottom of it. Erase all of that — the new frame included, there is no way to reach the residue above it
- *  otherwise — and write the frame straight back. That ordering is safe precisely BECAUSE the frame comes back:
- *  the bytes are the ones Ink last wrote, so its `previousLineCount` / `previousOutput` still describe the screen
- *  and its next render is unaffected. Costs one repaint's flicker, once per session. */
-export function correctionAfterRepaint(s: ResizeSample, verdict: ReflowVerdict, frameNow: string | undefined, parkedColNow: number): string {
-  if (!corrects(s, verdict) || frameNow === undefined) return "";
-  const residue = regionRows(s) - inkErases(s.frame);
-  if (residue <= 0) return "";
-  const erase = Math.min(residue + occupiedRows(frameNow, parkedColNow, s.newWidth), Math.max(1, s.rows));
+/** THE CORRECTION FOR A SESSION'S FIRST SHRINK, once the async verdict lands — the one shrink whose writes go
+ *  out before the terminal has been measured, so `frameWriteCorrection` cannot correct them where they are made.
+ *  By now Ink has repainted (more than once, on a live turn) and the proxy has re-parked, so the screen is
+ *  `stranded rows · live frame · parked cursor row` with the cursor at the bottom of it. Erase all of that — the
+ *  live frame included, there is no way to reach the rows above it otherwise — and write the frame straight
+ *  back. That ordering is safe precisely BECAUSE the frame comes back: the bytes are the ones Ink last wrote, so
+ *  its `previousLineCount` / `previousOutput` still describe the screen and its next render is unaffected. Costs
+ *  one repaint's flicker, once per session.
+ *    `stranded` IS COUNTED AT THE WRITES, NOT PREDICTED FROM THE DRAG (qa2-09). It used to be derived from the
+ *  frame that was on screen when SIGWINCH fired: how much taller that frame would be at the new width, less
+ *  Ink's erase — i.e. a prediction about ONE write, made before it happened. Two ways that is wrong, both
+ *  measured: a live turn puts several writes between the signal and the answer (the probe took 12 ms and Ink
+ *  wrote twice inside it) and the second of them stranded a row of its own that the prediction knows nothing
+ *  about; and a resize Ink DEDUPES away (`log-update.js` returns early on unchanged output) strands nothing at
+ *  all while the prediction still claims a region — an erase over live rows. Summing `writeShortfall` over the
+ *  writes that actually went out uncorrected answers both: no write, no claim. */
+export function correctionAfterRepaint(s: ResizeSample, verdict: ReflowVerdict, frameNow: string | undefined, parkedColNow: number, stranded: number): string {
+  if (!corrects(s, verdict) || frameNow === undefined || stranded <= 0) return "";
+  const erase = Math.min(stranded + occupiedRows(frameNow, parkedColNow, s.newWidth), Math.max(1, s.rows));
   return eraseRows(erase) + frameNow;
 }
 
@@ -209,6 +235,13 @@ export interface ResizeRepaintDeps {
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
   settleMs?: number;
+  /** qa2-09 — the proxy's running count of writes that DETACHED the screen from the frame record: an erase-only
+   *  write (`log.clear()`, the head of every `<Static>` commit) or Ink's tall-frame `clearTerminal`. Both re-lay
+   *  everything above the live frame — the first pushes committed transcript in between, the second wipes the
+   *  screen — so a count of stranded rows taken before one of them no longer says where those rows are. The
+   *  repair below compares the count at the narrowing against the count at the emit and claims nothing if they
+   *  differ. Optional: a tree wired without it simply never sees the invalidation. */
+  detached?: () => number;
 }
 
 export interface ResizeRepaint {
@@ -219,7 +252,13 @@ export interface ResizeRepaint {
    *  signal that armed it, and its emission WRITES: a drag in the last 80 ms of a session would otherwise repaint
    *  a frame into a terminal `runChatClient`'s `finally` has already unparked and handed back to the shell. */
   stop: () => void;
-  /** The measured verdict AS THE WRITE-TIME CORRECTOR MUST SEE IT: the cached answer, except while this module is
+  /** THE WRITE-TIME CORRECTOR, and the module's own record of what the writes it did not correct left behind.
+   *  Wire it straight into the proxy (`setFrameCorrector`): whatever it returns is injected between Ink's erase
+   *  prefix and the body of that same write. It lives here rather than in `runChatClient` because the two halves
+   *  are one decision — a write is either corrected where it is made, or its shortfall is owed to the repair that
+   *  runs when the verdict lands. */
+  frameWrite: (info: FrameWriteInfo) => string;
+  /** The measured verdict, as the corrector above sees it: the cached answer, except while this module is
    *  writing its own erase-plus-frame chunk, where it reads `undefined`. That chunk already carries a full-region
    *  erase and goes back through Ink's stdout (which is what re-records the frame and re-parks the cursor) — so it
    *  passes the corrector too, and a second erase run stacked on the first walks into live transcript. */
@@ -250,16 +289,34 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
   // rows the leg stranded are rows THAT frame painted, and by settle time Ink may have replaced it with a
   // taller one (a streaming turn) whose height has nothing to do with the leg.
   let frameAtNarrowest: string | undefined;
-  // …and the two remaining terms of that same sample, needed only by the settle-AT-narrowest branch below (see
-  // `repairAtSettle`), which measures the leg exactly as `correctionAfterRepaint` measures a first shrink: the
-  // width the frame was displayed at before this leg re-wrapped it, and the park that was on it then.
-  let widthBeforeNarrowest = 0, parkedColAtNarrowest = 0;
+  // …and the width the frame was displayed at before this leg re-wrapped it, which is the narrowing itself and
+  // the only thing the settle-AT-narrowest branch below needs beyond the live screen.
+  let widthBeforeNarrowest = 0;
+  // THE ROWS THE BURST'S OWN WRITES LEFT ABOVE THE FRAME (qa2-09), summed at the writes, where they are made and
+  // countable — see `correctionAfterRepaint` for why this is not derived from the drag. It is the burst's
+  // measurement: it starts at the narrowing, only writes that went out UNCORRECTED add to it, and it dies with
+  // the burst. …and the detach count as it stood at the narrowing, which is what says the rows are still where
+  // they were counted (`ResizeRepaintDeps.detached`).
+  let stranded = 0, detachedAtNarrowing = 0;
+  const strandedNow = (): number => ((deps.detached?.() ?? 0) === detachedAtNarrowing ? stranded : 0);
   let settling: unknown;
   // …and the one case the window cannot answer by itself: the probe measuring THIS burst's shrink takes up to
   // 750 ms and the window is 80, so the verdict the repair needs routinely lands after it. The repair waits for
   // it rather than declining on it, and re-measures when it runs.
   let awaitingVerdict = false;
-  const endBurst = (): void => { narrowest = Infinity; frameAtNarrowest = undefined; awaitingVerdict = false; };
+  const endBurst = (): void => { narrowest = Infinity; frameAtNarrowest = undefined; awaitingVerdict = false; stranded = 0; };
+  /** EVERY FRAME WRITE INK MAKES PASSES HERE, and each one is one of three things. Our own erase-plus-frame chunk
+   *  carries a full-region erase and lands on a screen it has just cleared, so nothing above it is owed any more.
+   *  A write the corrector repairs where it is made owes nothing either — the injected run reaches the top of the
+   *  region it replaces. Everything else that under-erased has left rows on screen, and the only place their
+   *  count exists is here: the frame that was on screen, the park that was under it and the width they were both
+   *  standing on are all facts at this instant and none of them survive to the repair. */
+  const frameWrite = (info: FrameWriteInfo): string => {
+    if (selfWriting) { stranded = 0; return ""; }
+    const seq = frameWriteCorrection(info, verdict);
+    if (!seq && narrowest !== Infinity) stranded += Math.max(0, writeShortfall(info));
+    return seq;
+  };
   /** The settle pass. Returns whether it emitted, because the probe's continuation must not ALSO emit: two
    *  erase-plus-frame writes in a row each move the frame up by their own residue, so the second one's erase
    *  lands on rows the first one just declared live. */
@@ -277,14 +334,15 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     // erase. It used to be refused outright (`narrowest < size.columns`), which left both legs of every
     // monotonic burst permanent: the probe covering them is still in flight for the whole drag, and its sample
     // is abandoned the moment the second leg moves the terminal off the width it was measured at (`:191`).
-    //   ONE EXCURSION EITHER WAY, which is the file's standing under-erase residual (`:176`-`:179`) and not a
-    // new one: a burst with several unmeasured legs stranded more than one frame's worth, and this claims the
-    // deepest — the leg `frameAtNarrowest` belongs to — leaving the shallower ones cosmetic rather than
-    // summing terms measured off frames that are no longer anywhere on screen.
+    //   ONE EXCURSION EITHER WAY on the round-trip branch, which is the file's standing under-erase residual
+    // (`:176`-`:179`) and not a new one: it claims the deepest leg — the one `frameAtNarrowest` belongs to —
+    // rather than summing re-wrap differences off frames that are no longer anywhere on screen. The monotonic
+    // branch has no such gap: every leg's writes are counted where they happened, and a row stranded by an
+    // earlier leg has only SPLIT since (the drag only ever narrowed), so the sum is short rather than long.
     const seq = narrowest < size.columns
       ? correctionAtSettle({ frame, frameAtNarrowest, parkedCol: deps.parkedColumn(), width: size.columns, narrowest, rows: size.rows }, verdict)
-      : correctionAfterRepaint({ frame: frameAtNarrowest, parkedCol: parkedColAtNarrowest, oldWidth: widthBeforeNarrowest, newWidth: narrowest, rows: size.rows },
-        verdict, frame, deps.parkedColumn());
+      : correctionAfterRepaint({ oldWidth: widthBeforeNarrowest, newWidth: narrowest, rows: size.rows },
+        verdict, frame, deps.parkedColumn(), strandedNow());
     endBurst();
     if (!seq) return false;
     repaintSelf(seq);
@@ -315,7 +373,10 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     // the rows that lie inside that retained residue — so keeping the pass alive claims them twice.
     if (newWidth < oldWidth) {
       if (verdict !== undefined) endBurst();
-      else if (newWidth < narrowest && frame !== undefined) { narrowest = newWidth; frameAtNarrowest = frame; widthBeforeNarrowest = oldWidth; parkedColAtNarrowest = parkedCol; }
+      else if (newWidth < narrowest && frame !== undefined) {
+        if (narrowest === Infinity) detachedAtNarrowing = deps.detached?.() ?? 0;   // this narrowing OPENS the burst
+        narrowest = newWidth; frameAtNarrowest = frame; widthBeforeNarrowest = oldWidth;
+      }
     }
     if (settling !== undefined) disarm(settling);
     awaitingVerdict = false;                            // the drag is still going; the NEXT settle asks again
@@ -326,7 +387,7 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     // width (and `colBefore > newWidth` then refuses every probe for the rest of the session). The window above
     // debounces the REPAIR; the probe stays on the signal, where the evidence is.
     if (frame === undefined || !(newWidth >= 2) || !(newWidth < oldWidth)) return;
-    const sample: ResizeSample = { frame, parkedCol, oldWidth, newWidth, rows: size.rows };
+    const sample: ResizeSample = { oldWidth, newWidth, rows: size.rows };
     // WITH A VERDICT IN HAND THERE IS NOTHING TO DO HERE. Ink may write on this signal, on a later tick, or never;
     // whichever it is, that write is where the correction belongs and the corrector reads `verdict()` then.
     if (verdict !== undefined) return;
@@ -342,11 +403,14 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
         // narrowing remembers — so if that write has not landed yet, the corrector is about to claim these
         // rows and the settle pass claiming them too is one erase run too many, over live transcript. A
         // SIGWINCH does not imply a write (`throttledLog` defers, the dedupe drops), so "has one landed" is
-        // not inferable from the signals; the recorded frame's own identity is the observation, because the
-        // proxy records one per frame write. Unchanged frame ⇒ nothing under-erased yet ⇒ forget.
+        // not inferable from the signals — it has to be observed at the writes, and `stranded` is that
+        // observation now: rows left by a write that went out UNCORRECTED, none of them owed to anyone else.
+        // It replaces the recorded frame's IDENTITY, which was the closest thing available before the count
+        // existed and reads a repeated frame (a drag that lands back on a width it already painted) as a
+        // write that never happened.
         //   This subsumes the narrower guard that shipped (clear on an emitting first-shrink repair): an
         // emission implies a cached "reflow", and by then Ink has repainted the leg it repairs.
-        if (deps.lastFrame() === frameAtNarrowest) endBurst();
+        if (strandedNow() === 0) endBurst();
       }
       // W2 t7 — THE BURST REPAIR WAS WAITING ON EXACTLY THIS, and it is the better-informed of the two: it
       // measures the screen as it stands now, while everything below measures a sample taken before the drag
@@ -361,7 +425,13 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
       // (it describes the TERMINAL) and abandon the emission (it described a screen that is gone). The next
       // shrink takes the cached-verdict path and is corrected synchronously, with no stale sample at all.
       if (deps.size().columns !== sample.newWidth) return;
-      const seq = correctionAfterRepaint(sample, answer, deps.lastFrame(), deps.parkedColumn());
+      // …AND THE SAME REFUSAL THE SETTLE PASS MAKES, for the same reason (qa2-09). `stranded` counts rows as
+      // they were painted, at the width they were painted at, and a drag that dipped BELOW where it settled
+      // merges them on the way back up — 70's rows are fewer rows at 90. Only `correctionAtSettle`'s re-wrap
+      // difference can speak for a screen that re-wrapped after the rows were counted; this path is for the
+      // screen that has not.
+      if (narrowest < deps.size().columns) return;
+      const seq = correctionAfterRepaint(sample, answer, deps.lastFrame(), deps.parkedColumn(), strandedNow());
       // …and when it emits, the screen above the frame is clean and the burst has nothing left to claim (W2 t7).
       // This is the branch the rule above deliberately KEEPS — Ink did repaint after the narrowing, so a real
       // residue existed — and this write is what removes it. Without this, a probe that answers WHILE the drag
@@ -370,5 +440,5 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     });
   };
   const stop = (): void => { if (settling !== undefined) { disarm(settling); settling = undefined; } endBurst(); };
-  return { onResize, stop, verdict: () => (selfWriting ? undefined : verdict) };
+  return { onResize, stop, frameWrite, verdict: () => (selfWriting ? undefined : verdict) };
 }

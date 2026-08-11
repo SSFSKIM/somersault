@@ -17,7 +17,7 @@ import { turnDurationEnabled } from "./durationRow.js";
 import { promptSuggestionEnabled } from "./suggester.js";
 import { refreshExampleFiles } from "./placeholder.js";
 import { createCursorReports, probeReflow } from "./reflowOracle.js";
-import { createResizeRepaint, frameWriteCorrection, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
+import { createResizeRepaint, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
 import { setTheme } from "./theme.js";
 import { createTerminalTitle } from "./terminalTitle.js";
 
@@ -86,6 +86,13 @@ export interface ResumeSafeStdout {
    *  wipe on an ordinary screen (the t8 over-erase): ChatApp consumes on every size it observes, a shrink
    *  included, so nothing survives a flush that saw it. */
   takeTallAtSignal(): boolean;
+  /** qa2-09 — how many writes have DETACHED THE SCREEN FROM THE FRAME RECORD: an erase-only write (`log.clear()`,
+   *  which is the head of every `<Static>` commit) or Ink's tall-frame `clearTerminal`. Both re-lay everything
+   *  above the live frame — the first puts committed transcript in between it and whatever was above it, the
+   *  second wipes the screen — and the resize repairs are counts of rows ABOVE the frame, taken earlier. A
+   *  COUNT, not a flag, because the only question is whether the screen moved BETWEEN two instants the reader
+   *  chooses; nothing here is consumed, so two readers cannot rob each other. */
+  detachedWrites(): number;
   /** W-R t4b: the resize correction, applied to the write that would otherwise create residue. Called for every
    *  frame write that carries an erase prefix and has a recorded frame in front of it; whatever it returns is
    *  injected between that prefix and the body, inside the SAME write. Set once, from `runChatClient` — the proxy
@@ -125,6 +132,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
   let tall = 0;                                  // W-R t8: tall-frame chunks written since the screen was last in sync
   let tallAtSignal = false;                      // W2 t7: …and whether one was outstanding at any SIGWINCH since the last read
+  let detached = 0;                              // qa2-09: writes that re-laid the screen above the frame (see `detachedWrites`)
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
   let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
@@ -224,13 +232,13 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   const record = (chunk: unknown): boolean => {
     if (typeof chunk !== "string") return false;
     if (chunk.startsWith("\x1b[2J")) {
-      justErased = false; dropped = undefined; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1;
+      justErased = false; dropped = undefined; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1; detached += 1;
       if (chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
       return false;
     }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
     const body = chunk.slice(prefix.length);
-    if (body === "") { justErased = true; if (frame !== undefined) dropped = frame; frame = undefined; parkedCol = 0; return false; }
+    if (body === "") { justErased = true; if (frame !== undefined) dropped = frame; frame = undefined; parkedCol = 0; detached += 1; return false; }
     // Ink's log() writes `str + "\n"` and its <Static> chunk ends the same way, so a body that does NOT end in a
     // newline is nobody's frame — it is another consumer of this same stdout (W-R t4: the keymap's DECSET writes,
     // suspend's cursor show/hide). Recording those used to clobber `lastFrame()` with a bare escape sequence, and
@@ -325,6 +333,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     screenResynced() { tall = 0; },
     noteResizeSignal() { tallAtSignal ||= tall > 0; },   // accumulates over the burst; the READ is what clears it
     takeTallAtSignal() { const was = tallAtSignal; tallAtSignal = false; return was; },
+    detachedWrites() { return detached; },
     setFrameCorrector(fn) { corrector = fn; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
@@ -423,11 +432,14 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     size: () => ({ columns: process.stdout.columns ?? 0, rows: process.stdout.rows ?? 0 }),
     repaint: (s) => { if (process.stdout.isTTY) output.stdout.write(s); },
     probe: (a) => probeReflow({ write: (s) => { process.stdout.write(s); }, onReply: reports.onReply, ...a }),
+    detached: output.detachedWrites,
   });
   // …and this is the correction itself: every frame write Ink makes passes the proxy, and the ones that would
   // leave residue get the missing erase injected into the same chunk. The proxy is built before the resize
-  // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument.
-  output.setFrameCorrector((info) => frameWriteCorrection(info, resize.verdict()));
+  // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument. The
+  // decision lives in the resize module, not in a closure here: a write is either corrected where it is made or
+  // its shortfall is owed to the repair that runs when the verdict lands, and only one of those two can be true.
+  output.setFrameCorrector(resize.frameWrite);
   // W2 t7 (s2qa2-05): THE ORDER IS THE WHOLE POINT OF DOING IT HERE. This listener is ahead of Ink's, so it is
   // the last moment at which "a tall write is outstanding" is still true for the screen the user is looking at —
   // Ink's own handler repaints synchronously on the next line of the same signal and stands the count down.
