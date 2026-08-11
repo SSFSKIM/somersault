@@ -1,0 +1,261 @@
+// harness/test/unit/host-wire-m3.test.ts — the five ADDITIVE host-wire revisions M3 carries (spec §1a).
+// Every one of them is driven over a REAL UDS through a REAL SessionHost + HostServer with a stubbed
+// engine (the host-ops.test.ts client pattern over the attach.test.ts host fixture): these are wire
+// promises, and a test that called the host's methods directly would prove nothing about what a foreign
+// client actually receives.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { connect } from "node:net";
+import { SessionHost } from "../../src/host/host.js";
+import type { SessionHostOpts } from "../../src/host/host.js";
+import { hostSocketPath } from "../../src/fleet/paths.js";
+
+const fleets: string[] = [];
+const tmpFleet = () => { const d = mkdtempSync(join(tmpdir(), "ccx-m3wire-")); fleets.push(d); return d; };
+const hosts: SessionHost[] = [];
+afterEach(async () => {
+  for (const h of hosts.splice(0)) await h.stop().catch(() => {});
+  for (const d of fleets.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+const AGENTS = [{ name: "reviewer", description: "reviews" }];
+
+/** A stub engine factory. `openSession` is called once by start() and once per swap, so it MINTS A NEW
+ *  engine per call — and only the first carries a session id, because a freshly-opened engine reports
+ *  none until its first turn's init frame (the exact state the `cleared` announce has to describe). */
+function engineFactory(firstSessionId?: string) {
+  const submits: { prompt: string; opts?: { uuid?: string } }[] = [];
+  const opened: Record<string, unknown>[] = [];
+  const engines: { sessionId?: string }[] = [];
+  const make = (sessionId?: string) => ({
+    sessionId,
+    submit: async (prompt: string, _on: (m: unknown) => void, opts?: { uuid?: string }) => { submits.push({ prompt, opts }); return {}; },
+    dispose: async () => {},
+    interrupt: async () => {},
+    onFrame: () => () => {},
+    setModel: async () => {},
+    setMaxThinkingTokens: async () => {},
+    capabilities: async () => ({ models: [{ value: "m1" }], commands: [{ name: "c1" }], mcpServers: [{ name: "s1" }], agents: AGENTS }),
+  });
+  return {
+    submits, opened, engines,
+    openSession: (c: Record<string, unknown>) => {
+      opened.push(c);
+      const e = make(engines.length === 0 ? firstSessionId : undefined);
+      engines.push(e);
+      return e;
+    },
+  };
+}
+
+async function startHost(opts: { firstSessionId?: string } & Partial<SessionHostOpts> = {}) {
+  const { firstSessionId, ...over } = opts;
+  const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
+  const f = engineFactory(firstSessionId);
+  const host = new SessionHost(
+    { short: "3a1b2c3d", name: "m3wire", cwd: "/tmp", kind: "interactive", detached: true,
+      config: { model: "claude-test-9" }, env, ...over } as SessionHostOpts,
+    { openSession: f.openSession as never, procStartOf: async () => "start", disposeGraceMs: 20 },
+  );
+  await host.start();
+  hosts.push(host);
+  return { host, f, path: hostSocketPath(process.pid, env) };
+}
+
+/** One connection, id-correlated ops, every pushed event kept. A reply and an event can never be
+ *  confused: events carry `t:"event"` and replies carry the id we sent. */
+function client(path: string) {
+  const frames: Record<string, any>[] = [];
+  const sock = connect(path);
+  sock.on("error", () => {});
+  let buf = "";
+  sock.on("data", (c) => {
+    buf += c.toString("utf8");
+    for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+      const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+      if (line.trim()) frames.push(JSON.parse(line));
+    }
+  });
+  let id = 0;
+  const waitFor = async (pred: (f: any) => boolean, ms = 2000) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const hit = frames.find(pred);
+      if (hit) return hit;
+      if (Date.now() > deadline) throw new Error(`no frame matched within ${ms}ms; saw ${JSON.stringify(frames)}`);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  return {
+    frames,
+    events: (kind: string) => frames.filter((f) => f.t === "event" && f.kind === kind),
+    ready: new Promise<void>((r) => sock.once("connect", () => r())),
+    ask: async (op: Record<string, unknown>) => { const mine = ++id; sock.write(JSON.stringify({ ...op, id: mine }) + "\n"); return waitFor((f) => f.id === mine); },
+    waitFor,
+    close: () => sock.destroy(),
+  };
+}
+
+/** Follow first, then run the op: every swap emission happens INSIDE the op's dispatch, so by the time
+ *  the correlated reply lands on this same socket the events it produced are already in `frames` —
+ *  the count assertions below need no sleep to be sound. */
+async function followed(path: string) {
+  const c = client(path);
+  await c.ready;
+  expect(await c.ask({ op: "follow" })).toMatchObject({ ok: true, following: true });
+  return c;
+}
+
+// ─── §1a-a: every engine swap announces, with a SINGLE owner ──────────────────────────────────────────
+// The emission lives in swapEngine, which all three paths go through. The count assertions are the
+// point: rewind() calls swapEngine AND used to emit for itself, so the obvious reading of "every swap
+// announces" double-announces every conversation rewind — two epoch bumps, two client rebuilds.
+describe("§1a-a — one `rewound` per engine swap, on all three paths", () => {
+  it("a `resume` op announces exactly once, naming the resumed conversation", async () => {
+    const { path } = await startHost({ firstSessionId: "sid-1" });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "resume", sessionId: "sid-resumed" })).toMatchObject({ ok: true });
+    const rewound = conn.events("rewound");
+    expect(rewound).toHaveLength(1);
+    expect(rewound[0]).toMatchObject({ sessionId: "sid-resumed" });
+    expect(rewound[0].cleared).toBeUndefined();
+    conn.close();
+  });
+
+  it("a `clear` op announces exactly once, with `cleared` and NO sessionId — the discarded id must not travel", async () => {
+    const { path } = await startHost({ firstSessionId: "sid-1" });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "clear" })).toMatchObject({ ok: true });
+    const rewound = conn.events("rewound");
+    expect(rewound).toHaveLength(1);
+    expect(rewound[0].cleared).toBe(true);
+    expect(Object.keys(rewound[0])).not.toContain("sessionId");
+    expect(rewound[0].prevUuid).toBeUndefined();
+    conn.close();
+  });
+
+  it("a conversation-scope `rewind` op announces exactly ONCE (the double-announce tripwire), carrying the anchor", async () => {
+    const { path } = await startHost({ firstSessionId: "sid-1" });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "rewind", uuid: "uB", prevUuid: "a1", scope: "conversation" })).toMatchObject({ ok: true });
+    const rewound = conn.events("rewound");
+    expect(rewound).toHaveLength(1);
+    expect(rewound[0]).toMatchObject({ sessionId: "sid-1", prevUuid: "a1" });
+    conn.close();
+  });
+
+  it("a first-message `rewind` announces exactly once and `cleared`, never an anchor", async () => {
+    const { path } = await startHost({ firstSessionId: "sid-1" });
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "rewind", uuid: "uA", prevUuid: null, scope: "conversation" })).toMatchObject({ ok: true });
+    const rewound = conn.events("rewound");
+    expect(rewound).toHaveLength(1);
+    expect(rewound[0].cleared).toBe(true);
+    expect(rewound[0].prevUuid).toBeUndefined();
+    conn.close();
+  });
+});
+
+// ─── §1a-b: the prompt op carries the user-item uuid ──────────────────────────────────────────────────
+describe("§1a-b — `prompt.uuid` reaches Session.submit", () => {
+  it("a uuid-stamped prompt hands `{uuid}` to submit", async () => {
+    const { f, path } = await startHost();
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello", uuid: "u-1" })).toMatchObject({ ok: true, accepted: true });
+    await vi.waitFor(() => expect(f.submits).toHaveLength(1));
+    expect(f.submits[0]).toMatchObject({ prompt: "hello", opts: { uuid: "u-1" } });
+    conn.close();
+  });
+
+  it("an unstamped prompt hands submit no uuid at all (a fabricated one would break the id stitch)", async () => {
+    const { f, path } = await startHost();
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello" })).toMatchObject({ ok: true, accepted: true });
+    await vi.waitFor(() => expect(f.submits).toHaveLength(1));
+    expect(f.submits[0].opts?.uuid).toBeUndefined();
+    conn.close();
+  });
+
+  it("refuses an empty uuid at the schema, rather than stamping the turn with one", async () => {
+    const { f, path } = await startHost();
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "prompt", text: "hello", uuid: "" })).toMatchObject({ ok: false });
+    expect(f.submits).toHaveLength(0);
+    conn.close();
+  });
+});
+
+// ─── §1a-c: status carries model/thinkingTokens, and the setters announce ─────────────────────────────
+describe("§1a-c — model/thinkingTokens on the status frame, `state` on the setters", () => {
+  it("the `status` reply carries the host's model mirror", async () => {
+    const { path } = await startHost();
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "status" })).toMatchObject({ ok: true, model: "claude-test-9" });
+    conn.close();
+  });
+
+  it("`set_model` pushes a `state` event whose status carries the NEW model", async () => {
+    const { path } = await startHost();
+    const conn = await followed(path);
+    const before = conn.events("state").length;
+    expect(await conn.ask({ op: "set_model", model: "opus" })).toMatchObject({ ok: true });
+    const states = conn.events("state");
+    expect(states.length).toBe(before + 1);
+    expect(states[states.length - 1].status).toMatchObject({ model: "claude-opus-5" });
+    conn.close();
+  });
+
+  it("`set_thinking` pushes a `state` event whose status carries the new budget, and a null budget clears it", async () => {
+    const { path } = await startHost();
+    const conn = await followed(path);
+    expect(await conn.ask({ op: "set_thinking", maxTokens: 12_000 })).toMatchObject({ ok: true });
+    let states = conn.events("state");
+    expect(states[states.length - 1].status).toMatchObject({ thinkingTokens: 12_000 });
+    expect(await conn.ask({ op: "set_thinking", maxTokens: null })).toMatchObject({ ok: true });
+    states = conn.events("state");
+    expect(states[states.length - 1].status.thinkingTokens).toBeUndefined();
+    conn.close();
+  });
+});
+
+// ─── §1a-d: the capabilities op returns all FOUR catalogs ─────────────────────────────────────────────
+describe("§1a-d — the `agents` catalog reaches the wire", () => {
+  it("a `capabilities` reply carries the engine's agents catalog verbatim, alongside the other three", async () => {
+    const { path } = await startHost();
+    const conn = await followed(path);
+    const rep = await conn.ask({ op: "capabilities" });
+    expect(rep).toMatchObject({ ok: true, models: [{ value: "m1" }], commands: [{ name: "c1" }], mcpServers: [{ name: "s1" }] });
+    expect(rep.agents).toEqual(AGENTS);
+    conn.close();
+  });
+});
+
+// ─── §1a-e: decision_settled carries the structured answer ────────────────────────────────────────────
+describe("§1a-e — `decision_settled` carries the answer the `answer` op received", () => {
+  it("a structured outcome rides the settlement event, payload intact", async () => {
+    const { host, path } = await startHost();
+    const conn = await followed(path);
+    void host.broker().request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "tu-1", signal: new AbortController().signal });
+    await vi.waitFor(() => expect(host.pending()).toHaveLength(1));
+    expect(await conn.ask({ op: "answer", toolUseID: "tu-1", by: "tester", answer: { kind: "deny", feedback: "not that one" } })).toMatchObject({ ok: true });
+    const settled = conn.events("decision_settled");
+    expect(settled).toHaveLength(1);
+    // The kind string stays exactly where it was — this field is ADDITIVE, and a pre-M3 client reads it.
+    expect(settled[0]).toMatchObject({ toolUseID: "tu-1", by: "tester", decision: "deny" });
+    expect(settled[0].answer).toEqual({ kind: "deny", feedback: "not that one" });
+    conn.close();
+  });
+
+  it("a flat legacy answer settles with the outcome the host reconstructed", async () => {
+    const { host, path } = await startHost();
+    const conn = await followed(path);
+    void host.broker().request({ toolName: "Bash", input: {}, toolUseID: "tu-2", signal: new AbortController().signal });
+    await vi.waitFor(() => expect(host.pending()).toHaveLength(1));
+    expect(await conn.ask({ op: "answer", toolUseID: "tu-2", by: "tester", decision: "allow_once" })).toMatchObject({ ok: true });
+    const settled = conn.events("decision_settled");
+    expect(settled[0].answer).toEqual({ kind: "allow_once" });
+    conn.close();
+  });
+});

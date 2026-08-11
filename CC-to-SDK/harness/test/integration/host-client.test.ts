@@ -204,7 +204,10 @@ describe("host + client over a real socket", () => {
       // The point of this test: the settle must reach a SECOND connected client over the real socket,
       // not merely be visible to whoever answered it.
       await new Promise((r) => setTimeout(r, 80));
-      expect(seenB).toContainEqual({ t: "event", kind: "decision_settled", toolUseID: "q9", by: "tty-a", decision: "question_answer" });
+      // …carrying the STRUCTURED answer too (M3 §1a-e): this second client is exactly the reader the field
+      // exists for — without it the answers themselves reach only the client that typed them.
+      expect(seenB).toContainEqual({ t: "event", kind: "decision_settled", toolUseID: "q9", by: "tty-a", decision: "question_answer",
+        answer: { kind: "question_answer", answers: { "red or blue?": "blue" } } });
     } finally {
       a?.detach(); b?.detach();
       await stopQuietly(host);

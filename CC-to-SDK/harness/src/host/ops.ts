@@ -1,7 +1,12 @@
 import { z } from "zod/v4";
 import type { FleetState } from "../fleet/roster.js";
 
-export interface HostStatus { state: FleetState; status: "busy" | "idle"; waitingFor?: string; sessionId?: string; permissionMode?: string }
+/** M3 §1a-c: `model` and `thinkingTokens` join `permissionMode` as host-published settings truth. All three
+ *  are OPTIONAL for the same reason — a host that was never told one has nothing truthful to publish, and a
+ *  mirroring client must be able to tell "unset" from "set". Without them a foreign client's `set_model`
+ *  could never reach another client's mirror: `status`/`state` is the only settings channel there is, and it
+ *  carried the mode alone. */
+export interface HostStatus { state: FleetState; status: "busy" | "idle"; waitingFor?: string; sessionId?: string; permissionMode?: string; model?: string; thinkingTokens?: number }
 const decisionKind = z.enum(["allow_once", "allow_always", "deny"]);
 // One SDK PermissionUpdate, carried verbatim (permissions/types.ts PermissionUpdateLike): an opaque
 // record ON PURPOSE — the engine authors these and we echo them back, so the wire must not reshape or
@@ -39,7 +44,12 @@ export const hostOp = z.discriminatedUnion("op", [
   // Exactly one of `decision`/`answer` is required — dispatch (server.ts) rejects both-or-neither; the
   // schema itself only bounds the SHAPE of each, not their mutual exclusivity.
   z.object({ op: z.literal("answer"), toolUseID: z.string().min(1), by: z.string().min(1), decision: decisionKind.optional(), answer: structuredAnswer.optional(), ...withId }),
-  z.object({ op: z.literal("prompt"), text: z.string().min(1), ...withId }),
+  // M3 §1a-b: `uuid` is the CALLER's id for the user item this turn starts from, handed straight to
+  // Session.submit's existing `{uuid}` opt so the pushed SDKUserMessage carries it. An orchestrating client
+  // (the app server's fleet threads) mints item ids before it sends the prompt and must be able to stitch
+  // its own item to the persisted row; an unstamped prompt makes that impossible. `.min(1)`, so a client
+  // that computed an empty id is refused here rather than stamping the turn with nothing.
+  z.object({ op: z.literal("prompt"), text: z.string().min(1), uuid: z.string().min(1).optional(), ...withId }),
   z.object({ op: z.literal("interrupt"), ...withId }),
   z.object({ op: z.literal("follow"), ...withId }),
   z.object({ op: z.literal("unfollow"), ...withId }),

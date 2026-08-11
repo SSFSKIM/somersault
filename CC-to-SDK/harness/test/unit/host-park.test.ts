@@ -186,7 +186,11 @@ describe("host park policy", () => {
       const reply = host.answer("q1", { kind: "question_answer", answers: { "red or blue?": "blue" } }, "me");
       expect(reply).toEqual({ ok: true });
       await expect(decision).resolves.toEqual({ kind: "question_answer", answers: { "red or blue?": "blue" } });
-      expect(seen).toContainEqual({ kind: "decision_settled", toolUseID: "q1", by: "me", decision: "question_answer" });
+      // M3 §1a-e: the settlement carries the WHOLE outcome alongside the legacy kind string. This test is
+      // the illustration of why — `decision: "question_answer"` alone says a question was answered and
+      // loses the answers themselves, which is all a client that did not win the race would ever learn.
+      expect(seen).toContainEqual({ kind: "decision_settled", toolUseID: "q1", by: "me", decision: "question_answer",
+        answer: { kind: "question_answer", answers: { "red or blue?": "blue" } } });
       await host.stop();
     });
 

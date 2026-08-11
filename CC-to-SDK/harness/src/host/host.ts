@@ -39,7 +39,10 @@ const DISPOSE_GRACE_MS = 5_000;
  *  below — structural, not `any`, so a signature drift in `Session` fails THIS build instead of failing
  *  at runtime inside a detached process nobody watches. */
 export interface HostSession {
-  submit(prompt: string, onMessage: (m: unknown) => void): Promise<unknown>;
+  // `opts` is Session.submit's own third parameter, surfaced here by M3 §1a-b so the `prompt` op's uuid can
+  // reach it. OPTIONAL, and an implementation may declare fewer parameters than this — every existing
+  // two-parameter HostSession fake still satisfies it.
+  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<unknown>;
   readonly sessionId: string | undefined;
   dispose(): Promise<void>;
   // `unknown`, not `void` — the real Session.interrupt() returns Promise<unknown>, and a Promise<void>
@@ -51,7 +54,11 @@ export interface HostSession {
   setModel?(model?: string): Promise<void>;
   setPermissionMode?(mode: string): Promise<void>;
   setMaxThinkingTokens?(maxTokens: number | null): Promise<void>;
-  capabilities?(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[] }>;
+  // FOUR catalogs, not three (M3 §1a-d). `agents` (the SDK's supportedAgents) is what the real
+  // Session.capabilities has always returned and what control()'s verbatim spread has always forwarded —
+  // this type was the only thing claiming otherwise, and a client reading the reply through it lost
+  // subagents entirely. Kept in step with appserver/registry.ts's copy of the same shape.
+  capabilities?(): Promise<{ models: unknown[]; commands: unknown[]; mcpServers: unknown[]; agents: unknown[] }>;
   compact?(): Promise<unknown>;
   usage?(): Promise<unknown>;
   getContextUsage?(): Promise<unknown>;
@@ -135,6 +142,11 @@ export class SessionHost {
   // and rewritten by a successful set_model. Read by the plan-upgrade applier alone — `auto` is model-gated
   // (autoModel.ts) and needs a supported model under it before the mode is worth setting.
   private model?: string;
+  // The engine's THINKING BUDGET, third member of the same published-settings group (M3 §1a-c) and on the
+  // same rule: seeded from the launch config in start(), rewritten by a successful set_thinking. `undefined`
+  // means "no budget was ever set" and is what a `null` set_thinking (the engine's own "clear it") writes
+  // back — a client mirror must be able to tell that from a budget of zero.
+  private thinkingTokens?: number;
   // Nested tool_use id → parent Agent tool_use id (from nested assistant frames' parent_tool_use_id).
   private parentOf = new Map<string, string>();
   // Agent tool_use id → subagent_type (from task_started frames).
@@ -226,6 +238,7 @@ export class SessionHost {
     // it, so a fresh client's status bar never shows a placeholder (spec §mode-sync).
     this.mode = resolvedPermissionMode(this.opts.config);
     this.model = resolvedModel(this.opts.config);
+    this.thinkingTokens = this.opts.config.maxThinkingTokens;
     try {
       this.session = this.deps.openSession(this.engineConfig());
       this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
@@ -235,7 +248,7 @@ export class SessionHost {
         stop: () => this.stop("stopped"),
         pending: () => this.pending(),
         answer: (id, d, by) => this.answer(id, d, by),
-        prompt: (text) => this.runTask(text),
+        prompt: (text, uuid) => this.runTask(text, uuid),
         interrupt: () => this.interrupt(),
         // One follower per connection, delivering to that connection's sink. The server owns the
         // sockets and counts them (the deny rule reads THAT count, not the follower set — see broker()).
@@ -283,7 +296,7 @@ export class SessionHost {
    *  would reset() the turn buffer out from under a turn that is still delivering messages to followers —
    *  a client attaching afterwards would be replayed zero messages, the exact regression the buffer
    *  exists to prevent. */
-  async runTask(prompt: string): Promise<void> {
+  async runTask(prompt: string, uuid?: string): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is already running a turn`);
     clearTimeout(this.idleTimer);   // a turn (including any park inside it) must never idle out
     this.turnInFlight = true; this.state = "working";
@@ -320,7 +333,10 @@ export class SessionHost {
     // turns instead: `working`, the same state start() wrote, so it is ready for the next runTask()
     // rather than frozen at a state that reads like the whole session is over.
     try {
-      await this.session!.submit(prompt, onMessage);
+      // The opts object exists ONLY when a uuid was actually given (M3 §1a-b): `{uuid: undefined}` is not
+      // the same offer as no opts at all to a session that reads the key, and this host must never invent
+      // an id — an unstamped prompt is a caller declining to stitch, not a caller that forgot.
+      await this.session!.submit(prompt, onMessage, uuid ? { uuid } : undefined);
       // Turn-end belt: an approved plan that settled but never saw the CLI's own post-approval status
       // frame (e.g. the turn ended before the CLI emitted one) must still upgrade — never leave an
       // approved upgrade silently unapplied (spec §mode-sync ordering).
@@ -349,15 +365,29 @@ export class SessionHost {
     const s = this.session;
     const need = <T>(v: T | undefined, name: string): T => { if (!v) throw new Error(`${name} unsupported by this host`); return v; };
     switch (op.op) {
-      // The model truth moves only after the engine took it — same rule as set_permission_mode below.
-      case "set_model": await need(s?.setModel?.bind(s), "set_model")(op.model); this.model = resolveModelAlias(op.model); return { ok: true };
+      // The model truth moves only after the engine took it — same rule as set_permission_mode below. The
+      // `state` push (M3 §1a-c) is the other half: without it a model change made by ONE client reached no
+      // other client's mirror at all, because `state` is the only settings channel there is.
+      case "set_model": {
+        await need(s?.setModel?.bind(s), "set_model")(op.model);
+        this.model = resolveModelAlias(op.model);
+        this.emit({ kind: "state", status: this.status() });
+        return { ok: true };
+      }
       case "set_permission_mode": {
         await need(s?.setPermissionMode?.bind(s), "set_permission_mode")(op.mode);
         this.mode = op.mode;                                      // our own successful set is the second writer
         this.emit({ kind: "state", status: this.status() });
         return { ok: true };
       }
-      case "set_thinking": await need(s?.setMaxThinkingTokens?.bind(s), "set_thinking")(op.maxTokens); return { ok: true };
+      // `null` is the engine's own "no budget", so it CLEARS the mirror rather than recording a zero —
+      // status() then omits the field, which is what "nobody set one" has to look like on the wire.
+      case "set_thinking": {
+        await need(s?.setMaxThinkingTokens?.bind(s), "set_thinking")(op.maxTokens);
+        this.thinkingTokens = op.maxTokens ?? undefined;
+        this.emit({ kind: "state", status: this.status() });
+        return { ok: true };
+      }
       case "capabilities": return { ok: true, ...await need(s?.capabilities?.bind(s), "capabilities")() };
       case "compact": return { ok: true, outcome: await need(s?.compact?.bind(s), "compact")() };
       case "usage": return { ok: true, usage: await need(s?.usage?.bind(s), "usage")() };
@@ -389,7 +419,17 @@ export class SessionHost {
     return { ...this.opts.config, ...partials, ...extra, permissionBroker: this.broker() };
   }
 
-  private async swapEngine(extra: Partial<HarnessConfig>): Promise<void> {
+  /** `announce` is the SWAP-SHAPE half of the `rewound` broadcast this method owns (M3 §1a-a): `{cleared:true}`
+   *  for a swap to a fresh conversation, `{prevUuid}` for a restore cut at an anchor, nothing for a plain
+   *  resume. The conversation id half is never passed in — it is read here, from the engine that now exists.
+   *
+   *  WHY THE EMISSION LIVES HERE AND NOWHERE ELSE. Every engine swap replaces the conversation under every
+   *  attached client, so every swap owes them the rebuild signal — a resume and a /clear did not send one,
+   *  and a foreign client's swap was invisible to every other client until it happened to notice the id had
+   *  moved. But `rewind()` CALLS this method, so an emission added to each swap path individually would fire
+   *  twice for every conversation rewind (two epoch bumps, two disk rebuilds, and for the app server two
+   *  `thread/rewound` broadcasts). One owner, one emission, on all three paths. */
+  private async swapEngine(extra: Partial<HarnessConfig>, announce: { prevUuid?: string; cleared?: true } = {}): Promise<void> {
     const old = this.session;
     // ONE writer for `resumedFrom`, covering all four callers (resumeSession, clearSession and both rewind
     // arms): `extra.resume` IS the conversation the new engine opens on. `undefined` — /clear and the
@@ -424,6 +464,13 @@ export class SessionHost {
     const deadline = new Promise<void>((r) => { timer = setTimeout(r, graceMs); (timer as { unref?: () => void }).unref?.(); });
     await Promise.race([old?.dispose().catch(() => {}) ?? Promise.resolve(), deadline]);
     clearTimeout(timer);
+    // LAST, after the old engine is gone — the position rewind's own emission held, kept so a follower's
+    // disk rebuild is never racing a session that is still being torn down. `currentSessionId()` and not the
+    // caller's resume target: the fresh engine's own id wins the moment it has one, and a swap that opened a
+    // FRESH conversation has no id to name at all (the discarded one must not travel — a follower whose
+    // cached id has not flipped yet would read the old file and re-render the conversation just thrown away).
+    const sid = this.currentSessionId();
+    this.emit({ kind: "rewound", ...(sid ? { sessionId: sid } : {}), ...announce });
   }
 
   /** Re-send whatever the host has accumulated to a NEW engine process (a resumed/rewound session
@@ -504,7 +551,7 @@ export class SessionHost {
   async clearSession(): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is busy`);
     this.swapInFlight = true;
-    try { await this.swapEngine({ resume: undefined, resumeAt: undefined }); }
+    try { await this.swapEngine({ resume: undefined, resumeAt: undefined }, { cleared: true }); }
     finally { this.swapInFlight = false; }
   }
 
@@ -696,14 +743,13 @@ export class SessionHost {
       }
       if (scope !== "code") {
         if (this.bgTasks.length) this.emit({ kind: "task", data: { type: "task_notification", status: "stopped", task_id: "rewind", summary: "background tasks ended by rewind" } });
-        if (clearing) await this.swapEngine({ resume: undefined, resumeAt: undefined });
-        else await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string });
-        // Broadcast so EVERY attached client rebuilds, not just the one that confirmed (see wire.ts).
-        // `cleared` is POSITIVE, not the absence of prevUuid: the swap above minted a NEW session, and a
-        // client whose cached id has not flipped yet would otherwise read the OLD file, find it non-empty,
-        // and re-render the very conversation the user just discarded.
-        this.emit({ kind: "rewound", sessionId: this.session?.sessionId ?? sid,
-                    ...(clearing ? { cleared: true } as const : anchor.prevUuid ? { prevUuid: anchor.prevUuid } : {}) });
+        // The `rewound` broadcast every attached client rebuilds from is emitted BY swapEngine (M3 §1a-a) —
+        // this method used to emit its own on top of the swap, which is why the announce travels as an
+        // argument now rather than as a second emission here. `cleared` is POSITIVE, not the absence of a
+        // prevUuid: the swap below mints a NEW session, and a client whose cached id has not flipped yet
+        // would otherwise read the OLD file, find it non-empty, and re-render the conversation just discarded.
+        if (clearing) await this.swapEngine({ resume: undefined, resumeAt: undefined }, { cleared: true });
+        else await this.swapEngine({ resume: sid, resumeAt: anchor.prevUuid as string }, { prevUuid: anchor.prevUuid as string });
       }
     } finally {
       this.swapInFlight = false;
@@ -768,7 +814,10 @@ export class SessionHost {
     // arms nothing: the engine flips there by itself ten milliseconds after the allow (probe 97).
     if (outcome.kind === "plan_approve" && outcome.mode !== "default") this.planUpgradeMode = outcome.mode;
     this.settledBy.set(toolUseID, by);
-    this.emit({ kind: "decision_settled", toolUseID, by, decision: outcome.kind });
+    // The WHOLE outcome travels (M3 §1a-e), not just its kind: a client that did not win the race has no
+    // other channel to learn what was actually granted — the feedback typed into a deny, the answers a
+    // question took, the mode an approved plan carried. `decision` stays for a pre-M3 reader.
+    this.emit({ kind: "decision_settled", toolUseID, by, decision: outcome.kind, answer: outcome });
     this.emit({ kind: "state", status: this.status() });
     return { ok: true };
   }
@@ -782,6 +831,9 @@ export class SessionHost {
   private settleParkedForSystem(): void {
     for (const e of this.parked.denyAll()) {
       this.settledBy.set(e.toolUseID, "system");
+      // NO `answer` field here, unlike the human path (§1a-e): that field exists to carry the PAYLOAD the
+      // bare kind string drops, and a system deny has none — `{by:"system", decision:"deny"}` reconstructs
+      // this settlement completely. Adding it would only widen the frame for every teardown.
       this.emit({ kind: "decision_settled", toolUseID: e.toolUseID, by: "system", decision: "deny" });
     }
   }
@@ -794,8 +846,12 @@ export class SessionHost {
     // currentSessionId(), not `this.session?.sessionId`: a resumed session HAS an id from the moment the
     // resume is accepted, and this frame is the only channel that tells a client so (see `resumedFrom`).
     const sid = this.currentSessionId();
-    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, permissionMode: this.mode, ...(sid ? { sessionId: sid } : {}) };
-    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", permissionMode: this.mode, ...(sid ? { sessionId: sid } : {}) };
+    // The settings block (M3 §1a-c) rides BOTH projections: a parked turn is exactly when another client is
+    // most likely to be attaching, and a mirror that goes blank whenever a decision is open is not a mirror.
+    // Each key is omitted when unset, so "never configured" never reads as a value the host invented.
+    const settings = { permissionMode: this.mode, ...(this.model ? { model: this.model } : {}), ...(this.thinkingTokens !== undefined ? { thinkingTokens: this.thinkingTokens } : {}) };
+    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, ...settings, ...(sid ? { sessionId: sid } : {}) };
+    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", ...settings, ...(sid ? { sessionId: sid } : {}) };
   }
 
   /** The host's OWN truthful busy signal, wired to the socket's `prompt` gate (see server.ts). Unlike

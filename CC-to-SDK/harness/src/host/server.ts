@@ -22,7 +22,9 @@ export interface HostHandlers {
   stop(): Promise<void>;
   pending(): PendingEntry[];
   answer(toolUseID: string, outcome: DecisionOutcome, by: string): { ok: boolean; alreadyAnsweredBy?: string; error?: string };
-  prompt(text: string): Promise<void>;
+  /** `uuid` (M3 §1a-b) is the caller's id for the user item this turn starts from — forwarded verbatim to
+   *  the session's submit opts, never invented here: a host-minted id would stitch to nothing. */
+  prompt(text: string, uuid?: string): Promise<void>;
   interrupt(): Promise<void>;
   /** Register ONE sink for ONE connection; the returned function unregisters it. The sink is what the
    *  server writes to that socket — fan-out lives in the host's follower set, never here. */
@@ -165,7 +167,7 @@ export class HostServer {
       // the roster while turn two is still going.
       case "prompt": {
         if (this.handlers.busy()) return { ok: false, error: "busy" };
-        void this.handlers.prompt(op.data.text).catch(() => {});
+        void this.handlers.prompt(op.data.text, op.data.uuid).catch(() => {});
         // runTask increments its seq synchronously before its first await, so it is readable here — the
         // client correlates its submit() to THIS turn's end event by it (adapter, Task 5).
         return { ok: true, accepted: true, seq: this.handlers.turnSeq() };

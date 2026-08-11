@@ -162,7 +162,12 @@ export class RemoteChatSession {
   tasksOp() { return this.send<{ ok: boolean; error?: string; tasks?: BackgroundTaskInfo[] }>({ op: "tasks" }); }
   backgroundOp() { return this.send<{ ok: boolean; error?: string; backgrounded?: boolean }>({ op: "background" }); }
   stopTaskOp(taskId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "stop_task", taskId }); }
-  prompt(text: string): Promise<{ ok: boolean; accepted?: boolean; seq?: number; error?: string }> { return this.send({ op: "prompt", text }); }
+  /** `uuid` (M3 §1a-b) stamps the user item this turn starts from — a TRAILING OPTIONAL, so every existing
+   *  caller is unchanged. Omitted from the frame entirely when absent: the schema refuses an empty one, and
+   *  a key carrying `undefined` is not the same offer as no key. */
+  prompt(text: string, uuid?: string): Promise<{ ok: boolean; accepted?: boolean; seq?: number; error?: string }> {
+    return this.send({ op: "prompt", text, ...(uuid ? { uuid } : {}) });
+  }
   interrupt(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "interrupt" }); }
   stopHost(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "stop" }); }
 
@@ -171,7 +176,10 @@ export class RemoteChatSession {
   setModelOp(model?: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_model", ...(model ? { model } : {}) }); }
   setPermissionModeOp(mode: string) { return this.send<{ ok: boolean; error?: string }>({ op: "set_permission_mode", mode }); }
   setThinkingOp(maxTokens: number | null) { return this.send<{ ok: boolean; error?: string }>({ op: "set_thinking", maxTokens }); }
-  capabilitiesOp() { return this.send<{ ok: boolean; error?: string; models?: unknown[]; commands?: unknown[]; mcpServers?: unknown[] }>({ op: "capabilities" }); }
+  /** FOUR catalogs (M3 §1a-d) — `agents` is the SDK's supportedAgents, forwarded verbatim by the host's
+   *  control passthrough. Every one is optional here for the same reason `error` is: a throwing handler
+   *  answers the generic `{ok:false, error}` instead, and a pre-M3 host answers without `agents`. */
+  capabilitiesOp() { return this.send<{ ok: boolean; error?: string; models?: unknown[]; commands?: unknown[]; mcpServers?: unknown[]; agents?: unknown[] }>({ op: "capabilities" }); }
   compactOp() { return this.send<{ ok: boolean; error?: string; outcome?: unknown }>({ op: "compact" }, COMPACT_TIMEOUT_MS); }
   usageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "usage" }); }
   contextUsageOp() { return this.send<{ ok: boolean; error?: string; usage?: unknown }>({ op: "context_usage" }); }

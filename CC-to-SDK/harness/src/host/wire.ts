@@ -1,4 +1,5 @@
 import type { PendingDecision } from "../permissions/pending.js";
+import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import type { HostStatus } from "./ops.js";
 
@@ -18,7 +19,12 @@ export type HostEvent =
   | { kind: "message"; data: unknown; replay?: true }                        // one SDK message from the turn
 
   | { kind: "decision"; entry: PendingDecision }                            // a decision just parked (any kind)
-  | { kind: "decision_settled"; toolUseID: string; by: string; decision: string }
+  // `decision` (the bare outcome KIND) stays exactly where it was — a client built before M3 reads it and
+  // nothing else. `answer` (§1a-e) is the same outcome object the `answer` op carried, and it is what a
+  // client that did not win the race needs to reconstruct the settlement: the kind string alone drops
+  // `deny.feedback`, `question_answer.answers`, `plan_approve.mode`, every payload the three decision
+  // families carry. Optional because a pre-M3 host emits none, and because the wire must stay additive.
+  | { kind: "decision_settled"; toolUseID: string; by: string; decision: string; answer?: DecisionOutcome }
   | { kind: "tasks_changed"; tasks: BackgroundTaskInfo[] }                   // REPLACE snapshot (Task 4 emits)
   | { kind: "task"; data: unknown }                                         // raw task lifecycle frame (Task 4 emits)
   | { kind: "state"; status: HostStatus }
