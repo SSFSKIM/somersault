@@ -310,6 +310,26 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
   nobody ran the matrix keyed between Wave C (which moved `esc to interrupt` to the footer) and
   wave 2's Task 7 fix round. Credential-gated cells rot silently — green-by-absence. Filed as an
   open Wave C instrument repair (triage doc §5.5).
+- Acceptance found two halves-shipped defects the task reviews missed: A4 — Task 2 removed the
+  fabricated imperative but nothing ENDED the turn on a bare plan rejection (upstream 2.1.227
+  ends it, verifier-compared); A8 — Task 6 deduped boot but each turn still fired the statusLine
+  twice. Probe 106 settled the A4 mechanism live: the SDK deny arm's declared `interrupt: true`
+  ends the turn, the session survives with its id unchanged, and the engine substitutes its own
+  canonical rejection copy for our message on that arm. Residual copy divergence recorded: the
+  bare-reject row reads upstream's interrupted-tool copy, not `User rejected Claude's plan:`.
+- A8's second trigger was invisible to the unit suite: on a conversation's first turn the
+  ai-title read poked the statusLine on its own. The turn refresh now waits for all three facts
+  and pokes once — the readings are second-scale control calls; a 300 ms debounce can never
+  merge them (D-W11's lesson, third recurrence).
+- The W-S5 compaction flake was NOT the wait budget (20 s failed as often as 2 s): Ink wraps
+  `✦ compacted` at the viewport edge where a random-length verb above moves the wrap point, and
+  the test helper turns the wrap newline into a double space. The fix reads the projected
+  transcript, not the wrapped frame. Same instrument-vs-measurement class as the sweep's
+  ready-needle rot.
+- The acceptance fixer correctly declined one instruction: canon 2.1.220 does carry the longer
+  `shift+tab to approve with this feedback` hint, but ccx's shorter form is a documented honesty
+  decision (approve-side feedback cannot reach the model through `canUseTool`) — restoring
+  canon's copy would advertise a channel that silently drops the user's sentence.
 
 Pending — written at finish.
 
