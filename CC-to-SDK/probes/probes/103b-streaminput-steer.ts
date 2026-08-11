@@ -1,4 +1,4 @@
-// probes/probes/103-streaminput-steer.ts — M2b Wave 4 probe 1 (spec table row 1): can
+// probes/probes/103b-streaminput-steer.ts — M2b Wave 4 probe 1 (spec table row 1): can
 // Query.streamInput inject a user message into a RUNNING turn ("steer"), the way the SDK docstring's
 // remote-UI story implies? Declared: streamInput(stream: AsyncIterable<SDKUserMessage>): Promise<void>
 // (sdk.d.ts:2557). Verdict ALIVE requires BOTH: the method exists at runtime AND the injected text

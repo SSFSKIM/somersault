@@ -340,8 +340,8 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
 
 ## Surprises & Discoveries
 
-- 2026-08-11 (M2b Task 5, probes 103–105 run keyed at SDK 0.3.220):
-  - **Probe 103 `streamInput` — ALIVE.** Mid-turn injection steers a running turn: during a
+- 2026-08-11 (M2b Task 5, probes 103b/104/105 run keyed (103 suffixed: a concurrent QA session claimed 103 on main the same day) at SDK 0.3.220):
+  - **Probe 103b `streamInput` — ALIVE.** Mid-turn injection steers a running turn: during a
     four-sequential-Bash-sleeps turn, `q.streamInput(oneShot("abandon remaining steps… reply
     'steered'"))` resolved and the model abandoned steps B–D and replied exactly `steered`.
     Signature note: the declared surface takes an `AsyncIterable<SDKUserMessage>` (a one-shot
