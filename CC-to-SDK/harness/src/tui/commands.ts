@@ -6,6 +6,7 @@ import type { CommandEntry } from "./commandComplete.js";
 import { formatCompactNumber, formatTokens, formatDuration, formatUsd, plural } from "./format.js";
 import type { SettingsRow } from "./settingsRows.js";
 import { THEME_LABELS } from "./theme.js";   // leaf module, no React — safe to import into this pure file
+import { LOCAL_OUTPUT_GUTTER } from "./species.js";   // also React-free; the ONE `⎿` local-output string
 
 export interface ParsedCommand { name: string; args: string }
 
@@ -158,6 +159,22 @@ export function formatModelSet(name: string, saveDefault: boolean): RenderLine[]
 }
 export function formatThink(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
+}
+/** W2 T5, fold s2qa4-10 — `/effort <level>` used to apply SILENTLY: the only feedback was the ten-second
+ *  chip, so once it decayed the transcript recorded that a command was typed and not what it did. Upstream's
+ *  own answer is a local-command result row (`frames-s2qa4/08-cc-effort-args`):
+ *  `  ⎿  Set effort level to low (saved as your default for new sessions): Quick, straightforward …`.
+ *
+ *  TWO DECLARED DIVERGENCES inside a verbatim frame. The gutter and the `Set effort level to <level>` head
+ *  are upstream's; the two clauses after it are not printable here. (1) SCOPE: ccx's `/effort` writes no
+ *  default — it is a live flag op and nothing else (`EffortDialog`'s subtitle already says "This session
+ *  only"), so printing upstream's persistence sentence would be a claim about a file we never write.
+ *  (2) DESCRIPTION: the per-level sentences in that frame are 2.1.226 copy for a SEVEN-level domain
+ *  (`ultracode`/`auto`); ccx's domain is the 2.1.220 five, and inventing descriptions for them would be new
+ *  copy wearing an upstream citation. The level is spelled RAW/lowercase, as `effortHint` spells it and as
+ *  the wire takes it — `effortTitle` is the ROW's form, not this one. */
+export function formatEffortSet(level: string): RenderLine[] {
+  return [{ text: `Set effort level to ${level} (this session only)`, gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } }];
 }
 /** The one surface here with NO verbatim upstream counterpart: upstream's post-compact notice (`Fl_`,
  *  L314674) prints the word `Compacted` plus hint clauses and no numbers at all, so this before→after pair

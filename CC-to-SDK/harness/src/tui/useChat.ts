@@ -38,7 +38,7 @@ import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -374,8 +374,15 @@ export function useChat(
   // map and they mean opposite things. Set in BOTH arms of the fetch (see the effect): success settles it,
   // and so does failure — an unanswerable capability is UNKNOWN support, never absent support.
   const [effortCapsSettled, setEffortCapsSettled] = useState(false);
-  //   Tri-state ON PURPOSE. `false` only once the catalog has SAID so; `undefined` means "not known yet",
-  //   which every consumer treats as "assume it has one".
+  //   Tri-state ON PURPOSE, and the three states are "the catalog has not answered yet" (undefined, treated
+  //   as "assume it has one"), "the catalog answered and this model has the axis", and "the catalog answered
+  //   and it does not".
+  //   W2 T5 (s2qa4-06) CORRECTED WHICH ANSWER IS WHICH. The map holds an entry for every row the catalog
+  //   returned, whether or not that row carried `supportsEffort` — so "no entry" is still not-yet-answered,
+  //   but an entry WITHOUT the field is the catalog having answered by omission. Probe 103: live, every row
+  //   states `supportsEffort: true` plus `supportedEffortLevels` except haiku, which carries neither. Hence
+  //   `=== true` and not `!== false`: the old polarity read haiku's silence as consent and is what let the
+  //   §C6.2 hint and the `/status` block claim an effort axis on a model that has none.
   //   DIVERGENCE, timing only: upstream answers this synchronously — `Fk(model)` (L76243) is a local model
   // registry, so a model without an effort axis never shows the hint for even one frame. ccx has no such
   // registry; the only authority is `capabilities().models[].supportsEffort`, one round-trip after mount.
@@ -384,7 +391,7 @@ export function useChat(
   // a second or three on exactly the models upstream never hints on. The wait costs nothing on supported
   // models — the hint's ten-second clock is restarted by the catalog-landing render either way — and costs
   // nothing on a FAILED fetch either, because failure settles the latch too.
-  const effortSupported: boolean | undefined = effortCap === undefined ? undefined : effortCap.supportsEffort !== false;
+  const effortSupported: boolean | undefined = effortCap === undefined ? undefined : effortCap.supportsEffort === true;
   const effortLevels: readonly EffortLevel[] = effortCap?.levels ?? EFFORT_LEVELS;
   /** DIVERGENCE: upstream's `(default)` clause compares the level against the MODEL's default — `I5t`, off
    *  its own per-model registry (`_5(model, value)` falls back to `high`, L76470). The SDK catalog exposes
@@ -1475,8 +1482,11 @@ export function useChat(
         // W-C T11 (EP-C6). No arg = upstream's shape, the dialog (`local-jsx`, L447278). An arg is ccx's
         // documented divergence (commands.ts's COMMANDS entry says why) and the only keyboard route to the
         // domain gate — a dialog cannot produce an invalid level.
+        // W2 T5 (fold s2qa4-10): the arg form now says what it did. The `⎿` row is the ARGUMENT form's
+        // alone — the dialog's Enter has the row on screen as its own feedback, and the picker's commit
+        // rides out with `formatModelSet`'s notice.
         case "effort":
-          if (cmd.args) applyEffort(cmd.args.trim());
+          if (cmd.args) { const applied = applyEffort(cmd.args.trim()); if (applied) append(formatEffortSet(applied)); }
           else openEffortDialog();
           break;
         case "mcp": {
@@ -1823,17 +1833,23 @@ export function useChat(
    *  Commit-before-await, the same ordering `pickModel`/`setThink` settled on (final review Finding 2): the
    *  engine call is fire-and-forget with a swallowed rejection, so deferring the local commit until it
    *  settled would buy no correctness and would open a window where the hint and the status line still read
-   *  the old level. */
-  function applyEffort(level: string): void {
-    if (disposed.current) return;
+   *  the old level.
+   *
+   *  W2 T5: RETURNS the level it applied, or `undefined` when it refused (or the hook is torn down). Only
+   *  the `/effort <level>` arm reads it — that surface, and only that surface, prints a result row, and the
+   *  refusal below already prints its own. Reporting it back beats an `announce` flag because the domain
+   *  gate stays in one place and no caller can print a confirmation for a level that never applied. */
+  function applyEffort(level: string): EffortLevel | undefined {
+    if (disposed.current) return undefined;
     if (!isEffortLevel(level)) {
       append([{ text: `effort: unknown effort level "${level}" · try low/medium/high/xhigh/max`, color: role("error") }]);
-      return;
+      return undefined;
     }
     setEffortState(level);
     // Feature-tested like every other SettingsOps verb: a lib Session (whose config is fixed at construction)
     // has no flag layer to write, and the local state above is still the truthful thing to show.
     if (hasSettingsOps(session)) void session.setEffort(level).catch(() => {});
+    return level;
   }
   /** Snapshot at open time, exactly as `openModelPicker` does, so ChatApp reads state and nothing else. */
   function openEffortDialog(): void {

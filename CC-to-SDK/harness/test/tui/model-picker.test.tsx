@@ -419,13 +419,23 @@ describe("ModelPicker — the mid-conversation switch confirm (EP-S8)", () => {
 
 // WAVE C TASK 11 (EP-C6): the effort row — `yva`, L441142 — which sits BETWEEN the list and the footer.
 // The row reflects the FOCUSED catalog row's effort capability, because that is the model the picker is
-// about to hand back; the level itself is the session's and is applied live by ←/→ (upstream's own
-// `modelPicker:decreaseEffort`/`increaseEffort` step `x5t`, the same state the hint reads).
+// about to hand back.
+//
+// WAVE 2 TASK 5 (s2qa4-05/06) REWROTE THE TRANSACTION under these tests. The level is STAGED: ←/→ move a
+// local value and flip a dirty bit (`lOH`, L441052), and the ONLY commit is `nvn` (L441077) — reached from
+// the Select's Enter, the `s` chord, or the switch-confirm accept, and guarded on that dirty bit. Esc
+// commits nothing by construction. The old pins on this describe asserted the opposite (a callback per
+// keypress) and are rewritten below, not deleted: each one names what replaced it.
 describe("ModelPicker — the effort row (§C6.3, L441142)", () => {
+  // The Haiku row carries NO `supportsEffort` key AT ALL. That is what the live catalog returns (probe 103:
+  // every model's entry has `supportsEffort: true` + `supportedEffortLevels` EXCEPT haiku, which omits both),
+  // and the old fixture's hardcoded `supportsEffort: false` is exactly why a green suite coexisted with a
+  // Haiku row the user could still step. Absence is the case that has to be pinned.
   const EFFORT_MODELS: ModelInfo[] = [
     { value: "opus", displayName: "Opus 5", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] },
-    { value: "haiku", displayName: "Haiku 4.5", supportsEffort: false },
+    { value: "haiku", displayName: "Haiku 4.5" },
     { value: "trim", displayName: "Trimmed", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high"] },
+    { value: "sonnet", displayName: "Sonnet 5", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] },
   ];
   function mountEffort(props: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
     const steps: string[] = [];
@@ -465,24 +475,35 @@ describe("ModelPicker — the effort row (§C6.3, L441142)", () => {
     expect(flat(frame(r.lastFrame))).not.toContain("←/→ to adjust");
   });
 
-  // The second step computes off the level the FIRST one reported, not off the (unchanged) prop: this test's
-  // parent records the callback and never re-renders, which is exactly the shape of two arrows arriving in a
-  // single stdin chunk. high →(right) xhigh →(left) high.
-  it("→ and ← step the level and report it, and a same-chunk pair does not net one step", async () => {
+  // W2 T5 — replaces "→ and ← step the level and REPORT it". A step is now visible on the ROW and nowhere
+  // else: `lOH` (L441052) writes the local value and the dirty bit, never the app-state setter. The
+  // same-chunk half of the old pin survives unchanged in substance — both arrows arrive in ONE stdin write,
+  // with no render in between, and the second must compute off what the first staged (`stagedRef`, which is
+  // what the old `effortRef` prop bridge became).
+  it("→ and ← step the ROW and report nothing; a same-chunk pair does not net one step", async () => {
     const r = mountEffort();
     await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
     await tick();
-    r.stdin.write("\x1b[C"); await tick();
-    r.stdin.write("\x1b[D"); await tick();
-    expect(r.steps).toEqual(["xhigh", "high"]);
+    r.stdin.write("\x1b[C");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    expect(r.steps).toEqual([]);
+    r.stdin.write("\x1b[D");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("High effort"));
+    expect(r.steps).toEqual([]);
+    r.stdin.write("\x1b[C\x1b[C");                                            // ONE chunk, two arrows
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Max effort"));     // high → xhigh → max, not one step
+    expect(r.steps).toEqual([]);
   });
 
   it("a model with a restricted level list never steps onto one it does not support", async () => {
     const r = mountEffort({ current: "trim" } as never);
     await waitFor(() => frame(r.lastFrame).includes("Trimmed"));
     await tick();
-    r.stdin.write("\x1b[C"); await tick();
-    expect(r.steps).toEqual(["low"]);                  // high → wraps, because `trim` stops at high
+    r.stdin.write("\x1b[C");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Low effort"));     // high → wraps, `trim` stops at high
+    r.stdin.write("\r");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.steps).toEqual(["low"]);
   });
 
   it("an unsupported focused row makes ←/→ inert", async () => {
@@ -493,6 +514,81 @@ describe("ModelPicker — the effort row (§C6.3, L441142)", () => {
     await tick();
     r.stdin.write("\x1b[C"); await tick();
     expect(r.steps).toEqual([]);
+    // …and nothing was staged behind the unsupported row either: Enter on it commits no effort at all.
+    r.stdin.write("\r");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.steps).toEqual([]);
+  });
+
+  // ── W2 T5: THE TRANSACTION (s2qa4-05). Four commit paths and one discard, all of them `nvn`'s dirty
+  // guard (L441077) read from a different side.
+  it("Esc DISCARDS the staged level: nothing is committed and the row was the only thing that moved", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("Max effort"));
+    r.stdin.write("\x1b");
+    await waitFor(() => r.wasCancelled());
+    expect(r.steps).toEqual([]);
+    expect(r.picked).toEqual([]);
+  });
+
+  it("Enter commits the staged level ONCE, with the level the last step left", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("Max effort"));
+    r.stdin.write("\r");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.steps).toEqual(["max"]);                                         // once, and the FINAL level
+    expect(r.picked).toEqual([{ model: "opus", saveDefault: true }]);
+  });
+
+  it("Enter with no step commits NOTHING — the dirty guard, not the equality of the values", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\r");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.steps).toEqual([]);
+  });
+
+  it("the `s` (session-only) chord commits the staged level too", async () => {
+    const r = mountEffort();
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    r.stdin.write("s");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.steps).toEqual(["xhigh"]);
+    expect(r.picked).toEqual([{ model: "opus", saveDefault: false }]);
+  });
+
+  it("the switch confirm holds the effort with the pick: a decline commits nothing, the accept commits once", async () => {
+    const r = mountEffort({ outputTokens: 500 } as never);                    // T12's gate armed
+    await waitFor(() => frame(r.lastFrame).includes("Opus 5"));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    r.stdin.write("\x1b[B\x1b[B\x1b[B");                                      // ↓↓↓ → Sonnet 5, a real switch
+    await waitFor(() => plain(frame(r.lastFrame)).includes("❯ 4. Sonnet 5") || plain(frame(r.lastFrame)).includes("❯ Sonnet 5"));
+    r.stdin.write("\r");
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    r.stdin.write("\x1b");                                                    // decline: back to the list
+    await waitFor(() => flat(frame(r.lastFrame)).includes("xHigh effort"));
+    expect(r.steps).toEqual([]);                                              // a refused switch refuses the effort with it
+    expect(r.picked).toEqual([]);
+    // The staging SURVIVES the decline (the Select remounts, the picker does not), so the second run through
+    // the same gate commits the level that was staged before the first one.
+    r.stdin.write("\x1b[B\x1b[B\x1b[B");
+    await waitFor(() => plain(frame(r.lastFrame)).includes("❯ 4. Sonnet 5") || plain(frame(r.lastFrame)).includes("❯ Sonnet 5"));
+    r.stdin.write("\r");
+    await waitFor(() => flat(frame(r.lastFrame)).includes(CONFIRM_TITLE));
+    r.stdin.write("\r");                                                      // accept
+    await waitFor(() => r.picked.length > 0);
+    expect(r.steps).toEqual(["xhigh"]);
+    expect(r.picked).toEqual([{ model: "sonnet", saveDefault: true, confirmed: true }]);
   });
 });
 

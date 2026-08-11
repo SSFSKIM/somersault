@@ -15,10 +15,11 @@ import { EffortDialog } from "../../src/tui/EffortDialog.js";
 import { createNotificationStore } from "../../src/tui/notifications.js";
 import {
   EFFORT_ADJUST_HINT, EFFORT_DIALOG_FOOTER, EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS,
-  MAX_EFFORT_CAVEAT, effortGlyph, effortHint, effortRowText, effortTitle, effortUnsupportedText, isEffortLevel,
-  stepEffort, type EffortLevel,
+  MAX_EFFORT_CAVEAT, MODEL_FOOTER, effortGlyph, effortHint, effortRowText, effortTitle, effortUnsupportedText,
+  isEffortLevel, stepEffort, type EffortLevel,
 } from "../../src/tui/modelPickerModel.js";
-import { formatStatus } from "../../src/tui/commands.js";
+import { formatStatus, formatEffortSet } from "../../src/tui/commands.js";
+import { LOCAL_OUTPUT_GUTTER } from "../../src/tui/species.js";
 // The other two spellings of the same domain. `modelPickerModel.ts` says this file pins all three equal, so
 // this file has to actually SEE all three: the tui may not import config at runtime (that boundary is the
 // whole reason the literal is written out three times), but a test is not bound by it.
@@ -41,6 +42,9 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
  *  is a resolved promise plus a state commit plus an effect, which is microtasks, so ~20 macrotask turns is
  *  orders of magnitude of headroom and still costs a few milliseconds. */
 async function settle(turns = 20) { for (let i = 0; i < turns; i++) await new Promise((r) => setTimeout(r, 1)); }
+/** The fold's own sentence, written out here rather than imported, so the formatter cannot redefine what
+ *  this file claims it prints. `formatEffortSet` is pinned against it in its own describe below. */
+const EFFORT_SET_TEXT = (level: string) => `Set effort level to ${level} (this session only)`;
 /** Type a slash command, WAIT for the composer to echo it, then submit — the same two-step every
  *  command-driving test in `chat.test.tsx` uses. One `write("/effort\r")` races the composer's own
  *  keystroke handling and the Return can land before the text does. */
@@ -244,6 +248,21 @@ describe("EffortDialog", () => {
 // `/status` (EP-C6's acceptance reads the field there)
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════
 
+// W2 T5 fold (s2qa4-10). Canon's row is `  ⎿  Set effort level to low (saved as your default for new
+// sessions): Quick, straightforward implementation with minimal overhead` (frames-s2qa4/08-cc-effort-args).
+// Ours keeps the gutter and the level and diverges on the two clauses it cannot honestly print: ccx's
+// `/effort` writes NO default (`EffortDialog`'s own subtitle says "This session only"), and ccx has no
+// per-level description table at all — the ones in the frame are 2.1.226 copy for a seven-level domain that
+// includes `ultracode`/`auto`, which ccx does not have (see the domain describe at the top of this file).
+describe("formatEffortSet — the /effort <level> result row (s2qa4-10)", () => {
+  it("is one `⎿` local-output row naming the level and its scope", () => {
+    const [row] = formatEffortSet("low");
+    expect(row!.text).toBe("Set effort level to low (this session only)");
+    expect(row!.gutter).toEqual({ text: LOCAL_OUTPUT_GUTTER, dim: true });
+    expect(formatEffortSet("xhigh")[0]!.text).toBe(EFFORT_SET_TEXT("xhigh"));   // the RAW level, as the wire spells it
+  });
+});
+
 describe("formatStatus", () => {
   it("carries the effort row, in the same 11-column gutter every other row uses", () => {
     const lines = formatStatus({ mode: "default", effort: "xhigh" }).map((l) => l.text);
@@ -272,9 +291,13 @@ function fakeEffortRemote(effortCalls: string[], remoteOpts: FakeRemoteOpts = {}
   };
 }
 
+// W2 T5: the Haiku row carries NO `supportsEffort` key, which is what the LIVE catalog returns (probe 103 —
+// every other model's entry has `supportsEffort: true` plus `supportedEffortLevels`; haiku omits both). The
+// old fixture spelled it `false`, a value the catalog never sends, which is why the suite stayed green while
+// the shipped surface treated Haiku as an effort model.
 const EFFORT_CAPS = [
   { value: "opus", displayName: "Opus 5", description: "most capable", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] },
-  { value: "haiku", displayName: "Haiku 4.5", description: "fastest", supportsEffort: false },
+  { value: "haiku", displayName: "Haiku 4.5", description: "fastest" },
 ];
 
 function mountApp(opts: { effortCalls: string[]; store?: ReturnType<typeof createNotificationStore>; initialEffort?: string; initialModel?: string; capsGate?: Promise<void>; capsFail?: boolean }) {
@@ -415,5 +438,79 @@ describe("/effort", () => {
     await waitFor(() => frame(r.lastFrame).includes("unknown effort level"));
     expect(calls).toEqual([]);
     expect(flat(r.lastFrame)).toContain("try low/medium/high/xhigh/max");
+  });
+
+  // W2 T5 fold (s2qa4-10): the argument form applied SILENTLY — once the ten-second chip expired, the
+  // transcript recorded that a command was typed and not what it did.
+  it("`/effort <level>` prints the ⎿ result row naming the level, and a REFUSED level prints none", async () => {
+    const calls: string[] = [];
+    const r = mountApp({ effortCalls: calls, initialEffort: "high" });
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await runCommand(r, "/effort low");
+    await waitFor(() => flat(r.lastFrame).includes(EFFORT_SET_TEXT("low")));
+    expect(flat(r.lastFrame)).toContain(`⎿ ${EFFORT_SET_TEXT("low")}`);
+    await runCommand(r, "/effort bogus");
+    await waitFor(() => frame(r.lastFrame).includes("unknown effort level"));
+    expect(flat(r.lastFrame)).not.toContain(EFFORT_SET_TEXT("bogus"));
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════
+// W2 T5 (s2qa4-05) — the `/model` picker's effort row is a TRANSACTION, at the REPL level: what the wire
+// sees, and what `/status` says afterwards. The component-level pins live in `model-picker.test.tsx`; these
+// two are the finding's own repro, which is an app-level one (`/model`, arrows, Esc, `/status`).
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe("the /model picker's effort row (s2qa4-05)", () => {
+  async function openPickerAndStepTwice(r: ReturnType<typeof mountApp>) {
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await runCommand(r, "/model");
+    await waitFor(() => flat(r.lastFrame).includes(MODEL_FOOTER));
+    await tick();
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(r.lastFrame).includes("xHigh effort"));
+    r.stdin.write("\x1b[C"); await waitFor(() => flat(r.lastFrame).includes("Max effort"));
+  }
+
+  it("Esc discards the stepped level: no wire op, and /status still reports the level the session had", async () => {
+    const calls: string[] = [];
+    const r = mountApp({ effortCalls: calls, initialEffort: "high" });
+    await openPickerAndStepTwice(r);
+    r.stdin.write("\x1b");
+    await waitFor(() => !flat(r.lastFrame).includes(MODEL_FOOTER));
+    await settle();
+    expect(calls).toEqual([]);
+    await runCommand(r, "/status");
+    await waitFor(() => flat(r.lastFrame).includes("effort high"));
+    expect(flat(r.lastFrame)).not.toContain("effort max");
+  });
+
+  it("Enter commits it once, and /status reports the level the last arrow left", async () => {
+    const calls: string[] = [];
+    const r = mountApp({ effortCalls: calls, initialEffort: "high" });
+    await openPickerAndStepTwice(r);
+    r.stdin.write("\r");
+    await waitFor(() => calls.length > 0);
+    await settle();
+    expect(calls).toEqual(["max"]);
+    await runCommand(r, "/status");
+    await waitFor(() => flat(r.lastFrame).includes("effort max"));
+  });
+
+  it("the cursor on Haiku locks the row — the live catalog omits `supportsEffort` and absence means absent", async () => {
+    const calls: string[] = [];
+    const r = mountApp({ effortCalls: calls, initialEffort: "high" });
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await runCommand(r, "/model");
+    await waitFor(() => flat(r.lastFrame).includes(MODEL_FOOTER));
+    await tick();
+    r.stdin.write("\x1b[B");                                            // ↓ → Haiku 4.5
+    await waitFor(() => flat(r.lastFrame).includes(effortUnsupportedText("Haiku 4.5")));
+    expect(flat(r.lastFrame)).not.toContain(EFFORT_ADJUST_HINT);
+    r.stdin.write("\x1b[D"); r.stdin.write("\x1b[D");                   // ←← : inert
+    await settle();
+    expect(flat(r.lastFrame)).toContain(effortUnsupportedText("Haiku 4.5"));
+    r.stdin.write("\r");
+    await waitFor(() => !flat(r.lastFrame).includes(MODEL_FOOTER));
+    expect(calls).toEqual([]);
   });
 });

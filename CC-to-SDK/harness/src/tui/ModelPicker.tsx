@@ -38,8 +38,15 @@ export interface ModelInfo {
   /** WAVE C TASK 11 (EP-C6): the catalog's own two effort fields (`sdk.d.ts` ModelInfo). They come off
    *  `capabilities().models` — the SAME source the picker's rows already come from, which is why the effort
    *  row needs no second capability lookup and why "does this model support effort" is answered per ROW
-   *  rather than once per session. Absent on a catalog that predates them, which reads as "unknown": the
-   *  supported arm renders and the full five-level list is what stepping wraps through. */
+   *  rather than once per session.
+   *
+   *  WAVE 2 TASK 5 (s2qa4-06) SETTLED WHAT ABSENCE MEANS, and it is the opposite of what this comment used
+   *  to say. Probe 103 dumped the live catalog: every model's row carries `supportsEffort: true` PLUS
+   *  `supportedEffortLevels` except haiku, whose row omits both fields entirely. So the catalog states
+   *  support positively and says nothing when there is none — absence is ABSENT support, not unknown
+   *  support, and the gate below is `=== true`. (A catalog too old to carry the field at all therefore
+   *  renders every row locked. That is the honest reading of a catalog that never claims the axis, and it
+   *  is not reachable on any SDK this harness supports.) */
   supportsEffort?: boolean;
   supportedEffortLevels?: EffortLevel[];
 }
@@ -67,14 +74,19 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
    *  gets it so the confirmation notice can say which of the two sentences applies. `confirmed` is set only
    *  when this pick passed the T12 switch confirm, and it is what tells `useChat` to stamp the ack — a pick
    *  that never saw the dialog must not suppress the NEXT one. */
-  /** WAVE C TASK 11 (EP-C6), the effort row's three props. `effort` is the SESSION's live level (useChat
-   *  owns it — the row reflects state, it does not hold it), `defaultEffort` is what the `(default)` clause
-   *  compares against, and `onEffortChange` fires on every ←/→ step.
+  /** WAVE C TASK 11 (EP-C6), the effort row's three props. `effort` is the level the picker OPENS on (the
+   *  session's live one; useChat owns it), `defaultEffort` is what the `(default)` clause compares against,
+   *  and `onEffortChange` is the COMMIT — it fires at most once per picker, on the way out.
    *
-   *  STEPPING APPLIES LIVE, unlike the standalone dialog's staged Enter (EffortDialog.tsx says why): §C6.3's
-   *  row carries only "←/→ to adjust" — it has no confirm of its own, and this dialog's Enter already means
-   *  "pick this model". So a step is the whole gesture, and the hint that decays ten seconds later is the
-   *  feedback for it. */
+   *  WAVE 2 TASK 5 (s2qa4-05) — THE PICKER IS A TRANSACTION, and the old "stepping applies live" reading was
+   *  wrong about upstream, not merely different from it. `zAe` seeds the level into LOCAL state once at
+   *  mount (L440938); `lOH` (L441052) — the ←/→ handler — writes `$PH` (that local value) and `IAI(!0)` (a
+   *  dirty flag) and NEVER the app-state setter; and the single commit is `nvn` (L441077), reached from the
+   *  Select's `onChange` (Enter) or the `s` chord and GUARDED on that dirty flag. Esc is a no-op by
+   *  construction: no path outside those two writes anything. §C6.3's footer says only "←/→ to adjust"
+   *  because the dialog's own Enter carries the effort out WITH the model, not because a step is the whole
+   *  gesture. The fleet found ccx's live-apply as s2qa4-05 (stepped level survived Esc; `/status` reported
+   *  a level the user cancelled). */
   effort?: EffortLevel;
   defaultEffort?: EffortLevel;
   onEffortChange?: (level: EffortLevel) => void;
@@ -103,6 +115,21 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
   // us in, not the one its render closed over.
   const [confirm, setConfirm, confirmRef] = useRefState<{ m: ModelInfo; saveDefault: boolean } | null>(null);
 
+  // W2 T5: THE STAGED LEVEL — `zAe`'s own `useState(effort)` (L440938). Seeded from the prop ONCE, at mount,
+  // and never re-seeded: from here on the picker owns the value on screen and the parent owns the session's,
+  // and they are deliberately allowed to differ until the commit reconciles them. (This is also why the
+  // parent's `effort` prop is read nowhere below except as this seed and as the "is there an axis at all"
+  // gate on the row.)
+  //   Ref-backed for the reason `focusRef` is: `→→` can arrive in ONE stdin chunk and dispatch twice with no
+  // render between them, so the second step must compute off what the first staged. That is exactly the job
+  // the old `effortRef` prop-bridge did, which is why it is gone — this ref subsumes it, and without the
+  // bridge's weakness of being overwritten by a prop the parent may not have changed.
+  const [staged, setStaged, stagedRef] = useRefState<EffortLevel | undefined>(effort);
+  // `IAI` (L441052). The commit is guarded on it and not on `staged !== effort` for a reason upstream's own
+  // guard has: a step out and back (→ then ←) lands on the level the picker opened with, and re-firing the
+  // op for it would re-post the decaying hint and re-hit the wire for a no-op edit.
+  const dirtyRef = useRef(false);
+
   const commit = (m: ModelInfo, saveDefault: boolean, confirmed: boolean) => {
     // The write goes FIRST, so a caller that unmounts the picker inside `onPick` (every caller does) cannot
     // race it. It is the picker's own job and not useChat's for one reason: `s` never reaches useChat as a
@@ -110,6 +137,15 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
     // BEST-EFFORT, like every other prefs writer (ChatApp's `app:toggleTodos`): KeymapProvider does not catch
     // what an action handler throws, so an unwritable prefs dir would take the whole REPL down on Enter.
     if (saveDefault) { try { savePrefs({ model: m.value }); } catch { /* prefs are best-effort */ } }
+    // W2 T5: `nvn`'s dirty-guarded write (L441077). THIS is the whole commit surface of the effort
+    // transaction, and it sits here rather than in each key handler because all THREE paths that can end the
+    // picker with a pick funnel through `commit`: the Select's Enter and the `s` chord (both via `choose`)
+    // and the T12 switch-confirm's accept. A declined confirm returns to the list without passing here, so
+    // the staged level and the dirty flag survive it — the pick was refused, not the edit.
+    // Before `onPick`, which unmounts us: the effort belongs to the same gesture as the model, and a parent
+    // that tears the picker down inside `onPick` must not be able to strand it.
+    const staged = stagedRef.current;
+    if (dirtyRef.current && onEffortChange && staged) { dirtyRef.current = false; onEffortChange(staged); }
     onPick(m, { saveDefault, ...(confirmed ? { confirmed: true } : {}) });
   };
 
@@ -134,25 +170,19 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
   // its `s` key acts on. Read through the focus REF and not the rendered row for the reason the `s` handler
   // does: `↓→` can arrive in one stdin chunk with no render between the two dispatches.
   const rowOf = (value: string): ModelInfo | undefined => models.find((m) => m.value === value);
-  // The level the NEXT step computes from. The parent owns `effort`, but `→→` can arrive in one stdin chunk
-  // and dispatch twice with no render between them — off the prop alone the second press would recompute
-  // from the same pre-chunk level and the pair would net ONE step. Reassigned from the prop on every render,
-  // so a parent that declines to apply a step (or applies a different level) still wins at the next paint;
-  // this only bridges the gap inside a chunk. Same reason `focusRef` exists two lines up.
-  const effortRef = useRef<EffortLevel | undefined>(effort);
-  effortRef.current = effort;
-  const effortSupported = (row: ModelInfo | undefined): boolean => row?.supportsEffort !== false;
+  // W2 T5 (s2qa4-06): POLARITY. Support is stated positively by the live catalog or it is not there at all
+  // (probe 103 — see `supportsEffort` above), so `undefined` means locked, exactly as haiku's row means it.
+  const effortSupported = (row: ModelInfo | undefined): boolean => row?.supportsEffort === true;
   const stepBy = (delta: 1 | -1): void => {
-    // Three ways to be inert, all of them "there is nothing here to adjust": no parent listening, the
-    // confirm screen has replaced the list (same reason `s` is inert behind it), or the focused model has no
-    // effort axis at all.
-    const from = effortRef.current;
+    // Three ways to be inert, all of them "there is nothing here to adjust": no parent listening (nothing to
+    // commit TO, so staging would be a control that lies), the confirm screen has replaced the list (same
+    // reason `s` is inert behind it), or the focused model has no effort axis at all.
+    const from = stagedRef.current;
     if (!onEffortChange || !from || confirmRef.current) return;
     const row = rowOf(focusRef.current);
     if (!effortSupported(row)) return;
-    const next = stepEffort(row?.supportedEffortLevels ?? EFFORT_LEVELS, from, delta);
-    effortRef.current = next;
-    onEffortChange(next);
+    setStaged(stepEffort(row?.supportedEffortLevels ?? EFFORT_LEVELS, from, delta));
+    dirtyRef.current = true;
   };
   // Inert behind the confirm: the list is not on screen, so there is no focused row for `s` to mean, and a
   // second pick queued behind an unanswered warning is exactly what the warning is there to prevent.
@@ -208,7 +238,10 @@ export function ModelPicker({ models, current, sessionModel, activeModel, output
           having an effort axis to show at all: `ccx attach` never learns a launch level, and a parent that
           passes none gets the picker exactly as it was before this task. */}
       {effort ? (
-        <EffortRow level={effort} isDefault={effort === defaultEffort}
+        // W2 T5: the row draws the STAGED level, which is the only place a step is visible until the commit.
+        // Gated on the PROP, not the staged value — "did the caller give us an axis at all" is a fact about
+        // the session (`ccx attach` never learns a launch level) and cannot change while we are mounted.
+        <EffortRow level={staged ?? effort} isDefault={(staged ?? effort) === defaultEffort}
           supported={effortSupported(rowOf(focus))}
           {...(() => { const n = modelLabel(rowOf(focus)); return n ? { modelName: n } : {}; })()} />
       ) : null}
