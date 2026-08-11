@@ -294,8 +294,22 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
   effort axis, and on the `/model` surface (skipSettingsWrite, L471450) it is the only write.
   Third bundle-settles-testimony overturn of the wave, caught by a reviewer re-opening the
   bundle. Canon also appends ` with <level> effort` to the model-set notice (L471428).
-
-## Outcomes & Retrospective
+- Task 7 review: the s2qa2-05 gate and the damage come from the same write. Ink's synchronous
+  resize handler repaints before React effects run, and that one write both strands the tall
+  dialog's header AND zeroes the `tallWrites` count the grow edge gated on — the fix as shipped
+  could never fire in its target scenario. Pattern that resolves it: latch the fact in ccx's own
+  resize listener, which attaches before `render()` and therefore reads pre-repaint state.
+  Reviewer falsified the repaired build's new matrix cell on hardware (pre-fix gate → header
+  twice; latch → once).
+- Task 7 fix round: a fixer correctly overruled a reviewer's prescribed fix with a mechanism
+  argument — "forget the burst whenever the verdict caches" would have deleted the settle pass,
+  because the reflow probe answers mid-drag on essentially every real burst. The reviewer
+  re-derived it and withdrew. Prescribed fixes are testimony too; the recipient owes them the
+  same verification as any premise.
+- The resize-matrix `a3` live cell rotted invisibly for a full wave: it skips keyless, and
+  nobody ran the matrix keyed between Wave C (which moved `esc to interrupt` to the footer) and
+  wave 2's Task 7 fix round. Credential-gated cells rot silently — green-by-absence. Filed as an
+  open Wave C instrument repair (triage doc §5.5).
 
 Pending — written at finish.
 
