@@ -189,6 +189,19 @@ describe("the tall-frame chunk resynchronizes the proxy's geometry", () => {
     out.noteResizeSignal();
     expect(out.takeTallAtSignal()).toBe(false);
   });
+
+  // …and the re-statement holds even when NOBODY READ the latch in between. That is the whole difference between
+  // `= tall > 0` and a sticky `||=`: a latch armed during a tall episode and never consumed would otherwise
+  // survive an arbitrary run of later signals and fire a viewport wipe on an ordinary screen, destroying the rows
+  // above it. Every read consumes, so the existing cases cannot see this (fix round 2).
+  it("re-states an unread latch on the next signal instead of accumulating it", () => {
+    const { out } = proxyOn(120, 40);
+    out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
+    out.noteResizeSignal();                                             // armed with a tall write outstanding…
+    out.stdout.write(eraseLines(2) + "an ordinary frame\n");            // …and the frame that stands the count down lands
+    out.noteResizeSignal();                                             // the next signal arrives on an ordinary screen
+    expect(out.takeTallAtSignal()).toBe(false);
+  });
 });
 
 describe("the tall-frame chunk keeps the terminal's scrollback", () => {

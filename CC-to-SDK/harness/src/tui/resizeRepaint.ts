@@ -176,7 +176,12 @@ export interface SettleSample { frame: string; frameAtNarrowest: string; parkedC
  *  drag scaled the claim with the wrong frame, and the reviewer drove 31 rows erased over 21 occupied and 0
  *  owed — ten live viewport rows. Where this is wrong it is wrong SHORT: a burst with several shrinks strands
  *  more than one frame's worth and this claims only the deepest single excursion, which leaves a cosmetic row
- *  rather than eating a live one. */
+ *  rather than eating a live one.
+ *  THE STANDING UNDER-ERASE RESIDUAL, for whoever reads a stale row and comes looking: on a terminal that has
+ *  ALREADY been measured, a burst leg whose frame write took Ink's tall-frame (`clearTerminal`) branch or was
+ *  deduped away is out of this pass's reach by construction — `onResize` ends the burst on any narrowing once a
+ *  verdict is cached, on the argument that every write from there is corrected at the write, and those two are
+ *  the writes that are not. Cosmetic, and on the side of the asymmetry at `:6-9`. */
 export function correctionAtSettle(s: SettleSample, verdict: ReflowVerdict | undefined): string {
   if (verdict !== "reflow" || !(s.width >= 2) || !(s.narrowest >= 2) || !(s.narrowest < s.width)) return "";
   // The park row is deliberately NOT in this difference: the proxy re-parks after every frame Ink wrote during
@@ -280,8 +285,13 @@ export function createResizeRepaint(deps: ResizeRepaintDeps): ResizeRepaint {
     //     probe is still in flight, so every leg of the drag falls through with `verdict === undefined`).
     //   · and only a leg whose frame is RECORDED. With no frame there is no measurement to take, which is the
     //     same refusal `lastFrame()` has always meant here.
-    if (newWidth < oldWidth && verdict === undefined && newWidth < narrowest && frame !== undefined) {
-      narrowest = newWidth; frameAtNarrowest = frame;
+    // …and a narrowing on an ALREADY-MEASURED terminal does not merely fail to be remembered, it ENDS the burst
+    // (fix round 2). A burst retained across the verdict holds real residue, but this leg's own write is
+    // corrected at the write, and `frameWriteCorrection`'s depth reaches above the frame it replaces by exactly
+    // the rows that lie inside that retained residue — so keeping the pass alive claims them twice.
+    if (newWidth < oldWidth) {
+      if (verdict !== undefined) endBurst();
+      else if (newWidth < narrowest && frame !== undefined) { narrowest = newWidth; frameAtNarrowest = frame; }
     }
     if (settling !== undefined) disarm(settling);
     awaitingVerdict = false;                            // the drag is still going; the NEXT settle asks again

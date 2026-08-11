@@ -355,6 +355,7 @@ describe("createResizeRepaint — the driver", () => {
   const F90 = ["m".repeat(100), "n"].join("\n") + "\n";
   const F150 = ["m".repeat(140), "n"].join("\n") + "\n";
   const F120 = ["m".repeat(110), "n"].join("\n") + "\n";
+  const F100 = ["m".repeat(90), "n"].join("\n") + "\n";
 
   it("repairs a round-trip burst once, after the settle window, off the size it settled at", async () => {
     const r = rig();
@@ -400,7 +401,10 @@ describe("createResizeRepaint — the driver", () => {
   // occupied and 0 owed — ten live viewport rows blanked, which is the direction `resizeRepaint.ts:6-9` forbids.
   it("claims nothing when the frame that was on screen at the narrowing stranded nothing", async () => {
     const short = "composer\n";
-    const streamed = [...Array(10).fill("z".repeat(150)), "tail"].join("\n") + "\n";
+    // 200 cells per line DELIBERATELY: it wraps 3× at 90 and 2× at 120, so the live frame is 31 rows against the
+    // 21 it occupies now — the reviewer's own numbers. A 150-cell line wraps twice at BOTH widths, which zeroes
+    // the residue term under the buggy formula too and leaves this case unable to fail (fix round 2, finding 1).
+    const streamed = [...Array(10).fill("z".repeat(200)), "tail"].join("\n") + "\n";
     const r = rig({ frame: short });
     r.drag(90, short); r.drag(150, short); r.drag(120, streamed);
     await flush();
@@ -498,6 +502,25 @@ describe("createResizeRepaint — the driver", () => {
     r.repaintedAs(F120);                                                // Ink's deferred write lands, corrected AT the write
     expect(r.settleWindow()).toBe(1);
     expect(r.repainted).toEqual([]);                                    // so the pass must not claim it a second time
+  });
+
+  // FIX ROUND 2 — THE SUB-CASE THAT SURVIVED THAT GUARD: TWO NARROWINGS STRADDLING THE VERDICT. The first leg's
+  // write DID land uncorrected, so the burst is rightly retained and real residue sits above the frame. Then the
+  // drag narrows again on a terminal that is now measured — and that leg's write is corrected at the write, where
+  // `frameWriteCorrection` erases `occupiedRows(prevFrame, newWidth) - inkErases` rows, reaching above the frame
+  // it replaces by exactly the amount that lands inside the retained residue. The settle pass would then claim
+  // those rows a second time, which is the over-erase direction. So a narrowing with a verdict in hand ends the
+  // burst outright: from here every leg is corrected at its own write.
+  it("forgets the burst when the drag narrows again after the verdict cached", async () => {
+    const r = rig();
+    r.drag(90, F90);                                                    // narrowed while unmeasured: remembered…
+    r.drag(120, F120);                                                  // …and the write landed, so the leg is retained
+    await flush();
+    expect(r.driver.verdict()).toBe("reflow");                          // measured mid-burst; its own emission abandoned
+    expect(r.repainted).toEqual([]);
+    r.drag(100, F100);                                                  // …and now a SECOND narrowing, corrected at its write
+    expect(r.settleWindow()).toBe(1);
+    expect(r.repainted).toEqual([]);
   });
 });
 
