@@ -340,6 +340,29 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
 
 ## Surprises & Discoveries
 
+- 2026-08-11 (M2b Task 5, probes 103–105 run keyed at SDK 0.3.220):
+  - **Probe 103 `streamInput` — ALIVE.** Mid-turn injection steers a running turn: during a
+    four-sequential-Bash-sleeps turn, `q.streamInput(oneShot("abandon remaining steps… reply
+    'steered'"))` resolved and the model abandoned steps B–D and replied exactly `steered`.
+    Signature note: the declared surface takes an `AsyncIterable<SDKUserMessage>` (a one-shot
+    async generator works), NOT the single-message call the plan sketched. Probe-craft lesson:
+    run 1 was INCONCLUSIVE because a prose-only turn (count to 30) finished in one burst before
+    the injection timer fired — a steer probe needs a turn with real wall-clock length (tool
+    calls), not a long prompt. → `turn/steer` *(X)* ships per the promotion row.
+  - **Probe 104 `readFile` — callable but returns null.** The method exists and the control
+    round-trip completes, but it resolved `null` for an EXISTING file with content and ALSO
+    resolved (null) for a nonexistent path — no error, no content, no usable read surface
+    headlessly at 0.3.220. Per the fixed criteria no M2b method ships either way; recorded as
+    M3 knowledge: `fs/read` cannot back onto `Query.readFile` as-is.
+  - **Probe 105 `reloadPlugins`/`reloadSkills` — both ALIVE, with rich receipts.** Each returns
+    a fresh catalog (commands+agents+plugins+mcpServers / skills) rather than a bare ack —
+    i.e. a reload IS a capabilities refresh. Promotions ship as the plan's thin `{ok:true}`
+    handlers; the receipt content suggests a future `thread/capabilities/changed` ping on
+    reload (noted, not built — outside the fixed promotion criteria).
+  - **Probe 5 (`register_repo_root`) — superseded, not run.** `thread/directory/add` ships in
+    Task 3b over the `applyFlagSettings{permissions.additionalDirectories}` seam `host.ts`
+    `addDir` uses in production; the control request remains unprobed knowledge (M3 `fs/*`
+    may revisit).
 - **2026-07-30 — probe 6 verdict: ALIVE** (`CC-to-SDK/probes/probes/70-usermessage-uuid.ts`; numbered 70
   because 69 was taken by the C6 transcript-at-park probe). A caller-supplied `uuid` on the
   `SDKUserMessage` pushed into `query()`'s prompt stream *is* the uuid persisted for that prompt row — the
