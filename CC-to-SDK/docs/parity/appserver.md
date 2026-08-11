@@ -225,7 +225,7 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `follow` | host/ops.ts | `thread/subscribe` | both | shipped(M1) |
 | `unfollow` | host/ops.ts | `thread/unsubscribe` | both | shipped(M1) |
 | `set_model` | host/ops.ts | `thread/model/set` | both | shipped(M2a) |
-| `set_permission_mode` | host/ops.ts | `thread/permissionMode/set` | both | shipped(M2a) — `auto` self-heals |
+| `set_permission_mode` | host/ops.ts | `thread/permissionMode/set` | both | shipped(M2a) — `auto` self-heals; `bypassPermissions` target launch-time-only (acceptance run 1) |
 | `set_thinking` | host/ops.ts | `thread/thinking/set` | both | shipped(M2a) |
 | `capabilities` | host/ops.ts | `thread/capabilities/read` | both | shipped(M2a) |
 | `compact` | host/ops.ts | `thread/compact/start` | both | shipped(M2a) — compact-as-turn |

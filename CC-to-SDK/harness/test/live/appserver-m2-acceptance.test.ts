@@ -133,7 +133,7 @@ live("M2 acceptance: the spec's full control-plane sequence, one keyed run", () 
   let forkThreadId = "";
   let promptItemId = "";   // the userMessage item id of the park turn = the uuid the appserver minted for it
   // The parkless safety net, armed once the decision-park leg has been observed (see `it` 4). Every later
-  // leg runs under bypassPermissions and must not park; if the engine consults the broker anyway, an
+  // leg runs under acceptEdits (bypass is launch-time-only — run-1 finding) and must not park; if the engine consults the broker anyway, an
   // unanswered park would hang that leg until its timeout and report a misleading failure. Answering it
   // keeps the failure where it belongs — and the ids it answered are asserted-empty at the end, so the net
   // can never silently mask a park that should not have happened.
@@ -275,11 +275,17 @@ live("M2 acceptance: the spec's full control-plane sequence, one keyed run", () 
     // The park has been observed; every remaining leg drives turns that must NOT park (the queue drain and
     // the steer leg both hang forever behind an unanswered consult). Switching the live mode IS a
     // control-plane assertion of its own — a runtime permissionMode change announced to both clients.
+    // Target acceptEdits, NOT bypassPermissions: run 1 (2026-08-11) proved the engine REFUSES a runtime
+    // bypass upgrade ("Cannot set permission mode to bypassPermissions because the session was not
+    // launched with --dangerously-skip-permissions") — the bypass rung is launch-time-only. That same
+    // run also proved every remaining leg's turns (bash sleeps, compact, fork) complete un-parked under
+    // plain default mode, so acceptEdits is belt on top of proven suspenders; the armed safety net's
+    // final empty-list assertion keeps the no-park claim honest either way.
     const markB = b.mark();
-    expect((await a.call("thread/permissionMode/set", { threadId, mode: "bypassPermissions" }, 30_000)).ok).toBe(true);
-    const moded = await b.waitFor("thread/settings/changed (bypassPermissions)", 20_000, (n) => n.method === "thread/settings/changed" && n.params.threadId === threadId, markB);
+    expect((await a.call("thread/permissionMode/set", { threadId, mode: "acceptEdits" }, 30_000)).ok).toBe(true);
+    const moded = await b.waitFor("thread/settings/changed (acceptEdits)", 20_000, (n) => n.method === "thread/settings/changed" && n.params.threadId === threadId, markB);
     expect(moded.params.source).toBe("client");
-    expect(moded.params.permissionMode).toBe("bypassPermissions");
+    expect(moded.params.permissionMode).toBe("acceptEdits");
     autoAllow = true;
   }, 240_000);
 
@@ -497,8 +503,8 @@ live("M2 acceptance: the spec's full control-plane sequence, one keyed run", () 
     expect(server.registry.list().length, "a thread survived close + shutdown — its SDK session and its claude child leaked").toBe(0);
 
     // The safety net (armed in the park leg) must never have fired: every leg after the park ran under
-    // bypassPermissions, so a park here would mean the runtime mode change did not reach the engine and the
+    // acceptEdits (with run-1 proof that these turns complete un-parked even under default), so a park here
     // legs above only passed because the net answered for them.
-    expect(autoAllowed, `a decision parked under bypassPermissions — the runtime permissionMode change did not take: ${JSON.stringify(autoAllowed)}`).toEqual([]);
+    expect(autoAllowed, `a decision parked after the acceptEdits switch — the no-park premise of the tail legs broke: ${JSON.stringify(autoAllowed)}`).toEqual([]);
   }, 180_000);
 });

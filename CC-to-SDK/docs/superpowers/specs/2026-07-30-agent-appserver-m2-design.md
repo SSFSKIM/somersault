@@ -340,6 +340,14 @@ tests. Its job: a foreign consumer that surfaces protocol awkwardness before a G
 
 ## Surprises & Discoveries
 
+- 2026-08-11 (M2b Task 9, acceptance run 1): **the engine refuses a RUNTIME upgrade to
+  `bypassPermissions`** — `setPermissionMode("bypassPermissions")` on a session launched without
+  `--dangerously-skip-permissions` throws "Cannot set permission mode to bypassPermissions because
+  the session was not launched with…". The bypass rung of the mode ladder is launch-time-only;
+  `thread/permissionMode/set` surfaces it as `-32603` with the engine's message. The acceptance's
+  post-park mode switch targets `acceptEdits` instead. Same run also settled the STEER correlation
+  question in the safe direction: the CLI attributes the steered turn's result to the PROMPT's
+  uuid (turn completed, `unmatchedResults: 0`, injection obeyed) — no lib change needed.
 - **2026-08-11 (M2b Task 8) — `turn/queued` shipped after all, per the Task 4 review adjudication.** The
   queue was designed with no notification of its own (the enqueue reply was the whole announcement); the
   review found that leaves every other subscriber holding a terminal `cancelled` for an id it never saw,
