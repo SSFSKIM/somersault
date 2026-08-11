@@ -20,12 +20,33 @@ import type { AppServer } from "./server.js";
 
 export interface QueuedTurn { id: string; input: string }
 
+/** The queue's ADMISSION CAPS (fix wave 1). The queue is this server's own memory, held for as long as the
+ *  running turn takes — so a client that keeps a thread busy could otherwise stack unlimited turns of
+ *  unlimited size in it. Two caps, because the two failures are different: many small entries exhaust the
+ *  count, one client's transcript-sized prompt exhausts the bytes. */
+export const MAX_QUEUED_TURNS = 64;
+export const MAX_QUEUED_BYTES = 1_048_576; // 1 MiB of queued input, summed across entries
+
+/** What an enqueue attempt answers. A refusal names WHICH cap it hit, so `turn/start` can say so on the
+ *  wire — a client that cannot tell "too many" from "too big" cannot retry usefully. */
+export type EnqueueResult = { ok: true; id: string; position: number } | { ok: false; reason: "entries" | "bytes" };
+
 /** Mints the entry's id off the thread's own turn counter — the same counter and format `turn/start` and
- *  compact use, so a drained turn needs no second id and the sequence never skips. */
-export function enqueueTurn(record: ThreadRecord, input: string): { id: string; position: number } {
+ *  compact use, so a drained turn needs no second id and the sequence never skips.
+ *
+ *  Both caps are checked BEFORE the mint, and that order is the invariant this module opens with: every
+ *  minted id gets a terminal event, and a refused enqueue has none — so an id burned on a refusal would be
+ *  a gap in the sequence that no client could ever account for. */
+export function enqueueTurn(record: ThreadRecord, input: string): EnqueueResult {
+  if (record.queue.length >= MAX_QUEUED_TURNS) return { ok: false, reason: "entries" };
+  // The candidate counts against what is already queued, in BYTES (a UTF-16 length under-counts the
+  // memory an emoji-heavy prompt actually holds). Accepted asymmetry: a NON-queued `turn/start` is not
+  // size-capped — this cap protects THIS server's buffer, not the engine's input path.
+  const queued = record.queue.reduce((n, q) => n + Buffer.byteLength(q.input, "utf8"), 0);
+  if (queued + Buffer.byteLength(input, "utf8") > MAX_QUEUED_BYTES) return { ok: false, reason: "bytes" };
   const id = mintTurnId(record);
   record.queue.push({ id, input });
-  return { id, position: record.queue.length };
+  return { ok: true, id, position: record.queue.length };
 }
 
 /** The `turn/queued` payload, built in ONE place because two paths emit it and they must not drift:

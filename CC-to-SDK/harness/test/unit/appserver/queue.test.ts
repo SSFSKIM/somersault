@@ -15,7 +15,9 @@
 import { describe, it, expect } from "vitest";
 import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { enqueueTurn, MAX_QUEUED_BYTES, MAX_QUEUED_TURNS } from "../../../src/appserver/queue.js";
 import type { AppServerDeps } from "../../../src/appserver/server.js";
+import type { ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -548,6 +550,73 @@ describe("turn queue (spec Wave 4)", () => {
     send(c, { id: 6, method: "turn/interrupt", params: { threadId, cancelQueued: true } });
     await settle();
     expect(threadView(srv, record).queueDepth).toBe(0);
+  });
+
+  // --- ADMISSION CAPS (fix wave 1, F2) --------------------------------------------------------------
+  // The queue was unbounded: a client could hold a thread busy and stack unlimited turns of unlimited
+  // size behind it, all of it retained in this server's memory until the drain or a flush. Two caps, both
+  // checked BEFORE the id is minted, because a refused enqueue owes no terminal event and a skipped id
+  // would be a turn nobody can ever account for.
+  it("fills to MAX_QUEUED_TURNS, then refuses -33001 naming the entry cap — and the refusal minted no id, queued nothing and broadcast nothing", async () => {
+    const engine = mkEngine();
+    const { srv, s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    for (let i = 0; i < MAX_QUEUED_TURNS; i++) send(c, { id: 100 + i, method: "turn/start", params: { threadId, input: `q${i}`, queue: true } });
+    await tick();
+    const record = srv.registry.get(threadId)!;
+    expect(record.queue).toHaveLength(MAX_QUEUED_TURNS);
+
+    send(c, { id: 999, method: "turn/start", params: { threadId, input: "over", queue: true } });
+    await tick();
+
+    expect(replyTo(s, 999).error.code).toBe(ERR.BUSY);
+    expect(replyTo(s, 999).error.message).toBe(`turn queue is full (max ${MAX_QUEUED_TURNS} queued turns)`);
+    expect(record.queue).toHaveLength(MAX_QUEUED_TURNS);              // no state change
+    expect(notifs(s, "turn/queued")).toHaveLength(MAX_QUEUED_TURNS);  // and no turn/queued for a turn that was refused
+
+    // A drain re-opens admission, and the next accepted id is CONTIGUOUS: the refusal consumed no id.
+    engine.release();
+    await settle();
+    send(c, { id: 1000, method: "turn/start", params: { threadId, input: "after", queue: true } });
+    await tick();
+    expect(replyTo(s, 1000).result.turn.id).toBe(`turn_${threadId}_${MAX_QUEUED_TURNS + 2}`);
+  });
+
+  it("the byte cap counts the candidate against what is already queued: four 250 KiB entries fit, the fifth is refused, and a small one still gets in", async () => {
+    const big = "x".repeat(250 * 1024); // under peer.ts's 256 KiB frame cap, so each one really reaches the handler
+    const engine = mkEngine();
+    const { srv, s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    for (let i = 0; i < 4; i++) send(c, { id: 10 + i, method: "turn/start", params: { threadId, input: big, queue: true } });
+    await tick();
+    expect(srv.registry.get(threadId)!.queue).toHaveLength(4);
+
+    send(c, { id: 20, method: "turn/start", params: { threadId, input: big, queue: true } });
+    send(c, { id: 21, method: "turn/start", params: { threadId, input: "small", queue: true } });
+    await tick();
+
+    expect(replyTo(s, 20).error.code).toBe(ERR.BUSY);
+    expect(replyTo(s, 20).error.message).toBe("turn queue is full (max 1 MiB queued input)");
+    // The cap bounds the BUFFER, not the entry: what still fits is still admitted.
+    expect(replyTo(s, 21).result.queued).toBe(true);
+    expect(srv.registry.get(threadId)!.queue).toHaveLength(5);
+  });
+
+  // Driven against the function rather than the wire, deliberately: peer.ts refuses any frame over 256 KiB
+  // (MAX_IN) before dispatch, so a single over-cap input cannot reach the handler at all. The cap still has
+  // to hold here — queue.ts is the state machine, and it is the thing a later caller would reuse.
+  it("a single over-cap entry is refused on an EMPTY queue, counts BYTES not characters, and mints no id", () => {
+    const record = { id: "thr_x", turnSeq: 0, queue: [] } as unknown as ThreadRecord;
+
+    // 300k emoji: 1.2 MB of UTF-8 over the wire, but only 600k UTF-16 units — a length-based cap admits it.
+    expect(enqueueTurn(record, "😀".repeat(300_000))).toEqual({ ok: false, reason: "bytes" });
+    expect(record.queue).toEqual([]);
+    expect(record.turnSeq).toBe(0);      // the id sequence must not skip: a refused enqueue owes no terminal event
+
+    expect(enqueueTurn(record, "small")).toEqual({ ok: true, id: "turn_thr_x_1", position: 1 });
+    expect(MAX_QUEUED_BYTES).toBe(1024 * 1024);
   });
 
   it("a SWAPPING thread refuses turn/start{queue:true} too — a swap never calls settleTurn, so an enqueue there would strand", async () => {

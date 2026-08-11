@@ -14,7 +14,7 @@ import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
-import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, type QueuedTurn } from "./queue.js";
+import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, MAX_QUEUED_BYTES, MAX_QUEUED_TURNS, type QueuedTurn } from "./queue.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams } from "./schema/turns.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
@@ -292,6 +292,15 @@ function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
   };
 }
 
+/** The two queue-full refusals, spelled off the caps themselves so the message can never drift from the
+ *  number it quotes. Which cap was hit is the whole content of the message: the client's next move is the
+ *  same either way (retry after the drain), but a queue full of small turns and a queue full of one huge
+ *  one are different things to have done. */
+const QUEUE_FULL: Record<"entries" | "bytes", string> = {
+  entries: `turn queue is full (max ${MAX_QUEUED_TURNS} queued turns)`,
+  bytes: `turn queue is full (max ${MAX_QUEUED_BYTES / 1024 / 1024} MiB queued input)`,
+};
+
 export const turnStart: Handler = (srv, ctx, id, params) => {
   const parsed = turnStartParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
@@ -318,6 +327,9 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   if (busyReason) {
     if (parsed.data.queue && busyReason === "turn") {
       const q = enqueueTurn(record, parsed.data.input);
+      // At capacity the thread is busy AND has nowhere to put this — same -33001 the unflagged call gets,
+      // since the client's move is the same one (retry after the queue drains), with the cap it hit named.
+      if (!q.ok) { ctx.peer.replyError(id, ERR.BUSY, QUEUE_FULL[q.reason]); return; }
       ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position });
       // Reply first, notify second — beginTurn's own turn/started ordering, for the same reason: the
       // caller's answer must not depend on the fan-out, and every OTHER subscriber needs the id before it
