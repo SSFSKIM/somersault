@@ -267,7 +267,8 @@ transport). Output returns to the calling client only; conversation state untouc
 deviation from Codex**, whose `thread/shellCommand` streams output into the turn so the model sees
 it — ours matches the TUI's display-only `!cmd` semantics (user-confirmed fork). Unsandboxed by
 design, like Codex's. Busy is allowed (the TUI permits `!` mid-turn); the command runs concurrently
-with the engine.
+with the engine. A dead-engine record follows the standard `-33005` gate — the thread reads
+consistently dead (clarified during planning).
 
 ### §4 `thread/reopen` (gap 10)
 
@@ -435,3 +436,7 @@ Pending — written at finish.
   target resolution corrected to real CLI parity (simultaneous filter, ambiguity error); `fleet/list`
   row sourced from a roster+projection join; 34-op wire count corrected; foreign-swap resync and
   fleet-read legs added to unit + acceptance coverage.
+- 2026-08-11 — planning
+  (`docs/superpowers/plans/2026-08-11-agent-appserver-m3-fleet-workspace.md`, Tasks 1–17): one
+  clarification folded back — `thread/shellCommand` on a dead-engine record follows the standard
+  `-33005` gate (§3); no other divergence.
