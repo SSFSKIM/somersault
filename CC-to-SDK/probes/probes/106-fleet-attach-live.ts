@@ -8,8 +8,11 @@
 //
 //   Q1 REPLAY ORDER on a mid-turn attach. host.ts's follow() documents: `turn start` (only when a turn is
 //      in flight) → buffered `message` frames marked `replay:true` → parked `decision` entries → the
-//      background-task snapshot → `state` LAST. Two attaches measure it: one mid-turn with nothing parked,
-//      one while a decision is parked (the only way the `decision` position is observable at all).
+//      background-task snapshot → `state` LAST. Two attaches measure it: one while the turn is doing
+//      tool work, one while a decision is parked (the only way the `decision` position is observable at
+//      all). Two smaller claims ride along, both of which an adapter's read loop depends on: the `follow`
+//      REPLY lands after the whole burst rather than delimiting it, and `stream_event` partials reach a
+//      live follower but are never replayed to a late one.
 //   Q2 THE RESULT FRAME. runTask fans every session message out as `{kind:"message"}`, which implies the
 //      SDK's terminal `type:"result"` message reaches a follower the same way — implied, never observed.
 //      An adapter that maps turn completion off the result frame needs that to be true, and needs to know
@@ -33,10 +36,22 @@
 // subject is the wire, and a probe that spoke it through the harness's own client would be measuring the
 // client instead.
 //
-// RUN IT (keyed — the turns are real):
-//   cd CC-to-SDK/probes && set -a; . ../.env; set +a; npx tsx probes/106-fleet-attach-live.ts
+// RUN IT (keyed — the turns are real). The runner supplies the credentials; this probe reads no `.env`
+// (a fresh worktree has none — the file is gitignored and lives in the main checkout):
+//   cd CC-to-SDK/probes && npx tsx probes/106-fleet-attach-live.ts
 // Keyless it will spawn and connect fine and then fail at the first turn — which is a FAILURE, not a
 // skip: this probe has nothing to say without a live engine.
+//
+// THE PERMISSION SHAPE IS THE WHOLE EXPERIMENT (run-1 scar). Run 1 launched with `ask:["Bash(*)"]` as
+// park insurance, and that rule parked the turn's FIRST tool call: the host went `blocked` at +8.4s, the
+// turn never progressed, and Q2-Q5 never ran. The turn's own work must therefore be ALLOWED and the park
+// must be a SEPARATE, LATER trigger. So: `sleep` is allowed, `touch` asks, and the prompt runs the sleeps
+// first and the touch last — one turn that is busy for real, then parks. Both rule syntaxes the engine
+// honors are used for each (verified in the reference CLI's `utils/permissions/shellRuleMatching.ts`:
+// `cmd:*` is the legacy PREFIX form — word boundary, and deliberately does NOT match a compound command —
+// while `cmd *` is the newer WILDCARD form, whose trailing ` *` is made optional so it also matches the
+// bare command). The prefix form's compound-command refusal is why the prompt insists on ONE command per
+// Bash call: `sleep 2 && sleep 2` matches no allow rule and would park on the sleeps again.
 import { mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -54,6 +69,17 @@ const WIRE_MS = 30_000;
 const TURN_MS = 120_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Poll until `pid` is gone, up to `ms`; resolves true if it went. `ms = 0` is a single instantaneous
+ *  check. Signal 0 is the probe-for-existence signal — it delivers nothing and throws ESRCH when there
+ *  is nobody there. */
+async function pidGone(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try { process.kill(pid, 0); } catch { return true; }
+    if (Date.now() >= deadline) return false;
+    await sleep(250);
+  }
+}
 const t0 = Date.now();
 const at = () => `+${((Date.now() - t0) / 1000).toFixed(1)}s`;
 const log = (s: string) => console.log(`${at()} ${s}`);
@@ -63,12 +89,15 @@ const dump = (label: string, v: unknown) => console.log(`  ${label}: ${JSON.stri
 const verdict: Record<string, string> = {
   Q1_replay_order_midturn: "NOT MEASURED",
   Q1_replay_order_parked: "NOT MEASURED",
+  Q1_follow_reply_position: "NOT MEASURED",
+  Q1_partials_live_never_replayed: "NOT MEASURED",
   Q2_result_frame: "NOT MEASURED",
   Q3_receipt_lost_race: "NOT MEASURED",
   Q3_receipt_kind_mismatch: "NOT MEASURED",
   Q3_receipt_no_parked: "NOT MEASURED",
   Q4_decision_settled: "NOT MEASURED",
   Q5_stop_vs_close: "NOT MEASURED",
+  Q5_process_exit: "NOT MEASURED",
 };
 /** Anything that makes a verdict line unearned. Non-empty ⇒ exit 1, so the controller sees failure
  *  loudly instead of reading a half-measured verdict as a result. */
@@ -230,15 +259,23 @@ try {
     idleTimeoutSec: 600,
     config: {
       cwd: scratchCwd,
-      // LAUNCH-time bypass, because a runtime upgrade to it is engine-refused (M2b run-1). Phase 1 needs a
-      // turn that CANNOT park (the replay order is the subject, and a park would end the turn early);
-      // phase 4 downgrades to `default` over the wire, which is the direction that works.
-      permissionMode: "bypassPermissions",
+      // `default`, explicitly: the ONE mode in which the broker is consulted at all, and it also overrides
+      // whatever `defaultMode` the developer's own settings carry (this machine's says `auto`, which would
+      // hand the decision to the classifier and park nothing).
+      permissionMode: "default",
       model: "claude-sonnet-4-6",
-      // Insurance for the park phase only. The harness loads user+project+local settings by default, and a
-      // developer's own allowlist can pre-authorize the command the park depends on (the M1 live test's
-      // scar). An `ask` rule cannot make phase 1 park — bypassPermissions never consults the broker at all.
-      settings: { permissions: { ask: ["Bash(*)"] } },
+      // The experiment itself — see the header. `sleep` runs FREE so the turn can be busy for real;
+      // `touch` ASKS so the park is a separate, later trigger inside the same turn. Both syntaxes for each,
+      // since both are honored and they cover different edges (prefix matches the bare command and refuses
+      // compound ones; the wildcard form survives an argument shape the prefix rule's word boundary trips
+      // on). The ask rules are what make the park independent of whatever the developer's own settings
+      // allow — `touch` is in nobody's allowlist, but saying so explicitly is what makes this portable.
+      settings: {
+        permissions: {
+          allow: ["Bash(sleep:*)", "Bash(sleep *)"],
+          ask: ["Bash(touch:*)", "Bash(touch *)"],
+        },
+      },
     },
   });
   process.argv[1] = argv1;
@@ -265,31 +302,42 @@ try {
   printBlock("A idle-attach replay", replayBlock(A));
   dump("A status", await A.send({ op: "status" }));
 
-  // Sequential sleeps, not a long prompt: the turn has to occupy real WALL-CLOCK time or there is no
-  // mid-turn to attach into (probe 103b's lesson — a verbose prompt finishes in one burst).
+  // ONE turn does all of it: sleeps for the wall clock the mid-turn attach needs (probe 103b's lesson —
+  // real elapsed time, not a verbose prompt that finishes in one burst), then a `touch` that parks at the
+  // END, which is what makes the parked-attach and the receipts measurable without a second turn.
+  // "one command per call, no && or ;" is load-bearing, not politeness: a prefix allow rule refuses
+  // compound commands outright (shellRuleMatching.ts), so a chained `sleep 2 && sleep 2` would park on
+  // the sleeps and reproduce run 1's failure.
   const promptReply = await A.send({
     op: "prompt",
-    text: "Run these three bash commands one at a time, in order, waiting for each to finish before starting the next: "
-      + "(1) `sleep 2 && echo p106-step-1`  (2) `sleep 2 && echo p106-step-2`  (3) `sleep 2 && echo p106-step-3`. "
-      + "Use the Bash tool for each. Then reply with exactly: DONE",
+    text: "Do exactly this, using the Bash tool, one command per tool call, never chaining with && or ; : "
+      + "call Bash four times with exactly the command `sleep 2` (four separate calls), "
+      + "then call Bash once with exactly the command `touch p106-done.txt`. "
+      + "Then reply with exactly: DONE",
   });
   log(`A prompt accepted — ${JSON.stringify(promptReply)}`);
   if (promptReply["ok"] !== true) throw new Error(`prompt refused: ${JSON.stringify(promptReply)}`);
 
   // -------------------------------------------------------------------------------------------------
-  // Phase 2 (Q1a) — attach MID-TURN, with real buffered content behind us and nothing parked.
+  // Phase 2 (Q1a) — attach MID-TURN, with real buffered content behind us.
   // -------------------------------------------------------------------------------------------------
-  // Attach as late as is SAFE, not as late as is interesting. The first assistant frame is the gate:
-  // it means the engine is up and has committed to a tool call, so there is real buffered content and
-  // (with two `sleep 2` steps still to come) plenty of turn left. The tool RESULT after it makes the
-  // replay richer, so it is waited for — but only briefly, and its absence is not a failure: a model
-  // that batched the three commands into one call would otherwise leave us attaching after the turn.
-  await A.waitEvent("turn-1 first assistant frame", (r) => r["kind"] === "message" && ((r["data"] as Record<string, unknown>)?.["type"] === "assistant"), TURN_MS);
-  await A.waitEvent("turn-1 first tool result", (r) => r["kind"] === "message" && ((r["data"] as Record<string, unknown>)?.["type"] === "user"), 10_000)
-    .catch(() => { log("no tool result within 10s of the first assistant frame — attaching anyway; the replay will be thinner"); return undefined; });
+  // Attach as EARLY as there is anything to replay, not as late as is interesting. The first assistant
+  // frame is the gate: the engine is up and has committed to a tool call, so the buffer holds real
+  // content and (with four `sleep 2` steps to get through) there is plenty of turn left. A tool RESULT
+  // makes the replay richer, so it is waited for — but only briefly, because a model that batched the
+  // sleeps into one call would otherwise leave us attaching after the turn had already moved on.
+  await A.waitEvent("turn first assistant frame", (r) => r["kind"] === "message" && ((r["data"] as Record<string, unknown>)?.["type"] === "assistant"), TURN_MS);
+  await A.waitEvent("turn first tool result", (r) => r["kind"] === "message" && ((r["data"] as Record<string, unknown>)?.["type"] === "user"), 3_000)
+    .catch(() => { log("no tool result within 3s of the first assistant frame — attaching anyway; the replay will be thinner"); return undefined; });
   const midStatus = await A.send({ op: "status" });
-  log(`mid-turn reached — status ${JSON.stringify(midStatus)}`);
-  if (midStatus["status"] !== "busy") fail(`expected a busy host at the mid-turn attach, got ${JSON.stringify(midStatus)}`);
+  log(`attaching now — host status ${JSON.stringify(midStatus)}`);
+  // WHICH STATE THIS ATTACH CAUGHT IS RECORDED, NOT ASSERTED (run-1 scar: the probe aborted because the
+  // host was parked). A turn is in flight in either of two projections — `busy` (mid-tool) or `blocked`
+  // (parked mid-turn, which status() deliberately reports as idle). Neither means the turn is over, and
+  // an IDLE attach is documented to replay the last completed turn with NO turn-start frame. Telling the
+  // three apart is what keeps a late attach from being reported as a wire divergence.
+  const turnLive = midStatus["status"] === "busy" || midStatus["state"] === "blocked";
+  const attachedInto = midStatus["state"] === "blocked" ? "a PARKED turn" : turnLive ? "a BUSY turn" : "an ENDED turn (idle attach)";
 
   const B = new HostClient("B");
   await B.connect(socketPath);
@@ -298,7 +346,7 @@ try {
   await sleep(250);                     // let the follow reply land wherever it lands
   const bBlock = replayBlock(B);
   console.log("");
-  log("Q1a MID-TURN ATTACH (nothing parked)");
+  log("Q1a MID-TURN ATTACH");
   printBlock("B replay burst", bBlock);
   const bTags = bBlock.map((f) => f.tag);
   const bFollowIdx = bBlock.findIndex((f) => f.raw["t"] !== "event" && f.raw["id"] === bFollow);
@@ -311,49 +359,39 @@ try {
   const bMsgsBeforeState = bTags.slice(1, -1).every((t) => t.startsWith("event:message") || t.startsWith("reply(") || t === "event:tasks_changed");
   dump("B follow reply position in the burst", { index: bFollowIdx, ofFrames: bBlock.length, note: bFollowIdx < 0 ? "reply landed AFTER the state frame" : "reply landed inside the burst" });
   dump("B replay-marked frames", bReplayCount);
-  verdict.Q1_replay_order_midturn = `${bStartsWithTurn && bEndsWithState && bMsgsBeforeState ? "AS DOCUMENTED" : "DIVERGED"} — ${bTags.join(" → ")}`;
-  if (!bStartsWithTurn) fail("mid-turn attach did not open with {kind:'turn',phase:'start'}");
+  // An idle attach is DOCUMENTED to omit the turn-start frame, so the expected shape depends on which of
+  // the three states the attach caught — anything else reports a late attach as a wire defect.
+  const bShapeOk = (turnLive ? bStartsWithTurn : !bStartsWithTurn) && bEndsWithState && bMsgsBeforeState;
+  verdict.Q1_replay_order_midturn = `${bShapeOk ? "AS DOCUMENTED" : "DIVERGED"} (attached into ${attachedInto}) — ${bTags.join(" → ")}`;
+  if (!turnLive) fail(`the turn was already over when B attached (${JSON.stringify(midStatus)}) — Q1a measured an IDLE attach, not a mid-turn one. The model finished or died before the attach gate fired; the frame dump above says which`);
+  else if (!bStartsWithTurn) fail("mid-turn attach did not open with {kind:'turn',phase:'start'}");
   if (!bEndsWithState) fail("mid-turn attach replay did not end with {kind:'state'}");
   if (bReplayCount === 0) fail("mid-turn attach replayed zero frames marked replay:true");
+  // The `follow` REPLY is not part of the replay: the server writes it only after handlers.follow()
+  // returns, i.e. after the whole burst is already on the wire. A client that waits for its follow reply
+  // before starting to read events therefore reads them in the right order anyway — but a client that
+  // treats the reply as the START of its stream has already missed the replay.
+  verdict.Q1_follow_reply_position = bFollowIdx < 0
+    ? "AFTER the whole replay burst (the reply is not a delimiter — the events precede it)"
+    : `INSIDE the burst at index ${bFollowIdx}/${bBlock.length}`;
+  if (bFollowIdx >= 0) fail(`the follow reply landed inside the replay burst (index ${bFollowIdx}) — the documented ordering says the burst is written first`);
+
+  // Partials ride the LIVE stream only — the turn buffer drops `stream_event` frames on the way in
+  // (host.ts), because a late follower cannot use a token delta it missed the start of. Measured on both
+  // clients: A followed from before the turn and should see them live; B joined mid-turn and must have
+  // received none of them marked as replay.
+  const livePartials = A.frames.filter((f) => f.tag.startsWith("event:message(stream_event")).length;
+  const replayedPartials = [A, B].reduce((n, c) => n + c.frames.filter((f) => f.tag.startsWith("event:message(stream_event") && f.raw["replay"] === true).length, 0);
+  dump("partials", { liveOnA: livePartials, replayMarkedAnywhere: replayedPartials });
+  verdict.Q1_partials_live_never_replayed = `${livePartials} live stream_event frames on the following client, ${replayedPartials} ever marked replay:true`;
+  if (livePartials === 0) fail("no stream_event partials arrived at all — an interactive host is supposed to stream them (host.ts's includePartialMessages default). A turn that died before generating any assistant text produces none either, so read this next to the turn's own outcome below");
+  if (replayedPartials > 0) fail(`${replayedPartials} stream_event frames were replayed to a late joiner — the turn buffer is supposed to drop them`);
 
   // -------------------------------------------------------------------------------------------------
-  // Phase 3 (Q2) — does the SDK's terminal `result` message travel as {kind:"message"}?
+  // Phase 3 — the park. Same turn: the four allowed sleeps ran, and the `touch` hits the ask rule.
   // -------------------------------------------------------------------------------------------------
-  const endA = await A.waitEvent("turn-1 end", (r) => r["kind"] === "turn" && r["phase"] === "end", TURN_MS);
-  const resultFrames = A.frames.filter((f) => f.raw["t"] === "event" && f.raw["kind"] === "message"
-    && ((f.raw["data"] as Record<string, unknown>)?.["type"] === "result"));
-  console.log("");
-  log("Q2 RESULT FRAME");
-  dump("turn end event", endA.raw);
-  if (resultFrames.length) {
-    const rf = resultFrames[resultFrames.length - 1];
-    const d = rf.raw["data"] as Record<string, unknown>;
-    dump("result frame envelope", { kind: rf.raw["kind"], replay: rf.raw["replay"] ?? null, index: rf.i, beforeTurnEnd: rf.i < endA.i });
-    dump("result frame payload keys", Object.keys(d).sort());
-    dump("result frame summary", { type: d["type"], subtype: d["subtype"], is_error: d["is_error"], num_turns: d["num_turns"], duration_ms: d["duration_ms"], session_id: d["session_id"] });
-    verdict.Q2_result_frame = `YES — {kind:"message"} carries data.type="result" (subtype=${String(d["subtype"])}, is_error=${String(d["is_error"])}), and it arrives ${rf.i < endA.i ? "BEFORE" : "AFTER"} {kind:"turn",phase:"end"}`;
-  } else {
-    verdict.Q2_result_frame = "NO — no {kind:'message'} frame carried data.type='result'";
-    fail("no result-type message frame reached a follower");
-  }
-  // Volume, for the record: an app-server adapter fans every one of these out again.
-  const partials = A.frames.filter((f) => f.tag.startsWith("event:message(stream_event")).length;
-  dump("A frame census (turn 1)", { total: A.frames.length, partials, nonPartialMessages: A.events("message").length - partials });
-
-  // -------------------------------------------------------------------------------------------------
-  // Phase 4 — downgrade to `default` and park a real permission decision.
-  // -------------------------------------------------------------------------------------------------
-  console.log("");
-  dump("set_permission_mode default", await A.send({ op: "set_permission_mode", mode: "default" }));
-  const turn2 = await A.send({
-    op: "prompt",
-    text: "Run exactly one bash command: `sleep 2 && echo p106-park-marker`. Use the Bash tool. Then reply with exactly: DONE",
-  });
-  log(`turn 2 accepted — ${JSON.stringify(turn2)}`);
-  if (turn2["ok"] !== true) throw new Error(`turn 2 refused: ${JSON.stringify(turn2)}`);
-
   const parkFrame = await A.waitEvent("a parked decision", (r) => r["kind"] === "decision", TURN_MS)
-    .catch((e: Error) => { throw new Error(`${e.message} — the turn ran without ever consulting the broker; a settings layer probably pre-authorized Bash (see the launch \`ask\` rule above)`); });
+    .catch((e: Error) => { throw new Error(`${e.message} — the turn never consulted the broker. Either the model never ran the \`touch\` (check the frame dump above for what it did run) or a settings layer pre-authorized it despite the launch \`ask\` rules`); });
   const entry = parkFrame.raw["entry"] as Record<string, unknown>;
   const toolUseID = String(entry["toolUseID"]);
   const parkKind = String(entry["kind"]);
@@ -363,7 +401,7 @@ try {
   dump("status while parked", await A.send({ op: "status" }));
 
   // -------------------------------------------------------------------------------------------------
-  // Phase 5 (Q1b) — a THIRD client attaches WHILE the decision is parked. The only way the `decision`
+  // Phase 4 (Q1b) — a THIRD client attaches WHILE the decision is parked. The only way the `decision`
   // position in the replay order is observable at all.
   // -------------------------------------------------------------------------------------------------
   const C = new HostClient("C");
@@ -388,7 +426,7 @@ try {
   dump("C pending op (the poll channel the replay is supposed to make unnecessary)", await C.send({ op: "pending" }));
 
   // -------------------------------------------------------------------------------------------------
-  // Phase 6 (Q3/Q4) — the three receipts, in the ONLY order that can measure all three: both refusals
+  // Phase 5 (Q3/Q4) — the three receipts, in the ONLY order that can measure all three: both refusals
   // are only reachable while the park is still open, so they run before the answer that settles it.
   // -------------------------------------------------------------------------------------------------
   console.log("");
@@ -457,11 +495,33 @@ try {
     drained++;
     void A.send({ op: "answer", toolUseID: id, by: "probe-drain", answer: { kind: "deny", feedback: "P106 drain" } }).catch(() => {});
   });
-  const endB = await A.waitEvent("turn-2 end", (r) => r["kind"] === "turn" && r["phase"] === "end" && r["seq"] === turn2["seq"], TURN_MS)
-    .catch(async (e: Error) => { log(`turn 2 did not end on its own (${e.message}) — interrupting`); dump("interrupt reply", await A.send({ op: "interrupt" })); return undefined; });
+  // -------------------------------------------------------------------------------------------------
+  // Phase 6 (Q2) — the turn finishes now that the decision is answered: does the SDK's terminal
+  // `result` message travel to a follower as {kind:"message"}, and on which side of `turn end`?
+  // -------------------------------------------------------------------------------------------------
+  const endA = await A.waitEvent("turn end", (r) => r["kind"] === "turn" && r["phase"] === "end" && r["seq"] === promptReply["seq"], TURN_MS)
+    .catch(async (e: Error) => { log(`the turn did not end on its own (${e.message}) — interrupting`); dump("interrupt reply", await A.send({ op: "interrupt" })); return undefined; });
   offDrain();
-  dump("turn 2 end", endB ? endB.raw : "(interrupted)");
+  console.log("");
+  log("Q2 RESULT FRAME");
+  dump("turn end event", endA ? endA.raw : "(interrupted — no clean end)");
   dump("re-parks drained after the deny", drained);
+  const resultFrames = A.frames.filter((f) => f.raw["t"] === "event" && f.raw["kind"] === "message"
+    && ((f.raw["data"] as Record<string, unknown>)?.["type"] === "result"));
+  if (resultFrames.length) {
+    const rf = resultFrames[resultFrames.length - 1];
+    const d = rf.raw["data"] as Record<string, unknown>;
+    const side = endA ? (rf.i < endA.i ? "BEFORE" : "AFTER") : "n/a (no clean turn end)";
+    dump("result frame envelope", { kind: rf.raw["kind"], replay: rf.raw["replay"] ?? null, index: rf.i, sideOfTurnEnd: side });
+    dump("result frame payload keys", Object.keys(d).sort());
+    dump("result frame summary", { type: d["type"], subtype: d["subtype"], is_error: d["is_error"], num_turns: d["num_turns"], duration_ms: d["duration_ms"], session_id: d["session_id"] });
+    verdict.Q2_result_frame = `YES — {kind:"message"} carries data.type="result" (subtype=${String(d["subtype"])}, is_error=${String(d["is_error"])}), arriving ${side} {kind:"turn",phase:"end"}`;
+  } else {
+    verdict.Q2_result_frame = "NO — no {kind:'message'} frame carried data.type='result'";
+    fail("no result-type message frame reached a follower");
+  }
+  // Volume, for the record: an app-server adapter fans every one of these out again.
+  dump("A frame census", { total: A.frames.length, partials: A.frames.filter((f) => f.tag.startsWith("event:message(stream_event")).length, messages: A.events("message").length });
 
   // -------------------------------------------------------------------------------------------------
   // Phase 7 (Q5) — `stop`: is there a receipt at all, and what closes first?
@@ -493,6 +553,17 @@ try {
   if (!finalRow || !TERMINAL.has(finalRow.state)) fail(`roster row did not reach a terminal state: ${JSON.stringify(finalRow ?? null)}`);
   else if (finalRow.state !== "stopped") fail(`an operator stop recorded ${finalRow.state}, not "stopped"`);
 
+  // A THIRD fact the stop path owes an orchestrator, and the one run 1 tripped over from the outside: a
+  // torn-down host is not necessarily a DEAD PROCESS. The roster row and the socket can both say "gone"
+  // while the pid is still up (teardown bounds dispose at a 5s grace and then leaves; whatever the SDK
+  // still holds open keeps the event loop alive). An app server that treats the roster row as proof the
+  // process is gone would leak one process per stopped thread.
+  const exited = await pidGone(hostPid, 20_000);
+  dump("host process exited after its own stop", { pid: hostPid, exited, waitedMs: 20_000 });
+  verdict.Q5_process_exit = exited
+    ? "the host process exits on its own after `stop` (roster terminal AND pid gone)"
+    : "the host process was STILL ALIVE 20s after `stop` — a terminal roster row is not proof the process is gone";
+
   A.destroy(); B.destroy(); C.destroy();
 } catch (e) {
   fail(`ABORTED: ${(e as Error)?.stack ?? String(e)}`);
@@ -503,30 +574,33 @@ try {
     for (const f of c.frames.slice(-25)) console.log(`    [${f.i}] +${(f.atMs / 1000).toFixed(1)}s ${f.tag}`);
   }
 } finally {
-  // Cleanup is the host's OWN stop op, never a broad process kill: this probe spawns exactly one process
-  // and knows its pid from the row it minted. The SIGTERM below is the last resort for that ONE pid (the
-  // host's own handler turns it into stop("stopped")), and it is itself reported as a problem — a stop
-  // that needed a signal is a finding, not housekeeping.
-  if (short && !stopSent) {
+  // TEARDOWN RUNS ON EVERY PATH, including an abort from any phase timeout — run 1 aborted mid-park and
+  // left the spawned host alive, which someone then had to clean up by hand.
+  //
+  // The ladder, in order, and each rung reported: the host's OWN `stop` op first (never a broad process
+  // kill — this probe spawned exactly one process and knows its pid from the row it minted); then SIGTERM
+  // to that ONE pid, which the host's own handler turns into stop("stopped"); then SIGKILL to the same
+  // pid. Escalating past the first rung is itself a FINDING, not housekeeping: it means a host does not
+  // reliably die of its own stop, which is exactly what an orchestrator that spawns fleets needs to know.
+  if (short) {
     try {
       const row = readRoster(short);
-      if (row && !TERMINAL.has(row.state)) {
+      if (row && !(await pidGone(row.pid, 0))) {
         const c = new HostClient("cleanup");
-        await c.connect(hostSocketPath(row.pid));
-        c.fireAndForget({ op: "stop" });
-        await sleep(8_000);
+        await c.connect(hostSocketPath(row.pid)).catch(() => { /* socket already gone: teardown got that far */ });
+        if (!stopSent) c.fireAndForget({ op: "stop" });
+        await pidGone(row.pid, 15_000);
         c.destroy();
       }
     } catch (e) { fail(`cleanup stop failed: ${(e as Error).message}`); }
   }
-  if (hostPid) {
-    let alive = true;
-    for (let i = 0; i < 40 && alive; i++) {
-      try { process.kill(hostPid, 0); await sleep(250); } catch { alive = false; }
-    }
-    if (alive) {
-      fail(`host pid ${hostPid} still alive after its own stop — sending SIGTERM to that one pid`);
-      try { process.kill(hostPid, "SIGTERM"); } catch { /* it went away between the check and the signal */ }
+  if (hostPid && !(await pidGone(hostPid, 0))) {
+    fail(`host pid ${hostPid} outlived its own stop — escalating to SIGTERM. This is a FINDING about the stop path (see Q5_process_exit), not a probe error: the verdict lines above still hold`);
+    try { process.kill(hostPid, "SIGTERM"); } catch { /* it went away between the check and the signal */ }
+    if (!(await pidGone(hostPid, 10_000))) {
+      fail(`host pid ${hostPid} ignored SIGTERM too — escalating to SIGKILL on that one pid`);
+      try { process.kill(hostPid, "SIGKILL"); } catch { /* ditto */ }
+      await pidGone(hostPid, 5_000);
     }
   }
   rmSync(root, { recursive: true, force: true });
