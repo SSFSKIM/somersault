@@ -285,12 +285,17 @@ Result for `claude` 2.1.222 — `any=0 btn=0 std=0 sgr=0 all=0`, in **every** st
 REPL, mid-turn, after a folded tool row, after `ctrl+o` expansion, and with the `/model` picker
 open. `ccx` reports the same all-zero set. **Neither TUI ever enables mouse reporting.**
 
-> **STALE at ≤24 rows for claude ≥2.1.226** (sweep #2, s2qa6-19, reproduced twice): launched at
-> 80×24, claude 2.1.226 enters the **alternate screen with SGR + any-motion mouse reporting ON**
-> (`alternate_on=1`, `sgr=1`, `any=1`). This is upstream's fullscreen renderer becoming the
-> default at small panes — 24-row scrollback/anchoring comparisons between the two TUIs are no
-> longer measuring the same renderer (see D10 in the umbrella spec and FULLSCREEN-1). At 40 rows
-> the all-zero result still held.
+> **STALE for claude ≥2.1.226 — and the trigger is NOT geometry** (sweep #2 filed s2qa6-19 as
+> "alt screen at ≤24 rows"; the FULLSCREEN-1 grounding, 2026-08-12, overturned the mechanism with
+> 32 captures): the renderer is a **rollout-flag decision cached in `$HOME`**, chosen ONCE at
+> startup and never re-evaluated on resize. A **cold** isolated home falls back to the flag
+> default (main screen, mouse off); the **second** launch in the same home reads the cached flag
+> and goes fullscreen **at every size tested (8–40 rows, 40–200 cols)** with SGR + any-motion
+> mouse reporting ON. The fleet's "24 enters, 40 doesn't" was cold-vs-warm home, not pane height.
+> **RULE: every claude launch line MUST pin the renderer explicitly** —
+> `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` (classic) or `CLAUDE_CODE_NO_FLICKER=1` (fullscreen) —
+> or the cell is silently sampling one of two renderers depending on home warmth. "Neither TUI
+> ever enables mouse reporting" above is true only of the classic renderer.
 
 ### 4.3 Injecting mouse bytes — which method actually delivers
 

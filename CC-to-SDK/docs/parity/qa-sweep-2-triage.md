@@ -166,6 +166,11 @@ is withdrawn for having no recorded method. s2qa2-06 **NOT SHIPPED** — out of 
 **FULLSCREEN-1** (D-W5): inside the current Ink `<Static>` renderer every honest fix either duplicates the
 transcript into scrollback per reflow or needs the `ESC[3J` wipe Wave R rejected. Owner input wanted on
 whether FULLSCREEN-1 gets scheduled; 2.1.226's alt-screen-at-24-rows default makes it more urgent.
+  **UPDATE 2026-08-12:** owner decided BUILD (its own wave; grounding complete). The reflow grounding
+  narrowed s2qa2-06's real scope — canon re-wraps only the **visible viewport tail** on width change
+  (`TJr` L178440: main-screen erase is `ESC[2K`-per-row, `ESC[3J` is alt-screen-only); "fully re-wraps
+  history" was the 40-row-cell reading where the whole session fits on screen. Feasible in the main-screen
+  renderer without either dishonest arm; grounding in the job scratch (`reflow-ground.md`).
 **Instrument finding:** matrix cell `a3` is dead — see §5, item 5; filed, not papered over.
 
 ### W6 · /resume preview
@@ -205,6 +210,17 @@ fleet roster (s2qa5-05); roster `state:"working"` for idle sessions persists (s2
   every 24-row cell compared different renderers — the exact D10 instrument confound, now
   version-triggered. Folds into FULLSCREEN-1 with new urgency: at small panes, *default* claude is
   now the fullscreen renderer.
+  **MECHANISM CORRECTED 2026-08-12 (FULLSCREEN-1 grounding, 32 captures):** the trigger is NOT pane
+  height — it is a **rollout-flag cache in `$HOME`**, decided once at startup, never re-evaluated on
+  resize. Cold isolated home → flag default → main screen; warm home (second launch) → fullscreen at
+  EVERY size tested (8–40 rows, 40–200 cols). The fleet's geometry reading was cold-vs-warm home. The
+  confound is therefore worse than filed — any cell in a reused home may be fullscreen at any size —
+  and the driver now mandates pinning the renderer per launch
+  (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` / `CLAUDE_CODE_NO_FLICKER=1`, §4.2). Two grounding
+  corollaries recorded for the wave: upstream "bottom-anchoring" anchors the SCROLL POSITION once
+  content overflows (short content sits at the TOP of the region; only the dock pins to the bottom),
+  and quitting fullscreen discards the conversation from scrollback (rmcup) leaving only a two-line
+  `--resume` pointer. Owner decided BUILD; grounding at the job scratch (`fullscreen-ground.md`).
 - **Inline chips absent** (s2qa6-14): closed by owner decision D-C3, correctly filed as such.
 
 ## 5 · Environment facts for the next sweep
