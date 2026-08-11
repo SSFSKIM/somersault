@@ -279,6 +279,11 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
 - Task 3 exposed a second-order defect its own fix created reach for: the fall-through made the
   global arm's first-press draft-clear fire over overlays. The bundle settled it (D-W10) — the
   reviewer's "should be an explicit choice" instinct was exactly right.
+- Task 5 review: canon's `nvn` has a SECOND effort write this wave's grounding missed — the
+  effort that rides out with the pick (`mOH`, L441087) is gated on dirty AND the PICKED model's
+  effort axis, and on the `/model` surface (skipSettingsWrite, L471450) it is the only write.
+  Third bundle-settles-testimony overturn of the wave, caught by a reviewer re-opening the
+  bundle. Canon also appends ` with <level> effort` to the model-set notice (L471428).
 
 ## Outcomes & Retrospective
 
