@@ -6,7 +6,7 @@
 // (`ComposerFrame`, CM1: two full-width `─` runs) are the cheapest width-derived string in the tree, so
 // they are what this file measures.
 import React from "react";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -117,6 +117,103 @@ describe("terminal size is React state", () => {
     resize.fire(); await tick();
     expect(commits).toBeGreaterThan(drained);                       // …and the probe is live, not merely silent
     expect(ruleWidths(frame(r.lastFrame))).toContain(60);
+  });
+
+  // WAVE 2 TASK 7 (s2qa2-05) — GROWING OUT OF A HEIGHT-CLIPPED TALL SURFACE. At 60x15 a `/model` picker's frame
+  // reaches the pane height, so Ink takes its tall-frame branch (ink.js:118-122), writes straight to stdout and
+  // leaves log-update's counters describing an older, shorter frame. Growing the pane then strands the picker's
+  // header: the write-time corrector refuses (no recorded frame, and a grow besides), and Wave R's recovery
+  // (ChatApp's `transcriptOpen` true→false edge) is the PAGER's — a dialog was a named residual.
+  //   The repair is the same one, fed by a second edge. Both halves of the t8 argument are kept intact: the
+  // `tallWrites() > 0` stand-down is untouched (loosening it is the over-erase that destroyed six live rows,
+  // chatMain.tsx:134-149), and the trigger is an EDGE — the size actually moved upward — never a level.
+  describe("growing while a tall write is outstanding", () => {
+    const fakeProxy = () => {
+      const state = { tall: 0, resynced: 0 };
+      return { state, output: { repaint: (run: () => void) => run(), tallWrites: () => state.tall, screenResynced: () => { state.tall = 0; state.resynced += 1; } } };
+    };
+    const mountWith = async (cols: () => number, resize: ReturnType<typeof fakeResize>, proxy: ReturnType<typeof fakeProxy>, resync: () => boolean) =>
+      mount(<ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ columns: cols, getSessionMessages: async () => [] as any[] }} onResize={resize.onResize}
+        resumeOutput={proxy.output} resyncViewport={resync} />);
+
+    it("resyncs the viewport once, on the grow itself", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.tall = 1;                                          // the clipped picker took ink.js:118
+      expect(resync).not.toHaveBeenCalled();                         // …and nothing fires at mount, however it stands
+      cols = 120;
+      resize.fire();
+      await tick();
+      expect(resync).toHaveBeenCalledTimes(1);
+      expect(proxy.state.resynced).toBe(1);                          // …and the proxy is told, so it stops asking
+      expect(proxy.state.tall).toBe(0);
+      r.unmount();
+    });
+
+    // The erase is viewport-bounded, but it is still an erase: on a NARROWING the residue is above the viewport's
+    // top as often as not, and Wave R's own corrector owns that direction at the write.
+    it("never fires on a shrink", async () => {
+      let cols = 120;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.tall = 1;
+      cols = 60;
+      resize.fire();
+      await tick();
+      expect(resync).not.toHaveBeenCalled();
+      expect(proxy.state.tall).toBe(1);
+      r.unmount();
+    });
+
+    // The t8 gate, unchanged and load-bearing: `clearViewport` blanks the whole viewport, which is safe only
+    // while the viewport holds nothing but a tall chunk's own bytes. On an ordinary screen a grow is Ink's own
+    // business and wiping it destroys live <Static> rows.
+    it("never fires when the proxy reports no tall write", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      cols = 120;
+      resize.fire();
+      await tick();
+      expect(resync).not.toHaveBeenCalled();
+      r.unmount();
+    });
+
+    // AN EDGE, NOT A LEVEL (ChatApp.tsx:466-480, the wave's history-vs-state lesson). "The terminal is wider than
+    // it was" is true forever after one grow; only the transition may fire. A resize that reports a size we
+    // already hold is not a transition, whatever the tall count does in the meantime.
+    it("does not fire again while the terminal simply stays large", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy(), resync = vi.fn(() => true);
+      const r = await mountWith(() => cols, resize, proxy, resync);
+      proxy.state.tall = 1;
+      cols = 120;
+      resize.fire(); await tick();
+      expect(resync).toHaveBeenCalledTimes(1);
+      proxy.state.tall = 1;                                          // another tall surface goes up…
+      resize.fire(); await tick();
+      resize.fire(); await tick();                                   // …and the terminal reports its size again
+      expect(resync).toHaveBeenCalledTimes(1);
+      expect(proxy.state.tall).toBe(1);
+      r.unmount();
+    });
+
+    // A reset that could not write (no tty — `clearViewport` returns false there) has resynchronized nothing, so
+    // the count must stand rather than be cleared on its behalf.
+    it("leaves the count standing when the reset declines to write", async () => {
+      let cols = 60;
+      const resize = fakeResize(), proxy = fakeProxy();
+      const r = await mountWith(() => cols, resize, proxy, () => false);
+      proxy.state.tall = 1;
+      cols = 120;
+      resize.fire();
+      await tick();
+      expect(proxy.state.resynced).toBe(0);
+      expect(proxy.state.tall).toBe(1);
+      r.unmount();
+    });
   });
 
   it("unsubscribes on unmount, so a torn-down app never keeps setting state off the terminal", async () => {

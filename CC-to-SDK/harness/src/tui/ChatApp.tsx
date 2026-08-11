@@ -490,14 +490,46 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // history-vs-state lesson for the third time (spec Surprises 11): the count answers "is the screen in that
   // state now", and the pager answers "did the tall surface just come DOWN" — that one is an edge, and an edge
   // cannot be read off a level.
+  //   WAVE 2 TASK 7 (s2qa2-05) — AND THE REPAIR NOW HAS A SECOND EDGE, so the level check above is shared. What
+  // the two edges have in common is the only thing that makes the wipe safe: `tallWrites() > 0`, the proxy's
+  // report that the viewport still holds nothing but a tall chunk's own bytes. What they do not share is the
+  // event — one is a pager coming down, the other is the terminal growing under a tall surface that is still up.
+  const resyncTallScreen = (): void => {
+    const output = resumeOutputRef.current;
+    if (!(output?.tallWrites?.() ?? 0)) return;
+    if ((resyncViewport ?? (() => clearViewport({ stdout, write })))()) output!.screenResynced?.();
+  };
+  const resyncTallScreenRef = useRef(resyncTallScreen); resyncTallScreenRef.current = resyncTallScreen;
   const transcriptWasOpen = useRef(false);
   useEffect(() => {
     const closed = transcriptWasOpen.current && !transcriptOpen;
     transcriptWasOpen.current = transcriptOpen;
-    const output = resumeOutputRef.current;
-    if (!closed || !(output?.tallWrites?.() ?? 0)) return;
-    if ((resyncViewport ?? (() => clearViewport({ stdout, write })))()) output!.screenResynced?.();
+    if (closed) resyncTallScreenRef.current();
   }, [transcriptOpen]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // WAVE 2 TASK 7 (s2qa2-05) — THE SECOND EDGE: THE TERMINAL GREW WHILE A TALL WRITE IS STILL OUTSTANDING. A
+  // `/model` picker in a 60x15 pane is at least as tall as the pane, so its frame takes ink.js:118 and log-update
+  // is bypassed; growing the pane then leaves the picker's header stranded above Ink's live frame, and every
+  // mechanism ccx has declines by construction — the write-time corrector has no recorded frame (the proxy drops
+  // it on a tall chunk) and requires a NARROWING besides, and the edge above is the pager's alone (the residual
+  // named at :470). The measured behaviour is that the fragment survives Esc, a keystroke and a pager cycle.
+  //   NO REFLOW-VERDICT PRECONDITION, deliberately. The verdict only ever exists after a narrowing — this edge is
+  // a GROW — and it is not what bounds this erase anyway: the reflow correction erases upward by a computed depth
+  // and needs a measurement to justify it, while `clearViewport` blanks the viewport and nothing else. Viewport-
+  // bounded is scrollback-safe by construction, and the forced repaint through Ink's `writeToStdout`
+  // (clearViewport.ts:40-56) leaves log-update's counters describing what it painted.
+  //   AND THE STAND-DOWN IS NOT LOOSENED. `tallWrites()` falls to 0 on any recorded frame write (chatMain.tsx:
+  // 134-149), so if Ink repaints an ordinary frame for the resize before this effect runs, the gate is false and
+  // the fragment survives. That is the under-erase side of a trade the t8 review already settled once with six
+  // destroyed transcript rows on the other side; it is not reopened here for a cosmetic row.
+  //   AN EDGE, NOT A LEVEL, for the third time in this file: `size` only changes identity when the size actually
+  // moved (`nextSize`), and the ref below makes the DIRECTION a transition. The first pass compares the mount
+  // size with itself, so a boot into a short pane — where every frame goes tall and no recorded frame write ever
+  // stands the count down — cannot fire it.
+  const sizeWasRef = useRef(size);
+  useEffect(() => {
+    const prev = sizeWasRef.current; sizeWasRef.current = size;
+    if (size.columns > prev.columns || size.rows > prev.rows) resyncTallScreenRef.current();
+  }, [size]);
   // Ctrl-O opens the pager (the PAGER owns closing it — Transcript's own ctrl+o → transcript:exit, task 7);
   // Ctrl-R/T/B are Composer-only. Ctrl-C is allowed from Composer and a visible decision dialog, but never
   // from an ordinary overlay hidden behind a decision. Shift+Tab/Esc are the composer's (Chat context) — it

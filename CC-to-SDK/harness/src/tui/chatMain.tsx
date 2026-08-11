@@ -431,7 +431,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   try { await app.waitUntilExit(); }
   finally {
     process.stdout.off("resize", resize.onResize);
-    title.clear();                       // `a0u` (L148428) — hand the terminal back with an empty title
+    resize.stop();                       // W2 t7 — …and drop the settle window with it: it WRITES when it fires
+    title.clear();                     // `a0u` (L148428) — hand the terminal back with an empty title
     // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our spaces.
     if (process.stdout.isTTY && output.parkedColumn() > 0) process.stdout.write("\x1b[2K\x1b[G");
   }

@@ -14,6 +14,20 @@
 #   3. at least one row of CONTENT above the frame — staged with `/status`, which paints a real transcript
 #      block with no model turn and therefore no API key (see "keyless" below).
 #
+# WHY THERE IS NO BURST CELL, MEASURED (W2 t7, s2qa2-07). A cell for a rapid multi-width drag was written and
+# then withdrawn: the tmux CLI cannot produce one at the granularity a real drag has, and the two regimes it
+# CAN produce are both useless here. Separate `tmux resize-window` invocations are ~250 ms apart (measured,
+# one client round-trip each), which is not a burst at all — every leg settles and the per-leg correction
+# already owns it. Chaining them into one round-trip (`resize-window … \; resize-window …`) goes the other
+# way: all three sizes are applied before the app's first SIGWINCH handler runs, and since `columns` is read
+# live at handler time the intermediate width is never delivered to the process AT ALL — a probe process
+# under a 120 → 90 → 150 → 120 chain logged `resize 150`, `resize 120` and no 90. That reflow leaves real
+# residue on screen (a 30-cell tail of a 120-wide rule) and NOTHING in ccx can reach it: every repair here is
+# measured off widths the process observed, and this one it never saw. Repairing it would need a screen-level
+# wipe, which is the over-erase the whole wave refuses. The observable regime — a mouse drag, whose signals do
+# arrive individually, ~12 ms apart (measured) — is what `resizeRepaint.ts`'s settle window handles, and it is
+# pinned in test/unit/resize-repaint.test.ts rather than here.
+#
 # WHY tmux AND NOT `scripts/capture-frames.py` (W-R2). pyte TRUNCATES long lines instead of reflowing them,
 # so the stale-rule remainder — the actual tell — never appears in a pyte frame. A green pyte run says
 # nothing about a resize fix. tmux reflows like a real terminal.
@@ -205,13 +219,18 @@ launch() {                                  # launch <session> <cols> <rows> [<e
   fi
   SESSIONS="$SESSIONS $s"
   tmux set-option -t "$s" remain-on-exit on >/dev/null
-  # READY-NEEDLE. NOT qa-driver.md §2.1's `⇧Tab to cycle`, which this build no longer prints anywhere (its
-  # footer reads `⇧Tab mode` and the tips line `⇧Tab to change mode`) — that needle burns its whole timeout
-  # against a REPL that was ready in a second. `⏎ send` is the composer's own hint row and survives every
-  # width in the matrix, wrapping but never disappearing.
+  # READY-NEEDLE, AND IT HAS DRIFTED TWICE NOW. It was qa-driver.md §2.1's `⇧Tab to cycle`, which Wave R
+  # replaced with `⏎ send` — the composer's own hint row. Wave C task 2 then DELETED that whole row (the
+  # one-row footer: `ChatComposer.tsx:1091`, "HINT ROW 1 … was a ccx invention"), so from that commit every
+  # cell here burned its full 60 s and reported "never reached the ready frame" — the matrix has been failing
+  # closed ever since, which is how W2 t7 found it. `⏸ manual mode on` is the footer's home state
+  # (`Footer.tsx`, annex §C4.c `⏸ manual mode on · ? for shortcuts · ← for agents`): it is printed by the
+  # first interactive frame at every width in the matrix, it does not depend on a draft or a turn, and the
+  # matrix never changes mode. The `? for shortcuts` tail is NOT in the needle — the footer suppresses it
+  # whenever a statusLine is configured, and an isolated HOME is the only reason it is on screen here.
   local i=0
   while [ "$i" -lt 120 ]; do
-    tmux capture-pane -t "$s" -p 2>/dev/null | grep -qF '⏎ send' && return 0
+    tmux capture-pane -t "$s" -p 2>/dev/null | grep -qF '⏸ manual mode on' && return 0
     sleep 0.5; i=$((i+1))
   done
   echo "      FAIL $s never reached the ready frame"; return 1
@@ -314,6 +333,14 @@ run_cell() {                                # run_cell <name> <w0>x<h0> [<w>x<h>
 run_a5_cell() {
   local s="wr-t5-a5-$RUN_ID" rc=0 cap="$MATRIX_ROOT/cap"
   echo "  cell a5: launch 120x40 (placeholder painted) -> 100x40 -> shrink 80x24 -> submit -> no stranded placeholder"
+  # …AND THE PLACEHOLDER HAS TO BE TURNED ON NOW (W2 t7). Wave C task 12 made `promptSuggestionEnabled` default
+  # FALSE (spec D-C4), which also silences the first-run `Try "…"` template this cell strands — so from that
+  # commit precondition 1 below failed on every run and the cell asserted nothing. It is a PREFERENCE, not a
+  # product change, so the cell states it: the same `~/.claude/ccx/prefs.json` a user would set, inside the
+  # per-cell HOME `launch` builds (`CCX_FLEET_ROOT=$home/.claude/ccx`, so this is that file) and nowhere near
+  # the operator's own. Written before launch, because `loadPrefs` runs before the first render.
+  mkdir -p "$MATRIX_ROOT/$s-home/.claude/ccx"
+  printf '{"promptSuggestionEnabled":true}\n' > "$MATRIX_ROOT/$s-home/.claude/ccx/prefs.json"
   launch "$s" 120 40 || { record "a5" 1; kill_cell "$s"; return; }
   settle_frame "$s" 120 "a5 start 120x40" || rc=1
   # PRECONDITION 1 — the string whose residue is under test is on screen BEFORE the shrink. (The launch banner
