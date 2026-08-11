@@ -125,9 +125,9 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `tasks` | host/ops.ts | `task/list` | both | planned(M2b) — `task/changed` notification ships (gap 5) |
 | `background` | host/ops.ts | `turn/background` | both | planned(M2b) |
 | `stop_task` | host/ops.ts | `task/stop` | both | planned(M2b) |
-| `rewind_anchors` | host/ops.ts | `thread/rewind/anchors` | both | planned(M2b) |
-| `rewind_dryrun` | host/ops.ts | `thread/rewind/dryRun` | both | planned(M2b) |
-| `rewind` | host/ops.ts | `thread/rewind` | both | planned(M2b) |
+| `rewind_anchors` | host/ops.ts | `thread/rewind/anchors` | both | shipped(M2b) |
+| `rewind_dryrun` | host/ops.ts | `thread/rewind/dryRun` | both | shipped(M2b) |
+| `rewind` | host/ops.ts | `thread/rewind` | both | shipped(M2b) — engine swap, host-order validation |
 | `clear` | host/ops.ts | `thread/clear` *(proposed)* | both | planned(M2b) — gap 6 |
 | `get_settings` | host/ops.ts | `thread/settings/read` *(proposed)* | both | planned(M2b) — gap 6 |
 | `list_dirs` | host/ops.ts | `thread/directory/list` *(proposed)* | both | planned(M2b) — gap 6 |
@@ -191,7 +191,7 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `reloadPlugins` | sdk.d.ts (Query) | `plugin/reload` | inProcess | probe-gated — unprobed |
 | `reloadSkills` | sdk.d.ts (Query) | `skill/reload` | inProcess | probe-gated — unprobed |
 | `accountInfo` | sdk.d.ts (Query) | `account/read` | inProcess | shipped(M2a) — see gap 3 |
-| `rewindFiles` | sdk.d.ts (Query) | `thread/rewind` (+`/anchors`, `/dryRun`) | both | planned(M2b) |
+| `rewindFiles` | sdk.d.ts (Query) | `thread/rewind` (+`/anchors`, `/dryRun`) | both | shipped(M2b) |
 | `seedReadState` | sdk.d.ts (Query) | N/A — internal plumbing | N/A | N/A |
 | `reconnectMcpServer` | sdk.d.ts (Query) | `mcpServer/reconnect` | both | planned(M2b) |
 | `toggleMcpServer` | sdk.d.ts (Query) | `mcpServer/toggle` | both | planned(M2b) |
