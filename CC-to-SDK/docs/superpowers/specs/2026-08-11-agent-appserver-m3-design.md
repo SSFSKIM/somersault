@@ -73,7 +73,7 @@ that verified every load-bearing claim against code. Load-bearing facts:
 ## Scope
 
 **In:** fleet adoption (`thread/attach`, `thread/stop`, `fleet/list`, origin widening, the full
-bridge, `-33006` activation, five additive host-wire revisions — §1a), workspace (`fs/read`,
+bridge, `-33006` activation, six additive host-wire revisions — §1a), workspace (`fs/read`,
 `fs/search`), `thread/shellCommand`, `thread/reopen` (gap 10), SDK 0.3.227 bump (+
 `resumeDropsTurn` adoption in the rewind seam), schema/console/scorecard/drift-gate follow-through,
 keyed live acceptance.
@@ -89,8 +89,8 @@ reverse-request domains; any change to `src/daemon/`.
 
 #### §1a Parent (host-wire) revisions carried by M3
 
-The reviews found five places where bridging *around* the wire would encode a lie the wire could
-cheaply stop telling. The host is in-repo, so M3 carries five **additive** host-side revisions
+The reviews and P106 found six places where bridging *around* the wire would encode a lie the wire
+could cheaply stop telling. The host is in-repo, so M3 carries six **additive** host-side revisions
 (each with its own host-side unit coverage; all optional-field or new-emission — no existing
 client breaks):
 
@@ -108,6 +108,13 @@ client breaks):
   reach a mirror).
 - **(d) The host `capabilities` op returns the `agents` catalog** (fourth of the engine's four —
   today it returns three, and fleet `thread/capabilities/read` would silently lose subagents).
+- **(f) `turn` end carries the turn's `result`** (P106 fold-in). `runTask` awaits
+  `session.submit(...)` and DISCARDS its `{result, error?}` return (`host.ts:339`), then emits a
+  bare `{kind:"turn", phase:"end", seq}` (`:356`) — so the result exists host-side and simply never
+  ships. Capture it and add an optional `result` field to the existing turn-end event. This is the
+  ONLY route: `Session`'s read loop resolves a `result` frame into the submit waiter and never
+  passes it to `onMessage` (`session.ts:313-325`), so no `{kind:"message"}` frame can ever carry
+  one — the wire cannot be bridged around here.
 - **(e) `decision_settled` carries the full structured answer.** Today the event carries only the
   answer-kind string (`wire.ts`), which cannot reconstruct the shipped `decision/resolved`
   notification's `answer` payload when the settlement was won by another host client. The event
@@ -121,7 +128,7 @@ New module (`appserver/fleetEngine.ts`) implementing `EngineSession` over the ho
 
 | `EngineSession` member | backing |
 |---|---|
-| `submit(prompt, onMessage, {uuid})` | `prompt` op (now uuid-stamped, §1a-b) → success reply `{ok, accepted, seq}` (`host/server.ts:171`) or busy refusal `{ok:false, error:"busy"}` → mapped `-33001`; settle on the seq-matched `turn end` event (ends-before-waiter ledger, `chatAdapter.ts` pattern); `onMessage` fed from `{kind:"message"}` frames in the seq window; `result` captured from the result-type SDK frame (production-proven, `chatAdapter.ts:107`; probe leg confirms) |
+| `submit(prompt, onMessage, {uuid})` | `prompt` op (now uuid-stamped, §1a-b) → success reply `{ok, accepted, seq}` (`host/server.ts:171`) or busy refusal `{ok:false, error:"busy"}` → mapped `-33001`; settle on the seq-matched `turn end` event (ends-before-waiter ledger, `chatAdapter.ts` pattern); `onMessage` fed from `{kind:"message"}` frames in the seq window; **`result` read off the turn-end event** (§1a-f — P106 proved no message frame ever carries one) |
 | `interrupt()` | `interrupt` op |
 | `dispose()` | `detach` — the host lives on (close ≠ stop) |
 | `onFrame(cb)` | `{kind:"message"}` and `{kind:"task"}` frames → the existing router |
@@ -332,9 +339,9 @@ experimental). Notification **count 26, unchanged**; one payload moves: `thread/
 optional `reason` field (additive — schema artifact and scorecard row update in the same change).
 New error code: **`-33008 ATTACH_FAILED`** (carries the ambiguity match list in `data` when that is
 the failure). `-33006` becomes emittable (scorecard rows flip from defined-unemitted). Host wire:
-five additive revisions (§1a) — single-owner `rewound` from all swap paths, `prompt.uuid`,
+six additive revisions (§1a) — single-owner `rewound` from all swap paths, `prompt.uuid`,
 `HostStatus.model`/`thinkingTokens` + setter `state` emissions, `capabilities.agents`,
-`decision_settled.answer`. Schema artifacts regenerate;
+`decision_settled.answer`, `turn-end.result`. Schema artifacts regenerate;
 `methodSchemas` gains seven entries; the drift gate's bijection pass forces seven new scorecard
 rows in the same change.
 
@@ -345,14 +352,11 @@ a **real `HostServer` over a real UDS with a stubbed engine behind it** — actu
 replay ordering, first-answer-wins, busy gating — no API key. An engine-faithful fake host harness
 (`test/appserver/fakeHost.ts` or similar) becomes the fleet analog of the existing engine fakes.
 
-**Premise probe (run before the plan hardens; number = next free in the corpus at execution):**
-
-- **P106 — mid-turn attach, result delivery, answer forwarding.** One probe, three confirmations:
-  attach while a turn is in flight and verify the replay order + seq correlation live; confirm the
-  result-type SDK frame arrives over `{kind:"message"}` (production-implied by
-  `chatAdapter.ts:107`; this makes it evidence); park a permission on the host, answer over the
-  wire from a second client, and capture the exact receipt shapes (`{ok:true, alreadyAnsweredBy}`
-  losing race, kind-mismatch, no-parked) plus `decision_settled` attribution.
+**Premise probe — P106, RUN AND SETTLED** (keyed, 2026-08-11,
+`probes/probes/106-fleet-attach-live.ts`; verdicts in Surprises above). Eleven questions measured:
+replay order (mid-turn + parked), follow-reply position, partial-replay exclusion, result-frame
+delivery (**overturned** → §1a-f), the three answer-receipt shapes, `decision_settled` fan-out with
+attribution and structured answer, stop-vs-close ordering, and post-stop process exit.
 
 **Unit surface:** FleetEngineSession over the fake host (submit/settle, foreign-turn derivation,
 own-vs-foreign under the start-before-reply race, seq-less replay markers ignored for busy,
@@ -429,6 +433,12 @@ answered by the probe/implementation contact, none architectural.
 - **D-M3-12 — fleet `thread/read` is disk-only** (review fold-in): symmetric with inProcess (live
   half via subscribe replay). *Rejected:* disk + live-buffer merge — double-counts rows under an
   absolute-offset cursor once the turn persists.
+- **D-M3-14 — the turn result ships on the turn-end event, not as a message frame** (P106
+  adjudication, 2026-08-11): §1a-f. *Rejected:* synthesizing a minimal result server-side from the
+  turn-end event — a fleet `turn/completed` would carry a fabricated payload while the real one sat
+  discarded one process away; forwarding the result as a `{kind:"message"}` frame — it would have
+  to be re-injected into a stream the SDK deliberately keeps it out of, and every existing
+  message consumer would gain a frame species it has never seen.
 - **D-M3-13 — no auto-recovery on a `resumeDropsTurn` refusal** (Task 1 adjudication,
   2026-08-11): the refusal fires only when the transcript's trailing entries do NOT all belong to
   the declared dropped turn — exactly the case where the pre-guard silent truncation would have
@@ -455,9 +465,28 @@ answered by the probe/implementation contact, none architectural.
   *forwarding* handlers but not for *orchestrating* ones (rewind/clear swaps, compact-as-turn,
   own-turn minting) — those needed explicit fleet branches with event-driven semantics (§1d), and
   three of its "bridge can't know" holes were really "the wire doesn't say yet" holes (§1a).
-- **P106's core premise was pre-answered by shipped code** — `chatAdapter.submit` already captures
-  the result frame in production `ccx attach` use; the probe demoted from open question to
-  evidence-capture (receipt shapes, replay order).
+- **P106 OVERTURNED the result-frame premise — and the "pre-answered by shipped code" reasoning
+  with it** (keyed run, 2026-08-11, `probes/probes/106-fleet-attach-live.ts`). The spec claimed
+  result delivery was production-proven because `chatAdapter.submit` captures a result-type frame
+  (`chatAdapter.ts:111`). The probe measured 88 message frames on a following client and **zero**
+  carrying `type:"result"`; the code then explained why — `Session`'s read loop resolves a result
+  into the submit waiter and never forwards it to `onMessage` (`session.ts:313-325`), so the host's
+  emission (which rides `onMessage`) can never include one. **That capture line is dead code that
+  has never fired.** The lesson generalizes past this milestone: a shipped code path that *looks*
+  like it handles a case is not evidence the case occurs — only a live run distinguishes "handled"
+  from "never reached", and the spec review that accepted the claim could not have caught it by
+  reading either. Resolution: §1a-f (the wire carries the result on turn-end).
+- **The other ten P106 answers, all AS DOCUMENTED unless noted** (keyed run): mid-turn and parked
+  replay both match `host.ts:513-546`'s order exactly (turn-start → replay-marked messages →
+  decision → state); the follow REPLY lands *after* the whole burst, so a client must not treat it
+  as a delimiter; `stream_event` partials fan out live (16 seen) and are never replay-marked (0);
+  answer receipts are `{ok:true, alreadyAnsweredBy:"<who>"}` for the lost race,
+  `{ok:false, error:"kind mismatch: permission park cannot take question_answer"}`, and
+  `{ok:false, error:"no parked request <id>"}`; `decision_settled` reached **3/3** attached clients
+  carrying `by` AND the §1a-e structured `answer` (Task 2's field, live-proven end to end);
+  `stop` sends **no receipt at all** — all three sockets closed ~479 ms after the write, so an
+  await-the-reply client waits forever (confirming the plan's EOF contract); and the host process
+  **does** exit on its own after `stop` (roster terminal AND pid gone).
 - *(during execution — append here)*
 - **Drift ritual (Task 1, SDK bump landed):** the 0.3.220 → 0.3.227 delta is five added declared
   properties and nothing else — `awsPairs`, `crossSessionInbound`, `dialogExpiry`,
