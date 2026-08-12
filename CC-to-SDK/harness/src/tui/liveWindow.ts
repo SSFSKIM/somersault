@@ -1,0 +1,57 @@
+// tui/src/liveWindow.ts — the live-window selector: the one decision the fullscreen renderer and the main
+// screen share. Given the finalized transcript items that have NOT been committed yet, it answers "which
+// tail of these must stay in the live (re-rendered) subtree, and which are now frozen?" — nothing else. No
+// Ink, no React, no terminal: a pure suffix split, so both surfaces can be reasoned about (and tested)
+// without a renderer.
+//
+// INPUT CONTRACT — `items` are the UNPUBLISHED finalized items only. The caller filters by its published-id
+// set BEFORE calling, and that ordering is the whole trick: because an item never reappears in the input
+// once it has been committed, the spec's one-way commit ratchet needs no state, no bookkeeping and no
+// enforcement here. This module therefore does NOT validate published-ness and has no rejection path — it is
+// TOTAL over whatever it is handed. Hardening it into a validator would move the ratchet's home and is the
+// one change to resist.
+//
+// WHY THE CAP IS HARD, not advisory: stock Ink 5.2.1 (`build/ink.js:121`) checks `outputHeight >=
+// stdout.rows` and, when it holds, writes `clearTerminal + fullStaticOutput + output` straight to stdout —
+// the entire session reprinted, every frame. The live subtree must never come near that cliff, so `capRows`
+// binds unconditionally: no input, however tall, may produce a window that sums past it.
+import type { RenderItem } from "./toolRenderer.js";
+import { renderItemHeight } from "./pager.js";
+
+/** The split. `commit` then `window` is exactly the input, in the input's order — the cut is always between
+ *  whole items, never inside a gutter block's body (half a block in Static and half in the live subtree would
+ *  print one `⎿` and then reflow its two halves independently on resize). */
+export interface LiveWindowResult { window: readonly RenderItem[]; commit: readonly RenderItem[] }
+
+/** The cushion a caller adds to the rows it actually needs reflowed when computing `targetRows`: two rows of
+ *  overshoot, so a frame that grows by a line does not immediately fall out of the selected window. */
+export const WINDOW_SLACK = 2;
+
+/** The measured steady-state main-screen dock: the rows that are never the transcript's. Todo panel up to 5
+ *  (`taskPanelModel.ts:16-18`) + chrome, the live-turn row (`ChatApp.tsx:776`/`:788`/`:800`), the composer's
+ *  ≥3 (`:968`) and the footer's 1 (`:1021`). It is a measurement, not a guess (plan review C3) — change it
+ *  only against a re-measured dock. */
+const MAIN_DOCK_ROWS = 14;
+
+/** The main screen's hard cap: whatever the terminal has left once the dock is paid for, floored at zero (a
+ *  terminal shorter than the dock simply has no live window — the window is empty, everything commits). */
+export function mainWindowCap(rows: number): number { return Math.max(0, rows - MAIN_DOCK_ROWS); }
+
+/** The smallest SUFFIX of whole items whose summed `renderItemHeight` reaches `targetRows`, hard-bounded at
+ *  `capRows`; everything above it is `commit`. Walking from the tail is what makes it minimal: the moment the
+ *  accumulated height satisfies the target we stop, so the live subtree never carries rows nobody asked to
+ *  reflow. The cap check that stops the walk covers two cases with one condition — an item that simply does
+ *  not fit alongside what is already selected, and an item taller than `capRows` all by itself, which can
+ *  never be in any window and so becomes a floor: it commits WHOLE (the recorded divergence — it is excluded
+ *  from reflow, rather than being split), and the window is whatever sits below it. Past the cap the target
+ *  has no say at all, so `targetRows ≥ capRows` degenerates to a purely cap-bounded selection. */
+export function selectLiveWindow(items: readonly RenderItem[], targetRows: number, capRows: number): LiveWindowResult {
+  let cut = items.length, height = 0;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (height >= targetRows) break;
+    const next = height + renderItemHeight(items[i]!);
+    if (next > capRows) break;
+    height = next; cut = i;
+  }
+  return { commit: items.slice(0, cut), window: items.slice(cut) };
+}
