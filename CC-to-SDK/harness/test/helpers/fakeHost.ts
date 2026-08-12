@@ -69,6 +69,10 @@ export interface FakeHostControls {
   /** §1a-f pairing contract (wire.ts's turn member): `error` is a THROWN turn and travels alone;
    *  `result` and `failure` describe a turn that RESOLVED and may travel together. */
   endTurn(seq: number, opts?: { error?: string; result?: unknown; failure?: TurnFailure }): void;
+  /** Make the NEXT prompt complete SYNCHRONOUSLY inside its own handler — turn/start AND turn/end both
+   *  emitted before the server writes the prompt reply, so a trivially-fast own turn's end beats its own
+   *  reply on the wire (external review F2). `opts` is `endTurn`'s shape. */
+  completeNextPromptInline(opts?: { error?: string; result?: unknown; failure?: TurnFailure }): void;
   park(entry: PendingDecisionLike): void;
   /** Settle a park host-side, decision_settled then state. With an `answer` this is the human path
    *  (§1a-e: the whole outcome travels, host.ts:860-861); without one it is the SDK-ABORT path — a bare
@@ -136,6 +140,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   let tasks: BackgroundTaskInfo[] = [];
   let busy = !!opts.busy;
   let seq = busy ? 1 : 0;                            // a turn in flight is a turn that started
+  let inlineComplete: { error?: string; result?: unknown; failure?: TurnFailure } | undefined; // F2: end this prompt inline
   const patch: Partial<HostStatus> = { ...opts.status };
   const ops: string[] = [];
   const opCalls: Array<{ op: string; args: unknown[] }> = [];
@@ -172,6 +177,18 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   // receipt that outlived its turn answers a stale client `alreadyAnsweredBy` where the real host says
   // `no parked request <id>`.
   const beginTurn = (n: number): void => { busy = true; seq = n; buffered.length = 0; settledBy.clear(); emit({ kind: "turn", phase: "start", seq: n }); };
+
+  /** The turn-END emitter, shared by the `endTurn` control and the inline-complete prompt path (F2). The
+   *  §1a-f pairing is the contract, so an impossible combination fails HERE rather than teaching a client to
+   *  read a frame the host cannot produce: a turn that THREW carries no result. */
+  const emitEnd = (n: number, o: { error?: string; result?: unknown; failure?: TurnFailure } = {}): void => {
+    if (o.error !== undefined && (o.result !== undefined || o.failure !== undefined)) {
+      throw new Error("turn-end contract: `error` is a thrown turn and travels alone — never with result/failure");
+    }
+    busy = false;
+    emit({ kind: "turn", phase: "end", seq: n, ...(o.result === undefined ? {} : { result: o.result }),
+      ...(o.failure === undefined ? {} : { failure: o.failure }), ...(o.error === undefined ? {} : { error: o.error }) });
+  };
 
   /** host.ts's settleParkedForSystem (:871-879), the path `interrupt` (:922) and teardown both take:
    *  `denyAll()` settles straight into the registry, so the host emits one BARE deny per entry itself —
@@ -238,7 +255,13 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     answer: (toolUseID, outcome, by) => { record("answer", toolUseID, outcome, by); return answer(toolUseID, outcome, by); },
     // runTask bumps the seq and emits `start` SYNCHRONOUSLY, before its first await — which is what makes
     // the seq the server puts in the prompt reply (read after this call) this turn's own.
-    prompt: async (text, uuid) => { record("prompt", text, uuid); promptCalls.push({ text, ...(uuid ? { uuid } : {}) }); beginTurn(seq + 1); },
+    prompt: async (text, uuid) => {
+      record("prompt", text, uuid); promptCalls.push({ text, ...(uuid ? { uuid } : {}) });
+      beginTurn(seq + 1);
+      // F2: complete the turn INLINE — turn/end is emitted here, before this handler returns, so it precedes
+      // the prompt reply the server writes next (turnSeq() still reads this turn's seq, the reply matches).
+      if (inlineComplete !== undefined) { const o = inlineComplete; inlineComplete = undefined; emitEnd(seq, o); }
+    },
     // The turn's own end frame is NOT emitted here: it comes from the SDK stream throwing under the
     // interrupt (host.ts's runTask catch arm, :363) — engine-mediated, so the test emits it via endTurn.
     interrupt: async () => { record("interrupt"); settleParkedForSystem(); },
@@ -311,16 +334,8 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     emitTask: (t) => emit({ kind: "task", data: t }),
     emitTasksChanged: (next) => { tasks = next as BackgroundTaskInfo[]; emit({ kind: "tasks_changed", tasks }); },
     beginTurn,
-    endTurn: (n, o = {}) => {
-      // The pairing is the contract, so an impossible combination fails HERE rather than teaching a
-      // client to read a frame the host cannot produce: a turn that THREW produced no outcome to carry.
-      if (o.error !== undefined && (o.result !== undefined || o.failure !== undefined)) {
-        throw new Error("turn-end contract: `error` is a thrown turn and travels alone — never with result/failure");
-      }
-      busy = false;
-      emit({ kind: "turn", phase: "end", seq: n, ...(o.result === undefined ? {} : { result: o.result }),
-        ...(o.failure === undefined ? {} : { failure: o.failure }), ...(o.error === undefined ? {} : { error: o.error }) });
-    },
+    endTurn: (n, o = {}) => emitEnd(n, o),
+    completeNextPromptInline: (o) => { inlineComplete = o ?? {}; },
     park: (e) => {
       const entry: PendingDecision = { sessionId: "s-fake", toolName: "Bash", kind: "permission", input: {}, createdAt: Date.now(), ...e };
       parked.push(entry);

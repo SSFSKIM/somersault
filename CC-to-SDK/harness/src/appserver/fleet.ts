@@ -154,8 +154,19 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     record.turnStartedBroadcast = false;
     record.updatedAt = nowSec();
     // `currentTurnId` is deliberately left standing (registry.ts: the replay path wants the last turn's id).
-    srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: failure === undefined ? { id: turnId, status: "completed" } : { id: turnId, status: "failed", error: failure } });
-    statusChanged(srv, record);
+    const complete = (): void => {
+      srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: failure === undefined ? { id: turnId, status: "completed" } : { id: turnId, status: "failed", error: failure } });
+      statusChanged(srv, record);
+    };
+    // F2: an OWN turn's turn/start REPLY (fleetTurnStart's onAccepted) is published on the microtask after
+    // the host's prompt reply resolves, while this end edge is broadcast synchronously as the frame routes.
+    // A trivially-fast turn whose end shares a data chunk with (or precedes) that reply would put
+    // turn/completed on the wire before the inProgress reply. `fleetStartAck` is set while that reply is
+    // pending and resolved the instant it publishes — so hold the completed edge behind it. Foreign turns
+    // set no ack, and once the reply is out it is cleared, so a normal completion stays synchronous. Mirrors
+    // the in-process spine, where turn/started strictly precedes turn/completed.
+    const ack = record.fleetStartAck;
+    if (ack) void ack.then(complete); else complete();
   }));
 
   // A park raised host-side, mirrored as a VIEW (broker.ts's parkView) — looked up per event rather than

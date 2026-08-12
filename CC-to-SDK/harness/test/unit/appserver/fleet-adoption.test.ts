@@ -327,6 +327,30 @@ describe("the fleet event layer owns turn lifecycle (M3 Task 7)", () => {
     expect(record.busy).toBe(false);
   });
 
+  it("a trivially-fast OWN turn whose end beats its prompt reply emits the inProgress reply BEFORE turn/completed (F2)", async () => {
+    // The event layer broadcasts turn/completed SYNCHRONOUSLY off the host's turn-end frame, while
+    // fleetTurnStart's inProgress reply + user item are published on the microtask after the prompt reply
+    // resolves (its onAccepted). A turn whose end lands with (or before) its own reply therefore used to put
+    // turn/completed on the wire ahead of the reply — terminal-before-acceptance, out of order. turn/started
+    // legitimately precedes the reply (the host emits start before the reply); turn/completed must not.
+    const { fh, lines, conn, threadId } = await attached();
+    fh.completeNextPromptInline({ result: "done" });          // turn/start AND turn/end before the prompt reply
+    send(conn, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await waitFor(() => expect(notifs(lines, "turn/completed")).toHaveLength(1));
+
+    const seqLines = parsed(lines);
+    const iStarted = seqLines.findIndex((f) => f.method === "turn/started");
+    const iReply = seqLines.findIndex((f) => f.id === 4);
+    const iUserItem = seqLines.findIndex((f) => f.method === "item/completed");
+    const iCompleted = seqLines.findIndex((f) => f.method === "turn/completed");
+    expect(iStarted).toBeGreaterThanOrEqual(0);
+    expect(iReply).toBeGreaterThan(iStarted);                 // started may precede the reply — that is legitimate
+    expect(iCompleted).toBeGreaterThan(iReply);               // THE FIX: completed never precedes the inProgress reply
+    expect(iCompleted).toBeGreaterThan(iUserItem);            // …nor the user item onAccepted published with it
+    expect(frame(lines, 4).result.turn).toEqual({ id: "t1@e0", status: "inProgress" });
+    expect(notifs(lines, "turn/completed")[0].params.turn).toEqual({ id: "t1@e0", status: "completed" });
+  });
+
   it("a turn the host reports as FAILED completes failed, and a busy host refuses turn/start with -33001", async () => {
     const { fh, lines, conn, threadId } = await attached();
 

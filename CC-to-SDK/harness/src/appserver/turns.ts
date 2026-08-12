@@ -318,11 +318,20 @@ function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
 function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord, input: string): void {
   const userUuid = randomUUID();
   let replied = false;
+  // F2: publish the promise the event layer (fleet.ts) holds a trivially-fast turn's turn/completed edge
+  // behind until this turn's inProgress reply is out. Resolved the instant onAccepted publishes the reply,
+  // and on the failure path so a deferred completed is never stranded. Only the record field is nulled
+  // conditionally (a later own turn may have replaced it); the resolver always fires.
+  let releaseAck!: () => void;
+  const ack = new Promise<void>((r) => { releaseAck = r; });
+  record.fleetStartAck = ack;
+  const clearAck = (): void => { if (record.fleetStartAck === ack) record.fleetStartAck = undefined; releaseAck(); };
   const onAccepted = (seq: number): void => {
     const turnId = fleetTurnId(record, seq);
     replied = true;
     ctx.peer.reply(id, { turn: { id: turnId, status: "inProgress" } });
     emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(input, userUuid) }]);
+    clearAck();   // the reply is out — release any completed edge the event layer deferred onto it
   };
   // Cast, not a widened `EngineSession`: `onAccepted` is a FLEET engine's member (fleetEngine.ts widens
   // submit for it), and declaring it on the shared interface would promise a callback the in-process
@@ -330,14 +339,15 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // writer of that pair.
   const engine = record.session as unknown as FleetEngineSession;
   engine.submit(input, () => {}, { uuid: userUuid, onAccepted }).catch((e: unknown) => {
+    clearAck();   // the reply will never come — don't strand a deferred turn/completed (F2)
     // Once the reply is out, this turn's outcome belongs to `turn/completed` off the host's own turn end
     // — a rejection here (the connection died mid-turn) is §1f's death sequence, not a second answer.
     if (replied) return;
     // The host's busy refusal, carrying the code the turns spine answers with (FleetBusyError). Read off
     // the value rather than by class, so any engine that refuses the same way answers the same way.
     const code = (e as { code?: unknown } | null)?.code;
-    if (code === ERR.BUSY) ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)");
-    else ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    if (code === ERR.BUSY) { ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)"); return; }
+    ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   });
 }
 

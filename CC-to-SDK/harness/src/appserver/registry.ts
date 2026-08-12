@@ -204,6 +204,16 @@ export interface ThreadRecord {
                                  // (server.ts) and never cleared — the latch M2b Task 4's queue drain
                                  // checks so no engine call starts after a close began
   swapInFlight?: boolean;       // set by M2b's rewind while an engine swap is in flight
+  fleetStartAck?: Promise<void>; // FLEET ONLY (external review F2): set by fleetTurnStart (turns.ts) while an
+                                 // OWN turn's turn/start REPLY is still pending — its inProgress reply + user
+                                 // item are published on the microtask after the host's prompt reply resolves
+                                 // (onAccepted), while the event layer (fleet.ts) broadcasts turn/started and
+                                 // turn/completed synchronously off the host's turn frames. A trivially-fast
+                                 // turn whose END frame is routed before that reply would otherwise put
+                                 // turn/completed on the wire ahead of the reply. The event layer defers the
+                                 // completed edge onto this promise; onAccepted resolves and clears it the
+                                 // moment the reply is out. Absent for foreign turns (no reply is owed) and
+                                 // once the reply has been published — so a normal completion stays synchronous.
   short?: string;               // FLEET ONLY (M3 §1b): the roster row's 8-hex id — the handle `ccx` itself
                                  // addresses a session by, so a client can name the same session both here
                                  // and at the CLI. Filled at attach (Task 7); never set on inProcess.
