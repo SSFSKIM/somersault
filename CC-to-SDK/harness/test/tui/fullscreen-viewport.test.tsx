@@ -99,19 +99,20 @@ describe("FullscreenViewport — the anchor", () => {
   // granted rows become four of transcript plus the pill while the user is scrolled up, and go back to five
   // the moment `stickBottom` re-sticks. The CLAIM the case carries is untouched: the window does not move when
   // content arrives after an explicit scroll. There is no keymap above this render, so the pill's chord
-  // resolves to nothing and it prints the bare destination — which is the honest three-state answer.
+  // resolves to nothing and it prints the destination and canon's trailing arrow, with no empty parenthesis
+  // between them — which is the honest three-state answer, and canon's own unbound arm (456164).
   it("holds the window still when content arrives after an explicit scroll, and re-sticks on stickBottom", async () => {
     const ref = React.createRef<ViewportScroll>();
     const { lastFrame, rerender } = render(view({ finalizedItems: doc(50), rows: 5, scrollRef: ref }));
     ref.current!.scroll({ kind: "lines", n: -3 });
     await tick();
     expect(rowsOf(lastFrame()).slice(0, 4)).toEqual(["L42", "L43", "L44", "L45"]);
-    expect(strip(rowsOf(lastFrame())[4]!)).toBe("Jump to bottom");
+    expect(strip(rowsOf(lastFrame())[4]!)).toBe("Jump to bottom ↓");
     expect(rowsOf(lastFrame())).toHaveLength(5);                               // still exactly the grant
 
     rerender(view({ finalizedItems: doc(51), rows: 5, scrollRef: ref }));
     expect(rowsOf(lastFrame()).slice(0, 4)).toEqual(["L42", "L43", "L44", "L45"]);   // the append did NOT move it
-    expect(strip(rowsOf(lastFrame())[4]!)).toBe("1 new message");              // …it was announced instead
+    expect(strip(rowsOf(lastFrame())[4]!)).toBe("1 new message ↓");            // …it was announced instead
 
     ref.current!.stickBottom();
     await tick();

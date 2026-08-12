@@ -10,8 +10,9 @@
 //      `Math.round` arithmetic moved one row further down than up and the round trip did not close.
 //   2. THE JUMP PILL is the way back. It is the only affordance a scrolled-up user has on a screen with no
 //      scrollbar and no scrollback, and its row is PAID FOR out of the window rather than floated over it:
-//      Ink has no absolute positioning inside the region, so a flow row that was not subtracted would make the
-//      region emit `grant + 1` rows and trip the frame's overflow diagnostic on every scrolled-up frame.
+//      Ink has no absolute positioning inside the region, so a flow row that was not subtracted fails SILENTLY
+//      rather than loudly — the frame re-measures only when the FRAME re-renders and a scroll is viewport-local
+//      state, so the diagnostic never looks and the frame's clip just eats the last row, the pill's own.
 //   3. CTRL-O MOUNTS IN THE REGION, not in the dock. On the main screen the pager takes the composer's slot
 //      because the transcript above it is in scrollback; in the frame the region IS the transcript, so the
 //      pager replaces it and takes the region's grant as its budget instead of `rows − 10`.
@@ -121,20 +122,26 @@ describe("the Scroll context drives the fullscreen viewport", () => {
 });
 
 describe("the jump pill", () => {
-  // The label picker is canon's (456169): three variants, longest first, the first that fits `columns − 2`.
+  // The label picker is canon's `[sIr, Ehf, Ybt].find(v => Ut(v) <= columns - 2) ?? Ybt` (456166-456171):
+  // three variants, longest first, and the ARROW is part of the first two — `${base} (${chord}) ↓`, then
+  // `${base} ↓`, then the bare base as both the shortest variant and the unconditional fallback.
   describe("jumpPillText", () => {
-    it("names the destination when nothing new has arrived, and suffixes the resolved key", () =>
-      expect(jumpPillText(0, "ctrl+end", 80)).toBe(" Jump to bottom (ctrl+end) "));
+    it("names the destination when nothing new has arrived, and suffixes the resolved key and the arrow", () =>
+      expect(jumpPillText(0, "ctrl+end", 80)).toBe(" Jump to bottom (ctrl+end) ↓ "));
     it("counts what arrived while you were away, singular and plural", () => {
-      expect(jumpPillText(1, "ctrl+end", 80)).toBe(" 1 new message (ctrl+end) ");
-      expect(jumpPillText(12, "ctrl+end", 80)).toBe(" 12 new messages (ctrl+end) ");
+      expect(jumpPillText(1, "ctrl+end", 80)).toBe(" 1 new message (ctrl+end) ↓ ");
+      expect(jumpPillText(12, "ctrl+end", 80)).toBe(" 12 new messages (ctrl+end) ↓ ");
     });
-    it("drops the chord, then the words, as the terminal narrows", () => {
-      expect(jumpPillText(0, "ctrl+end", 20)).toBe(" Jump to bottom ");
-      expect(jumpPillText(0, "ctrl+end", 10)).toBe(" ↓ ");
+    it("drops the chord, then the arrow, as the terminal narrows", () => {
+      expect(jumpPillText(0, "ctrl+end", 20)).toBe(" Jump to bottom ↓ ");
+      expect(jumpPillText(0, "ctrl+end", 19)).toBe(" Jump to bottom ");
     });
+    // Canon has no bare-arrow variant: below the shortest variant's width it returns `Ybt` anyway and lets
+    // `wrap:"truncate-end"` clip it, which is what the pill's `<Text>` now does too.
+    it("keeps the words rather than inventing an arrow-only pill when nothing fits", () =>
+      expect(jumpPillText(0, "ctrl+end", 10)).toBe(" Jump to bottom "));
     it("prints no empty parenthesis when the action is unbound", () =>
-      expect(jumpPillText(0, "", 80)).toBe(" Jump to bottom "));
+      expect(jumpPillText(0, "", 80)).toBe(" Jump to bottom ↓ "));
   });
 
   // `qqH` (455869-455878): shown only when the viewport is NOT sticky and NOT at the end. Both halves matter —
@@ -150,7 +157,7 @@ describe("the jump pill", () => {
     await tick();
     const lines = rowsOf(r.lastFrame());
     expect(lines).toHaveLength(10);                                   // still exactly the ten rows granted
-    expect(strip(lines[9])).toBe("Jump to bottom (ctrl+end)");
+    expect(strip(lines[9])).toBe("Jump to bottom (ctrl+end) ↓");
     r.unmount();
   });
 
@@ -185,16 +192,16 @@ describe("the jump pill", () => {
     const r = renderWithKeymap(view({ finalizedItems: doc(200), rows: 10 }));
     await tick();
     r.stdin.write(PAGE_UP); await tick();
-    expect(strip(rowsOf(r.lastFrame())[9])).toBe("Jump to bottom (ctrl+end)");
+    expect(strip(rowsOf(r.lastFrame())[9])).toBe("Jump to bottom (ctrl+end) ↓");
 
     r.rerender(view({ finalizedItems: doc(203), rows: 10 }));
-    expect(strip(rowsOf(r.lastFrame())[9])).toBe("3 new messages (ctrl+end)");
+    expect(strip(rowsOf(r.lastFrame())[9])).toBe("3 new messages (ctrl+end) ↓");
     expect(strip(rowsOf(r.lastFrame())[0])).toBe("L185");             // …and the window did not move for them
 
     r.stdin.write(CTRL_END); await tick();
     r.rerender(view({ finalizedItems: doc(206), rows: 10 }));
     r.stdin.write(PAGE_UP); await tick();
-    expect(strip(rowsOf(r.lastFrame())[9])).toBe("Jump to bottom (ctrl+end)");   // the count reset on re-stick
+    expect(strip(rowsOf(r.lastFrame())[9])).toBe("Jump to bottom (ctrl+end) ↓");  // the count reset on re-stick
     r.unmount();
   });
 });
@@ -227,7 +234,7 @@ describe("the pill's row is paid for out of the region, not floated over it", ()
     expect(lines).toHaveLength(39);                                    // 37 granted + the two dock rows
     expect(lines[0]).toBe("L145");                                     // 163 − floor(37/2)
     expect(strip(lines[35])).toBe("L180");                             // 36 transcript rows…
-    expect(strip(lines[36])).toBe("Jump to bottom (ctrl+end)");        // …and the pill on the region's last
+    expect(strip(lines[36])).toBe("Jump to bottom (ctrl+end) ↓");      // …and the pill on the region's last
     expect(lines.slice(37)).toEqual(["D0", "D1"]);                     // the dock did not move
     r.unmount();
   });

@@ -5,9 +5,10 @@
 // both: it announces what arrived while they were away and it names the key that returns them.
 //
 // WHAT IS CANON'S HERE: the two label forms (`"N new message(s)"` when something arrived, else
-// `"Jump to bottom"`), the resolved keybinding as a suffix, the longest-variant-that-fits rule against
-// `columns − 2` (456169), the `userMessageBackground` fill, and the predicate that shows it — not sticky AND
-// not at the end (`qqH`, 455869-455878), which lives in `FullscreenViewport` where both facts are.
+// `"Jump to bottom"`), the resolved keybinding and the trailing `↓` as suffixes, the three label variants and
+// the longest-that-fits rule against `columns − 2` (456166-456171), the `truncate-end` wrap under it, the
+// `userMessageBackground` fill, and the predicate that shows it — not sticky AND not at the end (`qqH`,
+// 455869-455878), which lives in `FullscreenViewport` where both facts are.
 //
 // TWO RECORDED DIVERGENCES, both forced by the medium rather than chosen:
 //  · Canon's pill is `position:absolute bottom:0` over the scroll box and costs the transcript nothing. Ink has
@@ -17,8 +18,9 @@
 //  · Canon counts unseen MESSAGES. The viewport's document is physical rows and nothing in it knows where one
 //    message ends, so `newRows` is the growth in the row total since stickiness was last held. The label keeps
 //    canon's word.
-// Canon's third variant is `(click)` for the mouse affordance; this wave is keyboard-only, so the fallback is
-// the bare arrow instead — a pill that offered a click nothing listens for would be worse than a small one.
+// Canon's `(click)` and `: <chord> to scroll` forms are the macOS-with-mouse branch of the LONGEST variant
+// (456156-456165), not extra lengths; this wave is keyboard-only, so only the bound-chord arm of that branch
+// is reachable and the three lengths below are canon's whole ladder.
 import React from "react";
 import { Box, Text } from "ink";
 import { formatBindingLower } from "./keys/hints.js";
@@ -30,16 +32,18 @@ import { resolveThemeColor, themeTokens } from "./theme.js";
 export const JUMP_PILL_ACTION = "scroll:bottom";
 
 /** The pill's rendered text INCLUDING its one-column breathing space on each side, which is what the fit rule
- *  measures: canon picks the longest of its variants that fits `columns − 2` (456169). Longest first, so a
- *  narrow terminal loses the chord before it loses the words and the words before it loses the affordance.
- *  An unbound `scroll:bottom` contributes no suffix at all rather than an empty parenthesis — the same
- *  three-state honesty `hints.ts` applies to every derived chord. */
+ *  measures: canon picks the longest of three variants that fits `columns − 2` and falls back to the SHORTEST
+ *  whether it fits or not, letting the truncation clip it (456166-456171,
+ *  `[sIr, Ehf, Ybt].find(v => Ut(v) <= columns - 2) ?? Ybt`). Longest first, so a narrow terminal loses the
+ *  chord, then the arrow, and never the words. An unbound `scroll:bottom` contributes no chord at all rather
+ *  than an empty parenthesis — the same three-state honesty `hints.ts` applies to every derived chord, and it
+ *  is canon's own `else` arm, which keeps the arrow. */
 export function jumpPillText(newRows: number, chord: string, columns: number): string {
   const base = newRows > 0 ? `${newRows} new message${newRows === 1 ? "" : "s"}` : "Jump to bottom";
-  const room = Math.max(1, columns - 2);
-  for (const variant of [chord === "" ? "" : ` ${base} (${chord}) `, ` ${base} `])
+  const room = Math.max(1, columns - 2), shortest = ` ${base} `;
+  for (const variant of [chord === "" ? "" : ` ${base} (${chord}) ↓ `, ` ${base} ↓ `, shortest])
     if (variant !== "" && variant.length <= room) return variant;
-  return " ↓ ";
+  return shortest;
 }
 
 export interface JumpPillProps {
@@ -56,7 +60,10 @@ export function JumpPill({ newRows, columns }: JumpPillProps): React.ReactElemen
   const chord = formatBindingLower(useBinding(JUMP_PILL_ACTION));
   return (
     <Box justifyContent="center" flexShrink={0}>
-      <Text backgroundColor={resolveThemeColor(themeTokens().userMessageBackground)}>{jumpPillText(newRows, chord, columns)}</Text>
+      {/* `truncate-end` is canon's own prop (456186) and load-bearing here rather than cosmetic: the shortest
+          variant is returned even when it does not fit, and an Ink `Text` that wrapped it instead of clipping
+          would make the pill two rows and eat a transcript row the viewport already paid for. */}
+      <Text wrap="truncate-end" backgroundColor={resolveThemeColor(themeTokens().userMessageBackground)}>{jumpPillText(newRows, chord, columns)}</Text>
     </Box>
   );
 }

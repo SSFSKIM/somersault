@@ -277,7 +277,11 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // the key shadows Global just as an unbind does. It has to be a binding rather than the Select's
     // `onUnhandledKey`, because an explicit unbind resolves to `{type:"unbound"}`, which `dispatch` treats as
     // CONSUMED — an unbound key never reaches a fallback at all. A dialog that registers no handler for these
-    // (every permission body) falls through exactly where it did before: nowhere.
+    // (every permission body) falls through to whoever owns the actions below it: nowhere on the main screen,
+    // but in FULLSCREEN the region's `Scroll` context claims both, so ctrl+u/ctrl+d scroll the transcript
+    // above the dock while a permission dialog is up. Safe — the dialog lives in the dock's disjoint row band
+    // and PlanDialog registers its own handlers and still wins — but a DELIBERATE DIVERGENCE: the live capture
+    // (fullscreen grounding L2.3) records both keys as inert in canonical fullscreen.
     "ctrl+u": "scroll:halfPageUp", "ctrl+d": "scroll:halfPageDown",
     // alt+p/alt+t are CHAT keys whose scope is already off the stack (the nulls only close the passive-flush
     // sub-tick). ctrl+c/ctrl+o/ctrl+t/ctrl+r/ctrl+b are deliberately ABSENT — a decision dialog keeps every
