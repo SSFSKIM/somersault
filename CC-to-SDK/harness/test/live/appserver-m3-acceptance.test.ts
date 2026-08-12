@@ -642,9 +642,20 @@ live("M3 acceptance: fleet adoption, workspace and shell over one live host — 
     preSwapCursor = String(page1.nextCursor);
     const page2 = await a.call("thread/read", { threadId, cursor: preSwapCursor, limit: 2 }, 120_000);
     expect(page2.data.length, "the second page came back empty").toBeGreaterThan(0);
-    // Pages walk oldest-ward and do not repeat themselves.
-    const first = new Set(page1.data.map((i: any) => i.id));
-    expect(page2.data.some((i: any) => first.has(i.id)), `the second page repeated the first: ${JSON.stringify(page2.data.map((i: any) => i.id))}`).toBe(false);
+    // Overlap across pages is EXPECTED, not a defect: rows are not 1:1 with items, so a multi-block
+    // assistant message straddles a page boundary and its items recur across pages — the pager guarantees
+    // union-by-id completeness and the client dedups by id (subscribe.ts:19-21, subscribe.test.ts stitch
+    // contract), NOT page disjointness. What this leg proves is PROGRESS: the walk advances oldest-ward,
+    // so each page's begin-row strictly decreases (pageFromWindow's `begin < cursorRow`, subscribe.ts:216)
+    // until the transcript is exhausted (`nextCursor: null`).
+    const preSwapRow = Number(preSwapCursor.split(":")[1]);
+    if (typeof page2.nextCursor === "string") {
+      expect(String(page2.nextCursor), "the second page's own cursor is not epoch-0 qualified").toMatch(/^0:\d+$/);
+      expect(Number(String(page2.nextCursor).split(":")[1]), `paging did not advance oldest-ward: page2 cursor ${page2.nextCursor} is not older than ${preSwapCursor}`).toBeLessThan(preSwapRow);
+    }
+    const ids1 = JSON.stringify(page1.data.map((i: any) => i.id));
+    const ids2 = JSON.stringify(page2.data.map((i: any) => i.id));
+    expect(ids2, `the second page restarted the walk instead of advancing: ${ids2}`).not.toBe(ids1);
   }, 300_000);
 
   it("OBLIGATION 1 — foreign swap: a raw `clear` on the host socket announces thread/rewound and invalidates the cursor", async () => {
