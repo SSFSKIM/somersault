@@ -1,7 +1,9 @@
 // harness/src/tui/chatMain.tsx — the dynamic-import target for every interactive invocation. Renders
 // ChatApp over a remote adapter; owning the HOST is the caller's job (loopback owns one, attach does not).
 import React from "react";
+import { writeSync } from "node:fs";
 import { render } from "ink";
+import { createAltScreenGuard, exitAltScreen } from "./altScreen.js";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
@@ -40,6 +42,13 @@ export interface ChatClientOpts {
   /** WAVE C TASK 8 (EP-C4a) — `--name`, so the terminal title can say what this session is before the engine
    *  has generated an ai-title for it. Only the foreground launch has one; `ccx attach` does not. */
   name?: string;
+  /** FSW T6 (spec §A3, plan review I8) — THE SIGNAL INTERLOCK'S TRANSPORT. `cli/main.ts`'s SIGTERM/SIGHUP
+   *  handler exits via `process.exit`, which never runs the `finally` below; anything that must happen
+   *  before the process dies registers itself here and the handler drains it SYNCHRONOUSLY, ahead of
+   *  `host.stop`. The owner is main, not this module: only one place may own a signal handler, and the
+   *  launch that registered SIGTERM at :405 is it. Absent on `ccx attach` — that client has no host to stop
+   *  and no handler at all, so the alt-screen guard takes those signals itself. */
+  beforeExit?: Array<() => void>;
 }
 
 // Ink owns a stable stdout identity from initial render. On resume it clears based on stale terminal-relative
@@ -419,7 +428,13 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     // this process is actually painting into.
     rendererChoice: renderer,
   };
-  const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
+  const buildSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
+  // FSW T6: the resume pointer needs an id, and this is the only place upstream of the tree that can see
+  // one. The adapter's `sessionId` is a LIVE getter (client/chatAdapter.ts:98) that tracks clears, rewinds
+  // and resumes, so holding the latest session is enough — no new channel out of the React tree, and the
+  // pointer names whatever conversation the user was actually in when they quit.
+  let liveSession: ChatSession | undefined;
+  const makeSession = (resume?: string) => { const s = buildSession(resume); liveSession = s; return s; };
   const output = createResumeSafeStdout(process.stdout);
   const bridge = createDeferredClearBridge();                 // created BEFORE render: useChat may ask on mount
   // F2 task 5: the keymap owns raw stdin for the whole tree (its own parser + binding table + chord machine),
@@ -498,6 +513,23 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // THIS IS ALSO THE CONTAINMENT: only the REPL builds one, so a daemon/HOST session — which never
   // calls `runChatClient` — cannot retitle a terminal it does not own.
   const title = createTerminalTitle({ write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); } });
+  // ── FSW T6 (spec §A3/§A6) — THE ALT-SCREEN GUARD AND THE EXIT GUARANTEE ──────────────────────────────
+  // CONSTRUCTED ON EVERY LAUNCH, ARMED BY NOBODY YET. `enter()` is the arming, and only the fullscreen
+  // renderer calls it (T9); until then every method here is inert and this block costs a classic launch two
+  // signal listeners and nothing on the wire. It is built BEFORE `render()` because that is where T9 enters
+  // — the screen has to be taken before Ink paints its first frame into it.
+  //   `writeSync` on fd 1, not `process.stdout.write`: the teardown's callers are `process.exit` and a dying
+  // process, neither of which drains an async write queue. `appRef` gives the guard canon `zuy`'s unmount
+  // attempt (L181502) without a forward reference — Ink does not exist yet on this line.
+  const appRef: { current?: { unmount(): void } } = {};
+  const altGuard = createAltScreenGuard({
+    writeSync: (s) => { if (process.stdout.isTTY) writeSync(1, s); },
+    ...(process.env.TERM_PROGRAM ? { termProgram: process.env.TERM_PROGRAM } : {}),
+    unmount: () => { appRef.current?.unmount(); },
+  });
+  const stopSignalSafety = altGuard.installSignalSafety();
+  // The interlock's other half: main owns SIGTERM/SIGHUP (cli/main.ts:405) and drains this before it exits.
+  opts.beforeExit?.push(() => { altGuard.exit(); });
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
@@ -510,6 +542,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     </UserKeymap>,
     { exitOnCtrlC: false, stdout: output.stdout },
   );
+  appRef.current = app;
   bridge.bind(() => app.clear());
   try { await app.waitUntilExit(); }
   finally {
@@ -518,5 +551,12 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     title.clear();                     // `a0u` (L148428) — hand the terminal back with an empty title
     // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our spaces.
     if (process.stdout.isTTY && output.parkedColumn() > 0) process.stdout.write("\x1b[2K\x1b[G");
+    // FSW T6 — LAST, AND IN THIS ORDER. Every line above still paints, and rmcup is the point past which
+    // nothing may (spec §A6); the resume pointer that follows it is not a paint into the alt screen but the
+    // first line of the main screen we just handed back. `/exit`, the double-ctrl-C arm and `ccx attach`'s
+    // onDetach all reach here the same way — they settle Ink's `waitUntilExit()` — so all three print it
+    // (the deliberate divergence from canon's graceful-only hint). Silent for a classic launch.
+    stopSignalSafety();
+    exitAltScreen(altGuard, liveSession?.sessionId, (s) => { if (process.stdout.isTTY) process.stdout.write(s); });
   }
 }

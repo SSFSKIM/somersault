@@ -679,6 +679,70 @@ describe("main — run: foreground (Task 7)", () => {
     expect(value).toBe(0);
     expect(out).toEqual(["backgrounded · 00000000"]);
   });
+
+  // ── FSW T6 — THE SIGNAL INTERLOCK (spec §A3) ────────────────────────────────────────────────────────
+  // `process.exit` skips `runChatClient`'s `finally`, so the REPL's terminal teardown can only be reached
+  // from inside this handler. The signal handler is invoked DIRECTLY rather than through `process.emit`:
+  // emitting would also fire vitest's own SIGTERM listener and tear the runner down.
+  it("passes the REPL a beforeExit array and drains it SYNCHRONOUSLY, before host.stop and before process.exit", async () => {
+    const order: string[] = [];
+    // `stop` records at CALL time and settles a turn later, so both halves of the claim are falsifiable:
+    // a drain placed after the stop call reorders the first two entries, and a drain that awaited anything
+    // would land after `process.exit`.
+    const fakeHost = { start: async () => {}, stop: () => { order.push("host.stop"); return new Promise<void>((r) => setImmediate(r)); } } as any;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => { order.push("process.exit"); }) as never);
+    try {
+      await captureLog(() => main(["task"], deps({
+        isTTY: () => true, makeHost: () => fakeHost,
+        runChatClient: async (o) => {
+          o.beforeExit!.push(() => order.push("alt-screen cleanup"));
+          const onSignal = process.listeners("SIGTERM").at(-1) as () => void;
+          onSignal();
+          // Synchronous, and AHEAD of the stop call — asserted before the loop can run anything at all.
+          expect(order).toEqual(["alt-screen cleanup", "host.stop"]);
+          for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+        },
+      })));
+    } finally { exitSpy.mockRestore(); }
+    expect(order.slice(0, 3)).toEqual(["alt-screen cleanup", "host.stop", "process.exit"]);
+  });
+
+  it("a second signal does not re-run cleanups the first one already drained", async () => {
+    const runs: string[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
+    try {
+      await captureLog(() => main(["task"], deps({
+        isTTY: () => true, makeHost: () => fakeHost,
+        runChatClient: async (o) => {
+          o.beforeExit!.push(() => runs.push("cleanup"));
+          const onSignal = process.listeners("SIGTERM").at(-1) as () => void;
+          onSignal(); onSignal();
+          for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+        },
+      })));
+    } finally { exitSpy.mockRestore(); }
+    expect(runs).toEqual(["cleanup"]);
+  });
+
+  it("a cleanup that throws still lets the signal finalize the host and exit", async () => {
+    const order: string[] = [];
+    const fakeHost = { start: async () => {}, stop: () => { order.push("host.stop"); return new Promise<void>((r) => setImmediate(r)); } } as any;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => { order.push("process.exit"); }) as never);
+    try {
+      await captureLog(() => main(["task"], deps({
+        isTTY: () => true, makeHost: () => fakeHost,
+        runChatClient: async (o) => {
+          o.beforeExit!.push(() => { throw new Error("writeSync failed"); });
+          o.beforeExit!.push(() => order.push("second cleanup"));
+          const onSignal = process.listeners("SIGTERM").at(-1) as () => void;
+          expect(() => onSignal()).not.toThrow();
+          for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+        },
+      })));
+    } finally { exitSpy.mockRestore(); }
+    expect(order.slice(0, 3)).toEqual(["second cleanup", "host.stop", "process.exit"]);
+  });
 });
 
 describe("main — lifecycle and failures", () => {

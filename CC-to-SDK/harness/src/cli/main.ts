@@ -401,7 +401,20 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   await host.start();
   // Terminal gone or OS says stop: finalize `done` — the deliberate asymmetry (acceptance 10): a default
   // session's life IS its terminal's. stop() is memoized+bounded, so double signals are safe.
-  const onSignal = () => { void host.stop("done").finally(() => process.exit(0)); };
+  //
+  // FSW T6 (spec §A3) — THE SIGNAL INTERLOCK. `process.exit` below never runs `runChatClient`'s `finally`,
+  // so anything the REPL must do before the process dies has to happen HERE, synchronously, ahead of the
+  // asynchronous `host.stop`. Under the fullscreen renderer that "anything" is the alt screen: a SIGTERM
+  // that skipped it would hand the shell back a terminal with no scrollback, no cursor and mouse reporting
+  // still armed. The array is the transport (plan review I8) — main owns it, `chatMain` registers the
+  // alt-screen guard's cleanup into it — so SIGTERM/SIGHUP keep ONE handler each and the REPL does not
+  // double-register the signals this launch already owns. `splice` because a second signal must not re-run
+  // cleanups that already ran, and a cleanup that throws must not cost the process its exit.
+  const beforeExit: Array<() => void> = [];
+  const onSignal = () => {
+    for (const cleanup of beforeExit.splice(0)) { try { cleanup(); } catch { /* dying anyway */ } }
+    void host.stop("done").finally(() => process.exit(0));
+  };
   process.on("SIGHUP", onSignal); process.on("SIGTERM", onSignal);
   // W-C T13 (EP-C8 §C8.3): the banner's billing label. Asked HERE because here is where the banner seeds.
   //
@@ -424,6 +437,9 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   try {
     await deps.runChatClient({
       socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
+      // FSW T6: the drain array above. Handed down rather than re-derived, because the whole point is that
+      // the handler that calls `process.exit` and the code that must run first are in different modules.
+      beforeExit,
       ...(inv.prompt ? { initialPrompt: inv.prompt } : {}),
       // W-C T8 (EP-C4a): the terminal-title ladder's `--name` rung. `inv.name`, NOT the `name` local above —
       // that one falls back to the minted short id so the fleet roster always has a handle, and putting a
