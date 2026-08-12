@@ -127,6 +127,12 @@ export interface ThreadRecord {
                                 // source of "the in-flight turn's id" a subscribe-time replay may read;
                                 // never reconstruct it from turnSeq (that increments in the same step now,
                                 // but re-deriving invites drift back in — see Task 9 finding 1)
+  fleetTurnTruncated?: boolean; // FLEET ONLY (final review R5): the in-flight turn's head was evicted from
+                                // the host's follow buffer before this thread attached, so its item events
+                                // are a SUFFIX, not the whole turn. Set from the host's `truncated` turn-start
+                                // (fleet.ts's onTurn), carried on the live turn/started AND its subscribe-time
+                                // replay so a client never renders the retained suffix as the whole turn.
+                                // Cleared at turn end / death, like `turnStartedBroadcast`.
   turnStartedBroadcast?: boolean; // true only once the chain callback has actually broadcast turn/started
                                 // for currentTurnId; false while busy=true but the broadcast is still
                                 // pending (the same-tick turn/start+subscribe gap), and reset to false when

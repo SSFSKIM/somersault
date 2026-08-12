@@ -105,7 +105,9 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
     // finding 1) — it is never stale, unlike a turnSeq re-derivation would be if this replay landed
     // before the chain callback's microtask ran.
     const turnId = record.buffer.length ? record.buffer[record.buffer.length - 1].turnId : record.currentTurnId!;
-    ctx.peer.notify("turn/started", { threadId: record.id, turn: { id: turnId, status: "inProgress" } });
+    // `truncated` rides the replay too (final review R5): a client that subscribes AFTER a truncated fleet
+    // turn-start must learn the head is missing exactly as one present at the live broadcast did (fleet.ts).
+    ctx.peer.notify("turn/started", { threadId: record.id, turn: { id: turnId, status: "inProgress" }, ...(record.fleetTurnTruncated ? { truncated: true } : {}) });
   }
   // The queue, FIFO, one turn/queued per entry (M2b Task 8, chartered by the Task 4 review adjudication).
   // Replayed HERE — with the turn layer it belongs to, ahead of the item layer below — so the join order

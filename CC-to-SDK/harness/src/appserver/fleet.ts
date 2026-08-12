@@ -144,7 +144,13 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
       record.interruptRequested = false;
       record.currentTurnId = turnId;
       record.updatedAt = nowSec();
-      srv.broadcast(record.id, "turn/started", { threadId: record.id, turn: { id: turnId, status: "inProgress" } });
+      // R5: a truncated turn-start (host.ts:607 — the follow buffer's head was evicted before this thread
+      // attached) opens a turn whose items are only a SUFFIX. Carry that on turn/started (and, via the
+      // record flag below, on the subscribe-time replay) so a client knows the head is missing rather than
+      // rendering the retained suffix as a whole turn. The idle seq-less marker (host.ts:610) never reaches
+      // here — fleetEngine drops seq-less turn frames — so only the mid-turn seq-bearing flag arrives.
+      record.fleetTurnTruncated = e.truncated === true;
+      srv.broadcast(record.id, "turn/started", { threadId: record.id, turn: { id: turnId, status: "inProgress" }, ...(e.truncated ? { truncated: true } : {}) });
       record.turnStartedBroadcast = true; // recorded after the broadcast, exactly as turns.ts does
       statusChanged(srv, record);
       return;
@@ -165,6 +171,7 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     mapper = undefined; windowId = undefined;
     record.busy = false;
     record.turnStartedBroadcast = false;
+    record.fleetTurnTruncated = false;    // this turn is over — its truncation no longer describes anything (R5)
     record.updatedAt = nowSec();
     // `currentTurnId` is deliberately left standing (registry.ts: the replay path wants the last turn's id).
     const complete = (): void => {
@@ -263,6 +270,7 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
       mapper = undefined; windowId = undefined;
       record.busy = false;
       record.turnStartedBroadcast = false;
+      record.fleetTurnTruncated = false;  // the turn failed at death — its truncation no longer describes anything (R5)
       // `currentTurnId` is left standing, exactly as the normal turn end leaves it (the replay path wants
       // the last turn's id).
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: CONNECTION_LOST } });
