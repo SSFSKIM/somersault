@@ -271,11 +271,28 @@ launch() {                                  # launch <session> <cols> <rows> [<e
 type_line() { tmux send-keys -t "$1" -l "$2"; sleep 0.3; tmux send-keys -t "$1" Enter; }
 # Condition 3, staged: `/status` is a LOCAL command — it paints an echo row and a five-line block with no
 # model turn, so the screen has real content above the composer on a machine with no API key at all.
+#
+# THE NEEDLE READS SCROLLBACK, NOT THE VIEWPORT, AND THAT IS WHAT MAKES IT WORK AT SHORT HEIGHTS (fsw g1
+# repair). `/status` commits ELEVEN rows — the `❯ /status` echo, the `Status` header and nine detail rows —
+# and the composer frame under it is four more. On a 15-row pane the sum overflows and the echo row, the
+# needle itself, is scrolled ABOVE the viewport by the time the block finishes painting; a `capture-pane -p`
+# that sees only the viewport therefore polls out on a session that staged perfectly (measured at 60x15: the
+# row sits at scrollback line 15 of 30, and zero copies are visible). Every cell that stages at 24 rows or
+# more never saw it, so the failure read as g1-specific and pre-existing. `-S -` is a superset of the
+# viewport, so no cell's staging gets weaker — and it is the right question anyway: what this waits for is
+# the row being COMMITTED, which is also what makes it a countable marker for the tall-branch preconditions
+# in `g1`/`m1`. SP-R0's condition 3 proper — content still ON SCREEN above the frame at assert time — is
+# `check_frame`'s `contentAboveFrame`, unchanged and still measured on the visible pane.
 stage_content() {                           # stage_content <session>
-  local s="$1" i=0
+  local s="$1" i=0 cap="$MATRIX_ROOT/cap-stage"
   type_line "$s" "/status"
-  while [ "$i" -lt 40 ]; do tmux capture-pane -t "$s" -p | grep -qF "$CARET /status" && return 0; sleep 0.25; i=$((i+1)); done
-  echo "      FAIL $s never painted the staged /status content"; return 1
+  while [ "$i" -lt 40 ]; do
+    tmux capture-pane -t "$s" -p -S - > "$cap"; grep -qF "$CARET /status" "$cap" && return 0
+    sleep 0.25; i=$((i+1))
+  done
+  echo "      FAIL $s never painted the staged /status content"
+  echo "      ── scrollback ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"
+  return 1
 }
 # Give the app a bounded window to converge WITHOUT further input, then assert on the settled screen.
 # EVERY frame assertion goes through here — a one-shot capture right after launch or a submit is a timing
