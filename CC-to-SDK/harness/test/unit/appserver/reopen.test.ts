@@ -461,6 +461,46 @@ describe("appserver thread/reopen recovery is REPEATABLE (M3 Task 14)", () => {
   });
 });
 
+describe("appserver thread/reopen — the FAILURE-path status retraction (final review R11)", () => {
+  it("a factory throw WITH a parked decision still corrects the status: the last thread/status/changed reads idle, not the mid-swap active", async () => {
+    // The success path's retraction has a failure twin. reset() settles the dead conversation's park and
+    // emits one thread/status/changed per entry, each computed under the swapInFlight latch and so reading
+    // "active". When the replacement factory THROWS, the success-path correction never runs and the finally
+    // clears the latch SILENTLY — so an event-driven client shows the recovered-but-still-dead thread active
+    // forever. The fix corrects it on the catch too.
+    const dead = mkEngine({ sessionId: "sess-1" });
+    const fresh = mkEngine({});
+    const { srv, s, c, threadId, configs } = await bootThread({ engines: [dead, new Error("cannot spawn the CLI child"), fresh] });
+    void (configs[0].permissionBroker as PermissionBroker)
+      .request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_stale", signal: new AbortController().signal });
+    await tick();
+    expect(srv.pendingDecisions(threadId)).toHaveLength(1);
+    dead.ended = true;
+    s.lines.length = 0;
+
+    send(c, { id: 3, method: "thread/reopen", params: { threadId } });
+    await settle();
+
+    // the factory threw — the reply relays its message
+    expect(reply(s.lines, 3).error).toMatchObject({ code: ERR.INTERNAL, message: "cannot spawn the CLI child" });
+    // …and the ghost-park status broadcasts (active, under the latch) are corrected to idle on this path too
+    const statuses = notifs(s.lines, "thread/status/changed");
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(statuses.at(-1)!.params).toEqual({ threadId, status: { state: "idle" } });
+    // un-wedged and still the corpse (-33005 elsewhere), so a SECOND reopen can retry and succeed
+    const record = srv.registry.get(threadId)!;
+    expect(record.swapInFlight).toBe(false);
+    expect(record.session).toBe(dead);
+    send(c, { id: 4, method: "thread/capabilities/read", params: { threadId } });
+    await settle();
+    expect(reply(s.lines, 4).error.code).toBe(ERR.ENGINE_GONE);
+    send(c, { id: 5, method: "thread/reopen", params: { threadId } });
+    await settle();
+    expect(reply(s.lines, 5).result).toEqual({ ok: true, sessionId: "sess-1" });
+    expect(srv.registry.get(threadId)!.session).toBe(fresh);
+  });
+});
+
 describe("appserver thread/reopen and the turn queue (M3 Task 14)", () => {
   it("queued turns are CANCELLED by the reopen, not left to drain onto the replacement", async () => {
     // A queued turn was priced against a conversation that is now gone (and on the no-sessionId arm the

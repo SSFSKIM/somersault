@@ -591,6 +591,14 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.pendingDecisions(threadId).length > 0) });
       ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
     } catch (e) {
+      // R11: the FAILURE twin of the success path's retraction above. reset() emitted one
+      // `thread/status/changed` per settled ghost park, each computed under the `swapInFlight` latch and so
+      // reading "active"; the success path corrects them, but a factory throw would clear the latch silently
+      // in `finally` and leave every subscriber that renders status off the wire stuck on "active" forever.
+      // Clear the latch HERE (before the recompute) so the corrected status reads the true post-failure
+      // state (idle — the corpse's turn is over), then name the failure.
+      record.swapInFlight = false;
+      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.pendingDecisions(threadId).length > 0) });
       // NOT `replyEngineThrow`: the record is still holding the corpse on this path (the factory threw
       // before `swapEngine` could install anything), so its -33005 re-check would fire and answer "Engine
       // is gone" — true, already known, and it would swallow the factory's own message, which is the only
