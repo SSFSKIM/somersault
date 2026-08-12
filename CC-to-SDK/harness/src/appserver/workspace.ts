@@ -97,12 +97,23 @@ export const fsRead: Handler = async (_srv, ctx, id, params) => {
     // one would block (FIFO) or grow without end (`/dev/zero`). Refusing by kind closes both, and subsumes
     // the directory case. Verbatim the message the path-`stat` version produced.
     if (!st.isFile()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `not a regular file (${kindOf(st)})`); return; }
+    // The fstat size is a fast-path refusal for a file already known too big — but NOT the boundary: it is
+    // just a HINT, and a regular file can GROW between this fstat and the read below (final review R12).
     if (st.size > READ_CAP_BYTES) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `file exceeds the 4 MiB read cap (${st.size} bytes)`); return; }
-    // Read from the SAME descriptor (not a re-open by path) — a regular file can still fail the read on its
-    // own (`EACCES`), which is bad-request-class here, never the dispatcher's -32603, keeping this module's
-    // one rule. `size` is the PAYLOAD's length, what a client sizing its decode buffer was actually sent.
-    const data = await fh.readFile();
-    ctx.peer.reply(id, { dataBase64: data.toString("base64"), size: data.byteLength });
+    // BOUNDED READ, from the SAME descriptor — the cap is enforced on the bytes ACTUALLY read, never on the
+    // stat, so a file grown past the cap after the fstat is refused rather than returned oversized (or
+    // silently truncated). Read at most one byte past the cap: hitting cap+1 means the file exceeds it.
+    // A regular file can still fail the read on its own (`EACCES`), which is bad-request-class here, never
+    // the dispatcher's -32603, keeping this module's one rule. `size` is the PAYLOAD's length.
+    const buf = Buffer.allocUnsafe(READ_CAP_BYTES + 1);
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, total, buf.length - total, null);
+      if (bytesRead === 0) break;    // EOF
+      total += bytesRead;
+      if (total > READ_CAP_BYTES) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `file exceeds the 4 MiB read cap`); return; }
+    }
+    ctx.peer.reply(id, { dataBase64: buf.toString("base64", 0, total), size: total });
   } catch (e) {
     ctx.peer.replyError(id, ERR.INVALID_PARAMS, msg(e));
   } finally {

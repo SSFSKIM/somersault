@@ -122,9 +122,16 @@ describe("fs/read", () => {
 describe("fs/read rides one descriptor (F3 — TOCTOU closed by construction)", () => {
   function trackedHandle(stats: Record<string, unknown>, bytes = Buffer.from("hi")) {
     const calls: string[] = [];
+    let pos = 0;   // how many bytes already handed out — a real fd's read advances a cursor and hits EOF
     const fh = {
       stat: vi.fn(async () => { calls.push("stat"); return stats; }),
-      readFile: vi.fn(async () => { calls.push("readFile"); return bytes; }),
+      read: vi.fn(async (buf: Buffer, off: number, len: number) => {
+        calls.push("read");
+        const n = Math.min(len, bytes.length - pos);
+        bytes.copy(buf, off, pos, pos + n);
+        pos += n;
+        return { bytesRead: n, buffer: buf };
+      }),
       close: vi.fn(async () => { calls.push("close"); }),
     };
     return { fh, calls };
@@ -135,8 +142,11 @@ describe("fs/read rides one descriptor (F3 — TOCTOU closed by construction)", 
     const spy = vi.spyOn(fsReadInternals, "open").mockResolvedValue(fh as never);
     const res = ok(await call("fs/read", { path: join(root, "x.txt") }));
     expect(spy).toHaveBeenCalledTimes(1);                    // ONE open — no second path resolution for the read
-    expect(calls).toEqual(["stat", "readFile", "close"]);    // fstat then read then close, all on that fd
+    expect(calls[0]).toBe("stat");                           // fstat first…
+    expect(calls.at(-1)).toBe("close");                      // …close last, all on that fd
+    expect(calls.filter((c) => c === "read").length).toBeGreaterThanOrEqual(1);
     expect(Buffer.from(res.dataBase64 as string, "base64").toString()).toBe("hi");
+    expect(res.size).toBe(2);
   });
 
   it("closes the fd on the refusal path and never reads through it", async () => {
@@ -146,9 +156,26 @@ describe("fs/read rides one descriptor (F3 — TOCTOU closed by construction)", 
     const e = err(await call("fs/read", { path: join(root, "d") }));
     expect(e.code).toBe(ERR.INVALID_PARAMS);
     expect(e.message).toBe("not a regular file (directory)");
-    expect(fh.readFile).not.toHaveBeenCalled();              // never read a non-regular file…
+    expect(fh.read).not.toHaveBeenCalled();                  // never read a non-regular file…
     expect(fh.close).toHaveBeenCalledTimes(1);               // …but the descriptor is still closed
     expect(calls).toEqual(["stat", "close"]);
+  });
+
+  it("caps on the BYTES actually read, not the fstat size: a file grown past the cap after fstat is refused (final review R12)", async () => {
+    // The fstat reports a small size, but the read returns more than the cap — a regular file that GREW
+    // between the two. Enforcing the cap on the fstat alone would return the oversized body; the bounded
+    // read refuses instead. The fd is still released.
+    const calls: string[] = [];
+    const fh = {
+      stat: vi.fn(async () => { calls.push("stat"); return { isFile: () => true, size: 10 }; }), // stale, small
+      read: vi.fn(async (_buf: Buffer, _off: number, len: number) => { calls.push("read"); return { bytesRead: len, buffer: _buf }; }), // fills the whole cap+1 buffer → over cap
+      close: vi.fn(async () => { calls.push("close"); }),
+    };
+    vi.spyOn(fsReadInternals, "open").mockResolvedValue(fh as never);
+    const e = err(await call("fs/read", { path: join(root, "grew.bin") }));
+    expect(e.code).toBe(ERR.INVALID_PARAMS);
+    expect(e.message).toBe("file exceeds the 4 MiB read cap");
+    expect(calls.at(-1)).toBe("close");                      // the fd is released on the cap refusal too
   });
 });
 
