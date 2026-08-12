@@ -181,7 +181,13 @@ export const threadDelete: Handler = async (srv, ctx, id, params) => {
   // reserve the id forever.
   srv.deletingSessions.add(resolved.sessionId);
   try {
-    if (findLiveBySessionId(srv, resolved.sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Thread is live in this server — close it first"); return; }
+    // R13: a `thread/resume` for this session, admitted DURING its PID-liveness probe, holds
+    // `resumingSessions` before it has a live record `findLiveBySessionId` could see — so refuse against
+    // that reservation too. Either the resume reserved first (this refuses) or this reserved
+    // `deletingSessions` first (the resume's own arrival check refuses); the two can never both win.
+    if (srv.resumingSessions.has(resolved.sessionId) || findLiveBySessionId(srv, resolved.sessionId)) {
+      ctx.peer.replyError(id, ERR.BUSY, "Thread is live in this server — close it first"); return;
+    }
     const deleteFn = srv.deps.deleteSession ?? realDeleteSession;
     await deleteFn(resolved.sessionId);
     ctx.peer.reply(id, { ok: true });

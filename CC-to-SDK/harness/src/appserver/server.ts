@@ -198,6 +198,17 @@ export class AppServer {
    *  the delete re-checks the live set after reserving, so whichever lands first wins and the other is
    *  refused — never both. */
   readonly deletingSessions = new Set<string>();
+  /** The mirror of `deletingSessions` for the OTHER direction of the same race (final review R13). A
+   *  `thread/resume` whose roster candidates need a PID liveness probe AWAITS that probe before it reaches
+   *  `startThread` — and a concurrent `thread/delete` for the same session could reserve, delete and RELEASE
+   *  its own reservation entirely inside that yield, leaving `startThread`'s `deletingSessions` check clear
+   *  and resuming over just-erased history. The resume reserves the sessionId here SYNCHRONOUSLY, before the
+   *  probe, and `thread/delete` refuses against it — so admission and deletion still cannot both win: either
+   *  the resume reserved first (the delete is refused here) or the delete reserved `deletingSessions` first
+   *  (the resume is refused at arrival / in `startThread`). The resume handler owns the add/remove and
+   *  removes in a `finally`. Empty in the common no-roster-candidate case — that path never probes, so it
+   *  reaches `startThread` in its own dispatch tick with no window to reserve against. */
+  readonly resumingSessions = new Set<string>();
   /** M3 §1e: the attaches in flight, keyed by roster `short` — the reservation that makes two simultaneous
    *  `thread/attach` calls for one target collapse onto ONE admission (the second awaits the first's
    *  promise) instead of dialling the host twice and registering two threads for one session. Taken and
@@ -236,12 +247,27 @@ export class AppServer {
       // (thread/delete's own live-refusal reasons the same way). The loop below awaits ONLY when a roster
       // row actually carries this sessionId; with none (the ordinary case) the handler falls straight
       // through to startThread in its dispatch tick — see fleetResumeCandidates for why that matters.
-      const candidates = fleetResumeCandidates(srv, parsed.data.sessionId);
+      const sessionId = parsed.data.sessionId;
+      const candidates = fleetResumeCandidates(srv, sessionId);
       if (candidates === "live") { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
-      for (const row of candidates) {
-        if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
+      // No roster candidate to probe (the overwhelmingly common case): fall straight through to
+      // startThread in this same dispatch tick — no await, so no window for a delete to race (see
+      // fleetResumeCandidates), and `startThread`'s own deletingSessions check still fences an in-flight one.
+      if (candidates.length === 0) { srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }); return; }
+      // R13: the probe below AWAITS. Reserve the resume synchronously HERE, before that yield, and refuse if
+      // a delete is already in flight — the two arrival-time checks that make admission and deletion
+      // mutually exclusive even when a concurrent delete completes inside the probe (see resumingSessions
+      // and sessionLib.ts's delete). Released in a `finally` — a refused probe must not reserve forever.
+      if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
+      srv.resumingSessions.add(sessionId);
+      try {
+        for (const row of candidates) {
+          if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
+        }
+        srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
+      } finally {
+        srv.resumingSessions.delete(sessionId);
       }
-      srv.startThread(ctx, id, { resume: parsed.data.sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
     },
     "thread/list": threadList,
     "thread/fork": threadFork,
