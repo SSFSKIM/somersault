@@ -470,6 +470,16 @@ answered by the probe/implementation contact, none architectural.
 
 ## Surprises & Discoveries
 
+- **A park does NOT survive its engine's death on the live inProcess path** (Task 17 keyed run,
+  2026-08-12): SIGKILLing the engine's CLI child makes the SDK abort the pending canUseTool
+  request, and `PendingDecisions.onAutoSettle` (pending.ts:83,100 — the request's abort signal)
+  settles the park `by:"system"` deny and broadcasts `decision/resolved` AT DEATH TIME. The
+  acceptance test's "stranded ghost" premise was manufactured-state truth, not live truth — the
+  reopen leg timed out waiting for a resolved event that had fired minutes earlier, before its
+  mark. Task 14's `reset()` stands as the BELT for parks whose abort signal never fires
+  (fabricated views, non-aborting death flavors — the unit tests own those); the live common case
+  settles earlier and reopen finds a clean slate. Same lesson-class as P106: the fake and the
+  unit world can manufacture states the live system refuses to produce.
 - **The repo has two unrelated "daemons", and the M2-era docs pointed at the wrong one.** The ccx
   fleet is per-session processes + per-session sockets (`src/fleet/` + `src/host/`); `src/daemon/`
   is the retiring `cc-harness` supervisor. "Attach to the fleet" therefore means dialing a
