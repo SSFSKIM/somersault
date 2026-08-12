@@ -20,24 +20,49 @@
 // <AlternateScreen>. Overflow clipped." — and then clipped. `onOverflow` is that diagnostic. It reports rather
 // than repairs on purpose: growing the frame is the one response that breaks the invariant above, and silently
 // clipping is how a region that has quietly stopped showing its last rows goes unnoticed for a release.
-//   ITS SCOPE IS THE REGION, WHICH IS NARROWER THAN CANON'S — say so rather than let a reader assume parity.
-// L180318 measures the WHOLE tree against `terminalRows`; this measures the region's content against the
-// region's own budget. Finer (it names which slot overspent, and it fires while the frame as a whole still
-// fits) but narrower: a dock that overruns its cap — T13's tall dialog is the case that will arrive — is
-// clipped by the frame with nothing said. A second measurement on the dock box is the fix when that lands;
-// until then the dock's clip is silent on the debug seam by construction, not by oversight.
-//   THE THREE CLIPS ARE NOT EQUALLY LOAD-BEARING. Only the region's is: it is what turns overlong content into
-// a clip instead of a shove, and removing it reddens the I9a case. The root's and the dock's are DEFENSIVE —
-// measured on both instruments (`ink-testing-library` and real Ink through `helpers/fakeTty`), removing either
-// leaves the painted bytes identical, because Ink allocates its `Output` buffer at the root's computed height
-// and truncates anything past it before a byte is written. They are kept because that truncation is Ink's
-// implementation detail and this frame's budget is a contract; they are deliberately left unpinned, since a
-// test asserting them would be asserting the absence of a difference no instrument can see.
+//   ITS SCOPE IS THE REGION AND THE BOTTOM SLOT, BOTH NARROWER THAN CANON'S — say so rather than let a reader
+// assume parity. L180318 measures the WHOLE tree against `terminalRows`; these measure each slot's content
+// against that slot's own budget. Finer (they name which slot overspent, and they fire while the frame as a
+// whole still fits) but narrower. T13 added the second measurement Task 9 named as owed ("a dock that overruns
+// its cap — T13's tall dialog is the case that will arrive — is clipped by the frame with nothing said"), so
+// both bands now report.
+//   WHAT NEITHER MEASUREMENT CAN SEE, and this is load-bearing for anything mounted inside them (T11, measured):
+// the effect below runs when THIS COMPONENT re-renders. A slot mounting or unmounting, a resize, a dock growing
+// — all of those re-render the frame, and the diagnostic sees them. A re-render that happens ENTIRELY INSIDE a
+// slot's children (the viewport's scroll state, a picker's own list window, a dialog's expand toggle) does not
+// reach here at all, so content that grows on that path is clipped by Yoga with nothing said and nothing to
+// say it. That is why every slot's occupant must respect its budget BY CONSTRUCTION — the viewport subtracts
+// the pill's row before slicing, the seam's surfaces are handed the slot's cap as their row budget — and why
+// the diagnostic is a debug seam rather than the enforcement.
+//   THE CLIPS ARE NOT EQUALLY LOAD-BEARING. Only the region's is: it is what turns overlong content into
+// a clip instead of a shove, and removing it reddens the I9a case. The root's and the bottom slot's are
+// DEFENSIVE — measured on both instruments (`ink-testing-library` and real Ink through `helpers/fakeTty`),
+// removing either leaves the painted bytes identical, because Ink allocates its `Output` buffer at the root's
+// computed height and truncates anything past it before a byte is written. They are kept because that
+// truncation is Ink's implementation detail and this frame's budget is a contract; they are deliberately left
+// unpinned, since a test asserting them would be asserting the absence of a difference no instrument can see.
 //
-// THE CONTAINER SHAPE IS THE PRODUCT, not the children. T10 replaces `regionChildren` with the virtualized
-// viewport, T13 adds the two overlay slots (the absolute-bottom seam and the dock replacement), and M4's
-// `/resume` launcher mounts this same component with a different dock — so the props are a region and a dock
-// from day one, and this file knows nothing about transcripts.
+// THE CONTAINER SHAPE IS THE PRODUCT, not the children. T10 replaced `regionChildren` with the virtualized
+// viewport, T13 added the seam slot below, and M4's `/resume` launcher mounts this same component with a
+// different dock — so the props are a region and a bottom band from day one, and this file knows nothing about
+// transcripts.
+//
+// ── THE TWO OVERLAY MECHANISMS (T13, grounding §L2.6 "Two overlay mechanisms, not one") ────────────────────
+// Canon has two, and a port with one is wrong in both directions. Every user-opened surface (`/model`,
+// `/help`, `/resume` and its preview, and their kin) plus the ONE decision whose layout is `"modal"` — exit
+// plan mode — render in an absolutely-positioned bottom slot: bundle `xDa` L455951, `position:absolute
+// bottom:0 left:0 right:0 maxHeight: rows − 2 … opaque`, fed by `cZo`'s `modal` prop at L549395, with an
+// upper-half-block `▔▔▔▔` rule as its top edge and the transcript squeezed above it. The remaining decisions
+// (permission, question) do something else: the composer disappears and they take the band where it was, under
+// the ordinary `────` rule their own frame paints. This component owns the first; the second is ChatApp's
+// routing plus `DialogFrame`'s existing rule, and needs nothing here beyond the dock it already has. Which
+// surface is which is ChatApp's call and is argued there.
+//   THE OCCLUSION IS REPRODUCED BY OMISSION, because stock Ink cannot paint over anything. Ink 5.2.1 has
+// `position:absolute` (styles.d.ts:7) but not the fork's `opaque`: an absolute box writes its own cells and
+// leaves every cell it does not write showing whatever was under it, so a picker floated over the dock would
+// paint a composer's tail through its blank rows. So when the seam is up the dock is NOT RENDERED and the seam
+// takes the band in flow. The two are visually identical whenever the slot is at least as tall as the dock,
+// which for every surface canon puts here it always is (a picker is ten-plus rows, the dock is five).
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Box, measureElement, type DOMElement } from "ink";
 
@@ -80,11 +105,33 @@ export function dockCap(rows: number, historySearchOpen: boolean): number {
   return Math.max(1, Math.min(cap, frameHeight(rows)));
 }
 
+/** The SEAM SLOT's cap — canon's `maxHeight: rows − 2` on the overlay box (bundle L455951), the same number
+ *  the history-search dock is allowed and for the same reason: while one of these is up it IS the content.
+ *  Clamped into `[1, frameHeight]` like `dockCap`. Inside a `rows − 1` frame the cap leaves the region exactly
+ *  one row, which is canon's "transcript still visible above it" (grounding §L2.6) as arithmetic rather than
+ *  as luck. */
+export function seamCap(rows: number): number {
+  return Math.max(1, Math.min(rows - 2, frameHeight(rows)));
+}
+
+/** The seam: a full-width run of U+2594 UPPER HALF BLOCK on the slot's top edge (grounding §L2.6, "one
+ *  absolutely-positioned bottom slot with an upper-half-block rule as its top edge").
+ *  A CUSTOM INK BORDER OBJECT rather than a hand-painted row, and that is what keeps the frame from needing a
+ *  column count: `renderBorder` builds the top edge as `box.top.repeat(width)` with no corners once both
+ *  verticals are off (ink/build/render-border.js:23-27, the same arithmetic `composerFrame.tsx` transcribes for
+ *  the composer's `────`), and `styles.js:196` gives the box exactly one row of Yoga border for it. Unstyled:
+ *  the captures are plain text and record no colour, and inventing one would be inventing canon. */
+const SEAM_RULE = { top: "▔", bottom: "", left: "", right: "", topLeft: "", topRight: "", bottomLeft: "", bottomRight: "" } as const;
+
 export interface FullscreenFrameProps {
   /** The terminal's row count — ChatApp's resize state, never `process.stdout.rows` read behind it. */
   rows: number;
   regionChildren: React.ReactNode;
   dock: React.ReactNode;
+  /** T13 — the absolute-bottom overlay slot's occupant. Present means canon's `xDa` is up: this REPLACES the
+   *  dock in the paint (see the header on why occlusion is omission here), takes the `rows − 2` cap instead of
+   *  the dock's, and wears the `▔▔▔▔` seam on its top edge. */
+  seam?: React.ReactNode;
   historySearchOpen?: boolean;
   /** The L180317 diagnostic. Default writes to stderr only under `CCX_DEBUG`, the same seam and the same reason
    *  `statusLine.ts` has one: an unguarded stderr write lands in the middle of a live frame. */
@@ -93,9 +140,14 @@ export interface FullscreenFrameProps {
 
 const defaultOverflow = (msg: string): void => { if (process.env.CCX_DEBUG) process.stderr.write(`${msg}\n`); };
 
-export function FullscreenFrame({ rows, regionChildren, dock, historySearchOpen = false, onOverflow }: FullscreenFrameProps) {
+export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearchOpen = false, onOverflow }: FullscreenFrameProps) {
   const height = frameHeight(rows);
-  const cap = dockCap(rows, historySearchOpen);
+  // ONE BOTTOM BAND, TWO OCCUPANTS AND TWO CAPS. Everything below — the region's floor, the measured grant's
+  // stamp, the clip and the diagnostic — is written against `cap` and `bottomSlot` rather than against the dock,
+  // so the seam is not a second code path but the same one with a different tenant.
+  const seamUp = seam !== undefined && seam !== null && seam !== false;
+  const bottomSlot = seamUp ? "seam" : "dock";
+  const cap = seamUp ? seamCap(rows) : dockCap(rows, historySearchOpen);
   // THE CAP IS EXPRESSED AS THE REGION'S FLOOR, because Yoga has a `maxHeight` and Ink 5.2.1 does not expose it
   // (build/styles.js applies `minHeight` and `height`, nothing else). The two are equivalent inside a
   // fixed-height container: a region that may not shrink below `height − cap` leaves at most `cap` rows for
@@ -105,26 +157,44 @@ export function FullscreenFrame({ rows, regionChildren, dock, historySearchOpen 
   const regionFloor = Math.max(0, height - cap);
   const regionRef = useRef<DOMElement>(null);
   const contentRef = useRef<DOMElement>(null);
+  const bottomRef = useRef<DOMElement>(null);
   const overflowing = useRef(false);
+  const bottomOverflowing = useRef(false);
   // The measured grant, STAMPED WITH THE GEOMETRY IT WAS MEASURED AT. A resize changes `height`/`cap` a full
   // render before the effect below can re-measure, and a stale grant from a taller terminal would have the
   // viewport render more rows than the region now has — clipped, so nothing breaks, but the budget would be
   // a coincidence for that frame instead of a contract. Falling back to the FLOOR while the stamp is stale
   // under-grants for exactly one frame, which is the safe direction.
-  const [measured, setMeasured] = useState({ height, cap, rows: regionFloor });
-  const regionRows = measured.height === height && measured.cap === cap ? measured.rows : regionFloor;
+  //   THE SLOT IS PART OF THE STAMP (T13), not merely the cap it implies. The seam's cap and the dock's coincide
+  // at some geometries — `floor(rows/2) === rows − 2` at four rows, and the history-search dock takes `rows − 2`
+  // outright — so a stamp keyed on the cap alone would carry a grant measured against a five-row dock into the
+  // frame where a twenty-row picker has just taken the band. The mount is a frame re-render, so the fallback
+  // fires on exactly the frame it needs to and the re-measure lands on the next.
+  const [measured, setMeasured] = useState({ height, cap, slot: bottomSlot, rows: regionFloor });
+  const regionRows = measured.height === height && measured.cap === cap && measured.slot === bottomSlot ? measured.rows : regionFloor;
   // Measured, not predicted. `contentRef` is an unshrinkable box, so its computed height is what the children
   // WANTED; `regionRef` is what they were given. An effect is the only place both are true — Yoga has laid out
   // by then — and the latch keeps a standing overflow from repeating the diagnostic on every keystroke.
   useEffect(() => {
-    const region = regionRef.current, content = contentRef.current;
+    const region = regionRef.current, content = contentRef.current, bottom = bottomRef.current;
     if (!region || !content) return;
+    const report = (latch: React.MutableRefObject<boolean>, over: boolean, msg: () => string) => {
+      if (!over) { latch.current = false; return; }
+      if (latch.current) return;
+      latch.current = true;
+      (onOverflow ?? defaultOverflow)(msg());
+    };
     const want = measureElement(content).height, got = measureElement(region).height;
-    if (got !== regionRows || measured.height !== height || measured.cap !== cap) setMeasured({ height, cap, rows: got });
-    if (want <= got) { overflowing.current = false; return; }
-    if (overflowing.current) return;
-    overflowing.current = true;
-    (onOverflow ?? defaultOverflow)(`fullscreen frame: region content ${want} rows > region ${got} rows — something is rendering outside the frame's budget. Overflow clipped.`);
+    if (got !== regionRows || measured.height !== height || measured.cap !== cap || measured.slot !== bottomSlot) setMeasured({ height, cap, slot: bottomSlot, rows: got });
+    report(overflowing, want > got, () => `fullscreen frame: region content ${want} rows > region ${got} rows — something is rendering outside the frame's budget. Overflow clipped.`);
+    // …AND THE BAND UNDER IT (T13). `flexShrink: 0` means the slot keeps its natural height and hangs past the
+    // frame's bottom edge when it overruns, where the root's clip silently takes it — measured against the CAP
+    // rather than against a granted height for that reason: there is no shortened box to compare with, the box
+    // is simply taller than the rows it will be allowed to keep.
+    if (bottom) {
+      const bottomGot = measureElement(bottom).height;
+      report(bottomOverflowing, bottomGot > cap, () => `fullscreen frame: ${bottomSlot} content ${bottomGot} rows > its ${cap}-row cap — Overflow clipped.`);
+    }
   });
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
@@ -133,7 +203,13 @@ export function FullscreenFrame({ rows, regionChildren, dock, historySearchOpen 
           <RegionRowsContext.Provider value={regionRows}>{regionChildren}</RegionRowsContext.Provider>
         </Box>
       </Box>
-      <Box flexDirection="column" flexShrink={0} overflow="hidden">{dock}</Box>
+      {/* ONE BOX, TWO TENANTS — same element position, so the swap is a prop change rather than an unmount, and
+          `bottomRef` stays attached across it. The seam adds nothing but its border row: the cap, the clip and
+          the diagnostic above are the dock's, unchanged. */}
+      {seamUp
+        ? <Box ref={bottomRef} flexDirection="column" flexShrink={0} overflow="hidden"
+            borderStyle={SEAM_RULE} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
+        : <Box ref={bottomRef} flexDirection="column" flexShrink={0} overflow="hidden">{dock}</Box>}
     </Box>
   );
 }

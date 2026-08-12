@@ -728,6 +728,31 @@ slot *above* an intact composer, under a `▔▔▔▔` rule. The **permission d
 (bundle 549395, `(PA || as?.shouldHidePromptInput) && jsx(url, {})`), which is a different slot from
 `cZo`'s `modal` prop. Any port needs both.
 
+**Correction to the paragraph above, from the bundle (added by FSW T13).** The *observation* stands — two
+mechanisms, the pickers in the seam and the permission dialog in the bottom band with the composer gone — but
+two of its bundle attributions are wrong, and both change what a port should build:
+
+1. `jsx(url, {})` is **not** the permission dialog. `url()` (496404) renders a *banner* (`sWt`, with a
+   `banner` prop and a `columns`), so `(PA || as?.shouldHidePromptInput) && jsx(url, {})` is a banner slot in
+   the dock, not the dialog's home. What actually hides the composer on that branch is the line below it:
+   `jsx(fra, { hidden: Cn || as?.isLocalJSXCommand === !0 || Boolean(PA) })`. The **inline** decisions
+   (permission, question) are mounted by `jsx(Api, {})` **inside `cZo`'s `scrollable`** — i.e. at the tail of
+   the transcript region, not in the dock at all. The capture agrees: a bottom-anchored region's tail sits
+   immediately above a dock that has just lost its composer, which is rows 13–24 either way.
+2. The seam slot has **two** tenants, and the bundle enumerates neither as a list of commands:
+   `RTt = i8 ? jsx(Api, { variant: "modal" }) : Ket`, with `Ket = Dqt ? as.jsx : null` and
+   `Dqt = ds() && as?.isLocalJSXCommand === !0`, passed as `cZo({ modal: RTt, … })` (549395). So it carries
+   (a) **any local JSX command's element, whenever fullscreen** — the whole user-opened-surface class, of
+   which `/model`, `/help` and `/resume` are the three that happened to be captured — and (b) the one
+   decision whose layout is `"modal"`: `ypi = { [Vur.kind]: "modal" }` (507338) is a **one-entry table**, and
+   `Api` returns null unless the pending decision's layout matches its variant (507350). `Vur` is
+   exit-plan-mode. **The plan dialog is a seam surface**, and it is the only decision that is.
+
+ccx's T13 ships (2) as written and diverges deliberately on (1): the inline decisions render in the dock band
+rather than inside the scrollable region. Same rows on screen at a bottom-anchored tail; the difference is
+that ours cannot be scrolled away from under the reader, and that ctrl+u/ctrl+d over a permission dialog
+scroll the transcript *behind* it (keys/bindings.ts:280) instead of moving the dialog itself.
+
 **Correction to the QA driver, §4.4.** The recorded verdict "neither TUI enables mouse reporting, both are
 keyboard-only, there is nothing to click" was measured on the **main screen**. In fullscreen a synthetic SGR
 click on the permission dialog's `3. No` option **selected it** — `surface-permission-click.txt` shows the
