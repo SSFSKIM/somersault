@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
 import { fsReadInternals } from "../../../src/appserver/workspace.js";
+import * as fileComplete from "../../../src/tui/fileComplete.js";
+import { MAX_SEARCH_ROOTS } from "../../../src/appserver/schema/workspace.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
@@ -201,5 +203,23 @@ describe("fs/search", () => {
     vi.spyOn(process, "cwd").mockReturnValue(root);
     const m = matches(await call("fs/search", { query: "target" }));
     expect(m).toEqual([expect.objectContaining({ root, path: "target.ts" })]);
+  });
+
+  it(`refuses more than ${MAX_SEARCH_ROOTS} roots with -32602 (F4)`, async () => {
+    // Each root drives its own recursive walk BEFORE the limit applies, so an unbounded array is
+    // disproportionate fs work off one frame — the schema caps it, same precedent as the queue cap.
+    const roots = Array.from({ length: MAX_SEARCH_ROOTS + 1 }, (_, i) => join(root, `r${i}`));
+    const e = err(await call("fs/search", { query: "x", roots }));
+    expect(e.code).toBe(ERR.INVALID_PARAMS);
+  });
+
+  it("dedupes roots that name the same directory — one walk, one match (F4)", async () => {
+    // Two spellings of one root must not double the walk (the disproportionate work the cap bounds) nor
+    // double the match. The walker is spied to prove the fs work itself is deduped, not just the output.
+    writeFileSync(join(root, "target.ts"), "x");
+    const spy = vi.spyOn(fileComplete, "collectEntries");
+    const m = matches(await call("fs/search", { query: "target", roots: [root, root, root + "/"] }));
+    expect(m).toHaveLength(1);                                                       // not three copies
+    expect(spy.mock.calls.filter((c) => (c[0] as string).startsWith(root))).toHaveLength(1); // walked once
   });
 });

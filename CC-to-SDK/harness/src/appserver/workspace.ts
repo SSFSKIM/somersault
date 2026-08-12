@@ -22,7 +22,7 @@
 //
 // The SDK's own `Query.readFile` deliberately backs none of this: probe 104 found it callable but
 // resolving null for an existing file and for a missing path alike, so there is nothing to serve from it.
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { readdir, open } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -139,7 +139,13 @@ export const fsSearch: Handler = async (_srv, ctx, id, params) => {
   // This process's cwd is the only "the workspace" this server knows — it holds no configured root, and
   // inventing a second source of truth for one is what `threadView.cwd` (server.ts) already avoids by
   // reporting the same value for an inProcess thread whose config named no cwd.
-  const roots = parsed.data.roots ?? [process.cwd()];
+  // Dedupe by NORMALIZED path before any walk (external review F4): "x", "./x" and "x/" name one directory,
+  // and each spelling would otherwise drive its own independent recursive walk — the disproportionate fs
+  // work the schema's root cap bounds. The FIRST spelling seen is kept, since the original string rides
+  // beside each match as `root`; the schema has already refused an over-cap array (-32602) above.
+  const requested = parsed.data.roots ?? [process.cwd()];
+  const seen = new Set<string>();
+  const roots = requested.filter((r) => { const key = resolve(r); if (seen.has(key)) return false; seen.add(key); return true; });
   const merged: Array<{ root: string; path: string; score: number }> = [];
   for (const root of roots) {
     // A ROOT THAT CANNOT BE WALKED CONTRIBUTES NOTHING, and the request still succeeds (§2, Codex's own

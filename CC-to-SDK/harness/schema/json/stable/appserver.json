@@ -1177,6 +1177,7 @@
           "type": "string"
         },
         "roots": {
+          "maxItems": 64,
           "type": "array",
           "items": {
             "type": "string",
