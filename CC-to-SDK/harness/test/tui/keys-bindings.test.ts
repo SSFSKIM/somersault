@@ -263,11 +263,23 @@ describe("overlay gating, expressed as null bindings", () => {
   // grew one. Canon's block (grounding §3.5, bundle 446135-446250) also carries wheel, selection-extension and
   // copy keys; this wave is keyboard-only, so exactly four keys land and the rest stay unbound rather than
   // resolving to actions no handler could answer.
-  it("Scroll binds the four keyboard scroll keys and nothing else", () => {
+  // FSW TASK 12 adds the fifth: `v`, the transcript dump (canon L549336, advertised on canon's own transcript
+  // screen as `v to open in ${editor}`, L547303). It is the escape hatch for a renderer that leaves no
+  // scrollback behind, and it is the one PRINTABLE key in this block — see `FullscreenViewport` for the
+  // reachability gate that keeps it off a composer the user is typing into.
+  it("Scroll binds the four keyboard scroll keys plus the v dump, and nothing else", () => {
     expect(block("Scroll").bindings).toEqual({
       "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
       "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+      "v": "scroll:dumpTranscript",
     });
+  });
+  // The dump is bound HERE and not in `Transcript` (plan review I5): the ctrl+O pager is a second reading
+  // surface, but the scrollback that vanishes is the FULLSCREEN region's, and that is the surface `Scroll`
+  // names. A stray copy in the pager's block would be a second home for one key.
+  it("the v dump is a Scroll action, declared and unbound anywhere else", () => {
+    expect(VALID_ACTIONS).toContain("scroll:dumpTranscript");
+    expect(all.filter((x) => x.action === "scroll:dumpTranscript").map((x) => x.context)).toEqual(["Scroll"]);
   });
   // THE HALF-PAGE IS PER-CONTEXT, and that is the whole reason the fix is a second binding rather than an edit
   // to `PAGER_ACTIONS`. Canon's `scroll:pageUp`/`pageDown` handlers move `floor(viewport/2)` DESPITE THE NAME

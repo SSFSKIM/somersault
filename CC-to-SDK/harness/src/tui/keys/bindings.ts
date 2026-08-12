@@ -144,9 +144,24 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // falling through to `Global`. The context is registered by `FullscreenViewport` with canon's own gate —
   // `isActive: t && !cbr()` (446211), i.e. live in fullscreen EXCEPT while a history search owns the dock,
   // where the search's own PgUp/PgDn are the ones that must fire.
+  //
+  // FSW TASK 12 ADDS THE FIFTH KEY, AND IT IS A PRINTABLE ONE. `v` is canon's transcript dump (L549336, and
+  // advertised on canon's own transcript screen as `v to open in ${editor}`, L547303): render the whole
+  // conversation to a file and open it in `$VISUAL`/`$EDITOR`. It is the scrollback escape hatch — this
+  // renderer's exit gives the user their shell back with the conversation absent, on purpose — so it belongs
+  // to the surface that HAS no scrollback, i.e. here rather than in the ctrl+O pager's block (plan review I5).
+  //   THE COLLISION IS REAL AND IS HANDLED ONE LAYER OUT. Canon can bind a bare letter because its `v` lives
+  // on a transcript SCREEN with no composer (`zPe = lr === "transcript"`, L549291); ours is the background
+  // context of a renderer whose composer is live in the dock, resolution finds no `v` in `Chat`, and a
+  // handler registered unconditionally would eat the letter out of every word typed. It is not the TABLE's
+  // job to know that — a per-key gate is not something a context block can express — so `FullscreenViewport`
+  // registers the handler only while the jump pill is up, and `KeymapProvider` falls a matched action with no
+  // handler through to the composer (`:177-180`). The key is bound here; whether it is LIVE is a property of
+  // what the screen is currently saying.
   { context: "Scroll", bindings: {
     "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
     "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+    "v": "scroll:dumpTranscript",
   }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",
@@ -353,6 +368,7 @@ export const VALID_ACTIONS: readonly string[] = [
   "transcript:exit", "transcript:toggleShowAll",
   "scroll:halfPageUp", "scroll:halfPageDown", "scroll:fullPageUp", "scroll:fullPageDown", "scroll:lineUp", "scroll:lineDown",
   "scroll:top", "scroll:bottom", "scroll:pageUp", "scroll:pageDown",
+  "scroll:dumpTranscript",                        // FSW T12 — `v`, the fullscreen scrollback escape hatch
   "historySearch:next", "historySearch:accept", "historySearch:cancel", "historySearch:execute", "historySearch:cycleScope",
   // The other five messageSelector actions retired with F6 T10 (see the MessageSelector block): the picker's
   // list IS a `Select` now, so moving/accepting there are Select's actions, and a name this table no longer

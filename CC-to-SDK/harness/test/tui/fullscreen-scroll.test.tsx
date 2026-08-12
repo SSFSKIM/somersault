@@ -20,13 +20,14 @@ import React from "react";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { render } from "ink-testing-library";
 import { Box, Text } from "ink";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FullscreenViewport } from "../../src/tui/FullscreenViewport.js";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { RegionPager, pagerChromeRows } from "../../src/tui/RegionPager.js";
 import { jumpPillText } from "../../src/tui/JumpPill.js";
+import { dumpDir } from "../../src/tui/transcriptDump.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
@@ -117,6 +118,51 @@ describe("the Scroll context drives the fullscreen viewport", () => {
     expect(r.top()).toBe("L163");
     await r.press(PAGE_UP);
     expect(r.top()).toBe("L163");
+    r.unmount();
+  });
+});
+
+// FSW TASK 12 — `v`, THE SCROLLBACK ESCAPE HATCH, AND THE ONE THING IT MAY NOT COST.
+//
+// Fullscreen quit takes the conversation's terminal record with it, so the dump is how a user keeps a copy.
+// The binding lives in the `Scroll` context (plan review I5) and it is a PRINTABLE key — the only one in that
+// block — while `Scroll` is the BACKGROUND context of a renderer whose composer is live in the dock below.
+// Resolution walks the composer's `Chat` context first, finds no `v` there, and lands on `Scroll`: so a
+// naively-registered handler eats the letter out of every word the user types.
+//
+// The gate is REACHABILITY, not the table: `KeymapProvider` falls a matched action with NO registered handler
+// through to the fallback (`KeymapProvider.tsx:177-180`), so the viewport registers `scroll:dumpTranscript`
+// only while the jump pill is up — i.e. exactly when the screen is telling the reader they are scrolled off
+// the tail — and `v` types normally the rest of the time. That is canon's own shape reached by another route:
+// canon's `v` (L549336) lives on a transcript SCREEN with no composer at all (`zPe = lr === "transcript"`).
+describe("v dumps the transcript, without eating the letter", () => {
+  const items = doc(200);
+  it("fires the dump once the viewport is scrolled off the bottom", async () => {
+    const dump = vi.fn();
+    const r = renderWithKeymap(view({ finalizedItems: items, rows: 10, onDumpTranscript: dump }));
+    await tick();
+    r.stdin.write("v"); await tick();
+    expect(dump).not.toHaveBeenCalled();                              // sticky: the key is not ours
+    r.stdin.write(PAGE_UP); await tick();
+    r.stdin.write("v"); await tick();
+    expect(dump).toHaveBeenCalledTimes(1);
+    r.stdin.write(CTRL_END); await tick();
+    r.stdin.write("v"); await tick();
+    expect(dump).toHaveBeenCalledTimes(1);                            // re-stuck: handed back again
+    r.unmount();
+  });
+
+  // The pill's OTHER half is deliberately part of the gate. A content shrink can leave the viewport unstuck
+  // with the tail nevertheless on screen; the pill stays off there (nothing to jump to) and so does the dump,
+  // because "the screen says you are scrolled away" is the whole rule.
+  it("hands the key back when the pill goes away under a shrink", async () => {
+    const dump = vi.fn();
+    const r = renderWithKeymap(view({ finalizedItems: items, rows: 10, onDumpTranscript: dump }));
+    await tick();
+    r.stdin.write(PAGE_UP); await tick();
+    r.rerender(view({ finalizedItems: doc(20), rows: 10, onDumpTranscript: dump }));
+    r.stdin.write("v"); await tick();
+    expect(dump).not.toHaveBeenCalled();
     r.unmount();
   });
 });
@@ -288,12 +334,22 @@ let fleetRootDir = "";
 let priorFleetRoot: string | undefined;
 beforeAll(() => { priorFleetRoot = process.env.CCX_FLEET_ROOT; fleetRootDir = mkdtempSync(join(tmpdir(), "ccx-t11-")); process.env.CCX_FLEET_ROOT = fleetRootDir; });
 afterAll(() => { if (priorFleetRoot === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = priorFleetRoot; rmSync(fleetRootDir, { recursive: true, force: true }); });
+// FSW T12, A SAFETY THIS FILE EARNED THE HARD WAY. `v` in the real tree spawns `$VISUAL`/`$EDITOR` with stdio
+// "inherit" — measured while sabotage-testing the gate below, which launched the developer's own vim into the
+// test runner and hung it. Unset for the whole file: the dump still writes its file, `openInEditor` answers
+// "no-editor", and no test can ever take the terminal hostage. The stub is FILE-level rather than per-test on
+// purpose — the hazard belongs to any test that presses `v`, including ones nobody has written yet.
+beforeAll(() => { vi.stubEnv("VISUAL", ""); vi.stubEnv("EDITOR", ""); });
+afterAll(() => { vi.unstubAllEnvs(); });
 
 describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
   const alphaEntries = (n = 60) => Array.from({ length: n }, (_, i) => ({
     kind: "sdk" as const, source: "disk" as const,
     message: { type: "assistant", parent_tool_use_id: null, uuid: `u-${i}`, message: { id: `m-${i}`, content: [{ type: "text", text: `ALPHA-${i}` }] } },
   }));
+  /** Every dump file sitting in the default destination right now — the before/after diff is how the test
+   *  below finds the one IT caused without reaching into the module for a path it should not know. */
+  const existing = (): string[] => readdirSync(dumpDir()).filter((f) => f.startsWith("cc-transcript-")).map((f) => join(dumpDir(), f));
   const app = (mode: "fullscreen" | "classic") => (
     <ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
       renderer={{ mode, reason: "env_on" }} initialEntries={alphaEntries()}
@@ -337,6 +393,37 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     r.stdin.write("hello");
     await tick();
     expect(r.lastFrame()).toContain("hello");
+    r.unmount();
+  });
+
+  // FSW TASK 12, the composer's half of the `v` gate — through the REAL tree, because that is the only place
+  // the composer and the `Scroll` context are on the stack together. A `v` typed at a following transcript is
+  // a letter.
+  it("types v into the composer while the transcript is following the tail", async () => {
+    const r = renderWithKeymap(app("fullscreen"));
+    await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+    await tick();
+    for (const ch of "vim") { r.stdin.write(ch); await tick(); }
+    expect(r.lastFrame()).toContain("vim");
+    r.unmount();
+  });
+
+  // …and the whole feature end to end, with no editor configured so nothing is spawned: scroll off the tail,
+  // press `v`, and a real file appears carrying the real document. This is the wiring test — `detailItems` →
+  // `transcriptDump` → the file — that no unit test can make, because ChatApp is where those meet.
+  it("writes the whole conversation to a file when v is pressed while scrolled", async () => {
+    const before = new Set(existing());
+    const r = renderWithKeymap(app("fullscreen"));
+    await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+    await tick();
+    r.stdin.write(PAGE_UP); await tick();
+    r.stdin.write("v"); await tick(); await tick();
+    const written = existing().filter((f) => !before.has(f));
+    expect(written).toHaveLength(1);
+    const text = readFileSync(written[0]!, "utf8");
+    expect(text).toContain("ALPHA-0");                                  // the WHOLE document, not the window
+    expect(text).toContain("ALPHA-59");
+    rmSync(written[0]!, { force: true });
     r.unmount();
   });
 

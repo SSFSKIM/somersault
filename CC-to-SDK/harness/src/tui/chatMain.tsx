@@ -693,7 +693,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
         hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
         initialTodosOpen={prefs.showExpandedTodos ?? true}
-        renderer={renderer}
+        renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess}
         {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
     </UserKeymap>,
     { exitOnCtrlC: false, stdout: output.stdout },

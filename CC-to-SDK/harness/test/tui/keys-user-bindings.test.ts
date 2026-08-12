@@ -141,6 +141,18 @@ describe("validation: each rule drops ONLY the offending entry", () => {
     expect(layers).toEqual([{ context: "Chat", bindings: { "alt+g": "chat:externalEditor" } }]);
     expect(resolve(layers, ev("q", { alt: true }), ["Chat"])).toEqual({ type: "no-match" });
   });
+  // FSW Task 12: a NEW action name is only rebindable once `VALID_ACTIONS` declares it — the validator is the
+  // one place that decides, so the arrival of `scroll:dumpTranscript` and the rejection of a name that merely
+  // looks like it are the same test.
+  it("invalid_action: scroll:dumpTranscript is rebindable, a near-miss beside it is not", () => {
+    const { layers, issues } = loadUserBindings(fileWith({ bindings: [
+      { context: "Scroll", bindings: { "alt+v": "scroll:dumpTranscript", "alt+w": "scroll:dumpTranscripts" } },
+    ] }));
+    expect(types(issues)).toEqual(["invalid_action"]);
+    expect(issues[0].detail).toContain("scroll:dumpTranscripts");
+    expect(layers).toEqual([{ context: "Scroll", bindings: { "alt+v": "scroll:dumpTranscript" } }]);
+    expect(resolve(layers, ev("v", { alt: true }), ["Scroll"])).toMatchObject({ type: "match", action: "scroll:dumpTranscript" });
+  });
   it("invalid_action: a non-string, non-null action (a number, an object) is dropped", () => {
     const { layers, issues } = loadUserBindings(fileWith({ bindings: [{ context: "Chat", bindings: { "alt+q": 7, "alt+w": { a: 1 } } }] }));
     expect(types(issues)).toEqual(["invalid_action", "invalid_action"]);

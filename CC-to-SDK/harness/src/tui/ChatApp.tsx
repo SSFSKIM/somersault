@@ -38,7 +38,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
-import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useSwallowKeys } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useSuspendInput, useSwallowKeys } from "./keys/KeymapProvider.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
@@ -47,6 +47,7 @@ import { Transcript } from "./Transcript.js";
 import { FullscreenFrame } from "./FullscreenFrame.js";
 import { FullscreenViewport } from "./FullscreenViewport.js";
 import { RegionPager } from "./RegionPager.js";
+import { dumpTranscript } from "./transcriptDump.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
@@ -123,6 +124,10 @@ const ESC_ARM_MS = 1500;
  *  suppressed. Injectable (`typingIdleMs`) for the same reason `yankHintMs`/`escClearMs`/`pasteHintMs` are —
  *  so a test can watch the real window close instead of faking the clock under Ink. */
 export const TYPING_IDLE_MS = 1500;
+/** FSW T12 — how long the dump's receipt stays on screen. Canon's own `j.setTimeout(() => Fn(""), 4000)`
+ *  (L549357), which is half the notification slot's default: the sentence names a path the user either acts on
+ *  immediately or does not need. */
+const TRANSCRIPT_DUMP_NOTICE_MS = 4000;
 /** Stable empties for the transient region while the pager owns the screen — fresh `[]` literals per render
  *  would remount the (empty) region every frame for nothing. */
 const EMPTY_ITEMS: readonly RenderItem[] = [];
@@ -170,7 +175,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, aroundSubprocess }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -244,6 +249,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  `/status` would report the mode the session started in. T15 must route the live value into `useChat`
    *  rather than let this invariant lapse silently. */
   renderer?: RendererChoice;
+  /** FSW TASK 12 — T6's `guard.aroundSubprocess`, threaded down for the ONE child this tree spawns itself: the
+   *  `v` dump's editor, which must run with the main screen in front of it. A prop rather than a context for
+   *  the same reason `renderer` is one, and absent everywhere the guard is (classic launches, embedders,
+   *  component tests) — where the guard would be inert anyway, since it is armed only by the fullscreen
+   *  renderer. */
+  aroundSubprocess?: <T>(run: () => T) => T;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
   // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
@@ -928,6 +939,31 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   useEffect(() => { if (paneOwned) publishLiveWindow(); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [paneOwned, state.finalizedItems]);
+  // ── FSW TASK 12 — `v`: THE WHOLE CONVERSATION, IN THE USER'S EDITOR ───────────────────────────────────
+  // Fullscreen quit gives the user their shell back with the conversation absent, on purpose (§A6). The three
+  // halves of the answer meet here and nowhere else: the retained document (`detailItems`, the same
+  // `detail-all` projection ctrl+O shows), the alt-screen guard the editor has to run inside, and the slot
+  // that says where the file went. `FullscreenViewport` owns only WHEN the key is live.
+  //   IT RUNS INSIDE THE KEYMAP'S TERMINAL HANDOFF, for the reason `chat:externalEditor` does (ChatComposer's
+  // note): the child is spawned with stdio "inherit", so while it owns fd 0 our still-flowing `data` listener
+  // would race it for its keystrokes. The dump itself is synchronous — spawnSync freezes the loop — so the
+  // only thing deferred past `suspendInput`'s await is the restore in its own `finally`.
+  //   THE MESSAGE IS EPHEMERAL, not a transcript row: it is a receipt for a keystroke, and a row would then be
+  // part of the NEXT dump. Canon clears its own after 4 s (L549357) and so do we.
+  //   AND THE PROP HANDED DOWN IS STABLE, through the ref that every "read the latest closure from a stdin
+  // handler" site in this tree uses. `detailItems` is a fresh function on every `useChat` render, so an inline
+  // arrow would invalidate the viewport's action memo on every streamed delta — on the one hot path this
+  // renderer has.
+  const suspendInput = useSuspendInput();
+  const dumpNow = () => {
+    const run = () => {
+      const r = dumpTranscript({ items: () => detailItems("detail-all"), ...(aroundSubprocess ? { around: aroundSubprocess } : {}) });
+      notify({ key: "transcript-dump", text: r.message, timeoutMs: TRANSCRIPT_DUMP_NOTICE_MS });
+    };
+    if (suspendInput) void suspendInput(async () => run()); else run();
+  };
+  const dumpRef = useRef(dumpNow); dumpRef.current = dumpNow;
+  const dumpTranscriptNow = useCallback(() => dumpRef.current(), []);
   // ── FSW TASK 9 — TWO RENDERERS, ONE TREE ──────────────────────────────────────────────────────────────
   // The split below is the SHAPE of the whole M2b renderer, so it is worth saying what it deliberately is not.
   // It is not two component trees: the transcript region and everything under it (the "dock" — panels, turn
@@ -959,7 +995,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const region = fullscreen
     ? (transcriptOpen
       ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
-      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} />)
+      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
     : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
   const dock = (
     <>

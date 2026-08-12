@@ -93,6 +93,11 @@ export interface FullscreenViewportProps {
    *  inline ctrl+r search). The jump pill goes with it: a pill advertising a key nothing would deliver is
    *  the dishonest affordance the derived-hint discipline exists to prevent. */
   historySearchOpen?: boolean;
+  /** FSW T12 — `v`: dump the whole transcript to a file and open it in `$VISUAL`/`$EDITOR`. The viewport owns
+   *  WHEN the key is live (see the registration below) and knows nothing about what the dump is: the document,
+   *  the alt-screen guard and the status message all live in ChatApp, which is the only place they meet.
+   *  Absent — every component test that does not care — and the key stays the composer's. */
+  onDumpTranscript?: () => void;
   scrollRef?: React.Ref<ViewportScroll>;
 }
 
@@ -103,7 +108,7 @@ export interface FullscreenViewportProps {
  *  wants it while sticky. */
 const START: AnchorState = { offset: Number.POSITIVE_INFINITY, sticky: true };
 
-export function FullscreenViewport({ finalizedItems, pendingItems, streaming, columns, rows, historySearchOpen = false, scrollRef }: FullscreenViewportProps) {
+export function FullscreenViewport({ finalizedItems, pendingItems, streaming, columns, rows, historySearchOpen = false, onDumpTranscript, scrollRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
   const height = Math.max(0, rows ?? granted);
   const items = useMemo(
@@ -141,13 +146,24 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, co
   // pair is not re-pointed anywhere.
   //   `scroll:bottom` is `stickBottom`, not `applyPager({kind:"bottom"})`. The two land on the same offset,
   // but only the first is canon's `scrollToBottom()` — "follow the tail again" rather than "show it once".
+  //   `scroll:dumpTranscript` (T12) is the fifth action and the only CONDITIONAL one, because `v` is a
+  // printable key on a context whose composer is live. Registration is the gate: `KeymapProvider` falls a
+  // matched action with no handler through to the fallback (`:177-180`), so an unregistered `v` reaches the
+  // composer as the letter it is. It is registered exactly while the JUMP PILL is up — the moment the screen
+  // is telling the reader they are scrolled off the tail, which is canon's reading surface reached by another
+  // route (canon's `v` lives on a transcript screen with no composer at all). Sticky, or unstuck-but-at-the-
+  // end, and the key is the composer's again. The cost is stated plainly: while the pill is up, `v` does not
+  // type. That is the trade the escape hatch is worth, and ctrl+end takes it back in one keystroke.
+  const atEnd = settled.offset >= total - height;
+  const showPill = !settled.sticky && !atEnd && !historySearchOpen;
   useKeyScope("Scroll", { active: !historySearchOpen });
   useKeyActions(useMemo(() => ({
     "scroll:halfPageUp": () => scroll(PAGER_ACTIONS["scroll:halfPageUp"]!),
     "scroll:halfPageDown": () => scroll(PAGER_ACTIONS["scroll:halfPageDown"]!),
     "scroll:top": () => scroll(PAGER_ACTIONS["scroll:top"]!),
     "scroll:bottom": () => stickBottom(),
-  }), [scroll, stickBottom]));
+    ...(showPill && onDumpTranscript ? { "scroll:dumpTranscript": () => onDumpTranscript() } : {}),
+  }), [scroll, stickBottom, showPill, onDumpTranscript]));
 
   // ── THE JUMP PILL, AND THE ROW IT COSTS ─────────────────────────────────────────────────────────────────
   // `qqH` (455869-455878): shown only when the viewport is neither sticky nor at the end. The second half is
@@ -168,8 +184,9 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, co
   // on the debug seam to say so. (Verified by mutating this line to `= height`: the pill is gone, the frame is
   // still 39 rows, `onOverflow` is never called. The blind spot is carried to T13, which owns the next change
   // to that measurement.)
-  const atEnd = settled.offset >= total - height;
-  const showPill = !settled.sticky && !atEnd && !historySearchOpen;
+  //   `atEnd`/`showPill` are computed ABOVE, beside the key registration that shares them (T12): the pill's
+  // visibility is now also what decides whether `v` is ours, and one derivation cannot be allowed to drift
+  // from the other.
   const body = showPill ? Math.max(0, height - 1) : height;
 
   // "N new message(s)" — as ROWS, because that is what this document is made of (JumpPill's header records
