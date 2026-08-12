@@ -347,6 +347,20 @@ non-goals).
   unconditional fallback leaning on `wrap:"truncate-end"` to clip — not a fits-always guarantee.
   The grounding's prose described the labels but missed the trailing `↓` its own live capture
   shows; the bundle settled it (JDa, cli.pretty.js:456145–456196).
+- **Held divergence — subprocess handoffs exit to the main screen; canon stays on the alt
+  screen** (T12 re-review, read from canon's terminal wrapper L180653): canon's
+  `enterAlternateScreen()` writes nothing when already active, so a child process (editor)
+  runs ON the alternate screen with modes off and the screen cleared — no rmcup at any point.
+  Our T6 guard chose the inverse bracket (EXIT_ALT → child on main screen → ENTER_ALT). Both
+  recover from an editor that toggles 1049 itself; ours additionally leaves the user's shell
+  scrollback reachable mid-edit. Held deliberately; every fullscreen-reachable editor caller
+  must pass through the guard (four wired by T12 + its fix rounds; rule recorded in
+  `externalEditor.ts`'s module header).
+- A printable key bound in a background context EATS the letter from the live composer —
+  `parse.ts` routes single printables through table resolution before the composer fallback.
+  Canon never faced this (its `v` lives on a composer-less screen); our answer is per-action
+  handler registration gated on the scrolled-up state, so the byte falls through to the
+  composer whenever the affordance (the pill) isn't showing.
 
 ## Outcomes & Retrospective
 

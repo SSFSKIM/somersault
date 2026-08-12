@@ -348,6 +348,29 @@ respective suites.
   inline classic); D11/D12/D13/D14 pins.
 - [ ] **Step 2:** implement. Commit `f5(fsw-t14): the fixed frame stops rows from shoving`.
 
+**Amendments from the T12 review (controller, 2026-08-13):**
+
+1. **D11 must not silence the transcript dump's receipt.** `ChatComposer`'s `NotificationSlot`
+   is the ONLY visible feedback for the `v` dump (`wrote <file> …`, `priority: "immediate"`).
+   Suppressing the slot wholesale in fullscreen makes `v` produce no feedback at all. D11's
+   suppression must keep a fullscreen home for immediate-priority notifications (the Footer
+   status row or an equivalent slot in the fixed frame) — pin the dump receipt visible in
+   fullscreen in the D11 test.
+2. **`v` must be announced somewhere in the fullscreen chrome** (condition attached to the
+   T12 review's approval of the pill-gated handler): canon's transcript screen advertises
+   `v to open in <editor>` on its hint row (bundle L547303). Give `v` a visible home —
+   the natural spot is wherever D1/D13's footer work lands, or the ?-shortcuts overlay's
+   fullscreen section. Assert its presence in a test.
+3. **ctrl+z suspend must run inside the alt-screen handoff** (T6 report flagged it; no other
+   task owns it). From fullscreen, `src/tui/suspend.ts`'s SIGTSTP path currently suspends with
+   the alternate screen still up; the shell prompt returns onto the alt screen. Wrap the
+   suspend/resume pair with the guard: EXIT_ALT (+ mouse/paste off, cursor show) before
+   SIGTSTP, ENTER_ALT + repaint on SIGCONT resume — same discipline as `aroundSubprocess`,
+   but split across the stop/continue boundary. Note canon's shape for subprocess handoffs
+   (re-review of T12, wave-level ⚠️): canon stays ON the alt screen and clears it instead of
+   dropping to main; our exit-to-main is a held divergence (T6 design) — keep suspend
+   consistent with OUR shape, not canon's.
+
 ### Task 15: `/tui` — the prop-change switch + attach rules
 
 **Files:** Modify `src/tui/commands.ts` (`/tui [default|fullscreen]`: persist `prefs.tui`,
