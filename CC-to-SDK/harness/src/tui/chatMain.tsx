@@ -132,6 +132,22 @@ const ESCAPES_ONLY = /^(?:\x1b\[[0-9;?]*[a-zA-Z]|\x1b[78])+$/;
  *  needs, it paints from there — is untouched, as is any `\x1b[3J` occurring later in the chunk as content. */
 const CLEAR_SCROLLBACK_HEAD = "\x1b[2J\x1b[3J";
 
+/** FSW T8 (spec §A4a) — DECSET 2026, the SYNCHRONIZED UPDATE pair (canon's mode table L177069,
+ *  `SYNCHRONIZED_UPDATE: 2026`). The fullscreen renderer paints through stock log-update with no `<Static>` in
+ *  its tree, so every paint is a full-frame erase-and-rewrite and the window between the two halves is the
+ *  flicker the renderer is named after ("flicker-free" is canon's own word for it, settings copy L42039). A
+ *  terminal that implements 2026 buffers everything between the pair and presents it as one update; one that
+ *  does not implements neither escape and ignores both, and the paint is byte-for-byte what it would have been
+ *  — which is the recorded divergence in §A4a rather than a fallback to write.
+ *    KNOWN BOUNDED DIVERGENCE (plan m1): the pair goes around ONE write, and two of Ink's seams are three.
+ *  `writeToStdout` (`ink.js:140`-`:155`) and `writeToStderr` (`:157`-`:171`) are each `log.clear()` →
+ *  `write(data)` → `log(lastOutput)`, and only that third call is a recorded frame write — the erase and the
+ *  payload go out unwrapped ahead of it, so a paint reached through those seams can tear. `/clear` and every
+ *  `console.*` under `patchConsole` (render.js's default, which this app does not turn off) reach them.
+ *  RECORDED, NOT FIXED: spanning three writes means holding bytes inside the proxy until a flush condition it
+ *  cannot know, and these are user-initiated one-offs rather than the per-keystroke path the wrap exists for. */
+const SYNC_BEGIN = "\x1b[?2026h", SYNC_END = "\x1b[?2026l";
+
 export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; this stays the import site it had
 
 /** FSW T3 FIX ROUND (review C1) — ONE SIGWINCH listener, three things to do, and the order is the contract.
@@ -150,7 +166,13 @@ export function createResizeChain(readers: () => void): { fire: () => void; subs
   };
 }
 
-export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeStdout {
+/** FSW T8: `altMode` is the alternate screen, and it is FIXED PER CONSTRUCTION because the renderer choice is —
+ *  `selectRenderer` runs once at boot and a resize never re-runs it (spec §L2.1), so a proxy cannot outlive the
+ *  screen it was built for. `runChatClient` has the choice in hand before it builds this (the `selectRenderer`
+ *  call precedes the `createResumeSafeStdout` one), so no setter is needed and none is offered: a mode that
+ *  could change mid-session would mean a frame recorded under one set of rules and erased under another. */
+export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMode?: boolean } = {}): ResumeSafeStdout {
+  const altMode = opts.altMode === true;
   let suppressNextWrite = false;
   let frame: string | undefined;                 // the last live frame, as painted
   let widthAtPaint = 0;                          // W-R t4b: …and the terminal width it was painted at
@@ -260,7 +282,14 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     if (typeof chunk !== "string") return false;
     if (chunk.startsWith("\x1b[2J")) {
       justErased = false; dropped = undefined; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1; detached += 1;
-      if (chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
+      // …ON THE MAIN SCREEN ONLY (FSW T8, plan m2/D6). Everything the paragraph above argues is an argument
+      // about SCROLLBACK: `\x1b[3J` erases it, and inline that is where this app's committed transcript and the
+      // user's pre-launch screen live. The alternate screen has no scrollback — that is what it is — so the
+      // escape has nothing to destroy there, and canon writes both deliberately: `Rms()` (L176982) is `2J`+`3J`
+      // +`H` and L177121 selects it precisely on `altScreen`. The strip is a main-screen rule and it comes off
+      // with the main screen. `clearViewport.ts`'s `screenClear` is the same decision on the same axis, for
+      // `/clear`'s own payload rather than for Ink's tall-frame head.
+      if (!altMode && chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
       return false;
     }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
@@ -308,6 +337,16 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // is equally load-bearing: after an erase-only write Ink's `previousLineCount` is 0, its next write carries no
   // erase prefix, and a parked column would displace that frame sideways.
   const park = (): void => {
+    // …AND NOT ON THE ALTERNATE SCREEN (FSW T8, plan m3). The park is padding written into a row of the screen
+    // so that a REFLOW carries the cursor with it; the alternate screen does not reflow (no scrollback to reflow
+    // out of), and T9 does not construct `createResizeRepaint` there at all — so the one consumer the padding
+    // exists for, `probeReflow`, is never built. The frame is fixed-height and owns every row it has, so the
+    // padding would be damage rather than merely useless. WHAT ELSE READS THE PARK, AND WHY 0 IS FINE FOR EACH:
+    // the exit teardown's unpark is `> 0`-guarded (`altScreen.ts:233`), so it writes nothing; the `foreign`
+    // branch below is `parkedCol > 0 && …`, so it goes dark and every non-Ink write passes through unhomed and
+    // un-re-parked; and `createChatTeardown`/`createResizeRepaint` both take `parkedColumn` as a reader that has
+    // always been allowed to answer 0 (it does, on any non-tty and any terminal under 8 columns).
+    if (altMode) return;
     const col = stdout.isTTY ? parkColumn(stdout.columns) : 0;
     if (col > 0) targetWrite(parkSequence(col));
     parkedCol = col;
@@ -335,7 +374,16 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
       // ONE CHUNK, ALWAYS (W-R t4b). The correction and Ink's own erase are two halves of one erase run: split
       // across two writes, anything else sharing this tty could land between them.
       const corrected = rewritten; rewritten = undefined;
-      const wrote = corrected === undefined ? targetWrite(...args) : targetWrite(corrected, ...args.slice(1));
+      // …AND IN ALTMODE THAT ONE CHUNK IS ALSO ONE UPDATE (FSW T8). The wrap goes HERE, at the write, and not
+      // one line earlier, for the same reason the correction is applied inside `record` rather than around it:
+      // `record` matches `INK_ERASE_PREFIX` against the bytes INK wrote, and a chunk opening on `\x1b[?2026h`
+      // matches no erase prefix — the frame would stop being recorded, which is the gate task 4 erases from.
+      // It also goes OUTSIDE the injected correction, because that erase is part of the paint it corrects and
+      // the two must land in the same update. Only a RECORDED FRAME WRITE is wrapped: `recorded` already draws
+      // the line between a paint of the live frame and the erases, <Static> flushes and foreign escapes that
+      // are not one, and wrapping those would nest a second update inside the frame write behind them.
+      const payload = altMode && recorded ? SYNC_BEGIN + (corrected ?? args[0] as string) + SYNC_END : corrected;
+      const wrote = payload === undefined ? targetWrite(...args) : targetWrite(payload, ...args.slice(1));
       if (recorded || (foreign && ESCAPES_ONLY.test(chunk))) park();
       return wrote;
     }

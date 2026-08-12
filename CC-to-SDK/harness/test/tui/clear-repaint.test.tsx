@@ -18,7 +18,7 @@ import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { useChat } from "../../src/tui/useChat.js";
-import { clearViewport, eraseViewport } from "../../src/tui/clearViewport.js";
+import { clearAltScreen, clearViewport, eraseViewport, screenClear } from "../../src/tui/clearViewport.js";
 import { eraseRows } from "../../src/tui/resizeRepaint.js";
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -92,6 +92,44 @@ describe("eraseViewport — upstream's INLINE clear arm (bundle L176988 `yJr`)",
     const start = term.chunks.length;
     expect(clearViewport(ink)).toBe(true);
     expect(term.chunks.slice(start).join("")).toContain(eraseViewport(ROWS));
+  });
+});
+
+// ── FSW TASK 8 (D6) — THE OTHER ARM, restored on upstream's own axis ─────────────────────────────────────
+// Task 7 retracted `Rms()` because it was being written INLINE, where `ESC[3J` destroys the scrollback the
+// committed transcript lives in. It was never wrong in itself: L177121 is `s += a.altScreen ? Rms() :
+// yJr(a.viewportRows)`, and on the alternate screen there is no scrollback to protect — the sequence is the
+// correct one there and the viewport-erase is the wrong one (it would leave the frame's rows blanked one at a
+// time rather than the screen reset). So the split is by SCREEN MODE, exactly as upstream splits it, and
+// `eraseViewport` keeps meaning what it has always meant to its existing callers.
+describe("screenClear — the D6 mode split (bundle L177121)", () => {
+  it("is upstream `Rms()` byte for byte on the alt arm: ESC[2J ESC[3J ESC[H", () => {
+    expect(clearAltScreen()).toBe("\x1b[2J\x1b[3J\x1b[H");
+  });
+  it("dispatches on screen mode and on nothing else", () => {
+    expect(screenClear({ altScreen: true, rows: ROWS })).toBe(clearAltScreen());
+    expect(screenClear({ altScreen: true, rows: 0 })).toBe(clearAltScreen());     // the alt arm ignores rows, as Rms() does
+    expect(screenClear({ altScreen: false, rows: ROWS })).toBe(eraseViewport(ROWS));
+  });
+  it("leaves clearViewport's existing callers on the inline arm", () => {
+    const term = new RecordingTerminal(); const ink = new InkModel(term);
+    ink.onRender(FRAME);
+    const start = term.chunks.length;
+    expect(clearViewport(ink)).toBe(true);
+    const payload = term.chunks.slice(start).join("");
+    expect(payload).toContain(eraseViewport(ROWS));
+    expect(payload).not.toContain("\x1b[3J");
+  });
+  it("…and takes the alt arm when the caller says the screen is the alternate one", () => {
+    const term = new RecordingTerminal(); const ink = new InkModel(term);
+    ink.onRender(FRAME);
+    const start = term.chunks.length;
+    expect(clearViewport(ink, { altScreen: true })).toBe(true);
+    expect(term.chunks.slice(start).join("")).toContain(clearAltScreen());
+  });
+  it("still writes nothing off a tty on either arm", () => {
+    const noTty = { stdout: { isTTY: false, rows: ROWS }, write: () => { throw new Error("wrote off a tty"); } };
+    expect(clearViewport(noTty, { altScreen: true })).toBe(false);
   });
 });
 

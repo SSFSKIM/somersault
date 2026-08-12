@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createResizeChain, createResumeSafeStdout, physicalRows, runChatClient } from "../../src/tui/chatMain.js";
 import { eraseViewport } from "../../src/tui/clearViewport.js";
-import { parkColumn } from "../../src/tui/resizeRepaint.js";
+import { parkColumn, parkSequence } from "../../src/tui/resizeRepaint.js";
 
 /** FSW TASK 4 — the wiring pin below needs `render()` to hand back the element tree instead of painting it.
  *  Only that one export is replaced; everything else in `ink` is the real module, because the tree being
@@ -232,6 +232,112 @@ describe("ResumeSafeStdout.lastFrame", () => {
     out.stdout.write("composer frame\n");                            // …so even these exact bytes stay <Static>
     expect(out.lastFrame()).toBeUndefined();
     expect(out.tallWrites()).toBe(1);
+  });
+});
+
+// ── FSW TASK 8 — THE ALTERNATE SCREEN'S PROXY (plan §T8, spec §A4a/D6) ───────────────────────────────────
+// One construction-time flag and three behaviours, each of which is a MAIN-SCREEN rule that the alternate
+// screen inverts. Fixed per construction because the renderer choice is (`selectRenderer`, spec §L2.1: a
+// resize never re-decides it), so nothing can flip underneath a proxy that has already painted.
+describe("ResumeSafeStdout altMode", () => {
+  const BSU = "\x1b[?2026h", ESU = "\x1b[?2026l";      // DECSET 2026, canon's mode table L177069
+  const alt = (columns?: number, rows?: number) => {
+    const terminal = new RecordingTerminal(columns, rows);
+    return { terminal, out: createResumeSafeStdout(terminal as any, { altMode: true }) };
+  };
+
+  // (1) Fullscreen paints through stock log-update with no <Static> in the tree, so every paint is a full-frame
+  // erase-and-rewrite and the gap between the two halves is the flicker the renderer is named after. The pair
+  // makes the terminal present both as one update.
+  it("wraps a recorded frame write in DECSET 2026", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write(eraseLines(3) + "one\ntwo\n");
+    expect(terminal.chunks.join("")).toBe(BSU + eraseLines(3) + "one\ntwo\n" + ESU);
+    expect(out.lastFrame()).toBe("one\ntwo\n");         // …and the record is what it always was (T4's gate)
+  });
+
+  it("leaves the main screen's bytes exactly as they were", () => {
+    const { terminal, out } = proxy();
+    out.stdout.write(eraseLines(3) + "one\ntwo\n");
+    expect(terminal.chunks.join("")).toBe(eraseLines(3) + "one\ntwo\n");
+  });
+
+  // Only a RECORDED FRAME WRITE is a paint. `log.clear()` and a <Static> flush are not, and wrapping them would
+  // open a synchronized update the frame write behind them opens a second one inside.
+  it("wraps only the frame write of Ink's clear→static→frame burst", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write(eraseLines(2));                     // log.clear()
+    out.stdout.write("committed transcript row\n");      // staticOutput
+    out.stdout.write("new frame\n");                     // log(output)
+    expect(terminal.chunks).toEqual([eraseLines(2), "committed transcript row\n", BSU + "new frame\n" + ESU]);
+    expect(out.lastFrame()).toBe("new frame\n");
+  });
+
+  // The wrap goes OUTSIDE task 4b's injected erase (one paint, one update) and AFTER `record` has read the raw
+  // chunk — a chunk whose first bytes were `\x1b[?2026h` would match no erase prefix and stop being a frame.
+  it("wraps outside the resize correction, and the corrector still sees Ink's raw prefix", () => {
+    const { terminal, out } = alt(80, 24);
+    const seen: any[] = [];
+    out.setFrameCorrector((info) => { seen.push(info); return "\x1b[2K"; });
+    out.stdout.write("first\n");
+    out.stdout.write(eraseLines(2) + "second\n");
+    expect(seen[0].inkErases).toBe(2);
+    expect(seen[0].prevFrame).toBe("first\n");
+    expect(terminal.chunks[1]).toBe(BSU + eraseLines(2) + "\x1b[2K" + "second\n" + ESU);
+  });
+
+  // (2) The park exists to make `probeReflow`'s cursor answerable across a reflow; the alternate screen does not
+  // reflow, T9 constructs no resize machinery there, and a row of padding spaces inside a fixed-height frame is
+  // damage. Every consumer of `parkedColumn()` tolerates 0 — that is what makes removing it safe rather than
+  // merely desirable.
+  it("never parks the cursor, at a width the main screen parks at", () => {
+    const { terminal: main, out: mainOut } = proxy(80, 24);
+    mainOut.stdout.write("frame\n");
+    expect(mainOut.parkedColumn()).toBe(parkColumn(80));
+    expect(main.chunks.join("")).toContain(parkSequence(parkColumn(80)));
+
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write("frame\n");
+    expect(out.parkedColumn()).toBe(0);
+    expect(terminal.chunks.join("")).toBe(BSU + "frame\n" + ESU);
+  });
+
+  // …and with no park standing, the `foreign` branch goes dark by itself: nothing is homed, nothing is re-parked.
+  it("writes a foreign escapes-only chunk through untouched", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write("frame\n");
+    out.stdout.write("\x1b[?2004h");                     // the keymap's bracketed-paste DECSET
+    expect(terminal.chunks.join("")).toBe(BSU + "frame\n" + ESU + "\x1b[?2004h");
+    expect(out.parkedColumn()).toBe(0);
+  });
+
+  // (3) `\x1b[3J` erases the terminal's SCROLLBACK, which inline is where the committed transcript lives — hence
+  // the strip. The alternate screen HAS no scrollback, and canon writes both escapes there on purpose (`Rms()`,
+  // L176982, selected on `altScreen` at L177121). So the strip is a main-screen rule and it comes off with it.
+  it("passes Ink's clearTerminal through with its ESC[3J intact", () => {
+    const { terminal, out } = alt();
+    const tall = "\x1b[2J\x1b[3J\x1b[H" + "scrollback\n".repeat(3) + "frame\n";
+    out.stdout.write(tall);
+    expect(terminal.chunks.join("")).toBe(tall);
+    expect(out.lastFrame()).toBeUndefined();             // still nobody's frame — the seam is still unmarked
+  });
+
+  it("still strips it on the main screen", () => {
+    const { terminal, out } = proxy();
+    const tall = "\x1b[2J\x1b[3J\x1b[H" + "scrollback\n".repeat(3) + "frame\n";
+    out.stdout.write(tall);
+    expect(terminal.chunks.join("")).toBe("\x1b[2J\x1b[H" + "scrollback\n".repeat(3) + "frame\n");
+  });
+
+  // The frame record is T4's gate and altMode must not touch it: the whole burst vocabulary still classifies.
+  it("keeps the frame record maintained across a burst", () => {
+    const { out } = alt(80, 24);
+    out.stdout.write(eraseLines(2) + "old frame\n");
+    expect(out.lastFrame()).toBe("old frame\n");
+    out.stdout.write(eraseLines(2));                     // log.clear() — off the screen, and not claimed painted
+    expect(out.lastFrame()).toBeUndefined();
+    out.stdout.write("old frame\n");                     // the writeToStderr restore — identical bytes
+    expect(out.lastFrame()).toBe("old frame\n");
   });
 });
 

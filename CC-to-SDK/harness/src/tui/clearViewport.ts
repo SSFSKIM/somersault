@@ -41,16 +41,32 @@ export function eraseViewport(rows: number): string {
   return "\x1b[H" + "\x1b[2K\x1b[1B".repeat(Math.max(0, rows)) + "\x1b[H";
 }
 
+/** Upstream `Rms` (bundle L176982) = `h1` + `lsr` + `fI` = `ESC[2J` `ESC[3J` `ESC[H`, byte for byte — the OTHER
+ *  arm of note 1, restored by FSW task 8 (spec §A4a/D6) on the axis upstream keeps it on. The `ESC[3J` that makes
+ *  this sequence wrong inline is exactly what makes it right on the alternate screen: that screen HAS no
+ *  scrollback, so there is nothing for it to destroy, and the alternate screen's own saved lines (which some
+ *  emulators keep) are ours to reset. The viewport-erase is the wrong arm there for the mirror reason — it blanks
+ *  the frame's rows one at a time and leaves the screen's state describing a paint we are about to replace. */
+export function clearAltScreen(): string { return "\x1b[2J\x1b[3J\x1b[H"; }
+
+/** Upstream's dispatch, verbatim (`Dms`, L177120-177121: `s += a.altScreen ? Rms() : yJr(a.viewportRows)`). The
+ *  mode is the ONLY input that selects the arm; `rows` reaches the inline arm only, because `Rms()` takes none. */
+export function screenClear(mode: { altScreen: boolean; rows: number }): string {
+  return mode.altScreen ? clearAltScreen() : eraseViewport(mode.rows);
+}
+
 /** Ink's `useStdout()` value, narrowed to what the reset reads: the stream (for `isTTY`/`rows`) and the
  *  `writeToStdout` that carries the forced repaint. */
 export interface InkStdout { stdout: { isTTY?: boolean; rows?: number } | undefined; write(data: string): void }
 
-/** Wipe the viewport and repaint the live frame in one Ink-sanctioned move. Returns whether anything was
+/** Wipe the screen and repaint the live frame in one Ink-sanctioned move. Returns whether anything was
  *  written — off a tty there is no viewport to wipe and no cursor addressing to do it with, exactly the gate
- *  the old `process.stdout.isTTY` check applied. */
-export function clearViewport(ink: InkStdout): boolean {
+ *  the old `process.stdout.isTTY` check applied. `altScreen` defaults to false because every caller that exists
+ *  today is a main-screen one; the fullscreen renderer (T9) passes the mode it was constructed with, the same
+ *  one-value-decided-once `RendererChoice` the output proxy's `altMode` comes from. */
+export function clearViewport(ink: InkStdout, mode?: { altScreen?: boolean }): boolean {
   const out = ink.stdout;
   if (!out?.isTTY) return false;
-  ink.write(eraseViewport(out.rows ?? 0));
+  ink.write(screenClear({ altScreen: mode?.altScreen ?? false, rows: out.rows ?? 0 }));
   return true;
 }
