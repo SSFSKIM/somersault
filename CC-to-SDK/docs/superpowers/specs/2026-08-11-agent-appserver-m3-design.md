@@ -441,6 +441,16 @@ answered by the probe/implementation contact, none architectural.
 - **D-M3-12 — fleet `thread/read` is disk-only** (review fold-in): symmetric with inProcess (live
   half via subscribe replay). *Rejected:* disk + live-buffer merge — double-counts rows under an
   absolute-offset cursor once the turn persists.
+- **D-M3-15 — `fs/search` is a bounded fuzzy picker, and its silent bounds are accepted** (Task 12
+  review adjudication, 2026-08-12): the shared walker seam caps each root at ~1000 entries and
+  excludes dotfiles/`node_modules`, with no truncation signal on the wire — a workspace search can
+  silently omit files. Accepted for M3: Codex's own `fuzzyFileSearch` is the same class (≤50
+  scored matches, heuristic, no completeness contract), the seam was chosen deliberately over a
+  reimplementation, and content search is already out of scope. *Rejected:* a `truncated` flag —
+  it would promise a completeness accounting the walker cannot cheaply provide (the cap is
+  per-directory-walk, not a countable remainder); a protocol-only exhaustive walker — a second
+  walker to drift from the composer's, for a picker whose reference is also bounded. Revisit only
+  if a client needs exhaustive listing (that is `fs` watch/list territory, recorded Out).
 - **D-M3-14 — the turn result ships on the turn-end event, not as a message frame** (P106
   adjudication, 2026-08-11): §1a-f. *Rejected:* synthesizing a minimal result server-side from the
   turn-end event — a fleet `turn/completed` would carry a fabricated payload while the real one sat
