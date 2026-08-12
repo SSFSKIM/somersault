@@ -155,7 +155,12 @@ export class ThreadDecisions {
    *  `abortTurn`), so answering a ghost would move the replacement's permission mode or interrupt its turn.
    *
    *  `deny` + `by:"system"` is the honest reading here, unlike on `discard()`'s fleet detach: this server
-   *  owned these promises, no human answered them, and the tool call they gated is gone with its engine. */
+   *  owned these promises, no human answered them, and the tool call they gated is gone with its engine.
+   *
+   *  WHICH IS ALSO THE PRECONDITION ON CALLING IT: only a caller that knows the awaiter is provably gone
+   *  (the engine has ENDED — `thread/reopen` gates on `isEnded()` before it gets here) may reach for this.
+   *  Called on a thread whose read loop is still alive it denies a decision a running turn is blocked
+   *  inside `canUseTool` on, handing the model a denial no human gave. */
   reset(): void {
     for (const entry of this.inner.denyAll()) {
       this.settledBy.set(entry.toolUseID, "system");

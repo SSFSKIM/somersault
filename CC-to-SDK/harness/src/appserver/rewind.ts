@@ -41,7 +41,7 @@ import type { RequestId } from "./rpc.js";
 import { installRouter } from "./router.js";
 import { flushQueue } from "./queue.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
-import { emptyFlagPerms, seedSettings, threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
+import { emptyFlagPerms, seedSettings, threadBusyReason, threadStatus, type EngineSession, type ThreadRecord } from "./registry.js";
 import { FleetBusyError, SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
@@ -546,6 +546,10 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
   // …and the dead conversation's parks are settled in that same step, NON-LATCHING (broker.ts's `reset()`).
   // Ghost entries whose awaiter is gone would otherwise keep listing, keep blocking rewind/clear — and,
   // once the replacement is live, keep `decision/respond`'s record-keyed side channels aimed at it.
+  // Whether it settles ANYTHING is remembered, because each settle rides a `thread/status/changed` out
+  // (server.ts's broadcastDecision) computed while `swapInFlight` is latched — i.e. `{state:"active"}` for
+  // a thread that is mid-recovery — and the latch clears without a word. See the correction below.
+  const settledGhostParks = srv.pendingDecisions(threadId).length > 0;
   srv.threadDecisions(threadId)?.reset();
   const sessionId = record.sessionId;
   record.chain = record.chain.then(async () => {
@@ -556,11 +560,25 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       // resume the recovery truncated at a stale anchor, and `forkSession` would silently mint a new id.
       await swapEngine(srv, record, () => factory({ ...(record.config ?? {}), resume: sessionId, resumeAt: undefined, droppedTurnUuid: undefined, forkSession: undefined }), sessionId);
       record.updatedAt = nowSec();
+      // Released HERE, ahead of the announcements rather than only in the finally, because everything below
+      // describes the RECOVERED thread and would otherwise describe the swap that is finishing. Nothing can
+      // interleave: the rest of this block is synchronous, and the finally stays the guarantee for the
+      // throwing path (where the thread must read retryable, not wedged at "swapping").
+      record.swapInFlight = false;
       // The established "engine swapped, resync" signal, both scopes (fanout.ts): the epoch moved, so every
       // outstanding thread/read cursor is stale, and a client rendering this thread needs to know its
       // engine is a different process now. `null` rather than an omitted key on the fresh arm — the same
       // choice thread/clear makes, so a client reads "no id yet" instead of "field missing".
       broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "thread/rewound", { threadId, sessionId: record.sessionId ?? null });
+      // THE RETRACTION, and only when there is something to retract. Settling the ghost parks above emitted
+      // one `thread/status/changed` per entry, each computed under the latch and therefore reading "active";
+      // a client that renders status off the wire (rather than re-reading `thread/get`) would sit on that
+      // until some later turn edge moved it. Conditional because a reopen with nothing parked broadcast no
+      // status at all, and an unconditional emit here would give this method a status edge its swap-family
+      // siblings do not have. Recomputed rather than asserted idle — the latch is the only term that
+      // changed, and the honest answer comes from the same `threadStatus`/`pendingDecisions` pair every
+      // other emit site uses.
+      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.pendingDecisions(threadId).length > 0) });
       ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
     } catch (e) {
       // NOT `replyEngineThrow`: the record is still holding the corpse on this path (the factory threw

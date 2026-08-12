@@ -242,6 +242,44 @@ describe("appserver thread/reopen and the DEAD conversation's parks (M3 Task 14,
     expect(notif(s.lines, "decision/resolved").params).toEqual({ threadId, toolUseId: "toolu_stale", by: "system", answer: { kind: "deny" } });
   });
 
+  it("the settle's own status broadcast is CORRECTED: the last thread/status/changed a client sees for a recovered thread reads idle, not the mid-swap active", async () => {
+    // The settle runs while `swapInFlight` is latched, so the `thread/status/changed` that rides every
+    // decision event (server.ts's broadcastDecision) computes `{state:"active"}` — busy for the reason
+    // "swapping". Nothing re-broadcasts when the finally clears the latch, so an event-driven client that
+    // renders status off the wire (rather than re-reading thread/get) shows the recovered thread ACTIVE
+    // until some later turn edge happens to move it. The reopen owes it the corrected state.
+    const dead = mkEngine({ sessionId: "sess-1" });
+    const { s, c, threadId, configs } = await bootThread({ engines: [dead, mkEngine({})] });
+    void (configs[0].permissionBroker as PermissionBroker)
+      .request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_stale", signal: new AbortController().signal });
+    await tick();
+    dead.ended = true;
+    s.lines.length = 0; // scope the count below to the reopen itself
+
+    send(c, { id: 3, method: "thread/reopen", params: { threadId } });
+    await settle();
+
+    const statuses = notifs(s.lines, "thread/status/changed");
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(statuses.at(-1)!.params).toEqual({ threadId, status: { state: "idle" } });
+  });
+
+  it("a reopen with NOTHING parked emits no status event at all — the correction answers the settle's broadcast, it is not a new per-reopen emit", async () => {
+    // The counterpart pin. With no park there is no decision event, so nothing broadcast a wrong status and
+    // there is nothing to correct; adding an unconditional emit here would make every reopen chatter a
+    // status edge that rewind and clear — the same swap, the same latch — do not.
+    const dead = mkEngine({ sessionId: "sess-1" });
+    const { s, c, threadId } = await bootThread({ engines: [dead, mkEngine({})] });
+    dead.ended = true;
+    s.lines.length = 0;
+
+    send(c, { id: 3, method: "thread/reopen", params: { threadId } });
+    await settle();
+
+    expect(reply(s.lines, 3).result).toEqual({ ok: true, sessionId: "sess-1" });
+    expect(notifs(s.lines, "thread/status/changed")).toHaveLength(0);
+  });
+
   it("a stale park answered AFTER the reopen cannot reach the REPLACEMENT: no plan upgrade is armed and no turn is interrupted", async () => {
     // The reachability the reopen introduced. `decision/respond` has two side channels keyed on the RECORD
     // rather than on the engine — `armPlanUpgrade` and `abortTurn -> requestInterrupt` — so answering the
