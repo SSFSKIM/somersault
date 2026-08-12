@@ -903,7 +903,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // cannot ratchet coverage permanently down — the same reasoning that already justifies the drag policy:
   // a window is free and may follow anything, a commit is irreversible and may only follow a settle.
   const windowItems = useMemo(() => {
-    if (paneOwned) return EMPTY_ITEMS;
+    // Fullscreen has no `<Static>` and therefore no unpublished TIER — `FullscreenViewport` takes the whole
+    // document — so this memo's one consumer (the classic branch below) does not exist on that path. Bailing
+    // first is not a micro-optimization: `state.streaming` is in the deps, so without it every streamed delta
+    // rebuilt a Set over the published items and re-filtered the entire finalized projection, then threw the
+    // result away.
+    if (fullscreen || paneOwned) return EMPTY_ITEMS;
     const published = new Set(state.staticItems.map((item) => item.id));
     const unpublished = state.finalizedItems.filter((item) => !published.has(item.id));
     // `size` (not `size.rows`) is the dependency, and since the C2 fix the WIDTH half of it is load-bearing
@@ -915,7 +920,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     const live = rowsOf(state.pendingItems) + rowsOf(streamingItems(state.streaming, size.columns));
     const cap = Math.max(0, mainWindowCap(size.rows) - WINDOW_SLACK - live - (suggestOpen ? popupHeight(size.rows) : 0));
     return selectLiveWindow(unpublished, cap, cap).window;
-  }, [state.finalizedItems, state.staticItems, state.pendingItems, state.streaming, size, paneOwned, suggestOpen]);
+  }, [state.finalizedItems, state.staticItems, state.pendingItems, state.streaming, size, fullscreen, paneOwned, suggestOpen]);
   // …and the commit half of I2. An EDGE would be enough (the flag is what changes), but a level is cheaper to
   // reason about and idempotent by construction: with nothing unpublished left, `publishLiveWindow` returns
   // without touching state, so a re-render behind an open dialog schedules nothing.

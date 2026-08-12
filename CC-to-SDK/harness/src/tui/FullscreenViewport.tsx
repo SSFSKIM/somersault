@@ -21,10 +21,28 @@
 //     (canon's `Se`) and cuts the window at item boundaries, so a gutter block is sliced by body row and prints
 //     its `⎿` exactly once. The dual-value split is deliberate and is T2's review finding, not an accident.
 //
-// THE BUDGET IS RESPECTED, NOT SURVIVED. `pageItemSlices(items, offset, regionRows)` can never emit more than
-// `regionRows` physical rows, so the frame's `overflow: hidden` never has to clip and `onOverflow` — canon's
-// L180317 "something is rendering outside the frame's budget" diagnostic — stays silent in steady state. The
-// clip remains, as the last line of defence; relying on it would make the frame's one invariant a coincidence.
+// THE BUDGET IS RESPECTED IN ROWS, AND ONLY AFTER THE DRAG SETTLES IN COLUMNS. `pageItemSlices(items, offset,
+// regionRows)` can never emit more than `regionRows` SLICE rows, so the frame's `overflow: hidden` never has to
+// clip and `onOverflow` — canon's L180317 "something is rendering outside the frame's budget" diagnostic —
+// stays silent in steady state. The clip remains, as the last line of defence; relying on it would make the
+// frame's one invariant a coincidence.
+//   A slice row is a PHYSICAL row only while the projection's width and the region's width agree, and during a
+// resize they do not. `columns` here is the live terminal's, moving on the SIGWINCH render; the finalized
+// projection is re-wrapped by `useChat` only once the drag has been stopped for `RESIZE_SETTLE_MS` (80 ms —
+// `useChat.ts:960-969`, deliberately debounced because re-projecting can COMMIT). So for the whole of a
+// narrowing drag the finalized `kind: "line"` items are wrapped for a terminal wider than the one the region
+// now has, Ink re-wraps them at paint time, and the region emits more physical rows than it was granted.
+// Measured through a real frame at 80x40: grant 37, claimed height 37, painted 39, and the diagnostic fires
+// verbatim. THE ROWS THE FRAME CLIPS ARE THE TAIL — the two NEWEST transcript rows — which is exactly what
+// bottom-anchoring exists to keep on screen, so the failure is at the worst end. Gutter blocks are not
+// exposed: their bodies are wrapped at `columns - 10` (`species.ts:486`) into a box of `columns - 5`, so they
+// tolerate five columns of drift. Only `kind: "line"` items are.
+//   NO CLAMP HERE, AND NONE IN THE PAGER (T10 review ruling). Neither module owns the truth — the pager is
+// width-unaware by design and clamping there would mean lying about heights or truncating content it cannot
+// see — and the only honest code fix threads the projection's width down beside `columns` and falls back to
+// `wrap="truncate-end"` on line items while the two disagree, trading inline emphasis for the budget. That
+// does not earn its complexity against 80 ms. **T17 owes the measurement**: whether a clipped tail lasting as
+// long as the user keeps dragging is visible on a real terminal is a question only its resize matrix can ask.
 //
 // THE CONTENT EVENT IS APPLIED DURING RENDER, not from an effect. Every append, every streamed delta, every
 // re-wrap and every resize is a content event, and an effect would paint one frame at the old offset before

@@ -23,13 +23,12 @@
 // `ink-testing-library` is the instrument (its `debug: true` arm writes `fullStaticOutput + output`, so
 // `lastFrame()` IS the serialized frame line for line, which is what every height assertion here reads).
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { render } from "ink-testing-library";
 import { Box, Text } from "ink";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { beforeAll, afterAll } from "vitest";
 import { FullscreenViewport, type ViewportScroll } from "../../src/tui/FullscreenViewport.js";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
@@ -53,8 +52,9 @@ const block = (id: string, n: number): RenderItem =>
 const band = (n: number, tag: string) => (
   <Box flexDirection="column">{Array.from({ length: n }, (_, i) => <Text key={i}>{`${tag}${i}`}</Text>)}</Box>
 );
-/** The viewport with everything but the document defaulted — every case below varies one thing. */
-const view = (props: Partial<React.ComponentProps<typeof FullscreenViewport>> & { rows: number }) => (
+/** The viewport with everything but the document defaulted — every case below varies one thing. `rows` is
+ *  optional exactly as the prop is: omitting it is how a case asks for the grant the frame's region publishes. */
+const view = (props: Partial<React.ComponentProps<typeof FullscreenViewport>> = {}) => (
   <FullscreenViewport finalizedItems={NO_ITEMS} pendingItems={NO_ITEMS} streaming={NO_LINES} columns={80} {...props} />
 );
 /** The composer's ready prompt: `❯` + a NON-BREAKING space (U+00A0), which is what it actually paints. */
@@ -129,6 +129,45 @@ describe("FullscreenViewport — the anchor", () => {
     expect(rowsOf(lastFrame())[0]).toBe("L140");
   });
 
+  // ── THE DUAL CLAMP, AT THE COMPONENT LEVEL (T10 review, Low 2) ────────────────────────────────────────
+  // The case above varies the REGION and holds `total` at 200, where the retained ceiling `max(hwm, total)`
+  // and a plain `total` are numerically indistinguishable — so the whole suite stayed green under a reducer
+  // mutated to `const hwm = e.total`. The two cases below vary the DOCUMENT while unsticky, which is the only
+  // shape that tells the two apart, and they are the component-level answer to "does the retained offset
+  // restore the exact row". Canon's split: the reducer keeps `Te` (the retained offset, ceilinged by the
+  // HIGH-WATER total) while `pageItemSlices` independently clamps to `Se` (the CURRENT bottom) for the paint.
+  // So a shrink paints the clamped row without ever writing it back, and the regrow returns the held one.
+  it("paints the clamped row on a content shrink but restores the exact held row on regrow", async () => {
+    const ref = React.createRef<ViewportScroll>();
+    const at = (n: number) => view({ finalizedItems: doc(n), rows: 10, scrollRef: ref });
+    const { lastFrame, rerender } = render(at(200));
+    ref.current!.scroll({ kind: "lines", n: -30 });                  // retained 160, hwm 200
+    await tick();
+    expect(rowsOf(lastFrame())[0]).toBe("L160");
+
+    rerender(at(100));                                               // Se clamps to the new bottom, 100 − 10…
+    expect(rowsOf(lastFrame())).toEqual(Array.from({ length: 10 }, (_, i) => `L${90 + i}`));
+    rerender(at(200));                                               // …and Te brings the exact row back
+    expect(rowsOf(lastFrame())[0]).toBe("L160");
+  });
+
+  // The same mechanism past the degenerate end: a document SHORTER than the region has no bottom to clamp to
+  // at all, so the frame top-aligns and `Se` is 0. If that zero were ever written back — the thing the hwm
+  // ceiling exists to prevent — the regrow would return the user to the top of a two-hundred-row transcript.
+  it("restores the held row after a shrink to fewer rows than the region", async () => {
+    const ref = React.createRef<ViewportScroll>();
+    const at = (n: number) => view({ finalizedItems: doc(n), rows: 10, scrollRef: ref });
+    const { lastFrame, rerender } = render(at(200));
+    ref.current!.scroll({ kind: "lines", n: -30 });
+    await tick();
+    expect(rowsOf(lastFrame())[0]).toBe("L160");
+
+    rerender(at(4));
+    expect(rowsOf(lastFrame())).toEqual(["L0", "L1", "L2", "L3"]);    // top-aligned, nothing else to show
+    rerender(at(200));
+    expect(rowsOf(lastFrame())[0]).toBe("L160");
+  });
+
   // The three regions are one document in reading order, and the anchor measures across all of them.
   it("anchors across finalized, pending and streaming rows as one document", () => {
     const { lastFrame } = render(view({
@@ -189,7 +228,7 @@ describe("FullscreenViewport — the region's budget", () => {
     const overflow = vi.fn();
     const { lastFrame } = render(
       <FullscreenFrame rows={40} onOverflow={overflow} dock={band(2, "D")}
-        regionChildren={view({ finalizedItems: doc(3), rows: undefined as unknown as number })} />,
+        regionChildren={view({ finalizedItems: doc(3) })} />,
     );
     await settle();
     const lines = rowsOf(lastFrame());
@@ -207,7 +246,7 @@ describe("FullscreenViewport — the region's budget", () => {
     const overflow = vi.fn();
     const { lastFrame } = render(
       <FullscreenFrame rows={40} onOverflow={overflow} dock={band(2, "D")}
-        regionChildren={view({ finalizedItems: doc(200), rows: undefined as unknown as number })} />,
+        regionChildren={view({ finalizedItems: doc(200) })} />,
     );
     await settle();
     const lines = rowsOf(lastFrame());
@@ -228,7 +267,7 @@ describe("FullscreenViewport — the region's budget", () => {
     const overflow = vi.fn();
     const frame = (rows: number) => (
       <FullscreenFrame rows={rows} onOverflow={overflow} dock={band(2, "D")}
-        regionChildren={view({ finalizedItems: doc(200), rows: undefined as unknown as number })} />
+        regionChildren={view({ finalizedItems: doc(200) })} />
     );
     const { lastFrame, rerender } = render(frame(40));
     await settle();
