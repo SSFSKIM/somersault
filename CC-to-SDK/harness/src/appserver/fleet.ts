@@ -47,6 +47,11 @@ const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const CONNECTION_LOST = "fleet host connection lost";
 const CONNECTION_LOST_HINT = `${CONNECTION_LOST} — close this thread and attach again to recover`;
 
+/** Thrown by `admitFleet` when the shutdown latch went up while the dial was in flight (final review R1),
+ *  so `threadAttach` answers SHUTTING_DOWN rather than the generic ATTACH_FAILED. A marker class, not a
+ *  message match: the reply code turns on what happened, never on wording. */
+class AttachShuttingDown extends Error {}
+
 /** `thread/stop`'s roster-terminal poll (§1e). The host writes its terminal row from its own exit path,
  *  AFTER the sockets are gone, so there is a real gap between the EOF this method takes as success and the
  *  state a client will read next; 250 ms steps cover that gap without spinning.
@@ -322,6 +327,14 @@ async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord>
       // swap that rebuilds one (registry.ts) — which never runs for this origin (§1b).
       flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
     };
+    // R1: re-check the shutdown latch immediately BEFORE publishing. `shutdown()` sets the latch and
+    // snapshots the registry in ONE synchronous step; this install+register is synchronous too (no await
+    // between here and `admitFleetThread`), so the two cannot interleave — either the latch is seen here
+    // (throw; the catch below disposes the just-dialled engine) or the record is already in the snapshot
+    // shutdown disposes. Without it, an attach admitted AFTER the snapshot leaves a socket + follower
+    // nothing ever disposes, blocking graceful exit — the M2b orphan-forks-under-shutdown class. The entry
+    // guard in `threadAttach` only covers the tick the request arrived on, not this later await's tail.
+    if (srv.isShuttingDown) throw new AttachShuttingDown("Server is shutting down");
     record.fleetOff = installFleetEvents(srv, record, engine);
     srv.admitFleetThread(record);
     return record;
@@ -501,16 +514,26 @@ export const threadAttach: Handler = async (srv, ctx, id, params) => {
   const inflight = srv.attachingShorts.get(row.short);
   if (inflight) {
     // The loser: it neither dials nor announces — it answers with the winner's record, or with the
-    // winner's failure (a target that could not be attached is not attachable for either caller).
+    // winner's failure (a target that could not be attached is not attachable for either caller). A
+    // winner refused by the shutdown latch (R1) surfaces here as the same SHUTTING_DOWN.
     try { ctx.peer.reply(id, { thread: threadView(srv, await inflight) }); }
-    catch (e) { ctx.peer.replyError(id, ERR.ATTACH_FAILED, `cannot attach to ${row.short}: ${msg(e)}`); }
+    catch (e) {
+      if (e instanceof AttachShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
+      ctx.peer.replyError(id, ERR.ATTACH_FAILED, `cannot attach to ${row.short}: ${msg(e)}`);
+    }
     return;
   }
   const admission = admitFleet(srv, row);
   srv.attachingShorts.set(row.short, admission);
   let record: ThreadRecord;
+  // R1: the dial won the race but the server began shutting down before the record was published — the
+  // engine was disposed in `admitFleet` and nothing was registered, so this refuses cleanly rather than
+  // reporting a generic attach failure for a server that is on its way down.
   try { record = await admission; }
-  catch (e) { ctx.peer.replyError(id, ERR.ATTACH_FAILED, `cannot attach to ${row.short}: ${msg(e)}`); return; }
+  catch (e) {
+    if (e instanceof AttachShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
+    ctx.peer.replyError(id, ERR.ATTACH_FAILED, `cannot attach to ${row.short}: ${msg(e)}`); return;
+  }
   // Released in a `finally`-equivalent position on both paths: a failed attach must leave the target
   // attachable rather than poisoned by its own reservation.
   finally { srv.attachingShorts.delete(row.short); }
