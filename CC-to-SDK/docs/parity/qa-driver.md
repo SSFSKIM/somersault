@@ -144,13 +144,30 @@ configured for ccx. `env_off` outranks `env_on`, so never set both. Only a non-T
 `CLAUDE_AX_SCREEN_READER` outrank the pins; nothing below them — the `tui` prefs key, the built-in
 default — can override one.
 
-**`DEFAULT_ON` is `false` today**, so an *unpinned* ccx launch lands classic and every existing cell
-in this file measured classic whether it said so or not. That is a temporary accident: the wave's
-Task 16 flips the constant, after which an unpinned launch is fullscreen and every unpinned cell
-silently changes what it measures. **The rule is therefore the same one §4.2 states for `claude`:
-pin the renderer on every ccx launch line, before the flip rather than after it.** `/status` names
-the live renderer and the rung that chose it (`renderer   classic (env_off) · …`) — read it back
-whenever a cell's result surprises you, rather than inferring the mode from the frame.
+**`DEFAULT_ON` is `true` as of the wave's Task 16**, so an *unpinned* ccx launch is now **fullscreen**.
+Before the flip, unpinned cells measured classic whether they said so or not and the accident was
+harmless; it is not harmless now, and the failure mode is the quiet one — an unpinned cell still runs
+and still passes, having changed which renderer it was about. **The rule is the same one §4.2 states
+for `claude`: every ccx launch line pins a renderer, and every recorded result names the renderer it
+was taken under.** `/status` names the live renderer and the rung that chose it
+(`renderer   classic (env_off) · …`) — read it back whenever a cell's result surprises you, rather
+than inferring the mode from the frame.
+
+One more rung can overrule a *fullscreen* pin and it is not an env var: from Task 16 the tmux `-CC`
+rung asks tmux itself (`tmux display-message -p '#{client_control_mode}'`, canon's probe, restored
+because the flip made the gap reachable) whenever `TMUX` is set and `TERM_PROGRAM` is not. Inside a
+control-mode client you get `classic (tmux_cc_off)` no matter what `CLAUDE_CODE_NO_FLICKER=1` says —
+`env_on` sits above it, so the pin does win, but a cell driven from a plain `tmux` pane with no
+`TERM_PROGRAM` and no pin lands classic rather than on the new default. Read `/status` back.
+
+**Which instrument measures which renderer** (keep this table honest when adding one):
+
+| Instrument | Renderer | How it is pinned |
+|---|---|---|
+| §2.1 launch line above | classic | `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` on the line |
+| §5 resize probe | classic | inherits §2.1's session |
+| §6.2 terminal-usability probe | fullscreen | `CLAUDE_CODE_NO_FLICKER=1` on the line (the alt screen is the thing whose restore it proves) |
+| `harness/scripts/resize-matrix.sh` (all ten cells) | classic | `CLAUDE_CODE_NO_FLICKER=0` injected by its `launch` helper |
 
 ### 2.2 One turn
 
@@ -427,6 +444,12 @@ So the escape-sequence parsers on both sides are well-behaved. There is simply n
 
 ## 5. Resize probe
 
+**Renderer: classic.** This probe drives §2.1's session, which pins
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`, and both observations below were recorded under it. They do
+not transfer: the fullscreen renderer owns a fixed viewport with no scrollback to strand a stale rule
+in, so "the rules stay 120 wide" is not a claim about it. The scripted successor to this probe —
+`harness/scripts/resize-matrix.sh` — is classic-only for the same reason and says so in its header.
+
 ```bash
 tmux resize-window -t <session> -x 80 -y 24
 sleep 2
@@ -473,7 +496,9 @@ the app is gone. If it echoes and executes, the terminal is usable; there is no 
 ### 6.2 The pattern
 
 Make the pane's command a shell that runs the app and then **`exec sh`**, so the pty survives the
-app and stays interactive:
+app and stays interactive. **Renderer: fullscreen, deliberately** — `CLAUDE_CODE_NO_FLICKER=1` below
+is a choice, not boilerplate, because the alternate screen is one of the modes whose restore this
+probe exists to prove. Run the classic pin as a second cell when you want both:
 
 ```bash
 tmux new-session -d -s qaexit -x 120 -y 40 -c "$CCX_PROJ" \

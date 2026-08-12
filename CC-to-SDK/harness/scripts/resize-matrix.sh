@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # harness/scripts/resize-matrix.sh — Wave R acceptance A12: the QA-2 width matrix, scripted.
 #
+# WHICH RENDERER THIS MEASURES: THE CLASSIC ONE, ALWAYS, AND NOW EXPLICITLY (FSW T16). Every cell here is a
+# main-screen claim — residue in scrollback, a rule left at a width the pane no longer has, a second composer
+# block below the first — and all of them are claims about the renderer that lets Ink's tree be as tall as it
+# likes and repairs the damage afterwards. The fullscreen renderer has no scrollback to strand anything in.
+# Until T16 the product default was classic and this file could stay silent about it; T16 flipped
+# `DEFAULT_ON`, so silence would now mean "measures whatever the default happens to be" — the one thing an
+# instrument may not do. `launch` therefore pins `CLAUDE_CODE_NO_FLICKER=0` into every cell's environment
+# (see the note there). A matrix for the fullscreen renderer would be a different file with different needles.
+#
 # WHY THIS EXISTS. Wave R's P0 (`qa2-10`, the stale full-width rules and the doubled composer block after a
 # shrink) had ZERO regression coverage: no test in this repo resizes anything. Unit and Ink tests cannot
 # supply it either — the defect lives in what the process WRITES to a real terminal across a SIGWINCH, which
@@ -231,7 +240,17 @@ launch() {                                  # launch <session> <cols> <rows> [<e
   # reached the ready frame" — a red CI step that looks like a product regression and is not one.
   # `is-in-ci` short-circuits on the literal `"false"`, which is the one lever that beats all three clauses.
   # It is also the honest value here: the pane below is a real PTY being driven as an interactive user.
-  cmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false node $BIN"
+  #
+  # `CLAUDE_CODE_NO_FLICKER=0` IS THE RENDERER PIN, AND FROM FSW T16 IT IS LOAD-BEARING (see the header). Every
+  # cell in this file measures MAIN-SCREEN semantics — a stale rule left in scrollback, a doubled composer
+  # block, a stranded placeholder, residue after a grow out of Ink's tall branch. None of those exist in the
+  # fullscreen renderer, which owns a fixed viewport and repaints it whole. T16 flipped `DEFAULT_ON` to true,
+  # so an unpinned launch here would silently swap the subject: the cells would still run, still pass, and
+  # measure a renderer that cannot exhibit the defects they were written to catch. `=0` is the ladder's
+  # `env_off` rung (src/tui/renderer.ts), which sits above both the settings key and the default, so this
+  # pin holds no matter what a5 writes into its prefs file. The fullscreen renderer's own resize behaviour is
+  # a separate instrument and is not measured here.
+  cmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false CLAUDE_CODE_NO_FLICKER=0 node $BIN"
   # THE CREDENTIAL, WHEN THERE IS ONE (task 6's A3 cell), GOES THROUGH `-e` AND NOT THROUGH `$cmd`. Appending
   # it there would put it in the argv of the shell tmux runs, visible in `ps` for the whole life of the
   # session; with `-e` the child's argv is the `env … node bin.js` line and nothing else (measured). What `-e`
@@ -889,7 +908,7 @@ run_m1_cell() {
 }
 
 # ── run ───────────────────────────────────────────────────────────────────────────────────────────────────
-echo "Wave R — QA-2 width matrix (A12)"
+echo "Wave R — QA-2 width matrix (A12) — CLASSIC renderer only (CLAUDE_CODE_NO_FLICKER=0 pinned per cell)"
 self_test
 
 if [ "$BUILD" = 1 ]; then

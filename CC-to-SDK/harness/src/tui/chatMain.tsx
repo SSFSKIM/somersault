@@ -12,7 +12,7 @@ import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs, type CcxPrefs } from "./prefs.js";
-import { selectRenderer, type RendererChoice, type RendererMode } from "./renderer.js";
+import { makeTmuxProbe, selectRenderer, type RendererChoice, type RendererMode } from "./renderer.js";
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
@@ -600,9 +600,11 @@ export interface RendererSwitch {
  *
  *  Extracted from `runChatClient` so the ordering has somewhere to be asserted, exactly as `createResizeChain`
  *  was; it has no other caller. */
-export function createRendererSwitch(deps: { prefs: CcxPrefs; isTTY: boolean; env: NodeJS.ProcessEnv; guard: AltScreenGuard; live: { mode: RendererMode }; output: Pick<ResumeSafeStdout, "noteScreenChange"> }): RendererSwitch {
+export function createRendererSwitch(deps: { prefs: CcxPrefs; isTTY: boolean; env: NodeJS.ProcessEnv; guard: AltScreenGuard; live: { mode: RendererMode }; output: Pick<ResumeSafeStdout, "noteScreenChange">; tmuxProbe?: (env: NodeJS.ProcessEnv) => boolean }): RendererSwitch {
   return {
-    select: (tui) => selectRenderer({ isTTY: deps.isTTY, env: deps.env, prefs: { ...deps.prefs, tui } }),
+    // The probe comes in from the boot call (T16) rather than being made here: `/tui` re-walks the whole
+    // ladder, and the tmux rung's answer was settled once at startup — a keystroke must not spawn anything.
+    select: (tui) => selectRenderer({ isTTY: deps.isTTY, env: deps.env, prefs: { ...deps.prefs, tui }, tmuxProbe: deps.tmuxProbe }),
     apply(next) {
       const was = deps.live.mode;
       deps.live.mode = next.mode;
@@ -653,7 +655,11 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // decision must not move again: a resize never re-evaluates it (§L2.1), so every consumer reads this one
   // value. `/status` prints it (F9), the output proxy takes its screen rules from it (T8), and from T9 it is
   // what decides which machinery below gets CONSTRUCTED at all.
-  const renderer = selectRenderer({ isTTY: Boolean(process.stdout.isTTY), env: process.env, prefs });
+  //   FSW T16 restored canon's tmux `-CC` shell-out to that rung (renderer.ts divergence 1, withdrawn), so the
+  // probe is built HERE, once, and shared with the `/tui` switch below: the ladder is walked twice in a
+  // process's life and tmux is asked at most once.
+  const tmuxProbe = makeTmuxProbe();
+  const renderer = selectRenderer({ isTTY: Boolean(process.stdout.isTTY), env: process.env, prefs, tmuxProbe });
   // FSW T9 (spec §A2a) — THE ONE BOOLEAN THE WHOLE BRANCH READS. Derived once, beside the decision, so no
   // line below re-derives it and none of them can disagree about which screen this process is painting into.
   //   FSW T15 MOVED IT INTO A HOLDER, and the boolean is now only the BOOT value. `/tui` swaps the renderer
@@ -857,7 +863,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // there on, and this line is unchanged, which was the point of writing it this way.
   if (fullscreen) altGuard.enter();
   // FSW T15 — the flip's two halves, over the guard built above and the holder every screen rule reads.
-  const rendererSwitch = createRendererSwitch({ prefs, isTTY: Boolean(process.stdout.isTTY), env: process.env, guard: altGuard, live, output });
+  const rendererSwitch = createRendererSwitch({ prefs, isTTY: Boolean(process.stdout.isTTY), env: process.env, guard: altGuard, live, output, tmuxProbe });
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>

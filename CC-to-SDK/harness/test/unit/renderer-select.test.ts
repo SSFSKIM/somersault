@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_ON, selectRenderer } from "../../src/tui/renderer.js";
+import { DEFAULT_ON, makeTmuxProbe, probeTmuxControlMode, selectRenderer } from "../../src/tui/renderer.js";
 import { loadPrefs } from "../../src/tui/prefs.js";
 import type { CcxPrefs } from "../../src/tui/prefs.js";
 
@@ -86,17 +86,34 @@ describe("selectRenderer — the ladder, rung by rung", () => {
     expect(selectRenderer({ ...bare, env: { ...tmuxCc, CLAUDE_CODE_NO_FLICKER: "1" } })).toEqual({ mode: "fullscreen", reason: "env_on" });
   });
 
-  it("tmux_cc_off needs all three parts — no shell-out means each one alone must falsify it", () => {
+  it("the cheap heuristic needs all three parts, and each miss that names a terminal costs no subprocess", () => {
+    // T16 restored the shell-out behind this rung, so "did it fire?" is no longer the only question — "did it
+    // PAY?" is the other half, and a spawn that throws on call is how these four say no. Each env below names
+    // a terminal (or has no tmux at all), which is canon's own gate on reaching the subprocess.
+    const noSpawn = { ...settingsFloor, tmuxProbe: (env: NodeJS.ProcessEnv) => probeTmuxControlMode(env, (() => { throw new Error("spawned"); }) as never) };
     // No TMUX at all: iTerm2 on its own is not control mode.
-    expect(selectRenderer({ ...settingsFloor, env: { TERM_PROGRAM: "iTerm.app", TERM: "xterm-256color" } })).toEqual({ mode: "classic", reason: "settings_off" });
+    expect(selectRenderer({ ...noSpawn, env: { TERM_PROGRAM: "iTerm.app", TERM: "xterm-256color" } })).toEqual({ mode: "classic", reason: "settings_off" });
     // tmux under a terminal that is not iTerm2: `-CC` is an iTerm2 integration, so nothing to avoid.
-    expect(selectRenderer({ ...settingsFloor, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "Apple_Terminal", TERM: "xterm-256color" } }))
+    expect(selectRenderer({ ...noSpawn, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "Apple_Terminal", TERM: "xterm-256color" } }))
       .toEqual({ mode: "classic", reason: "settings_off" });
     // A `screen*`/`tmux*` TERM means the client is a REAL tmux pane, i.e. not the -CC passthrough window.
-    expect(selectRenderer({ ...settingsFloor, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "screen-256color" } }))
+    expect(selectRenderer({ ...noSpawn, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "screen-256color" } }))
       .toEqual({ mode: "classic", reason: "settings_off" });
-    expect(selectRenderer({ ...settingsFloor, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "tmux-256color" } }))
+    expect(selectRenderer({ ...noSpawn, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "tmux-256color" } }))
       .toEqual({ mode: "classic", reason: "settings_off" });
+  });
+
+  // T16: the rung the restored probe exists for. The env heuristic cannot see this launch at all — the tmux
+  // server predates the `-CC` client, so its panes carry no TERM_PROGRAM — and before the probe came back this
+  // fell through to `default_on`, i.e. an alt screen inside iTerm2's control-mode window.
+  it("tmux_cc_off fires on the probe's verdict alone, beats the settings key and the default, and loses to env_on", () => {
+    const bareTmux = { TMUX: "/tmp/tmux-501/default,1,0", TERM: "screen-256color" };
+    const onProbe = () => true;
+    expect(selectRenderer({ ...bare, env: bareTmux, tmuxProbe: onProbe })).toEqual({ mode: "classic", reason: "tmux_cc_off" });
+    expect(selectRenderer({ ...bare, env: bareTmux, prefs: { tui: "fullscreen" }, tmuxProbe: onProbe })).toEqual({ mode: "classic", reason: "tmux_cc_off" });
+    expect(selectRenderer({ ...bare, env: { ...bareTmux, CLAUDE_CODE_NO_FLICKER: "1" }, tmuxProbe: onProbe })).toEqual({ mode: "fullscreen", reason: "env_on" });
+    // …and a probe that says no leaves the ladder exactly where it was.
+    expect(selectRenderer({ ...bare, env: bareTmux, tmuxProbe: () => false })).toEqual({ mode: "fullscreen", reason: "default_on" });
   });
 
   it("win_ssh_off needs BOTH Windows and an SSH marker, beats settings, and loses to tmux_cc_off", () => {
@@ -118,11 +135,73 @@ describe("selectRenderer — the ladder, rung by rung", () => {
     expect(selectRenderer({ ...bare, prefs: { tui: "default" } })).toEqual({ mode: "classic", reason: "settings_off" });
   });
 
-  // THE M2a SHIPPABILITY GATE. The wave ships behind a knob that is OFF, and Task 16 flips this one constant
-  // and nothing else. Both halves are literal: the constant is `false`, and an unconfigured TTY launch says so.
-  it("DEFAULT_ON is false today, so a bare TTY launch lands classic with reason default_off", () => {
-    expect(DEFAULT_ON).toBe(false);
-    expect(selectRenderer(bare)).toEqual({ mode: "classic", reason: "default_off" });
+  // THE DEFAULT, POST-FLIP (Task 16). The wave shipped behind a knob that was OFF and this is the one constant
+  // T16 turned — the whole flip's test fallout is this single expectation, which is what the M2a gate was built
+  // for. Both halves stay literal: the constant is `true`, and an unconfigured TTY launch says so. Every other
+  // test in this file sits on `settingsFloor` precisely so that it did not move when this one did.
+  it("DEFAULT_ON is true, so a bare TTY launch lands fullscreen with reason default_on", () => {
+    expect(DEFAULT_ON).toBe(true);
+    expect(selectRenderer(bare)).toEqual({ mode: "fullscreen", reason: "default_on" });
+  });
+});
+
+// FSW T16 — THE RESTORED SHELL-OUT (renderer.ts divergence 1, withdrawn). T5 dropped canon's
+// `tmux display-message -p '#{client_control_mode}'` because a miss "resolved to classic anyway on today's
+// default-off constant"; T16 turned that constant on, so the miss now resolves to an alt screen inside
+// iTerm2's `-CC` window. What has to hold is that the spawn is RARE (canon's gate) and that every way it can
+// go wrong is a non-verdict rather than a crash on the boot path of a REPL.
+describe("probeTmuxControlMode — the tmux -CC shell-out", () => {
+  /** A spawnSync stand-in that records its calls and replays a canned result. `status: null` is what Node
+   *  reports for both a killed-by-timeout child and a binary that is not on PATH. */
+  const fakeSpawn = (result: { status: number | null; stdout?: string }) => {
+    const calls: unknown[][] = [];
+    const spawn = ((...args: unknown[]) => { calls.push(args); return { status: result.status, stdout: result.stdout ?? "", stderr: "" }; }) as never;
+    return { calls, spawn };
+  };
+  const ccEnv = { TMUX: "/tmp/tmux-501/default,1,0", TERM: "screen-256color" } as NodeJS.ProcessEnv;
+
+  it("asks tmux only when TMUX is set and no terminal has named itself, and reads `1` as control mode", () => {
+    const yes = fakeSpawn({ status: 0, stdout: "1\n" });
+    expect(probeTmuxControlMode(ccEnv, yes.spawn)).toBe(true);
+    expect(yes.calls).toHaveLength(1);
+    // The argv and the ceiling are canon's, verbatim — the 2 s is a TIMEOUT, not a cost (measured 4.8 ms
+    // against a live server), and `windowsHide` keeps a console from flashing on Windows.
+    expect(yes.calls[0][0]).toBe("tmux");
+    expect(yes.calls[0][1]).toEqual(["display-message", "-p", "#{client_control_mode}"]);
+    expect(yes.calls[0][2]).toMatchObject({ encoding: "utf8", timeout: 2000, windowsHide: true });
+    const no = fakeSpawn({ status: 0, stdout: "0\n" });
+    expect(probeTmuxControlMode(ccEnv, no.spawn)).toBe(false);
+  });
+
+  it("never spawns when the cheap env test already decided, either way", () => {
+    const boom = (() => { throw new Error("spawned"); }) as never;
+    // Heuristic HIT: iTerm2 named itself and the TERM is a passthrough window — answered without tmux.
+    expect(probeTmuxControlMode({ TMUX: "/tmp/t,1,0", TERM_PROGRAM: "iTerm.app", TERM: "xterm-256color" }, boom)).toBe(true);
+    // No tmux at all.
+    expect(probeTmuxControlMode({ TERM: "xterm-256color" }, boom)).toBe(false);
+    // A terminal that named itself and is not iTerm2 — canon's gate, and the reason the vast majority of
+    // launches pay nothing for this rung.
+    expect(probeTmuxControlMode({ TMUX: "/tmp/t,1,0", TERM_PROGRAM: "vscode", TERM: "xterm-256color" }, boom)).toBe(false);
+  });
+
+  it("every failure is a non-verdict, never a throw", () => {
+    expect(probeTmuxControlMode(ccEnv, fakeSpawn({ status: 1 }).spawn)).toBe(false);            // stale TMUX, dead socket
+    expect(probeTmuxControlMode(ccEnv, fakeSpawn({ status: null }).spawn)).toBe(false);         // timeout, or tmux not on PATH
+    expect(probeTmuxControlMode(ccEnv, fakeSpawn({ status: 0, stdout: "" }).spawn)).toBe(false); // no output to parse
+    expect(probeTmuxControlMode(ccEnv, (() => { throw new Error("EACCES"); }) as never)).toBe(false);
+  });
+
+  it("makeTmuxProbe asks once and answers every later caller from the cache", () => {
+    // `/tui` re-walks the whole ladder on a keystroke; without this, each one would spawn.
+    const s = fakeSpawn({ status: 0, stdout: "1\n" });
+    const probe = makeTmuxProbe(s.spawn);
+    expect([probe(ccEnv), probe(ccEnv), probe(ccEnv)]).toEqual([true, true, true]);
+    expect(s.calls).toHaveLength(1);
+    // …and a `false` verdict is cached too — it is an answer, not the absence of one.
+    const n = fakeSpawn({ status: 0, stdout: "0\n" });
+    const noProbe = makeTmuxProbe(n.spawn);
+    expect([noProbe(ccEnv), noProbe(ccEnv)]).toEqual([false, false]);
+    expect(n.calls).toHaveLength(1);
   });
 });
 
