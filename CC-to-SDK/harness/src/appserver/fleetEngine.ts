@@ -168,7 +168,14 @@ class FleetEngine implements FleetEngineSession {
   private frameCbs = new Set<(m: unknown, replay?: true) => void>();
 
   constructor(private sock: Socket) {
-    sock.on("data", (c) => this.onData(c.toString("utf8")));
+    // `setEncoding("utf8")` FIRST: the socket then runs an internal StringDecoder that retains an incomplete
+    // multibyte sequence across chunk boundaries and only emits already-decoded strings, so `data` arrives
+    // as a string with no partial codepoint. Decoding each raw Buffer chunk independently
+    // (`chunk.toString("utf8")`) instead corrupts a non-ASCII char split across a socket-chunk boundary to
+    // replacement chars BEFORE the newline-level line buffer at onData() can reassemble it (the buffering is
+    // at the newline level, not the byte level).
+    sock.setEncoding("utf8");
+    sock.on("data", (s: string) => this.onData(s));
     sock.on("close", () => this.die(new Error("fleet host connection closed")));
     sock.on("error", (e) => this.die(e));
   }

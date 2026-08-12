@@ -52,7 +52,7 @@ function taps(s: FleetEngineSession) {
  *  recorded the truncated buffer as unmodelled and `fakeHost.ts` is out of scope for this fix, so this one
  *  case speaks the wire by hand — through the SHARED codec (`encodeEvent`), so it cannot drift on what a
  *  frame is — and answers every correlated op `{ok:true}` so `follow`/`unfollow` complete. */
-async function startRawHost(): Promise<{ socketPath: string; emit(ev: HostEvent): void; close(): Promise<void> }> {
+async function startRawHost(): Promise<{ socketPath: string; emit(ev: HostEvent): void; writeRaw(buf: Buffer): void; close(): Promise<void> }> {
   const socketPath = join(mkdtempSync(join(tmpdir(), "fleet-raw-")), "h.sock");
   let peer: Socket | undefined;
   const srv = createServer((s) => {
@@ -69,6 +69,9 @@ async function startRawHost(): Promise<{ socketPath: string; emit(ev: HostEvent)
   return {
     socketPath,
     emit: (ev) => { peer?.write(encodeEvent(ev)); },
+    // Raw bytes, so a test can split one encoded frame across two writes at a chosen byte offset — the only
+    // way to put a multibyte char astride a socket-chunk boundary (F1); `emit` always writes a whole frame.
+    writeRaw: (buf) => { peer?.write(buf); },
     close: () => new Promise<void>((r) => { peer?.destroy(); srv.close(() => r()); }),
   };
 }
@@ -228,6 +231,31 @@ describe("FleetEngineSession", () => {
       await waitFor(() => expect(t.turns).toHaveLength(1));
       await new Promise((r) => setTimeout(r, 20));
       expect(t.turns).toEqual([{ phase: "start", seq: 7, truncated: true }]);
+    } finally {
+      await eng?.dispose().catch(() => {}); eng = undefined;
+      await raw.close();
+    }
+  });
+
+  it("reassembles a multibyte char split across socket chunks (F1)", async () => {
+    // The wire is UTF-8 and the socket chunks it at arbitrary BYTE offsets, so a non-ASCII char can straddle
+    // a chunk boundary. Decoding each chunk independently (`chunk.toString("utf8")`) turns the split char
+    // into replacement chars before the newline-level line buffer ever sees it. The fake host writes whole
+    // frames in one write, so this never fired in the other cases — hence the raw peer, splitting one
+    // encoded frame mid-codepoint by hand through the SHARED codec.
+    const raw = await startRawHost();
+    try {
+      const s = await connectFleetEngine(raw.socketPath); eng = s;
+      const t = taps(s);
+      s.activate();
+      const buf = Buffer.from(encodeEvent({ kind: "message", data: { text: "가나다😀" } }), "utf8");
+      // Land the split ONE byte into "가" (a 3-byte sequence) — the boundary falls inside the codepoint.
+      const splitAt = buf.indexOf(Buffer.from("가", "utf8")) + 1;
+      raw.writeRaw(buf.subarray(0, splitAt));
+      await new Promise((r) => setTimeout(r, 15));
+      raw.writeRaw(buf.subarray(splitAt));
+      await waitFor(() => expect(t.frames).toHaveLength(1));
+      expect(t.frames[0]).toEqual({ text: "가나다😀" });   // intact, not replacement chars
     } finally {
       await eng?.dispose().catch(() => {}); eng = undefined;
       await raw.close();
