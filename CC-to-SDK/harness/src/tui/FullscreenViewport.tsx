@@ -50,12 +50,19 @@
 // while rendering" pattern re-runs this component before committing, so the first painted frame is already
 // right; `applyAnchor` is idempotent on a repeated content event (sticky re-derives the same bottom, unsticky
 // re-clamps to the same ceiling and returns the SAME object), which is what makes the loop terminate at one.
-import React, { useImperativeHandle, useMemo, useRef, useState } from "react";
+//
+// THE KEYS AND THE PILL ARE BOTH HERE (T11), and both for the same reason the anchor is: `settled.sticky`,
+// `total`, `height` and the scroll closures are all in scope on this component and nowhere else. Lifting
+// either one into ChatApp would re-render the composer, the footer and the dialog chain on every streamed
+// delta, and a getter on the imperative handle is not a render trigger — so the pill reads state, not a ref.
+import React, { useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { applyAnchor, type AnchorState } from "./scrollAnchor.js";
-import { pageItemSlices, renderItemHeight, type PagerAction } from "./pager.js";
+import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction } from "./pager.js";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
 import { useRegionRows } from "./FullscreenFrame.js";
+import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
+import { JumpPill } from "./JumpPill.js";
 import type { RenderLine } from "./render.js";
 
 /** The scroll seam, exposed imperatively so a key binding can drive the viewport without the anchor having to
@@ -80,6 +87,12 @@ export interface FullscreenViewportProps {
   columns: number;
   /** The row budget. Omitted in production: the frame publishes the rows it granted through its own context. */
   rows?: number;
+  /** Canon's `isActive: t && !cbr()` (446211): the `Scroll` context is live for the whole of a fullscreen
+   *  session EXCEPT while a history search owns the dock, where its own PgUp/PgDn are the ones that must
+   *  fire. ChatApp passes the same disjunction it hands the frame (`/history`'s overlay OR the composer's
+   *  inline ctrl+r search). The jump pill goes with it: a pill advertising a key nothing would deliver is
+   *  the dishonest affordance the derived-hint discipline exists to prevent. */
+  historySearchOpen?: boolean;
   scrollRef?: React.Ref<ViewportScroll>;
 }
 
@@ -90,7 +103,7 @@ export interface FullscreenViewportProps {
  *  wants it while sticky. */
 const START: AnchorState = { offset: Number.POSITIVE_INFINITY, sticky: true };
 
-export function FullscreenViewport({ finalizedItems, pendingItems, streaming, columns, rows, scrollRef }: FullscreenViewportProps) {
+export function FullscreenViewport({ finalizedItems, pendingItems, streaming, columns, rows, historySearchOpen = false, scrollRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
   const height = Math.max(0, rows ?? granted);
   const items = useMemo(
@@ -109,13 +122,68 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, co
   // scroll must start from the position on screen, not from the one before this render's content event.
   const anchorRef = useRef(settled); anchorRef.current = settled;
   const geometry = useRef({ total, height }); geometry.current = { total, height };
-  useImperativeHandle(scrollRef, () => ({
-    scroll: (action: PagerAction) => setAnchor(anchorRef.current = applyAnchor(anchorRef.current, { kind: "scroll", action, ...geometry.current })),
-    stickBottom: () => setAnchor(anchorRef.current = applyAnchor(anchorRef.current, { kind: "stickBottom", ...geometry.current })),
-  }), []);
+  // Stable for the life of the component: both read the refs above rather than this render's values, so
+  // nothing they close over can go stale, and the imperative handle and the key handlers share them.
+  const scroll = useCallback((action: PagerAction) => setAnchor(anchorRef.current = applyAnchor(anchorRef.current, { kind: "scroll", action, ...geometry.current })), []);
+  const stickBottom = useCallback(() => setAnchor(anchorRef.current = applyAnchor(anchorRef.current, { kind: "stickBottom", ...geometry.current })), []);
+  useImperativeHandle(scrollRef, () => ({ scroll, stickBottom }), [scroll, stickBottom]);
 
-  const { slices } = pageItemSlices(items, settled.offset, height);
+  // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
+  // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no
+  // other path — and deactivated under a history search, which is canon's other half of the same gate.
+  //   ONLY the four actions the context binds are handled. `TranscriptPager` registers the whole
+  // `PAGER_ACTIONS` map because the Transcript context binds the whole map; registering names nothing in
+  // fullscreen can produce would be ten dead entries. Note the one crossing this does create deliberately: a
+  // decision dialog's `SelectDecision` block binds ctrl+u/ctrl+d to the half-page pair for its own reading
+  // path, and `handlerFor` looks handlers up by ACTION across the whole stack — so in fullscreen those two
+  // keys now scroll the transcript BEHIND the dialog instead of falling through to nobody. That is the right
+  // answer for a renderer whose transcript stays on screen under its dialogs, and it is why the dialog's own
+  // pair is not re-pointed anywhere.
+  //   `scroll:bottom` is `stickBottom`, not `applyPager({kind:"bottom"})`. The two land on the same offset,
+  // but only the first is canon's `scrollToBottom()` — "follow the tail again" rather than "show it once".
+  useKeyScope("Scroll", { active: !historySearchOpen });
+  useKeyActions(useMemo(() => ({
+    "scroll:halfPageUp": () => scroll(PAGER_ACTIONS["scroll:halfPageUp"]!),
+    "scroll:halfPageDown": () => scroll(PAGER_ACTIONS["scroll:halfPageDown"]!),
+    "scroll:top": () => scroll(PAGER_ACTIONS["scroll:top"]!),
+    "scroll:bottom": () => stickBottom(),
+  }), [scroll, stickBottom]));
+
+  // ── THE JUMP PILL, AND THE ROW IT COSTS ─────────────────────────────────────────────────────────────────
+  // `qqH` (455869-455878): shown only when the viewport is neither sticky nor at the end. The second half is
+  // not redundant — a content SHRINK leaves the anchor unstuck with the tail nevertheless on screen (the
+  // retained offset is held past the new bottom and `pageItemSlices` clamps the paint), and a pill offering to
+  // take the reader somewhere they already are is noise.
+  //   THE ANCHOR STILL MEASURES AGAINST THE FULL GRANT, and only the SLICE is shortened. Canon's pill is
+  // `position:absolute` over the scroll box, so a half page is half of the REGION and `scroll:bottom` lands on
+  // the region's own bottom; Ink cannot float a row, so the pill instead COVERS the window's last row — same
+  // pixels, same arithmetic, one row of transcript hidden while it is up. Subtracting it from `height` as well
+  // would make the scroll distance depend on whether the pill happens to be showing.
+  //   AND IT MUST BE SUBTRACTED FROM THE SLICE, for a worse reason than the T10 review predicted. The review
+  // expected an unpaid-for row to trip the frame's L180317 diagnostic on every scrolled-up frame. MEASURED, it
+  // does not: the frame re-measures in an effect that runs when the FRAME re-renders, and a scroll is
+  // viewport-local state, so the frame never re-renders and never looks. The unsubtracted row is therefore not
+  // a loud overflow but a SILENT one — the region emits `grant + 1`, the frame's clip drops the last row, and
+  // the row it drops is THE PILL. The affordance disappears at exactly the moment it exists for, with nothing
+  // on the debug seam to say so. (Verified by mutating this line to `= height`: the pill is gone, the frame is
+  // still 39 rows, `onOverflow` is never called. The blind spot is carried to T13, which owns the next change
+  // to that measurement.)
+  const atEnd = settled.offset >= total - height;
+  const showPill = !settled.sticky && !atEnd && !historySearchOpen;
+  const body = showPill ? Math.max(0, height - 1) : height;
+
+  // "N new message(s)" — as ROWS, because that is what this document is made of (JumpPill's header records
+  // the divergence). The baseline is the row total at the last render that was STICKY: stickiness is lost by
+  // a scroll, which does not change `total`, so the frozen value is the total the reader had seen. Re-sticking
+  // resumes the mirror and the count returns to zero.
+  const stickyTotal = useRef(total);
+  if (settled.sticky) stickyTotal.current = total;
+
+  const { slices } = pageItemSlices(items, settled.offset, body);
   // Keyed by item id AND slice index: one item can contribute at most one slice to a window, but the index
   // keeps the key stable when the same block is re-sliced at a different offset.
-  return <>{slices.map((s, i) => <RenderItemView key={`${s.item.id}:${i}`} item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />)}</>;
+  return <>
+    {slices.map((s, i) => <RenderItemView key={`${s.item.id}:${i}`} item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />)}
+    {showPill ? <JumpPill newRows={Math.max(0, total - stickyTotal.current)} columns={columns} /> : null}
+  </>;
 }

@@ -257,6 +257,54 @@ describe("overlay gating, expressed as null bindings", () => {
     for (const k of ["ctrl+r", "ctrl+t"]) expect(b[k], `Transcript ${k} must be null`).toBeNull();
     for (const k of GLOBAL_KEYS) expect(b, `Transcript ${k} must be spoken for`).toHaveProperty(k);
   });
+  // ── FSW TASK 11: the `Scroll` context ────────────────────────────────────────────────────────────────
+  // `Scroll` has been in VALID_CONTEXTS since F2 and bound NOTHING until now — canon's own name for "a
+  // scrollable view is focused (fullscreen layout)", and there was no such view until the fullscreen renderer
+  // grew one. Canon's block (grounding §3.5, bundle 446135-446250) also carries wheel, selection-extension and
+  // copy keys; this wave is keyboard-only, so exactly four keys land and the rest stay unbound rather than
+  // resolving to actions no handler could answer.
+  it("Scroll binds the four keyboard scroll keys and nothing else", () => {
+    expect(block("Scroll").bindings).toEqual({
+      "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
+      "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+    });
+  });
+  // THE HALF-PAGE IS PER-CONTEXT, and that is the whole reason the fix is a second binding rather than an edit
+  // to `PAGER_ACTIONS`. Canon's `scroll:pageUp`/`pageDown` handlers move `floor(viewport/2)` DESPITE THE NAME
+  // (446159-446174), while the ctrl+O transcript view's PgUp is a full page. One shared action map, two
+  // contexts naming different entries in it — so `Transcript` keeps `scroll:pageUp` and `Scroll` names
+  // `scroll:halfPageUp`, and neither surface has to be renamed to describe the other.
+  it("Scroll's PgUp/PgDn are HALF pages while Transcript's are FULL — same map, different entries", () => {
+    expect(block("Scroll").bindings["pageup"]).toBe("scroll:halfPageUp");
+    expect(block("Transcript").bindings["pageup"]).toBe("scroll:pageUp");
+  });
+  // THE CENSUS THAT CATCHES DRIFT. Task 11 was allowed to touch the `Scroll` block and nothing else, and the
+  // grandfathered-collision list above only sees reserved keys — a `Transcript` entry retargeted while adding
+  // the sibling context would slip past every other case in this file. So the pager's block is pinned WHOLE.
+  it("the Transcript block is unchanged, key for key", () => {
+    expect(block("Transcript").bindings).toEqual({
+      "escape": "transcript:exit", "q": "transcript:exit", "ctrl+c": "transcript:exit",
+      "ctrl+u": "scroll:halfPageUp", "ctrl+d": "scroll:halfPageDown",
+      "ctrl+b": "scroll:fullPageUp", "ctrl+f": "scroll:fullPageDown",
+      "ctrl+n": "scroll:lineDown", "ctrl+p": "scroll:lineUp",
+      "g": "scroll:top", "shift+g": "scroll:bottom", "j": "scroll:lineDown", "k": "scroll:lineUp",
+      "space": "scroll:fullPageDown", "b": "scroll:fullPageUp",
+      "up": "scroll:lineUp", "down": "scroll:lineDown", "pageup": "scroll:pageUp", "pagedown": "scroll:pageDown",
+      "home": "scroll:top", "end": "scroll:bottom",
+      "ctrl+e": "transcript:toggleShowAll", "ctrl+o": "transcript:exit",
+      "ctrl+r": null, "ctrl+t": null, "alt+p": null, "alt+t": null, "ctrl+x ctrl+b": null,
+    });
+  });
+  // Not an overlay owner and not a decision surface: `Scroll` is the BACKGROUND context of the fullscreen
+  // renderer — the transcript region is what the user is looking at, with the composer still live below it —
+  // so every root global must keep falling through to `Global`, and both composer keys must keep reaching the
+  // composer. A suppression block copied from the dialogs would have killed ctrl+o, ctrl+t and ctrl+r for the
+  // whole of a fullscreen session.
+  it("Scroll suppresses nothing: it is the background of the fullscreen renderer, not an overlay", () => {
+    const b = block("Scroll").bindings;
+    for (const k of [...GLOBAL_KEYS, "alt+p", "alt+t", "ctrl+x ctrl+b"])
+      expect(k in b, `Scroll must leave ${k} alone`).toBe(false);
+  });
   it("Confirmation is the decision owner: the gate deliberately keeps the root globals live", () => {
     const b = block("Confirmation").bindings;
     for (const k of ["ctrl+c", "ctrl+o", "ctrl+t", "ctrl+r", "ctrl+b"]) expect(b, `Confirmation must not touch ${k}`).not.toHaveProperty(k);

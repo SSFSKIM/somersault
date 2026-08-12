@@ -122,6 +122,32 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // owns every other key on screen (final review, deferred t8 minor). Same null, same zero cost, as Select's.
     "ctrl+x ctrl+b": null,
   }},
+  // FSW TASK 11 — `Scroll`, upstream's own name for "a scrollable view is focused (fullscreen layout)". It has
+  // been in VALID_CONTEXTS since F2 and bound NOTHING, because until the fullscreen renderer grew a virtual
+  // region there was no such view: the main screen scrolls in the TERMINAL, not in the app.
+  //
+  // FOUR KEYS OF CANON'S BLOCK (bundle 446135-446250, grounding §3.5), and the rest deliberately left unbound.
+  // The block there also carries `wheelup`/`wheeldown` and seven selection-extension/copy chords; mouse and
+  // in-frame selection are not in this wave, and an action name that resolves but reaches no handler is the
+  // dishonest rebind F2 exists to remove (the same reasoning that held ModelPicker's effort pair back at F6).
+  //
+  // PGUP/PGDN ARE HALF PAGES, AND THAT IS NOT A TYPO OF UPSTREAM'S OR OURS. Canon binds them to
+  // `scroll:pageUp`/`pageDown` and then its handler moves `floor(getViewportHeight() / 2)` (446159-446174) —
+  // the action NAME says page, the behaviour is half. We keep the behaviour and fix the name by pointing the
+  // keys at the half-page entries of the SAME `PAGER_ACTIONS` map, which is why this is a per-context binding
+  // rather than an edit to that map: `Transcript` (ctrl+O) names the full-page entries with the same two keys,
+  // and its own PgUp semantics are separately grounded. One map, two contexts, no surface renamed to describe
+  // the other.
+  //
+  // NO SUPPRESSION BLOCK, unlike every dialog above. This is the BACKGROUND context of the fullscreen renderer,
+  // not an overlay over it: the composer is still live in the dock below, and all six root globals must keep
+  // falling through to `Global`. The context is registered by `FullscreenViewport` with canon's own gate —
+  // `isActive: t && !cbr()` (446211), i.e. live in fullscreen EXCEPT while a history search owns the dock,
+  // where the search's own PgUp/PgDn are the ones that must fire.
+  { context: "Scroll", bindings: {
+    "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
+    "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+  }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",
     "ctrl+c": "historySearch:cancel", "enter": "historySearch:execute", "ctrl+s": "historySearch:cycleScope",

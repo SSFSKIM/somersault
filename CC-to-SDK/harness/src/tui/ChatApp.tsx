@@ -46,6 +46,7 @@ import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { FullscreenFrame } from "./FullscreenFrame.js";
 import { FullscreenViewport } from "./FullscreenViewport.js";
+import { RegionPager } from "./RegionPager.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
@@ -948,8 +949,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // WHOLE document (`finalizedItems ⧺ pending ⧺ streaming`) and virtualizes it against T2's anchor, so the
   // frame is a window over everything rather than a view of the newest tier. `windowItems` is therefore a
   // main-screen concept and is not passed here; `mainWindowCap`'s fourteen-row dock reservation goes with it.
+  //   …AND CTRL-O TAKES THE REGION RATHER THAN THE COMPOSER'S SLOT (FSW Task 11). On the main screen the pager
+  // is an overlay over the LIVE rows, because everything committed is in scrollback above the frame — so it
+  // renders in the dialog chain below, where the composer would be. In the frame the region IS the transcript,
+  // so the pager replaces it there and the dock keeps its footer; `RegionPager` sizes it to the rows the frame
+  // granted instead of `TranscriptPager`'s `rows − 10` guess at the terminal. The dock's own transcript arm
+  // renders nothing on this path (see it below) — which is what keeps the composer's `Chat` scope OFF the
+  // stack while the pager owns the keyboard, exactly as an unmounted composer does on the main screen.
   const region = fullscreen
-    ? <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} columns={size.columns} />
+    ? (transcriptOpen
+      ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
+      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} />)
     : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
   const dock = (
     <>
@@ -1019,7 +1029,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // The ONLY route from the retained document to the pager: useChat's detailItems closure re-projects
         // it at whichever detail projection the pager currently wants. ChatApp never projects detail itself
         // and never owns show-all state — Ctrl-E is pager-local, Ctrl-O/Escape are all this arm decides.
-        ? <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} />
+        // FSW T11: in fullscreen the pager has already drawn in the REGION (see `region` above) and this arm
+        // renders NOTHING — but it stays an arm rather than dropping out of the chain, because what it leaves
+        // empty is the composer's slot. That emptiness is the point: it is how the composer's `Chat` scope
+        // comes off the keymap stack, which is what stops Chat's `escape`/`ctrl+d` shadowing the pager's own
+        // exit and half-page keys. On the main screen the same emptiness arrives for free, from the pager
+        // itself occupying the slot.
+        ? (fullscreen ? null : <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} />)
         : state.historyOpen
         // CM59: the preview pane's side-by-side/stacked switch is a function of the live terminal width, read
         // the same per-render way the composer's is so a resize reaches it on the next frame.

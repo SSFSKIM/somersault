@@ -31,9 +31,29 @@ describe("applyPager / clampOffset", () => {
     expect(clampOffset(999, 100, 10)).toBe(90);
     expect(clampOffset(5, 8, 10)).toBe(0);                 // content shorter than the window
   });
-  it("half page rounds against height", () => {
+  // FSW TASK 11 — THE HALF-PAGE ARITHMETIC CHANGED, so this block's assertions change with it. It used to be
+  // `Math.round(a.n * height)` and read "half page rounds against height"; `Math.round` is round-HALF-UP, which
+  // is not symmetric about zero (`round(5.5)` is 6 but `round(-5.5)` is −5), so on every ODD height a half page
+  // DOWN moved one row further than a half page UP and the pair did not return you to the row you started on.
+  // At height 1 it was worse than asymmetric: `round(-0.5)` is `-0`, so the up key moved nothing at all.
+  //   The replacement floors the MAGNITUDE and floors it at one row: `sign(n) * max(1, floor(|n| * height))`.
+  // Integer pages are untouched (`floor(1 * h) === h`), so only the fractional arm moves — which is why the
+  // Transcript context's ctrl+u/ctrl+d and `SelectDecision`'s borrowed pair shift by one row on odd heights
+  // too, deliberately and in the direction that makes them reversible.
+  it("half page floors the magnitude — symmetric in both directions on an odd height", () => {
     expect(applyPager(50, { kind: "pages", n: -0.5 }, 100, 10)).toBe(45);
-    expect(applyPager(50, { kind: "pages", n: 0.5 }, 100, 11)).toBe(56);   // round(5.5)=6
+    expect(applyPager(50, { kind: "pages", n: 0.5 }, 100, 11)).toBe(55);   // floor(5.5)=5; round(5.5) gave 56
+    expect(applyPager(50, { kind: "pages", n: -0.5 }, 100, 11)).toBe(45);  // …and the SAME five rows upward
+  });
+  it("a half page is never zero rows — the up key is alive in a one-row window", () => {
+    expect(applyPager(5, { kind: "pages", n: -0.5 }, 100, 1)).toBe(4);     // round(-0.5) was -0: dead key
+    expect(applyPager(5, { kind: "pages", n: 0.5 }, 100, 1)).toBe(6);
+  });
+  it("down-then-up returns to the starting row at every height the region can have", () => {
+    for (const h of [1, 2, 7, 10, 11, 17, 19, 37]) {
+      const down = applyPager(200, { kind: "pages", n: 0.5 }, 1000, h);
+      expect(applyPager(down, { kind: "pages", n: -0.5 }, 1000, h), `height ${h}`).toBe(200);
+    }
   });
   it("top/bottom/lines/pages", () => {
     expect(applyPager(50, { kind: "top" }, 100, 10)).toBe(0);

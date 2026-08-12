@@ -92,15 +92,26 @@ describe("FullscreenViewport — the anchor", () => {
 
   // The live capture's "typing while scrolled up does not snap back" (grounding §L2.3), at the surface that
   // has to honour it: a scroll off the bottom unsticks, and every later content event holds the window still.
+  //
+  // FSW T11 RE-CUT THIS CASE, and the reason is worth stating rather than absorbing: an unstuck viewport now
+  // raises the jump pill, and the pill's row is PAID FOR out of the window (`FullscreenViewport`'s header —
+  // Ink cannot float a row, so an unsubtracted one would make the region emit `grant + 1` rows). So the five
+  // granted rows become four of transcript plus the pill while the user is scrolled up, and go back to five
+  // the moment `stickBottom` re-sticks. The CLAIM the case carries is untouched: the window does not move when
+  // content arrives after an explicit scroll. There is no keymap above this render, so the pill's chord
+  // resolves to nothing and it prints the bare destination — which is the honest three-state answer.
   it("holds the window still when content arrives after an explicit scroll, and re-sticks on stickBottom", async () => {
     const ref = React.createRef<ViewportScroll>();
     const { lastFrame, rerender } = render(view({ finalizedItems: doc(50), rows: 5, scrollRef: ref }));
     ref.current!.scroll({ kind: "lines", n: -3 });
     await tick();
-    expect(rowsOf(lastFrame())).toEqual(["L42", "L43", "L44", "L45", "L46"]);
+    expect(rowsOf(lastFrame()).slice(0, 4)).toEqual(["L42", "L43", "L44", "L45"]);
+    expect(strip(rowsOf(lastFrame())[4]!)).toBe("Jump to bottom");
+    expect(rowsOf(lastFrame())).toHaveLength(5);                               // still exactly the grant
 
     rerender(view({ finalizedItems: doc(51), rows: 5, scrollRef: ref }));
-    expect(rowsOf(lastFrame())).toEqual(["L42", "L43", "L44", "L45", "L46"]);   // the append did NOT move it
+    expect(rowsOf(lastFrame()).slice(0, 4)).toEqual(["L42", "L43", "L44", "L45"]);   // the append did NOT move it
+    expect(strip(rowsOf(lastFrame())[4]!)).toBe("1 new message");              // …it was announced instead
 
     ref.current!.stickBottom();
     await tick();
