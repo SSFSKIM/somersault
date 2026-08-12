@@ -157,7 +157,16 @@ describe("FSW T3 — commit is settle-driven, the window is render-time", () => 
     for (let n = 1; n <= 12; n++) expect(occurrences(grown, `ALPHA-${n} `)).toBe(1);
   });
 
-  it("while a dialog owns the pane the window is empty — the dock budget never has to pay for both", async () => {
+  // FIX ROUND (review I2) — THIS PIN CHANGED SEMANTICS, and it is the one place the change is visible.
+  // T3 shipped `paneOwned` as a pure BLANK: the dock budget must not have to cover a dialog as well, so the
+  // window rendered nothing while one was up. Measured consequence: for the life of ANY pane-owning surface
+  // the last `rows − 16` rows of transcript left the screen — eight at 24 rows, twenty-four at 40 — and came
+  // back when it closed. Before this task those rows were in scrollback ABOVE the dialog and stayed readable.
+  // They are again, and by the honest route: a dialog opening is a SETTLED event, so the window is COMMITTED
+  // rather than hidden, and `<Static>` is where committed rows live. The dock budget is protected exactly as
+  // before (nothing unpublished is left, so the window is empty because it is EMPTY) and the accepted cost is
+  // one more driver of the one-way ratchet: rows committed by a dialog are frozen at the width they had.
+  it("a dialog taking the pane COMMITS the window instead of blanking it — the rows stay readable above it", async () => {
     const rows = 40;
     const fake = fakeRemote({ capabilities: () => ({ models: [{ value: "opus", displayName: "Opus" }], commands: [], mcpServers: [] }) });
     // Under the keymap provider: `?` only reaches the overlay through the binding table (F2 task 6), and the
@@ -173,6 +182,14 @@ describe("FSW T3 — commit is settle-driven, the window is render-time", () => 
     // that one is content-sized and deliberately NOT on that list, which is the distinction the flag draws.
     app.stdin.write("\x1bp");
     await waitFor(() => flat(app.lastFrame).includes("Select model"));
-    for (let n = 1; n <= 4; n++) expect(flat(app.lastFrame)).not.toContain(`ALPHA-${n}`);
+    // THE FRAME IS THE PROOF, and it is not a weaker one than a model read would be. The render window is
+    // empty for as long as `paneOwned` holds — that is unchanged and unconditional in the memo — so a row
+    // that is on screen underneath the picker can only be arriving from `fullStaticOutput`, which is
+    // `ink-testing-library`'s stand-in for the terminal's scrollback and holds committed rows alone.
+    for (let n = 1; n <= 4; n++) expect(occurrences(flat(app.lastFrame), `ALPHA-${n} `)).toBe(1);
+    // …and closing it does not print them a second time: the commit was a publish, not a copy.
+    app.stdin.write("\x1b");
+    await waitFor(() => !flat(app.lastFrame).includes("Select model"));
+    for (let n = 1; n <= 4; n++) expect(occurrences(flat(app.lastFrame), `ALPHA-${n} `)).toBe(1);
   });
 });

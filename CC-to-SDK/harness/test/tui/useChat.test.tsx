@@ -1985,7 +1985,12 @@ describe("useChat: one retained document behind every surface", () => {
   it("publishes every stable RenderItem id exactly once — local visual, assistant text and divider alike", async () => {
     const fake = fakeRemote();
     let ids: string[] = [];
-    function H() { const c = useChat(() => fake); ids = [...c.state.staticItems].map((i) => i.id); return <Text>{allText(c)}</Text>; }
+    // FSW TASK 3 FIX ROUND (review I1) — reads `finalizedItems`, not `staticItems`. This case was NOT among
+    // the twelve the task re-pointed, because it stayed green: at the default 24-row geometry with three
+    // items nothing is ever committed, so `ids` was empty and `new Set(ids).size === ids.length` was
+    // comparing 0 to 0. "Every stable RenderItem id" is a claim about the finalized projection — which is
+    // what `staticItems` used to be, and is now only its committed head.
+    function H() { const c = useChat(() => fake); ids = [...c.state.finalizedItems].map((i) => i.id); return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     const text = { type: "assistant", parent_tool_use_id: null, message: { id: "stable-text", content: [{ type: "text", text: "stable reply" }] } };
@@ -1995,6 +2000,7 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "turn", phase: "start", truncated: true, seq: 4 });   // a divider-shaped local record, twice
     fake.pushEvent({ kind: "turn", phase: "start", truncated: true, seq: 4 });
     await waitFor(() => frame(lastFrame).includes("stable reply") && frame(lastFrame).includes("Earlier live output unavailable"));
+    expect(ids.length).toBeGreaterThan(0);                                // …and it is not comparing 0 to 0
     expect(new Set(ids).size).toBe(ids.length);
     expect(frame(lastFrame).match(/stable reply/g)).toHaveLength(1);
     expect(frame(lastFrame).match(/Earlier live output unavailable/g)).toHaveLength(1);

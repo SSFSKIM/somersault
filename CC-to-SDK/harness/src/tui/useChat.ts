@@ -267,6 +267,9 @@ export function useChat(
   const initialFinalized = useRef<readonly RenderItem[] | null>(null);
   if (initialFinalized.current === null) initialFinalized.current = projectCompact(documentRef.current!, projectionContext());
   const [finalizedItems, setFinalizedItems] = useState<readonly RenderItem[]>(initialFinalized.current);
+  /** The same list as a ref, for `publishLiveWindow` below — it is called from a passive effect in ChatApp,
+   *  which is one commit later than the render whose closure it would otherwise read. */
+  const finalizedRef = useRef<readonly RenderItem[]>(initialFinalized.current);
   // THE MOUNT PUBLISH IS THE SAME SPLIT, not a special case: a resumed or attached session used to dump its
   // whole history into <Static> here, which put the tail out of reach of reflow before the first frame was
   // ever painted. Only what the window cannot hold is published; the rest is live from the start.
@@ -896,7 +899,7 @@ export function useChat(
     mergeThoughtMs();
     const context = projectionContext();
     const finalized = projectCompact(documentRef.current!, context);
-    setFinalizedItems(finalized);
+    setFinalizedItems(finalized); finalizedRef.current = finalized;
     const unpublished = finalized.filter((item) => !publishedIds.current.has(item.id));
     const cap = commitCap();
     const { commit } = selectLiveWindow(unpublished, cap, cap);
@@ -905,6 +908,21 @@ export function useChat(
       setStaticItems((s) => [...s, ...commit]);
     }
     setPendingItems(livePending(context));
+  }
+  /** FSW T3 FIX ROUND (review I2) — publish the WHOLE live window, geometry ignored. The one caller is
+   *  ChatApp, on a pane-owning surface going up: the live subtree is blanked for as long as a dialog owns
+   *  the screen, and hiding those rows meant the last `rows − 16` of transcript disappeared for the life of
+   *  the dialog instead of sitting readable in scrollback above it, which is where they were before this
+   *  task. A dialog opening is a settled event, so the commit ratchet applies honestly — that is what makes
+   *  this a publish and not a second kind of hiding. The accepted cost is that the ratchet is now driven by
+   *  a UI event as well as by the document: rows committed this way are frozen at the width they were
+   *  projected at, exactly as any other committed row is. */
+  function publishLiveWindow(): void {
+    if (disposed.current) return;
+    const unpublished = finalizedRef.current.filter((item) => !publishedIds.current.has(item.id));
+    if (!unpublished.length) return;
+    for (const item of unpublished) publishedIds.current.add(item.id);
+    setStaticItems((s) => [...s, ...unpublished]);
   }
   /** The transient region: `projectPending` returns everything the compact projection cannot publish yet, and
    *  the live-open set narrows the OPEN calls to the ones a live turn is actually running — so a
@@ -2680,5 +2698,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

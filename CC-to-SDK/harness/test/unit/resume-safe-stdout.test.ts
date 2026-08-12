@@ -2,7 +2,7 @@
 // passes through code we own, so it is where we learn what is currently painted and how tall it really is.
 // Task 4 erases on resize from exactly these two answers, so both are pinned here rather than inferred later.
 import { describe, expect, it } from "vitest";
-import { createResumeSafeStdout, physicalRows } from "../../src/tui/chatMain.js";
+import { createResizeChain, createResumeSafeStdout, physicalRows } from "../../src/tui/chatMain.js";
 import { eraseViewport } from "../../src/tui/clearViewport.js";
 import { parkColumn } from "../../src/tui/resizeRepaint.js";
 
@@ -250,5 +250,46 @@ describe("physicalRows", () => {
     expect(physicalRows("a\n", 40)).toBe(1);
     expect(physicalRows("a\n\n", 40)).toBe(2);
     expect(physicalRows("a", 40)).toBe(1);
+  });
+});
+
+// ── FSW T3 FIX ROUND (review C1) — the SIGWINCH chain's ORDER ────────────────────────────────────────────
+// One listener, three jobs, and the order between them is the whole reason this is a function rather than
+// three lines in `runChatClient`. The measurement that forced it: at 40 → 24 rows with a full live window,
+// ChatApp learning the new size AFTER Ink's own resize handler meant Ink measured the old, twenty-four-row
+// window against a twenty-four-row terminal and wrote `clearTerminal + the entire session` — one tall write,
+// a 44-row frame. Learning it BEFORE (this chain, driven from a listener registered before `render()`) means
+// React has already re-rendered and re-committed by the time Node reaches Ink's handler: zero tall writes.
+// The other direction is a constraint too, which is why the subscribers cannot simply prepend their own
+// listener: both readers below must see the screen as it stands before anything repaints it.
+describe("createResizeChain", () => {
+  it("runs the readers before every subscriber, in subscription order", () => {
+    const log: string[] = [];
+    const chain = createResizeChain(() => log.push("readers"));
+    chain.subscribe(() => log.push("a"));
+    chain.subscribe(() => log.push("b"));
+    chain.fire();
+    expect(log).toEqual(["readers", "a", "b"]);
+  });
+
+  it("fires the readers even with nothing subscribed, and stops a subscriber that unsubscribed", () => {
+    const log: string[] = [];
+    const chain = createResizeChain(() => log.push("readers"));
+    chain.fire();
+    const off = chain.subscribe(() => log.push("a"));
+    chain.fire();
+    off();
+    chain.fire();
+    expect(log).toEqual(["readers", "readers", "a", "readers"]);
+  });
+
+  it("survives a subscriber that unsubscribes from inside its own callback", () => {
+    // ChatApp's effect cleanup can run in response to the very re-render its sampler triggers.
+    const log: string[] = [];
+    const chain = createResizeChain(() => log.push("readers"));
+    const off = chain.subscribe(() => { log.push("a"); off(); });
+    chain.subscribe(() => log.push("b"));
+    chain.fire(); chain.fire();
+    expect(log).toEqual(["readers", "a", "b", "readers", "b"]);
   });
 });

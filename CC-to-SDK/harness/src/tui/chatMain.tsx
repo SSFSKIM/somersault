@@ -123,6 +123,22 @@ const CLEAR_SCROLLBACK_HEAD = "\x1b[2J\x1b[3J";
 
 export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; this stays the import site it had
 
+/** FSW T3 FIX ROUND (review C1) — ONE SIGWINCH listener, three things to do, and the order is the contract.
+ *  `readers` runs first: those are the two measurements that must see the screen as it stands BEFORE anything
+ *  repaints it (`noteResizeSignal` latches whether a tall write is outstanding; `resizeRepaint.onResize`
+ *  measures off the last recorded frame). Subscribers run second: today that is ChatApp's size commit, which
+ *  synchronously re-renders and therefore WRITES — put ahead of the readers it would destroy their evidence,
+ *  put behind Ink's own handler (`ink.js:77`, registered during `render()`) it would arrive after Ink had
+ *  already measured the old, taller tree against the new row count and taken the tall-frame branch.
+ *  Extracted from `runChatClient` only so that ordering has somewhere to be asserted; it has no other caller. */
+export function createResizeChain(readers: () => void): { fire: () => void; subscribe: (cb: () => void) => () => void } {
+  const subscribers = new Set<() => void>();
+  return {
+    fire: () => { readers(); for (const cb of [...subscribers]) cb(); },
+    subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
+  };
+}
+
 export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeStdout {
   let suppressNextWrite = false;
   let frame: string | undefined;                 // the last live frame, as painted
@@ -443,7 +459,24 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // W2 t7 (s2qa2-05): THE ORDER IS THE WHOLE POINT OF DOING IT HERE. This listener is ahead of Ink's, so it is
   // the last moment at which "a tall write is outstanding" is still true for the screen the user is looking at —
   // Ink's own handler repaints synchronously on the next line of the same signal and stands the count down.
-  const onTerminalResize = (): void => { output.noteResizeSignal(); resize.onResize(); };
+  // FSW T3 FIX ROUND (review C1): …AND CHATAPP'S SIZE COMMIT IS THE THIRD LINK OF THIS SAME CHAIN, for the
+  // same reason the other two are here. Ink's own handler (`ink.js:77`, registered inside `render()` below)
+  // re-lays-out and re-serializes the EXISTING element tree against the NEW row count and checks
+  // `outputHeight >= stdout.rows` while doing it — so a component that learns the new size any later than
+  // this has already had its old, taller tree measured against the shorter terminal. Measured before this
+  // wiring, at 40 → 24 rows with a full live window: one `clearTerminal` write and a 44-row frame against a
+  // 24-row pane, i.e. the whole session reprinted on the one frame the wave exists to protect. Afterwards:
+  // none. It works because Ink runs React in LEGACY mode (`ink.js:59`), where a `setState` from a plain
+  // event callback flushes synchronously — the re-render, the re-layout and the write all land before Node
+  // reaches the next listener.
+  //   ORDER WITHIN THE CHAIN IS NOT FREE EITHER, which is why this is a fan-out from here rather than
+  // ChatApp prepending its own listener (its default does exactly that, for embedders that have no chain).
+  // Both lines above read the screen as it stands BEFORE anything repaints it: `noteResizeSignal` latches
+  // whether a tall write is outstanding, and `resize.onResize` measures off the last recorded frame. A size
+  // commit ahead of them writes a frame, stands `tallWrites()` down and re-records — and the W2-t7 grow
+  // resync, whose whole job is to repair a stranded tall surface, would never fire again.
+  const resizeChain = createResizeChain(() => { output.noteResizeSignal(); resize.onResize(); });
+  const onTerminalResize = resizeChain.fire;
   process.stdout.on("resize", onTerminalResize);
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
   // reasons: it is a process-level concern with a teardown obligation (the `finally` below clears the title
@@ -460,7 +493,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
       <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
         initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
-        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output}
+        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
         initialTodosOpen={prefs.showExpandedTodos ?? true}
         {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
     </UserKeymap>,

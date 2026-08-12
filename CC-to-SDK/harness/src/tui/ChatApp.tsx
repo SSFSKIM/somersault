@@ -34,7 +34,7 @@
 // different question (which surface is VISIBLE), and F6 TASK 5 gave it a second job: it is now the ONE
 // derivation this file reads back to decide what to draw — which dialog slot (`inlineDecision`), whether the
 // composer's slot is empty, and whether the composer is being suppressed rather than replaced (`"typing"`).
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
@@ -45,6 +45,8 @@ import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
+import { streamingItems } from "./streamingItems.js";
+import { renderItemHeight } from "./pager.js";
 import { clearViewport } from "./clearViewport.js";
 import { physicalRows } from "./resizeRepaint.js";
 import { Line } from "./Line.js";
@@ -121,10 +123,35 @@ export const TYPING_IDLE_MS = 1500;
 const EMPTY_ITEMS: readonly RenderItem[] = [];
 const EMPTY_LINES: readonly RenderLine[] = [];
 
-/** WAVE R TASK 1 (defect i) — the default terminal-resize subscription. Module-scoped rather than a default
- *  arrow in the parameter list so its identity is stable across renders: the effect below lists it as a
- *  dependency, and a fresh closure per render would tear down and re-attach the listener every frame. */
-const DEFAULT_ON_RESIZE = (cb: () => void): (() => void) => { process.stdout.on("resize", cb); return () => { process.stdout.off("resize", cb); }; };
+/** Physical rows a run of items will occupy — the same measure `liveWindow.ts` budgets in. */
+const rowsOf = (items: readonly RenderItem[]): number => items.reduce((sum, item) => sum + renderItemHeight(item), 0);
+
+/** WAVE R TASK 1 (defect i) — the default terminal-resize subscription, REWRITTEN IN THE FSW T3 FIX ROUND
+ *  (review C1). Two things about it are now load-bearing, and both are about ORDER rather than about the
+ *  callback:
+ *    · It subscribes to the stream INK ITSELF was given, not to `process.stdout`. Those are the same emitter
+ *      in production (chatMain hands Ink a Proxy whose `on`/`prependListener` are bound to the real tty), but
+ *      only the first of them is the one a test can resize.
+ *    · It PREPENDS. Ink registers its own `resize` handler in its constructor (`ink.js:77`), i.e. while
+ *      `render()` is running, and that handler re-lays-out and RE-SERIALIZES the existing element tree
+ *      synchronously — `resized = () => { this.calculateLayout(); this.onRender() }` — checking
+ *      `outputHeight >= stdout.rows` (`ink.js:121`) as it goes. This component subscribes from a passive
+ *      effect, which is strictly later, so an appended listener would always run AFTER Ink had already
+ *      measured the OLD tree against the NEW row count. On a shrink that is the tall-frame branch firing on
+ *      the one frame the whole wave exists to protect: measured at 40 → 24 rows with a full window, one
+ *      `clearTerminal` write and a 44-row frame against a 24-row terminal.
+ *      Prepending closes it because Ink runs React in LEGACY mode (`ink.js:59`, `createContainer(…, 0, …)`),
+ *      where a `setState` from a plain event callback flushes synchronously: the size lands, React re-renders
+ *      and re-commits (and Ink's `resetAfterCommit` re-lays-out and writes) before Node reaches Ink's own
+ *      handler, which then finds a tree that already fits. Measured on the same scenario: zero tall writes.
+ *  PRODUCTION DOES NOT TAKE THIS PATH — `chatMain` passes its own `onResize`, because it has a listener that
+ *  must stay ahead of this one (it latches "a tall write was outstanding at this signal" off the screen Ink
+ *  is about to repaint). This default is what any other embedder, and the test that measures the bound, get. */
+const subscribeToStdoutResize = (stream: NodeJS.WriteStream | undefined) => (cb: () => void): (() => void) => {
+  const target = stream ?? process.stdout;
+  target.prependListener("resize", cb);
+  return () => { target.off("resize", cb); };
+};
 
 export type TermSize = { columns: number; rows: number };
 /** WAVE R TASK 1 (review finding) — the functional update the sampler below hands to `setSize`: the PREVIOUS
@@ -138,7 +165,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize = DEFAULT_ON_RESIZE, doublePressDeps, name, terminalTitle }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -176,10 +203,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  a test could not tell "recovered" from "declined to". Returns whether anything was written. */
   resyncViewport?: () => boolean;
   /** WAVE R TASK 1 — subscribe to terminal resizes; returns the unsubscribe. A seam for the same reason
-   *  `suspend` is one: a test cannot resize `ink-testing-library`'s fake stdout, and the real default
-   *  (`DEFAULT_ON_RESIZE`) listens on the process's own tty.
-   *  MUST HAVE A STABLE IDENTITY across the caller's renders — a module-scoped function (as
-   *  `DEFAULT_ON_RESIZE` is, for exactly this reason) or a `useCallback`, never an inline arrow. The
+   *  `suspend` is one: a test cannot resize `ink-testing-library`'s fake stdout, and the default
+   *  (`subscribeToStdoutResize`, above) listens on Ink's own tty.
+   *  FSW T3 FIX ROUND — `chatMain` now PASSES this rather than falling through to the default, and the
+   *  reason is ordering: whatever drives this callback must run before Ink's own resize handler, and
+   *  chatMain already owns a listener that must run before BOTH. See `subscribeToStdoutResize` for the
+   *  measurement and chatMain's `onTerminalResize` for the chain.
+   *  MUST HAVE A STABLE IDENTITY across the caller's renders — a module- or call-scoped function (as both
+   *  the default and chatMain's are, for exactly this reason) or a `useCallback`, never an inline arrow. The
    *  subscribing effect lists it as its only dependency, so a fresh closure per frame would unsubscribe and
    *  re-subscribe the terminal listener on every render. */
   onResize?: (cb: () => void) => () => void;
@@ -202,7 +233,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
   // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
@@ -224,10 +255,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //     subscribed yet — and the state would stay wrong until the next resize. The functional update returns
   //     the PREVIOUS object when nothing moved, so the extra sample costs a comparison and no render, and the
   //     same guard de-duplicates any later resize event that reports an unchanged size.
+  const subscribeResize = useCallback(onResize ?? subscribeToStdoutResize(stdout), [onResize, stdout]);
   useEffect(() => {
     const sample = () => setSize((prev) => nextSize(prev, readSizeRef.current()));
-    const off = onResize(sample); sample(); return off;
-  }, [onResize]);
+    const off = subscribeResize(sample); sample(); return off;
+  }, [subscribeResize]);
   // WAVE C TASK 8 (EP-C4a) — THE TERMINAL TITLE'S MOUNT SITE. Two effects, because the title text and the
   // busy prefix change on completely different cadences and upstream re-emits on either (`CVe`'s deps are
   // the composed string). The writer dedupes, so the first pass here is the launch emission (`✳ ccx`, or
@@ -792,19 +824,49 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // added in the same breath as an append to this array, so its identity is the published-count signal. A
   // Set rather than a length: the two lists agree today, but "published" is an id question and reading it
   // as a prefix length would silently mis-slice the day a projection re-keys an item under it.
-  // EMPTY WHILE `paneOwned`: the dialog owns the screen, and this tree already blanks the pending and
-  // streaming regions on that same flag — so the dock budget (`mainWindowCap`'s fourteen rows, measured for
-  // the steady state) never has to cover a dialog as well.
+  // EMPTY WHILE `paneOwned`, and the rows are COMMITTED rather than hidden (fix round, review I2). The
+  // dialog owns the screen and this tree already blanks the pending and streaming regions on that same flag,
+  // so the dock budget (`mainWindowCap`'s fourteen rows, measured for the steady state) never has to cover a
+  // dialog as well — but blanking ALONE meant that for the whole life of any pane-owning surface the last
+  // `rows − 16` rows of transcript simply vanished (eight at 24 rows, twenty-four at 40) and came back when
+  // it closed. Before this task those rows were in scrollback ABOVE the dialog and stayed readable. The
+  // effect below puts them back there by publishing them: a dialog opening is a SETTLED event, not a drag,
+  // so the one-way commit ratchet is honest here in a way it would not be mid-resize. This branch is then
+  // only the one-frame belt: the commit runs in a passive effect, so the frame that first paints the dialog
+  // would otherwise still be carrying the window it is about to hand over.
+  //
+  // THE CAP SUBTRACTS THE LIVE ROWS IT SHARES THE FRAME WITH (fix round, review C2). `mainWindowCap`'s dock
+  // figure covers the composer, footer, todo panel, spinner and queue — it does NOT cover `pendingItems` or
+  // the in-flight turn, and both of those are unbounded. Before this subtraction the window took the slack
+  // those two had been living on and handed the tall-frame branch back: measured at 24 rows with a full
+  // window, Ink's `outputHeight >= rows` fired at TWELVE streamed rows, against roughly twenty on the parent
+  // commit. Subtracting them restores the parent's threshold exactly, because past the point where the
+  // window has yielded all eight of its rows the frame is `dock + streaming` on both sides of the change.
+  // `streamingItems` exists to make this arithmetic honest — a line three times the width reports three
+  // rows, which is the whole reason it wraps ahead of the renderer rather than letting Ink do it.
+  //   AND IT IS THE RENDER CAP ONLY. `useChat`'s `commitCap()` stays geometry-only, so a transient stream
+  // cannot ratchet coverage permanently down — the same reasoning that already justifies the drag policy:
+  // a window is free and may follow anything, a commit is irreversible and may only follow a settle.
   const windowItems = useMemo(() => {
     if (paneOwned) return EMPTY_ITEMS;
     const published = new Set(state.staticItems.map((item) => item.id));
     const unpublished = state.finalizedItems.filter((item) => !published.has(item.id));
-    // `size` (not `size.rows`) is the dependency on purpose: the items were projected at a WIDTH, so a
-    // column change is as much a reason to re-derive as a row change is. `nextSize` keeps the identity
-    // stable while neither moves, so this costs nothing on an ordinary re-render.
-    const cap = Math.max(0, mainWindowCap(size.rows) - WINDOW_SLACK);
+    // `size` (not `size.rows`) is the dependency, and since the C2 fix the WIDTH half of it is load-bearing
+    // rather than decorative: `streamingItems` wraps to `size.columns`, so the same in-flight turn costs a
+    // different number of rows at a different width. (It was inert before — the items were re-projected at
+    // the new width inside `useChat`, and that fresh array identity already invalidated this memo.)
+    // `nextSize` keeps the identity stable while neither dimension moves, so this costs nothing on an
+    // ordinary re-render.
+    const live = rowsOf(state.pendingItems) + rowsOf(streamingItems(state.streaming, size.columns));
+    const cap = Math.max(0, mainWindowCap(size.rows) - WINDOW_SLACK - live);
     return selectLiveWindow(unpublished, cap, cap).window;
-  }, [state.finalizedItems, state.staticItems, size, paneOwned]);
+  }, [state.finalizedItems, state.staticItems, state.pendingItems, state.streaming, size, paneOwned]);
+  // …and the commit half of I2. An EDGE would be enough (the flag is what changes), but a level is cheaper to
+  // reason about and idempotent by construction: with nothing unpublished left, `publishLiveWindow` returns
+  // without touching state, so a re-render behind an open dialog schedules nothing.
+  useEffect(() => { if (paneOwned) publishLiveWindow(); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [paneOwned, state.finalizedItems]);
   return (
     <Box flexDirection="column">
       <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
