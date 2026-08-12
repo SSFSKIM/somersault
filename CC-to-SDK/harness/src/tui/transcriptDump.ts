@@ -94,6 +94,10 @@ export function dumpTranscript(deps: TranscriptDumpDeps): TranscriptDumpResult {
     writeFileSync(file, text, { mode: 0o600 });
     const opened = openInEditor(file, { ...deps.editorIO, around });
     if (opened === "opened") return { status: "opened", file, message: `opening ${file}` };
+    // FOURTH MESSAGE, AND IT IS OURS (divergence 4, t12 review M2): canon has three, and prints `opening …`
+    // for any spawn that did not error — a non-zero editor exit included (`wDo`, L317693). We tell the user
+    // the editor came back unhappy, because the file is still there and the sentence is the only place they
+    // can learn that. Deliberate; the other three are canon's verbatim.
     return { status: "wrote", file, message: `wrote ${file} · ${opened === "no-editor" ? "no $VISUAL/$EDITOR set" : "the editor exited non-zero"}` };
   } catch (e) {
     // canon's own wording (L549353), and it covers the write as well as the render — from the user's side

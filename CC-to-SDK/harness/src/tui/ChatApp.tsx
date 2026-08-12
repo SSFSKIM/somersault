@@ -48,6 +48,7 @@ import { FullscreenFrame } from "./FullscreenFrame.js";
 import { FullscreenViewport } from "./FullscreenViewport.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
+import { editExternal } from "./externalEditor.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
@@ -249,11 +250,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  `/status` would report the mode the session started in. T15 must route the live value into `useChat`
    *  rather than let this invariant lapse silently. */
   renderer?: RendererChoice;
-  /** FSW TASK 12 — T6's `guard.aroundSubprocess`, threaded down for the ONE child this tree spawns itself: the
-   *  `v` dump's editor, which must run with the main screen in front of it. A prop rather than a context for
-   *  the same reason `renderer` is one, and absent everywhere the guard is (classic launches, embedders,
-   *  component tests) — where the guard would be inert anyway, since it is armed only by the fullscreen
-   *  renderer. */
+  /** FSW TASK 12 — T6's `guard.aroundSubprocess`, threaded down for EVERY child this tree hands the terminal
+   *  to: the `v` dump's editor, and (t12 review, I1) the composer's ctrl+g / ctrl+x ctrl+e and the plan
+   *  dialog's ctrl+g, all of which must run with the main screen in front of them. A prop rather than a
+   *  context for the same reason `renderer` is one, and absent everywhere the guard is (classic launches,
+   *  embedders, component tests) — where the guard would be inert anyway, since it is armed only by the
+   *  fullscreen renderer. */
   aroundSubprocess?: <T>(run: () => T) => T;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
@@ -958,12 +960,26 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const dumpNow = () => {
     const run = () => {
       const r = dumpTranscript({ items: () => detailItems("detail-all"), ...(aroundSubprocess ? { around: aroundSubprocess } : {}) });
-      notify({ key: "transcript-dump", text: r.message, timeoutMs: TRANSCRIPT_DUMP_NOTICE_MS });
+      // …AND THE RECEIPT PREEMPTS (t12 review, M1). Absent `priority` reads as `"low"` (notifications.ts:97),
+      // so behind a hint that is still holding `current` the answer to a keystroke would arrive seconds after
+      // the key — canon writes its status the moment the handler returns (L549349).
+      notify({ key: "transcript-dump", text: r.message, priority: "immediate", timeoutMs: TRANSCRIPT_DUMP_NOTICE_MS });
     };
     if (suspendInput) void suspendInput(async () => run()); else run();
   };
   const dumpRef = useRef(dumpNow); dumpRef.current = dumpNow;
   const dumpTranscriptNow = useCallback(() => dumpRef.current(), []);
+  // …AND THE DUMP IS NOT THE ONLY EDITOR (t12 review, I1). The composer's `chat:externalEditor` (ctrl+g,
+  // ctrl+x ctrl+e) and the plan dialog's ctrl+g spawn `$VISUAL`/`$EDITOR` with stdio "inherit" too, and an
+  // editor left on the alternate screen is worse than one that never got it: the child's OWN rmcup on exit
+  // drops the terminal to the main screen while the guard still believes it holds the alt one, so the next
+  // frame paints over the user's shell scrollback. Same handoff, same seam — `EditorIO.around`.
+  //   `undefined` WITHOUT A GUARD, deliberately: both children then take their own defaults (the composer's
+  // `realEditExternal`, the dialog's default `editor` param) and run the child where we stand, which is what a
+  // main-screen editor has always done. Memoized on the guard so the composer's prop identity is stable.
+  const editExternalHere = useMemo(
+    () => (aroundSubprocess ? (text: string) => editExternal(text, { around: aroundSubprocess }) : undefined),
+    [aroundSubprocess]);
   // ── FSW TASK 9 — TWO RENDERERS, ONE TREE ──────────────────────────────────────────────────────────────
   // The split below is the SHAPE of the whole M2b renderer, so it is worth saying what it deliberately is not.
   // It is not two component trees: the transcript region and everything under it (the "dock" — panels, turn
@@ -1195,7 +1211,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     // in bypass cannot be granted it. `state.model` is undefined on an attach client until a
                     // turn ends, which PlanDialog reads as "auto not available".
                     ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)}
-                        model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} rows={terminalRows()} />
+                        model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} rows={terminalRows()}
+                        // I1: ctrl+g from this dialog is the same terminal handoff the composer's is.
+                        {...(editExternalHere ? { editor: editExternalHere } : {})} />
                     : null
                   : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} onInputActivity={noteInputActivity} waitingForPermission={inputOwnerRef.current === "typing"} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
                       // F5 t12: the composer's disk seed, its history append and now its inline search all
@@ -1203,6 +1221,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // takes — so a test that points ChatApp at a temp fleet root points BOTH surfaces
                       // there. Undefined in the product, where the composer falls back to `process.env`.
                       historyEnv={deps?.env}
+                      // FSW T12 review (I1): ctrl+g / ctrl+x ctrl+e inside the alt screen. Absent without a
+                      // guard, so the composer keeps its own `realEditExternal` on every main-screen launch.
+                      {...(editExternalHere ? { editExternal: editExternalHere } : {})}
                       queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
                       submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef}
                       // WAVE C TASK 2: one queue for the whole app (useChat owns it), and the composer's

@@ -20,7 +20,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { render } from "ink-testing-library";
 import { Box, Text } from "ink";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FullscreenViewport } from "../../src/tui/FullscreenViewport.js";
@@ -28,9 +28,12 @@ import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { RegionPager, pagerChromeRows } from "../../src/tui/RegionPager.js";
 import { jumpPillText } from "../../src/tui/JumpPill.js";
 import { dumpDir } from "../../src/tui/transcriptDump.js";
+import { createAltScreenGuard, ENTER_ALT, EXIT_ALT } from "../../src/tui/altScreen.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { YANK_HINT_TEXT } from "../../src/tui/ChatComposer.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
+import type { PendingEntry } from "../../src/permissions/pending.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
@@ -425,6 +428,116 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     expect(text).toContain("ALPHA-59");
     rmSync(written[0]!, { force: true });
     r.unmount();
+  });
+
+  // FSW T12 REVIEW (M1) — THE RECEIPT IS AN ANSWER TO A KEYSTROKE, so it takes the row now. A notification
+  // with no `priority` reads as `"low"` (notifications.ts:97) and waits out whatever is holding `current` —
+  // here the kill-paste hint's five seconds, which is five seconds of the user not being told where their
+  // transcript went. Canon writes its status the moment the handler returns (L549349).
+  it("puts the dump's receipt on the row in front of a hint that is still holding it", async () => {
+    const before = new Set(existing());
+    const r = renderWithKeymap(app("fullscreen"));
+    await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+    await tick();
+    r.stdin.write("abcd"); await tick();
+    r.stdin.write("\x15");                                              // ctrl+u — the kill-paste hint (immediate, 5 s)
+    await waitFor(() => (r.lastFrame() ?? "").includes(YANK_HINT_TEXT));
+    r.stdin.write(PAGE_UP); await tick();
+    r.stdin.write("v"); await tick(); await tick();
+    expect(r.lastFrame()).toContain("wrote /");                         // the receipt, on the very next frame
+    //   ^ the head of it: the row is one terminal width wide and the notification's own truncation eats the
+    //     file name on any machine whose temp dir is deep enough, so the path's first byte is the pin.
+    expect(r.lastFrame()).not.toContain(YANK_HINT_TEXT);                // …with the hint displaced, not queued in front
+    for (const f of existing().filter((x) => !before.has(x))) rmSync(f, { force: true });
+    r.unmount();
+  });
+
+  // ── FSW T12 REVIEW (I1) — EVERY child this tree hands the terminal to, not only the dump's editor ────────
+  // `v`'s editor was wired to the guard and the composer's ctrl+g / ctrl+x ctrl+e was not. A child spawned with
+  // stdio "inherit" while the alternate screen is up issues its OWN rmcup on exit: the terminal is back on the
+  // main screen and the guard still believes it is not, so the very next frame paints over the user's shell
+  // scrollback — the one thing fullscreen promises never to touch.
+  //   THE EDITOR IS OURS, a two-line script and never a real `$EDITOR` (the file-level unset above stays in
+  // force for every other test). It rewrites the temp file `editExternal` round-trips, so `EDITED` arriving in
+  // the composer is what proves the spawn happened INSIDE the brackets rather than that the wrapper merely
+  // wrote two escape sequences somewhere.
+  const SPAWN = "<spawnSync $VISUAL>";
+  const fakeEditor = () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccx-t12-editor-"));
+    const path = join(dir, "editor.sh");
+    writeFileSync(path, '#!/bin/sh\nprintf EDITED > "$1"\n', { mode: 0o755 });
+    return { path, clean: () => rmSync(dir, { recursive: true, force: true }) };
+  };
+  /** The guard exactly as `chatMain` builds it — armed for fullscreen, never armed for a classic launch, which
+   *  passes `aroundSubprocess` down all the same — plus a marker written at the point the child runs. */
+  const guarded = (armed: boolean) => {
+    const writes: string[] = [];
+    const guard = createAltScreenGuard({ writeSync: (s) => { writes.push(s); } });
+    if (armed) { guard.enter(); writes.length = 0; }
+    const around = <T,>(run: () => T): T => guard.aroundSubprocess(() => { writes.push(SPAWN); return run(); });
+    return { writes, guard, around };
+  };
+  const guardedApp = (mode: "fullscreen" | "classic", around: <T>(run: () => T) => T, session = fakeRemote()) => (
+    <ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+      renderer={{ mode, reason: "env_on" }} initialEntries={alphaEntries()}
+      deps={{ columns: () => 80, rows: () => 24 }} aroundSubprocess={around} />
+  );
+  const planEntry = (): PendingEntry =>
+    ({ sessionId: "s", toolUseID: "p", toolName: "ExitPlanMode", kind: "plan", input: { plan: "ship it" }, createdAt: Date.now() });
+
+  it("hands the main screen back around the COMPOSER's editor, and takes the alt screen again after it", async () => {
+    const ed = fakeEditor(), { writes, guard, around } = guarded(true);
+    process.env.VISUAL = ed.path;
+    try {
+      const r = renderWithKeymap(guardedApp("fullscreen", around));
+      await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+      await tick();
+      r.stdin.write("\x07");                                            // ctrl+g — `chat:externalEditor`
+      await waitFor(() => (r.lastFrame() ?? "").includes("EDITED"));
+      const child = writes.indexOf(SPAWN);
+      expect(child).toBeGreaterThan(0);
+      expect(writes.slice(0, child)).toContain(EXIT_ALT);                // rmcup BEFORE the child
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT]);              // …and smcup after it, nothing between
+      expect(guard.active()).toBe(true);                                 // the guard owns the screen across the handoff
+      r.unmount();
+    } finally { process.env.VISUAL = ""; ed.clean(); }
+  });
+
+  // The main screen is the case the wrapper must not change: `chatMain` hands `aroundSubprocess` down in BOTH
+  // modes and the guard is simply never armed, so the editor runs where we stand and not one escape is written.
+  it("writes no alt-screen bytes at all when the guard is not armed", async () => {
+    const ed = fakeEditor(), { writes, around } = guarded(false);
+    process.env.VISUAL = ed.path;
+    try {
+      const r = renderWithKeymap(guardedApp("classic", around));
+      await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+      await tick();
+      r.stdin.write("\x07");
+      await waitFor(() => (r.lastFrame() ?? "").includes("EDITED"));
+      expect(writes).toEqual([SPAWN]);
+      r.unmount();
+    } finally { process.env.VISUAL = ""; ed.clean(); }
+  });
+
+  // The plan dialog spawns the same editor from the same key, from a surface where the composer is not even
+  // mounted — so it needs the prop in its own right, not by inheriting the composer's.
+  it("brackets the plan dialog's ctrl+g editor the same way", async () => {
+    const ed = fakeEditor(), { writes, around } = guarded(true);
+    const fake = fakeRemote();
+    process.env.VISUAL = ed.path;
+    try {
+      const r = renderWithKeymap(guardedApp("fullscreen", around, fake));
+      await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+      fake.parkPermission(planEntry());
+      await waitFor(() => (r.lastFrame() ?? "").includes("Ready to code?"));
+      r.stdin.write("\x07");
+      await waitFor(() => writes.includes(ENTER_ALT));
+      const child = writes.indexOf(SPAWN);
+      expect(child).toBeGreaterThan(0);
+      expect(writes.slice(0, child)).toContain(EXIT_ALT);
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT]);
+      r.unmount();
+    } finally { process.env.VISUAL = ""; ed.clean(); }
   });
 
   // The classic renderer is untouched: there the committed transcript is in scrollback above the frame, so the
