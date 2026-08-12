@@ -302,9 +302,11 @@ live("M3 acceptance: fleet adoption, workspace and shell over one live host — 
   // are asserted empty at the end of each half, so the net can never silently mask a park.
   const autoAllowThreads = new Set<string>();
   const autoAllowed: string[] = [];
-  // OBLIGATION 2's tripwire, armed for the whole file: `thread/reopen` resolves promises whose query died,
-  // and the SDK's own control-response write to a dead transport is the thing that could reject with nobody
-  // listening. Collected rather than merely left to vitest's default so the reopen leg can NAME it.
+  // OBLIGATION 2's tripwire, armed for the whole file: a dying engine settles its own park through the SDK's
+  // abort of the pending canUseTool request, and `thread/reopen`'s `reset()` resolves whatever a death left
+  // behind — either way an answer is written over a transport that is going or already gone, which is the
+  // thing that could reject with nobody listening. Collected rather than merely left to vitest's default so
+  // the reopen leg can NAME it.
   const unhandled: string[] = [];
   const onUnhandled = (reason: unknown): void => { unhandled.push(reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)); };
 
@@ -769,11 +771,18 @@ live("M3 acceptance: fleet adoption, workspace and shell over one live host — 
     expect(autoAllowed, `a decision parked after the acceptance park — a leg above only passed because the net answered for it: ${JSON.stringify(autoAllowed)}`).toEqual([]);
   }, 300_000);
 
-  it("OBLIGATION 2 — inProcess reopen: a park survives its engine's death, the recovery settles it, and a follow-up turn works", async () => {
-    // The reopen leg is the canUseTool-over-dead-transport probe (ledger minor 54): `reset()` resolves
-    // promises whose query has already ended, and the SDK's own control-response write to a dead subprocess
-    // is where an unhandled rejection would surface. Everything below is arranged so that path is actually
-    // taken — a park OUTSTANDING at the moment the engine dies.
+  it("OBLIGATION 2 — inProcess engine death settles its park AT DEATH TIME (SDK abort → onAutoSettle); reopen recovers a clean slate", async () => {
+    // PREMISE CORRECTED BY THE KEYED RUN (spec `## Surprises & Discoveries`, 2026-08-12 — "A park does NOT
+    // survive its engine's death on the live inProcess path"). This leg was written expecting a park to sit
+    // stranded until `thread/reopen`'s `reset()` swept it. Live, SIGKILLing the engine's CLI child makes the
+    // SDK ABORT the pending canUseTool request, so `PendingDecisions.onAutoSettle` (pending.ts:83,100 — the
+    // request's abort-signal path) settles the park `by:"system"` deny and the broker broadcasts
+    // `decision/resolved` AT DEATH TIME, minutes before the reopen. So the death half asserts that settle,
+    // and the reopen half asserts what the reopen actually owns here: a clean slate and a working engine.
+    // `reset()` remains the BELT for parks whose abort signal never fires (fabricated views, non-aborting
+    // death flavors) — the unit suite owns that path.
+    // The arrangement is unchanged: a park OUTSTANDING when the engine dies is still exactly the
+    // canUseTool-over-dead-transport path (ledger minor 54) this leg exists to walk.
     const before = new Set(childPids());
     const started = await a.call("thread/start", {
       // `settingSources: []` is load-bearing exactly as in the M1/M2 acceptances: a developer's own
@@ -807,6 +816,14 @@ live("M3 acceptance: fleet adoption, workspace and shell over one live host — 
     const failed = await a.waitFor("turn/completed (the turn the death took with it)", 120_000,
       (n) => n.method === "turn/completed" && n.params.turn?.id === deadTurnId, markA);
     expect(failed.params.turn.status).toBe("failed");
+    // THE SETTLE — AT DEATH TIME, not at reopen: the SDK's abort of the pending canUseTool request reached
+    // our broker, and a client that was told about a park is owed a terminal event for it. Waited from
+    // `markA` (taken before the turn, i.e. before the death), NOT from the reopen's mark: by now it is
+    // already in the buffer, which `waitFor` handles by scanning everything since the mark before parking.
+    const settled = await a.waitFor("decision/resolved (the park, settled by its engine's death)", 60_000,
+      (n) => n.method === "decision/resolved" && n.params.toolUseId === strandedId, markA);
+    expect(settled.params.by).toBe("system");
+    expect(settled.params.answer).toEqual({ kind: "deny" });
     // The engine handle, read the way the M2 acceptance reads it — this test owns the server object, and
     // `isEnded()` is the ONLY dead-engine signal the wire's own -33005 gate is allowed to consult.
     const record: any = server.registry.get(reopenThreadId);
@@ -815,22 +832,18 @@ live("M3 acceptance: fleet adoption, workspace and shell over one live host — 
     const gone = await rpcError("a live-transport method on a dead thread", a.call("thread/usage/read", { threadId: reopenThreadId }, 30_000));
     expect(gone.code).toBe(ERR.ENGINE_GONE);
 
-    // THE RECOVERY. Armed first: every turn from here on must not park (the net), and the ghost park below
-    // is settled by the reopen itself rather than answered by anyone.
+    // THE RECOVERY. Armed first: every turn from here on must not park (the net).
     autoAllowThreads.add(reopenThreadId);
     const markR = a.mark();
     const reopened = await a.call("thread/reopen", { threadId: reopenThreadId }, 300_000);
     expect(reopened.ok).toBe(true);
-    // The dead conversation's park is SETTLED, not left listing: its awaiter is provably gone, and a client
-    // that was told about a park is owed a terminal event for it.
-    const ghost = await a.waitFor("decision/resolved (the stranded park)", 60_000,
-      (n) => n.method === "decision/resolved" && n.params.toolUseId === strandedId, markR);
-    expect(ghost.params.by).toBe("system");
-    expect(ghost.params.answer).toEqual({ kind: "deny" });
     // The established "engine swapped, resync" signal: the epoch moved, so every outstanding cursor is stale.
     const rewound = await a.waitFor("thread/rewound (the reopen)", 60_000, (n) => n.method === "thread/rewound" && n.params.threadId === reopenThreadId, markR);
     expect(rewound.params).toHaveProperty("sessionId");
-    expect((await a.call("decision/list", { threadId: reopenThreadId }, 30_000)).data, "a ghost park is still listing after the reopen").toEqual([]);
+    // A CLEAN SLATE — on this path that means no ghost ever EXISTED for the reopen to sweep (the death
+    // settled it above), which is a different fact from "the reopen settled one" and the reason nothing
+    // else is expected after `markR`. `reset()` is the belt for the non-aborting flavors; unit suite owns it.
+    expect((await a.call("decision/list", { threadId: reopenThreadId }, 30_000)).data, "a park is still listing on the reopened thread").toEqual([]);
 
     // …and the thread is a working thread again, on a real engine.
     const markF = a.mark();
@@ -842,7 +855,8 @@ live("M3 acceptance: fleet adoption, workspace and shell over one live host — 
     expect((await a.call("thread/close", { threadId: reopenThreadId }, 60_000)).ok).toBe(true);
     held.delete(reopenThreadId);
     // OBLIGATION 2's verdict. Vitest fails a run on an unhandled rejection anyway; asserting it HERE is what
-    // names the suspect — the reopen's `reset()` resolving canUseTool promises whose transport is gone.
+    // names the suspect — a canUseTool answer written over a transport that is gone, whether by the death's
+    // own abort-time settle or by the reopen's `reset()`.
     expect(unhandled, `unhandled rejection(s) during this run — the dead-transport reopen path above is the suspect this tripwire exists for:\n${unhandled.join("\n---\n")}`).toEqual([]);
     expect(autoAllowed, `a decision parked on the recovered thread: ${JSON.stringify(autoAllowed)}`).toEqual([]);
   }, 900_000);
