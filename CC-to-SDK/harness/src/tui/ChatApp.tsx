@@ -34,7 +34,7 @@
 // different question (which surface is VISIBLE), and F6 TASK 5 gave it a second job: it is now the ONE
 // derivation this file reads back to decide what to draw — which dialog slot (`inlineDecision`), whether the
 // composer's slot is empty, and whether the composer is being suppressed rather than replaced (`"typing"`).
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
@@ -44,6 +44,7 @@ import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
+import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { clearViewport } from "./clearViewport.js";
 import { physicalRows } from "./resizeRepaint.js";
 import { Line } from "./Line.js";
@@ -210,9 +211,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // fresh numbers to their consumers.
   //   · `deps.columns` still comes FIRST, for the same reason useChat prefers it — the frame-capture fixture
   //     and the tests pin a width; the resize event is when we go back and ask it again.
-  //   · No `deps` override for the HEIGHT (the composer's paste-chip threshold, F5 task 3): nothing pins a
-  //     row count the way the frame fixtures pin a width, and 24 is the POSIX default pasteChips uses.
-  const readSize = () => ({ columns: deps?.columns?.() ?? stdout?.columns ?? 80, rows: stdout?.rows ?? 24 });
+  //   · The HEIGHT gained the same seam in FSW Task 3 (plan review I4), and for a stronger reason than the
+  //     width had: the terminal's row count is now an INPUT to what gets committed to scrollback and what
+  //     stays live, and `ink-testing-library`'s stdout stub reports no `rows` at all — so without it every
+  //     component test would be stuck at the 24-row POSIX default and the boundary could be pinned at no
+  //     other geometry. Same precedence as the width: the injected reader first, the real terminal next.
+  const readSize = () => ({ columns: deps?.columns?.() ?? stdout?.columns ?? 80, rows: deps?.rows?.() ?? stdout?.rows ?? 24 });
   const readSizeRef = useRef(readSize); readSizeRef.current = readSize;      // the effect below runs once; the reader must not be a mount-time closure
   const [size, setSize] = useState(readSize);
   //   · RESAMPLE ONCE AFTER SUBSCRIBING (review finding). The read above happens during RENDER; the listener
@@ -770,9 +774,40 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     else dismissNotification(ESC_REWIND_KEY);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [escArmVisible]);
+  // FSW TASK 3 — THE LIVE WINDOW, DERIVED AT RENDER TIME. `useChat` decided at the last settle which rows
+  // are gone for good (they are in `state.staticItems`, written into Ink's append-only <Static>); this
+  // decides which of the rows that are LEFT fit on the screen as it is right now. It has to live here, and
+  // it has to be a derivation rather than state, for two reasons that are one reason:
+  //   · A commit is irreversible, so it must only ever ride a SETTLED geometry. A window is free, so it can
+  //     — and must — follow a resize drag frame by frame. Making the same decision once, in reconcile,
+  //     would either commit rows on a transient 40-column drag or leave the subtree over its budget for the
+  //     whole drag; there is no single cadence that is right for both.
+  //   · Ink's own resize handling re-lays-out the existing element tree synchronously (ink.js:83) and the
+  //     tall-frame cliff (ink.js:121) is checked on THAT pass. A bound that is only re-evaluated when the
+  //     document changes is not a bound at all during the window that matters.
+  // Fed the UNPUBLISHED tail only — `liveWindow.ts`'s input contract, and the reason a committed row can
+  // never reappear in the live subtree when the terminal grows (it would then be painted twice, once out of
+  // `fullStaticOutput` and once out of the frame). `state.staticItems` is BOTH the exclusion set and the
+  // signal that the set changed: `publishedIds` is a ref and cannot re-run a memo, but every id it gains is
+  // added in the same breath as an append to this array, so its identity is the published-count signal. A
+  // Set rather than a length: the two lists agree today, but "published" is an id question and reading it
+  // as a prefix length would silently mis-slice the day a projection re-keys an item under it.
+  // EMPTY WHILE `paneOwned`: the dialog owns the screen, and this tree already blanks the pending and
+  // streaming regions on that same flag — so the dock budget (`mainWindowCap`'s fourteen rows, measured for
+  // the steady state) never has to cover a dialog as well.
+  const windowItems = useMemo(() => {
+    if (paneOwned) return EMPTY_ITEMS;
+    const published = new Set(state.staticItems.map((item) => item.id));
+    const unpublished = state.finalizedItems.filter((item) => !published.has(item.id));
+    // `size` (not `size.rows`) is the dependency on purpose: the items were projected at a WIDTH, so a
+    // column change is as much a reason to re-derive as a row change is. `nextSize` keeps the identity
+    // stable while neither moves, so this costs nothing on an ordinary re-render.
+    const cap = Math.max(0, mainWindowCap(size.rows) - WINDOW_SLACK);
+    return selectLiveWindow(unpublished, cap, cap).window;
+  }, [state.finalizedItems, state.staticItems, size, paneOwned]);
   return (
     <Box flexDirection="column">
-      <Transcript key={state.staticEpoch} staticItems={state.staticItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
+      <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
       {todosOpen && !paneOwned ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
       {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407975, mounted at L407973)
           takes the whole slot over while a retry status exists, so the row REPLACES the spinner rather than

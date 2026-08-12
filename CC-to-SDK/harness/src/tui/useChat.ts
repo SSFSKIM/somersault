@@ -31,6 +31,7 @@ import { userEchoLines, type RenderLine } from "./render.js";
 import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState } from "./foldPendingState.js";
@@ -92,7 +93,12 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; /** W-C T11 (EP-C6): the session's live effort level, and whether the live model has the axis at all (undefined = the catalog has not answered yet). */ effort?: EffortLevel; effortSupported?: boolean; /** What the picker's/dialog's `(default)` clause compares against — see `DEFAULT_EFFORT`. */ defaultEffort: EffortLevel; effortDialog: { open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[];
+  /** FSW Task 3: the WHOLE compact projection, of which `staticItems` is the committed head. The tail
+   *  (everything whose id is not in `staticItems`) is what the render-time live window selects from — see
+   *  `reconcile`. Consumers that want "the finalized transcript" want THIS; `staticItems` answers the
+   *  narrower question "what has already been written to scrollback and can never be repainted". */
+  finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; /** W-C T11 (EP-C6): the session's live effort level, and whether the live model has the axis at all (undefined = the catalog has not answered yet). */ effort?: EffortLevel; effortSupported?: boolean; /** What the picker's/dialog's `(default)` clause compares against — see `DEFAULT_EFFORT`. */ defaultEffort: EffortLevel; effortDialog: { open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -154,7 +160,11 @@ export function useChat(
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string, dir?: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
+  // `rows` (FSW Task 3) is `columns`'s sibling and exists for the same two reasons: the terminal HEIGHT is
+  // now an input to the rendering boundary (it sets the live window's budget), and `ink-testing-library`'s
+  // stdout stub reports no `rows` at all — so without a seam every component test would silently reconcile
+  // against the 24-row POSIX default and no test could pin the boundary at any other geometry.
+  deps: { now?: () => number; columns?: () => number; rows?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string, dir?: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
     /** Wave C Task 1/2: the notification queue. Injected so a test can drive its timers synthetically. */
     notifications?: NotificationStore;
     /** Wave C Task 7: the duration row's verb. Upstream picks it uniformly at random (`SvH`), which would
@@ -174,6 +184,7 @@ export function useChat(
   const cwd = opts.cwd ?? process.cwd();
   const nowFn = deps.now ?? (() => Date.now());
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
+  const rowsFn = deps.rows ?? (() => process.stdout.rows ?? 24);
   const scheduleRepaint = deps.scheduleRepaint ?? ((cb: () => void, ms: number) => { const id = setInterval(cb, ms); return () => clearInterval(id); });
   const home = deps.home ?? homedir(), platform = deps.platform ?? process.platform;
   // F3 Task 9 (LT20): the background hint is DERIVED from the live binding table on every render — a rebind of
@@ -244,10 +255,26 @@ export function useChat(
   // (not `useRef(new …)`) so a re-render does not allocate a state object it immediately discards.
   const pendingStateRef = useRef<FoldPendingState | null>(null);
   if (pendingStateRef.current === null) pendingStateRef.current = new FoldPendingState({ now: nowFn });
+  // ── FSW Task 3: the rendering boundary, in two phases ─────────────────────────────────────────────────
+  /** The hard bound on the live (re-rendered) subtree, in physical rows: what the terminal has left once the
+   *  dock is paid for, LESS `WINDOW_SLACK`. The subtraction is the whole safety margin — `mainWindowCap`
+   *  measures the dock at its maximum, so a window filled to that cap under a maximal dock sums to exactly
+   *  `rows` and takes Ink's tall-frame branch. Read live (never captured): commit is settle-driven, so the
+   *  honest budget is the one the terminal has at the moment something settles. */
+  const commitCap = (): number => Math.max(0, mainWindowCap(rowsFn()) - WINDOW_SLACK);
+  /** The FULL compact projection, retained rather than discarded. It is what the render-time window is
+   *  selected from (ChatApp), and `staticItems` is now strictly its committed HEAD rather than all of it. */
+  const initialFinalized = useRef<readonly RenderItem[] | null>(null);
+  if (initialFinalized.current === null) initialFinalized.current = projectCompact(documentRef.current!, projectionContext());
+  const [finalizedItems, setFinalizedItems] = useState<readonly RenderItem[]>(initialFinalized.current);
+  // THE MOUNT PUBLISH IS THE SAME SPLIT, not a special case: a resumed or attached session used to dump its
+  // whole history into <Static> here, which put the tail out of reach of reflow before the first frame was
+  // ever painted. Only what the window cannot hold is published; the rest is live from the start.
   const [staticItems, setStaticItems] = useState<readonly RenderItem[]>(() => {
-    const items = projectCompact(documentRef.current!, projectionContext());
-    for (const item of items) publishedIds.current.add(item.id);
-    return items;
+    const cap = commitCap();
+    const { commit } = selectLiveWindow(initialFinalized.current!, cap, cap);
+    for (const item of commit) publishedIds.current.add(item.id);
+    return commit;
   });
   const [pendingItems, setPendingItems] = useState<readonly RenderItem[]>(() => livePending());
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
@@ -851,6 +878,17 @@ export function useChat(
     if (!live) return;
     for (const [id, ms] of live.thinkingDurations(nowFn())) thoughtMsRef.current.set(`message:${id}`, ms);
   }
+  /** FSW Task 3 — THE COMMIT PHASE, and only that. What used to happen here (every unseen finalized item
+   *  goes straight into Static) is now split in two, because "this row is settled" and "this row has
+   *  scrolled out of reach" are different facts that become true at different moments:
+   *    · here, at SETTLE: an item is published once the live window can no longer hold it. Publication is
+   *      irreversible — it is a write into Ink's append-only <Static> — so it must never ride a transient
+   *      geometry. Reconcile runs when the DOCUMENT moves, which is the one cadence that is not a drag.
+   *    · in ChatApp, at RENDER: which of the still-unpublished tail is on screen this frame. That one is
+   *      cheap, reversible, and has to keep up with a resize, so it is a derivation and not a commit.
+   *  The filter order is what makes the ratchet automatic (`liveWindow.ts`'s input contract): published
+   *  items are removed BEFORE the selector sees them, so nothing already in Static can be re-selected into
+   *  the live subtree and printed a second time. `publishedIds` remains the sole authority. */
   function reconcile(): void {
     if (disposed.current) return;
     // BEFORE the projection, not after: a group row's item id is derived from its membership alone, so a
@@ -858,10 +896,13 @@ export function useChat(
     mergeThoughtMs();
     const context = projectionContext();
     const finalized = projectCompact(documentRef.current!, context);
-    const unseen = finalized.filter((item) => !publishedIds.current.has(item.id));
-    if (unseen.length) {
-      for (const item of unseen) publishedIds.current.add(item.id);
-      setStaticItems((s) => [...s, ...unseen]);
+    setFinalizedItems(finalized);
+    const unpublished = finalized.filter((item) => !publishedIds.current.has(item.id));
+    const cap = commitCap();
+    const { commit } = selectLiveWindow(unpublished, cap, cap);
+    if (commit.length) {
+      for (const item of commit) publishedIds.current.add(item.id);
+      setStaticItems((s) => [...s, ...commit]);
     }
     setPendingItems(livePending(context));
   }
@@ -2639,5 +2680,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

@@ -23,8 +23,16 @@ import { renderItemHeight } from "./pager.js";
  *  print one `⎿` and then reflow its two halves independently on resize). */
 export interface LiveWindowResult { window: readonly RenderItem[]; commit: readonly RenderItem[] }
 
-/** The cushion a caller adds to the rows it actually needs reflowed when computing `targetRows`: two rows of
- *  overshoot, so a frame that grows by a line does not immediately fall out of the selected window. */
+/** Two rows of cushion between the window and the cliff. AMENDED BY ITS FIRST CONSUMER (Task 3): Task 1
+ *  shipped this as "overshoot a caller adds to `targetRows`", which was the wrong sign. `mainWindowCap`
+ *  below returns `rows - dock`, and the dock figure it subtracts is the dock at its MAXIMUM — so a window
+ *  filled to exactly that cap, sitting under a dock that is actually that tall, sums to `rows` and takes
+ *  Ink's `outputHeight >= stdout.rows` branch (see the note above) on the very frame the cap was supposed
+ *  to prevent. The caller therefore HOLDS THIS BACK from the cap it passes in
+ *  (`max(0, mainWindowCap(rows) - WINDOW_SLACK)`, ChatApp/useChat), which is the spec's own arithmetic —
+ *  `W = rows − dockRows − SLACK`, design §A1 — and leaves the live subtree at `rows − 2` in the worst case.
+ *  Adding it to `targetRows` instead would have made the window bigger, not safer: past the cap the target
+ *  has no say at all, so it would have been a no-op in every case except the one it endangered. */
 export const WINDOW_SLACK = 2;
 
 /** The measured steady-state main-screen dock: the rows that are never the transcript's. It is a measurement,

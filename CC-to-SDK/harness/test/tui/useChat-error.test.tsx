@@ -21,6 +21,9 @@ import { fakeRemote } from "./helpers/fakeRemote.js";
 import { useChat } from "../../src/tui/useChat.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
 
+// FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
+// the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
+// these content assertions are actually about.
 const itemLines = (item: RenderItem): string[] => (item.kind === "line" ? [item.line.text] : item.body.map((l) => l.text));
 const API_ERROR_TEXT = "Failed to authenticate. API Error: 401 probe 96 synthetic 401";
 // Probe 96's synthetic assistant frame, key-for-key (`model:"<synthetic>"`, `is_api_error_message:true`).
@@ -36,7 +39,7 @@ async function runFailedTurn(endError?: string): Promise<string[]> {
     // Clock and verb injected so the duration row below the failure is one fixed string, not a regex over
     // eight verbs and whatever the wall clock spent between two `setTimeout`s.
     const c = useChat(() => fake, {}, { now: () => 1000, pickTurnVerb: () => "Crunched" });
-    rows = [...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines).filter((l) => l.trim());
+    rows = [...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines).filter((l) => l.trim());
     return <Text>x</Text>;
   }
   render(<H />);
@@ -69,7 +72,7 @@ describe("useChat: an API failure renders exactly one honest failure line", () =
     let rows: string[] = [];
     function H() {
       const c = useChat(() => fake);
-      rows = [...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines).filter((l) => l.trim());
+      rows = [...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines).filter((l) => l.trim());
       return <Text>x</Text>;
     }
     render(<H />);

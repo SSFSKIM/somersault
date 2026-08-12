@@ -163,8 +163,10 @@ describe("the same band on every surface", () => {
     const api: { run?: (s: string) => void; items?: readonly RenderItem[] } = {};
     function H() {
       const c = useChat(() => fake as unknown as ChatSession, {}, { columns: () => 24 });
-      api.run = c.submit; api.items = c.state.staticItems;
-      return <Text>{c.state.staticItems.length}</Text>;
+      // FSW T3: `finalizedItems`, not `staticItems` — the finalized projection is what this claim is about;
+      // `staticItems` is now only the part of it already committed to <Static>.
+      api.run = c.submit; api.items = c.state.finalizedItems;
+      return <Text>{c.state.finalizedItems.length}</Text>;
     }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));

@@ -33,7 +33,10 @@ async function tick() { await act(async () => { await new Promise((r) => setTime
  *  one (`deps.savePrefs ?? realSavePrefs`), which the temp-root env already redirects. */
 function Host({ fake, env, sink, savePrefs }: { fake: FakeRemote; env: NodeJS.ProcessEnv; sink: { text: string }; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void }) {
   const c = useChat(() => fake, {}, { env, savePrefs });
-  sink.text = [...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
+  // FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
+  // the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
+  // these content assertions are actually about.
+  sink.text = [...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
   return <Text>m:{c.state.mode}</Text>;
 }
 

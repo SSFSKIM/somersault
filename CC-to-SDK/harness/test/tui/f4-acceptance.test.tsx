@@ -392,9 +392,11 @@ const flatten = (items: readonly RenderItem[]): string[] => itemLines(items).map
 function EchoHost({ api }: { api: { run?: (p: string) => void; rows?: () => string[]; items?: () => RenderLine[] } }) {
   const chat = useChat(() => fakeRemote(), {}, { columns: () => ECHO_COLUMNS, platform: "linux", home: "/home/me" });
   api.run = chat.submit;
-  api.rows = () => [...flatten(chat.state.staticItems), ...flatten(chat.state.pendingItems)];
-  api.items = () => [...itemLines(chat.state.staticItems), ...itemLines(chat.state.pendingItems)];
-  return <Text>{chat.state.staticItems.length}</Text>;
+  // FSW T3: `finalizedItems`, not `staticItems` — the finalized projection is what this claim is about;
+  // `staticItems` is now only the part of it already committed to <Static>.
+  api.rows = () => [...flatten(chat.state.finalizedItems), ...flatten(chat.state.pendingItems)];
+  api.items = () => [...itemLines(chat.state.finalizedItems), ...itemLines(chat.state.pendingItems)];
+  return <Text>{chat.state.finalizedItems.length}</Text>;
 }
 async function waitFor(cond: () => boolean, timeout = 2000): Promise<void> {
   const start = Date.now();

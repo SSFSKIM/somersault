@@ -39,9 +39,12 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 // F1 Task 4: the transcript is `RenderItem[]` now — published Static rows, then the transient pending
 // region, then the in-flight partial lines, in exactly the order a reader sees them.
 const itemLines = (item: RenderItem): string[] => (item.kind === "line" ? [item.line.text] : item.body.map((l) => l.text));
-type ProjectedState = { state: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: { text: string }[] } };
+// FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
+// the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
+// these content assertions are actually about.
+type ProjectedState = { state: { finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: { text: string }[] } };
 function allText(c: ProjectedState): string {
-  return [...[...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines), ...c.state.streaming.map((l) => l.text)].join("|");
+  return [...[...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines), ...c.state.streaming.map((l) => l.text)].join("|");
 }
 function Host({ makeSession, prompt, initialPrompt }: { makeSession: () => ChatSession; prompt?: string; initialPrompt?: string }) {
   const c = useChat(makeSession, { initialPrompt });
@@ -529,7 +532,9 @@ describe("useChat", () => {
   it("clear() empties the transcript and fires the terminal viewport reset", async () => {
     let cleared = 0;
     const api: { run?: (s: string) => void; clear?: () => void } = {};
-    function H() { const c = useChat(() => fakeRemote(), {}, { clearViewport: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.staticItems.length}</Text>; }
+        // FSW T3: `finalizedItems`, not `staticItems` — the finalized projection is what this claim is about;
+    // `staticItems` is now only the part of it already committed to <Static>.
+    function H() { const c = useChat(() => fakeRemote(), {}, { clearViewport: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.finalizedItems.length}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("hi");  await waitFor(() => !frame(lastFrame).includes("L:0"));   // lines present
@@ -976,8 +981,10 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
 
   it("a task_started arriving mid-run does NOT break the fold: one group row, not two", async () => {
     const fake = fakeRemote();
-    let snap!: { staticItems: readonly RenderItem[] };
-    function H() { const c = useChat(() => fake); snap = { staticItems: c.state.staticItems }; return <Text>{allText(c)}</Text>; }
+    let snap!: { finalizedItems: readonly RenderItem[] };
+    // FSW T3: `finalizedItems`, not `staticItems` — the finalized projection is what this claim is about;
+    // `staticItems` is now only the part of it already committed to <Static>.
+    function H() { const c = useChat(() => fake); snap = { finalizedItems: c.state.finalizedItems }; return <Text>{allText(c)}</Text>; }
     render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
@@ -987,8 +994,8 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
     fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", uuid: "user-result-b", message: { content: [{ type: "tool_result", tool_use_id: "read-2", content: "b" }] } } });
     fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-3", content: [{ type: "text", text: "all done" }] } } });   // the breaker that publishes the run
-    await waitFor(() => snap.staticItems.some((i) => i.id.startsWith("group:")));
-    const groups = snap.staticItems.filter((i) => i.id.startsWith("group:"));
+    await waitFor(() => snap.finalizedItems.some((i) => i.id.startsWith("group:")));
+    const groups = snap.finalizedItems.filter((i) => i.id.startsWith("group:"));
     expect(groups).toHaveLength(1);
     expect(itemLines(groups[0]!)[0]).toContain("Read 2 files");
   });
@@ -1851,7 +1858,7 @@ describe("useChat's own emitted lines carry semantic tokens, not ANSI literals",
   function ColorHost({ makeSession, api, deps }: { makeSession: () => ChatSession; api: { run?: (s: string) => void; colors?: () => { text: string; color?: string }[] }; deps?: Parameters<typeof useChat>[2] }) {
     const c = useChat(makeSession, { cwd: "/proj" }, deps);
     api.run = c.submit;
-    api.colors = () => [...[...c.state.staticItems, ...c.state.pendingItems].flatMap((i) => (i.kind === "line" ? [i.line] : i.body)), ...c.state.streaming];
+    api.colors = () => [...[...c.state.finalizedItems, ...c.state.pendingItems].flatMap((i) => (i.kind === "line" ? [i.line] : i.body)), ...c.state.streaming];
     return <Text>{allText(c)}</Text>;
   }
   it("the ! echo reads `bashBorder` and a failed command's exit line reads `error`", async () => {
@@ -1901,10 +1908,13 @@ describe("useChat: one retained document behind every surface", () => {
   // the case below pins what the row does to the same sequence when it is on.
   it("keeps a settled-but-unclosed fold run visible in the dynamic region until a breaker publishes it", async () => {
     const fake = fakeRemote();
-    let snap!: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
+    // FSW T3: the split this case draws is compact-projection-vs-transient (`finalizedItems` vs
+    // `pendingItems`), which is what `staticItems` used to stand in for. Publication to <Static> is a
+    // separate, later boundary now, and is not what "published by a breaker" means here.
+    let snap!: { finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
     function H() {
       const c = useChat(() => fake, { initialShowTurnDuration: false });
-      snap = { staticItems: c.state.staticItems, pendingItems: c.state.pendingItems };
+      snap = { finalizedItems: c.state.finalizedItems, pendingItems: c.state.pendingItems };
       return <Text>{allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
@@ -1916,22 +1926,22 @@ describe("useChat: one retained document behind every surface", () => {
     await waitFor(() => snap.pendingItems.some((i) => i.id === "group:read-1:unclosed-row"));
     expect(frame(lastFrame)).toContain("Read 1 file (ctrl+o to expand)");
     expect(frame(lastFrame)).not.toContain("Reading 1 file");                       // settled form, not the active one
-    expect(snap.staticItems.filter((i) => i.id.startsWith("group:"))).toEqual([]);  // still unpublished — Static is append-only
+    expect(snap.finalizedItems.filter((i) => i.id.startsWith("group:"))).toEqual([]);  // still withheld: a growable run is not finalized
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });                         // a turn boundary is NOT a breaker
     await waitFor(() => frame(lastFrame).includes("Read 1 file (ctrl+o to expand)"));
     expect(snap.pendingItems.map((i) => i.id)).toEqual(["group:read-1:unclosed-row"]);
     fake.pushEvent({ kind: "message", data: CLOSING_PROSE });                       // the breaker publishes it
-    await waitFor(() => snap.staticItems.some((i) => i.id === "group:read-1:row"));
+    await waitFor(() => snap.finalizedItems.some((i) => i.id === "group:read-1:row"));
     expect(snap.pendingItems).toEqual([]);                                          // and the dynamic copy is gone the same render
     expect(frame(lastFrame).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);
   });
 
   it("with the duration row ON, turn end IS the breaker — the run publishes above it, exactly once", async () => {
     const fake = fakeRemote();
-    let snap!: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
+    let snap!: { finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
     function H() {
       const c = useChat(() => fake, {}, { pickTurnVerb: () => "Worked" });
-      snap = { staticItems: c.state.staticItems, pendingItems: c.state.pendingItems };
+      snap = { finalizedItems: c.state.finalizedItems, pendingItems: c.state.pendingItems };
       return <Text>{allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
@@ -1941,11 +1951,11 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
     await waitFor(() => snap.pendingItems.some((i) => i.id === "group:read-1:unclosed-row"));
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await waitFor(() => snap.staticItems.some((i) => i.id === "group:read-1:row"));
+    await waitFor(() => snap.finalizedItems.some((i) => i.id === "group:read-1:row"));
     expect(snap.pendingItems).toEqual([]);
     // ORDER MATTERS: the run is published at a lower sequence than the row that broke it, so the fold row
     // reads above `✻ Worked for …` rather than under it.
-    const texts = snap.staticItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text)));
+    const texts = snap.finalizedItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text)));
     expect(texts.findIndex((t) => t.includes("Read 1 file"))).toBeLessThan(texts.findIndex((t) => t.startsWith("Worked for")));
     expect(frame(lastFrame).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);
   });
@@ -2106,7 +2116,7 @@ describe("useChat: one retained document behind every surface", () => {
   it("publishes ONE compact-summary row when the same compact_boundary frame is redelivered", async () => {
     const fake = fakeRemote();
     let items: readonly RenderItem[] = [];
-    function H() { const c = useChat(() => fake); items = c.state.staticItems; return <Text>{allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake); items = c.state.finalizedItems; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     const boundary = { type: "system", subtype: "compact_boundary", uuid: "compact-boundary-1" };
@@ -2126,7 +2136,7 @@ describe("useChat: one retained document behind every surface", () => {
     const fake = fakeRemote();
     const api: { detail?: (p: "detail-all" | "detail-collapsed") => readonly RenderItem[] } = {};
     let items: readonly RenderItem[] = [];
-    function H() { const c = useChat(() => fake); api.detail = c.detailItems; items = c.state.staticItems; return <Text>{allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake); api.detail = c.detailItems; items = c.state.finalizedItems; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "message", data: { type: "system", subtype: "informational", uuid: "sys-info-1", level: "info", content: "QUIET-INFO-LINE" } });

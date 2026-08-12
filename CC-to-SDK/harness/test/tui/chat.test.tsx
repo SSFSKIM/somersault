@@ -1850,9 +1850,17 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/output-style"); await waitFor(() => frame(lastFrame).includes("/output-style"));
     stdin.write("\r");
-    await waitFor(() => frame(lastFrame).includes("/output-style moved → Output style in /config"));
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // Settings opened, Config tab — not OutputStylePicker's own "Preferred output style" title
     expect(frame(lastFrame)).not.toContain("Preferred output style");
+    // FSW TASK 3, A DELIBERATE RE-PIN. This used to wait for the redirect line BEFORE the dialog appeared,
+    // on the premise that a transcript row is flushed into <Static> the instant it is emitted. It no longer
+    // is: a row lives in the live window until the window can no longer hold it, and a pane-owning dialog
+    // blanks that window for as long as it is up (`paneOwned`, ChatApp) — so a notice printed in the very
+    // commit that opens Settings is not painted underneath it. The claim the case exists to make is
+    // unchanged (the command prints the redirect rather than opening the picker); only WHEN the line is
+    // readable moved, so it is asserted where it is now true: on the way back out.
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("/output-style moved → Output style in /config"));
   });
 
   // F2 task 9: /keybindings is upstream's own file-opener now — the keymap IS customizable (the file merges
@@ -2422,7 +2430,12 @@ describe("<ChatApp> — retained source", () => {
     app.stdin.write("g"); await waitFor(() => plain(frame(app.lastFrame)).includes("lines 1–"));
     // Asserted at the TOP of the pager, where a wrongly-compact pager would show its own overflow row: at the
     // bottom anchor a duplicate above the viewport is invisible and the count passes vacuously.
-    expect(plain(frame(app.lastFrame)).match(OVERFLOW) ?? []).toHaveLength(1);                  // only the static copy: the pager is NOT compact
+    // FSW TASK 3, A DELIBERATE RE-PIN: the expected count went from one to ZERO, and strengthens rather than
+    // weakens. The `1` was the copy this run had already published into <Static>; since the commit boundary
+    // moved, a five-row run at 24 rows still fits the live window and the pager — which owns the pane —
+    // blanks that window while it is up. So every overflow row the frame could hold now belongs to the pager
+    // itself, and the claim "the pager is not showing the compact form" is read off directly.
+    expect(plain(frame(app.lastFrame)).match(OVERFLOW) ?? []).toHaveLength(0);                  // the pager is NOT compact
     app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));
     app.stdin.write("\x05"); await waitFor(() => plain(frame(app.lastFrame)).includes("… +37 lines (ctrl+e to show all)")); expect(plain(frame(app.lastFrame))).not.toContain("line 40");
     app.stdin.write("\x05"); app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40")); app.stdin.write("\x1b"); await waitFor(() => !plain(frame(app.lastFrame)).includes("line 40"));
@@ -2443,9 +2456,16 @@ describe("<ChatApp> — retained source", () => {
     app.stdin.write("\x1b"); await waitFor(() => !plain(frame(app.lastFrame)).includes("line 40"));
     const after = app.stdout.frames.slice(before);
     expect(after.length).toBeGreaterThan(0);
-    // Every frame the toggles and the close emitted still carries that row exactly once: never republished
-    // by a re-projection, never wiped by an accidental <Static> replacement.
-    for (const f of after) expect(plain(f).split(compactRow!)).toHaveLength(2);
+    // NEVER TWICE — the half of this case that is about republication, and the half that still binds. A
+    // re-projection that appended the row a second time, or a <Static> replacement that re-emitted the whole
+    // transcript, both show up here as a frame carrying it twice.
+    // FSW TASK 3, A DELIBERATE RE-PIN of the other half: "exactly once in EVERY frame" was a statement about
+    // <Static>, which held every finalized row from the moment it existed. The row now lives in the live
+    // window (five rows fit at 24) and the pager blanks that window while it owns the pane, so the frames
+    // emitted mid-pager legitimately carry it zero times. What must hold — and is asserted — is that it is
+    // never doubled anywhere, and that closing the pager brings back exactly one copy rather than a second.
+    for (const f of after) expect(plain(f).split(compactRow!).length).toBeLessThanOrEqual(2);
+    expect(plain(frame(app.lastFrame)).split(compactRow!)).toHaveLength(2);
   });
 });
 
