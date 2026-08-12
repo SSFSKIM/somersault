@@ -157,6 +157,10 @@ describe("thread/stop on a fleet thread (M3 §1e)", () => {
     expect(order).toEqual(["turn/completed", "warning", "thread/status/changed"]);
     expect(notifs(lines, "turn/completed")[0].params.turn).toEqual({ id: "t1@e0", status: "failed", error: "fleet host connection lost" });
     expect(notifs(lines, "warning")[0].params).toMatchObject({ threadId, code: "fleetConnectionLost" });
+    // "active", where the plain socket-death case below reports "idle" — the two paths legitimately differ:
+    // the failed `thread/stop` leaves its `closing` latch DOWN (server.ts) and a closing thread is busy by
+    // definition (threadBusyReason), so this death's status keeps saying so until `thread/close` recovers it.
+    expect(notifs(lines, "thread/status/changed").at(-1)!.params.status).toEqual({ state: "active" });
     expect(record.busy).toBe(false);
     expect(srv.pendingDecisions(threadId)).toEqual([]);
     expect(notifs(lines, "decision/resolved")).toEqual([]);   // dropped silently, as every death drops them

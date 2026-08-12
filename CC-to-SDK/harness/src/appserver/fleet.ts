@@ -49,8 +49,18 @@ const CONNECTION_LOST_HINT = `${CONNECTION_LOST} — close this thread and attac
 
 /** `thread/stop`'s roster-terminal poll (§1e). The host writes its terminal row from its own exit path,
  *  AFTER the sockets are gone, so there is a real gap between the EOF this method takes as success and the
- *  state a client will read next; 250 ms steps for 5 s covers it without spinning. */
-const STOP_POLL: StopPoll = { stepMs: 250, capMs: 5_000 };
+ *  state a client will read next; 250 ms steps cover that gap without spinning.
+ *
+ *  THE CAP IS COUPLED TO THE HOST'S OWN `DISPOSE_GRACE_MS` (host/host.ts) — tune either and you must look
+ *  at the other. `SessionHost.teardown` writes the terminal roster row EARLY and closes the server only in
+ *  its outer `finally`, so on the host's DESIGNED slow path (a wedged interrupt/dispose riding out the full
+ *  grace) the roster half of this poll satisfies at once while the socket stays open for the whole grace.
+ *  A cap equal to that grace therefore expires precisely inside the host's normal-but-slow window: the
+ *  client gets -33008 for a stop that was in fact working, the death latch is handed back, and the real
+ *  death a beat later announces a connection loss for a session the client DELIBERATELY ended — the exact
+ *  mis-announcement `expectDeath` exists to prevent. 10 s clears the 5 s grace with room for the socket
+ *  teardown tail behind it (`server.close()` destroys sockets immediately, host/server.ts). */
+const STOP_POLL: StopPoll = { stepMs: 250, capMs: 10_000 };
 export interface StopPoll { stepMs: number; capMs: number }
 const sleep = (ms: number): Promise<void> => new Promise((r) => { const t = setTimeout(r, ms); (t as { unref?: () => void }).unref?.(); });
 
