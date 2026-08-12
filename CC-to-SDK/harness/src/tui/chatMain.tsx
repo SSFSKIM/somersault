@@ -3,7 +3,7 @@
 import React from "react";
 import { writeSync } from "node:fs";
 import { render } from "ink";
-import { createAltScreenGuard, exitAltScreen } from "./altScreen.js";
+import { createAltScreenGuard, createChatTeardown, resolveTerminalName } from "./altScreen.js";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
@@ -42,12 +42,13 @@ export interface ChatClientOpts {
   /** WAVE C TASK 8 (EP-C4a) — `--name`, so the terminal title can say what this session is before the engine
    *  has generated an ai-title for it. Only the foreground launch has one; `ccx attach` does not. */
   name?: string;
-  /** FSW T6 (spec §A3, plan review I8) — THE SIGNAL INTERLOCK'S TRANSPORT. `cli/main.ts`'s SIGTERM/SIGHUP
-   *  handler exits via `process.exit`, which never runs the `finally` below; anything that must happen
-   *  before the process dies registers itself here and the handler drains it SYNCHRONOUSLY, ahead of
-   *  `host.stop`. The owner is main, not this module: only one place may own a signal handler, and the
-   *  launch that registered SIGTERM at :405 is it. Absent on `ccx attach` — that client has no host to stop
-   *  and no handler at all, so the alt-screen guard takes those signals itself. */
+  /** FSW T6 (spec §A3, plan review I8) — THE SIGNAL INTERLOCK'S TRANSPORT. `cli/main.ts`'s
+   *  SIGINT/SIGTERM/SIGHUP handler exits via `process.exit`, which never runs the `finally` below; anything
+   *  that must happen before the process dies registers itself here and the handler drains it
+   *  SYNCHRONOUSLY, ahead of `host.stop`. The owner is main, not this module: only one place may own a
+   *  signal handler, and the launch that registered all three at :424 is it. ITS PRESENCE IS ALSO THE
+   *  DECLARATION (fix round F8): absent means `ccx attach` — no host to stop, no handler at all — and the
+   *  alt-screen guard takes those signals itself. */
   beforeExit?: Array<() => void>;
 }
 
@@ -521,15 +522,39 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   //   `writeSync` on fd 1, not `process.stdout.write`: the teardown's callers are `process.exit` and a dying
   // process, neither of which drains an async write queue. `appRef` gives the guard canon `zuy`'s unmount
   // attempt (L181502) without a forward reference — Ink does not exist yet on this line.
+  //   THE UPGRADE GATE READS A RESOLVED NAME, NOT `TERM_PROGRAM` (T6 review F5). Canon feeds `Ybe()` from
+  // `Z.terminal` = `oeh()` (L22139), and kitty — the terminal the feature is named after — sets no
+  // `TERM_PROGRAM` at all, so the raw variable could never reach two of canon's seven.
+  //   AND WHO OWNS THE SIGNALS IS DECLARED, NOT SNIFFED (review F8). `beforeExit` present means main
+  // registered the handlers and will drain our teardown out of that array; absent (`ccx attach`) means
+  // nobody will, and the guard takes the signals itself. One expression decides both, so they cannot
+  // disagree — a launch that owned the signals but passed no array used to get no cleanup at all.
   const appRef: { current?: { unmount(): void } } = {};
+  const terminalName = resolveTerminalName(process.env);
   const altGuard = createAltScreenGuard({
     writeSync: (s) => { if (process.stdout.isTTY) writeSync(1, s); },
-    ...(process.env.TERM_PROGRAM ? { termProgram: process.env.TERM_PROGRAM } : {}),
+    ...(terminalName ? { termProgram: terminalName } : {}),
     unmount: () => { appRef.current?.unmount(); },
+    signalsOwned: opts.beforeExit !== undefined,
   });
   const stopSignalSafety = altGuard.installSignalSafety();
-  // The interlock's other half: main owns SIGTERM/SIGHUP (cli/main.ts:405) and drains this before it exits.
-  opts.beforeExit?.push(() => { altGuard.exit(); });
+  // ONE TEARDOWN, BOTH ROUTES (review F1). Everything the REPL owes the terminal, in the order §A6 requires,
+  // latched so the route that does not win runs nothing. The signal route drains it out of `beforeExit`
+  // (`cli/main.ts:424`) ahead of `host.stop` and `process.exit`; the graceful route reaches the `finally`
+  // below. They are not exclusive — the guard's unmount settles `waitUntilExit()`, so a signal makes the
+  // `finally` run too, which is exactly the microtask that used to paint the title reset and the unpark onto
+  // the user's shell screen AFTER rmcup.
+  const teardown = createChatTeardown({
+    offResizeListener: () => process.stdout.off("resize", onTerminalResize),
+    stopResize: () => resize.stop(),           // W2 t7 — drop the settle window with it: it WRITES when it fires
+    clearTitle: () => title.clear(),           // `a0u` (L148428) — hand the terminal back with an empty title
+    parkedColumn: output.parkedColumn,
+    stopSignalSafety,
+    guard: altGuard,
+    sessionId: () => liveSession?.sessionId,   // read LATE — see the live-getter note above
+    write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); },
+  });
+  if (opts.beforeExit) opts.beforeExit.push(teardown);
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
@@ -544,19 +569,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   );
   appRef.current = app;
   bridge.bind(() => app.clear());
-  try { await app.waitUntilExit(); }
-  finally {
-    process.stdout.off("resize", onTerminalResize);
-    resize.stop();                       // W2 t7 — …and drop the settle window with it: it WRITES when it fires
-    title.clear();                     // `a0u` (L148428) — hand the terminal back with an empty title
-    // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our spaces.
-    if (process.stdout.isTTY && output.parkedColumn() > 0) process.stdout.write("\x1b[2K\x1b[G");
-    // FSW T6 — LAST, AND IN THIS ORDER. Every line above still paints, and rmcup is the point past which
-    // nothing may (spec §A6); the resume pointer that follows it is not a paint into the alt screen but the
-    // first line of the main screen we just handed back. `/exit`, the double-ctrl-C arm and `ccx attach`'s
-    // onDetach all reach here the same way — they settle Ink's `waitUntilExit()` — so all three print it
-    // (the deliberate divergence from canon's graceful-only hint). Silent for a classic launch.
-    stopSignalSafety();
-    exitAltScreen(altGuard, liveSession?.sessionId, (s) => { if (process.stdout.isTTY) process.stdout.write(s); });
-  }
+  // `/exit`, the double-ctrl-C arm and `ccx attach`'s onDetach all reach here the same way — they settle
+  // Ink's `waitUntilExit()` — so all three print the resume pointer (the deliberate divergence from canon's
+  // graceful-only hint). A signal got there first? Then this is a no-op and the pointer is already out.
+  try { await app.waitUntilExit(); } finally { teardown(); }
 }
