@@ -95,6 +95,10 @@ export interface FleetEngineEvents {
    *  fired for it. Everything else a close does still happens — the latch, and settling whatever was
    *  in flight — because a suppressed announcement must never become a parked promise. */
   expectDeath(): void;
+  /** Give the latch back: the requested death did NOT happen and the connection is still open, so the
+   *  next close is once again the unannounced kind §1f exists for. Only `thread/stop`'s timeout path has
+   *  a use for it (fleet.ts) — a latch left standing over a live socket is a death nobody will hear. */
+  cancelExpectDeath(): void;
 }
 
 export interface FleetEngineSession extends EngineSession, FleetEngineEvents {
@@ -279,6 +283,7 @@ class FleetEngine implements FleetEngineSession {
   }
 
   expectDeath(): void { this.expectedDeath = true; }
+  cancelExpectDeath(): void { this.expectedDeath = false; }
 
   // ── the EngineSession contract ──────────────────────────────────────────────────────────────────
   async submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }> {

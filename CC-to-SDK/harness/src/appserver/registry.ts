@@ -149,9 +149,9 @@ export interface ThreadRecord {
                                  // spec D-M2-6) — closeRecord calls this before disposing the engine
   fleetOff?: () => void;        // FLEET ONLY (M3 §1b): unsubscribes the fleet EVENT LAYER — the item fan
                                  // plus the seven host-event fans `installFleetEvents` installs (fleet.ts).
-                                 // closeRecord calls it beside `routerOff`, which is the whole point: the
-                                 // two are installed together and a close that dropped only one left a
-                                 // detached record's listeners wired to a live engine object
+                                 // closeRecord calls it beside `routerOff`, which is the whole point:
+                                 // teardown is symmetric with install, so no subscription this record took
+                                 // outlives the record's own registration
 
   sessionId?: string;
   config?: Record<string, unknown>; // the FULL config this thread's engine was opened with (broker

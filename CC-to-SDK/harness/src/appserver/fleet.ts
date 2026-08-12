@@ -65,9 +65,11 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
  *  since the dial — finds every listener in place.
  *
  *  Returns its own UNINSTALLER, which the caller stores as `record.fleetOff` for `closeRecord` to call
- *  beside `routerOff` (M3 Task 9). Install and teardown have to be symmetric for the same reason the
- *  router's pair is: a record that closes and re-attaches otherwise accumulates a fan of listeners per
- *  cycle, each still holding a record the registry has already dropped. */
+ *  beside `routerOff` (M3 Task 9). Install and teardown are symmetric for the same reason the router's
+ *  pair is: every subscription this record took is given back when the record goes, so none outlives its
+ *  registration. Not an accumulation across attach cycles — a re-attach dials a FRESH engine and the
+ *  disposed one's callback sets are garbage with it — but a fan still wired to a record the registry has
+ *  dropped is state this server cannot account for. */
 export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine: FleetEngineSession): () => void {
   // ONE mapper and ONE derived id per turn WINDOW, whoever started the turn (§1b: "one mapper owner per
   // turn window, both origins of the turn"). Held in this closure rather than on the record because
@@ -367,7 +369,8 @@ export async function fleetStop(srv: AppServer, record: ThreadRecord): Promise<v
   const engine = record.session as FleetEngineSession;
   // FIRST, before the op is on the wire: this death is the client's own, so §1f's sequence — the failed
   // turn, the fleetConnectionLost warning — must not fire for it. A stop that latched after writing would
-  // race the host's teardown and announce a loss for a session the client just ended.
+  // race the host's teardown and announce a loss for a session the client just ended. Given BACK if the
+  // poll times out on a socket that is still open — see the loop.
   engine.expectDeath();
   const { stepMs, capMs } = srv.deps.stopPoll ?? STOP_POLL;
   // `Infinity`: there is no deadline to keep on a promise nobody reads. Caught, not left floating — an
@@ -377,7 +380,18 @@ export async function fleetStop(srv: AppServer, record: ThreadRecord): Promise<v
   for (;;) {
     const stuck = stopStuckReason(record, engine);
     if (stuck === undefined) return;
-    if (Date.now() >= deadline) throw new Error(`thread/stop did not complete within ${capMs}ms: ${stuck}`);
+    if (Date.now() >= deadline) {
+      // THE LATCH GOES BACK, because the death it was armed for never came: the socket is still open, the
+      // record stays standing (see the doc above), and whatever kills that host next is a loss nobody
+      // asked for — §1f's sequence, in full. Left armed, the client's only word about a thread that later
+      // dies is -33005 on its next call, with no failed turn, no warning and no status change.
+      //
+      // ONLY on this branch. When the stuck reason is the OTHER one — the engine already ended, the roster
+      // row just never turned terminal — the death has ALREADY happened under the latch and was correctly
+      // suppressed; re-arming would leave a latch nothing can ever fire, and nothing to resurrect either.
+      if (!engine.isEnded()) engine.cancelExpectDeath();
+      throw new Error(`thread/stop did not complete within ${capMs}ms: ${stuck}`);
+    }
     await sleep(stepMs);
   }
 }

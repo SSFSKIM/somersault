@@ -487,8 +487,8 @@ export class AppServer {
     if (record.origin === "fleet") decisions?.discard(); else decisions?.teardown();
     record.routerOff?.(); // stop routing frames from an engine we are about to dispose (Task 8a)
     record.fleetOff?.();  // …and, for a fleet thread, the event layer installed alongside it (M3 Task 9:
-                          // the two are installed as a pair and must be released as one, or a record that
-                          // closes and re-attaches leaves a fan of listeners per cycle)
+                          // the two are installed as a pair and are released as one, so no subscription
+                          // this record took outlives its registration)
     try {
       await record.session.dispose();
     } finally {

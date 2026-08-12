@@ -382,7 +382,10 @@ retires the `fleet-only` scope, gap 4), and the two `N/A` rows, `seedReadState` 
 protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
 `probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
-Origin scope splits **56 `both` / 21 `inProcess` / 1 `fleet-only` / 4 `N/A`** across the same 82 rows.
+Origin scope splits **57 `both` / 21 `inProcess` / 0 `fleet-only` / 6 `N/A`**, recounted off the tables at
+M3 Task 9 across all **84** rows — the snapshot block above still says 82 because it predates M3 Task 7's
+two new server-origin rows (`fleet/list`, `thread/attach`, both `N/A`), and `thread/stop` moved from
+`fleet-only` to `both` when it shipped origin-branched (gap 4).
 
 **The live surface those rows cover: 51 registered methods and 26 notifications.** 51 is the size of
 `appserver/schema/index.ts`'s `methodSchemas` — the number `scripts/drift-check.mjs` prints on every run

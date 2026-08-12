@@ -128,6 +128,43 @@ describe("thread/stop on a fleet thread (M3 §1e)", () => {
     expect(srv.registry.get(threadId)).toBeTruthy();
     expect(notifs(lines, "thread/closed")).toEqual([]);
   });
+
+  it("a timeout with the host STILL ALIVE gives the death latch back — the later real death still runs §1f", async () => {
+    // The OTHER stuck reason (the case above is the roster one): this host takes the `stop` op and never
+    // closes the socket, so the engine is still live when the cap runs out. `expectDeath()` was armed
+    // before the op went out; leaving it armed makes the death that comes LATER — the one nobody asked
+    // for — announce nothing at all, and the thread becomes a silent -33005 zombie.
+    const { fh, srv, conn, lines, threadId, record } = await attached({ stopHangs: true }, FAST_POLL);
+
+    send(conn, { id: 5, method: "turn/start", params: { threadId, input: "go" } });
+    await waitFor(() => expect(fh.promptCalls).toHaveLength(1));
+    fh.park({ toolUseID: "tu-1", toolName: "Bash", input: { command: "ls" } });
+    await waitFor(() => expect(srv.pendingDecisions(threadId)).toHaveLength(1));
+
+    send(conn, { id: 6, method: "thread/stop", params: { threadId } });
+    await waitFor(() => expect(frame(lines, 6)).toBeTruthy());
+    expect(frame(lines, 6).error.code).toBe(ERR.ATTACH_FAILED);
+    expect(frame(lines, 6).error.message).toContain("has not closed the connection");
+    expect(record.session.isEnded!()).toBe(false);            // the host really is still on the other end
+    expect(srv.registry.get(threadId)).toBeTruthy();
+    lines.length = 0;
+
+    await fh.close();                                         // …and NOW it dies, unasked
+    await waitFor(() => expect(notifs(lines, "warning")).toHaveLength(1));
+
+    // The FULL sequence, in §1f's pinned order — nothing about the failed stop may cost a client any of it.
+    const order = parsed(lines).map((f) => f.method).filter((m) => m === "turn/completed" || m === "warning" || m === "thread/status/changed");
+    expect(order).toEqual(["turn/completed", "warning", "thread/status/changed"]);
+    expect(notifs(lines, "turn/completed")[0].params.turn).toEqual({ id: "t1@e0", status: "failed", error: "fleet host connection lost" });
+    expect(notifs(lines, "warning")[0].params).toMatchObject({ threadId, code: "fleetConnectionLost" });
+    expect(record.busy).toBe(false);
+    expect(srv.pendingDecisions(threadId)).toEqual([]);
+    expect(notifs(lines, "decision/resolved")).toEqual([]);   // dropped silently, as every death drops them
+
+    send(conn, { id: 7, method: "thread/usage/read", params: { threadId } });
+    await waitFor(() => expect(frame(lines, 7)).toBeTruthy());
+    expect(frame(lines, 7).error.code).toBe(ERR.ENGINE_GONE);
+  });
 });
 
 describe("thread/stop on an inProcess thread (M3 §1e)", () => {

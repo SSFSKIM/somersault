@@ -39,6 +39,10 @@ export interface FakeHostOpts {
    *  if given, overrides the derived `state`/`status`. Same overlay `setStatus` patches into later — and
    *  the same one the setter ops and the resume/clear swap write their own truth into. */
   status?: Partial<HostStatus>;
+  /** Take the `stop` op and NEVER let go of the socket — a host wedged mid-exit. The other shape of a
+   *  stop that does not complete, and the one §1e's first stuck reason ("the host has not closed the
+   *  connection") is about; the default models the real `SessionHost.stop`, which tears its sockets down. */
+  stopHangs?: boolean;
   short?: string; name?: string; cwd?: string;
   /** The pid the socket path is keyed by — `hostSocketPath(pid, env)`, exactly as a real host keys its
    *  own. Defaults to THIS process's, which is both truthful (the fake really does run here) and the
@@ -213,7 +217,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     busy: () => busy,
     // NO REPLY. `SessionHost.stop` tears every socket down before the dispatch could write one (P106:
     // the client sees a close and nothing else) — a stop-ACK here would green a client that waits for one.
-    stop: async () => { record("stop"); await server.close(); },
+    stop: async () => { record("stop"); if (opts.stopHangs) return new Promise<void>(() => {}); await server.close(); },
     pending: () => { record("pending"); return parked.slice(); },
     answer: (toolUseID, outcome, by) => { record("answer", toolUseID, outcome, by); return answer(toolUseID, outcome, by); },
     // runTask bumps the seq and emits `start` SYNCHRONOUSLY, before its first await — which is what makes
