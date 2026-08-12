@@ -1,10 +1,15 @@
-// appserver/workspace.ts — M3 Task 12: `fs/read` and `fs/search` (spec §2), the workspace pair a GUI
-// client needs to show a file the agent touched and to offer a file picker of its own.
+// appserver/workspace.ts — the workspace cluster: `fs/read` and `fs/search` (spec §2, M3 Task 12), the pair
+// a GUI client needs to show a file the agent touched and to offer a file picker of its own, and
+// `thread/shellCommand` (spec §3, Task 13), the display-only shell escape. One module because all three
+// answer for THIS MACHINE's filesystem rather than for a conversation — the same trust posture, the same
+// unsandboxed reasoning, and (for the two that take a directory) the same rooting.
 //
-// SERVER-SCOPED BY CONSTRUCTION. Neither method takes a `threadId`, so neither passes through dispatch's
-// -33005 or origin gates (server.ts) — there is no record to judge. That is also what makes them the
-// right shape for the job: a client browsing a workspace is not addressing a conversation, and a fleet
+// THE PAIR IS SERVER-SCOPED BY CONSTRUCTION. Neither takes a `threadId`, so neither passes through
+// dispatch's -33005 or origin gates (server.ts) — there is no record to judge. That is also what makes them
+// the right shape for the job: a client browsing a workspace is not addressing a conversation, and a fleet
 // thread's tree is as readable as an inProcess one's because the path, not the thread, is the subject.
+// `thread/shellCommand` names a thread for one reason only — a command has to run SOMEWHERE, and the
+// thread is what knows where — and it is gated accordingly (see its own note).
 //
 // TRUSTED-CLIENT, UNSANDBOXED — Codex parity. Their reads run sandbox-None server-side, and a client that
 // has already cleared the Bearer handshake can start a turn that reads any file anyway; a path allowlist
@@ -22,9 +27,11 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { collectEntries, rankCandidates } from "../tui/fileComplete.js";
 import type { AsyncReaddirFn } from "../tui/fileComplete.js";
+import { runBash } from "../tui/bash.js";
 import { ERR } from "./rpc.js";
+import { threadCwd } from "./registry.js";
 import type { Handler } from "./server.js";
-import { fsReadParams, fsSearchParams } from "./schema/workspace.js";
+import { fsReadParams, fsSearchParams, shellCommandParams } from "./schema/workspace.js";
 
 /** A RECORDED DEVIATION from Codex, which caps nothing (spec §2): a browser client asking for a 2 GB
  *  core dump gets a clear refusal instead of a base64 string a third larger than the file that OOMs the
@@ -131,4 +138,38 @@ export const fsSearch: Handler = async (_srv, ctx, id, params) => {
   // the second. Ties break on path so the answer is stable between identical calls.
   merged.sort((a, b) => b.score - a.score || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   ctx.peer.reply(id, { matches: merged.slice(0, limit) });
+};
+
+/** `thread/shellCommand {threadId, command}` → `{code, output, timedOut?}` (spec §3) — the TUI's `!cmd`
+ *  over the wire, run in the thread's own cwd over the SAME primitive (`src/tui/bash.ts`'s `runBash`: a
+ *  full shell string through `exec`, a 30 s timeout, a 4 MiB output cap, and a promise that never rejects,
+ *  so every outcome is a result rather than an RPC error).
+ *
+ *  DISPLAY-ONLY, and this is the spec's recorded deviation from Codex (D-M3-2): their `thread/shellCommand`
+ *  streams output into the turn, so the model reads it. Ours returns it to the ONE client that asked and
+ *  leaves the conversation untouched — the TUI's `!` semantics, which is what an escape hatch is for. A
+ *  client that wants the model to see something still has `turn/start`.
+ *
+ *  UN-CHAINED, deliberately: no busy check and no `record.chain`. Every other thread-scoped method
+ *  serializes because it drives the engine, and this one never touches it — the command runs concurrently
+ *  with whatever the turn is doing, exactly as `!` does mid-turn in the terminal. Queuing it behind a turn
+ *  would make "peek at the disk while it works" the one thing the escape hatch cannot do.
+ *
+ *  GATED NORMALLY on -33005 (it is NOT in `ENGINE_GONE_EXEMPT`), which is the opposite choice and the
+ *  right one: a thread whose engine is gone is dead for every method a client can name on it, and one
+ *  surface that kept working would invite a client to treat a dead thread as half-alive. The record is the
+ *  only thing this handler reads, so that lookup is the whole of its engine adjacency.
+ *
+ *  Unsandboxed by design, like Codex's — see this module's trust note. */
+export const shellCommand: Handler = async (srv, ctx, id, params) => {
+  const parsed = shellCommandParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // `threadCwd` is `threadView.cwd`'s own function (registry.ts), so the command lands where the client was
+  // told this thread lives. Undefined means a fleet record whose attach stamped no roster cwd — refused
+  // rather than defaulted, because "somewhere else" is not a safe degradation for an unsandboxed exec.
+  const cwd = threadCwd(record);
+  if (cwd === undefined) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "thread has no cwd to run in"); return; }
+  ctx.peer.reply(id, await runBash(parsed.data.command, cwd));
 };

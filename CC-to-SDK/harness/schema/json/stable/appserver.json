@@ -1193,6 +1193,25 @@
         "query"
       ],
       "additionalProperties": false
+    },
+    "thread/shellCommand": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "threadId",
+        "command"
+      ],
+      "additionalProperties": false,
+      "description": "unsandboxed; output returns to the calling client only — the model never sees it (deviation from Codex's stream-into-turn)"
     }
   }
 }

@@ -4,7 +4,7 @@
 import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
-import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
+import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadCwd, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
 import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
 import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
@@ -27,7 +27,7 @@ import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
 import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
-import { fsRead, fsSearch } from "./workspace.js";
+import { fsRead, fsSearch, shellCommand } from "./workspace.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -90,11 +90,11 @@ export interface ConnCtx {
  *  key forces every consumer to write the `?? 0` itself, and one that forgets it renders "unknown" for the
  *  ordinary case. It counts only turns that have NOT started — the running turn is `status`'s business.
  *
- *  `cwd` is ORIGIN-BRANCHED (M3 §1b; `fs/search` and `thread/shellCommand` both root themselves on it):
- *  an inProcess thread whose start config named no cwd genuinely runs in THIS process's cwd, so reporting
- *  that is a fact, not a placeholder. A fleet thread does not — its session runs wherever its roster row
- *  says, filled at attach (Task 7) — so an absent value stays absent rather than borrowing ours, which
- *  would point a client's file reads at the wrong tree. `short`/`name` are the roster's own handles and
+ *  `cwd` is ORIGIN-BRANCHED (M3 §1b) and comes from `threadCwd` (registry.ts) rather than from a branch
+ *  written out here, because `thread/shellCommand` runs its command through the SAME function: what this
+ *  view reports and where that command lands are one answer by construction, not two that happen to agree.
+ *  `fs/search` roots itself on this value too, a client passing it back as a search root.
+ *  `short`/`name` are the roster's own handles and
  *  exist for fleet threads only; the keys are OMITTED (not undefined) on inProcess rows, which keeps this
  *  view's key set identical to sessionLib.ts's store-only projection for every row that predates M3. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
@@ -104,7 +104,7 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     sessionId: r.sessionId,
     title: r.title,
     tags: r.tags,
-    cwd: r.origin === "inProcess" ? r.cwd ?? process.cwd() : r.cwd,
+    cwd: threadCwd(r),
     ...(r.origin === "fleet" ? { short: r.short, name: r.name } : {}),
     model: r.settings.model,
     permissionMode: r.settings.permissionMode,
@@ -393,6 +393,14 @@ export class AppServer {
     // roots them on a thread's tree by passing `threadView.cwd` as the path or the search root.
     "fs/read": fsRead,
     "fs/search": fsSearch,
+    // M3 Task 13 (§3): the display-only shell escape — the TUI's `!cmd` over the wire, run in the thread's
+    // own cwd. Registered with the pair above (same module, same subject: this machine's filesystem) but
+    // unlike them it NAMES A THREAD, so it does pass through both dispatch gates — and answers each the way
+    // its own semantics demand: -33005 applies (a dead thread is dead for everything), while the origin gate
+    // never fires because a fleet thread's cwd is as runnable as an inProcess one's. What it does NOT do is
+    // take `record.chain`: the command never reaches the engine, so nothing about a turn in flight has any
+    // claim on it (workspace.ts's own note).
+    "thread/shellCommand": shellCommand,
   };
 
   private readonly token: string;

@@ -130,6 +130,21 @@ root-relative beside the `root` that produced it, an unwalkable root
 degrading to zero matches rather than failing the call (Codex's behavior), and the roots merged into one
 score-ordered list capped at 50 (Codex's `MATCH_LIMIT`). No highlight indices and no warm index: recorded
 deviations — our ranker produces no indices, and the TUI re-walks on every query too.
+Last in the cluster, and in the same module, is §3's **`thread/shellCommand`** (M3 Task 13) — the TUI's
+`!cmd` over the wire, `{threadId, command}` → `{code, output, timedOut?}` over the shipped `runBash`
+primitive (`src/tui/bash.ts`: a full shell string through `exec`, 30 s timeout, 4 MiB output cap, and a
+promise that never rejects, so every outcome is a result rather than an RPC error). It is the one method
+of the three that names a thread, for the one reason a command needs one: the thread is what says WHERE to
+run, and the cwd it runs in is `threadView.cwd`'s own value (`registry.ts`'s `threadCwd` — the config cwd
+for an inProcess thread, this process's when the config named none, the roster cwd stamped at attach for a
+fleet one). **Display-only, the recorded deviation from Codex** (D-M3-2), whose `thread/shellCommand`
+streams output into the turn so the model reads it: ours returns it to the calling client and leaves the
+conversation untouched, which is what the escape hatch is for. Unsandboxed by design, like Codex's — and
+the deviation note rides the generated schema artifact, since a client reading the shape alone would
+assume Codex's semantics from the name. Its two gates are deliberately opposite: the **standard `-33005`**
+applies (it is NOT in `ENGINE_GONE_EXEMPT`, so a dead thread reads consistently dead for every method a
+client can name on it), while the busy check and `record.chain` are **skipped** — the command never
+reaches the engine, and `!` mid-turn is exactly the terminal precedent.
 
 **26 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
@@ -394,23 +409,27 @@ calls the SDK's own `Query.close()`.
 
 ## Server-origin methods — no seam token, so never walked
 
-Seven methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
+Eight methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
 no walker can ever produce a row for them: `initialize` is special-cased in `dispatch()` ahead of the
 handlers table, `server/status` reports this process, and `thread/start` *creates* the thread the other
 four tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). M3 Task 7 adds
 the adoption pair for the same reason: `fleet/list` reports this machine's roster — sessions no thread
 here exists for yet — and `thread/attach` is what turns one of those rows into a thread. M3 Task 12 adds
 the workspace pair, `fs/read` and `fs/search` (§2), whose subject is a path on this machine — the one
-kind of request a client makes without addressing a conversation at all. They were
+kind of request a client makes without addressing a conversation at all; M3 Task 13 adds
+`thread/shellCommand` (§3), the same subject reached from the other end. They were
 therefore invisible to a scorecard whose rows all came from the walked-token direction, and the M2b
 Task 6 gate (every registered method must be named by some row — the "zero schema-less methods"
 acceptance) is what surfaced the omission. Origin scope is a question about an *existing* thread and
-none of the seven has one, so all seven read `N/A` there — the adoption pair included, whose SUBJECT is a
-fleet session but whose caller names no thread at all, and the workspace pair, which a client roots on a
-thread's tree by passing `threadView.cwd` as a plain path. The seam-token column repeats the method name:
-there is no upstream token to put in it. `fs/read` is the one row here with a seam it deliberately does
-NOT use — `Query.readFile`, probe-dead since probe 104; that seam keeps its own `N/A` row in the Query
-table above.
+seven of the eight have none, so those seven read `N/A` there — the adoption pair included, whose SUBJECT
+is a fleet session but whose caller names no thread at all, and the workspace pair, which a client roots on
+a thread's tree by passing `threadView.cwd` as a plain path. `thread/shellCommand` is the exception, and
+the only row in this table with a real origin scope: it names a thread because a command has to run
+somewhere and the thread is what knows where, and it runs on **both** origins — a fleet thread's cwd is as
+runnable as an inProcess one's, the host being on this same machine. The seam-token column repeats the
+method name: there is no upstream token to put in it. `fs/read` is the one row here with a seam it
+deliberately does NOT use — `Query.readFile`, probe-dead since probe 104; that seam keeps its own `N/A`
+row in the Query table above.
 
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
@@ -421,13 +440,15 @@ table above.
 | `thread/attach` | appserver/fleet.ts | `thread/attach` | N/A | shipped(M3) — registers a `fleet` thread over `FleetEngineSession`; short/sessionId/name resolution with `-33008` on ambiguity, a terminal row or an unreachable socket; reservation-idempotent, and admitted behind the activation barrier |
 | `fs/read` | appserver/workspace.ts | `fs/read` | N/A | shipped(M3) — `{path}` → `{dataBase64, size}`, absolute paths only, trusted-client and unsandboxed (Codex's reads are sandbox-None). Refuses with `-32602` and nothing else: a relative path, a failing `stat` (the fs message verbatim), a path that is not a regular file — `not a regular file (directory\|FIFO\|socket\|character device\|block device)`, which is what keeps a FIFO from hanging the request forever and `/dev/zero` from reading without end, both invisible to the cap because `stat` sizes them at 0 — a failing read (`EACCES`), and a file over the **4 MiB cap** — `file exceeds the 4 MiB read cap (N bytes)`. The cap is a recorded deviation (Codex has none); the SDK seam that would have backed this, `Query.readFile`, is probe-dead (probe 104) and its own row is in the Query table |
 | `fs/search` | appserver/workspace.ts | `fs/search` | N/A | shipped(M3) — `{query, roots?, limit?}` → `{matches: [{root, path, score}]}` over the TUI's own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`), so a client's search and the composer's `@`-picker score a tree identically — equally scored matches can still order differently, the cross-root re-sort keeping the ranker's lexical tie-break but not its shorter-path-first one. Empty/whitespace query → `[]` before any walk; `roots` defaults to the server's cwd (this process's — the server holds no other) and is otherwise taken as given, relative roots included (§2 asks absoluteness of `fs/read`'s `path` alone); each match's `path` is root-relative beside the `root` that produced it; an unwalkable root degrades to zero matches rather than failing the call (Codex parity), so the reply is never an RPC error; roots merge into one score-ordered list capped at `limit`, default and max 50 (Codex's `MATCH_LIMIT`). No highlight indices, no warm index — both recorded deviations |
+| `thread/shellCommand` | appserver/workspace.ts | `thread/shellCommand` | both | shipped(M3) — `{threadId, command}` → `{code, output, timedOut?}` over `src/tui/bash.ts`'s `runBash`, the TUI's own `!cmd` primitive: a full shell string through `exec` (pipes and redirection are the point), a 30 s timeout reported as `timedOut`, a 4 MiB output cap, and a promise that never rejects — so a failing command is a result with a nonzero `code`, never an RPC error. **Display-only: the output goes to the calling client and the conversation is untouched — the model never sees it.** That is the recorded deviation from Codex (D-M3-2), whose version streams into the turn; ours matches the TUI's `!` semantics, and the note rides the generated schema artifact because the shape cannot carry it. Unsandboxed by design, as Codex's is. Runs in the thread's own cwd — `threadView.cwd`'s own value (`registry.ts`'s `threadCwd`), so a client is never served a directory it was not told about: the start config's cwd for an inProcess thread, this process's when the config named none, the roster cwd stamped at attach for a fleet one. Gates: the standard `-33005` applies (deliberately NOT in `ENGINE_GONE_EXEMPT` — a dead thread reads consistently dead), `-33004` for an unknown thread, `-32602` for malformed params; **no busy check and no `record.chain`** — un-chained on purpose, since the command never reaches the engine and `!` works mid-turn in the terminal. Measured, not assumed: output past the cap comes back truncated at 4 MiB with a nonzero `code` and no `timedOut` flag (node's `exec` reports `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`, a string code that `runBash` maps to a plain exit 1) |
 
 ## Totals
 
 34 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **79 walked tokens**,
-all rowed above — plus the 7 server-origin rows just above, which no walker produces, for **86 rows**
-in all. (Recounted off the tables at M3 Task 12; it read "3 / 82" from the M2b close-out until then,
-having missed Task 7's adoption pair as well as this task's workspace pair.)
+all rowed above — plus the 8 server-origin rows just above, which no walker produces, for **87 rows**
+in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out until then,
+having missed Task 7's adoption pair as well as its own workspace pair; Task 13's `thread/shellCommand`
+is the eighth.)
 
 **Per-status row tallies, recomputed at the M2b close-out sweep (Task 9, 2026-08-11)** by rewalking the
 five tables above. They are a snapshot, not a running total: every landing wave flips a handful of rows,
@@ -450,10 +471,11 @@ retires the `fleet-only` scope, gap 4), and the two `N/A` rows, `seedReadState` 
 protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
 `probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
-Origin scope splits **66 `both` / 11 `inProcess` / 0 `fleet-only` / 9 `N/A`**, recounted off the tables at
-M3 Task 12 across all **86** rows — the per-status snapshot block above still says 82 because it predates
-all FOUR of M3's new server-origin rows: Task 7's `fleet/list` and `thread/attach`, and Task 12's own
-`fs/read` and `fs/search` (all four `N/A`). Task 12 moved three:
+Origin scope splits **67 `both` / 11 `inProcess` / 0 `fleet-only` / 9 `N/A`**, recounted off the tables at
+M3 Task 13 across all **87** rows — the per-status snapshot block above still says 82 because it predates
+all FIVE of M3's new server-origin rows: Task 7's `fleet/list` and `thread/attach`, Task 12's own
+`fs/read` and `fs/search` (those four `N/A`), and Task 13's `thread/shellCommand`, the one row in that
+table with a real origin scope — `both`, which is the whole `67 - 66` of this recount. Task 12 moved three:
 its own two workspace rows (`fs/read`, `fs/search`, both `N/A` — no thread, no origin question) and
 `readFile`, which had been scored `inProcess` while its status read `N/A`; a token backing no method has
 no origin, so it now reads `N/A` in both columns, as `seedReadState` always has. This line has gone stale
@@ -468,7 +490,10 @@ above it). The eleven that remain `inProcess` are exactly the wire gaps: `FLEET_
 `appserver/schema/index.ts`'s `methodSchemas` — the number `scripts/drift-check.mjs` prints on every run
 ("every row status matches the live surface (N registered methods)") — and 26 is the notification list in
 "Shipped, per the code" above, each of whose names appears as a literal under `appserver/`. Both are
-recorded here as of the close-out sweep and are expected to age; the script is what is current.
+recorded here as of the close-out sweep and are expected to age; the script is what is current. It has
+aged as predicted: **57** as of M3 Task 13 (the M2b 51, plus Task 7's `fleet/list` and `thread/attach`,
+Task 9's `thread/stop`, Task 12's `fs/read` and `fs/search`, and Task 13's `thread/shellCommand`) — a
+number restated here per landing rather than swept, since the gate prints the true one on every run.
 
 **The gate now enforces all three directions**, which is why a hand-carried total is safe to write down
 at a sweep and unsafe to trust between them: *presence* (every walked token has a row — the original

@@ -280,6 +280,20 @@ export function threadStatus(r: ThreadRecord, waitingOn: boolean): { state: "idl
   return waitingOn ? { state: "active", waitingOn: "decision" } : { state: "active" };
 }
 
+/** WHERE THIS THREAD RUNS — the one answer, shared by `threadView.cwd` (server.ts) and by the directory
+ *  `thread/shellCommand` executes in (workspace.ts, M3 §3). One function rather than two matching
+ *  expressions because the two are a PROMISE to the client: it reads a thread's cwd off the view and then
+ *  asks this server to run a command there, and a divergence between the two would land that command in a
+ *  directory the client was never told about.
+ *
+ *  ORIGIN-BRANCHED (spec §1b): an inProcess thread whose start config named no cwd genuinely runs in THIS
+ *  process's cwd, so answering that is a fact rather than a placeholder. A fleet thread does not — its
+ *  session runs wherever its roster row said at attach (Task 7) — so an absent value stays absent rather
+ *  than borrowing ours, which would point a client's file reads, and a shell command, at the wrong tree.
+ *  Undefined is unreachable in practice for a fleet record (`RosterRow.cwd` is required, and attach stamps
+ *  it), which is exactly why the honest answer to it is "I don't know" rather than a fallback. */
+export const threadCwd = (r: ThreadRecord): string | undefined => (r.origin === "inProcess" ? r.cwd ?? process.cwd() : r.cwd);
+
 /** The methods a fleet-origin thread cannot serve, because the HOST WIRE has no op behind them (spec
  *  §1c) — not because some engine build happens to lack a member. Membership is a statement about the
  *  wire, so it is a flat set here rather than a per-handler check: the refusal must read the same for a

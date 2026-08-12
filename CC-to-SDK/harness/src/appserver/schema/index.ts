@@ -11,7 +11,7 @@ import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverr
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
-import { fsReadParams, fsSearchParams } from "./workspace.js";
+import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -91,4 +91,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // seam that would have backed `fs/read`, `Query.readFile`, is probe-dead — probe 104.)
   "fs/read": { params: fsReadParams },
   "fs/search": { params: fsSearchParams },
+  // M3 Task 13 (§3): the display-only shell escape, registered with the pair above because it shares their
+  // module and their subject — this machine's filesystem — even though it is the one of the three that
+  // names a thread. STABLE: `runBash` is our own primitive, and the deviation the params' `.describe()`
+  // carries is about SEMANTICS (output never reaches the model), not about a shape that might move.
+  "thread/shellCommand": { params: shellCommandParams },
 };
