@@ -67,6 +67,11 @@ export interface AppServerDeps {
   // five real seconds proving one timeout, and faking the clock instead would fake the very thing the poll
   // is measuring (a host taking its own time to exit).
   stopPoll?: StopPoll;
+  // M3 Task 13: `thread/shellCommand`'s OUTER deadline in ms (workspace.ts's SHELL_DEADLINE_MS is the
+  // default), the bound on the REQUEST rather than on the child. Injectable for stopPoll's reason above and
+  // one of its own: the production value must sit ABOVE the seam's inner 30 s SIGTERM attempt, so a suite
+  // that served it honestly would spend 40 real seconds proving one branch.
+  shellDeadlineMs?: number;
 }
 export interface ConnCtx {
   peer: Peer;

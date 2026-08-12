@@ -11,10 +11,10 @@
 // socket behind it to prove where its command runs — the only engine-adjacent step in the whole path is
 // dispatch's own `-33005` record lookup, which the dead-engine case below drives.
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppServer } from "../../../src/appserver/server.js";
+import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { FLEET_UNSUPPORTED, emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
 import { methodSchemas } from "../../../src/appserver/schema/index.js";
@@ -34,8 +34,8 @@ let nextId = 100;
  *  here for a reason that has nothing to do with the method. */
 const mkdir = (): string => { const d = realpathSync(mkdtempSync(join(tmpdir(), "ccx-shell-"))); dirs.push(d); return d; };
 
-function boot(): AppServer {
-  const srv = new AppServer({}, {});
+function boot(deps: AppServerDeps = {}): AppServer {
+  const srv = new AppServer({}, deps);
   servers.push(srv);
   const s = mkSink();
   conn = srv.connect(s.sink);
@@ -76,7 +76,29 @@ async function call(params: Record<string, unknown>, timeout = 5000): Promise<Re
 const err = (frame: Record<string, unknown>): { code: number; message: string } => frame.error as { code: number; message: string };
 const ok = (frame: Record<string, unknown>): { code: number; output: string; timedOut?: true } => frame.result as { code: number; output: string; timedOut?: true };
 
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Every marker a term-proof fixture writes its pid into. The handler DELIBERATELY abandons such a child
+ *  (that residual is what its note names), so the TEST owns the ending — swept in `afterEach` as a backstop
+ *  for a case that fails before reaping, because a leaked node process would outlive the whole run. */
+const markers: string[] = [];
+/** A command that IGNORES SIGTERM, so `exec`'s own timeout cannot end it: a no-op handler REPLACES node's
+ *  default terminate disposition. It records its pid first thing, then idles well past any deadline here. */
+function termProof(dir: string): { command: string; marker: string } {
+  const marker = join(dir, "pid");
+  markers.push(marker);
+  return { marker, command: `node -e "process.on('SIGTERM',()=>{});require('fs').writeFileSync(process.argv[1],String(process.pid));setTimeout(()=>{},30000)" ${JSON.stringify(marker)}` };
+}
+/** Assert the abandoned child is STILL RUNNING (the residual the note claims), then end it for real. */
+async function reap(marker: string): Promise<void> {
+  let pid = 0;
+  await vi.waitFor(() => { pid = Number(readFileSync(marker, "utf8")); expect(pid, "term-proof child never wrote its pid").toBeGreaterThan(0); }, { timeout: 5000 });
+  expect(alive(pid), "the abandoned child should have outlived the reply").toBe(true);
+  process.kill(pid, "SIGKILL");                       // SIGTERM is exactly what it ignores
+  await vi.waitFor(() => { expect(alive(pid)).toBe(false); }, { timeout: 5000 });
+}
+
 afterEach(async () => {
+  for (const m of markers.splice(0)) { try { process.kill(Number(readFileSync(m, "utf8")), "SIGKILL"); } catch { /* already reaped, or never started */ } }
   for (const srv of servers.splice(0)) await srv.shutdown().catch(() => {});
   vi.restoreAllMocks();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -125,6 +147,67 @@ describe("thread/shellCommand — execution", () => {
 
     expect(fake.submitted).toEqual([]);
     expect(parsed(lines).filter((f) => typeof f.method === "string").map((f) => f.method)).toEqual([]);
+  });
+});
+
+describe("thread/shellCommand — the outer deadline bounds the REPLY", () => {
+  // The seam's `timeout: 30_000` bounds the CHILD, not the request: `exec` kills by SIGTERM and `runBash`
+  // never escalates, so a child that ignores TERM leaves that promise unsettled FOREVER and the RPC never
+  // answers — the FIFO-hang class, and un-chained it lets one client stack up hung requests. The handler's
+  // own outer deadline is what turns that into an honest reply.
+  //
+  // The deadline is injected BELOW the seam's 30 s here, which inverts production's ordering on purpose:
+  // outer-fires-first is the code path under test, and honouring the real 40 s would cost 40 s of wall clock
+  // to prove one branch. The complementary case — a TERM-CATCHING command outliving the seam's own 30 s, so
+  // the seam answers and the outer never fires — is NOT covered: that 30 s is a hardcoded constant in
+  // `src/tui/bash.ts` (a shared TUI seam this cluster must not fork), so there is no cheap scaled version of
+  // it, and the un-injected tests below already pin the outer arm losing every ordinary race.
+
+  it("abandons a SIGTERM-proof command at the outer deadline, and says so", async () => {
+    const srv = boot({ shellDeadlineMs: 500 });
+    const dir = mkdir();
+    const threadId = addRecord(srv, "inProcess", fakeSession().session, { cwd: dir });
+    const { command, marker } = termProof(dir);
+
+    const id = nextId++;
+    const t0 = Date.now();
+    conn.feed(JSON.stringify({ id, method: "thread/shellCommand", params: { threadId, command } }) + "\n");
+    let frame: Record<string, unknown> | undefined;
+    await vi.waitFor(() => { frame = parsed(lines).find((f) => f.id === id); expect(frame, "the request never answered").toBeDefined(); }, { timeout: 10_000 });
+
+    // Under 5 s is the whole claim: without the outer deadline this frame arrives NEVER, not late.
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(ok(frame as Record<string, unknown>)).toEqual({
+      code: 1, timedOut: true,
+      output: "<harness note: command ignored SIGTERM and exceeded the 0.5s harness deadline; its process may still be running>",
+    });
+
+    // The note is honest only if the residual it names is real: the child OUTLIVES the reply (asserted in
+    // `reap`), and the harness has stopped waiting for it.
+    await reap(marker);
+    // Killing it makes `exec`'s callback finally fire — and that late settle is DISCARDED by the race, so no
+    // second frame may follow. A handler that replied off both arms would corrupt the client's id map.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(parsed(lines).filter((f) => f.id === id).length).toBe(1);
+  }, 20_000);
+
+  it("an ordinary command still answers with its OWN result — the deadline arm loses the race", async () => {
+    // The other half of the race, pinned separately: a tight deadline must not colour a normal reply, and
+    // `timedOut` must stay absent rather than arriving false off the abandonment shape.
+    const srv = boot({ shellDeadlineMs: 5000 });
+    const threadId = addRecord(srv, "inProcess", fakeSession().session, { cwd: mkdir() });
+
+    expect(ok(await call({ threadId, command: "echo fast" }))).toEqual({ code: 0, output: "fast" });
+  });
+
+  it("the production deadline sits ABOVE the seam's inner 30 s, so it can only fire for a TERM-proof child", async () => {
+    // The tripwire for the one invariant the tests above cannot observe (they invert it on purpose). The
+    // inner bound is a bare `timeout: 30_000` literal inside `src/tui/bash.ts` — not exported, and not ours
+    // to export — so the ordering is asserted against the number rather than against the symbol. Lower this
+    // under 30 s and the outer arm starts pre-empting the seam's own timeout, turning every ordinary hang
+    // into an "ignored SIGTERM" note that is simply false.
+    const { SHELL_DEADLINE_MS } = await import("../../../src/appserver/workspace.js");
+    expect(SHELL_DEADLINE_MS).toBeGreaterThan(30_000);
   });
 });
 

@@ -27,7 +27,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { collectEntries, rankCandidates } from "../tui/fileComplete.js";
 import type { AsyncReaddirFn } from "../tui/fileComplete.js";
-import { runBash } from "../tui/bash.js";
+import { runBash, type BashResult } from "../tui/bash.js";
 import { ERR } from "./rpc.js";
 import { threadCwd } from "./registry.js";
 import type { Handler } from "./server.js";
@@ -39,6 +39,9 @@ import { fsReadParams, fsSearchParams, shellCommandParams } from "./schema/works
 export const READ_CAP_BYTES = 4 * 1024 * 1024;
 /** Codex's MATCH_LIMIT, and the schema's max — so `limit` only ever narrows. */
 const DEFAULT_LIMIT = 50;
+/** THE OUTER BOUND ON A `thread/shellCommand` REQUEST, above the seam's own inner 30 s — so it only ever
+ *  fires for a child that IGNORED the SIGTERM that timeout sends. See the handler's note. */
+export const SHELL_DEADLINE_MS = 40_000;
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** Names the kind a refused path turned out to be, so the client is told WHY its path is unservable rather
@@ -142,8 +145,8 @@ export const fsSearch: Handler = async (_srv, ctx, id, params) => {
 
 /** `thread/shellCommand {threadId, command}` → `{code, output, timedOut?}` (spec §3) — the TUI's `!cmd`
  *  over the wire, run in the thread's own cwd over the SAME primitive (`src/tui/bash.ts`'s `runBash`: a
- *  full shell string through `exec`, a 30 s timeout, a 4 MiB output cap, and a promise that never rejects,
- *  so every outcome is a result rather than an RPC error).
+ *  full shell string through `exec`, a 30 s SIGTERM timeout, a 4 MiB output cap, and a promise that never
+ *  rejects, so every outcome is a result rather than an RPC error).
  *
  *  DISPLAY-ONLY, and this is the spec's recorded deviation from Codex (D-M3-2): their `thread/shellCommand`
  *  streams output into the turn, so the model reads it. Ours returns it to the ONE client that asked and
@@ -154,6 +157,20 @@ export const fsSearch: Handler = async (_srv, ctx, id, params) => {
  *  serializes because it drives the engine, and this one never touches it — the command runs concurrently
  *  with whatever the turn is doing, exactly as `!` does mid-turn in the terminal. Queuing it behind a turn
  *  would make "peek at the disk while it works" the one thing the escape hatch cannot do.
+ *
+ *  TWO TIMEOUTS, and only the outer one bounds the REQUEST. The seam's `timeout: 30_000` bounds the CHILD,
+ *  and it bounds it with a SIGTERM that `runBash` never escalates — so a command that ignores TERM
+ *  (`trap '' TERM`, or any process with a handler that declines to exit) leaves that promise unsettled
+ *  forever and this RPC never answers at all. Un-chained, that is worse than a slow method: a client can
+ *  stack up hung requests, each holding a JSON-RPC id that will never be released. The handler therefore
+ *  races `runBash` against `SHELL_DEADLINE_MS`, set ABOVE the inner 30 s so the ordinary timeout path still
+ *  belongs to the seam and this arm fires only for a TERM-proof child.
+ *
+ *  Its reply is an ADMISSION, not a kill: we abandon the child and say so, because escalating to SIGKILL
+ *  would mean reaching past `runBash` into a process the shared TUI seam owns. The child leaks — a real
+ *  residual, acceptable only because this method already hands a trusted client arbitrary unsandboxed
+ *  execution, so a process it deliberately made unkillable is its own to clean up. The note names the leak
+ *  so a client is never told "timed out" while something of its making is still running.
  *
  *  GATED NORMALLY on -33005 (it is NOT in `ENGINE_GONE_EXEMPT`), which is the opposite choice and the
  *  right one: a thread whose engine is gone is dead for every method a client can name on it, and one
@@ -167,9 +184,24 @@ export const shellCommand: Handler = async (srv, ctx, id, params) => {
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   // `threadCwd` is `threadView.cwd`'s own function (registry.ts), so the command lands where the client was
-  // told this thread lives. Undefined means a fleet record whose attach stamped no roster cwd — refused
-  // rather than defaulted, because "somewhere else" is not a safe degradation for an unsandboxed exec.
+  // told this thread lives. Undefined means a fleet record that attached with no roster cwd — TYPE-
+  // unreachable (`RosterRow.cwd` is required) but RUNTIME-reachable, because `readRoster` casts parsed JSON
+  // and validates `short` alone (fleet/roster.ts), so a legacy or hand-edited row can carry no cwd at all.
+  // This refusal is therefore load-bearing rather than tidy: defaulting would run an unsandboxed command in
+  // a directory the caller never named, and "somewhere else" is not a safe degradation for an exec.
   const cwd = threadCwd(record);
   if (cwd === undefined) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "thread has no cwd to run in"); return; }
-  ctx.peer.reply(id, await runBash(parsed.data.command, cwd));
+  const deadlineMs = srv.deps.shellDeadlineMs ?? SHELL_DEADLINE_MS;
+  // The deadline is a RESULT, not a rejection, so it composes with the primitive's own "never rejects"
+  // contract and the reply shape stays one type. `Promise.race` is what makes the double-reply structurally
+  // impossible: whichever arm lands first is the only value this `await` ever sees, and a late `runBash`
+  // settle (the child finally dying, minutes later) is discarded with nothing left listening for it.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const abandoned = new Promise<BashResult>((resolve) => {
+    timer = setTimeout(() => resolve({ code: 1, timedOut: true, output: `<harness note: command ignored SIGTERM and exceeded the ${deadlineMs / 1000}s harness deadline; its process may still be running>` }), deadlineMs);
+    (timer as { unref?: () => void }).unref?.();   // a pending deadline must not be a reason to stay alive
+  });
+  const result = await Promise.race([runBash(parsed.data.command, cwd), abandoned]);
+  clearTimeout(timer);                              // the ordinary path leaves no timer behind
+  ctx.peer.reply(id, result);
 };

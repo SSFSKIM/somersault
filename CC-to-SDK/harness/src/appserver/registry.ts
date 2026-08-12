@@ -290,8 +290,12 @@ export function threadStatus(r: ThreadRecord, waitingOn: boolean): { state: "idl
  *  process's cwd, so answering that is a fact rather than a placeholder. A fleet thread does not — its
  *  session runs wherever its roster row said at attach (Task 7) — so an absent value stays absent rather
  *  than borrowing ours, which would point a client's file reads, and a shell command, at the wrong tree.
- *  Undefined is unreachable in practice for a fleet record (`RosterRow.cwd` is required, and attach stamps
- *  it), which is exactly why the honest answer to it is "I don't know" rather than a fallback. */
+ *  Undefined is TYPE-unreachable for a fleet record (`RosterRow.cwd` is required, and attach stamps it) but
+ *  NOT runtime-unreachable: `readRoster` casts parsed JSON to `RosterRow` and validates `short` alone
+ *  (fleet/roster.ts), so a legacy or hand-edited row with no cwd reaches attach as a well-typed row that
+ *  stamps nothing. The arm is therefore load-bearing against a malformed roster rather than merely tidy,
+ *  and "I don't know" is the honest answer to it — a fallback would quietly relocate every consumer,
+ *  `thread/shellCommand`'s unsandboxed exec included. */
 export const threadCwd = (r: ThreadRecord): string | undefined => (r.origin === "inProcess" ? r.cwd ?? process.cwd() : r.cwd);
 
 /** The methods a fleet-origin thread cannot serve, because the HOST WIRE has no op behind them (spec
