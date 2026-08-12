@@ -245,6 +245,28 @@ describe("host mode sync (one source of truth, last-write-wins)", () => {
     await host.stop();
   });
 
+  it("a CLEARED model is not resurrected by a later swap: the replacement opens with no model and status omits it (final review R7)", async () => {
+    // set_model with no model field UNSETS this.model (control() -> resolveModelAlias(undefined) -> undefined).
+    // The swap must then override engineConfig's LAUNCH model explicitly, or it comes back while status()
+    // (which omits an unset model) keeps advertising none — a mirror/engine divergence.
+    const { fake } = fakeSession();
+    const opens: any[] = [];
+    const host = new SessionHost(
+      { short: "e0e0e0e2", name: "t", cwd: "/tmp", kind: "bg", detached: true, config: { model: "claude-sonnet-5" } as never, env: { CCX_FLEET_ROOT: tmpFleet() } },
+      { openSession: (c: unknown) => { opens.push(c); return fake as any; }, procStartOf: async () => "start" },
+    );
+    await host.start();
+    expect(host.status().model).toBe("claude-sonnet-5");                 // launch model is live
+    await host.control({ op: "set_model" });                            // the model field is optional: this CLEARS it
+    expect(host.status().model).toBeUndefined();                        // status omits a cleared model
+    await host.resumeSession("resume-id-1");                            // a swap
+    // The replacement opens with model EXPLICITLY undefined — the launch "claude-sonnet-5" does not come back.
+    expect(opens[1]).toMatchObject({ resume: "resume-id-1" });
+    expect(opens[1].model).toBeUndefined();
+    expect(host.status().model).toBeUndefined();                        // …and status still agrees
+    await host.stop();
+  });
+
   it("a failed/interrupted turn clears planUpgradePending in the catch, not just the try", async () => {
     const fake = {
       sessionId: "sid-1",

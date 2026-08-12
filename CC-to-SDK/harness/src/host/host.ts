@@ -475,14 +475,18 @@ export class SessionHost {
     // is not running — and the mid-swap `state` emit below would be the first frame to say so. The mirrors
     // are the runtime truth for exactly the same reason `this.mode` is: each is rewritten only after its
     // setter's engine call succeeds.
-    //   The two are spread differently on purpose. `model` is omitted when the mirror is unset, so a swap
-    // never invents a key the launch config did not have. `maxThinkingTokens` is written UNCONDITIONALLY,
-    // because `undefined` is a value here: a `set_thinking(null)` CLEARS the mirror (see control()), and
-    // only an explicit undefined can stop the launch config's budget from coming back with the new engine.
+    //   BOTH `model` and `maxThinkingTokens` are written UNCONDITIONALLY, because `undefined` is a VALUE
+    // for each: a `set_model` carrying no model CLEARS `this.model` (control() -> resolveModelAlias(undefined)
+    // -> undefined; registry.ts: "setModel(undefined) resets to the engine's default"), just as
+    // `set_thinking(null)` clears the budget. Only an explicit undefined overrides `engineConfig`'s launch
+    // model — which the config spreads first — so a swap after a client CLEARED the model does not silently
+    // resurrect the launch one while `status()` (which omits an unset `model`) keeps advertising none (final
+    // review R7). `this.model` starts seeded from the launch config (start() -> resolvedModel, always a
+    // string), so the only way it is undefined here is an explicit clear — never "the launch config had none".
     this.session = this.deps.openSession(this.engineConfig({
       ...extra,
       permissionMode: this.mode as HarnessConfig["permissionMode"],
-      ...(this.model ? { model: this.model } : {}),
+      model: this.model as HarnessConfig["model"],
       maxThinkingTokens: this.thinkingTokens,
     }));
     this.turnBuffer.reset(); this.settledBy.clear();
