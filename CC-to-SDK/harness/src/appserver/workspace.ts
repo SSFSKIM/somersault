@@ -19,6 +19,7 @@
 // resolving null for an existing file and for a missing path alike, so there is nothing to serve from it.
 import { isAbsolute } from "node:path";
 import { readdir, readFile, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { collectEntries, rankCandidates } from "../tui/fileComplete.js";
 import type { AsyncReaddirFn } from "../tui/fileComplete.js";
 import { ERR } from "./rpc.js";
@@ -32,6 +33,16 @@ export const READ_CAP_BYTES = 4 * 1024 * 1024;
 /** Codex's MATCH_LIMIT, and the schema's max — so `limit` only ever narrows. */
 const DEFAULT_LIMIT = 50;
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** Names the kind a refused path turned out to be, so the client is told WHY its path is unservable rather
+ *  than being handed a bare "not a regular file". `stat` follows symlinks, so no symlink case appears. */
+const kindOf = (st: Stats): string =>
+  st.isDirectory() ? "directory"
+  : st.isFIFO() ? "FIFO"
+  : st.isSocket() ? "socket"
+  : st.isCharacterDevice() ? "character device"
+  : st.isBlockDevice() ? "block device"
+  : "unknown kind";
 
 /** The walker's injected `readdir` (fileComplete.ts takes one so the TUI's tests can walk a fake tree).
  *  A symlink reads as a FILE here, `isDirectory()` being false for one — the walk therefore never follows
@@ -49,16 +60,24 @@ export const fsRead: Handler = async (_srv, ctx, id, params) => {
   // No cwd-relative resolution, on purpose: this server's cwd is not the client's, and quietly resolving
   // against ours would answer a DIFFERENT file than the one the client believes it asked for.
   if (!isAbsolute(path)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "path must be absolute"); return; }
-  let size: number;
+  let st: Stats;
   // The fs message verbatim (`ENOENT: no such file...`, `EACCES: permission denied...`): it names the
   // errno and the path, which is the whole of what a client can act on, and any rewording here would be
   // this module guessing which of the dozen stat failures it is looking at.
-  try { size = (await stat(path)).size; }
+  try { st = await stat(path); }
   catch (e) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, msg(e)); return; }
+  // ONLY A REGULAR FILE, and this guard is what makes the cap below mean anything. `stat` reports
+  // `size: 0` for every other kind, so a FIFO or a character device sails past the cap — and then
+  // `readFile` on a FIFO blocks in `open(2)` until a writer that never comes, so the handler NEVER
+  // replies and the caller waits forever, while `/dev/zero` reads without end into a growing buffer.
+  // Refusing by kind closes both, and subsumes the directory case (which used to be caught as `EISDIR`
+  // by the read below).
+  if (!st.isFile()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `not a regular file (${kindOf(st)})`); return; }
+  const size = st.size;
   if (size > READ_CAP_BYTES) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `file exceeds the 4 MiB read cap (${size} bytes)`); return; }
-  // The read is guarded SEPARATELY from the stat, and not as a formality: a directory stats fine and
-  // fails here (EISDIR), which is the ordinary way a client's path is wrong. Left to dispatch's catch-all
-  // it would surface as -32603, contradicting this module's one rule.
+  // The read is still guarded separately from the stat: a regular file can fail it on its own (`EACCES`,
+  // or the file changing kind under us between the two calls). Left to dispatch's catch-all such a
+  // failure would surface as -32603, contradicting this module's one rule.
   let data: Buffer;
   try { data = await readFile(path); }
   catch (e) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, msg(e)); return; }
@@ -71,8 +90,11 @@ export const fsRead: Handler = async (_srv, ctx, id, params) => {
  *  (`src/tui/fileComplete.ts`), one root at a time, merged.
  *
  *  REUSED, not re-implemented: `collectEntries` + `rankCandidates` are the same two functions the
- *  composer's file picker runs, so a client's search and the terminal's popup rank a tree identically —
- *  including the ignore rules (`node_modules`, `.git`, dotfiles) and the 1000-entry walk cap. Directories
+ *  composer's file picker runs, so a client's search and the terminal's popup see the same candidates and
+ *  SCORE them identically — including the ignore rules (`node_modules`, `.git`, dotfiles) and the
+ *  1000-entry walk cap. Not byte-identical ORDER, though: `rankCandidates` breaks a score tie on path
+ *  length and then lexically, while the cross-root re-sort below keeps only the lexical half, so equally
+ *  scored matches can come back in a different order than the popup shows them. Directories
  *  come back as matches of their own, carrying the walker's trailing slash (its documented
  *  `isDir === path.endsWith("/")` invariant), which is how a client tells the two apart without a field.
  *
@@ -98,11 +120,10 @@ export const fsSearch: Handler = async (_srv, ctx, id, params) => {
   for (const root of roots) {
     // A ROOT THAT CANNOT BE WALKED CONTRIBUTES NOTHING, and the request still succeeds (§2, Codex's own
     // behavior): a client searching three roots, one of which it lacks permission on, wants the other
-    // two's answers rather than an error naming none of them. `collectEntries` already swallows a failing
-    // readdir mid-walk; this catch covers the same failure at the root itself.
-    let paths: string[];
-    try { paths = (await collectEntries(root, realReaddir)).map((e) => e.path); }
-    catch { continue; }
+    // two's answers rather than an error naming none of them. No catch is needed for it here — the swallow
+    // lives in the walker: `collectEntries` wraps EVERY `readdir`, the base directory's included
+    // (`fileComplete.ts:61`), so an unwalkable root returns `[]` instead of throwing.
+    const paths = (await collectEntries(root, realReaddir)).map((e) => e.path);
     for (const c of rankCandidates(paths, query, limit)) merged.push({ root, path: c.path, score: c.score });
   }
   // Re-sorted ACROSS roots — each root was ranked against the same query, so the scores are comparable,

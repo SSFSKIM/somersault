@@ -115,13 +115,18 @@ op for a fleet thread, `thread/close`'s own path for an inProcess one. Then §2'
 and the only two methods in the registry whose subject is this machine rather than a conversation, which
 is what lets a client browse a fleet thread's tree as readily as an inProcess one's (it passes
 `threadView.cwd` as the path or the search root). Trusted-client and unsandboxed, matching Codex's own
-sandbox-None reads. `fs/read` requires an absolute path, refuses anything over a **4 MiB cap** (a recorded
-deviation — Codex caps nothing, but an oversize base64 payload OOMs a browser client) and answers
-`{dataBase64, size}`; **every one of its refusals is `-32602`**, the failing `stat` and the failing read
-alike, because an fs failure names a bad request rather than a broken server. `fs/search` runs the TUI's
+sandbox-None reads. `fs/read` requires an absolute path, requires a **regular file** (a FIFO would
+otherwise hang the request forever, and `stat` sizes one at 0 so the cap cannot see it), refuses anything
+over a **4 MiB cap** (a recorded deviation — Codex caps nothing, but an oversize base64 payload OOMs a
+browser client) and answers `{dataBase64, size}`; **every one of its refusals is `-32602`**, the failing
+`stat`, the wrong file kind and the failing read alike, because an fs failure names a bad request rather
+than a broken server. `fs/search` runs the TUI's
 own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`) once per root — so a client's search
-and the composer's `@`-picker rank a tree identically, ignore rules and walk cap included — with `roots`
-defaulting to the server's cwd, root-relative `path` beside the absolute `root`, an unwalkable root
+and the composer's `@`-picker score a tree identically, ignore rules and walk cap included (equally scored
+matches can still order differently: the cross-root re-sort keeps the ranker's lexical tie-break but not
+its shorter-path-first one) — with `roots` defaulting to the server's cwd and otherwise taken as given,
+relative ones included (§2 asks absoluteness of `fs/read`'s `path` alone), each match's `path`
+root-relative beside the `root` that produced it, an unwalkable root
 degrading to zero matches rather than failing the call (Codex's behavior), and the roots merged into one
 score-ordered list capped at 50 (Codex's `MATCH_LIMIT`). No highlight indices and no warm index: recorded
 deviations — our ranker produces no indices, and the TUI re-walks on every query too.
@@ -414,8 +419,8 @@ table above.
 | `thread/start` | appserver/server.ts | `thread/start` | N/A | shipped(M1) — registers an `inProcess` thread; a client's whole `config` reaches `openSession` |
 | `fleet/list` | appserver/fleet.ts | `fleet/list` | N/A | shipped(M3) — roster + live-projection join over the same probe seams `collectFleet` uses; terminal and unresponsive rows are listed, and `threadId` marks the rows this server holds |
 | `thread/attach` | appserver/fleet.ts | `thread/attach` | N/A | shipped(M3) — registers a `fleet` thread over `FleetEngineSession`; short/sessionId/name resolution with `-33008` on ambiguity, a terminal row or an unreachable socket; reservation-idempotent, and admitted behind the activation barrier |
-| `fs/read` | appserver/workspace.ts | `fs/read` | N/A | shipped(M3) — `{path}` → `{dataBase64, size}`, absolute paths only, trusted-client and unsandboxed (Codex's reads are sandbox-None). Refuses with `-32602` and nothing else: a relative path, a failing `stat` (the fs message verbatim), a failing read (a directory's `EISDIR` is the ordinary case), and a file over the **4 MiB cap** — `file exceeds the 4 MiB read cap (N bytes)`. The cap is a recorded deviation (Codex has none); the SDK seam that would have backed this, `Query.readFile`, is probe-dead (probe 104) and its own row is in the Query table |
-| `fs/search` | appserver/workspace.ts | `fs/search` | N/A | shipped(M3) — `{query, roots?, limit?}` → `{matches: [{root, path, score}]}` over the TUI's own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`), so a client's search and the composer's `@`-picker rank a tree identically. Empty/whitespace query → `[]` before any walk; `roots` defaults to the server's cwd (this process's — the server holds no other); `path` is root-relative beside the absolute `root`; an unwalkable root degrades to zero matches rather than failing the call (Codex parity), so the reply is never an RPC error; roots merge into one score-ordered list capped at `limit`, default and max 50 (Codex's `MATCH_LIMIT`). No highlight indices, no warm index — both recorded deviations |
+| `fs/read` | appserver/workspace.ts | `fs/read` | N/A | shipped(M3) — `{path}` → `{dataBase64, size}`, absolute paths only, trusted-client and unsandboxed (Codex's reads are sandbox-None). Refuses with `-32602` and nothing else: a relative path, a failing `stat` (the fs message verbatim), a path that is not a regular file — `not a regular file (directory\|FIFO\|socket\|character device\|block device)`, which is what keeps a FIFO from hanging the request forever and `/dev/zero` from reading without end, both invisible to the cap because `stat` sizes them at 0 — a failing read (`EACCES`), and a file over the **4 MiB cap** — `file exceeds the 4 MiB read cap (N bytes)`. The cap is a recorded deviation (Codex has none); the SDK seam that would have backed this, `Query.readFile`, is probe-dead (probe 104) and its own row is in the Query table |
+| `fs/search` | appserver/workspace.ts | `fs/search` | N/A | shipped(M3) — `{query, roots?, limit?}` → `{matches: [{root, path, score}]}` over the TUI's own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`), so a client's search and the composer's `@`-picker score a tree identically — equally scored matches can still order differently, the cross-root re-sort keeping the ranker's lexical tie-break but not its shorter-path-first one. Empty/whitespace query → `[]` before any walk; `roots` defaults to the server's cwd (this process's — the server holds no other) and is otherwise taken as given, relative roots included (§2 asks absoluteness of `fs/read`'s `path` alone); each match's `path` is root-relative beside the `root` that produced it; an unwalkable root degrades to zero matches rather than failing the call (Codex parity), so the reply is never an RPC error; roots merge into one score-ordered list capped at `limit`, default and max 50 (Codex's `MATCH_LIMIT`). No highlight indices, no warm index — both recorded deviations |
 
 ## Totals
 
@@ -447,7 +452,8 @@ protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). 
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
 Origin scope splits **66 `both` / 11 `inProcess` / 0 `fleet-only` / 9 `N/A`**, recounted off the tables at
 M3 Task 12 across all **86** rows — the per-status snapshot block above still says 82 because it predates
-M3 Task 7's two new server-origin rows (`fleet/list`, `thread/attach`, both `N/A`). Task 12 moved three:
+all FOUR of M3's new server-origin rows: Task 7's `fleet/list` and `thread/attach`, and Task 12's own
+`fs/read` and `fs/search` (all four `N/A`). Task 12 moved three:
 its own two workspace rows (`fs/read`, `fs/search`, both `N/A` — no thread, no origin question) and
 `readFile`, which had been scored `inProcess` while its status read `N/A`; a token backing no method has
 no origin, so it now reads `N/A` in both columns, as `seedReadState` always has. This line has gone stale

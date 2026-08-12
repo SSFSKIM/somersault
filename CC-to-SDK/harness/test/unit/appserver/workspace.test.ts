@@ -4,6 +4,7 @@
 // oversize refusal, the base64 round-trip of non-UTF8 bytes and the unreadable-root degradation each
 // depend on what node's fs actually does.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,11 +84,31 @@ describe("fs/read", () => {
   });
 
   it("refuses a directory with -32602 rather than -32603", async () => {
-    // `stat` SUCCEEDS on a directory, so this refusal can only come from the read itself — and an fs
-    // failure is bad-request-class on every path (Codex parity), never the dispatcher's internal catch.
+    // `stat` SUCCEEDS on a directory, so this refusal comes from the kind check — and an fs failure is
+    // bad-request-class on every path (Codex parity), never the dispatcher's internal catch.
     const e = err(await call("fs/read", { path: root }));
     expect(e.code).toBe(ERR.INVALID_PARAMS);
-    expect(e.message).toContain("EISDIR");
+    expect(e.message).toBe("not a regular file (directory)");
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a FIFO instead of hanging on it forever", async () => {
+    // THE CAP'S HOLE, and the worst failure this module can have: `stat` reports `size: 0` for a FIFO, so
+    // the 4 MiB cap waves it through, and `readFile` then blocks in `open(2)` until a writer appears —
+    // which never happens. The handler never replies, the request id leaks and the caller waits forever.
+    // `call`'s 2 s deadline is what turns that hang into a failing assertion here.
+    const fifo = join(root, "pipe");
+    execFileSync("mkfifo", [fifo]);                                  // node's fs has no mkfifo; the tool is on darwin+linux
+    const e = err(await call("fs/read", { path: fifo }));
+    expect(e.code).toBe(ERR.INVALID_PARAMS);
+    expect(e.message).toBe("not a regular file (FIFO)");
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a character device, which `stat` also sizes at 0", async () => {
+    // The same hole pointed the other way: `/dev/zero` passes the cap and then reads without end, growing
+    // the buffer until the process dies. One `isFile()` guard closes both.
+    const e = err(await call("fs/read", { path: "/dev/zero" }));
+    expect(e.code).toBe(ERR.INVALID_PARAMS);
+    expect(e.message).toBe("not a regular file (character device)");
   });
 });
 
