@@ -23,7 +23,9 @@
 // The SDK's own `Query.readFile` deliberately backs none of this: probe 104 found it callable but
 // resolving null for an existing file and for a missing path alike, so there is nothing to serve from it.
 import { isAbsolute } from "node:path";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, open } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { collectEntries, rankCandidates } from "../tui/fileComplete.js";
 import type { AsyncReaddirFn } from "../tui/fileComplete.js";
@@ -43,6 +45,11 @@ const DEFAULT_LIMIT = 50;
  *  fires for a child that IGNORED the SIGTERM that timeout sends. See the handler's note. */
 export const SHELL_DEADLINE_MS = 40_000;
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** The fd opener `fs/read` rides, exposed so a test can substitute a tracked FileHandle and assert the
+ *  read rides ONE descriptor and it is closed on the refusal path (the TOCTOU fix is structural — a true
+ *  swap race cannot be staged deterministically). Nothing else reads this. */
+export const fsReadInternals = { open };
 
 /** Names the kind a refused path turned out to be, so the client is told WHY its path is unservable rather
  *  than being handed a bare "not a regular file". `stat` follows symlinks, so no symlink case appears. */
@@ -70,30 +77,37 @@ export const fsRead: Handler = async (_srv, ctx, id, params) => {
   // No cwd-relative resolution, on purpose: this server's cwd is not the client's, and quietly resolving
   // against ours would answer a DIFFERENT file than the one the client believes it asked for.
   if (!isAbsolute(path)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "path must be absolute"); return; }
-  let st: Stats;
+  // ONE descriptor for the whole read, which is what closes the stat→read TOCTOU: the old code `stat`ed the
+  // path and then `readFile`d it by PATH, re-opening a possibly-different inode — a file swapped for a
+  // FIFO/device/large file between the two calls bypassed the kind + size guard, and the read could then
+  // hang or grow unbounded (the request-never-settles class). Open ONCE, `fstat` THAT descriptor (the same
+  // inode the read will use), guard on it, then read from the fd — no second path resolution, so the swap
+  // window is gone. `O_NONBLOCK` so opening a FIFO with no writer returns immediately rather than blocking
+  // in `open(2)` (the very hang the kind guard exists to prevent); it has no effect on the regular files
+  // that pass the guard. `?? 0` because Windows has no O_NONBLOCK — and no FIFOs, so an open never blocks.
+  let fh: FileHandle;
   // The fs message verbatim (`ENOENT: no such file...`, `EACCES: permission denied...`): it names the
-  // errno and the path, which is the whole of what a client can act on, and any rewording here would be
-  // this module guessing which of the dozen stat failures it is looking at.
-  try { st = await stat(path); }
+  // errno and the path, the whole of what a client can act on; any rewording would be this module guessing.
+  try { fh = await fsReadInternals.open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)); }
   catch (e) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, msg(e)); return; }
-  // ONLY A REGULAR FILE, and this guard is what makes the cap below mean anything. `stat` reports
-  // `size: 0` for every other kind, so a FIFO or a character device sails past the cap — and then
-  // `readFile` on a FIFO blocks in `open(2)` until a writer that never comes, so the handler NEVER
-  // replies and the caller waits forever, while `/dev/zero` reads without end into a growing buffer.
-  // Refusing by kind closes both, and subsumes the directory case (which used to be caught as `EISDIR`
-  // by the read below).
-  if (!st.isFile()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `not a regular file (${kindOf(st)})`); return; }
-  const size = st.size;
-  if (size > READ_CAP_BYTES) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `file exceeds the 4 MiB read cap (${size} bytes)`); return; }
-  // The read is still guarded separately from the stat: a regular file can fail it on its own (`EACCES`,
-  // or the file changing kind under us between the two calls). Left to dispatch's catch-all such a
-  // failure would surface as -32603, contradicting this module's one rule.
-  let data: Buffer;
-  try { data = await readFile(path); }
-  catch (e) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, msg(e)); return; }
-  // `size` is the PAYLOAD's length, not the stat's — they differ only if the file changed under us, and
-  // a client sizing its decode buffer wants the number that describes what it was actually sent.
-  ctx.peer.reply(id, { dataBase64: data.toString("base64"), size: data.byteLength });
+  try {
+    const st: Stats = await fh.stat();
+    // ONLY A REGULAR FILE, and this guard is what makes the cap below mean anything. `fstat` reports
+    // `size: 0` for every other kind, so a FIFO or a character device would sail past the cap and a read of
+    // one would block (FIFO) or grow without end (`/dev/zero`). Refusing by kind closes both, and subsumes
+    // the directory case. Verbatim the message the path-`stat` version produced.
+    if (!st.isFile()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `not a regular file (${kindOf(st)})`); return; }
+    if (st.size > READ_CAP_BYTES) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `file exceeds the 4 MiB read cap (${st.size} bytes)`); return; }
+    // Read from the SAME descriptor (not a re-open by path) — a regular file can still fail the read on its
+    // own (`EACCES`), which is bad-request-class here, never the dispatcher's -32603, keeping this module's
+    // one rule. `size` is the PAYLOAD's length, what a client sizing its decode buffer was actually sent.
+    const data = await fh.readFile();
+    ctx.peer.reply(id, { dataBase64: data.toString("base64"), size: data.byteLength });
+  } catch (e) {
+    ctx.peer.replyError(id, ERR.INVALID_PARAMS, msg(e));
+  } finally {
+    await fh.close().catch(() => {});   // one descriptor, released on every path — refusal and success alike
+  }
 };
 
 /** `fs/search {query, roots?, limit?}` → `{matches: [{root, path, score}]}` — the TUI's @-mention ranker

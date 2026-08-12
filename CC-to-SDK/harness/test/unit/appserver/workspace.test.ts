@@ -9,6 +9,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
+import { fsReadInternals } from "../../../src/appserver/workspace.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
@@ -109,6 +110,43 @@ describe("fs/read", () => {
     const e = err(await call("fs/read", { path: "/dev/zero" }));
     expect(e.code).toBe(ERR.INVALID_PARAMS);
     expect(e.message).toBe("not a regular file (character device)");
+  });
+});
+
+// F3: the read rides ONE descriptor — open once, fstat THAT fd, read from it — closing the stat→read swap
+// window by construction (a true TOCTOU race cannot be staged deterministically). These assert the fd
+// structure through a tracked FileHandle: open is called exactly once, and the descriptor is closed on
+// every path, refusal included (a leak here is the descriptor-exhaustion failure the finally-close prevents).
+describe("fs/read rides one descriptor (F3 — TOCTOU closed by construction)", () => {
+  function trackedHandle(stats: Record<string, unknown>, bytes = Buffer.from("hi")) {
+    const calls: string[] = [];
+    const fh = {
+      stat: vi.fn(async () => { calls.push("stat"); return stats; }),
+      readFile: vi.fn(async () => { calls.push("readFile"); return bytes; }),
+      close: vi.fn(async () => { calls.push("close"); }),
+    };
+    return { fh, calls };
+  }
+
+  it("opens once, fstats that same fd, reads from it, then closes — one descriptor, in order", async () => {
+    const { fh, calls } = trackedHandle({ isFile: () => true, size: 2 });
+    const spy = vi.spyOn(fsReadInternals, "open").mockResolvedValue(fh as never);
+    const res = ok(await call("fs/read", { path: join(root, "x.txt") }));
+    expect(spy).toHaveBeenCalledTimes(1);                    // ONE open — no second path resolution for the read
+    expect(calls).toEqual(["stat", "readFile", "close"]);    // fstat then read then close, all on that fd
+    expect(Buffer.from(res.dataBase64 as string, "base64").toString()).toBe("hi");
+  });
+
+  it("closes the fd on the refusal path and never reads through it", async () => {
+    // A non-regular file is refused AFTER the fstat and BEFORE any read — and the fd must still be released.
+    const { fh, calls } = trackedHandle({ isFile: () => false, isDirectory: () => true, size: 0 });
+    vi.spyOn(fsReadInternals, "open").mockResolvedValue(fh as never);
+    const e = err(await call("fs/read", { path: join(root, "d") }));
+    expect(e.code).toBe(ERR.INVALID_PARAMS);
+    expect(e.message).toBe("not a regular file (directory)");
+    expect(fh.readFile).not.toHaveBeenCalled();              // never read a non-regular file…
+    expect(fh.close).toHaveBeenCalledTimes(1);               // …but the descriptor is still closed
+    expect(calls).toEqual(["stat", "close"]);
   });
 });
 
