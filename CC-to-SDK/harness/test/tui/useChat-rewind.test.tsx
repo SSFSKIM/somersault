@@ -309,6 +309,34 @@ describe("useChat: rewind flow", () => {
     expect(wipes).toBe(1);
   });
 
+  it("20. a local /clear the host REFUSES does not suppress a FOREIGN rewound arriving in that window (final review R8)", async () => {
+    // The blanket self-flag suppressed EVERY rewound for the whole in-flight window of a local op — including
+    // a DIFFERENT client's rewind that lands while a local /clear is being refused busy, stranding the UI on
+    // stale history. Correlating suppression to the local op's echo shape ({cleared:true} for a clear) lets a
+    // distinguishable foreign rewound (a rewind, carrying prevUuid) through.
+    let reads = 0;
+    let session!: ReturnType<typeof fakeRewindSession>;
+    session = fakeRewindSession({}, {
+      clearSession: async () => {
+        session.pushEvent({ kind: "rewound", sessionId: "s2", prevUuid: "anchor-x" } as any);  // a FOREIGN rewind, not a clear
+        await new Promise((r) => setTimeout(r, 5));                                             // the host round-trip — the foreign rewound routes in this window
+        throw new Error("host busy");                                                           // …and the local /clear is refused
+      },
+    });
+    // The retry override keeps the empty-read rebuild fast (test 10's convention) — otherwise it polls the
+    // full post-rewind disk-flush window.
+    const deps = { getSessionMessages: async () => { reads++; return [] as any[]; }, clearScreen: () => {}, rewindReplayRetry: { attempts: 1, delayMs: 0 } };
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => session, {}, deps); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("/clear");
+    // THE FIX: the foreign rewound rebuilt the transcript despite the local /clear being refused in the same window.
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    expect(reads).toBeGreaterThan(0);                        // rebuildAfterRewind ran (it re-reads the disk)
+    await waitFor(() => frame(lastFrame).includes("screen left as is"));   // …and the /clear refusal was still surfaced
+  });
+
   it("10. the composer is held behind a modal while a rewind runs, so a prompt typed mid-rewind cannot be lost", async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => { release = r; });

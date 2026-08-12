@@ -815,12 +815,21 @@ export function useChat(
   }, [mode, model, thinkLevel, outputStyle, renameTitle, aiTitle, effort, effortSupported]);   // eslint-disable-line react-hooks/exhaustive-deps
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
-  // Set for the whole window in which THIS client's own rewind is in flight, so the host's `rewound`
-  // broadcast — which every follower receives, the confirming client included — does not trigger a
-  // second rebuild on top of confirmRewind's own. A boolean, not the anchor uuid: nothing on the wire is
-  // needed to answer "was this mine", and the window is bounded by the same try/finally that owns
-  // `rewinding`.
-  const selfRewind = useRef(false);
+  // Set for the whole window in which THIS client's own rewind/clear is in flight, so the host's `rewound`
+  // broadcast — which every follower receives, the confirming client included — does not trigger a second
+  // rebuild on top of confirmRewind's/clear's own. NOT a blanket boolean (final review R8): a local op that
+  // is REFUSED (a /clear the host busy-refuses) produces no echo, and a blanket flag suppressed a DIFFERENT
+  // client's rewound that happened to arrive in that window, stranding the UI on stale history. Instead it
+  // carries the EXPECTED echo shape — a clear expects `{cleared:true}`, a rewind expects its `prevUuid` —
+  // and the follower arm below suppresses only a rewound matching it, so a distinguishable foreign one
+  // passes through even mid-refusal. Bounded by the same try/finally that owns `rewinding`.
+  const selfRewind = useRef<{ cleared: boolean; prevUuid?: string | null } | null>(null);
+  /** Does this incoming `rewound` match the local op's expected echo (final review R8)? A clear's echo is
+   *  `{cleared:true}`; a rewind's is `{prevUuid}` with no `cleared`. Two clears are genuinely
+   *  indistinguishable on the wire, so a foreign clear during a local clear is the one residual — every
+   *  other cross-shape foreign rewound (a rewind during a clear, a rewind to a different anchor) passes. */
+  const isSelfRewindEcho = (self: { cleared: boolean; prevUuid?: string | null }, ev: { prevUuid?: string; cleared?: boolean }): boolean =>
+    self.cleared ? ev.cleared === true : (!ev.cleared && ev.prevUuid === self.prevUuid);
 
   // ── Projection reconciliation ────────────────────────────────────────────────────────────────────────
   /** Generic by `RenderItem.id`: filter out what is already published, append every unseen finalized item
@@ -1276,9 +1285,14 @@ export function useChat(
         reconcile();
       }
       // ANOTHER client rewound: rebuild from disk, cut at the anchor the host resumed at (no prefill —
-      // not our prompt). Our OWN rewind's broadcast is skipped: confirmRewind already awaits its own
-      // rebuild, and running a second one on top of it re-reads disk and re-mints the composer prefill.
-      else if (ev.kind === "rewound") { if (!selfRewind.current) void rebuildAfterRewind({ prevUuid: ev.prevUuid, cleared: ev.cleared }); }
+      // not our prompt). Our OWN op's echoed broadcast is skipped: confirmRewind/clear already runs its own
+      // rebuild, and a second one re-reads disk and re-mints the composer prefill. The suppression is
+      // CORRELATED to the local op's expected echo (final review R8), so a foreign rewound arriving while a
+      // local op is in flight — including a local op the host then refuses — still rebuilds the UI.
+      else if (ev.kind === "rewound") {
+        const self = selfRewind.current;
+        if (!(self && isSelfRewindEcho(self, ev))) void rebuildAfterRewind({ prevUuid: ev.prevUuid, cleared: ev.cleared });
+      }
       else if (ev.kind === "state") {
         idleFollowReplay.current = false;                          // the trailing frame of a follow replay ends the idle-ingestion mode
         if (ev.status.status === "idle") { clearLiveOpen(); clearRetry(); disarmStall(); }   // the host says nothing is running — no call of ours can still be live, no retry of ours is still pending, and nothing is left to go silent on us
@@ -1575,11 +1589,11 @@ export function useChat(
         // its OWN path, `clear()` on the next line. A FOREIGN client's rewound still rebuilds: the ref is
         // set only across our own op.
         case "clear": {
-          selfRewind.current = true;
+          selfRewind.current = { cleared: true };   // R8: this op's echo is `{cleared:true}` — suppress only that
           try { await session.clearSession?.(); } catch (e) {
             append([{ text: `clear: ${e instanceof Error ? e.message : String(e)} — screen left as is (engine context unchanged)`, dim: true }]);
             break;
-          } finally { selfRewind.current = false; }
+          } finally { selfRewind.current = null; }
           clear();
           break;
         }
@@ -2312,7 +2326,10 @@ export function useChat(
     // cleared from the editor, forwarded, and rejected by the host as busy — silently losing what the
     // user typed. `rewinding` keeps the composer off-screen until the operation settles.
     setRewinding(true);
-    selfRewind.current = true;
+    // R8: this op's echo shape — a first-message rewind CLEARS (`{cleared:true}`), any other resumes at
+    // `prevUuid`. Only a matching rewound is suppressed; a foreign one still rebuilds. A code-only rewind
+    // provokes no `rewound` broadcast at all, so the descriptor is harmless on that arm.
+    selfRewind.current = { cleared: !anchor.prevUuid, prevUuid: anchor.prevUuid };
     void (async () => {
       try {
         await session.rewind(anchor, scope);
@@ -2325,7 +2342,7 @@ export function useChat(
       // see rewindFailureHeading for why the arm cannot be chosen by which half actually threw, and for the
       // one arm of upstream's four that has no channel to reach us at all.
       } catch (e) { append([{ text: rewindFailureHeading(scope), color: role("error") }, { text: (e as Error).message, color: role("error") }]); }
-      finally { selfRewind.current = false; if (!disposed.current) setRewinding(false); }
+      finally { selfRewind.current = null; if (!disposed.current) setRewinding(false); }
     })();
   }
 
