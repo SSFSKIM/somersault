@@ -73,6 +73,9 @@ export interface FakeHostControls {
    *  emitted before the server writes the prompt reply, so a trivially-fast own turn's end beats its own
    *  reply on the wire (external review F2). `opts` is `endTurn`'s shape. */
   completeNextPromptInline(opts?: { error?: string; result?: unknown; failure?: TurnFailure }): void;
+  /** Make the NEXT prompt DESTROY this connection instead of answering — a host death after the op is
+   *  dispatched but before its reply is written (external review F6). */
+  killNextPrompt(): void;
   park(entry: PendingDecisionLike): void;
   /** Settle a park host-side, decision_settled then state. With an `answer` this is the human path
    *  (§1a-e: the whole outcome travels, host.ts:860-861); without one it is the SDK-ABORT path — a bare
@@ -141,6 +144,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   let busy = !!opts.busy;
   let seq = busy ? 1 : 0;                            // a turn in flight is a turn that started
   let inlineComplete: { error?: string; result?: unknown; failure?: TurnFailure } | undefined; // F2: end this prompt inline
+  let killPrompt = false;                            // F6: destroy the connection on the next prompt
   const patch: Partial<HostStatus> = { ...opts.status };
   const ops: string[] = [];
   const opCalls: Array<{ op: string; args: unknown[] }> = [];
@@ -257,6 +261,10 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     // the seq the server puts in the prompt reply (read after this call) this turn's own.
     prompt: async (text, uuid) => {
       record("prompt", text, uuid); promptCalls.push({ text, ...(uuid ? { uuid } : {}) });
+      // F6: the host dies before the reply — destroy the connection synchronously (server.close() runs its
+      // socket-destroy synchronously), so the server's about-to-be-written prompt reply reaches a dead socket
+      // and the client sees the death with the op unanswered. Runs before beginTurn: no turn ever starts.
+      if (killPrompt) { killPrompt = false; void server.close(); return; }
       beginTurn(seq + 1);
       // F2: complete the turn INLINE — turn/end is emitted here, before this handler returns, so it precedes
       // the prompt reply the server writes next (turnSeq() still reads this turn's seq, the reply matches).
@@ -336,6 +344,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     beginTurn,
     endTurn: (n, o = {}) => emitEnd(n, o),
     completeNextPromptInline: (o) => { inlineComplete = o ?? {}; },
+    killNextPrompt: () => { killPrompt = true; },
     park: (e) => {
       const entry: PendingDecision = { sessionId: "s-fake", toolName: "Bash", kind: "permission", input: {}, createdAt: Date.now(), ...e };
       parked.push(entry);

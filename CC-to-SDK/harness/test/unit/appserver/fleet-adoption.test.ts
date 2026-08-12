@@ -367,6 +367,19 @@ describe("the fleet event layer owns turn lifecycle (M3 Task 7)", () => {
     expect(notifs(lines, "turn/completed")[0].params.turn).toEqual({ id: "t1@e0", status: "failed", error: "API Error" });
   });
 
+  it("a socket death after dispatch but before the prompt ack maps turn/start to -33005, not -32603 (F6)", async () => {
+    // fleetTurnStart special-cases only the BUSY refusal; an engine-gone rejection (the host died after the
+    // op was sent but before its ack) used to fall through to -32603 INTERNAL, so a client could not tell a
+    // reconnectable host loss from a server bug. `isEnded()` is the death latch the -33005 dispatch gate
+    // itself reads, so a rejection from a dead engine now maps to ENGINE_GONE like every other fleet op.
+    const { fh, lines, conn, threadId } = await attached();
+    fh.killNextPrompt();                                       // host destroys the connection instead of acking
+    send(conn, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await waitFor(() => expect(frame(lines, 4)).toBeTruthy());
+    expect(frame(lines, 4).error.code).toBe(ERR.ENGINE_GONE);
+    expect(notifs(lines, "turn/started")).toEqual([]);        // no turn ever started
+  });
+
   it("a FOREIGN turn is first-class: started/completed under its own seq, and its frames are itemized", async () => {
     const { fh, lines, threadId, record } = await attached();
 

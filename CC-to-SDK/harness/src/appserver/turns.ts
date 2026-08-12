@@ -347,6 +347,12 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
     // the value rather than by class, so any engine that refuses the same way answers the same way.
     const code = (e as { code?: unknown } | null)?.code;
     if (code === ERR.BUSY) { ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)"); return; }
+    // F6: a socket death after dispatch but before the prompt ack rejects submit with the engine's
+    // connection-closed error, which carries no `code`. `isEnded()` is the death latch dispatch's own
+    // -33005 gate reads (fleetEngine.ts), so a rejection from a dead engine maps to ENGINE_GONE — the same
+    // reconnectable-host-loss signal every other fleet op answers — while a genuine unexpected throw on a
+    // LIVE engine stays INTERNAL, so a client can tell a server bug from a host it can recover by re-attach.
+    if (engine.isEnded()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, e instanceof Error ? e.message : String(e)); return; }
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   });
 }
