@@ -45,6 +45,7 @@ import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
+import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
 import { renderItemHeight } from "./pager.js";
 import { clearViewport } from "./clearViewport.js";
@@ -295,6 +296,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // It lives up here rather than in the composer for the same reason the typing debounce does: the composer
   // is unmounted by every dialog, and its own cleanup reports IDLE so nothing stale survives the unmount.
   const [footerState, setFooterState] = useState<ComposerFooterState>(IDLE_COMPOSER_FOOTER_STATE);
+  // THE SUGGESTION POPUP'S ROWS, held here because the live window's cap has to pay for them (see the
+  // `windowItems` memo). A boolean, reported synchronously from the composer's `commitState` — the height
+  // itself is `popupHeight(rows)` and is re-derived per render, so a resize needs no second report.
+  const [suggestOpen, setSuggestOpen] = useState(false);
   // The draft half of the footer's inputs, on its own channel — see `ComposerFooterState`'s docblock for why
   // it must not ride the effect the other four states use.
   const [draftNonEmpty, setDraftNonEmpty] = useState(false);
@@ -835,6 +840,26 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // only the one-frame belt: the commit runs in a passive effect, so the frame that first paints the dialog
   // would otherwise still be carrying the window it is about to hand over.
   //
+  // …AND THE SUGGESTION POPUP, on the same argument and for a bigger region (FSW task 4 §5). `popupHeight` is
+  // half the terminal — twenty rows at 40 — and it is none of `mainWindowCap`'s fourteen: window + dock +
+  // popup cleared the pane at EVERY size, so Ink took the tall branch on the keystrokes of every slash
+  // command and appended a fresh copy of the committed transcript to scrollback each time. A/B on one build,
+  // six `/status` submissions typed a character at a time at 80x40, counting copies of the echo row in
+  // `capture-pane -S -`: WITHOUT this term 132 copies / 1915 scrollback rows, WITH it 6 / 65 — and 6 is the
+  // pre-wave number, i.e. one copy per submission and nothing reprinted. (Task 4 measured 139 / 2035 by the
+  // same method; 2035 is past tmux's default 2000-row history-limit, so the user's real scrollback is gone.)
+  // Two things this deliberately is NOT:
+  //   · not a COMMIT. The popup opens and closes on every keystroke of a slash command, and a commit is
+  //     irreversible — driving the ratchet from a flicker would publish the tail a row at a time and freeze it
+  //     at whatever width and moment the user happened to be typing at. The rows leave the WINDOW while the
+  //     popup is up and are back the moment it closes, which is the same trade the streaming subtraction above
+  //     already makes.
+  //   · not a blanking. It is budgeted: the window yields exactly the popup's rows, not all of them (the I2
+  //     lesson from `paneOwned`, which used to hide `rows − 16` rows for the whole life of a dialog).
+  // The flag arrives SYNCHRONOUSLY with the keystroke (`onSuggestOpen`, off the composer's `commitState`) and
+  // not off `onFooterState`'s effect, because one frame late is one tall write, which is one reprinted
+  // session — the defect itself, merely rarer.
+  //
   // THE CAP SUBTRACTS THE LIVE ROWS IT SHARES THE FRAME WITH (fix round, review C2). `mainWindowCap`'s dock
   // figure covers the composer, footer, todo panel, spinner and queue — it does NOT cover `pendingItems` or
   // the in-flight turn, and both of those are unbounded. Before this subtraction the window took the slack
@@ -858,9 +883,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // `nextSize` keeps the identity stable while neither dimension moves, so this costs nothing on an
     // ordinary re-render.
     const live = rowsOf(state.pendingItems) + rowsOf(streamingItems(state.streaming, size.columns));
-    const cap = Math.max(0, mainWindowCap(size.rows) - WINDOW_SLACK - live);
+    const cap = Math.max(0, mainWindowCap(size.rows) - WINDOW_SLACK - live - (suggestOpen ? popupHeight(size.rows) : 0));
     return selectLiveWindow(unpublished, cap, cap).window;
-  }, [state.finalizedItems, state.staticItems, state.pendingItems, state.streaming, size, paneOwned]);
+  }, [state.finalizedItems, state.staticItems, state.pendingItems, state.streaming, size, paneOwned, suggestOpen]);
   // …and the commit half of I2. An EDGE would be enough (the flag is what changes), but a level is cheaper to
   // reason about and idempotent by construction: with nothing unpublished left, `publishLiveWindow` returns
   // without touching state, so a re-render behind an open dialog schedules nothing.
@@ -1073,7 +1098,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // WAVE C TASK 2: one queue for the whole app (useChat owns it), and the composer's
                       // footer-state channel. Both are how the one-row footer and the one-row overlay stay
                       // in sync with a component that unmounts behind every dialog.
-                      notifications={notifications} onFooterState={setFooterState}
+                      notifications={notifications} onFooterState={setFooterState} onSuggestOpen={setSuggestOpen}
                       // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
                       // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
                       // arm clock every double-press in this tree shares.

@@ -12,7 +12,7 @@ import type { CommandEntry } from "./commandComplete.js";
 // module cycle editorHistory.ts documents: hoisted `function` declarations, nothing called at module-eval
 // time. Everything this file used to export from that section is re-exported below, so no caller moved.
 import { acceptCommand, acceptGhost, acceptMention, commandActive, completionActive, ghostText, mentionActive, moveCommand, moveMention, syncCompletions } from "./completions.js";
-export { commandActive, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, mentionActive, setCommandCatalog, setMentionFiles, syncCompletions } from "./completions.js";
+export { commandActive, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, mentionActive, setCommandCatalog, setMentionFiles, suggestPopupShown, syncCompletions } from "./completions.js";
 export type { GhostText } from "./completions.js";
 import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, ingestPaste, snapOut, substituteChips } from "./pasteChips.js";
 // F5 task 7: the history WALK moved out to its own module (the plan's pre-allocated split), leaving this file
