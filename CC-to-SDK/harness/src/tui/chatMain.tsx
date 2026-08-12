@@ -136,16 +136,31 @@ const CLEAR_SCROLLBACK_HEAD = "\x1b[2J\x1b[3J";
  *  `SYNCHRONIZED_UPDATE: 2026`). The fullscreen renderer paints through stock log-update with no `<Static>` in
  *  its tree, so every paint is a full-frame erase-and-rewrite and the window between the two halves is the
  *  flicker the renderer is named after ("flicker-free" is canon's own word for it, settings copy L42039). A
- *  terminal that implements 2026 buffers everything between the pair and presents it as one update; one that
- *  does not implements neither escape and ignores both, and the paint is byte-for-byte what it would have been
- *  — which is the recorded divergence in §A4a rather than a fallback to write.
+ *  terminal that implements 2026 buffers everything between the pair and presents it as one update.
+ *    DELIBERATE DIVERGENCE — WE EMIT IT UNCONDITIONALLY AND CANON DOES NOT. Canon gates the pair: `Dms`
+ *  (L177106) emits it only when its skip flag is false, and both call sites (L180802, L181310) pass
+ *  `skipSyncMarkers()` (L180678), which skips unless stdout is a TTY, TTY handlers are attached, AND `Lee()`
+ *  says the terminal is on a twelve-branch capability ALLOW-LIST: `TERM_PROGRAM` in {iTerm.app, WezTerm,
+ *  WarpTerminal, ghostty, contour, vscode, alacritty, mintty, rio, Tabby}, JetBrains terminals,
+ *  `KONSOLE_VERSION >= 211200`, kitty, `xterm-ghostty`, `foot*`, `ZED_TERM`, `VTE_VERSION >= 6800`, or the
+ *  `CLAUDE_CODE_FORCE_SYNC_OUTPUT` override — and under `TMUX` only when a LIVE PROBE said yes (`E2u`/`b2u`,
+ *  L176997). An allow-list that specific exists because 2026 to an unknown terminal is NOT free: one that
+ *  honors BSU and drops ESU holds the display. The named exposure is our own: TMUX is this wave's QA
+ *  environment, and it is precisely the case canon refuses without a positive probe. Nothing here can
+ *  unbalance the pair (one concatenation, one `targetWrite`), so the divergence is recorded rather than gated
+ *  — but T17 OWES the matrix a proof, BEFORE T16 flips the renderer default on: the wrap must be shown INERT
+ *  on a terminal outside canon's allow-list and on bare tmux with no probe.
  *    KNOWN BOUNDED DIVERGENCE (plan m1): the pair goes around ONE write, and two of Ink's seams are three.
  *  `writeToStdout` (`ink.js:140`-`:155`) and `writeToStderr` (`:157`-`:171`) are each `log.clear()` →
  *  `write(data)` → `log(lastOutput)`, and only that third call is a recorded frame write — the erase and the
  *  payload go out unwrapped ahead of it, so a paint reached through those seams can tear. `/clear` and every
  *  `console.*` under `patchConsole` (render.js's default, which this app does not turn off) reach them.
- *  RECORDED, NOT FIXED: spanning three writes means holding bytes inside the proxy until a flush condition it
- *  cannot know, and these are user-initiated one-offs rather than the per-keystroke path the wrap exists for. */
+ *  RECORDED, NOT FIXED — and NOT because bytes would have to be held: opening on the erase and closing on the
+ *  frame behind it would hold nothing (the `justErased`/`dropped` latch already models that triple). The
+ *  reason is that an erase-only write is not guaranteed to HAVE a frame behind it — a bare `app.clear()`, an
+ *  unmount, a crash between the two — and each of those would leave the terminal inside an OPEN synchronized
+ *  update with no closer. An unbalanced pair is the one failure here that can freeze a display; a tear is
+ *  cosmetic and user-initiated. That asymmetry, not flush difficulty, is why m1 stays unfixed. */
 const SYNC_BEGIN = "\x1b[?2026h", SYNC_END = "\x1b[?2026l";
 
 export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; this stays the import site it had

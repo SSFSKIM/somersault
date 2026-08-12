@@ -46,7 +46,14 @@ export function eraseViewport(rows: number): string {
  *  this sequence wrong inline is exactly what makes it right on the alternate screen: that screen HAS no
  *  scrollback, so there is nothing for it to destroy, and the alternate screen's own saved lines (which some
  *  emulators keep) are ours to reset. The viewport-erase is the wrong arm there for the mirror reason — it blanks
- *  the frame's rows one at a time and leaves the screen's state describing a paint we are about to replace. */
+ *  the frame's rows one at a time and leaves the screen's state describing a paint we are about to replace.
+ *    KNOWN GAP, NOT AN OVERSIGHT — CANON CLEARS INSIDE THE SYNC PAIR AND WE DO NOT. In `Dms` (L177106-177121)
+ *  the `clearTerminal` op is appended to the SAME string the DECSET 2026 BSU opens and the ESU closes, so
+ *  canon's clear is presented atomically with the repaint behind it. In ccx the clear arrives at the output
+ *  proxy as a separate, non-recorded write (Ink's `writeToStdout` seam: `log.clear()` → `write(data)` →
+ *  `log(lastOutput)`) and only that third write is wrapped — so a fullscreen `/clear` can show the wipe before
+ *  the repaint lands. Same class as the m1 divergence recorded on `SYNC_BEGIN` in `chatMain.tsx`, and it is
+ *  left to T9 (which owns routing `/clear` through this arm) and T17 (which owns proving it) with eyes open. */
 export function clearAltScreen(): string { return "\x1b[2J\x1b[3J\x1b[H"; }
 
 /** Upstream's dispatch, verbatim (`Dms`, L177120-177121: `s += a.altScreen ? Rms() : yJr(a.viewportRows)`). The

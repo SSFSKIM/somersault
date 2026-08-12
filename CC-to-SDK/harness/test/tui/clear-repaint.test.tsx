@@ -9,7 +9,7 @@
 // face. Driving the REAL renderer instead is not available either: ink reads `is-in-ci` at import time and CI
 // sets `CI=true`, which routes `onRender` down the static-only branch (ink.js:110-116).
 // So `InkModel` below reimplements the three mechanisms that matter, line-for-line against the installed
-// `node_modules/ink@6.4.0`, and `test/tui/resumeOutput.test.ts` sets the precedent for that shape. Everything
+// `node_modules/ink@5.2.1`, and `test/tui/resumeOutput.test.ts` sets the precedent for that shape. Everything
 // it models is quoted in its comments; the production code under test (`clearViewport`, `useChat.clear`) is
 // the real thing.
 import { describe, it, expect } from "vitest";

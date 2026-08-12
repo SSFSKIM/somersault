@@ -320,6 +320,10 @@ describe("ResumeSafeStdout altMode", () => {
     out.stdout.write(tall);
     expect(terminal.chunks.join("")).toBe(tall);
     expect(out.lastFrame()).toBeUndefined();             // still nobody's frame — the seam is still unmarked
+    // …and the REST of the 2J branch still fires behind the disabled strip: the strip is the only thing altMode
+    // takes off. Pinned so a later widening of the flip cannot quietly take the bookkeeping with it.
+    expect(out.tallWrites()).toBe(1);
+    expect(out.detachedWrites()).toBe(1);
   });
 
   it("still strips it on the main screen", () => {
