@@ -14,7 +14,7 @@
   One JSON message per WebSocket text frame. Replies are `{id, result}` or `{id, error:{code,
   message, data?}}`. Notifications are `{method, params, emittedAtMs}` (no id).
 
-  Panels (waves 0-4, per the M2 design spec's "one panel per wave"):
+  Panels (A-F are M2 waves 0-4, per the M2 design spec's "one panel per wave"; G-H are M3):
     A. Connect & threads   — initialize, thread/list, thread-existence notifications, subscribe.
     B. Settings & meters    — the four setters, the notification-only settings readout, the five
                               introspection reads, token-usage/rate-limit meters.
@@ -79,7 +79,7 @@
   .stream-pane div { border-bottom: 1px dotted color-mix(in srgb, currentColor 15%, transparent); padding: .1rem 0; }
 </style>
 
-<h1>agent app-server console <span class="sub">waves 0&ndash;4 &middot; foreign consumer &middot; disposable</span></h1>
+<h1>agent app-server console <span class="sub">waves 0&ndash;4 + M3 &middot; foreign consumer &middot; disposable</span></h1>
 <div class="row status-line">
   status: <span id="connStatus" class="conn-bad">disconnected</span>
   <span id="activeThreadLine"></span>
@@ -652,6 +652,11 @@ function onWsMessage(evt) {
 // Wire log (panel Z) — every request/reply/notification, chronological.
 // ---------------------------------------------------------------------------------------------
 const wireLogEl = document.getElementById("wireLog");
+/** This log exists for CORRELATION, not for data — the panels render the payload, this line only has to
+ *  show that it arrived and roughly what it was. Panel H alone can route 4 MiB of `fs/read` base64 plus
+ *  4 MiB of shell output through here, and stringifying either whole makes one multi-megabyte DOM text
+ *  node per reply, which is what wedges the tab. Truncating inside logWire means every panel benefits. */
+const LOG_BODY_CHARS = 4096;
 function logWire(dir, label, payload) {
   const div = document.createElement("div");
   const cls = dir === "out" ? "dir-out" : dir === "in" ? "dir-in-ok" : dir === "err" ? "dir-in-err" : "dir-notify";
@@ -659,6 +664,8 @@ function logWire(dir, label, payload) {
   const time = new Date().toLocaleTimeString();
   let body;
   try { body = typeof payload === "string" ? payload : JSON.stringify(payload); } catch (e) { body = String(payload); }
+  if (typeof body !== "string") body = String(body);   // JSON.stringify(undefined) is undefined, not a string
+  if (body.length > LOG_BODY_CHARS) body = body.slice(0, LOG_BODY_CHARS) + `… [truncated, ${body.length} chars total]`;
   div.textContent = `[${time}] ${label} ${body}`;
   wireLogEl.appendChild(div);
   if (document.getElementById("autoscroll").checked) wireLogEl.scrollTop = wireLogEl.scrollHeight;
@@ -1434,8 +1441,13 @@ function wireErrText(e) {
   return JSON.stringify(e) + "\n\nmatches — re-ask with one of these:\n" + matches.map((m) => `  ${m.short}${m.name ? `  (${m.name})` : ""}`).join("\n");
 }
 
-// Roster stamps are epoch MILLISECONDS (registry timestamps elsewhere in this wire are seconds — the
-// fleet handler divides when it seeds a record, which is the tell).
+// Roster stamps are epoch MILLISECONDS: `fleet/list`'s startedAt/endedAt are the roster file's own
+// `Date.now()` verbatim (src/host/host.ts stamps startedAt at spawn; src/fleet/roster.ts's
+// finalizeRoster stamps endedAt), and the handler passes them through untouched. The REGISTRY's stamps
+// are unix SECONDS — `threadView.createdAt`/`updatedAt` — which is why ADOPTING a row divides:
+// src/appserver/fleet.ts's admitFleet seeds `createdAt: Math.floor(row.startedAt / 1000)`. So the two
+// stamp families on this wire genuinely differ in unit; a later "consistency" edit that makes fmtStamp
+// and the threadView renderer agree, in either direction, is a 1000× bug.
 const fmtStamp = (ms) => (typeof ms === "number" ? new Date(ms).toLocaleTimeString() : "");
 // `working`/`blocked` are the two live states; the other three are terminal. `unresponsive` is a
 // separate field, not a state: the row is alive on the roster and its host would not answer the probe.
@@ -1588,26 +1600,36 @@ function hexDump(bytes, limit) {
 }
 async function doFsRead(path) {
   if (!path) { alert("enter an absolute path first (or click Read on a match above)"); return; }
-  try {
-    const r = await send("fs/read", { path });
-    const bytes = b64ToBytes(r.dataBase64);
-    // ATTEMPTED, not assumed: a STRICT utf-8 decode is the test (a lone continuation byte throws), and
-    // a NUL disqualifies a file that decodes but is not text.
-    let text = null;
-    try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch (e) { text = null; }
-    if (text !== null && text.indexOf("\u0000") !== -1) text = null;
-    const truncated = text !== null ? text.length > PREVIEW_CHARS : bytes.length > HEX_BYTES;
-    document.getElementById("fsReadNote").textContent =
-      `${path} — size ${r.size} · decoded ${bytes.length} byte(s) · rendered as ${text !== null ? "text" : "hex"}`
-      + (truncated ? " · truncated to this console's own preview cap (the whole file did arrive)" : "");
-    document.getElementById("fsPreview").textContent = text !== null ? text.slice(0, PREVIEW_CHARS) : hexDump(bytes, HEX_BYTES);
-  } catch (e) {
+  let r;
+  try { r = await send("fs/read", { path }); }
+  catch (e) {
     // Dumped rather than alerted, like panel B's reads: every fs refusal is -32602 carrying the fs
     // message VERBATIM (`ENOENT: …`, `not a regular file (directory)`, `path must be absolute`), which
     // names the errno and the path — the whole of what a client can act on.
     document.getElementById("fsReadNote").textContent = `fs/read ${path} failed`;
     document.getElementById("fsPreview").textContent = JSON.stringify(e, null, 2);
+    return;
   }
+  // The base64 decode is OURS, and it gets its own catch so a fault that never left this tab is not
+  // reported as the server refusing the read — atob throws a DOMException, which JSON.stringify renders
+  // as `{}`, so the old shared catch blamed fs/read and attached no evidence at all. Message, not blob.
+  let bytes;
+  try { bytes = b64ToBytes(r.dataBase64); }
+  catch (e) {
+    document.getElementById("fsReadNote").textContent = `fs/read ${path} — the server replied; this console could not decode dataBase64 (client-side)`;
+    document.getElementById("fsPreview").textContent = `${e && e.name ? `${e.name}: ` : ""}${(e && e.message) || String(e)}`;
+    return;
+  }
+  // ATTEMPTED, not assumed: a STRICT utf-8 decode is the test (a lone continuation byte throws), and
+  // a NUL disqualifies a file that decodes but is not text.
+  let text = null;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch (e) { text = null; }
+  if (text !== null && text.indexOf("\u0000") !== -1) text = null;
+  const truncated = text !== null ? text.length > PREVIEW_CHARS : bytes.length > HEX_BYTES;
+  document.getElementById("fsReadNote").textContent =
+    `${path} — size ${r.size} · decoded ${bytes.length} byte(s) · rendered as ${text !== null ? "text" : "hex"}`
+    + (truncated ? " · truncated to this console's own preview cap (the whole file did arrive)" : "");
+  document.getElementById("fsPreview").textContent = text !== null ? text.slice(0, PREVIEW_CHARS) : hexDump(bytes, HEX_BYTES);
 }
 document.getElementById("btnFsRead").onclick = () => doFsRead(document.getElementById("fsPath").value.trim());
 
