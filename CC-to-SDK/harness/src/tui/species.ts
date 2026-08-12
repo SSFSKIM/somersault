@@ -87,9 +87,14 @@ export const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
 /** `EAr` (L421286): the heading upstream paints instead of `zWo` when a plan comes back rejected. Upstream
  *  reaches it by CONTENT — `v4t` (L427687) tests the tool_result for the `rmn` prefix (L376058, "The agent
  *  proposed a plan that was rejected by the user… Rejected plan:") and renders the plan itself under this
- *  heading in a rounded box. Neither half of that is available to us: the SDK writes its own rejection text
- *  (probe 106 A4 measured `Dpt`, not `rmn`), so `toolRenderer` discriminates on the TOOL plus the interrupted
- *  status instead, and the box stays a recorded divergence — the heading is what QA scored. */
+ *  heading in a rounded box, painted `color: "subtle"` (a theme token, not the SGR dim attribute `zWo` takes).
+ *  The content route is not available to us — the SDK writes its own rejection text (probe 106 A4 measured
+ *  `Dpt`, not `rmn`) — so `toolRenderer` discriminates on the TOOL plus the interrupted status instead.
+ *  The DIVERGENCE this leaves is not "heading only, missing a border": per the live captures, canon prints
+ *  `⏺ Updated plan`, then `⎿ /plan to preview`, then this heading, then the plan in a box; ccx prints neither
+ *  of those two header rows, and its plan body is on screen but in the wrong PLACE — the whole markdown spills
+ *  into the `ExitPlanMode(...)` call header above the heading rather than sitting boxed beneath it. The
+ *  header rows and that placement, not the missing border, are what remains unmatched. */
 export const PLAN_REJECTED_TEXT = "User rejected Claude's plan:";
 /** `Cr`'s gutter children (L406895): `"  "` then `"⎿ \xa0"` — two spaces, ⎿ (U+23BF), space, NBSP. Five
  *  columns. It lives HERE rather than in toolRenderer.tsx so this pure module can use it without dragging

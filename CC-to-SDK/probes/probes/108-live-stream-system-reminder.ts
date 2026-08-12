@@ -44,6 +44,15 @@
 // to a tool_result's CONTENT would render as that tool's output body (`resultBody`), which is a different
 // row from the user-frame leak this probe was aimed at. This run saw none — the Read result carried no
 // reminder at all — so it stays an unobserved possibility, not a finding.
+//
+// WHAT REPRODUCES AND WHAT DOES NOT (added after an independent re-run). The headline "zero frames mention
+// `<system-reminder>` ANYWHERE" is RUN-DEPENDENT: the model sometimes quotes its own context inside a
+// `thinking` block, and one re-run saw a single `assistant` frame whose raw JSON carried the tag for that
+// reason. That count is therefore weather, not contract. The LOAD-BEARING claims reproduced in every run:
+// zero user frames carrying a text block, zero reminders in a renderable text block, and every `user` frame
+// `tool_result`-only. Read the summary that way — the per-question lines, not the raw-JSON tally.
+// POSITIVE CONTROL: the hook increments `hookInvocations` and the run prints it. Without it, a hook that
+// silently never fired would produce this same all-clean result and the conclusion would be unearned.
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -60,8 +69,11 @@ writeFileSync(join(CWD, "probe.txt"), "hello from probe 108\n");
 const trunc = (s: string, n = 220): string => (s.length > n ? `${s.slice(0, n)}…(len=${s.length})` : s);
 const blocks = (m: any): any[] => (Array.isArray(m?.message?.content) ? m.message.content : typeof m?.message?.content === "string" ? [{ type: "text", text: m.message.content }] : []);
 
-interface Row { i: number; type: string; subtype?: string; isMeta?: unknown; parent?: unknown; blockTypes: string[]; mentionsReminder: boolean; where: string[]; texts: string[] }
+interface Row { i: number; type: string; subtype?: string; isMeta?: unknown; parent?: unknown; blockTypes: string[]; mentionsReminder: boolean; rawHasMarker: boolean; where: string[]; texts: string[] }
 const rows: Row[] = [];
+// POSITIVE CONTROL (see the header note): counted inside the hook body, so an all-clean result cannot be
+// confused with a hook that never ran.
+let hookInvocations = 0;
 
 async function* input() {
   yield { type: "user" as const, message: { role: "user" as const, content: `Read probe.txt with the Read tool, then reply with exactly one word: DELTA` }, parent_tool_use_id: null, session_id: "x" };
@@ -73,7 +85,7 @@ for await (const m of query({
   options: {
     model: MODEL, cwd: CWD, settingSources: [], permissionMode: "bypassPermissions",
     hooks: {
-      UserPromptSubmit: [{ hooks: [async () => ({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: REMINDER } })] }],
+      UserPromptSubmit: [{ hooks: [async () => { hookInvocations++; return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: REMINDER } }; }] }],
     },
   },
 })) {
@@ -84,14 +96,20 @@ for await (const m of query({
   for (const b of bs) {
     const t = typeof b?.text === "string" ? b.text : "";
     const c = typeof b?.content === "string" ? b.content : Array.isArray(b?.content) ? JSON.stringify(b.content) : "";
+    // A `thinking` block keeps its prose on `b.thinking`, NOT `b.text` — without this arm the classifier is
+    // blind to the one block type that actually quotes the context back, and files such a frame under
+    // "elsewhere in the frame", which reads like an unexplained leak when it is the model reasoning aloud.
+    const th = typeof b?.thinking === "string" ? b.thinking : "";
     if (b?.type === "text" && t.includes("<system-reminder>")) where.push("TEXT BLOCK (RENDERABLE)");
     if (b?.type === "tool_result" && c.includes("<system-reminder>")) where.push("tool_result block (projection skips)");
+    if (b?.type === "thinking" && th.includes("<system-reminder>")) where.push("thinking block (model quoting its context, not a leak)");
   }
   if (raw.includes("<system-reminder>") && where.length === 0) where.push("elsewhere in the frame (not a content block)");
   rows.push({
     i: i++, type: String(any.type), subtype: any.subtype, isMeta: any.isMeta, parent: any.parent_tool_use_id,
     blockTypes: bs.map((b) => String(b?.type)),
     mentionsReminder: raw.includes("<system-reminder>"),
+    rawHasMarker: raw.includes(MARKER),
     where,
     texts: bs.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => trunc(b.text)),
   });
@@ -106,10 +124,14 @@ for (const r of rows) {
 const users = rows.filter((r) => r.type === "user");
 const userTextFrames = users.filter((r) => r.blockTypes.includes("text"));
 console.log("\n=== SUMMARY ===");
+console.log(`>>> CONTROL hook invocations              : ${hookInvocations}   (0 would void every clean result below)`);
 console.log(`total frames                              : ${rows.length}`);
 console.log(`type:"user" frames                        : ${users.length}  (block shapes: ${users.map((r) => `[${r.blockTypes.join(",")}]`).join(" ") || "(none)"})`);
 console.log(`Q1 user frames carrying a TEXT block      : ${userTextFrames.length}`);
-console.log(`Q2/Q3 frames mentioning <system-reminder> : ${rows.filter((r) => r.mentionsReminder).length}`);
+console.log(`Q2/Q3 frames mentioning <system-reminder> : ${rows.filter((r) => r.mentionsReminder).length}   (RAW JSON — run-dependent; a thinking block may quote it)`);
 console.log(`Q4 reminder in a RENDERABLE text block    : ${rows.filter((r) => r.where.includes("TEXT BLOCK (RENDERABLE)")).length}`);
 console.log(`   …of those, on a user frame (reaches the document): ${rows.filter((r) => r.type === "user" && r.where.includes("TEXT BLOCK (RENDERABLE)")).length}`);
-console.log(`marker ${MARKER} seen anywhere            : ${rows.some((r) => r.texts.some((t) => t.includes(MARKER)))}`);
+// TWO lines, because they answer different questions: the first is what the RENDERER could ever draw (text
+// blocks only, and those are truncated to 220 chars for display); the second is the whole wire.
+console.log(`marker ${MARKER} seen in TEXT blocks : ${rows.some((r) => r.texts.some((t) => t.includes(MARKER)))}`);
+console.log(`marker ${MARKER} seen in RAW JSON    : ${rows.some((r) => r.rawHasMarker)}`);

@@ -136,14 +136,15 @@ describe("F1 shared tool renderer", () => {
   // ── QA WAVE 2 DELTA — an interrupted `ExitPlanMode` is a PLAN REJECTION, and upstream names it.
   // Wave 2's A4 fix made a feedback-less plan rejection end the turn by sending the SDK deny arm's
   // `interrupt: true` (gate.ts, probe 106), and the row it leaves behind took the generic interrupted-tool
-  // copy. Canon prints its own row for this: `EAr` (bundle L421286) renders the literal below.
+  // copy. Canon prints its own row for this: `EAr` (bundle L421286) renders the literal below, and paints it with
+  // the `subtle` theme token (`color: "subtle"`) rather than the SGR dim attribute the generic prompt takes.
   // The three negatives are the whole discrimination: an ESC-cancelled plan is not a rejection (the engine
   // writes `INTERRUPT_CANCELLED` as that tool_result's content — toolResult.ts), the WITH-FEEDBACK arm is an
   // `error` carrying the human's sentence verbatim and must be untouched, and no other tool takes this copy.
   it("names an interrupted ExitPlanMode as upstream's plan rejection, and nothing else", () => {
     const plan = { ...read, id: "plan-1", name: "ExitPlanMode", input: { plan: "# do the thing" } };
     const rejected = { ...normalized, tool: "ExitPlanMode", status: "interrupted" as const, summary: "ExitPlanMode", flatText: "", output: "", outputLines: [] };
-    expect(bodyOf(renderToolEvent(plan, rejected, options))).toEqual([{ text: "User rejected Claude's plan:", dim: true }]);
+    expect(bodyOf(renderToolEvent(plan, rejected, options))).toEqual([{ text: "User rejected Claude's plan:", color: resolveThemeColor(themeTokens().subtle) }]);
     const cancelled = { ...rejected, flatText: INTERRUPT_CANCELLED, output: INTERRUPT_CANCELLED, outputLines: [INTERRUPT_CANCELLED] };
     expect(bodyOf(renderToolEvent(plan, cancelled, options))).toEqual([{ text: "Interrupted · What should Claude do instead?", dim: true }]);
     const feedback = { ...rejected, status: "error" as const, flatText: "use argparse only", output: "use argparse only", outputLines: ["use argparse only"] };

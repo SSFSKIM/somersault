@@ -189,9 +189,14 @@ const isPlanRejection = (event: ToolEvent, normalized: NormalizedToolResult): bo
 
 function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] {
   if (normalized.status === "running") return [];
-  // Both surfaces are upstream `dimColor` prompts, not failures: they are what the USER did, so they never take the
-  // error colour, and the rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it.
-  if (normalized.status === "interrupted") return [{ text: isPlanRejection(event, normalized) ? PLAN_REJECTED_TEXT : INTERRUPTED_TEXT, dim: true }];
+  // None of these surfaces is a failure: they are what the USER did, so they never take the error colour, and the
+  // rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it. The two attributes are NOT
+  // interchangeable — `zWo`'s generic prompt and the `rejected` row are upstream `dimColor`, but `EAr` paints the
+  // plan-rejection heading with the `subtle` theme TOKEN (L421286, `color: "subtle"`), so that arm carries a colour.
+  if (normalized.status === "interrupted")
+    return [isPlanRejection(event, normalized)
+      ? { text: PLAN_REJECTED_TEXT, color: resolveThemeColor(themeTokens().subtle) }
+      : { text: INTERRUPTED_TEXT, dim: true }];
   if (normalized.status === "rejected") return [{ text: REJECTED_TEXT, dim: true }];   // upstream ignores the tool's text entirely: the row is always this literal
   const typed = summaryLines(event, normalized, options);
   if (typed !== undefined) return typed;
