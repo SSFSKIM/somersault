@@ -50,6 +50,8 @@ import { buildHintList, HINT_JOINER, type AgentsState, type HintSegment } from "
 import { expandHintText, formatBindingLower } from "./keys/hints.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { statusLineRows } from "./statusLine.js";
+import { NotificationSlot } from "./NotificationSlot.js";
+import type { CcxNotification } from "./notifications.js";
 
 /** `Pasting…` (L493764) — one ellipsis CHARACTER. Re-exported from here now that the composer no longer
  *  owns the row; `ChatComposer.tsx` keeps its own copy for the paste tests that predate this file. */
@@ -90,6 +92,10 @@ export interface FooterProps {
   /** The pane height, for the `Rtl` term of the statusLine guard below. Defaults to the POSIX 24 that
    *  `ChatApp.readSize` falls back to, so a bare render is a normal-sized terminal. */
   rows?: number;
+  /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Three of canon's surface
+   *  deltas land on this component and all three read it: D1's held statusLine row, D12's `paddingRight`, and
+   *  D13's right region. Defaults false, so every classic mount and every bare render is unchanged. */
+  fullscreen?: boolean;
   exitArm?: FooterExitArm;
   pasting: boolean;
   pasteExpandHint: boolean;
@@ -100,6 +106,9 @@ export interface FooterProps {
   bindings: (action: string) => readonly string[];
   /** Divergence 2 in the header. Defaults to true so a bare render is the composer-owned case. */
   composerOwnsKeys?: boolean;
+  /** FSW T14 — the notification queue's `current`, for the RIGHT REGION below. Only the immediate rank is
+   *  drawn, and only in fullscreen; see `footerNotice`. */
+  notice?: CcxNotification | null;
   /** The agents flash's clock (`Lci`). Injected so a test can place `now` rather than wait 2.5 s. */
   now?: () => number;
 }
@@ -111,16 +120,39 @@ const dimRow = (text: string) => <Box height={1} overflow="hidden"><Text dimColo
 
 /** The slice of the footer's props the statusLine slot is a function of. Its own type so the two readers —
  *  this component and the fullscreen dock's reservation — cannot be handed different facts. */
-export type FooterStatusInput = Pick<FooterProps, "statusLineConfigured" | "statusLineText" | "bashMode" | "pasting" | "exitArm" | "rows">;
+export type FooterStatusInput = Pick<FooterProps, "statusLineConfigured" | "statusLineText" | "bashMode" | "pasting" | "exitArm" | "rows" | "fullscreen">;
 /** The statusLine slot's HEIGHT: zero when it is not drawn, one per line of the script's output when it is.
  *  Exported for the fullscreen dock budget (FSW T13b review I4), which charged this whole component ONE row —
  *  true of the hint/chip row alone. With a statusLine configured the footer is taller than the reserve knew,
  *  and the dialog above it composed into rows the frame then clipped. Same predicate, same `statusLineRows`
- *  the slot is rendered from, so the reserve cannot drift from the paint. */
-export function footerStatusRows({ statusLineConfigured, statusLineText, bashMode, pasting, exitArm, rows = 24 }: FooterStatusInput): number {
-  const visible = statusLineConfigured && statusLineText !== undefined && statusLineText !== ""
-    && !bashMode && !exitArm && !pasting && rows >= STATUS_LINE_MIN_ROWS;
-  return visible ? statusLineRows(statusLineText).length : 0;
+ *  the slot is rendered from, so the reserve cannot drift from the paint.
+ *
+ *  D1 (FSW T14) IS THE THIRD ARM, and it is the only one the renderer changes. Bundle L484935 chooses between
+ *  three states inside the configured block: `a ? <StatusLine text={a}/> : ds() ? <Text> </Text> : null` — so a
+ *  configured statusLine whose command has NOT answered yet holds one blank row on the alternate screen and
+ *  collapses on the main one. The reason is the fixed frame: the row is produced by an async shell command with
+ *  a refresh interval (484901-484902), and a row that appears and disappears under a frame that cannot reflow
+ *  shoves the whole transcript. Classic can afford the collapse because the frame moves anyway.
+ *    NOTE THE GATE ABOVE IT IS NOT SPLIT. Canon's 15-row floor is itself fullscreen-only (`Rtl = LRn && Imk <
+ *  nVf`, L494585) while ours applies in both modes — a pre-existing divergence recorded at `STATUS_LINE_MIN_ROWS`
+ *  and deliberately left alone here, because narrowing it would move the CLASSIC footer. */
+export function footerStatusRows({ statusLineConfigured, statusLineText, bashMode, pasting, exitArm, rows = 24, fullscreen = false }: FooterStatusInput): number {
+  const gated = statusLineConfigured && !bashMode && !exitArm && !pasting && rows >= STATUS_LINE_MIN_ROWS;
+  if (!gated) return 0;
+  if (statusLineText !== undefined && statusLineText !== "") return statusLineRows(statusLineText).length;
+  return fullscreen ? 1 : 0;                                          // D1: the held row, blank
+}
+/** WHAT THE RIGHT REGION SHOWS, as one predicate both the paint and any future reservation can read.
+ *
+ *  D11 (bundle L494644) suppresses the notification block wholesale in fullscreen — `Utl = LRn ? null : <zRr/>`
+ *  — and in canon that is harmless, because canon's own `v` lives on a transcript screen with its own hint row.
+ *  Here it is not: ccx's `v` dump posts `wrote <file>` at `priority:"immediate"` and the composer's slot is the
+ *  ONLY thing that draws it (FSW T14, amendment 1). So the suppression keeps a home for the immediate rank, and
+ *  the home is canon's own: `Wtl` (L494681), the footer's right region, which carries the chip lane and a
+ *  `notifications` slot side by side on the mode row. It costs no rows — which is the whole reason it is the
+ *  right answer rather than a second line the dock's budget would have to learn about. */
+export function footerNotice(input: Pick<FooterProps, "notice" | "fullscreen">): CcxNotification | null {
+  return input.fullscreen && input.notice?.priority === "immediate" ? input.notice : null;
 }
 /** Every row the footer paints: its one unconditional row (the chip / hint / arm line, which always draws)
  *  plus the statusLine slot above it. */
@@ -131,7 +163,7 @@ function HintSpans({ hint }: { hint: HintSegment }) {
   return <>{hint.spans.map((s, i) => <Text key={i} color={s.color ? resolveThemeColor(themeTokens()[s.color]) : undefined} dimColor={s.dim}>{s.text}</Text>)}</>;
 }
 
-export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, statusLineText, statusLineConfigured, statusLinePadding, rows = 24, exitArm, pasting, pasteExpandHint, bashMode, agents, bindings, composerOwnsKeys = true, now }: FooterProps) {
+export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, statusLineText, statusLineConfigured, statusLinePadding, rows = 24, fullscreen = false, exitArm, pasting, pasteExpandHint, bashMode, agents, bindings, composerOwnsKeys = true, notice, now }: FooterProps) {
   // `Otl`'s gate (L494626), all five terms — `mode === "prompt" && !Rtl && !exitMessage.show && !isPasting
   // && statusLineConfigured`, with `Rtl = ds() && rows < 15` (`nVf = 15`, L494585). Notably NOT behind
   // `suppressHint`, which the row is itself an input to: a configured statusLine hides `? for shortcuts`
@@ -156,13 +188,17 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
   // a script breaks — which is precisely what the sweep measured claude doing.
   //   The predicate itself lives in `footerStatusRows` above, because the dock's row reservation has to ask
   // the same question and a second copy of it is a second thing to keep in step.
-  const statusVisible = footerStatusRows({ statusLineConfigured, statusLineText, bashMode, pasting, exitArm, rows }) > 0;
+  //   D1 (FSW T14) reopened that divergence on canon's own terms — the blank IS gated on `ds()`, and this tree
+  // now knows which renderer it is in. `statusResolved` is the middle arm of L484935's three; `statusRows > 0`
+  // with no text is the third, the held row.
+  const statusRows = footerStatusRows({ statusLineConfigured, statusLineText, bashMode, pasting, exitArm, rows, fullscreen });
+  const statusResolved = statusRows > 0 && statusLineText !== undefined && statusLineText !== "";
   // `g3f` (L484937): one `<Text dimColor wrap="truncate">` for a single line, a `flexDirection="column"` of
   // them for several. Each row arrives from `statusLineRows` as FINISHED BYTES — see that function for why
   // Ink's `dimColor` prop cannot express "dim over the script's own ANSI" — so these are bare `<Text>`s and
   // no chalk wrapper gets a chance to rewrite what the script emitted. `wrap="truncate"` is Ink's own, and
   // it ends an over-wide line with `…` rather than wrapping it onto a second row.
-  const statusRow = statusVisible ? ((): React.ReactElement => {
+  const statusRow = statusResolved ? ((): React.ReactElement => {
     const lines = statusLineRows(statusLineText!);
     return (
       <Box paddingX={statusLinePadding ?? 0} gap={2}>
@@ -171,7 +207,10 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
           : <Box flexDirection="column">{lines.map((l, i) => <Text key={i} wrap="truncate">{l}</Text>)}</Box>}
       </Box>
     );
-  })() : null;
+  })()
+    // D1's held row. `<Text> </Text>` and not `<Text/>` for the reason `suggestPopup`'s padding is written the
+    // same way: Ink collapses a genuinely empty Text and the whole point of this row is to occupy a line.
+    : statusRows > 0 ? <Box height={1} overflow="hidden"><Text> </Text></Box> : null;
 
   const row = ((): React.ReactElement => {
     // `Wci`'s four early returns, in upstream's own order (L493757–L493777, L493959).
@@ -217,9 +256,29 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
     );
   })();
 
+  // ── D13 (bundle L494586/L494681) — THE RIGHT REGION, IN FULLSCREEN ONLY ─────────────────────────────────
+  // Divergence 1 in this file's header says ccx omits `Wtl` rather than rendering it hollow, "so re-adding one
+  // is a one-element change". This is that change, and it arrives with exactly one live tenant.
+  //   CANON'S CHIP LANE IS EMPTY HERE, AND THAT IS RECORDED RATHER THAN FIXED. `Wtl`'s `modeLabels` is
+  // `[false, fullscreen && briefTranscript && "focus", memoryPaused && "memory paused"].filter(Boolean)`
+  // (L494586-L494593). `briefTranscript` is `/focus` — spec §A8's deferred D20 — and ccx has no memory-pause
+  // state either, so both members are unreachable today. The MECHANISM is what D13 needs standing; a chip
+  // rendered from a predicate nothing can set would be the dishonest affordance this port's help/hint
+  // discipline exists to prevent.
+  //   THE TENANT IT DOES HAVE is amendment 1's: the immediate-rank notification D11 would otherwise silence.
+  // `footerNotice` owns that predicate.
+  //   `flexWrap` GOES TO `nowrap` ON THIS ARM, and only on it. With two children a wrapping row can put the
+  // right region on a SECOND line when the hint list is long — which would make the footer two rows tall
+  // without `footerRows` knowing, and the dock's reservation is exact (T13b review I4). Classic keeps canon's
+  // `wrap` because classic has one child and no reservation resting on it.
+  const right = footerNotice({ notice, fullscreen });
   return (
-    <Box flexDirection="row" flexWrap="wrap" alignItems="flex-start" paddingLeft={2} paddingRight={2} columnGap={1}>
-      <Box flexDirection="column" flexShrink={1}>{statusRow}{row}</Box>
+    <Box flexDirection="row" flexWrap={fullscreen ? "nowrap" : "wrap"} alignItems="flex-start" paddingLeft={2} paddingRight={fullscreen ? 1 : 2} columnGap={1}>
+      <Box flexDirection="column" flexShrink={1} overflow="hidden">{statusRow}{row}</Box>
+      {/* `flexGrow` IS canon's `marginLeft:"auto"` here — Ink 5.2.1's `Styles` types margins as numbers, so the
+          auto margin is expressed as the region absorbing the row's slack instead, and `NotificationSlot`'s own
+          `justifyContent:"flex-end"` does the flush. Same pixels, one property. */}
+      {right ? <Box height={1} flexGrow={1} flexShrink={1} alignItems="flex-end" overflow="hidden"><NotificationSlot notification={right} /></Box> : null}
     </Box>
   );
 }

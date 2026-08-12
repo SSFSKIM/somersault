@@ -37,11 +37,22 @@ export const JUMP_PILL_ACTION = "scroll:bottom";
  *  `[sIr, Ehf, Ybt].find(v => Ut(v) <= columns - 2) ?? Ybt`). Longest first, so a narrow terminal loses the
  *  chord, then the arrow, and never the words. An unbound `scroll:bottom` contributes no chord at all rather
  *  than an empty parenthesis — the same three-state honesty `hints.ts` applies to every derived chord, and it
- *  is canon's own `else` arm, which keeps the arrow. */
-export function jumpPillText(newRows: number, chord: string, columns: number): string {
+ *  is canon's own `else` arm, which keeps the arrow.
+ *
+ *  FSW T14, AMENDMENT 2 ADDS A FOURTH RUNG ON TOP, and the ladder is what makes it affordable: `v to open in
+ *  <editor>` is canon's own phrase for this escape (bundle L547303, the hint row of canon's transcript screen —
+ *  `↑↓ scroll · v to open in <editor> · ? for shortcuts`, with the editor name resolved by `Zcn()`), and on a
+ *  pane too narrow for it the rule drops it before it drops the words.
+ *    THE PILL IS WHERE `v` IS HONEST, which is why the announcement landed here rather than on the footer row
+ *  or in the `?` grid (the amendment named both). `scroll:dumpTranscript` is registered by the viewport for
+ *  exactly as long as this pill is up — T12's own gate, "while the pill is up, `v` does not type" — so a
+ *  permanent row anywhere else would advertise a key that, most of the time, is a printable letter. */
+export function jumpPillText(newRows: number, chord: string, columns: number, dumpEditor?: string): string {
   const base = newRows > 0 ? `${newRows} new message${newRows === 1 ? "" : "s"}` : "Jump to bottom";
   const room = Math.max(1, columns - 2), shortest = ` ${base} `;
-  for (const variant of [chord === "" ? "" : ` ${base} (${chord}) ↓ `, ` ${base} ↓ `, shortest])
+  const jump = `${base}${chord === "" ? "" : ` (${chord})`} ↓`;
+  const dump = dumpEditor === undefined ? "" : ` ${jump} · v to open in ${dumpEditor} `;
+  for (const variant of [dump, chord === "" ? "" : ` ${base} (${chord}) ↓ `, ` ${base} ↓ `, shortest])
     if (variant !== "" && variant.length <= room) return variant;
   return shortest;
 }
@@ -51,9 +62,13 @@ export interface JumpPillProps {
   newRows: number;
   /** The region's width — the fit rule's input. */
   columns: number;
+  /** The editor `v` would hand the terminal to — `editorDisplayName()`, or canon's bare `"editor"` when none is
+   *  configured. Present exactly when the viewport has registered the dump (T12's gate); absent everywhere the
+   *  key is not ours, so the pill never names it. */
+  dumpEditor?: string;
 }
 
-export function JumpPill({ newRows, columns }: JumpPillProps): React.ReactElement {
+export function JumpPill({ newRows, columns, dumpEditor }: JumpPillProps): React.ReactElement {
   // Derived from the LIVE table, so a user who rebinds `scroll:bottom` sees their own key here. `useBinding`
   // searches active scopes first, and the viewport pushes `Scroll` before this child renders, so the answer is
   // that context's key rather than the ctrl+O pager's `end`/`shift+g`.
@@ -63,7 +78,7 @@ export function JumpPill({ newRows, columns }: JumpPillProps): React.ReactElemen
       {/* `truncate-end` is canon's own prop (456186) and load-bearing here rather than cosmetic: the shortest
           variant is returned even when it does not fit, and an Ink `Text` that wrapped it instead of clipping
           would make the pill two rows and eat a transcript row the viewport already paid for. */}
-      <Text wrap="truncate-end" backgroundColor={resolveThemeColor(themeTokens().userMessageBackground)}>{jumpPillText(newRows, chord, columns)}</Text>
+      <Text wrap="truncate-end" backgroundColor={resolveThemeColor(themeTokens().userMessageBackground)}>{jumpPillText(newRows, chord, columns, dumpEditor)}</Text>
     </Box>
   );
 }

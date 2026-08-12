@@ -58,6 +58,8 @@ import { clearViewport } from "./clearViewport.js";
 import { physicalRows } from "./resizeRepaint.js";
 import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
+import { indentRenderLine } from "./agentProgress.js";
+import { PaletteHost, PaletteSlot } from "./paletteSlot.js";
 import { ChatComposer, composerOwns, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { pushHistory } from "./editorHistory.js";
@@ -107,6 +109,8 @@ import type { RenderLine } from "./render.js";
  *  scope and its ctrl+x ctrl+b chord would survive the hold. */
 /** `$jp = 2` (bundle L426022) — the `paddingX` `wqo` puts around a queued prompt in normal layout. */
 const QUEUE_PAD = 2;
+/** The same two columns as a string — D14 folds them into the line rather than into a Box (see `queuedItems`). */
+const QUEUE_INSET = " ".repeat(QUEUE_PAD);
 /** WAVE C TASK 2 — the Esc-Esc rewind arm's queue entry. Both halves are ccx's, because the gesture is ccx's
  *  (upstream's second Esc clears the draft; the composer owns that arm and upstream's own
  *  `escape-again-to-clear` key with it). `ESC_ARM_MS` is the arm window itself, so the entry and the arm it
@@ -177,7 +181,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, aroundSubprocess }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -258,6 +262,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  embedders, component tests) — where the guard would be inert anyway, since it is armed only by the
    *  fullscreen renderer. */
   aroundSubprocess?: <T>(run: () => T) => T;
+  /** FSW T14, AMENDMENT 3 — T6's `guard.handoff`, the same terminal handoff `aroundSubprocess` wraps, opened
+   *  up so ctrl+z can hold its two halves across the SIGTSTP/SIGCONT round trip. Threaded from `chatMain`
+   *  beside `aroundSubprocess`; absent wherever the guard is (classic launches, embedders, component tests),
+   *  and inert on a main-screen launch, where the guard is never armed. */
+  altHandoff?: () => () => void;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
   // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
@@ -529,9 +538,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // Ctrl-Z is process-level for EVERY visible owner: the provider intercepts it before context dispatch,
   // like upstream's raw input loop, so this handler runs under Help and modal swallowers too;
   // suspendProcess is already a Windows-safe no-op.
+  //   FSW T14, AMENDMENT 3: and it runs inside the alt-screen handoff. Without it a fullscreen ctrl+z stopped
+  // the process with the smcup still standing, so the shell drew its prompt onto OUR alternate screen — and
+  // `fg` then wiped that prompt along with everything the user had typed at it. SIGTSTP is deliberately NOT in
+  // `cli/main.ts`'s signal set (that handler drains `beforeExit` and exits); this path owns it, and the guard's
+  // teardown is untouched by it — `handoff` leaves `armed` true, so a kill arriving while we are STOPPED still
+  // finds a guard willing to write rmcup.
   useKeySuspend(() => {
     const repaint = () => write("");
-    (suspendRef.current ?? suspendProcess)({ stdin, stdout, repaint: () => {
+    (suspendRef.current ?? suspendProcess)({ stdin, stdout, ...(altHandoff ? { handoff: altHandoff } : {}), repaint: () => {
       const output = resumeOutputRef.current;
       if (output) output.repaint(repaint); else repaint();
     } });
@@ -1024,6 +1039,23 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // granted instead of `TranscriptPager`'s `rows − 10` guess at the terminal. The dock's own transcript arm
   // renders nothing on this path (see it below) — which is what keeps the composer's `Chat` scope OFF the
   // stack while the pager owns the keyboard, exactly as an unmounted composer does on the main screen.
+  // ── FSW T14 / D14 (grounding §4; bundle L549395 `ds() && jsx(lui, {})`) — QUEUED PROMPTS JOIN THE DOCUMENT.
+  // The dock's echo below is unchanged and still the classic renderer's; in fullscreen the same rows are built
+  // as document items instead, so they sit at the scrollable's tail rather than in a band that cannot scroll.
+  // WHY IT MATTERS beyond fidelity: the dock's cap is `floor(rows/2)` and a queued paragraph is unbounded, so
+  // a queue of three prompts used to push the composer and the footer off the frame's bottom edge.
+  //   THE INSET IS CARRIED, NOT LOST. `wqo` wraps a queued prompt in `paddingX: $jp = 2` (L426022) and keeps
+  // the ORDINARY prompt echo inside it; there is no Box to put around a virtualised slice, so the two columns
+  // are folded into the line itself (`indentRenderLine`) and the band is minted at the same `queueWidth` the
+  // dock uses. Same pixels, one fewer container.
+  //   ONE ITEM PER ROW, which is what `renderItemHeight` needs to be trusted: `userEchoLines` has already
+  // wrapped to `queueWidth`, so every line it returns is exactly one physical row.
+  const queuedItems: readonly RenderItem[] = useMemo(
+    () => (fullscreen
+      ? state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth })
+          .map((l, j) => ({ kind: "line" as const, id: `queued:${i}:${j}`, line: indentRenderLine(l, QUEUE_INSET) })))
+      : EMPTY_ITEMS),
+    [fullscreen, state.queue, queueWidth]);
   const region = fullscreen
     ? (transcriptOpen
       ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
@@ -1033,7 +1065,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
       // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
       // where the overlay never occludes it (grounding §L2.6). The classic arm below keeps the trade.
-      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
+      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
     : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
   // ── FSW TASK 13 — WHICH OF CANON'S TWO OVERLAY MECHANISMS A SURFACE GETS ──────────────────────────────
   // Grounding §L2.6, "Two overlay mechanisms, not one". In fullscreen a surface the USER opened (`/model`,
@@ -1097,16 +1129,21 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  reservation charges from it, so the two cannot disagree about how tall the footer is — which they did
    *  (T13b review I4): the reserve charged one row for the whole component while a configured statusLine adds
    *  one per line of the script's output, and the dialog above then composed into rows the frame clipped. */
+  //   …AND THE RENDERER IS PART OF THAT OBJECT SINCE T14. D1 gives the footer a row in fullscreen it does not
+  // have in classic (a configured statusLine that has not answered yet holds one blank line), so `fullscreen`
+  // is an input to `footerStatusRows` exactly as `rows` and `bashMode` are — and it arrives through this same
+  // one object, which is what keeps the reserve below and the paint below THAT counting the same rows.
   const footerStatusInput = (): FooterStatusInput => ({
     statusLineConfigured: hookOpts?.statusLine !== undefined, statusLineText: state.statusLineText,
     bashMode: footerState.bashMode, pasting: footerState.pasting,
-    exitArm: exitArmed ? EXIT_ARM_CTRL_C : footerState.exitArm, rows: terminalRows(),
+    exitArm: exitArmed ? EXIT_ARM_CTRL_C : footerState.exitArm, rows: terminalRows(), fullscreen,
   });
   const dockDialogRows = (): number | undefined => {
     if (!fullscreen) return undefined;
+    // The queue term went with D14 (T14): in fullscreen those rows are at the document's tail, not in the
+    // band, so charging the band for them would have reserved rows nothing was going to use.
     const others = footerRows(footerStatusInput())                                      // the footer's rows
       + (state.busy || state.compacting ? 1 : 0)                                        // the live-turn slot
-      + state.queue.reduce((n, q) => n + userEchoLines(q.value, { width: queueWidth }).length, 0)
       + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
     return Math.max(0, dockCap(size.rows, true) - others);
   };
@@ -1299,10 +1336,20 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // `Try "…"` template (upstream's L1542 rule), so with suggestions off by default a fresh
                       // ccx session shows no template either — recorded in the spec as an accepted change.
                       suggestion={suggestionText(state.promptSuggestion)} suggestionEnabled={state.promptSuggestionEnabled}
-                      onSuggestionSlot={noteSuggestionSlot} onSuggestionAccept={acceptSuggestion} />
+                      onSuggestionSlot={noteSuggestionSlot} onSuggestionAccept={acceptSuggestion}
+                      // FSW T14 — D10 (hoist the palette out of here) and D11 (drop the notification block).
+                      // Both are subtractions from what the composer paints; the destinations are the dock's
+                      // `PaletteSlot` and the footer's right region, and both are above this element.
+                      fullscreen={fullscreen} />
   );
   const dock = (
     <>
+      {/* D10 (bundle 456219-456226 `rCn`, mounted at 455945 as the band's FIRST child) — the suggestion
+          palette's fullscreen home. Canon floats it at `bottom:"100%" opaque`, i.e. over the region and out
+          of the band's own height; stock Ink cannot, so it takes the top of the band in flow and the frame's
+          `paletteOpen` widens the cap to pay for it (FullscreenFrame). Empty on the classic arm — nothing is
+          ever published there, because `ChatComposer` only hoists in fullscreen. */}
+      {fullscreen ? <PaletteSlot /> : null}
       {todosOpen && !paneOwned ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
       {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407975, mounted at L407973)
           takes the whole slot over while a retry status exists, so the row REPLACES the spinner rather than
@@ -1327,7 +1374,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           counts and dies here. The band is minted at `columns - 2*QUEUE_PAD`, which reproduces upstream's
           queued rule inset exactly: it hands `Sg` a padding of `3 + paddingWidth` = 7 where a normal
           message hands 3, and `paddingWidth` is `paddingX * 2` = 4. */}
-      {state.queue.length > 0 && !paneOwned ? (
+      {/* FSW T14 / D14: fullscreen renders these at the viewport's tail instead (`queuedItems` above). */}
+      {state.queue.length > 0 && !paneOwned && !fullscreen ? (
         <Box flexDirection="column" paddingX={QUEUE_PAD}>
           {state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
         </Box>
@@ -1404,6 +1452,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // COUNT is wired — it is what replaced the old `⚙ N bg` chip. `agentsAffordance` implements both
         // flashes and its own 2500 ms window (`Lci`); a producer sets `awaiting`/`done` here and gets them.
         agents={{ count: state.bgTasks.length }}
+        // FSW T14 — D12's padding, D13's right region and D1's held row all hang off this one fact, and the
+        // right region is where D11's suppression puts the immediate rank it may not silence (amendment 1).
+        // `notice` is handed over whole; `footerNotice` inside the component decides whether it draws.
+        notice={state.notification}
         bindings={bindings} composerOwnsKeys={composerOwns(inputOwnerRef.current)} />
     </>
   );
@@ -1417,6 +1469,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   THE DOCK IS STILL PASSED WHILE THE SEAM IS UP, and the frame ignores it — canon's overlay is `opaque`
   // over the dock rather than instead of it, and keeping the prop shaped that way is what lets the frame own
   // the "occlusion is omission" decision in one place (FullscreenFrame's header) instead of two.
-  if (fullscreen) return <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching} dialogInDock={inlineDecision !== null} regionChildren={region} dock={dock} seam={seamActive ? overlayChain : null} />;
+  //   AND THE HOST WRAPS ONLY THE FULLSCREEN ARM (T14/D10). `PaletteHost` holds the published element and
+  // nothing else; its setState re-renders the slot alone, because the `children` element handed to it here is
+  // unchanged across that write (paletteSlot.tsx's header). Classic renders no host, so the composer's
+  // `usePaletteHoist` finds no setter and is inert — which is the whole of "classic is byte-identical" for
+  // this delta.
+  if (fullscreen) return (
+    <PaletteHost>
+      <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching}
+        dialogInDock={inlineDecision !== null} paletteOpen={suggestOpen}
+        regionChildren={region} dock={dock} seam={seamActive ? overlayChain : null} />
+    </PaletteHost>
+  );
   return <Box flexDirection="column">{region}{dock}</Box>;
 }

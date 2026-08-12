@@ -90,6 +90,12 @@ export interface AltScreenGuard {
   /** Run a child that wants the real terminal ($EDITOR, `!bash`, the `v` dump) with the main screen handed
    *  back for its duration, and take the alt screen again afterwards — canon L180653-180662. */
   aroundSubprocess<T>(run: () => T): T;
+  /** THE SAME HANDOFF, OPENED UP — leave now, and get back the call that returns. `aroundSubprocess` cannot
+   *  serve ctrl+z (FSW T14, amendment 3): a suspend's two halves are separated by a SIGTSTP/SIGCONT round trip
+   *  through the shell, so there is no `run()` to wrap and no stack to keep. The bytes and their order are the
+   *  wrapper's own — that function is written in terms of this one — and the returned call is idempotent-safe
+   *  to drop: an unarmed guard hands back a no-op, exactly as `aroundSubprocess` runs the child in place. */
+  handoff(): () => void;
 }
 
 export interface AltScreenDeps {
@@ -129,24 +135,31 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
     write(PASTE_OFF);
     write(CURSOR_SHOW);
   };
+  // THE SUBPROCESS HANDOFF, AS TWO HALVES. `armed` deliberately stays true across it (canon keeps
+  // `altScreenActive` set through `prepareTerminalForHandoff`): a signal that lands while somebody else owns
+  // the terminal must still find a guard willing to write mouse-off and rmcup, and a redundant rmcup on the
+  // main screen costs nothing. That matters more for ctrl+z than for a child process — a STOPPED process can
+  // be killed outright, and the `exit` limb is then the only thing left to speak for the terminal.
+  const handoff = (): (() => void) => {
+    if (!armed) return () => {};
+    write(MOUSE_OFF);
+    write(EXIT_ALT);
+    // …and whoever takes the terminal gets a cursor they can see. Ink's log-update hides one on every render
+    // (`ink/build/log-update.js:9`) and only shows it again in `done()`, which no handoff runs, so `$EDITOR` /
+    // `!bash` / the `v` dump — and the SHELL PROMPT a ctrl+z returns to — would arrive with DECTCEM still
+    // reset. Canon's leave is explicit about the same pair, in this order: `\x1B[0m\x1B[?25h` (L180654).
+    write(SGR_RESET);
+    write(CURSOR_SHOW);
+    return () => { write(enterSeq); };
+  };
   return {
     enter() { if (!armed) takeScreen(); },
     exit() { if (!armed) return; armed = false; handBack(); },
     active() { return armed; },
+    handoff,
     aroundSubprocess<T>(run: () => T): T {
-      if (!armed) return run();
-      // `armed` deliberately stays true across the handoff (canon keeps `altScreenActive` set through
-      // `prepareTerminalForHandoff`): a signal that lands while the child owns the terminal must still find
-      // a guard willing to write mouse-off and rmcup, and a redundant rmcup on the main screen costs nothing.
-      write(MOUSE_OFF);
-      write(EXIT_ALT);
-      // …and the child gets a cursor it can see. Ink's log-update hides one on every render
-      // (`ink/build/log-update.js:9`) and only shows it again in `done()`, which no handoff runs, so
-      // `$EDITOR` / `!bash` / the `v` dump would open with DECTCEM still reset. Canon's leave is explicit
-      // about the same pair, in this order: `\x1B[0m\x1B[?25h` (L180654).
-      write(SGR_RESET);
-      write(CURSOR_SHOW);
-      try { return run(); } finally { write(enterSeq); }
+      const back = handoff();
+      try { return run(); } finally { back(); }
     },
     installSignalSafety() {
       const off: Array<() => void> = [];

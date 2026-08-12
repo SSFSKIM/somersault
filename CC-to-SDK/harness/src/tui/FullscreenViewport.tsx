@@ -63,6 +63,7 @@ import { streamingItems } from "./streamingItems.js";
 import { useRegionRows } from "./FullscreenFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { JumpPill } from "./JumpPill.js";
+import { editorDisplayName } from "./externalEditor.js";
 import type { RenderLine } from "./render.js";
 
 /** The scroll seam, exposed imperatively so a key binding can drive the viewport without the anchor having to
@@ -83,6 +84,14 @@ export interface FullscreenViewportProps {
   finalizedItems: readonly RenderItem[];
   pendingItems: readonly RenderItem[];
   streaming: readonly RenderLine[];
+  /** FSW T14 / D14 (grounding §4, bundle L549395: `ds() && jsx(lui, {})`) — the prompts typed during a running
+   *  turn, at the TAIL of the scrollable. Canon's classic renderer puts them elsewhere; ccx's puts them in the
+   *  dock, which in a fixed frame is a band that cannot scroll and whose budget they eat. Here they are simply
+   *  the document's last items, so they follow the tail while the reader is stuck to it and scroll away with
+   *  everything else when they are not — and they cost the grant nothing, because `pageItemSlices` is already
+   *  the only thing that decides what fits. Pre-built by ChatApp (it owns `userEchoLines`' width and the
+   *  queued rule's inset); empty in classic and in every test that does not care. */
+  queuedItems?: readonly RenderItem[];
   /** The region's width — `streamingItems` pre-wraps to it. The region is full-bleed, so this is the terminal's. */
   columns: number;
   /** The row budget. Omitted in production: the frame publishes the rows it granted through its own context. */
@@ -107,13 +116,17 @@ export interface FullscreenViewportProps {
  *  under `pageItemSlices` no matter what the document turns out to be. `hwm` is absent, exactly as the reducer
  *  wants it while sticky. */
 const START: AnchorState = { offset: Number.POSITIVE_INFINITY, sticky: true };
+/** A stable empty default, so an absent `queuedItems` cannot invalidate the document memo every render. */
+const EMPTY_ITEMS: readonly RenderItem[] = [];
 
-export function FullscreenViewport({ finalizedItems, pendingItems, streaming, columns, rows, historySearchOpen = false, onDumpTranscript, scrollRef }: FullscreenViewportProps) {
+export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, scrollRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
   const height = Math.max(0, rows ?? granted);
+  // Queued prompts go LAST, below even the in-flight turn — canon's own order (`fNn`'s scrollable at L549395
+  // ends `… spinner, ds() && <lui/>`).
   const items = useMemo(
-    () => [...finalizedItems, ...pendingItems, ...streamingItems(streaming, columns)],
-    [finalizedItems, pendingItems, streaming, columns],
+    () => [...finalizedItems, ...pendingItems, ...streamingItems(streaming, columns), ...queuedItems],
+    [finalizedItems, pendingItems, streaming, columns, queuedItems],
   );
   const total = useMemo(() => items.reduce((sum, item) => sum + renderItemHeight(item), 0), [items]);
 
@@ -201,6 +214,10 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, co
   // keeps the key stable when the same block is re-sliced at a different offset.
   return <>
     {slices.map((s, i) => <RenderItemView key={`${s.item.id}:${i}`} item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />)}
-    {showPill ? <JumpPill newRows={Math.max(0, total - stickyTotal.current)} columns={columns} /> : null}
+    {/* AMENDMENT 2: the pill names `v` exactly when `v` is registered above — one derivation, `showPill &&
+        onDumpTranscript`, read twice, so the affordance and the key cannot drift apart. `editorDisplayName`
+        answers null with neither `$VISUAL` nor `$EDITOR` set, where canon prints its bare `open in editor`. */}
+    {showPill ? <JumpPill newRows={Math.max(0, total - stickyTotal.current)} columns={columns}
+      {...(onDumpTranscript ? { dumpEditor: editorDisplayName() ?? "editor" } : {})} /> : null}
   </>;
 }

@@ -101,4 +101,57 @@ describe("suspendProcess", () => {
     })).toThrow("kill unavailable");
     expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', 'write("\\u001b[?2004l")', "once", "remove(SIGCONT)", "raw(true)", 'write("\\u001b[?25l")', 'write("\\u001b[?2004h")']);
   });
+
+  // ── FSW T14, AMENDMENT 3 — CTRL+Z INSIDE THE ALT-SCREEN HANDOFF ─────────────────────────────────────────
+  // From fullscreen the stop used to hand the shell a prompt drawn ON the alternate screen: the guard was never
+  // told, so the smcup stood while another process owned the terminal. The handoff is the same one every
+  // subprocess takes (`aroundSubprocess`), split across the stop/continue boundary — leave before the signal,
+  // come back before the repaint.
+  describe("the alt-screen handoff", () => {
+    const wire = (calls: string[]) => ({
+      stdin: { setRawMode: (v: boolean) => calls.push(`raw(${v})`) },
+      stdout: { isTTY: true, write: (data: string) => { calls.push(`write(${JSON.stringify(data)})`); return true; } },
+      repaint: () => calls.push("repaint"),
+      handoff: () => { calls.push("leaveAlt"); return () => calls.push("backAlt"); },
+    });
+
+    it("leaves the alt screen BEFORE the stop and takes it back BEFORE the repaint", () => {
+      const calls: string[] = [];
+      let onResume: (() => void) | undefined;
+      suspendProcess({
+        ...wire(calls),
+        once: (_s: string, h: () => void) => { calls.push("once(SIGCONT)"); onResume = h; },
+        kill: () => calls.push("kill(0,SIGTSTP)"),
+      });
+      // Bracketed paste off before the terminal changes hands; the guard's own leave writes mouse-off, rmcup,
+      // an SGR reset and the cursor, so nothing here re-derives those bytes.
+      expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', 'write("\\u001b[?2004l")', "leaveAlt", "once(SIGCONT)", "kill(0,SIGTSTP)"]);
+      onResume?.();
+      expect(calls.slice(6)).toEqual(["raw(true)", "backAlt", 'write("\\u001b[?25l")', 'write("\\u001b[?2004h")', "repaint"]);
+    });
+
+    it("re-enters the screen it left when signal delivery fails", () => {
+      const calls: string[] = [];
+      expect(() => suspendProcess({
+        ...wire(calls),
+        once: () => calls.push("once"),
+        removeListener: (signal: string) => calls.push(`remove(${signal})`),
+        kill: () => { throw new Error("kill unavailable"); },
+      })).toThrow("kill unavailable");
+      expect(calls).toEqual(["raw(false)", 'write("\\u001b[?25h")', 'write("\\u001b[?2004l")', "leaveAlt", "once", "kill", "remove(SIGCONT)", "backAlt", "raw(true)", 'write("\\u001b[?25l")', 'write("\\u001b[?2004h")'].filter((c) => c !== "kill"));
+    });
+
+    it("is optional — a classic launch passes no handoff and behaves exactly as before", () => {
+      const calls: string[] = [];
+      let onResume: (() => void) | undefined;
+      suspendProcess({
+        stdin: { setRawMode: (v) => calls.push(`raw(${v})`) },
+        repaint: () => calls.push("repaint"),
+        once: (_s, h) => { onResume = h; },
+        kill: () => calls.push("kill"),
+      });
+      onResume?.();
+      expect(calls).toEqual(["raw(false)", "kill", "raw(true)", "repaint"]);
+    });
+  });
 });

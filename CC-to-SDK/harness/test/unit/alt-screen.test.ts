@@ -240,6 +240,36 @@ describe("AltScreenGuard.aroundSubprocess", () => {
   });
 });
 
+// FSW T14, AMENDMENT 3 — the same handoff with its two halves in the caller's hands. ctrl+z cannot use the
+// wrapper: the stop and the resume are separated by a round trip through the shell's job control, so there is
+// no `run()` to wrap. `handoff()` is what `aroundSubprocess` is written in terms of, which is the point — one
+// definition of the byte order, two callers.
+describe("AltScreenGuard.handoff", () => {
+  it("writes the leave immediately and the return only when the caller says so", () => {
+    const s = sink();
+    const g = createAltScreenGuard({ writeSync: s.writeSync, termProgram: "WezTerm" });
+    g.enter();
+    s.writes.length = 0;
+    const back = g.handoff();
+    expect(s.writes).toEqual([
+      "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+      "\x1b[<u\x1b[?1049l\x1b[>4m",
+      "\x1b[0m",
+      "\x1b[?25h",
+    ]);
+    expect(g.active()).toBe(true);      // still ours across the stop: a kill while suspended must find a guard
+    back();
+    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m");
+  });
+
+  it("hands back a no-op on an unarmed guard, so a classic ctrl+z writes nothing", () => {
+    const s = sink();
+    const g = createAltScreenGuard({ writeSync: s.writeSync });
+    g.handoff()();
+    expect(s.writes).toEqual([]);
+  });
+});
+
 describe("installSignalSafety", () => {
   /** Runs `body` with process.exit stubbed, and always disposes the handlers it installed. */
   function withExitSpy<T>(body: (calls: number[]) => T): T {

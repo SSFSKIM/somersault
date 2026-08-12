@@ -17,6 +17,7 @@ import { editExternal as realEditExternal } from "./externalEditor.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor } from "./composerFrame.js";
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
 import { NotificationSlot } from "./NotificationSlot.js";
+import { usePaletteHoist } from "./paletteSlot.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
 import { expandHintText, formatBindings } from "./keys/hints.js";
@@ -273,7 +274,13 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+  /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Two of canon's surface
+   *  deltas land on this component, and both are SUBTRACTIONS from what it paints rather than new content:
+   *  D10 hoists the suggestion popup out of here into the band above the dock (`usePaletteHoist` below), and
+   *  D11 (L494644, `Utl = LRn ? null : …`) drops the notification block. Defaults false, so every classic
+   *  mount and every bare-composer test renders exactly what it always did. */
+  fullscreen?: boolean;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -1197,6 +1204,17 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // …and the popup goes with it. A dialog unmounting this component while a list was up would otherwise leave
   // the app holding rows back for a region that is no longer on screen — for the rest of the session.
   useEffect(() => () => { onSuggestOpenRef.current?.(false); }, []);
+  // ── D10 (bundle 456219-456226 `rCn`, mounted at 455945) — THE PALETTE, PUBLISHED RATHER THAN PAINTED ────
+  // In fullscreen the popup belongs above the dock, in a band this component is not in. `paletteSlot` is the
+  // seam (its header carries the argument); the element is built here because everything it needs — the
+  // matches, the selection, the catalog's name column — is this component's editor state and leaves it
+  // nowhere else. `null` on the classic arm and whenever nothing is drawn, which withdraws the slot.
+  //   ABOVE the `editorInFlight` early return, like every other hook, so the hook order is unconditional —
+  // and the effect's cleanup is what takes the palette down when a dialog unmounts us mid-list.
+  const hoisted = fullscreen && popupShown && suggest
+    ? <SuggestPopup {...suggest} columns={cols} rows={termRows} />
+    : null;
+  usePaletteHoist(hoisted);
   // CM8's early return, upstream's own shape (L496236): while the editor holds the terminal the composer
   // is JUST the framed literal — no glyph, no input, and none of the hint rows below, because upstream
   // returns before it builds any of them. Placed after every hook so the hook order is unconditional.
@@ -1232,7 +1250,17 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           only while a notification is live and costs no line when it is not. `NotificationSlot` returns null
           when empty, so nothing is mounted in the idle state and the block is exactly as tall as it was. The
           visible difference from upstream is one row of vertical position while a hint is up. */}
-      {notice ? <Box width={cols} paddingLeft={2} paddingRight={1} flexDirection="row" justifyContent="flex-end" overflow="hidden"><NotificationSlot notification={notice} /></Box> : null}
+      {/*   D11 (bundle L494644, `Utl = LRn ? null : jsx(zRr, …)`) — and it is the WHOLE block that goes, not a
+            filtered version of it: in a fixed frame this row appears and disappears under a dock that cannot
+            reflow, which is the same shove D1 exists to prevent one row down.
+              THE IMMEDIATE RANK IS NOT LOST WITH IT (FSW T14, amendment 1). Canon can afford the clean cut
+            because its `v` escape lives on a transcript screen with its own hint row; ccx's posts
+            `wrote <file>` at `priority:"immediate"` and this slot was its only reader, so suppressing here
+            without a destination would make the keystroke silent. The destination is `Footer`'s right region
+            — canon's own `Wtl` notifications slot (L494681), which costs no row because it shares the mode
+            row. `footerNotice` is the predicate; everything below immediate simply does not draw in
+            fullscreen, which is canon's behaviour for all of them. */}
+      {fullscreen || !notice ? null : <Box width={cols} paddingLeft={2} paddingRight={1} flexDirection="row" justifyContent="flex-end" overflow="hidden"><NotificationSlot notification={notice} /></Box>}
       <ComposerFrame columns={cols} borderToken={borderToken} label={ruleLabel}>
         <PromptGlyph mode={mode} busy={busy} />
         {/* CM5 (`t_p`, L395963): an empty buffer paints the PLACEHOLDER with its first character inverted —
@@ -1250,8 +1278,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           produces a `suggest` whose list is empty and whose message is absent, and `SuggestPopup` draws
           nothing for it. That difference is now load-bearing rather than cosmetic — `ChatApp` subtracts
           `popupHeight(rows)` from the live window on exactly this predicate, so mounting the component on a
-          weaker one would hold rows back for a region nobody can see. */}
-      {popupShown && suggest ? <SuggestPopup {...suggest} columns={cols} rows={termRows} /> : null}
+          weaker one would hold rows back for a region nobody can see.
+          D10: in fullscreen this slot is EMPTY and the same element is published to the band above the dock
+          instead (`hoisted` above) — canon renders the inline box only under `Ptl && !LRn` (L494609). */}
+      {fullscreen ? null : popupShown && suggest ? <SuggestPopup {...suggest} columns={cols} rows={termRows} /> : null}
     </Box>
   );
 }

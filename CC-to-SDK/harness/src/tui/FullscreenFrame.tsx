@@ -152,6 +152,13 @@ export interface FullscreenFrameProps {
   /** T13b — a parked decision's dialog is in the dock. It takes `dockCap`'s wide arm for the reason history
    *  search does; see there. */
   dialogInDock?: boolean;
+  /** T14 / D10 — the suggestion palette is in the band, above the dock. THIRD tenant of `dockCap`'s wide arm,
+   *  and the least avoidable of the three: the popup is blank-padded to `popupHeight(rows)` = `max(6,
+   *  floor(rows/2))` whenever it draws at all, which IS the narrow cap — so left on it the composer and the
+   *  footer are the rows the frame clips, on the keystrokes of every slash command. Canon does not pay this
+   *  because its palette is `position:absolute bottom:"100%" opaque` and contributes no height to the band at
+   *  all (L456226); ours is in flow, for the "occlusion is omission" reason this file's header gives. */
+  paletteOpen?: boolean;
   /** The L180317 diagnostic. Default writes to stderr only under `CCX_DEBUG`, the same seam and the same reason
    *  `statusLine.ts` has one: an unguarded stderr write lands in the middle of a live frame. */
   onOverflow?: (msg: string) => void;
@@ -159,14 +166,14 @@ export interface FullscreenFrameProps {
 
 const defaultOverflow = (msg: string): void => { if (process.env.CCX_DEBUG) process.stderr.write(`${msg}\n`); };
 
-export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearchOpen = false, dialogInDock = false, onOverflow }: FullscreenFrameProps) {
+export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearchOpen = false, dialogInDock = false, paletteOpen = false, onOverflow }: FullscreenFrameProps) {
   const height = frameHeight(rows);
   // ONE BOTTOM BAND, TWO OCCUPANTS AND TWO CAPS. Everything below — the region's floor, the measured grant's
   // stamp, the clip and the diagnostic — is written against `cap` and `bottomSlot` rather than against the dock,
   // so the seam is not a second code path but the same one with a different tenant.
   const seamUp = seam !== undefined && seam !== null && seam !== false;
   const bottomSlot = seamUp ? "seam" : "dock";
-  const cap = seamUp ? seamCap(rows) : dockCap(rows, historySearchOpen || dialogInDock);
+  const cap = seamUp ? seamCap(rows) : dockCap(rows, historySearchOpen || dialogInDock || paletteOpen);
   // THE CAP IS EXPRESSED AS THE REGION'S FLOOR, because Yoga has a `maxHeight` and Ink 5.2.1 does not expose it
   // (build/styles.js applies `minHeight` and `height`, nothing else). The two are equivalent inside a
   // fixed-height container: a region that may not shrink below `height − cap` leaves at most `cap` rows for

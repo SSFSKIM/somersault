@@ -39,6 +39,14 @@ export interface SuspendDeps {
   kill?: (pid: number, signal: string) => void;
   once?: (signal: string, handler: () => void) => void;
   removeListener?: (signal: string, handler: () => void) => void;
+  /** FSW T14, AMENDMENT 3 — `AltScreenGuard.handoff`. Ctrl-Z is a terminal handoff like every other, except
+   *  that its two halves are separated by a round trip through the shell's job control, so there is no
+   *  `run()` for `aroundSubprocess` to wrap: this calls the leave and holds the returned re-enter until
+   *  SIGCONT. Without it a fullscreen suspend left the smcup standing and the shell drew its prompt onto OUR
+   *  alternate screen — a screen that then vanished, prompt and all, on `fg`.
+   *    ABSENT ON A CLASSIC LAUNCH, and inert rather than absent on a main-screen one: the guard hands back a
+   *  no-op unless it is armed, which only the fullscreen renderer does (altScreen.ts). */
+  handoff?: () => () => void;
 }
 
 export function suspendProcess(deps: SuspendDeps): void {
@@ -58,12 +66,20 @@ export function suspendProcess(deps: SuspendDeps): void {
   // re-arm the moment we resume, and a blocking `read()` on fd 0 parks the main thread forever. Repair first,
   // before raw mode and the repaint touch the terminal. Failure-silent by construction.
   const restoreTty = deps.restoreTty ?? restoreTtyNonblock;
-  const onResume = () => { restoreTty(); deps.stdin.setRawMode?.(true); cursor(false); paste(true); deps.repaint(); };
+  // The alt screen's half of the round trip. `back` is set the moment we leave and is the ONLY thing that puts
+  // the screen back, so both exits from here — SIGCONT and the delivery-failure rollback — call it. Ordering on
+  // the way back: raw mode first (the tty has to be ours again before we write to it), then smcup, and only
+  // then the repaint — a frame painted before the screen is retaken lands on the user's shell.
+  let back: (() => void) | undefined;
+  const onResume = () => { restoreTty(); deps.stdin.setRawMode?.(true); back?.(); cursor(false); paste(true); deps.repaint(); };
   let listenerAttempted = false;
   try {
     deps.stdin.setRawMode?.(false);
     cursor(true);
     paste(false);
+    // …and rmcup LAST of the leave, after the modes it does not own are already down — the guard's own leave
+    // writes mouse-off, rmcup, an SGR reset and a cursor show, in canon's order (altScreen.ts `handoff`).
+    back = deps.handoff?.();
     // once-before-kill is load-bearing: a fast `fg` (SIGCONT delivered right back) must not race a listener
     // that hasn't attached yet, so the listener goes up BEFORE the signal that could trigger it.
     listenerAttempted = true;
@@ -71,6 +87,7 @@ export function suspendProcess(deps: SuspendDeps): void {
     kill(0, "SIGTSTP");   // whole process group (matches upstream) — child processes suspend with us, like real job control
   } catch (error) {
     if (listenerAttempted) removeListener("SIGCONT", onResume);
+    back?.();             // …and the screen we already gave up comes back: nothing was suspended after all
     deps.stdin.setRawMode?.(true);
     cursor(false);
     paste(true);
