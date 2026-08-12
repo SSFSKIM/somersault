@@ -13,7 +13,10 @@
 // The swap itself (`swapEngine` below) is deliberately factored away from rewind's own validation: M2b's
 // `thread/clear` performs the SAME swap against a different replacement engine (a fresh conversation
 // instead of one resumed at an anchor), and the one thing neither may re-derive is the ORDER — bump the
-// epoch, drop the router, dispose, install the replacement.
+// epoch, drop the router, dispose, install the replacement. M3 §4's `thread/reopen` (bottom of this file)
+// is the third caller and the one that inverts the precondition: rewind and clear swap a LIVE engine for a
+// different conversation, reopen swaps a DEAD one for the same conversation, which is why it is the only
+// member that dispatch lets through the -33005 gate at all.
 //
 // NONE OF THAT REACHES A FLEET THREAD (M3 §1d, Task 11). Everything above describes one server owning one
 // engine. A fleet thread's engine belongs to a running ccx host that other clients are attached to, and
@@ -29,9 +32,14 @@
 // The GATES stay local, though (busy + a parked decision view), because they are the same refusals the
 // host makes for the same reasons (host.ts's rewind) and answering them here keeps the UX identical
 // across origins — one refusal, at request-arrival time, before anything is sent.
+// `thread/reopen` is the exception to the forwarding rule and refuses the origin outright (-33006, from
+// the dispatch gate — `FLEET_UNSUPPORTED`, never a branch here): there is no host op to forward to, and
+// there should not be one. Rebuilding a running host's engine on its own clients' behalf is the host's
+// lifecycle to own, and §1f already names the recovery for a dead fleet socket — close, then re-attach.
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { installRouter } from "./router.js";
+import { flushQueue } from "./queue.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { emptyFlagPerms, seedSettings, threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import { FleetBusyError, SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
@@ -40,7 +48,7 @@ import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.j
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
-import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./schema/rewind.js";
+import { rewindAnchorsParams, rewindDryRunParams, rewindParams, reopenParams } from "./schema/rewind.js";
 
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/turns.ts — registry.ts's `updatedAt` is unix seconds, not ms
 
@@ -141,6 +149,13 @@ export function replySwapThrow(record: ThreadRecord, ctx: ConnCtx, id: RequestId
  *  A FAILING dispose does not abort the swap (host.ts's `swapEngine` swallows it the same way): the
  *  outgoing engine is being discarded either way, and letting its failure propagate here would leave the
  *  record holding a dead engine with no router at all — strictly worse than completing the replacement.
+ *  A THROW is all that catch can absorb, so `thread/reopen` — the one caller whose outgoing engine is
+ *  already dead by definition (§4) — asked whether a HANG were possible here instead, and it is not:
+ *  `Session.dispose()` is `input.close(); await this.done` (src/session/session.ts), `close()` is
+ *  idempotent, and `done` is the read loop, which has already ended whenever `isEnded()` is true (`ended`
+ *  is set in that loop's own `finally`). An already-dead engine therefore disposes in a microtask, and no
+ *  bounded-await guard is needed for the only engine kind that can reach this line — a fleet thread's
+ *  socket-backed session never does, every fleet arm in this family returning before the swap.
  *
  *  `nextSessionId` is the store id the record carries afterwards, and it is the CALLER's to decide: a
  *  destructive rewind resumes the same conversation id, so it stays stamped (the router's init latch then
@@ -442,6 +457,103 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
     } finally {
       // Guaranteed: a throw from the dry run, the real restore or the swap itself must not leave the
       // thread wedged reading "swapping" forever.
+      record.swapInFlight = false;
+    }
+  });
+};
+
+/** The replacement `thread/reopen` builds when no test injected one — the SAME primitive `thread/clear`'s
+ *  own default uses (settingsOps.ts's `defaultFreshFactory`), because the two ask the identical thing of
+ *  `record.config`; whether the conversation continues or starts over is decided by the `resume` the
+ *  caller folds in, not by the factory. Defaulted at the call site like every other DI slot here. */
+const defaultReopenFactory = (config: Record<string, unknown>): EngineSession => openSession(config as OpenSessionConfig);
+
+/** The refusal an ALIVE engine earns. Reopen is a RECOVERY, not a restart: without this a client could
+ *  cycle a healthy thread's engine — dropping its in-flight context and its CLI process — through a method
+ *  whose whole contract is "this thread is already broken". */
+export const ENGINE_NOT_DEAD = "engine is not dead; nothing to reopen";
+
+/** `thread/reopen` (spec §4) — the fourth member of the swap family, and the only one whose starting state
+ *  is a thread that answers -33005 to everything else. Scorecard gap 10: `swapEngine`'s fixed order
+ *  disposes before it builds, so a factory that throws (an `openSession` that cannot spawn the CLI child)
+ *  unwinds leaving the record holding a disposed engine. That reads honestly — `isEnded()` is true, so
+ *  dispatch refuses every method — but until now the only way out was `thread/close` plus a fresh
+ *  `thread/resume`, which mints a NEW thread id and drops every subscription, name, tag and cursor the
+ *  client held against the old one. This admits a replacement engine into the EXISTING record instead.
+ *
+ *  REACHABLE ONLY BECAUSE IT IS EXEMPT. `thread/reopen` is in server.ts's `ENGINE_GONE_EXEMPT`, or the
+ *  dispatch-level -33005 gate would refuse it in exactly the state it exists for. The origin gate runs
+ *  immediately after that exemption, which is what makes a fleet thread's -33006 land here without a line
+ *  of code in this handler: reopen NEVER forwards, because a fleet thread's engine is a running host's and
+ *  its lifecycle is that host's to own (§1f — a dead fleet socket is recovered by `thread/close` plus a
+ *  fresh `thread/attach`, not by rebuilding someone else's engine underneath them).
+ *
+ *  RESUME OR FRESH is decided by the retained id and nothing else: `record.sessionId` present means the
+ *  conversation was persisted and the replacement resumes it; absent means the engine died before its
+ *  first init frame ever latched one, so there is no transcript to resume and the thread reopens as a
+ *  fresh conversation (spec §4, documented — the `thread/rewound` then carries the new id, `null` until
+ *  the router's init latch learns it). The `resume` is folded into the config the factory receives, which
+ *  is `startThread`'s own convention (server.ts) — and folding it in is also what OVERWRITES a stale
+ *  `resume` left in `record.config` by the original admission, so a thread that has been cleared since
+ *  does not quietly resurrect the conversation the clear dropped.
+ *
+ *  THE DECISION REGISTRY IS DELIBERATELY UNTOUCHED, though a park from the dead conversation can outlive
+ *  it. Neither settle path is usable: `ThreadDecisions.teardown()` and `.discard()` both LATCH `closed`,
+ *  and the broker they close is the same object `record.config` carries onto every replacement — closing
+ *  it here would hand the recovered thread an engine whose every future tool call is auto-denied, with
+ *  nothing on the wire saying why. A stale park is the smaller residual (it keeps `waitingOn` true and
+ *  refuses a later rewind/clear until the thread is closed) and is a pre-existing property of any dead
+ *  thread, not something this method introduces. */
+export const threadReopen: Handler = (srv, ctx, id, params) => {
+  // Mirrors `thread/clear`'s own first line, and for the same reason: this method SPAWNS an engine, and
+  // shutdown()'s snapshot must not be raced into leaking a CLI child nothing will dispose.
+  if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
+  const parsed = reopenParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const { threadId } = parsed.data;
+  const record = srv.registry.get(threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // Every refusal resolved synchronously, before a side effect — the family's rule (see threadRewind).
+  const busyReason = threadBusyReason(record);
+  if (busyReason) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return; }
+  // NO parked-decision gate, unlike rewind and clear, and the omission is the point: that gate exists
+  // because the swap awaits a LIVE engine's dispose, which cannot finish while a turn sits inside
+  // canUseTool holding one of our parked promises (the C1 circular wait). Here the read loop has already
+  // ended — that is the precondition — so there is no wait to deadlock, and refusing on a park would make
+  // the recovery unreachable for exactly the threads that died holding one.
+  if (!record.session.isEnded?.()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, ENGINE_NOT_DEAD); return; }
+  // Latched synchronously, as rewind and clear do: the swap sits behind record.chain, and every gate reads
+  // the latch through threadBusyReason -> "swapping".
+  record.swapInFlight = true;
+  // The queue is FLUSHED, in the same synchronous step — `thread/close`'s latch+flush pair, for a reason of
+  // this method's own. A queued turn was accepted against a conversation that has since died, and on the
+  // no-sessionId arm the replacement is a different conversation outright; nothing would run it at reopen
+  // time either (only `settleTurn` drains), so left in place it would execute against unrecognizable
+  // context the first time some later turn completed. Cancelled rather than dropped, because a client that
+  // was told `{queued:true}` is owed a terminal event for that id (queue.ts's invariant).
+  flushQueue(srv, record);
+  const sessionId = record.sessionId;
+  record.chain = record.chain.then(async () => {
+    try {
+      const factory = srv.deps.sessionFactory ?? defaultReopenFactory;
+      await swapEngine(srv, record, () => factory({ ...(record.config ?? {}), resume: sessionId }), sessionId);
+      record.updatedAt = nowSec();
+      // The established "engine swapped, resync" signal, both scopes (fanout.ts): the epoch moved, so every
+      // outstanding thread/read cursor is stale, and a client rendering this thread needs to know its
+      // engine is a different process now. `null` rather than an omitted key on the fresh arm — the same
+      // choice thread/clear makes, so a client reads "no id yet" instead of "field missing".
+      broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "thread/rewound", { threadId, sessionId: record.sessionId ?? null });
+      ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
+    } catch (e) {
+      // NOT `replyEngineThrow`: the record is still holding the corpse on this path (the factory threw
+      // before `swapEngine` could install anything), so its -33005 re-check would fire and answer "Engine
+      // is gone" — true, already known, and it would swallow the factory's own message, which is the only
+      // thing telling the client whether a retry can possibly work. The thread keeps answering -33005
+      // everywhere else, so nothing here misrepresents its state.
+      ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    } finally {
+      // Guaranteed, exactly as in threadRewind: a second factory throw must leave the thread retryable
+      // rather than wedged at "swapping" — which is what makes this recovery REPEATABLE.
       record.swapInFlight = false;
     }
   });

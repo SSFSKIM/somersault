@@ -1212,6 +1212,19 @@
       ],
       "additionalProperties": false,
       "description": "unsandboxed; output returns to the calling client only — the model never sees it (deviation from Codex's stream-into-turn)"
+    },
+    "thread/reopen": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "additionalProperties": false
     }
   }
 }

@@ -66,6 +66,10 @@ const GATED_CALLS: Array<[string, (threadId: string) => Record<string, unknown>]
   ["thread/reinitialize", (threadId) => ({ threadId })],
   ["account/read", (threadId) => ({ threadId })],
   ["thread/init/read", (threadId) => ({ threadId })],
+  // M3 Task 14: the tenth, landed WITH its schema (the subset rule below). It is also the one gated method
+  // that is ENGINE_GONE_EXEMPT, so on a fleet thread the gate is what answers whether the engine is alive
+  // or dead — reopen.test.ts drives the dead half; this table's engines are alive.
+  ["thread/reopen", (threadId) => ({ threadId })],
 ];
 
 describe("appserver origin gate (M3 Task 3)", () => {
@@ -74,8 +78,6 @@ describe("appserver origin gate (M3 Task 3)", () => {
     // its old answer), and a name that is not a methodSchemas key cannot ever be dispatched at all.
     expect([...FLEET_UNSUPPORTED].sort()).toEqual(GATED_CALLS.map(([m]) => m).sort());
     for (const m of FLEET_UNSUPPORTED) expect(Object.keys(methodSchemas)).toContain(m);
-    // thread/reopen joins the set in Task 14, WITH its schema — never before (the subset rule above).
-    expect(FLEET_UNSUPPORTED.has("thread/reopen")).toBe(false);
   });
 
   for (const [method, mkParams] of GATED_CALLS) {
@@ -145,6 +147,8 @@ describe("appserver origin gate (M3 Task 3)", () => {
   it("a DEAD fleet engine answers -33005 for a gated method — engine-gone is a fact about this thread now, and outranks the structural refusal", async () => {
     // The other half of the dispatch ordering: the gate sits after the -33005 check, which is what spec
     // §1f's death sequence expects ("subsequent methods answer -33005"; recovery is close + re-attach).
+    // `thread/reopen` is the one gated method that skips that check (it is ENGINE_GONE_EXEMPT), and the
+    // ordering is what makes it answer -33006 rather than -33005 here — reopen.test.ts pins that case.
     const { srv, conn, lines } = boot();
     const threadId = addRecord(srv, "fleet", fakeSession({ isEnded: () => true }));
 

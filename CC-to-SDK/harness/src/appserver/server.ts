@@ -21,7 +21,7 @@ import { threadList, threadFork, threadNameSet, threadTagSet, threadDelete } fro
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
 import { broadcastToWatchers, broadcastToSubscribersAndWatchers } from "./fanout.js";
-import { rewindAnchors, rewindDryRun, threadRewind } from "./rewind.js";
+import { rewindAnchors, rewindDryRun, threadRewind, threadReopen } from "./rewind.js";
 import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverrideSet } from "./mcp.js";
 import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
@@ -175,6 +175,11 @@ const ENGINE_GONE_EXEMPT = new Set([
   "thread/close", "thread/read", "thread/subscribe", "thread/unsubscribe", "decision/list",
   "thread/name/set", "thread/tag/set", "thread/fork", "thread/delete",
   "task/list", "thread/directory/list",
+  // M3 §4's `thread/reopen` is the one member that is exempt for the OPPOSITE reason to the rest: not
+  // "this answers without transport" but "a dead engine is its entire subject". The gate would otherwise
+  // refuse the recovery in exactly the state it exists for, and the alive-engine refusal it owes (-32602)
+  // is the handler's, after the exemption (rewind.ts).
+  "thread/reopen",
 ]);
 
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
@@ -406,6 +411,13 @@ export class AppServer {
     // take `record.chain`: the command never reaches the engine, so nothing about a turn in flight has any
     // claim on it (workspace.ts's own note).
     "thread/shellCommand": shellCommand,
+    // M3 Task 14 (§4): the gap-10 recovery path — a dead-engine record gets a replacement engine in place
+    // rather than staying -33005 until the client closes it. Registered last, but it lives in rewind.ts:
+    // it is the fourth member of the swap family and reuses `swapEngine` verbatim. It is the ONLY entry in
+    // this table that is BOTH `ENGINE_GONE_EXEMPT` and origin-gated, which is what the gate ordering above
+    // was written for — the exemption lets a dead thread reach it, and the origin gate still answers
+    // -33006 for a fleet one.
+    "thread/reopen": threadReopen,
   };
 
   private readonly token: string;

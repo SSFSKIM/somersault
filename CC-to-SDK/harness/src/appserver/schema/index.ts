@@ -6,7 +6,7 @@ import { threadStartParams, threadResumeParams, threadReadParams, threadListPara
 import { turnStartParams, turnInterruptParams, turnSteerParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
-import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.js";
+import { rewindAnchorsParams, rewindDryRunParams, rewindParams, reopenParams } from "./rewind.js";
 import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./mcp.js";
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
@@ -96,4 +96,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // names a thread. STABLE: `runBash` is our own primitive, and the deviation the params' `.describe()`
   // carries is about SEMANTICS (output never reaches the model), not about a shape that might move.
   "thread/shellCommand": { params: shellCommandParams },
+  // M3 Task 14 (§4): the gap-10 recovery path. Registered last, matching `server.ts`'s table, though its
+  // params live with the rest of the swap family in `schema/rewind.ts` — the module a reader looks in for
+  // "what replaces a thread's engine". STABLE: the shape is a threadId and the mechanism is `swapEngine`,
+  // both of which have shipped since M2b.
+  "thread/reopen": { params: reopenParams },
 };

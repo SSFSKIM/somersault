@@ -15,3 +15,10 @@ export const rewindParams = threadIdParams.extend({
   prevUuid: z.string().min(1).nullable(),
   scope: z.enum(["both", "conversation", "code"]),
 });
+/** M3 §4's `thread/reopen` — the fourth member of the swap family, and the one with NOTHING to say beyond
+ *  which thread (aliased to `threadIdParams` exactly as `threadClearParams` is). Everything the replacement
+ *  engine is built from already lives on the record: the start config, and the retained sessionId that
+ *  decides resume-vs-fresh. A `resume` or `config` param here would be a second, client-supplied source of
+ *  truth for state the server already owns — and a way to smuggle a different conversation, or a different
+ *  cwd, into an existing thread's record. */
+export const reopenParams = threadIdParams;

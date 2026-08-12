@@ -88,7 +88,7 @@ over the per-record flag accumulator, committed only after `applyFlagSettings` a
 off-vocabulary effort level is refused `-32602` before the engine is touched) and `thread/clear` (the
 rewind gate order against a FRESH conversation — `resume`/`resumeAt` explicitly overridden, epoch
 bumped, `sessionId` dropped, `thread/rewound {cleared:true}` broadcast). Every LOCAL engine swap —
-rewind's and clear's alike, and a fleet thread performs neither — re-pushes the settings mirror and the flag accumulator onto the replacement engine
+rewind's, clear's and M3 Task 14's `thread/reopen` alike, and a fleet thread performs none of them — re-pushes the settings mirror, the flag accumulator and the MCP layer onto the replacement engine
 from the one shared seam (`rewind.ts`'s `swapEngine`), since a replacement is rebuilt from
 `record.config` and would otherwise silently revert every runtime write. A re-push the replacement
 rejects never fails the completed swap; it is reported twice over instead — the state is reconciled to
@@ -148,6 +148,19 @@ applies (it is NOT in `ENGINE_GONE_EXEMPT`, so a dead thread reads consistently 
 client can name on it), while the busy check and `record.chain` are **skipped** — the command never
 reaches the engine, and `!` mid-turn is exactly the terminal precedent.
 
+Registered after it, and last of all, is §4's **`thread/reopen`** (M3 Task 14) — the one method whose
+subject is a thread that answers `-33005` to everything else, and the closure of scorecard gap 10. It
+takes a bare `{threadId}` and admits a REPLACEMENT engine into the existing record through the same
+`swapEngine` the rewind trio and `thread/clear` go through (it lives in `appserver/rewind.ts` for that
+reason, the fourth member of the swap family), so the thread keeps its id, its subscribers, its name and
+tags, and its accumulated settings/flag/MCP state — which the post-swap re-push replays onto the new
+engine exactly as it does after a rewind. It is the only registered method that is **both**
+`ENGINE_GONE_EXEMPT` and origin-gated, and dispatch's gate order is what makes that combination answer
+correctly: the exemption lets a dead thread reach it, and the origin gate immediately after still refuses
+a fleet thread `-33006` — reopen never forwards, because rebuilding a running host's engine is that
+host's lifecycle to own (§1f's recovery for a dead fleet socket is `thread/close` plus a fresh
+`thread/attach`).
+
 **26 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
 subscribers and watchers alike — for the two losses that are facts about what the thread now IS rather
@@ -157,7 +170,9 @@ server-scoped (via `initialize{watchThreads:true}`) `thread/started`, `thread/de
 `thread/closed` (M3 Task 9 adds an OPTIONAL `reason` — `"stopped"` when the thread ended because
 `thread/stop` ended its session, absent for a plain close, which on a fleet thread is only a detach and
 must not claim more) and `thread/rewound` (`{threadId, sessionId}`, plus `cleared: true` and a null id
-when the swap was a `thread/clear`); thread-scoped
+when the swap was a `thread/clear`; M3 Task 14's `thread/reopen` emits the same bare shape — every engine
+swap says "resync" in one voice, and a client that reopens a dead thread has the same stale cursors and
+the same new process to reckon with as one that rewound a live one); thread-scoped
 `thread/status/changed` (`{state, waitingOn?}`), `thread/settings/changed` (client + engine legs,
 echo-deduped), `thread/name/updated`, `thread/capabilities/changed`, `thread/compacted`,
 `thread/tokenUsage/updated`, `thread/limits/updated`, `turn/queued` (M2b Task 8 — broadcast at enqueue
@@ -177,7 +192,10 @@ frame router's status route (D-M2-6 architecture, t10 semantics).
 no backpressure source exists yet), `-33001 BUSY`, `-33002 ALREADY_SETTLED` (carries `data.by`),
 `-33003 UNAUTHENTICATED`, `-33004 THREAD_NOT_FOUND`, `-33005 ENGINE_GONE` (dispatch-level gate via
 `isEnded()`; the exempt set is everything answerable without live transport —
-close/read/subscribe/unsubscribe/decision-list, the store-only session CRUD, and `task/list`),
+close/read/subscribe/unsubscribe/decision-list, the store-only session CRUD, `task/list` and
+`thread/directory/list` — plus M3 Task 14's `thread/reopen`, the one member exempt for the OPPOSITE
+reason: a dead engine is its whole subject, so the gate would refuse the recovery in exactly the state it
+exists for),
 `-33006 UNSUPPORTED_FOR_ORIGIN` (defined, unemittable until M3), `-33007 SHUTTING_DOWN`.
 
 **Transport** is WebSocket only (`transport/ws.ts`): loopback default, Bearer-token `initialize`
@@ -269,17 +287,31 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
    swap happened to replay it. Clearing is what restores the escape hatch the old reasoning assumed. The
    remove-side ops keep having no dedup guard, so re-asserting a layer against an engine a client does not
    trust still works.
-10. **A factory throw inside `swapEngine` leaves the record holding a DISPOSED engine** — known residual,
-    **M3 candidate**. The swap's fixed order (bump epoch, drop router, dispose, install replacement) means
-    the outgoing engine is already gone when `makeReplacement()` runs, so a factory that throws — an
-    `openSession` that cannot spawn the CLI child — unwinds with the old, disposed session still in
-    `record.session`. Post-Task-3b this at least READS honestly rather than confusingly: `isEnded()` is
-    true on the disposed engine, so dispatch's gate and every chain-deferred mutation answer `-33005`
-    ("Engine is gone"), and `thread/rewind`/`thread/clear` clear `swapInFlight` in a `finally` so the
-    thread never wedges at "swapping". What is missing is a way back: the thread cannot be re-opened in
-    place, and a client's only recovery is `thread/close` plus a fresh `thread/resume`. The fix is a
-    re-open path (retry the factory, or admit a replacement engine into an existing record), which is M3
-    work — it needs the same admission machinery fleet adoption is bringing.
+10. **CLOSED by `thread/reopen` (M3 §4, Task 14) — the recovery the residual was missing.** The underlying
+    fact is unchanged and is not a bug to fix: `swapEngine`'s fixed order (bump epoch, drop router,
+    dispose, install replacement) means the outgoing engine is already gone when `makeReplacement()` runs,
+    so a factory that throws — an `openSession` that cannot spawn the CLI child — unwinds with the old,
+    disposed session still in `record.session`. That still READS honestly (`isEnded()` is true, so
+    dispatch's gate and every chain-deferred mutation answer `-33005`, and all three swap callers clear
+    `swapInFlight` in a `finally`, so the thread never wedges at "swapping"). What has changed is that the
+    state is now **recoverable in place**: `thread/reopen {threadId}` builds a replacement from
+    `record.config` — resuming the retained `sessionId`, or starting a fresh conversation when the engine
+    died before the first init frame latched one — and drives it through the same `swapEngine`, so the
+    thread keeps its id, subscribers, name/tags and accumulated state instead of forcing `thread/close`
+    plus a `thread/resume` that mints a new thread and drops every subscription and cursor with it. The
+    recovery is REPEATABLE, which is the property that makes it a real escape hatch rather than a second
+    chance: a factory that throws again relays its own message (`-32603`, not the `-33005` the record would
+    otherwise answer — that message is the only thing telling a client whether retrying can work), the
+    `finally` releases the latch, and the next attempt is admitted exactly like the first.
+
+    Two residuals, both deliberate and both narrower than the gap they replace. (a) A **parked decision
+    from the dead conversation outlives the reopen** — it keeps `status.waitingOn` true and blocks a later
+    `thread/rewind`/`thread/clear` until the thread is closed. Settling it is not available: both
+    `ThreadDecisions.teardown()` and `.discard()` latch `closed`, and that broker is the same object
+    `record.config` carries onto every replacement, so closing it here would hand the recovered thread an
+    engine whose every future tool call is silently auto-denied. The stale park is a property of any dead
+    thread, not something the reopen introduces; a decision-registry reset that survives a swap would be
+    its own change. (b) **Queued turns are cancelled, not carried over** — see the method's row.
 
 ## Host ops — `harness/src/host/ops.ts` (34 tokens)
 
@@ -411,7 +443,7 @@ calls the SDK's own `Query.close()`.
 
 ## Server-origin methods — no seam token, so never walked
 
-Eight methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
+Nine methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
 no walker can ever produce a row for them: `initialize` is special-cased in `dispatch()` ahead of the
 handlers table, `server/status` reports this process, and `thread/start` *creates* the thread the other
 four tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). M3 Task 7 adds
@@ -419,16 +451,20 @@ the adoption pair for the same reason: `fleet/list` reports this machine's roste
 here exists for yet — and `thread/attach` is what turns one of those rows into a thread. M3 Task 12 adds
 the workspace pair, `fs/read` and `fs/search` (§2), whose subject is a path on this machine — the one
 kind of request a client makes without addressing a conversation at all; M3 Task 13 adds
-`thread/shellCommand` (§3), the same subject reached from the other end. They were
+`thread/shellCommand` (§3), the same subject reached from the other end; and M3 Task 14 adds
+`thread/reopen` (§4), which mirrors no seam for the same reason `thread/start` does not — building an
+engine is this server's own act, and the SDK has no "reopen" to walk. They were
 therefore invisible to a scorecard whose rows all came from the walked-token direction, and the M2b
 Task 6 gate (every registered method must be named by some row — the "zero schema-less methods"
 acceptance) is what surfaced the omission. Origin scope is a question about an *existing* thread and
-seven of the eight have none, so those seven read `N/A` there — the adoption pair included, whose SUBJECT
+seven of the nine have none, so those seven read `N/A` there — the adoption pair included, whose SUBJECT
 is a fleet session but whose caller names no thread at all, and the workspace pair, which a client roots on
-a thread's tree by passing `threadView.cwd` as a plain path. `thread/shellCommand` is the exception, and
-the only row in this table with a real origin scope: it names a thread because a command has to run
-somewhere and the thread is what knows where, and it runs on **both** origins — a fleet thread's cwd is as
-runnable as an inProcess one's, the host being on this same machine. The seam-token column repeats the
+a thread's tree by passing `threadView.cwd` as a plain path. The two exceptions both name a thread and
+score it differently, which is the distinction worth reading the pair for: `thread/shellCommand` runs on
+**both** origins — a command has to run somewhere, the thread is what knows where, and a fleet thread's
+cwd is as runnable as an inProcess one's, the host being on this same machine — while `thread/reopen` is
+**inProcess** only, because the thing it rebuilds is an engine this server owns, and a fleet thread's
+belongs to a live host with its own clients. The seam-token column repeats the
 method name: there is no upstream token to put in it. `fs/read` is the one row here with a seam it
 deliberately does NOT use — `Query.readFile`, probe-dead since probe 104; that seam keeps its own `N/A`
 row in the Query table above.
@@ -443,14 +479,15 @@ row in the Query table above.
 | `fs/read` | appserver/workspace.ts | `fs/read` | N/A | shipped(M3) — `{path}` → `{dataBase64, size}`, absolute paths only, trusted-client and unsandboxed (Codex's reads are sandbox-None). Refuses with `-32602` and nothing else: a relative path, a failing `stat` (the fs message verbatim), a path that is not a regular file — `not a regular file (directory\|FIFO\|socket\|character device\|block device)`, which is what keeps a FIFO from hanging the request forever and `/dev/zero` from reading without end, both invisible to the cap because `stat` sizes them at 0 — a failing read (`EACCES`), and a file over the **4 MiB cap** — `file exceeds the 4 MiB read cap (N bytes)`. The cap is a recorded deviation (Codex has none); the SDK seam that would have backed this, `Query.readFile`, is probe-dead (probe 104) and its own row is in the Query table |
 | `fs/search` | appserver/workspace.ts | `fs/search` | N/A | shipped(M3) — `{query, roots?, limit?}` → `{matches: [{root, path, score}]}` over the TUI's own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`), so a client's search and the composer's `@`-picker score a tree identically — equally scored matches can still order differently, the cross-root re-sort keeping the ranker's lexical tie-break but not its shorter-path-first one. Empty/whitespace query → `[]` before any walk; `roots` defaults to the server's cwd (this process's — the server holds no other) and is otherwise taken as given, relative roots included (§2 asks absoluteness of `fs/read`'s `path` alone); each match's `path` is root-relative beside the `root` that produced it; an unwalkable root degrades to zero matches rather than failing the call (Codex parity), so the reply is never an RPC error; roots merge into one score-ordered list capped at `limit`, default and max 50 (Codex's `MATCH_LIMIT`). No highlight indices, no warm index — both recorded deviations |
 | `thread/shellCommand` | appserver/workspace.ts | `thread/shellCommand` | both | shipped(M3) — `{threadId, command}` → `{code, output, timedOut?}` over `src/tui/bash.ts`'s `runBash`, the TUI's own `!cmd` primitive: a full shell string through `exec` (pipes and redirection are the point), a 4 MiB output cap, and a promise that never rejects — so a failing command is a result with a nonzero `code`, never an RPC error. **Display-only: the output goes to the calling client and the conversation is untouched — the model never sees it.** That is the recorded deviation from Codex (D-M3-2), whose version streams into the turn; ours matches the TUI's `!` semantics, and the note rides the generated schema artifact because the shape cannot carry it. Unsandboxed by design, as Codex's is. Runs in the thread's own cwd — `threadView.cwd`'s own value (`registry.ts`'s `threadCwd`), so a client is never served a directory it was not told about: the start config's cwd for an inProcess thread, this process's when the config named none, the roster cwd stamped at attach for a fleet one. Gates: the standard `-33005` applies (deliberately NOT in `ENGINE_GONE_EXEMPT` — a dead thread reads consistently dead), `-33004` for an unknown thread, `-32602` for malformed params; **no busy check and no `record.chain`** — un-chained on purpose, since the command never reaches the engine and `!` works mid-turn in the terminal. Measured, not assumed: output past the cap comes back truncated at 4 MiB with a nonzero `code` and no `timedOut` flag (node's `exec` reports `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`, a string code that `runBash` maps to a plain exit 1). **Two timeouts, and `timedOut` covers both:** the seam's inner 30 s bounds the CHILD and bounds it with a SIGTERM `runBash` never escalates, so the handler races it against its own 40 s outer deadline (`SHELL_DEADLINE_MS`, injectable via `AppServerDeps.shellDeadlineMs`) that bounds the REQUEST — set above the inner one so it fires only for a child that ignored the TERM. Without it such a child left the promise unsettled forever and the RPC never replied at all, which un-chained let one client stack up hung ids. The outer arm replies `{code:1, timedOut:true}` with a `<harness note: …>` output naming the abandonment, because it is an admission rather than a kill: the child is left running (a real residual, spelled out to the client), since escalating to SIGKILL would mean reaching past the shared TUI seam this method deliberately reuses. That residual has two further halves the note cannot carry: the abandoned child also **pins the server's own exit** — `exec`'s stdio handles stay referenced in our event loop and `runBash` returns only a promise, so there is nothing here to unref (measured: reply at 1503 ms, parent process exit only at 10037 ms, when the child died), which means a supervisor awaiting a graceful exit hangs until something else kills that child; and the child's **partial output is discarded** — `runBash` has not resolved when the outer arm fires, so its buffer is unreachable from outside the seam and the client gets only the harness note |
+| `thread/reopen` | appserver/rewind.ts | `thread/reopen` | inProcess | shipped(M3) — `{threadId}` → `{ok:true, sessionId}`, the gap-10 recovery path (§4): a record whose engine is DEAD gets a replacement in place instead of answering `-33005` until the client gives up on it. The replacement is built from `record.config` through the same `swapEngine` the rewind trio and `thread/clear` use — **resumed** on the retained `record.sessionId`, or a **fresh conversation** when the engine died before the first init frame ever latched one (documented in §4; the reply and the `thread/rewound` then carry `null` until the router's init latch learns the new id). The `resume` is folded into the config handed to the factory, which also overwrites any stale `resume` a prior `thread/clear` left behind, so a cleared thread does not quietly resurrect the conversation the clear dropped. Post-swap, `repushThreadState` replays the settings mirror, the flag layer and the MCP layer onto the new engine exactly as after a rewind, and `thread/rewound {threadId, sessionId}` goes to subscribers and watchers (the epoch bumped, so every outstanding `thread/read` cursor is stale). Gates: **`ENGINE_GONE_EXEMPT`** — the one method exempt because a dead engine is its subject rather than because it avoids the transport, without which dispatch's `-33005` would refuse it in precisely the state it exists for; `-33006` for a fleet thread, from the dispatch origin gate that runs right after that exemption, since reopen never forwards (a running host owns its own engine lifecycle, and §1f's recovery for a dead fleet socket is close + re-attach); `-33001` for busy/closing/swapping; `-33007` while the server is shutting down (it spawns an engine); and **`-32602` "engine is not dead; nothing to reopen"** when the engine is ALIVE, so reopen cannot be used as a covert restart of a healthy thread. Deliberately NO parked-decision gate, unlike rewind and clear: that gate guards a live engine's dispose against the C1 circular wait, and here the read loop has already ended — refusing on a park would make the recovery unreachable for exactly the threads that died holding one. **Recovery is repeatable:** a factory that throws again relays its own message as `-32603` (not the `-33005` the record would otherwise answer — that message is the only signal telling a client whether a retry can work), `swapInFlight` is released in a `finally`, and the next attempt is admitted like the first. **Queued turns are flushed `cancelled`** at request arrival, in the same synchronous step as the swap latch (`thread/close`'s latch+flush pair): a queued turn was accepted against a conversation that has since died, nothing would drain it at reopen time anyway (only `settleTurn` drains), and left in place it would run against unrecognizable context the first time some later turn completed — cancelled rather than dropped, because a client told `{queued:true}` is owed a terminal event for that id. The decision registry is untouched by design — see gap 10 for the residual that leaves |
 
 ## Totals
 
 34 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **79 walked tokens**,
-all rowed above — plus the 8 server-origin rows just above, which no walker produces, for **87 rows**
+all rowed above — plus the 9 server-origin rows just above, which no walker produces, for **88 rows**
 in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out until then,
 having missed Task 7's adoption pair as well as its own workspace pair; Task 13's `thread/shellCommand`
-is the eighth.)
+is the eighth and Task 14's `thread/reopen` the ninth.)
 
 **Per-status row tallies, recomputed at the M2b close-out sweep (Task 9, 2026-08-11)** by rewalking the
 five tables above. They are a snapshot, not a running total: every landing wave flips a handful of rows,
@@ -473,11 +510,12 @@ retires the `fleet-only` scope, gap 4), and the two `N/A` rows, `seedReadState` 
 protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
 `probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
-Origin scope splits **67 `both` / 11 `inProcess` / 0 `fleet-only` / 9 `N/A`**, recounted off the tables at
-M3 Task 13 across all **87** rows — the per-status snapshot block above still says 82 because it predates
-all FIVE of M3's new server-origin rows: Task 7's `fleet/list` and `thread/attach`, Task 12's own
-`fs/read` and `fs/search` (those four `N/A`), and Task 13's `thread/shellCommand`, the one row in that
-table with a real origin scope — `both`, which is the whole `67 - 66` of this recount. Task 12 moved three:
+Origin scope splits **67 `both` / 12 `inProcess` / 0 `fleet-only` / 9 `N/A`**, recounted off the tables at
+M3 Task 14 across all **88** rows — the per-status snapshot block above still says 82 because it predates
+all SIX of M3's new server-origin rows: Task 7's `fleet/list` and `thread/attach`, Task 12's own
+`fs/read` and `fs/search` (those four `N/A`), Task 13's `thread/shellCommand` — `both`, which was the whole
+`67 - 66` of the previous recount — and Task 14's `thread/reopen`, `inProcess` (the `12 - 11` of this one),
+the two rows in that table with a real origin scope. Task 12 moved three:
 its own two workspace rows (`fs/read`, `fs/search`, both `N/A` — no thread, no origin question) and
 `readFile`, which had been scored `inProcess` while its status read `N/A`; a token backing no method has
 no origin, so it now reads `N/A` in both columns, as `seedReadState` always has. This line has gone stale
@@ -485,16 +523,19 @@ three times, which is the point of recounting it at every landing rather than tr
 Task 9 corrected it to 57/21/0/6 when `thread/stop` moved from `fleet-only` to `both` (gap 4), and Task 10
 moved nine more when the forwarded control + settings surface went live on fleet threads — all nine in the
 ControlFrame table, whose origin column had been scoring the bridge rather than the method (see the note
-above it). The eleven that remain `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods
-(§1c) plus the Query-side seams behind them.
+above it). The twelve that remain `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods
+(§1c) plus the Query-side seams behind them — Task 14's `thread/reopen` joining that set as the one member
+whose absence from the host wire is a deliberate boundary rather than a missing op (the host owns its own
+engine lifecycle).
 
 **The live surface those rows cover: 51 registered methods and 26 notifications.** 51 is the size of
 `appserver/schema/index.ts`'s `methodSchemas` — the number `scripts/drift-check.mjs` prints on every run
 ("every row status matches the live surface (N registered methods)") — and 26 is the notification list in
 "Shipped, per the code" above, each of whose names appears as a literal under `appserver/`. Both are
 recorded here as of the close-out sweep and are expected to age; the script is what is current. It has
-aged as predicted: **57** as of M3 Task 13 (the M2b 51, plus Task 7's `fleet/list` and `thread/attach`,
-Task 9's `thread/stop`, Task 12's `fs/read` and `fs/search`, and Task 13's `thread/shellCommand`) — a
+aged as predicted: **58** as of M3 Task 14 (the M2b 51, plus Task 7's `fleet/list` and `thread/attach`,
+Task 9's `thread/stop`, Task 12's `fs/read` and `fs/search`, Task 13's `thread/shellCommand` and Task 14's
+`thread/reopen`) — a
 number restated here per landing rather than swept, since the gate prints the true one on every run.
 
 **The gate now enforces all three directions**, which is why a hand-carried total is safe to write down

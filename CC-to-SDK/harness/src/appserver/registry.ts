@@ -305,8 +305,12 @@ export const threadCwd = (r: ThreadRecord): string | undefined => (r.origin === 
  *
  *  Every string MUST be a registered `methodSchemas` key (schema/index.ts) — a typo gates nothing at all,
  *  silently, since the misspelled name is never dispatched. origin-gate.test.ts pins both directions.
- *  `thread/reopen` belongs here too (the host owns its own engine lifecycle) and joins in Task 14, in the
- *  same change that registers its schema — never before, or the subset tripwire is lying.
+ *  `thread/reopen` (M3 §4, Task 14) joined in the same change that registered its schema, and it is the one
+ *  member here whose absence would not merely be a wire gap: rebuilding the engine of a host other clients
+ *  are attached to is that host's lifecycle to own, and §1f's recovery for a dead fleet socket is
+ *  `thread/close` plus a fresh `thread/attach`. It is also the only gated method that is
+ *  `ENGINE_GONE_EXEMPT` (server.ts), so for a fleet thread this gate answers whether the engine is alive or
+ *  dead — which is exactly why dispatch runs the exemption first and the gate second.
  *
  *  `turn/start` is deliberately ABSENT: only its `{queue:true}` FLAG is unsupported (the server-side queue
  *  rides ownership of the engine chain, which a fleet thread's host does not hand over), so that refusal
@@ -314,6 +318,7 @@ export const threadCwd = (r: ThreadRecord): string | undefined => (r.origin === 
 export const FLEET_UNSUPPORTED: ReadonlySet<string> = new Set([
   "turn/steer", "thread/settings/apply", "mcpServer/set", "mcpServer/permissionModeOverride/set",
   "plugin/reload", "skill/reload", "thread/reinitialize", "account/read", "thread/init/read",
+  "thread/reopen",
 ]);
 
 /** The one message every origin refusal carries — the turns handler's queue-flag arm included, so a client
