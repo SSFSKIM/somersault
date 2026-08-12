@@ -327,6 +327,16 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // the event layer's turn-start ahead of the prompt reply, now owns busy) or when the submit fails before
   // it accepted a seq.
   record.fleetTurnPending = true;
+  // Reset at arrival, exactly as beginTurn does (turns.ts:168) and for the same same-tick reason: a
+  // turn/interrupt landing in this same tick — before the chain callback below runs — sets
+  // interruptRequested, and the callback's skip guard reads it to refuse a turn the client already
+  // cancelled. It must be reset HERE, not left to the event layer's turn-start (fleet.ts), which only runs
+  // AFTER this turn's own submit reaches the host: a prior interrupted turn leaves the latch standing (its
+  // onTurn 'end' does not clear it), and without this reset the callback would read that stale flag and
+  // wrongly refuse this fresh turn. Safe because turn/start only reaches here when the thread is idle (the
+  // busy gate refuses -33001 before the origin branch, turns.ts:415-435), so no in-flight turn's latch is
+  // clobbered.
+  record.interruptRequested = false;
   const clearReservation = (): void => { record.fleetTurnPending = false; };
   // F2: the promise the event layer (fleet.ts) holds a trivially-fast turn's turn/completed edge (and, for
   // R4, this turn's own item emissions) behind until the inProgress reply is out. Set on the chain right
@@ -355,10 +365,18 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // reservation above was taken synchronously, so admission (busy) is still decided at arrival, not on
   // the chain.
   record.chain = record.chain.then(() => {
-    // Re-read: a thread/close that latched `closing` while this waited on the chain must not submit to an
-    // engine it is about to detach. No seq/id exists yet (the seq arrives on onAccepted), so the honest
-    // answer is the same -33001 the busy gate itself gives — not a synthesized cancelled turn.
-    if (record.closing) { clearReservation(); ctx.peer.replyError(id, ERR.BUSY, "Thread is busy (closing)"); return; }
+    // Re-read: a thread/close that latched `closing`, or a turn/interrupt that landed while this waited on
+    // the chain (or in the very same tick), must not submit to an engine the client is done with. This
+    // mirrors beginTurn's own re-read (turns.ts:197), which settles the turn TERMINALLY on either latch —
+    // but the fleet turn has NO id until the host's seq arrives on onAccepted, so it cannot broadcast a
+    // synthesized turn/completed the way beginTurn does; the honest answer is the same -33001 the busy gate
+    // gives, exactly as the `closing` branch already documents. `fleetStartAck` is assigned AFTER this guard,
+    // so no ack cleanup is owed on either path.
+    if (record.closing || record.interruptRequested) {
+      clearReservation();
+      ctx.peer.replyError(id, ERR.BUSY, record.closing ? "Thread is busy (closing)" : "Turn interrupted before it started");
+      return;
+    }
     record.fleetStartAck = ack;   // bracket only THIS turn's reply window (see the ack note above)
     engine.submit(input, () => {}, { uuid: userUuid, onAccepted }).catch((e: unknown) => {
       clearReservation();
