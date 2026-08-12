@@ -24,15 +24,29 @@
 //     follow it. As a corollary, while the content is shorter than the viewport the bottom is 0 and no scroll
 //     can ever unstick — correct, since every row is the last row.
 //   · `total` and `height` move between events (re-wrap on a resize, a tool result re-measuring). A sticky
-//     anchor re-derives against the NEW numbers; an unstuck one CLAMPS the offset it is holding so it cannot
-//     point past the new bottom, but is never re-anchored — clamping preserves the user's position where it
-//     still exists, which re-anchoring would silently discard.
+//     anchor re-derives against the NEW numbers. An unstuck one keeps TWO values, as canon does in one
+//     layout walk at L179841-179843: the RETAINED offset (`Te` → `scrollTop`) is clamped against a
+//     HIGH-WATER content height — `Y = Math.max(scrollHeightHwm ?? 0, total)` at L179827, with the hwm
+//     cleared by every explicit scroll (L434908/434914/434919) and unused while sticky — whereas the
+//     RENDERED offset (`Se` → `scrollTopRendered`) is clamped against the CURRENT bottom. So a shrink
+//     paints the clamped row but remembers the held one, and a regrow puts the user back on the exact row
+//     they were reading; clamping the retained value instead paints the same frame while silently dropping
+//     them toward the tail. This module owns the retained value only: `pageItemSlices` (pager.ts:49)
+//     already clamps what it paints, which is `Se`, and canon's jump-pill predicate reads the retained
+//     value too. Note the one move the user did not ask for that canon still makes: the ceiling
+//     `max(G, Y − M)` uses the CURRENT height, so growing the viewport does pull the offset down.
 //
 // `applyPager` (pager.ts:33) already owns the move-and-clamp arithmetic for every `scroll:*` action, so a
 // scroll event is that call plus the stickiness verdict; the clamp math lives in exactly one place.
-import { applyPager, clampOffset, type PagerAction } from "./pager.js";
+import { applyPager, type PagerAction } from "./pager.js";
 
-export interface AnchorState { offset: number; sticky: boolean }
+export interface AnchorState {
+  offset: number; sticky: boolean;
+  /** `scrollHeightHwm` (L179827-179828): the tallest `total` seen since the last explicit scroll, and the
+   *  ceiling the RETAINED offset is clamped against. Cleared while sticky, exactly as canon clears it —
+   *  a sticky anchor re-derives from the current numbers and has nothing to remember. */
+  hwm?: number;
+}
 export type AnchorEvent =
   | { kind: "content"; total: number; height: number }
   | { kind: "scroll"; action: PagerAction; total: number; height: number }
@@ -45,8 +59,18 @@ export function applyAnchor(s: AnchorState, e: AnchorEvent): AnchorState {
   const bottom = bottomOffset(e.total, e.height);
   let next: AnchorState;
   if (e.kind === "stickBottom") next = { offset: bottom, sticky: true };
-  else if (e.kind === "content") next = s.sticky ? { offset: bottom, sticky: true } : { offset: clampOffset(s.offset, e.total, e.height), sticky: false };
-  else { const offset = applyPager(s.offset, e.action, e.total, e.height); next = { offset, sticky: offset === bottom }; }
-  // Same position, same flag ⇒ same object, so a React consumer can bail out of the render entirely.
-  return next.offset === s.offset && next.sticky === s.sticky ? s : next;
+  else if (e.kind === "content") {
+    if (s.sticky) next = { offset: bottom, sticky: true };
+    else {
+      // `Te` at L179841: hold the offset, clamped only to the high-water ceiling `max(G, Y − M)`.
+      const hwm = Math.max(s.hwm ?? 0, e.total);
+      next = { offset: Math.max(0, Math.min(s.offset, hwm - e.height)), sticky: false, hwm };
+    }
+  } else {
+    // An explicit scroll clears the hwm; the new one starts from the total this scroll was measured against.
+    const offset = applyPager(s.offset, e.action, e.total, e.height), sticky = offset === bottom;
+    next = sticky ? { offset, sticky } : { offset, sticky, hwm: e.total };
+  }
+  // Same position, same flag, same memory ⇒ same object, so a React consumer can bail out of the render.
+  return next.offset === s.offset && next.sticky === s.sticky && next.hwm === s.hwm ? s : next;
 }
