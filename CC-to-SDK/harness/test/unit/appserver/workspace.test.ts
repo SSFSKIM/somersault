@@ -9,7 +9,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
-import { fsReadInternals } from "../../../src/appserver/workspace.js";
+import { fsReadInternals, READ_CAP_BYTES } from "../../../src/appserver/workspace.js";
 import * as fileComplete from "../../../src/tui/fileComplete.js";
 import { MAX_SEARCH_ROOTS } from "../../../src/appserver/schema/workspace.js";
 import { ERR } from "../../../src/appserver/rpc.js";
@@ -176,6 +176,34 @@ describe("fs/read rides one descriptor (F3 — TOCTOU closed by construction)", 
     expect(e.code).toBe(ERR.INVALID_PARAMS);
     expect(e.message).toBe("file exceeds the 4 MiB read cap");
     expect(calls.at(-1)).toBe("close");                      // the fd is released on the cap refusal too
+  });
+
+  it("reads a small file in bounded chunks, never allocating the full 4 MiB cap per read (scoped review SR3)", async () => {
+    // R12's bounded read allocated Buffer.allocUnsafe(READ_CAP_BYTES + 1) = 4 MiB+1 for EVERY read, even a
+    // 5-byte file — so a client pipelining many ordinary small reads could hold hundreds of MiB at once. The
+    // chunked read bounds each iteration's allocation to one 64 KiB chunk. Asserted STRUCTURALLY on the read
+    // length (which IS the buffer size handed to `fh.read`): a tiny file never triggers a multi-MiB read.
+    const bytes = Buffer.from("hello");
+    const readLens: number[] = [];
+    let pos = 0;
+    const fh = {
+      stat: vi.fn(async () => ({ isFile: () => true, size: bytes.length })),
+      read: vi.fn(async (buf: Buffer, off: number, len: number) => {
+        readLens.push(len);
+        const n = Math.min(len, bytes.length - pos);
+        bytes.copy(buf, off, pos, pos + n);
+        pos += n;
+        return { bytesRead: n, buffer: buf };
+      }),
+      close: vi.fn(async () => {}),
+    };
+    vi.spyOn(fsReadInternals, "open").mockResolvedValue(fh as never);
+    const res = ok(await call("fs/read", { path: join(root, "tiny.txt") }));
+    expect(Buffer.from(res.dataBase64 as string, "base64").toString()).toBe("hello");
+    expect(res.size).toBe(5);
+    expect(readLens.length).toBeGreaterThan(0);                          // the read did proceed
+    expect(Math.max(...readLens)).toBeLessThanOrEqual(64 * 1024);        // …bounded by the 64 KiB chunk…
+    expect(Math.max(...readLens)).toBeLessThan(READ_CAP_BYTES);          // …never the full 4 MiB cap (pre-SR2: cap+1)
   });
 });
 

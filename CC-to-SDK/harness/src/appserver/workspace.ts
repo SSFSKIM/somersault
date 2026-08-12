@@ -100,19 +100,27 @@ export const fsRead: Handler = async (_srv, ctx, id, params) => {
     // The fstat size is a fast-path refusal for a file already known too big — but NOT the boundary: it is
     // just a HINT, and a regular file can GROW between this fstat and the read below (final review R12).
     if (st.size > READ_CAP_BYTES) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `file exceeds the 4 MiB read cap (${st.size} bytes)`); return; }
-    // BOUNDED READ, from the SAME descriptor — the cap is enforced on the bytes ACTUALLY read, never on the
-    // stat, so a file grown past the cap after the fstat is refused rather than returned oversized (or
-    // silently truncated). Read at most one byte past the cap: hitting cap+1 means the file exceeds it.
-    // A regular file can still fail the read on its own (`EACCES`), which is bad-request-class here, never
-    // the dispatcher's -32603, keeping this module's one rule. `size` is the PAYLOAD's length.
-    const buf = Buffer.allocUnsafe(READ_CAP_BYTES + 1);
+    // BOUNDED, CHUNKED READ from the SAME descriptor — the cap is enforced on the bytes ACTUALLY read, never
+    // on the stat, so a file grown past the cap after the fstat is refused rather than returned oversized (or
+    // silently truncated). Read at most one byte past the cap: reaching cap+1 means the file exceeds it.
+    // CHUNKED rather than one `Buffer.allocUnsafe(READ_CAP_BYTES + 1)` (final review R12 → scoped review SR3):
+    // a 4 MiB+1 buffer per read cost hundreds of MiB when a client pipelined many ordinary small reads (peer
+    // frames dispatch concurrently with no per-method admission cap), a memory-exhaustion regression from the
+    // file-sized allocation R12 replaced. A tiny file now costs one 64 KiB chunk, while the over-cap probe is
+    // preserved. A regular file can still fail the read on its own (`EACCES`), which is bad-request-class
+    // here, never the dispatcher's -32603, keeping this module's one rule. `size` is the PAYLOAD's length.
+    const chunks: Buffer[] = [];
     let total = 0;
     for (;;) {
-      const { bytesRead } = await fh.read(buf, total, buf.length - total, null);
+      const want = Math.min(64 * 1024, READ_CAP_BYTES + 1 - total); // +1 so a file that reaches cap+1 proves it is over-cap
+      const chunk = Buffer.allocUnsafe(want);
+      const { bytesRead } = await fh.read(chunk, 0, want, null);
       if (bytesRead === 0) break;    // EOF
       total += bytesRead;
       if (total > READ_CAP_BYTES) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, `file exceeds the 4 MiB read cap`); return; }
+      chunks.push(bytesRead === want ? chunk : chunk.subarray(0, bytesRead));
     }
+    const buf = Buffer.concat(chunks, total);
     ctx.peer.reply(id, { dataBase64: buf.toString("base64", 0, total), size: total });
   } catch (e) {
     ctx.peer.replyError(id, ERR.INVALID_PARAMS, msg(e));
