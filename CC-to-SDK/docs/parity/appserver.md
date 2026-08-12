@@ -31,10 +31,11 @@
 > gets `-33006 unsupportedForOrigin`; `fleet-only` — the mirror case (see gap 4); `N/A` — no method,
 > so no origin question applies. M2a still registered only `inProcess` threads, so `-33006` stayed
 > defined-but-unemitted until M3 Task 7's `thread/attach`; since Task 10 the `both` column is
-> LITERAL — exercised against a host over its own op — EXCEPT the four swap-family rows
-> (`rewind_anchors`/`rewind_dryrun`/`rewind`/`clear`), whose fleet branches are Task 11's: until it
-> lands, `thread/rewind` on a fleet record still runs the LOCAL swap (rewind.ts has no origin
-> branch) — the last open interim hazard, with `thread/clear`.
+> LITERAL — every one of those methods has been exercised against a real host over its own op. The four
+> swap-family rows (`rewind_anchors`/`rewind_dryrun`/`rewind`/`clear`) were the one exception that
+> outlived Task 10 — a fleet-origin `thread/rewind` still ran the LOCAL swap, disposing the socket to a
+> living host — and **Task 11 closed it**: all four now forward the host's own op, the resync rides the
+> host's `rewound` event, and no interim hazard remains.
 
 ## Shipped, per the code (post-merge 2026-08-11)
 
@@ -48,7 +49,9 @@ exists to catch, so no number is written here. The names, in registration order:
 store, deduped on `sessionId`, live wins, cursor-paged), `thread/fork`, `thread/name/set`,
 `thread/tag/set`, `thread/delete` (busy-guarded), `thread/close`, `thread/reinitialize` (busy-gated),
 `thread/subscribe`, `thread/unsubscribe`, `thread/read` (row-windowed, absolute-offset cursor,
-limit clamped to 500 + `warning`), `thread/compact/start` (compaction is a turn — same `beginTurn`
+limit clamped to 500 + `warning`; disk-only on BOTH origins — M3 Task 11 verified the fleet case needs
+no branch, since the pager already reads only persisted rows under `record.sessionId` and never merges
+the live per-turn buffer, which is exactly §1f's rule), `thread/compact/start` (compaction is a turn — same `beginTurn`
 spine — on an inProcess thread; a fleet thread forwards the bare host op with no turn at all, §1d),
 `turn/start` (Wave 4's `queue: true` flag enqueues instead of refusing when the thread is busy
 with a turn — see gap 1), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
@@ -60,7 +63,8 @@ registers them. The **rewind trio** — `thread/rewind/anchors` (re-read every t
 `thread/rewind/dryRun` (un-chained; normalizes the engine's throw-vs-return split into one
 `{canRewind}` shape), `thread/rewind` (busy-gated and park-gated at request arrival, then file restore
 on the live engine before the conversation swap, which bumps `record.epoch` and announces
-`thread/rewound`). The **MCP quintet** — `mcpServer/status/list` (un-chained read),
+`thread/rewound`) — all three, plus `thread/clear` below, FORWARD the host's own op on a fleet thread
+instead, keeping only the two local gates (§1d, M3 Task 11; see the host-ops table). The **MCP quintet** — `mcpServer/status/list` (un-chained read),
 `mcpServer/reconnect`, `mcpServer/toggle`, `mcpServer/set` (all three chain-scoped, and each pings
 `thread/capabilities/changed` on success since `mcpServers` is one of the four catalogs
 `thread/capabilities/read` replies), `mcpServer/permissionModeOverride/set` (chain-scoped, rules-layer
@@ -80,8 +84,8 @@ grants, and is exempt from the `-33005` gate because it never reaches an engine)
 over the per-record flag accumulator, committed only after `applyFlagSettings` accepts; an
 off-vocabulary effort level is refused `-32602` before the engine is touched) and `thread/clear` (the
 rewind gate order against a FRESH conversation — `resume`/`resumeAt` explicitly overridden, epoch
-bumped, `sessionId` dropped, `thread/rewound {cleared:true}` broadcast). Every engine swap — rewind's
-and clear's alike — re-pushes the settings mirror and the flag accumulator onto the replacement engine
+bumped, `sessionId` dropped, `thread/rewound {cleared:true}` broadcast). Every LOCAL engine swap —
+rewind's and clear's alike, and a fleet thread performs neither — re-pushes the settings mirror and the flag accumulator onto the replacement engine
 from the one shared seam (`rewind.ts`'s `swapEngine`), since a replacement is rebuilt from
 `record.config` and would otherwise silently revert every runtime write. A re-push the replacement
 rejects never fails the completed swap; it is reported twice over instead — the state is reconciled to
@@ -233,9 +237,9 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 
 ## Host ops — `harness/src/host/ops.ts` (34 tokens)
 
-**Since M3 Task 10 the `both` in this table is literal, not forward-looking — except the four
-swap-family rows (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), which stay forward-looking
-until Task 11 lands their fleet forwarding.** Every other row below whose
+**Since M3 Task 10 the `both` in this table is literal, not forward-looking — and since Task 11 that
+holds for the four swap-family rows too (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), whose
+fleet forwarding was the last exception.** Every row below whose
 method is not origin-refused now reaches a fleet thread's host over that host's own op, and the
 `FleetEngineSession` forwarders (`fleetEngine.ts`, Task 6) are what carry the plain ones —
 `capabilities`, `usage`, `context_usage`, `mcp_status`, `mcp_reconnect`, `tasks`, `background`,
@@ -271,10 +275,10 @@ this origin. The dedup guard goes with it: a re-add forwards, and the host decid
 | `tasks` | host/ops.ts | `task/list` | both | shipped(M2b) — un-chained read of the engine's live task set; answerable on a dead engine (cached set) |
 | `background` | host/ops.ts | `turn/background` | both | shipped(M2b) — relays the engine's boolean receipt |
 | `stop_task` | host/ops.ts | `task/stop` | both | shipped(M2b) |
-| `rewind_anchors` | host/ops.ts | `thread/rewind/anchors` | both | shipped(M2b) |
-| `rewind_dryrun` | host/ops.ts | `thread/rewind/dryRun` | both | shipped(M2b) |
-| `rewind` | host/ops.ts | `thread/rewind` | both | shipped(M2b) — engine swap, host-order validation |
-| `clear` | host/ops.ts | `thread/clear` | both | shipped(M2b) — engine swap to a FRESH conversation, rewind's gate order |
+| `rewind_anchors` | host/ops.ts | `thread/rewind/anchors` | both | shipped(M2b) — M3 T11 fleet: forwarded, and forwarded even when the record carries no `sessionId` (on this origin that field is a mirror a host-side swap can briefly empty; the host's own reader answers `[]` when it truly has nothing). Both sides build anchors from the same `rewindAnchorsFrom`, so the shape cannot drift |
+| `rewind_dryrun` | host/ops.ts | `thread/rewind/dryRun` | both | shipped(M2b) — M3 T11 fleet: forwarded; a host refusal is normalized into the same `{canRewind:false, error}` the inProcess arm produces, never an RPC error (one shape, per the method's own contract). Without the branch this answered from the fleet engine's absent `rewind` member — a verdict about the wrong engine |
+| `rewind` | host/ops.ts | `thread/rewind` | both | shipped(M2b) — engine swap, host-order validation. **M3 T11 fleet:** forwards `{uuid, prevUuid, scope}` and performs NO local swap (no `swapInFlight`, no `swapEngine`, no `repushThreadState`) — the epoch bump, the id reconcile and the single `thread/rewound` all ride the host's own `rewound` event. Busy and parked-decision gates stay LOCAL (same UX; the host refuses the same two). Two inProcess refusals deliberately do NOT apply: the `sessionId` gate (only the host knows whether its engine has a conversation — it raises the identical "no session to rewind") and the null-`prevUuid` refusal (that one is about the LOCAL `resumeAt` primitive; the host expresses the same intent by clearing, W-S8) |
+| `clear` | host/ops.ts | `thread/clear` | both | shipped(M2b) — engine swap to a FRESH conversation, rewind's gate order. **M3 T11 fleet:** forwards the bare op, no local swap and no `swapInFlight`; the dropped id and the `thread/rewound {cleared:true}` arrive on the host's `rewound`. This is also what makes T10's "no local accumulator" right by construction — `repushThreadState` has nothing to replay on an origin that never swaps |
 | `get_settings` | host/ops.ts | `thread/settings/read` | both | shipped(M2b) — untyped engine passthrough; on fleet the `getSettings` forwarder IS this op, so the handler is unchanged |
 | `list_dirs` | host/ops.ts | `thread/directory/list` | both | shipped(M2b) — three-source assembly; record-only, so exempt from the -33005 gate. M3 T10: fleet forwards the op instead — the HOST assembles the same three sources, and answering from this server's record would report a fleet thread's cwd alone |
 | `add_dir` | host/ops.ts | `thread/directory/add` | both | shipped(M2b) — flag accumulator, commit-after-accept; supersedes probe 5's `register_repo_root`; M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |

@@ -13,9 +13,12 @@
 //     and clear both ride (:499-513). What only an engine can produce — a turn's messages and its end
 //     frame (including the throw an interrupt provokes), task lifecycle frames — stays the test's, via
 //     the `emit*`/`beginTurn`/`endTurn`/`settle` controls: a fake that guessed at those would assert its
-//     own fiction and six suites would assert it back. `rewind` is the one deliberate gap: its host half
-//     is gated on a dry run only an engine can answer (:756-797), so it is recorded alone, and a case
-//     that needs its swap burst drives `emitTasksChanged`/`setStatus`/`emitRewound` itself.
+//     own fiction and six suites would assert it back. `rewind` splits along that same line, per SCOPE
+//     (Task 5 review minor 25, closed by Task 11): a `conversation` rewind is fully host-side — the dry
+//     run is skipped (host.ts:777) and the swap burst follows — so it is MODELLED here, through the very
+//     same `swapEngine` resume and clear ride; `both`/`code` open with a dry run and a file restore only
+//     an engine can answer (:779-784), so those are recorded alone and a case that wants their aftermath
+//     drives `emitTasksChanged`/`setStatus`/`emitRewound` itself.
 import { HostServer } from "../../src/host/server.js";
 import type { HostHandlers } from "../../src/host/server.js";
 import type { HostEvent } from "../../src/host/wire.js";
@@ -260,7 +263,19 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     stopTask: async (taskId) => { record("stop_task", taskId); },
     rewindAnchors: async () => { record("rewind_anchors"); return (replies.rewind_anchors as RewindAnchor[] | undefined) ?? []; },
     rewindDryRun: async (uuid) => { record("rewind_dryrun", uuid); return (replies.rewind_dryrun as RewindDryRun | undefined) ?? { canRewind: false }; },
-    rewind: async (anchor, scope) => { record("rewind", anchor, scope); },
+    // host.ts's rewind (:756-797), host half only — see rule 2 in the header for where the line falls.
+    // The refusal comes first and is fully host-side (`currentSessionId()`, :762): a host whose engine
+    // never minted an id has no conversation to fork from, whatever the caller's anchor says. Then the
+    // conversation arm, which for `scope:"conversation"` is the whole op — no dry run, no file restore,
+    // just the swap, announced `{cleared:true}` when there is no anchor before the prompt (W-S8's
+    // `clearing`) and `{prevUuid}` otherwise.
+    rewind: async (anchor, scope) => {
+      record("rewind", anchor, scope);
+      if (!patch.sessionId) throw new Error("no session to rewind");
+      if (scope !== "conversation") return;                 // the engine half is the test's
+      if (anchor.prevUuid) swapEngine(patch.sessionId, { prevUuid: anchor.prevUuid });
+      else swapEngine(undefined, { cleared: true });
+    },
     getSettings: async () => { record("get_settings"); return replies.get_settings ?? {}; },
     listDirs: () => { record("list_dirs"); return (replies.list_dirs as ReturnType<HostHandlers["listDirs"]> | undefined) ?? []; },
     addDir: async (path) => { record("add_dir", path); },

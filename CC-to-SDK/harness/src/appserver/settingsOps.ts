@@ -41,7 +41,7 @@
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { replyEngineThrow } from "./engineThrow.js";
-import { swapEngine } from "./rewind.js";
+import { forwardSwapOp, replySwapThrow, swapEngine } from "./rewind.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import type { FleetEngineSession } from "./fleetEngine.js";
@@ -266,7 +266,18 @@ const defaultFreshFactory = (config: Record<string, unknown>): EngineSession => 
  *  And for the same reason it consults the SHUTDOWN LATCH like every other engine-CREATING method
  *  (`thread/start`, `thread/fork`): shutdown's whole guarantee is that its snapshot of live threads cannot
  *  go stale (server.ts's `shutdown`), and a clear admitted inside that window opens a replacement engine —
- *  an SDK session and its `claude` child — that the pass already walked past and will never dispose. */
+ *  an SDK session and its `claude` child — that the pass already walked past and will never dispose. The
+ *  latch is left origin-blind: a fleet clear creates nothing here, but the record it names is one the
+ *  shutdown pass is already detaching, so refusing it is the same true answer for a different reason.
+ *
+ *  FLEET (M3 §1d, Task 11): the fourth member of the swap family, and it forwards like the other three —
+ *  the bare host `clear` op, and nothing written locally. The gates above still answer first (identical
+ *  UX; the host gates its own clear the same way), but no `swapInFlight` is latched — the latch guards a
+ *  LOCAL swap that never happens on this origin, and the host serializes its own clear against its own
+ *  prompts. The epoch bump, the dropped id and the `thread/rewound {cleared:true}` all ride the host's
+ *  `rewound` event (fleet.ts's layer), so one host swap produces exactly one broadcast no matter how many
+ *  of its clients asked for it. It is also why the MCP/flag accumulators stay untouched for this origin
+ *  (Task 10): they exist to be replayed by `repushThreadState`, which only a local swap runs. */
 export const threadClear: Handler = (srv, ctx, id, params) => {
   if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
   const parsed = threadClearParams.safeParse(params);
@@ -279,9 +290,23 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
   if (srv.pendingDecisions(threadId).length) { ctx.peer.replyError(id, ERR.BUSY, "a decision is pending — answer it first"); return; }
   // Latched synchronously, same as rewind: the work below sits behind record.chain, so a same-tick
   // turn/start would otherwise pass its own busy gate and drive an engine call against a thread being
-  // swapped out from under it. Every gate reads it through threadBusyReason -> "swapping".
-  record.swapInFlight = true;
+  // swapped out from under it. Every gate reads it through threadBusyReason -> "swapping". INPROCESS
+  // ONLY — see the fleet paragraph above: there is no local swap for the latch to fence off, and a busy
+  // state no other client of that host observes is exactly what §1d's compact deviation refuses to invent.
+  if (record.origin !== "fleet") record.swapInFlight = true;
   record.chain = record.chain.then(async () => {
+    if (record.origin === "fleet") {
+      try {
+        await forwardSwapOp(record, { op: "clear" });
+        record.updatedAt = nowSec();
+        // Read AFTER the op resolves: the host writes its swap burst — the `rewound {cleared:true}` this
+        // record drops its id from — ahead of the reply to the op that caused it, and frames route in
+        // arrival order, so the event layer has already run. `null`, not omitted: JSON.stringify would
+        // drop an undefined key and a client would read "field missing" rather than "no id yet".
+        ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
+      } catch (e) { replySwapThrow(record, ctx, id, e); }
+      return;
+    }
     try {
       const factory = srv.deps.sessionFactory ?? defaultFreshFactory;
       // `undefined` as the post-swap id, where rewind passes its retained one: a fresh conversation

@@ -14,14 +14,32 @@
 // `thread/clear` performs the SAME swap against a different replacement engine (a fresh conversation
 // instead of one resumed at an anchor), and the one thing neither may re-derive is the ORDER — bump the
 // epoch, drop the router, dispose, install the replacement.
+//
+// NONE OF THAT REACHES A FLEET THREAD (M3 §1d, Task 11). Everything above describes one server owning one
+// engine. A fleet thread's engine belongs to a running ccx host that other clients are attached to, and
+// the host performs this very sequence itself — its own `swapEngine`, its own `replayFlagState`, its own
+// `rewound` broadcast to every follower. So the fleet arm of each method here FORWARDS the host's own op
+// (`rewind_anchors`/`rewind_dryrun`/`rewind`; `clear` is settingsOps.ts's, through the same sender) and
+// writes nothing: no `swapInFlight`, no `swapEngine`, no `repushThreadState`, no epoch bump and no
+// `thread/rewound` of its own. Running the local swap for this origin would dispose the SOCKET to a
+// living host — dropping a follower other clients still have — and replace it with a locally resumed SDK
+// session no other client of that host can see. The resync is event-driven instead: the host's `rewound`
+// is what bumps the epoch, reconciles the id and announces (fleet.ts's event layer, Task 7), so exactly
+// one broadcast reaches the wire per host swap however many clients asked for it.
+// The GATES stay local, though (busy + a parked decision view), because they are the same refusals the
+// host makes for the same reasons (host.ts's rewind) and answering them here keeps the UX identical
+// across origins — one refusal, at request-arrival time, before anything is sent.
 import { ERR } from "./rpc.js";
+import type { RequestId } from "./rpc.js";
 import { installRouter } from "./router.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { emptyFlagPerms, seedSettings, threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
+import { FleetBusyError, type FleetEngineSession } from "./fleetEngine.js";
+import { replyEngineThrow } from "./engineThrow.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
-import type { AppServer, Handler } from "./server.js";
+import type { AppServer, ConnCtx, Handler } from "./server.js";
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./schema/rewind.js";
 
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/turns.ts — registry.ts's `updatedAt` is unix seconds, not ms
@@ -54,6 +72,36 @@ async function dryRunRewind(session: EngineSession, uuid: string): Promise<DryRu
   if (!fn) return { canRewind: false, error: "rewind unsupported by this engine" };
   try { return (await fn(uuid, { dryRun: true })) as DryRunResult; }
   catch (e) { return { canRewind: false, error: e instanceof Error ? e.message : String(e) }; }
+}
+
+/** The swap family's one host-op sender (§1d) — shared with `thread/clear` (settingsOps.ts), which is the
+ *  fourth member of the family and must not grow a second copy of this. `{ok:false, error}` is the shape
+ *  a throwing host handler produces (host/server.ts wraps every dispatch), so it is raised here and both
+ *  arms answer through `replySwapThrow` below rather than each inventing a mapping.
+ *
+ *  ONE token is re-classed on the way past: `"busy"`. `host/server.ts` gates `rewind` and `clear` exactly
+ *  as it gates `prompt`, so losing a race to another client of that host is the SAME refusal `turn/start`
+ *  already answers -33001 for — raised as the same class (fleetEngine.ts's `FleetBusyError`) so a client
+ *  matches one family whichever method it raced on. Only reachable in the gap before the host's own
+ *  turn-start event has flipped this record's busy flag; after that the local gate refuses first.
+ *
+ *  Deliberately NOT settingsOps.ts's `forwardFlagOp`, which is send-plus-reply for a family whose reply is
+ *  always the bare `{ok:true}`: each method here answers a DIFFERENT shape off the host's own body, and
+ *  the flag ops are ungated host-side, so the busy re-class above would be a refusal they cannot receive. */
+export async function forwardSwapOp<T extends { ok: boolean; error?: string }>(record: ThreadRecord, op: Record<string, unknown>): Promise<T> {
+  const rep = await (record.session as FleetEngineSession).sendOp<T>(op);
+  if (rep.ok) return rep;
+  if (rep.error === "busy") throw new FleetBusyError();
+  throw new Error(rep.error ?? "host refused");
+}
+
+/** What a throw out of `forwardSwapOp` becomes: -33005 when the socket died while the op waited its turn
+ *  in the chain (engineThrow.ts's re-check), -33001 for the busy refusal above, and otherwise -32603
+ *  carrying the HOST's own message — this server never sees the host's engine and cannot re-derive what
+ *  it was refusing, so relaying is the only honest answer. */
+export function replySwapThrow(record: ThreadRecord, ctx: ConnCtx, id: RequestId, e: unknown): void {
+  if ((e as { code?: unknown } | null)?.code === ERR.BUSY) { ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)"); return; }
+  replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
 }
 
 /** Replace a thread's engine, in the ONE order spec D-M2-8 fixes. Callers own the validation; this owns
@@ -228,6 +276,17 @@ export const rewindAnchors: Handler = async (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // FLEET (§1d): the host reads ITS transcript through the same `rewindAnchorsFrom` this arm uses
+  // (host.ts's `rewindAnchors`), so the two sides cannot drift on what an anchor is — and only the host
+  // knows which conversation its engine currently holds. Forwarded WITHOUT the sessionId short-circuit
+  // below: on this origin that field is a mirror a host-side swap can leave momentarily empty, while the
+  // host's own reader already answers `[]` when it genuinely has nothing to anchor on. Un-chained like the
+  // read it is; a rejection propagates into dispatch's own catch (introspect.ts's convention).
+  if (record.origin === "fleet") {
+    const rep = await forwardSwapOp<{ ok: boolean; error?: string; anchors?: unknown[] }>(record, { op: "rewind_anchors" });
+    ctx.peer.reply(id, { data: rep.anchors ?? [], nextCursor: null });
+    return;
+  }
   // Nothing is persisted until the first turn's init frame latches an id, so "no anchors yet" is the
   // honest answer, not an error — same call the picker makes on a freshly started thread.
   if (!record.sessionId) { ctx.peer.reply(id, { data: [], nextCursor: null }); return; }
@@ -246,6 +305,17 @@ export const rewindDryRun: Handler = async (srv, ctx, id, params) => {
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // FLEET (§1d): the host runs the dry run on ITS engine and normalizes the same throw-vs-return split
+  // (host.ts's `rewindDryRun`, probe 68d). Without this branch the handler answers from the FLEET engine's
+  // absent `rewind` member — "rewind unsupported by this engine", a verdict about this server's own engine
+  // build rather than about the host's. A host-side refusal keeps `dryRunRewind`'s ONE-SHAPE contract
+  // rather than becoming an RPC error: a client deciding whether to OFFER the rewind cannot be asked to
+  // tell "the host said no" from "the host could not be asked".
+  if (record.origin === "fleet") {
+    const rep = await (record.session as FleetEngineSession).sendOp<{ ok: boolean; error?: string; dryRun?: DryRunResult }>({ op: "rewind_dryrun", uuid: parsed.data.uuid });
+    ctx.peer.reply(id, rep.ok ? rep.dryRun ?? { canRewind: false } : { canRewind: false, error: rep.error ?? "host refused" });
+    return;
+  }
   ctx.peer.reply(id, await dryRunRewind(record.session, parsed.data.uuid));
 };
 
@@ -264,6 +334,34 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
   // outgoing engine's dispose(), and dispose awaits its read loop, which cannot end while a turn sits
   // inside canUseTool holding one of our parked promises (the C1 circular wait, closeRecord's header).
   if (srv.pendingDecisions(threadId).length) { ctx.peer.replyError(id, ERR.BUSY, "a decision is pending — answer it first"); return; }
+  // ── FLEET (§1d): forward, and stop. Everything BELOW this line is the local swap — the one thing this
+  // origin must never do (see the module header). The two gates above stayed local because the host
+  // refuses the same two things for the same reasons (host.ts's rewind), and a parked VIEW counts: it
+  // mirrors a park the host is genuinely blocked on.
+  //
+  // NEITHER of the two refusals below is re-stated here, and each absence is deliberate:
+  //  - no `sessionId` gate. That field is a MIRROR of the host's conversation id on this origin, and only
+  //    the host knows whether its engine has one; it raises the identical "no session to rewind" itself.
+  //  - no null-`prevUuid` refusal. The inProcess one is a statement about the LOCAL fork primitive
+  //    (`resumeAt` cannot name "before the first message"), and the host expresses exactly that outcome by
+  //    CLEARING instead (host.ts's `clearing`, W-S8) — refusing here would deny a capability the engine on
+  //    the other end has, and the host's `rewound {cleared:true}` is what tells every client it happened.
+  //
+  // Chain-scoped like every other fleet mutation (settingsOps.ts's `forwardFlagOp`), so two writes from
+  // one client reach the host in the order that client made them. The REPLY's `sessionId` is read AFTER
+  // the op resolves, and that ordering is what makes it true: the host writes its swap burst — including
+  // the `rewound` this record reconciles from — to the socket BEFORE the reply to the op that caused it,
+  // and frames are routed in arrival order, so the event layer has already run by the time this resolves.
+  if (record.origin === "fleet") {
+    record.chain = record.chain.then(async () => {
+      try {
+        await forwardSwapOp(record, { op: "rewind", uuid, prevUuid, scope });
+        record.updatedAt = nowSec();          // the epoch/id/announce half belongs to the host's `rewound`
+        ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
+      } catch (e) { replySwapThrow(record, ctx, id, e); }
+    });
+    return;
+  }
   const sessionId = record.sessionId;
   if (!sessionId) { ctx.peer.replyError(id, ERR.ENGINE_GONE, "no session to rewind"); return; }
   // `resumeAt` takes a message uuid and has no value meaning "before the first message" (the fork
