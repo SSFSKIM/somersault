@@ -470,6 +470,20 @@ answered by the probe/implementation contact, none architectural.
 
 ## Surprises & Discoveries
 
+- **The acceptance's transcript-paging leg over-claimed the pager's contract** (Task 17 keyed runs
+  2–3, 2026-08-12): the leg asserted consecutive `thread/read` pages share NO item id — but the
+  pager (`subscribe.ts`, UNCHANGED by M3, reused origin-blind) explicitly does not promise that.
+  Rows are not 1:1 with items (a multi-block assistant message is one row → items `msg_X#0`,
+  `msg_X#1`), so a row straddling a page boundary is fetched by both windows for COMPLETENESS; the
+  pager's unit-tested contract is "union-by-id equals every item, at every page size" plus
+  dedup-by-id at the client (subscribe.test.ts stitch contract at :239/:497), NOT page
+  disjointness. The strict assertion surfaced only when the live model happened to emit a
+  multi-block message at the exact page-2 boundary — content-nondeterministic (passed run 1,
+  failed runs 2–3 on `msg_...#0`). Root-caused rather than dismissed as a flake or blamed on the
+  external-review fixes (which touched no pager code and whose own live legs passed): the TEST
+  premise was wrong, corrected to assert the real contract (paging advances oldest-ward; overlap
+  is deduped by id). Lesson: an acceptance assertion must claim the property the code actually
+  guarantees, not a stronger one that happens to hold on the first content sample.
 - **A park does NOT survive its engine's death on the live inProcess path** (Task 17 keyed run,
   2026-08-12): SIGKILLing the engine's CLI child makes the SDK abort the pending canUseTool
   request, and `PendingDecisions.onAutoSettle` (pending.ts:83,100 — the request's abort signal)
