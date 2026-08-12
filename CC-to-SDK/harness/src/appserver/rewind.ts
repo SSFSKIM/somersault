@@ -495,15 +495,25 @@ export const ENGINE_NOT_DEAD = "engine is not dead; nothing to reopen";
  *  the router's init latch learns it). The `resume` is folded into the config the factory receives, which
  *  is `startThread`'s own convention (server.ts) — and folding it in is also what OVERWRITES a stale
  *  `resume` left in `record.config` by the original admission, so a thread that has been cleared since
- *  does not quietly resurrect the conversation the clear dropped.
+ *  does not quietly resurrect the conversation the clear dropped. THE OTHER THREE SWAP-FAMILY KEYS ARE
+ *  NULLED for the same reason and by the same explicit-write rule `thread/clear` follows (settingsOps.ts):
+ *  `record.config` is the client's VERBATIM `thread/start` passthrough (server.ts's `buildConfig`), so a
+ *  thread opened with a fork or truncate config still carries those keys, and a spread that merely omits
+ *  them leaves them in force. Each is destructive in its own way — `resumeAt`/`droppedTurnUuid` would make
+ *  the recovered engine resume TRUNCATED at an anchor from some earlier request, and `forkSession` would
+ *  mint a new conversation id while `record.sessionId` keeps reporting the old one.
  *
- *  THE DECISION REGISTRY IS DELIBERATELY UNTOUCHED, though a park from the dead conversation can outlive
- *  it. Neither settle path is usable: `ThreadDecisions.teardown()` and `.discard()` both LATCH `closed`,
- *  and the broker they close is the same object `record.config` carries onto every replacement — closing
- *  it here would hand the recovered thread an engine whose every future tool call is auto-denied, with
- *  nothing on the wire saying why. A stale park is the smaller residual (it keeps `waitingOn` true and
- *  refuses a later rewind/clear until the thread is closed) and is a pre-existing property of any dead
- *  thread, not something this method introduces. */
+ *  THE DEAD CONVERSATION'S PARKS ARE SETTLED, through `ThreadDecisions.reset()` — the settle loop without
+ *  `teardown()`/`discard()`'s `closed` latch, which is the one thing this method must not set (the broker
+ *  is the same object `record.config` carries onto the replacement, so latching would auto-deny the
+ *  recovered thread's every tool call). Not merely tidiness: those promises are awaited by a read loop that
+ *  has already ended, so no answer will ever be consumed — while the entries keep listing on the wire and
+ *  keep refusing a later rewind/clear. Worse, the reopen makes them reachable in the wrong direction:
+ *  `decision/respond`'s two side channels are keyed on the RECORD, not the engine (server.ts's
+ *  `armPlanUpgrade`, and `abortTurn -> requestInterrupt`), so answering a ghost would upgrade the
+ *  REPLACEMENT's permission mode or interrupt a live unrelated turn. Settled here, that answer is a plain
+ *  "already settled" instead. Runs in the same synchronous step as the queue flush, and each entry gets the
+ *  `decision/resolved` a client told about a park is owed (the terminal-event invariant queue.ts follows). */
 export const threadReopen: Handler = (srv, ctx, id, params) => {
   // Mirrors `thread/clear`'s own first line, and for the same reason: this method SPAWNS an engine, and
   // shutdown()'s snapshot must not be raced into leaking a CLI child nothing will dispose.
@@ -520,7 +530,8 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
   // because the swap awaits a LIVE engine's dispose, which cannot finish while a turn sits inside
   // canUseTool holding one of our parked promises (the C1 circular wait). Here the read loop has already
   // ended — that is the precondition — so there is no wait to deadlock, and refusing on a park would make
-  // the recovery unreachable for exactly the threads that died holding one.
+  // the recovery unreachable for exactly the threads that died holding one. They are SETTLED below instead
+  // of refused on, which is what leaves nothing for a client to have to answer first.
   if (!record.session.isEnded?.()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, ENGINE_NOT_DEAD); return; }
   // Latched synchronously, as rewind and clear do: the swap sits behind record.chain, and every gate reads
   // the latch through threadBusyReason -> "swapping".
@@ -532,11 +543,18 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
   // context the first time some later turn completed. Cancelled rather than dropped, because a client that
   // was told `{queued:true}` is owed a terminal event for that id (queue.ts's invariant).
   flushQueue(srv, record);
+  // …and the dead conversation's parks are settled in that same step, NON-LATCHING (broker.ts's `reset()`).
+  // Ghost entries whose awaiter is gone would otherwise keep listing, keep blocking rewind/clear — and,
+  // once the replacement is live, keep `decision/respond`'s record-keyed side channels aimed at it.
+  srv.threadDecisions(threadId)?.reset();
   const sessionId = record.sessionId;
   record.chain = record.chain.then(async () => {
     try {
       const factory = srv.deps.sessionFactory ?? defaultReopenFactory;
-      await swapEngine(srv, record, () => factory({ ...(record.config ?? {}), resume: sessionId }), sessionId);
+      // The three siblings are nulled EXPLICITLY, not omitted: `record.config` is a verbatim client
+      // passthrough and this is a spread (see the header) — a leftover `resumeAt`/`droppedTurnUuid` would
+      // resume the recovery truncated at a stale anchor, and `forkSession` would silently mint a new id.
+      await swapEngine(srv, record, () => factory({ ...(record.config ?? {}), resume: sessionId, resumeAt: undefined, droppedTurnUuid: undefined, forkSession: undefined }), sessionId);
       record.updatedAt = nowSec();
       // The established "engine swapped, resync" signal, both scopes (fanout.ts): the epoch moved, so every
       // outstanding thread/read cursor is stale, and a client rendering this thread needs to know its

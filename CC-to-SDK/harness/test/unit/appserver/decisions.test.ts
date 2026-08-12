@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { ThreadDecisions, type DecisionEvent } from "../../../src/appserver/broker.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -503,5 +504,40 @@ describe("appserver decisions (Task 7)", () => {
     const listed = parsed(a.lines).find((f) => f.id === 4).result.data[0];
     expect(listed.toolUseId).toBe("toolu_wire");
     expect(listed).not.toHaveProperty("toolUseID");
+  });
+});
+
+describe("ThreadDecisions.reset() — settle without latching (M3 §4)", () => {
+  const mkDec = () => {
+    const events: DecisionEvent[] = [];
+    return { events, dec: new ThreadDecisions((ev) => void events.push(ev), () => "park", () => true) };
+  };
+  const park = (dec: ThreadDecisions, toolUseID: string) =>
+    dec.broker("thr_1").request({ toolName: "Bash", input: { command: "ls" }, toolUseID, signal: new AbortController().signal });
+
+  it("settles every parked entry deny, emits the resolved event for each, and then still accepts a NEW park — which teardown() does not", async () => {
+    // The whole distinction, in one test: `teardown()` and `reset()` run the same settle loop, and the only
+    // difference is the `closed` latch — which is exactly what `thread/reopen` must not set, since the
+    // broker it would close is the same object `record.config` carries onto the replacement engine.
+    const { events, dec } = mkDec();
+    const first = park(dec, "toolu_1");
+
+    dec.reset();
+
+    expect(await first).toEqual({ kind: "deny" });
+    expect(dec.pending()).toEqual([]);
+    expect(events.filter((e) => e.type === "resolved")).toEqual([{ type: "resolved", toolUseID: "toolu_1", by: "system", outcome: { kind: "deny" } }]);
+    // NOT latched: the next request parks for real instead of being auto-denied.
+    void park(dec, "toolu_2");
+    expect(dec.pending().map((e) => e.toolUseID)).toEqual(["toolu_2"]);
+    expect(dec.respond("toolu_2", { kind: "allow_once" }, "A#1")).toEqual({ ok: true });
+  });
+
+  it("teardown() keeps its latch: after it, a request is auto-denied without ever parking", async () => {
+    // The control case — reset() would be indistinguishable from teardown() without it.
+    const { dec } = mkDec();
+    dec.teardown();
+    expect(await park(dec, "toolu_3")).toEqual({ kind: "deny" });
+    expect(dec.pending()).toEqual([]);
   });
 });

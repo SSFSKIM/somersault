@@ -37,6 +37,9 @@ interface FakeEngine {
   sessionId?: string;
   ended: boolean;
   disposed: number;
+  /** interrupt() call count — decision/respond's `abortTurn` side channel is one of the two things a
+   *  stale park could reach into the REPLACEMENT with, so a test has to be able to see it not happen. */
+  interrupted: number;
   /** every optional-member push the post-swap re-push made, in order — the repush spy. */
   pushed: string[];
   live: Set<(m: unknown) => void>;
@@ -61,12 +64,13 @@ function mkEngine(opts: { sessionId?: string; disposeImpl?: () => Promise<void>;
     sessionId: opts.sessionId,
     ended: false,
     disposed: 0,
+    interrupted: 0,
     pushed: [],
     live,
     captured,
     push: (frame) => { for (const cb of [...live]) cb(frame); },
     submit: opts.submitImpl ?? (async () => ({ result: {} })),
-    interrupt: async () => ({}),
+    interrupt: async () => { e.interrupted++; return {}; },
     dispose: () => { e.disposed++; return opts.disposeImpl ? opts.disposeImpl() : new Promise<void>((r) => setTimeout(r, 1)); },
     onFrame: (cb) => { live.add(cb); captured.push(cb); return () => { live.delete(cb); }; },
     isEnded: () => e.ended,
@@ -181,11 +185,12 @@ describe("appserver thread/reopen — the swap (M3 Task 14)", () => {
     expect(notif(s.lines, "thread/rewound").params).toEqual({ threadId, sessionId: null });
   });
 
-  it("the replacement engine's decisions still park: the reopen must not settle or latch the thread's decision registry", async () => {
-    // Both `ThreadDecisions.teardown()` and `.discard()` latch `closed`, after which the broker — the SAME
-    // object, carried in `record.config` onto every replacement — denies every request forever. So a reopen
-    // that "cleaned up" the dead conversation's parks would hand the recovered thread an engine whose every
-    // tool call is auto-denied with nothing on the wire saying why.
+  it("the replacement engine's decisions still park AND still resolve: the reset must not latch the thread's decision registry", async () => {
+    // The non-latching proof, and the case that distinguishes `reset()` from `teardown()`/`discard()`. Both
+    // of those latch `closed`, after which the broker — the SAME object, carried in `record.config` onto
+    // every replacement — denies every request forever. So a reopen that cleaned up the dead conversation's
+    // parks with either of them would hand the recovered thread an engine whose every tool call is
+    // auto-denied with nothing on the wire saying why.
     const dead = mkEngine({ sessionId: "sess-1" });
     const fresh = mkEngine({});
     const { srv, s, c, threadId, configs } = await bootThread({ engines: [dead, fresh] });
@@ -195,11 +200,110 @@ describe("appserver thread/reopen — the swap (M3 Task 14)", () => {
     await settle();
 
     const broker = configs[1].permissionBroker as PermissionBroker;
-    void broker.request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_after", signal: new AbortController().signal });
+    let outcome: unknown;
+    void broker.request({ toolName: "Bash", input: { command: "ls" }, toolUseID: "toolu_after", signal: new AbortController().signal })
+      .then((o) => { outcome = o; });
     await tick();
 
     expect(srv.pendingDecisions(threadId).map((d) => d.toolUseID)).toEqual(["toolu_after"]);
     expect(notif(s.lines, "decision/requested").params.decision.toolUseId).toBe("toolu_after");
+    // …and answering it works end to end: the reply, the awaited promise and the resolved event all land.
+    send(c, { id: 4, method: "decision/respond", params: { threadId, toolUseId: "toolu_after", answer: { kind: "allow_once" } } });
+    await settle();
+    expect(reply(s.lines, 4).result).toEqual({ ok: true });
+    expect(outcome).toEqual({ kind: "allow_once" });
+    expect(srv.pendingDecisions(threadId)).toEqual([]);
+  });
+});
+
+describe("appserver thread/reopen and the DEAD conversation's parks (M3 Task 14, review fix)", () => {
+  it("a park held by the dead conversation is settled DENY at the reopen, with the terminal decision/resolved every parked id is owed", async () => {
+    // Left standing, the entry is a ghost: its promise belongs to a read loop that has already ended, so
+    // nothing will ever consume the answer — while the wire still lists it, `status.waitingOn` still counts
+    // it, and `thread/rewind`/`thread/clear` still refuse on it until the thread is closed.
+    const dead = mkEngine({ sessionId: "sess-1" });
+    const fresh = mkEngine({});
+    const { srv, s, c, threadId, configs } = await bootThread({ engines: [dead, fresh] });
+    let outcome: unknown;
+    void (configs[0].permissionBroker as PermissionBroker)
+      .request({ toolName: "Bash", input: { command: "rm -rf /" }, toolUseID: "toolu_stale", signal: new AbortController().signal })
+      .then((o) => { outcome = o; });
+    await tick();
+    expect(srv.pendingDecisions(threadId)).toHaveLength(1);
+    dead.ended = true;
+
+    send(c, { id: 3, method: "thread/reopen", params: { threadId } });
+    await settle();
+
+    expect(srv.pendingDecisions(threadId)).toEqual([]);
+    expect(outcome).toEqual({ kind: "deny" });
+    // queue.ts's terminal-event invariant, applied to the decision family: a client told about a park is
+    // owed the event that clears it from its UI.
+    expect(notif(s.lines, "decision/resolved").params).toEqual({ threadId, toolUseId: "toolu_stale", by: "system", answer: { kind: "deny" } });
+  });
+
+  it("a stale park answered AFTER the reopen cannot reach the REPLACEMENT: no plan upgrade is armed and no turn is interrupted", async () => {
+    // The reachability the reopen introduced. `decision/respond` has two side channels keyed on the RECORD
+    // rather than on the engine — `armPlanUpgrade` and `abortTurn -> requestInterrupt` — so answering the
+    // dead conversation's park would silently move the replacement's permission mode and interrupt a live
+    // unrelated turn. Before reopen existed the same call answered -33005 and neither could fire.
+    const dead = mkEngine({ sessionId: "sess-1" });
+    const fresh = mkEngine({});
+    const { srv, s, c, threadId, configs } = await bootThread({ engines: [dead, fresh] });
+    void (configs[0].permissionBroker as PermissionBroker)
+      .request({ toolName: "ExitPlanMode", input: {}, toolUseID: "toolu_plan", kind: "plan", signal: new AbortController().signal });
+    await tick();
+    dead.ended = true;
+
+    send(c, { id: 3, method: "thread/reopen", params: { threadId } });
+    await settle();
+    send(c, { id: 4, method: "decision/respond", params: { threadId, toolUseId: "toolu_plan", answer: { kind: "plan_approve", mode: "acceptEdits" }, abortTurn: true } });
+    await settle();
+
+    expect(reply(s.lines, 4).error).toMatchObject({ code: ERR.ALREADY_SETTLED });
+    const record = srv.registry.get(threadId)!;
+    expect(record.planUpgradeMode).toBeUndefined();          // armPlanUpgrade never ran
+    expect(record.settings.permissionMode).toBeUndefined();  // …so nothing upgraded the replacement
+    expect(fresh.interrupted).toBe(0);                       // and abortTurn never reached the live engine
+    expect(record.interruptRequested).toBe(false);
+  });
+});
+
+describe("appserver thread/reopen scrubs the swap-family config keys (M3 Task 14, review fix)", () => {
+  // `record.config` is the client's verbatim `thread/start` passthrough (server.ts's buildConfig), so a
+  // client that opened the thread with a fork/truncate config leaves those keys sitting in it. Folding in
+  // `resume` alone is not enough: the spread carries `resumeAt` (the replacement would resume TRUNCATED at
+  // a stale anchor — destructive) and `forkSession` (the replacement would mint a NEW conversation id while
+  // `record.sessionId` keeps reporting the old one). Explicit nulls, mirroring thread/clear's own call.
+  const forkish = { model: "claude-opus-4-8", resumeAt: "msg-old", droppedTurnUuid: "turn-old", forkSession: true };
+
+  it("the RESUME arm hands the factory resume plus all three keys explicitly undefined", async () => {
+    const dead = mkEngine({ sessionId: "sess-1" });
+    const { c, threadId, configs } = await bootThread({ engines: [dead, mkEngine({})], config: forkish });
+    dead.ended = true;
+
+    send(c, { id: 3, method: "thread/reopen", params: { threadId } });
+    await settle();
+
+    expect(configs[1].resume).toBe("sess-1");
+    expect(configs[1].model).toBe("claude-opus-4-8"); // everything else still rides across
+    expect(configs[1].resumeAt).toBeUndefined();
+    expect(configs[1].droppedTurnUuid).toBeUndefined();
+    expect(configs[1].forkSession).toBeUndefined();
+  });
+
+  it("the FRESH arm scrubs them too — a thread that never latched an id must not fork or truncate on the way back", async () => {
+    const dead = mkEngine({});
+    const { c, threadId, configs } = await bootThread({ engines: [dead, mkEngine({})], config: forkish });
+    dead.ended = true;
+
+    send(c, { id: 3, method: "thread/reopen", params: { threadId } });
+    await settle();
+
+    expect(configs[1].resume).toBeUndefined();
+    expect(configs[1].resumeAt).toBeUndefined();
+    expect(configs[1].droppedTurnUuid).toBeUndefined();
+    expect(configs[1].forkSession).toBeUndefined();
   });
 });
 

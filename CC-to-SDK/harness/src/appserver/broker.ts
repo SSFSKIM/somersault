@@ -141,13 +141,34 @@ export class ThreadDecisions {
     this.inner.denyAll();
   }
 
-  /** Deny + settle everything still parked (thread close) — denyAll() bypasses respond()'s own emit, so
-   *  this is the one place that emits for it (mirrors PendingDecisions.denyAll's documented contract). */
-  teardown(): void {
-    this.closed = true;
+  /** M3 §4 (`thread/reopen`): the settle loop WITHOUT the latch — the registry survives, and the very next
+   *  request parks for real. That is the whole distinction from `teardown()` below, and it is what makes
+   *  this usable mid-life: the broker a reopen would otherwise close is the SAME object `record.config`
+   *  carries onto the replacement engine, so latching here would auto-deny every tool call the recovered
+   *  thread ever makes, with nothing on the wire saying why.
+   *
+   *  Settling is not optional cleanup. An engine that died left its parks awaited by a read loop that has
+   *  already ended, so nothing will ever consume the answer — but the entries still list on the wire, still
+   *  count toward `status.waitingOn`, and still refuse a later `thread/rewind`/`thread/clear`. And once the
+   *  thread has a live engine again they become reachable in the WRONG direction: `decision/respond` has
+   *  side channels keyed on the record rather than on the engine (server.ts's `armPlanUpgrade` and
+   *  `abortTurn`), so answering a ghost would move the replacement's permission mode or interrupt its turn.
+   *
+   *  `deny` + `by:"system"` is the honest reading here, unlike on `discard()`'s fleet detach: this server
+   *  owned these promises, no human answered them, and the tool call they gated is gone with its engine. */
+  reset(): void {
     for (const entry of this.inner.denyAll()) {
       this.settledBy.set(entry.toolUseID, "system");
       this.emit({ type: "resolved", toolUseID: entry.toolUseID, by: "system", outcome: { kind: "deny" } });
     }
+  }
+
+  /** Deny + settle everything still parked (thread close) — denyAll() bypasses respond()'s own emit, so
+   *  `reset()` above is the one place that emits for it (mirrors PendingDecisions.denyAll's documented
+   *  contract). Teardown is exactly that loop plus the `closed` latch; the two share the loop so a change
+   *  to what a settled entry announces cannot apply to one path and not the other. */
+  teardown(): void {
+    this.closed = true;
+    this.reset();
   }
 }
