@@ -10,7 +10,7 @@ import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.
 import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./mcp.js";
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
-import { fleetListParams, threadAttachParams } from "./fleet.js";
+import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -80,4 +80,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // read this machine's own roster and the host wire that `ccx attach` has spoken since A2a.
   "fleet/list": { params: fleetListParams },
   "thread/attach": { params: threadAttachParams },
+  // M3 Task 9 (§1e): the release half of adoption. Registered beside the pair above rather than with the
+  // other thread-scoped methods because its MEANING is origin-branched — on a fleet thread it ends the
+  // host, on an inProcess one it is `thread/close` — and reading it next to `thread/attach` is what makes
+  // the pairing legible.
+  "thread/stop": { params: threadStopParams },
 };

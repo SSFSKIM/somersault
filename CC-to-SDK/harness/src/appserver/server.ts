@@ -26,8 +26,9 @@ import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverri
 import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
 import { pluginReload, skillReload } from "./reloads.js";
-import { fleetDecisionRespond, fleetList, threadAttach } from "./fleet.js";
+import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
+import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
 
@@ -59,6 +60,12 @@ export interface AppServerDeps {
   // inside `config` because it is derived per-rewind from the request, exactly as `resumeAt` is, while
   // `config` is the thread's unchanging start config.
   resumeAtFactory?: (sessionId: string, resumeAt: string, droppedTurnUuid: string, config: Record<string, unknown>) => EngineSession;
+  // M3 Task 9: `thread/stop`'s roster-terminal poll (fleet.ts's STOP_POLL is the default). CONFIG rather
+  // than a function, unlike every other slot here, because what a caller ever wants to change is the
+  // wall-clock wait, not the algorithm — a suite that had to serve the production cap honestly would spend
+  // five real seconds proving one timeout, and faking the clock instead would fake the very thing the poll
+  // is measuring (a host taking its own time to exit).
+  stopPoll?: StopPoll;
 }
 export interface ConnCtx {
   peer: Peer;
@@ -343,6 +350,43 @@ export class AppServer {
     // those gates exist for.
     "fleet/list": fleetList,
     "thread/attach": threadAttach,
+    // M3 Task 9 (§1e): ONE method, origin-appropriate meaning. On an inProcess thread this IS
+    // `thread/close` — our engine, our call to end it. On a fleet thread the two diverge completely:
+    // closing only detaches (the host lives on), so ending the SESSION needs its own op and its own
+    // completion contract. Both answer `{ok:true}` and both announce `thread/closed {reason:"stopped"}`,
+    // so a client that does not care which origin it holds writes one call and reads one notification.
+    "thread/stop": async (srv, ctx, id, params) => {
+      const parsed = threadStopParams.safeParse(params);
+      if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+      const record = srv.registry.get(parsed.data.threadId);
+      if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+      // The same synchronous latch+flush pair `thread/close` raises, for the same reasons — see there.
+      record.closing = true;
+      flushQueue(srv, record);
+      record.chain = record.chain.then(async () => {
+        // The fleet half runs FIRST and separately, because its failure mode is the opposite of a close's.
+        // A close can say "the engine is gone from this server's point of view either way" and drop the
+        // record on a failing dispose; a stop cannot. A host whose roster row never turns terminal may
+        // still be running, and the record is the only handle a client has on it — dropping it there would
+        // make the session unaddressable from here (§1e: the record is NOT closed on that path). The
+        // `closing` latch above stays down on that path, deliberately: the client asked for this session
+        // to end, so admitting new turns onto a host that is mid-exit is the wrong recovery. What the
+        // record is still good for is `thread/close` — exempt from both gates — which is §1f's recovery
+        // for a dead fleet thread and is this one's too.
+        if (record.origin === "fleet") {
+          // -33008, the fleet-operation-failed code (rpc.ts): the request was well-formed and the thread
+          // real — the TARGET could not be brought to the state the method promises.
+          try { await fleetStop(srv, record); }
+          catch (e) { ctx.peer.replyError(id, ERR.ATTACH_FAILED, e instanceof Error ? e.message : String(e)); return; }
+        }
+        try {
+          await srv.closeRecord(record, "stopped");
+          ctx.peer.reply(id, { ok: true });
+        } catch (e) {
+          ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+        }
+      });
+    },
   };
 
   private readonly token: string;
@@ -413,8 +457,10 @@ export class AppServer {
    *  the latch itself — both before and after that write). */
   get isShuttingDown(): boolean { return this.shuttingDown; }
 
-  /** Tear one thread down: settle its parked decisions, dispose the engine, tell the thread's subscribers,
-   *  drop the record. Shared by thread/close and shutdown().
+  /** Tear one thread down: release its parked decisions, dispose the engine, tell the thread's subscribers,
+   *  drop the record. Shared by thread/close, thread/stop and shutdown() — `reason` is what distinguishes
+   *  them on the wire (`thread/closed {reason:"stopped"}` for a stop; absent for a plain close, which is
+   *  the only honest thing to say about a detach).
    *
    *  ORDER IS LOAD-BEARING (C1): the real Session.dispose() is `input.close(); await this.done`, and
    *  `done` is the read loop — which cannot end while a turn sits blocked inside canUseTool awaiting one of
@@ -425,15 +471,30 @@ export class AppServer {
    *  Rethrows a failing dispose() (the caller owes its own reply) but still broadcasts + drops the record
    *  in `finally` — the engine is gone from the server's point of view either way. thread/closed goes out
    *  BEFORE the delete, since broadcast() no-ops once the record is out of the registry. */
-  private async closeRecord(record: ThreadRecord): Promise<void> {
-    this.decisions.get(record.id)?.teardown();
+  async closeRecord(record: ThreadRecord, reason?: "stopped"): Promise<void> {
+    // M3 §1f — the origin branch, and it is a branch about TRUTH, not about cleanup. On a fleet thread a
+    // close is a DETACH: the host keeps every decision it has parked and stays blocked on each one.
+    // `teardown()` would announce `decision/resolved {by:"system", answer:{kind:"deny"}}` for each — a
+    // denial no human gave and no engine performed, which an audit-logging client records as fact and a UI
+    // renders as an answered prompt. So the views are dropped, silently, and the decisions stay where they
+    // actually live.
+    //
+    // Safe to decide per RECORD rather than per entry: a fleet thread's registry holds views and nothing
+    // else (`admitFleetThread` mints its ThreadDecisions but no fleet path ever calls `broker()` — the
+    // host's engine has its own), while an inProcess thread's holds only real local parks, whose awaited
+    // promises `teardown()` MUST settle or the dispose below deadlocks on them (see the order note above).
+    const decisions = this.decisions.get(record.id);
+    if (record.origin === "fleet") decisions?.discard(); else decisions?.teardown();
     record.routerOff?.(); // stop routing frames from an engine we are about to dispose (Task 8a)
+    record.fleetOff?.();  // …and, for a fleet thread, the event layer installed alongside it (M3 Task 9:
+                          // the two are installed as a pair and must be released as one, or a record that
+                          // closes and re-attaches leaves a fan of listeners per cycle)
     try {
       await record.session.dispose();
     } finally {
       // thread/closed reaches BOTH this thread's subscribers and every server-scoped watcher (Task 5),
       // deduped by Peer identity — fanout.ts owns that rule now that M2b's thread/rewound needs it too.
-      broadcastToSubscribersAndWatchers(record.subscribers, this.watchers(), "thread/closed", { threadId: record.id });
+      broadcastToSubscribersAndWatchers(record.subscribers, this.watchers(), "thread/closed", { threadId: record.id, ...(reason ? { reason } : {}) });
       this.decisions.delete(record.id);
       this.registry.delete(record.id);
     }

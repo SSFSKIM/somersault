@@ -147,6 +147,12 @@ export interface ThreadRecord {
                                 // per-approval watcher — so there is no planUpgradeOff here.
   routerOff?: () => void;       // unsubscribes the ONE per-thread frame router (router.ts, Task 8a,
                                  // spec D-M2-6) — closeRecord calls this before disposing the engine
+  fleetOff?: () => void;        // FLEET ONLY (M3 §1b): unsubscribes the fleet EVENT LAYER — the item fan
+                                 // plus the seven host-event fans `installFleetEvents` installs (fleet.ts).
+                                 // closeRecord calls it beside `routerOff`, which is the whole point: the
+                                 // two are installed together and a close that dropped only one left a
+                                 // detached record's listeners wired to a live engine object
+
   sessionId?: string;
   config?: Record<string, unknown>; // the FULL config this thread's engine was opened with (broker
                                  // included) — stamped once at thread/start|resume and never rewritten.

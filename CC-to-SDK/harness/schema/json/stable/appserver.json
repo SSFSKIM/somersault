@@ -1143,6 +1143,19 @@
         "target"
       ],
       "additionalProperties": false
+    },
+    "thread/stop": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "additionalProperties": false
     }
   }
 }

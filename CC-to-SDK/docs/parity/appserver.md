@@ -95,11 +95,14 @@ null for an existing file and for a missing path alike.
 
 **26 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
-subscribers and watchers alike — when a post-swap state re-push is rejected, since the loss is a fact
-about what the thread now is, not a per-peer aside to whoever asked for the swap);
+subscribers and watchers alike — for the two losses that are facts about what the thread now IS rather
+than per-peer asides to whoever asked for something: `code:"stateRepushFailed"` when a post-swap state
+re-push is rejected, and M3 §1f's `code:"fleetConnectionLost"` when a fleet thread's host socket dies);
 server-scoped (via `initialize{watchThreads:true}`) `thread/started`, `thread/deleted`; both-scoped
-`thread/closed` and `thread/rewound` (`{threadId, sessionId}`, plus `cleared: true` and a null id when
-the swap was a `thread/clear`); thread-scoped
+`thread/closed` (M3 Task 9 adds an OPTIONAL `reason` — `"stopped"` when the thread ended because
+`thread/stop` ended its session, absent for a plain close, which on a fleet thread is only a detach and
+must not claim more) and `thread/rewound` (`{threadId, sessionId}`, plus `cleared: true` and a null id
+when the swap was a `thread/clear`); thread-scoped
 `thread/status/changed` (`{state, waitingOn?}`), `thread/settings/changed` (client + engine legs,
 echo-deduped), `thread/name/updated`, `thread/capabilities/changed`, `thread/compacted`,
 `thread/tokenUsage/updated`, `thread/limits/updated`, `turn/queued` (M2b Task 8 — broadcast at enqueue
@@ -151,8 +154,15 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 3. **`account/read` and `thread/init/read` have no backing host op** — walking `host/ops.ts` turns up
    nothing named `account`/`init` — so they are `inProcess`-only today, beyond spec §2's explicit
    list (a documented omission; growing the host wire is named follow-up work).
-4. **`thread/stop`/`thread/attach` are the mirror of the inProcess-only rule** — they only make
-   sense for a fleet-adopted thread, scored `fleet-only` here.
+4. **CORRECTED at M3 Task 9.** This note used to read "`thread/stop`/`thread/attach` are the mirror
+   of the inProcess-only rule — they only make sense for a fleet-adopted thread, scored `fleet-only`
+   here." Both halves turned out wrong once the methods shipped. `thread/attach` names no thread at
+   all, so it lives in the server-origin table below at `N/A`, not at `fleet-only`. And spec §1e made
+   `thread/stop` **origin-branched rather than fleet-exclusive** — one method, origin-appropriate
+   meaning: it ends the host for a fleet thread and *is* `thread/close` for an inProcess one, so a
+   client holding either kind ends a session with one call. Its row therefore reads `both`. The
+   `fleet-only` bucket is empty as of this task; the asymmetry that justified a separate method is
+   `thread/close`'s, which on a fleet thread DETACHES (§1f) rather than ending anything.
 5. **The task split is CLOSED as of M2b Wave 3** (kept at this number so older references still
    resolve). Both halves now ship: the `task/changed` + `task/event` **notifications** from the Wave 1
    frame router, and the `task/list`/`task/stop`/`turn/background` **methods** (`appserver/tasks.ts`),
@@ -221,7 +231,7 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
 | `status` | host/ops.ts | `thread/status/changed` (+ `thread/list` status field) | both | shipped(M1) |
-| `stop` | host/ops.ts | `thread/stop` | fleet-only | planned(M3) |
+| `stop` | host/ops.ts | `thread/stop` | both | shipped(M3) — ends the SESSION, origin-branched: the host op for a fleet thread (EOF is the contract — no receipt is awaited — then the roster row must turn terminal within a bounded poll, `-33008` naming the stuck state if it does not, record left standing), `thread/close`'s own path for an inProcess one. Both announce `thread/closed {reason:"stopped"}` |
 | `pending` | host/ops.ts | `decision/list` | both | shipped(M1) |
 | `answer` | host/ops.ts | `decision/respond` | both | shipped(M1) — Wave T wire shapes (see above) |
 | `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) |
@@ -366,9 +376,10 @@ this block.
 | probe-gated | — | — | — | — | — | 0 |
 | N/A | — | — | — | 2 | — | 2 |
 
-**79 of the 82 rows read shipped.** The three that do not are the whole remainder: `stop`
-(`planned(M3)`, the one `fleet-only` row — gap 4), and the two `N/A` rows, `seedReadState` (internal
-plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
+**79 of the 82 rows read shipped.** The three that did not are the whole remainder: `stop`
+(`planned(M3)` at the sweep — **shipped(M3) since Task 9**, which also empties the `planned` bucket and
+retires the `fleet-only` scope, gap 4), and the two `N/A` rows, `seedReadState` (internal plumbing, no
+protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
 `probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
 Origin scope splits **56 `both` / 21 `inProcess` / 1 `fleet-only` / 4 `N/A`** across the same 82 rows.

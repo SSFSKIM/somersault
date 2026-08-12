@@ -16,7 +16,7 @@
 //     host's `turn` events are the only place both origins of a turn meet — this client's prompt and
 //     another client's — so busy, the turn id, the item mapper and the two broadcasts all hang off them,
 //     and `turns.ts`'s fleet branch does nothing but gate, submit and reply.
-import { listRoster, TERMINAL } from "../fleet/roster.js";
+import { listRoster, readRoster, TERMINAL } from "../fleet/roster.js";
 import type { RosterRow } from "../fleet/roster.js";
 import { hostSocketPath } from "../fleet/paths.js";
 import { collectFleet } from "../fleet/index.js";
@@ -40,6 +40,20 @@ import { fleetListParams, threadAttachParams } from "./schema/fleet.js";
 const nowSec = (): number => Math.floor(Date.now() / 1000); // registry.ts's `updatedAt` is unix seconds
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** What §1f's death sequence puts on the wire — the failed turn's `error` and the warning's `message` say
+ *  the same thing, because they ARE the same fact reaching a client through two channels. Deliberately not
+ *  the engine's own "connection closed" wording (fleetEngine.ts's rejection): a client that CLOSED a thread
+ *  reads that phrase as its own doing, and this is the death nobody asked for. */
+const CONNECTION_LOST = "fleet host connection lost";
+const CONNECTION_LOST_HINT = `${CONNECTION_LOST} — close this thread and attach again to recover`;
+
+/** `thread/stop`'s roster-terminal poll (§1e). The host writes its terminal row from its own exit path,
+ *  AFTER the sockets are gone, so there is a real gap between the EOF this method takes as success and the
+ *  state a client will read next; 250 ms steps for 5 s covers it without spinning. */
+const STOP_POLL: StopPoll = { stepMs: 250, capMs: 5_000 };
+export interface StopPoll { stepMs: number; capMs: number }
+const sleep = (ms: number): Promise<void> => new Promise((r) => { const t = setTimeout(r, ms); (t as { unref?: () => void }).unref?.(); });
+
 /** The ONE status shape (registry.ts), same as turns.ts's own private helper — `waitingOn` needs the
  *  decisions map, which the record does not have. */
 function statusChanged(srv: AppServer, record: ThreadRecord): void {
@@ -48,14 +62,25 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
 
 /** Everything a fleet thread learns from its host that is NOT an SDK frame (§1b's host-synthesized set).
  *  Installed BEFORE the record is published and BEFORE `activate()`, so the follow replay — buffered
- *  since the dial — finds every listener in place. */
-export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine: FleetEngineSession): void {
+ *  since the dial — finds every listener in place.
+ *
+ *  Returns its own UNINSTALLER, which the caller stores as `record.fleetOff` for `closeRecord` to call
+ *  beside `routerOff` (M3 Task 9). Install and teardown have to be symmetric for the same reason the
+ *  router's pair is: a record that closes and re-attaches otherwise accumulates a fan of listeners per
+ *  cycle, each still holding a record the registry has already dropped. */
+export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine: FleetEngineSession): () => void {
   // ONE mapper and ONE derived id per turn WINDOW, whoever started the turn (§1b: "one mapper owner per
   // turn window, both origins of the turn"). Held in this closure rather than on the record because
   // nothing outside this layer may feed them — `turns.ts`'s fleet branch passes an inert sink precisely
   // so a turn is itemized once, here, from the frames every client of the host sees.
   let mapper: TurnMapper | undefined;
   let windowId: string | undefined;
+
+  /** Every host-event subscription this layer takes, so the uninstaller can give all of them back. The
+   *  frame subscription is NOT in here — it is re-taken on every swap (see `installFrames`), so only its
+   *  current value can be released. */
+  const subs: Array<() => void> = [];
+  const track = (off: () => void): void => { subs.push(off); };
 
   // The frame subscriptions are a PAIR, in this order: the router first, the item layer second — the
   // order the in-process read loop delivers in (session.ts's frame fan runs before the turn's own sink),
@@ -82,7 +107,7 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   };
   installFrames();
 
-  engine.onTurn((e) => {
+  track(engine.onTurn((e) => {
     const turnId = fleetTurnId(record, e.seq);
     if (e.phase === "start") {
       // Everything `beginTurn` does at request-arrival time (turns.ts), minus the mint and the reply:
@@ -119,11 +144,11 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     // `currentTurnId` is deliberately left standing (registry.ts: the replay path wants the last turn's id).
     srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: failure === undefined ? { id: turnId, status: "completed" } : { id: turnId, status: "failed", error: failure } });
     statusChanged(srv, record);
-  });
+  }));
 
   // A park raised host-side, mirrored as a VIEW (broker.ts's parkView) — looked up per event rather than
   // captured, so a park arriving after the thread closed reaches nothing instead of a dangling registry.
-  engine.onDecision((entry) => { srv.threadDecisions(record.id)?.parkView(record.id, entry); });
+  track(engine.onDecision((entry) => { srv.threadDecisions(record.id)?.parkView(record.id, entry); }));
 
   // …and its settlement, by ANY client of that host — the sole remover of a view (§1b: this server never
   // settles a fleet decision locally), the settlement its own `decision/respond` won included. It arrives
@@ -134,18 +159,18 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   // and what the host's OWN settlements carry today (an SDK abort, an interrupt's sweep — a system deny
   // has no payload the kind drops). Reconstructing the payload-free outcome from it is exact, and is the
   // same `{kind:"deny"}` a local teardown resolves with.
-  engine.onDecisionSettled((e) => {
+  track(engine.onDecisionSettled((e) => {
     srv.threadDecisions(record.id)?.settleView(e.toolUseID, e.by, e.answer ?? ({ kind: e.decision } as DecisionOutcome));
-  });
+  }));
 
   // Announce-only, no record-level task mirror — inProcess parity: `task/list` forwards to the engine's own
   // live set on both origins (tasks.ts, and here the host's `tasks` op), so there is no second copy to keep
   // honest. Which also means the snapshot the follow replay carries is not lost by reaching an empty
   // subscriber set during the attach: it is the host's CURRENT task set (host.ts:624, delivered for the same
   // reason `state` is), and the first client to ask reads it straight off the host.
-  engine.onTasksChanged((tasks) => { srv.broadcast(record.id, "task/changed", { threadId: record.id, tasks }); });
+  track(engine.onTasksChanged((tasks) => { srv.broadcast(record.id, "task/changed", { threadId: record.id, tasks }); }));
 
-  engine.onState((s) => {
+  track(engine.onState((s) => {
     if (s.sessionId && s.sessionId !== record.sessionId) record.sessionId = s.sessionId;
     // §1a-c: `model`/`thinkingTokens` are OMITTED until the host has one, so an absent field means
     // "unknown", never "cleared" — only a present-and-different value is a change worth announcing.
@@ -162,9 +187,9 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     // The host's own busy/waitingFor is NOT mirrored onto `record.busy`: the turn events above own that,
     // and a `state` frame arrives for reasons that are not turn edges (a park, a setter, a swap).
     statusChanged(srv, record);
-  });
+  }));
 
-  engine.onRewound((e) => {
+  track(engine.onRewound((e) => {
     // Any client's resume/clear/rewind (§1a-a makes all three announce). The epoch bump is what
     // invalidates every outstanding read cursor (subscribe.ts) — the rows those cursors addressed are not
     // the rows the same offsets address now.
@@ -173,13 +198,49 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     record.updatedAt = nowSec();
     installFrames();                    // the epoch moved — see installFrames
     broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "thread/rewound", { threadId: record.id, sessionId: record.sessionId ?? null, ...(e.cleared ? { cleared: true } : {}) });
-  });
+  }));
 
-  // §1f's death sequence is Task 9's, and it is a SEQUENCE (settle the in-flight turn, clear busy, drop
-  // the parked views, warn) rather than a latch — the latch already exists, on the engine (`isEnded`),
-  // and dispatch's -33005 gate is the only reader that matters until then. Subscribed here so the seam is
-  // where Task 9 needs it, and because an unsubscribed death is an event this layer would never see.
-  engine.onSocketDeath(() => { /* Task 9 (§1f) */ });
+  // §1f's death sequence — the host crashed, was killed, or the network went. It is a SEQUENCE, not a
+  // latch: the latch already exists on the engine (`isEnded`, which dispatch's -33005 gate reads), and
+  // what this owes a client is everything the latch cannot say. Fired only for an UNEXPECTED close —
+  // `dispose()` and `thread/stop` both pre-latch `expectDeath()`, so a release this server asked for
+  // never announces a loss.
+  //
+  // ORDER IS THE CONTRACT, and the first step is the load-bearing one: a client watching a turn must get
+  // that turn's terminal event BEFORE it hears the connection is gone, or it is left holding a turn row
+  // that never ends. The engine has already rejected the in-flight submit by the time this runs (die()
+  // sweeps its waiter before fanning here), but a fleet turn's lifecycle is not owned by the submit — this
+  // layer owns it (§1b), for foreign turns as much as our own — so the broadcast is ours to make, rendered
+  // exactly as turns.ts's `onFailure` renders a rejected in-process turn.
+  track(engine.onSocketDeath(() => {
+    if (windowId !== undefined) {
+      // The open items are finalized FAILED first, same as every other failure path: a client left with an
+      // `item/started` that never completes cannot render the turn at all.
+      if (mapper) emitItems(srv, record, windowId, mapper.finalize(true));
+      const turnId = windowId;
+      mapper = undefined; windowId = undefined;
+      record.busy = false;
+      record.turnStartedBroadcast = false;
+      // `currentTurnId` is left standing, exactly as the normal turn end leaves it (the replay path wants
+      // the last turn's id).
+      srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: CONNECTION_LOST } });
+    }
+    record.busy = false;               // idle-at-death holds too: there may have been no turn to fail
+    record.updatedAt = nowSec();
+    // SILENTLY (§1f, and broker.ts's `discard`): the host may be dead or alive — a crashed host's parks
+    // died with it, a network loss left them exactly where they were — and this server cannot tell which,
+    // so it must not claim either.
+    srv.threadDecisions(record.id)?.discard();
+    // A fact about what the thread now IS, not an aside to whoever last asked for something — so it fans
+    // to subscribers and watchers alike, the same shape rewind.ts's re-push warning uses.
+    broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "warning", { threadId: record.id, code: "fleetConnectionLost", message: CONNECTION_LOST_HINT });
+    statusChanged(srv, record);
+    // The RECORD stays: a zombie answering -33005 to everything but the exempt set, until a client's own
+    // `thread/close` drops it (§1f — recovery is close plus a fresh attach; there is no auto-reconnect,
+    // D-M3-13).
+  }));
+
+  return () => { offItems?.(); offItems = undefined; for (const off of subs.splice(0)) off(); };
 }
 
 /** Dial, seed, publish. Returns the record UNACTIVATED — the caller announces `thread/started` first and
@@ -211,7 +272,7 @@ async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord>
       // swap that rebuilds one (registry.ts) — which never runs for this origin (§1b).
       flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
     };
-    installFleetEvents(srv, record, engine);
+    record.fleetOff = installFleetEvents(srv, record, engine);
     srv.admitFleetThread(record);
     return record;
   } catch (e) {
@@ -265,6 +326,60 @@ export async function fleetDecisionRespond(ctx: ConnCtx, id: RequestId, record: 
   // mode the host already set — the flag layer's rule (§1b), that the host is the single owner.
   if (p.abortTurn) await requestInterrupt(record);
   ctx.peer.reply(id, { ok: true });
+}
+
+/** Why `thread/stop` is not finished yet, or `undefined` when it is. Two conditions, in the order they
+ *  become true, and each is a different thing to be stuck on — which is the whole reason the poll reports a
+ *  reason rather than a bare timeout: "the host never let go of the socket" and "the host let go but never
+ *  accounted for itself" send a client to different places.
+ *
+ *  A roster row that is GONE counts as terminal. A concurrent `ccx rm` unlinks it, and waiting for a state
+ *  nobody will ever write again is waiting forever — the session is at least as finished as a stamped row
+ *  says it is. */
+function stopStuckReason(record: ThreadRecord, engine: FleetEngineSession): string | undefined {
+  if (!engine.isEnded()) return "the host has not closed the connection";
+  const row = record.short === undefined ? undefined : readRoster(record.short);
+  if (row && !TERMINAL.has(row.state)) return `roster row ${record.short} still reads ${JSON.stringify(row.state)}`;
+  return undefined;
+}
+
+/** `thread/stop` on a FLEET thread (§1e): end the HOST. The counterpart of `thread/close`, which only ends
+ *  this server's hold on it — the asymmetry that makes stop its own method.
+ *
+ *  EOF IS THE CONTRACT, NOT A RECEIPT. `SessionHost.stop` tears down its server, destroying every open
+ *  socket, before the dispatch that would have written a reply (host/server.ts's close() cannot wait on the
+ *  connection carrying the very op it is answering, or it deadlocks) — P106 measured exactly that, and
+ *  `ccx stop` ignores the missing ack for the same reason. So the op is written and never awaited: its
+ *  ordinary outcome is the connection-closed rejection every in-flight op takes, and a host that happens to
+ *  ack resolves it. Neither is the verdict.
+ *
+ *  The verdict is the POLL: the socket at EOF and the roster row terminal. It is the roster the rest of the
+ *  world reads — `ccx fleet list`, this server's own `fleet/list`, the next attach's resolution — so a stop
+ *  that returned on the EOF alone would report a session ended while every listing still called it working.
+ *  A stop that runs out of cap throws, and the CALLER keeps the record: a host that would not die is a host
+ *  a client may still need to reach.
+ *
+ *  Does NOT close the record — `thread/stop`'s handler does that, through the same `closeRecord` every
+ *  other teardown goes through, so a stopped fleet thread and a closed one leave the server in one state. */
+export async function fleetStop(srv: AppServer, record: ThreadRecord): Promise<void> {
+  // The cast is `decision/respond`'s: `expectDeath` is a FLEET engine's member and `record.origin` is the
+  // guarantee behind it — fleet.ts is the only writer of that pair.
+  const engine = record.session as FleetEngineSession;
+  // FIRST, before the op is on the wire: this death is the client's own, so §1f's sequence — the failed
+  // turn, the fleetConnectionLost warning — must not fire for it. A stop that latched after writing would
+  // race the host's teardown and announce a loss for a session the client just ended.
+  engine.expectDeath();
+  const { stepMs, capMs } = srv.deps.stopPoll ?? STOP_POLL;
+  // `Infinity`: there is no deadline to keep on a promise nobody reads. Caught, not left floating — an
+  // unhandled rejection here would take the process down for the ordinary path.
+  void engine.sendOp({ op: "stop" }, Infinity).catch(() => {});
+  const deadline = Date.now() + capMs;
+  for (;;) {
+    const stuck = stopStuckReason(record, engine);
+    if (stuck === undefined) return;
+    if (Date.now() >= deadline) throw new Error(`thread/stop did not complete within ${capMs}ms: ${stuck}`);
+    await sleep(stepMs);
+  }
 }
 
 /** `fleet/list` — every session on this machine, attached or not (§1e). The live half is `collectFleet`

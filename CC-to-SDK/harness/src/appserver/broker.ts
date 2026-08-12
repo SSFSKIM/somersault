@@ -125,6 +125,22 @@ export class ThreadDecisions {
     return { ok: true };
   }
 
+  /** M3 §1f: teardown's silent twin, for a registry that holds VIEWS. Same latch, same settle of the
+   *  underlying promises — but NOTHING is announced, because nothing was decided. A view's decision lives
+   *  on the host: on a detach the host is still holding it and still blocked on it, and on a socket death
+   *  this server cannot tell whether the host died with it. `decision/resolved {by:"system",
+   *  answer:{kind:"deny"}}` in either case reports a denial no human gave and no engine performed, which
+   *  an audit-logging client records as fact and a UI renders as an answered prompt.
+   *
+   *  The promises are still settled (`denyAll`) rather than abandoned: `parkView` voids them, so nothing
+   *  here awaits one, but leaving them pending would keep every view's resolver alive for the life of the
+   *  process. Which is also why this is not `teardown()`'s job with a flag — the two differ only in the
+   *  emit, and the emit is the whole distinction worth naming. */
+  discard(): void {
+    this.closed = true;
+    this.inner.denyAll();
+  }
+
   /** Deny + settle everything still parked (thread close) — denyAll() bypasses respond()'s own emit, so
    *  this is the one place that emits for it (mirrors PendingDecisions.denyAll's documented contract). */
   teardown(): void {

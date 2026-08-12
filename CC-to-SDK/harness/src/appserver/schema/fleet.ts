@@ -10,3 +10,10 @@ export const fleetListParams = z.object({});
  *  `short` | `sessionId` | `name`, where more than one hit is an error carrying the matches rather than a
  *  precedence — a wrong guess would attach to someone else's session. */
 export const threadAttachParams = z.object({ target: z.string().min(1) });
+/** `thread/stop` — the one method here that DOES name a thread, and the only fleet method whose subject is
+ *  a thread this server already holds. Spelled beside its siblings rather than reusing `threadIdParams`
+ *  because the shape is incidental and the meaning is not: this ends the SESSION (the host process, for a
+ *  fleet thread), where `thread/close` — the identically-shaped method next to it — only ends this
+ *  server's hold on it. Two methods with one param shape and opposite consequences each deserve their own
+ *  documented entry. */
+export const threadStopParams = z.object({ threadId: z.string().min(1) });
