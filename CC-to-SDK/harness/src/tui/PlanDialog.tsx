@@ -180,9 +180,42 @@ export function planRegionRows(rows: number, options: readonly SelectOption[], h
 }
 /** How many plan lines actually print. A plan that FITS gets the whole region; one that does not gives a row
  *  back to the marker — so a plan of exactly `region + 1` lines is not clipped for the sake of a marker row
- *  announcing the single line the marker itself displaced. */
+ *  announcing the single line the marker itself displaced. FLOORED AT ZERO, not at one (T13b): under a hard
+ *  row budget the region can be a single row, and then the honest thing to spend it on is the marker ALONE.
+ *  Unreachable on the unbudgeted path, where `planRegionRows` floors the region at three. */
 export function planWindow(region: number, lineCount: number): number {
-  return lineCount > region ? Math.max(1, region - 1) : region;
+  return lineCount > region ? Math.max(0, region - 1) : region;
+}
+
+// ── THE INVERSION, WHEN THERE IS A HARD ROW BUDGET (T13b) ─────────────────────────────────────────────
+// `planRegionRows` above sizes the plan against the TERMINAL, which is the right question on the main screen
+// where the dialog may be as tall as it likes. In the fullscreen seam it is the wrong one: the slot hands
+// down a budget (`Q0r = rows − 3`, bundle L455845) and everything past it is clipped off the bottom — which
+// is the option box, every answer the dialog exists to collect. So under a budget the arithmetic runs the
+// other way round: the OPTION BOX and the frame's header are reserved first and the plan takes what is left.
+//   THREE RUNGS, SHED IN ORDER, because a budget can be smaller than the chrome itself. First the plan's own
+// DECORATIONS go — the "Here is Claude's plan:" label, `SM`'s two dashed rules and the margins around them —
+// which costs presentation and no information. Then the ctrl+g row, which advertises a detour, before a
+// single option row goes. Nothing below that can be given back: the option box alone is seven rows, and a
+// terminal too short for it is short of the dialog's irreducible content.
+/** The frame's own rows above the plan: `marginTop`, the `Ed` rule, the title. */
+export const PLAN_FRAME_ROWS = 3;
+/** The plan body's decorations: its `marginTop`, `PLAN_BODY_TITLE`, `SM`'s two rules, its `marginBottom`. */
+export const PLAN_BODY_CHROME = 5;
+export interface PlanLayout {
+  /** Rows the plan region may print into, marker included. */
+  region: number;
+  /** Whether the body keeps its label, its dashed rules and its margins. */
+  decorated: boolean;
+  /** Whether the ctrl+g row survives (it is hidden anyway when no editor is configured). */
+  hint: boolean;
+}
+export function planLayout(budget: number, options: readonly SelectOption[], hasEditor: boolean, hasReason: boolean): PlanLayout {
+  const spare = (hint: boolean) => budget - PLAN_FRAME_ROWS - optionBoxRows(options, hasEditor && hint) - (hasReason ? 1 : 0);
+  const decorated = spare(true) - PLAN_BODY_CHROME;
+  if (decorated >= 1) return { region: decorated, decorated: true, hint: true };
+  if (spare(true) >= 1) return { region: spare(true), decorated: false, hint: true };
+  return { region: Math.max(1, spare(false)), decorated: false, hint: false };
 }
 
 export interface PlanDialogRequest {
@@ -191,7 +224,7 @@ export interface PlanDialogRequest {
   decisionReason?: string;
 }
 
-export function PlanDialog({ req, onDecision, editor = editExternal, editorName, rows, suspendInput, model, bypassAvailable = false }: {
+export function PlanDialog({ req, onDecision, editor = editExternal, editorName, rows, maxRows, suspendInput, model, bypassAvailable = false }: {
   req: PlanDialogRequest;
   onDecision: (o: DecisionOutcome) => void;
   /** The model the ENGINE is running, for the auto arm's gate. `undefined` — an attach client before its
@@ -215,6 +248,10 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   editorName?: string | null;
   /** Terminal height, for the region math above. Read live from stdout by default, like `Select` does. */
   rows?: number;
+  /** A HARD CEILING on the rows this dialog may compose into — the fullscreen seam's `Q0r` budget (T13b).
+   *  Absent means "as tall as it likes", which is the main screen and every classic mount: the whole ladder
+   *  is off and `planRegionRows` sizes the plan exactly as it always did. */
+  maxRows?: number;
 }) {
   const term = rows ?? process.stdout.rows ?? 24;
   // `dk`/`h$b` (L500755-761): the plan is STATE with a ref beside it, because `Anl` writes both — the ref is
@@ -251,7 +288,10 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   const options = planOptions(avail);
 
   const lines = useMemo(() => renderMarkdown(plan), [plan]);
-  const region = planRegionRows(term, options, name !== null, reason !== undefined);
+  const layout: PlanLayout = maxRows === undefined
+    ? { region: planRegionRows(term, options, name !== null, reason !== undefined), decorated: true, hint: true }
+    : planLayout(maxRows, options, name !== null, reason !== undefined);
+  const region = layout.region;
   const window = planWindow(region, lines.length);
   const maxTop = Math.max(0, lines.length - window);
   // Derived, not stored, for the reason `Select`'s own window is: a ctrl+g edit can shorten the plan under a
@@ -367,8 +407,12 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
   return (
     <Box flexDirection="column">
       <DialogFrame title={PLAN_TITLE} color="planMode" innerPaddingX={0} subagentType={req.subagentType}>
-        <Box flexDirection="column" marginTop={1}>
-          <Box paddingX={1} flexDirection="column"><Text>{PLAN_BODY_TITLE}</Text></Box>
+        {/* UNDECORATED IS THE SAME BODY WITH ITS PRESENTATION SPENT (T13b, `layout.decorated`): the label, the
+            two dashed rules and both margins are what a budget too small for them buys back, and the plan
+            lines plus their marker are what it buys. Nothing about the WINDOW changes — one code path picks
+            the lines, and only the box around them differs. */}
+        <Box flexDirection="column" {...(layout.decorated ? { marginTop: 1 } : {})}>
+          {layout.decorated ? <Box paddingX={1} flexDirection="column"><Text>{PLAN_BODY_TITLE}</Text></Box> : null}
           {/* `EDr` (L501096) wraps the plan in `SM` (L424994-425003): dashed rules top and bottom, left and
               right edges off, in the `subtle` role, `paddingX:1` and `marginBottom:1`. The two rules are what
               separate the plan from the title above it and the consent line below without a second frame.
@@ -377,11 +421,15 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
               L182559 over the provider at L181297), so upstream paints NO border there. We paint
               unconditionally — stock Ink 5 has no such context and this repo has no screen-reader surface to
               read it off, the same class of gap DialogFrame.tsx records for `srPrefix`. */}
-          <Box flexDirection="column" borderStyle={DASHED_BORDER} borderColor={role("subtle")}
-            borderLeft={false} borderRight={false} overflow="hidden" paddingX={1} marginBottom={1}>
+          <Box flexDirection="column" paddingX={1}
+            {...(layout.decorated
+              ? { borderStyle: DASHED_BORDER, borderColor: role("subtle"), borderLeft: false, borderRight: false, overflow: "hidden" as const, marginBottom: 1 }
+              : {})}>
             {lines.slice(top, top + window).map((l, i) => <Line key={top + i} l={l} />)}
             {/* One marker row, kept whether or not there is anything BELOW, so scrolling never reflows the
-                region's height under the reader's eyes. */}
+                region's height under the reader's eyes. INSIDE the window, not after it: a marker below the
+                content would be the first row a tight budget clipped, i.e. the one row whose whole job is to
+                say that rows are missing. */}
             {lines.length > window
               ? <Text dimColor>… {below > 0 ? `+${below} more lines` : `${top} lines above`} ({SCROLL_HINT})</Text>
               : null}
@@ -397,7 +445,7 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
           <Select options={options} onChange={pick} onCancel={cancel} context="SelectDecision"
             onInputChange={(_v, text) => { feedbackRef.current = text; }} />
         </Box>
-        {name !== null
+        {name !== null && layout.hint
           ? (
             <Box marginTop={1}>
               <Text>

@@ -11,7 +11,7 @@
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
-import { FilePermission } from "../../src/tui/dialogs/FilePermission.js";
+import { FilePermission, bodyWindow, fileChromeRows } from "../../src/tui/dialogs/FilePermission.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { themeTokens } from "../../src/tui/theme.js";
 import { parseSedEdit } from "../../src/tui/dialogs/sedEdit.js";
@@ -39,14 +39,14 @@ function fakeFs(files: Record<string, string> = {}, dirs: string[] = [], links: 
 }
 
 interface Req { toolName: string; input: Record<string, unknown>; subagentType?: string; suggestions?: PermissionUpdateLike[] }
-async function mount(req: Req, opts: { fs?: FileFs; filePath?: string; sed?: string; directories?: string[]; columns?: number } = {}) {
+async function mount(req: Req, opts: { fs?: FileFs; filePath?: string; sed?: string; directories?: string[]; columns?: number; maxRows?: number } = {}) {
   const got: PermissionDecision[] = [];
   const sedEdit = opts.sed === undefined ? undefined : parseSedEdit(opts.sed)!;
   const view = render(
     <FilePermission
       req={req} cwd={CWD} home={HOME} columns={opts.columns ?? 80}
       filePath={opts.filePath ?? (req.input.file_path as string | undefined) ?? (req.input.notebook_path as string | undefined) ?? CWD}
-      sedEdit={sedEdit} directories={opts.directories} fs={opts.fs ?? fakeFs()}
+      sedEdit={sedEdit} directories={opts.directories} fs={opts.fs ?? fakeFs()} maxRows={opts.maxRows}
       onDecision={(d) => got.push(d)}
     />,
   );
@@ -396,4 +396,75 @@ describe("PermissionDialog — the switchboard routes the file kind", () => {
 
   it("a Bash command that is really an in-place edit lands on the FILE body", async () =>
     expect((await mountVia({ toolName: "Bash", input: { command: "sed -i '' 's/a/b/' f.ts" } })).frame()).toContain("Edit file"));
+});
+
+// ── FSW T13b — THE ROW BUDGET ──────────────────────────────────────────────────────────────────────────
+// This dialog is dock-pinned in the fullscreen renderer, and the dock is a CAPPED band with no pager behind
+// it. A fifty-row diff therefore did not scroll — it pushed the question, all three options and the
+// `esc cancel` row off the bottom of the frame, where nothing could reach them, and the user was left
+// approving an edit they could not see. Under `maxRows` the chrome is reserved and the BODY windows instead.
+describe("<FilePermission> — the row budget (T13b)", () => {
+  const OLD = Array.from({ length: 25 }, (_, i) => `old ${i}`).join("\n");
+  const NEW = Array.from({ length: 25 }, (_, i) => `new ${i}`).join("\n");
+  const edit = { toolName: "Edit", input: { file_path: "/repo/f.ts", old_string: OLD, new_string: NEW } };
+  const rowsOf = (v: { frame: () => string }) => plain(v.frame()).split("\n");
+
+  it("windows the diff into the budget and keeps the question, every option and the Esc row", async () => {
+    const v = await mount(edit, { maxRows: 20 });
+    const lines = rowsOf(v);
+    expect(lines.length).toBeLessThanOrEqual(20);
+    expect(plain(v.frame())).toContain("Do you want to make this edit to f.ts?");
+    expect(plain(v.frame())).toContain("1. Yes");
+    expect(plain(v.frame())).toContain("3. No");
+    expect(plain(v.frame())).toContain("esc cancel");
+    expect(plain(v.frame())).toMatch(/… \+\d+ more lines/);
+    expect(plain(v.frame())).toContain("old 0");                     // the diff still starts at its top
+  });
+
+  // THE MARKER IS INSIDE THE WINDOW, not after it. Placed after the content it would be the FIRST row a tight
+  // budget clipped — the one row whose whole job is to say that rows are missing.
+  it("spends a budget with no room left on the marker ALONE rather than on chrome", async () => {
+    const v = await mount(edit, { maxRows: fileChromeRows({ subtitle: true, warning: false, options: 3 }) });
+    const f = plain(v.frame());
+    expect(f).toContain("… +50 more lines");                          // every diff row accounted for…
+    expect(f).not.toContain("old 0");                                 // …and none of them printed
+    expect(f).toContain("Do you want to make this edit to f.ts?");
+    expect(f).toContain("esc cancel");
+  });
+
+  it("counts its own chrome — the reservation and the rendered frame agree", async () => {
+    const v = await mount(edit, { maxRows: 20 });
+    const chrome = fileChromeRows({ subtitle: true, warning: false, options: 3 });
+    const body = rowsOf(v).length - chrome;
+    expect(body).toBe(20 - chrome);                                   // …the budget spent exactly, no more
+  });
+
+  it("windows the CREATE arm's code block too, and keeps its dashed box", async () => {
+    const content = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
+    const v = await mount({ toolName: "Write", input: { file_path: "/repo/n.ts", content } }, { maxRows: 18 });
+    const f = plain(v.frame());
+    expect(rowsOf(v).length).toBeLessThanOrEqual(18);
+    expect(f).toMatch(/… \+\d+ more lines/);
+    expect(f.split("\n").filter((r) => r.includes("╌╌╌"))).toHaveLength(2);
+    expect(f).toContain("1. Yes");
+    expect(f).toContain("esc cancel");
+  });
+
+  // THE CLASSIC PIN: no budget, no window. The main screen has no cap and prints the whole diff, as every
+  // other case in this file assumes.
+  it("prints the whole body with no budget — the main screen is untouched", async () => {
+    const v = await mount(edit);
+    const f = plain(v.frame());
+    expect(f).toContain("old 0");
+    expect(f).toContain("new 24");                                    // …the very last row of the diff
+    expect(f).not.toMatch(/… \+\d+ more lines/);
+  });
+
+  it("bodyWindow: a body that fits is untouched, and one that does not gives a row to the marker", () => {
+    expect(bodyWindow(5, undefined)).toEqual({ keep: 5, hidden: 0 });
+    expect(bodyWindow(5, 5)).toEqual({ keep: 5, hidden: 0 });
+    expect(bodyWindow(5, 4)).toEqual({ keep: 3, hidden: 2 });
+    expect(bodyWindow(5, 1)).toEqual({ keep: 0, hidden: 5 });         // the marker alone
+    expect(bodyWindow(5, 0)).toEqual({ keep: 0, hidden: 5 });
+  });
 });

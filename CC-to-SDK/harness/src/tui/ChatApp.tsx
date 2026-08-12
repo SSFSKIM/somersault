@@ -44,7 +44,8 @@ import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
-import { FullscreenFrame } from "./FullscreenFrame.js";
+import { FullscreenFrame, dockCap, seamCap } from "./FullscreenFrame.js";
+import { todoPanelRows } from "./taskPanelModel.js";
 import { FullscreenViewport } from "./FullscreenViewport.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
@@ -1026,8 +1027,270 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const region = fullscreen
     ? (transcriptOpen
       ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
-      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
+      // …AND THE BLANKING IS A MAIN-SCREEN TRADE THAT DOES NOT APPLY HERE (T13b). `paneOwned` hides the live
+      // rows so the dock's fourteen-row budget never has to cover a dialog as well; in the frame the region is
+      // a fixed virtualised band that the seam has ALREADY shrunk by taking the bottom one, so blanking buys
+      // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
+      // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
+      // where the overlay never occludes it (grounding §L2.6). The classic arm below keeps the trade.
+      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
     : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
+  // ── FSW TASK 13 — WHICH OF CANON'S TWO OVERLAY MECHANISMS A SURFACE GETS ──────────────────────────────
+  // Grounding §L2.6, "Two overlay mechanisms, not one". In fullscreen a surface the USER opened (`/model`,
+  // `/help`, `/resume` and its preview — canon's captured three) renders in the absolute-bottom SEAM SLOT under
+  // a `▔▔▔▔` rule with the transcript squeezed above it, while a surface the MODEL is asking about (the parked
+  // decisions) replaces the DOCK: the composer disappears and the dialog sits under the ordinary `────` rule
+  // `DialogFrame` already paints (its own header, bundle L438011). Two slots, and a port needs both.
+  //   WHAT GOES IN THE SEAM IS `cZo`'s `modal` PROP, AND THE BUNDLE NAMES ITS TWO TENANTS OUTRIGHT (L549395,
+  // read for this task rather than inferred from the captures):
+  //     RTt = i8 ? jsx(Api, { variant: "modal" }) : Ket        Ket = Dqt ? as.jsx : null
+  //     Dqt = ds() && as?.isLocalJSXCommand === !0             …passed as  cZo({ modal: RTt, … })
+  //   · `Ket` — a LOCAL JSX COMMAND's element, but only under `ds()` (fullscreen). That is the whole
+  //     user-opened-surface class: `/model`, `/help`, `/resume`, `/config`, `/permissions`, … Canon does not
+  //     enumerate three of them, it routes the CLASS, which is what "One slot, one seam, every dialog"
+  //     (grounding §L2.6) says in prose and what makes the three captures three samples rather than a list.
+  //   · `Api` with `variant: "modal"` — and `Api` returns null unless the pending decision's own layout matches
+  //     that variant (L507350: `if (($3k[L4.kind] ?? "inline") !== F3k) return null`). The layout table `ypi`
+  //     (L507338) has exactly ONE entry, `[Vur.kind]: "modal"` — exit-plan-mode. So the plan dialog is a seam
+  //     surface too, and it is the only decision that is.
+  //   The remaining decisions (`layout:"inline"` — permission, question) are NOT in the seam: their `Api` is
+  // mounted inside `scrollable`, at the tail of the transcript, with the composer hidden (`fra hidden={… ||
+  // Boolean(PA)}`). ccx draws them one band lower, in the dock, which is where the live capture puts them
+  // anyway (a bottom-anchored region's tail sits immediately above a dock that has lost its composer) and
+  // which is what keeps them from scrolling away under the reader — see the report's grounding correction.
+  //   THE ROUTER IS `inputOwnerRef`, NOT A SECOND LIST OF SURFACES. That derivation already draws canon's line:
+  // `"overlay"` is every surface the user opened — ccx's `Ket` — and `"decision"` every parked one, of which
+  // the plan kind is the `ypi` entry. Reusing it means the seam cannot drift out of agreement with the chain
+  // about which surface is on screen; a second enumeration of the chain's precedence would be a second thing to
+  // keep in step, and the failure mode of getting it wrong is a picker rendered in two bands at once. The chain
+  // BELOW is unchanged and still the one place any of these elements is written; only its slot moves.
+  //   THE TWO OWNERS OUTSIDE THE BUCKET STAY WHERE THEY WERE: the `?` shortcuts overlay and the ctrl+O pager
+  // are `"shortcuts"`/`"transcript"`, and neither goes to the seam — the pager already owns the REGION (T11)
+  // and the shortcuts grid is a presentational takeover with no canon slot behind it.
+  const seamActive = fullscreen && (inputOwnerRef.current === "overlay"
+    || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan"));
+  /** The rows a SEAM surface may size its own lists to. In the slot that is the SLOT's cap, not the terminal's
+   *  height: a picker that windows itself for `rows` and is handed `rows − 2` loses its last two lines — which
+   *  is canon's own `/help` defect (grounding §L2.6: "Its `Esc to cancel` line is pushed off the bottom and
+   *  never renders at 24 rows … an upstream clipping defect, not something to reproduce"). Handing down the
+   *  real budget is how these surfaces respect it BY CONSTRUCTION; the frame's clip and its diagnostic are the
+   *  backstop, and the diagnostic cannot even see a picker re-windowing itself (FullscreenFrame's header).
+   *  Classic gets the identical value it always did.
+   *    MEASURED, on `PlanDialog`, which is why this is not a nicety: at 24 rows the plan dialog wants
+   *  seventeen rows and a dock capped at twelve, so before T13 its whole option block — every answer the
+   *  dialog exists to collect — was clipped off the bottom of the frame with nothing on screen to say so. In
+   *  the seam at `rows − 2` it fits. */
+  const overlayRows = () => (fullscreen ? seamCap(size.rows) - 1 : terminalRows());
+  /** THE ROWS A DOCK DIALOG MAY COMPOSE INTO (FSW T13b). Canon draws a permission/question consult in the
+   *  scrollable; ccx pins it in the dock band, where — unlike a pager — there is no way to reach a row the
+   *  frame clipped. So the band takes `dockCap`'s wide arm while a decision is in it (see there) and the
+   *  dialog is handed what is left of it after the band's OTHER tenants, which are the footer's unconditional
+   *  row, the live-turn slot, the queue echo and the task panel.
+   *    ARITHMETIC RATHER THAN MEASUREMENT, and biased to over-reserve: measuring would cost a ref, an effect
+   *  and a frame of lag, while an over-reservation costs one row of diff. The task panel is the one term that
+   *  can be short — `todoPanelRows` assumes the single in-progress row TodoWrite's discipline produces — and
+   *  its error is a row of the dialog's chrome, which is why the reserve rounds up rather than down.
+   *    `undefined` OFF THE FULLSCREEN PATH: the main screen has no band and no cap, so nothing is windowed
+   *  there and every classic mount renders exactly what it always did. */
+  const dockDialogRows = (): number | undefined => {
+    if (!fullscreen) return undefined;
+    const others = 1                                                                    // the footer's row
+      + (state.busy || state.compacting ? 1 : 0)                                        // the live-turn slot
+      + state.queue.reduce((n, q) => n + userEchoLines(q.value, { width: queueWidth }).length, 0)
+      + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
+    return Math.max(0, dockCap(size.rows, true) - others);
+  };
+  /** THE OVERLAY CHAIN — every surface that replaces the composer, in precedence order. Extracted from the
+   *  dock in FSW T13 so ONE list of elements can be handed to either slot (see `seamActive` above): on the
+   *  main screen and for a parked decision it renders where it always did, directly above the footer; in
+   *  fullscreen a user-opened overlay is handed to the frame's seam slot instead. Nothing about the chain
+   *  itself moved — same arms, same order, same props. */
+  const overlayChain = (
+    // Wave-T T15: the head of the chain, above even the `?` overlay. `/yolo` is a request to stop being
+    // asked before dangerous commands run, and until it is answered nothing else may take the keyboard —
+    // this is the one dialog in the tree whose whole job is to be in the way.
+    state.bypassConsent.open
+        ? <BypassConsent onAccept={acceptBypassConsent} onRefuse={refuseBypassConsent}
+            {...(deps?.savePrefs ? { savePrefs: deps.savePrefs } : {})} {...(deps?.env ? { env: deps.env } : {})} />
+        : state.shortcutsOpen
+        ? <ShortcutsOverlay onClose={closeShortcuts} />
+        // F6 T14: `/help`'s dialog sits directly behind the `?` overlay — they render the SAME grid, and the
+        // one that was opened last is the one on screen. Both are USER surfaces (no parked decision under
+        // them), so this pair keeps the head of the chain.
+        : state.helpOpen
+        ? <HelpDialog commands={state.commandCatalog} onClose={closeHelp} rows={overlayRows()} columns={terminalColumns()} />
+        : transcriptOpen
+        // The ONLY route from the retained document to the pager: useChat's detailItems closure re-projects
+        // it at whichever detail projection the pager currently wants. ChatApp never projects detail itself
+        // and never owns show-all state — Ctrl-E is pager-local, Ctrl-O/Escape are all this arm decides.
+        // FSW T11: in fullscreen the pager has already drawn in the REGION (see `region` above) and this arm
+        // renders NOTHING — but it stays an arm rather than dropping out of the chain, because what it leaves
+        // empty is the composer's slot. That emptiness is the point: it is how the composer's `Chat` scope
+        // comes off the keymap stack, which is what stops Chat's `escape`/`ctrl+d` shadowing the pager's own
+        // exit and half-page keys. On the main screen the same emptiness arrives for free, from the pager
+        // itself occupying the slot.
+        ? (fullscreen ? null : <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} />)
+        : state.historyOpen
+        // CM59: the preview pane's side-by-side/stacked switch is a function of the live terminal width, read
+        // the same per-render way the composer's is so a resize reaches it on the next frame.
+        // `onExecute` is WRAPPED, and the wrapper is the in-session half of one gesture whose other half is
+        // useChat's (see `executeHistory`'s comment there). Running a prompt from the picker has to promote
+        // it in BOTH history lists the typed submit path promotes it in: the persisted log, which useChat
+        // re-appends to, and the composer's Up-arrow list, which is this app-scoped ref — a composer instance
+        // seeds it once and `submitTurn` pushes onto it thereafter. The composer is unmounted while this
+        // overlay is up, so the push lands on the ref and the remount right behind `setHistoryOpen(false)`
+        // reads it, which is the same machinery that already carries a draft across every dialog.
+        ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={(e) => { promoteExecuted(e); executeHistory(e); }} onCancel={closeHistorySearch} columns={terminalColumns} />
+        // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
+        // if the composer came back first, a prompt typed in that window would be cleared from the editor,
+        // sent, and refused by the host as busy — the user's text lost rather than queued.
+        //
+        // NB (F3, final review): every arm ABOVE this one — shortcuts/pager/history — still renders over a
+        // pending decision dialog too (state.pending is checked further below in this chain). That is an
+        // accepted oddity, not a new gap this fix introduces: the park is state-owned on the host, not
+        // reachable/answerable through the overlay, and closing the overlay remounts the dialog fresh via
+        // its `key={state.pending.toolUseID}` — so no answer can be lost, only its rendering briefly hidden.
+        : state.rewinding
+        ? <RestoringModal />
+        : state.rewindPicker.open
+          ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} rows={overlayRows()} columns={terminalColumns()} />
+          : state.bgPanelOpen
+            ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} columns={terminalColumns()} />
+            : state.effortDialog.open
+              // WAVE C TASK 11 (EP-C6) — the standalone `/effort` dialog. It slots HERE, between the bg panel
+              // and the model picker, and NOT after it: `modelPicker` and `settings` are deliberately
+              // adjacent (the Settings Model row hides SettingsDialog behind the picker and falls back
+              // through to it on close, see the settings arm below), so a new arm between them would break
+              // that handoff. Nothing hands off to or from this dialog — `/effort` is the only route in.
+              //   It is NOT in `paneOwned`: one row plus an optional caveat line is a fixed-height dialog,
+              // which is the other half of that partition (see the enumeration above it).
+              ? <EffortDialog level={state.effortDialog.level ?? "high"}
+                  {...(state.effortDialog.levels ? { levels: state.effortDialog.levels } : {})}
+                  defaultEffort={state.defaultEffort}
+                  {...(state.effortDialog.modelName !== undefined ? { modelName: state.effortDialog.modelName } : {})}
+                  {...(state.effortDialog.supported !== undefined ? { supported: state.effortDialog.supported } : {})}
+                  onConfirm={confirmEffort} onCancel={closeEffortDialog} />
+            : state.modelPicker.open
+              // F6 T11: `savePrefs` reaches the picker for the same reason it reaches SettingsDialog and
+              // ThemeDialog — Enter here writes the default model, and the write seam is injectable so a
+              // test never touches the real prefs file.
+              //
+              // WAVE R TASK 5 (qa2-10a) — `rows`/`columns` are Task 1's state, and every dialog in this chain
+              // that ACCEPTS them now gets them (ModelPicker, RewindPicker, SessionPicker, PlanDialog's height).
+              // They were declared and never passed, so each fell through to `Select`'s own
+              // `process.stdout.rows ?? 24` / `.columns ?? 80` defaults.
+              //
+              // WHY THAT MATTERS IS SINGLE-SOURCE-OF-TRUTH, NOT STALENESS (fix round 1 — the first version of
+              // this comment claimed the default was read "once, at mount, with no route back", which is
+              // false: a default parameter is re-evaluated on every render, and after Task 1 every SIGWINCH
+              // re-renders this tree). The real cost is that `process.stdout` is a SECOND source of size and
+              // an uninjectable one: `deps.columns`/`terminalRows()` is what the app, the composer and every
+              // test/frame-capture fixture treat as authoritative, and a dialog reading stdout behind its back
+              // silently ignores that pin — under `ink-testing-library` the fake stdout reports the runner's
+              // own geometry (and no `rows` at all), so the dialog and the composer disagree about the size of
+              // the same terminal. Threading the state is the whole fix: one size for the whole tree.
+              // WAVE S T12: `outputTokens`/`ackedAt` are the switch-confirm's gate inputs, both owned by
+              // useChat (`openModelPicker` reads the usage, `pickModel` stamps the ack) and threaded through
+              // here as plain state. The confirm itself is a STAGE OF THE PICKER, not a new arm in this
+              // chain — see ModelSwitchConfirm.tsx's header for why, and note that it therefore adds nothing
+              // to `paneOwned` above: `state.modelPicker.open` already covers the whole surface, and a
+              // fixed-height dialog does not belong in that set anyway.
+              ? <ModelPicker models={state.modelPicker.models} current={state.modelPicker.current} sessionModel={state.modelPicker.sessionModel}
+                  outputTokens={state.modelPicker.outputTokens} ackedAt={state.modelPicker.ackedAt} activeModel={state.modelPicker.activeModel}
+                  {...(state.effort ? { effort: state.effort } : {})} defaultEffort={state.defaultEffort} onEffortChange={applyEffort}
+                  onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} rows={overlayRows()} columns={terminalColumns()} />
+              // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
+              // in the order settings → permissions → theme → addDir (plan Global Constraints line 38);
+              // settings goes immediately after this modelPicker arm precisely so its Model row can reuse
+              // THIS SAME modelPicker overlay: opening it hides SettingsDialog behind it, closing it falls
+              // back through to state.settings.open still being true. PermissionsDialog needs no such
+              // handoff — its own "Add directory…" row EMBEDS AddDirDialog directly (PermissionsDialog.tsx's
+              // own header comment) rather than reaching for the top-level state.addDir slot below, which
+              // sits AFTER this arm and so would otherwise be unreachable while permissions stays open.
+              : state.settings.open
+                ? <SettingsDialog tab={state.settings.tab ?? "Config"} onTabChange={setSettingsTab}
+                    model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
+                    showTurnDuration={state.showTurnDuration} setShowTurnDuration={setShowTurnDuration}
+                    promptSuggestionEnabled={state.promptSuggestionEnabled} setPromptSuggestionEnabled={setPromptSuggestionEnabled}
+                    onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
+                    fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
+                    // WAVE S t5: the Config list is windowed now, so this dialog joins the set that is handed
+                    // Task 1's size state rather than falling through to `process.stdout` behind the app's
+                    // pin (the ModelPicker arm above spells the whole argument out).
+                    onOpenModelPicker={openModelPicker} savePrefs={deps?.savePrefs} rows={overlayRows()} columns={terminalColumns()} />
+                : state.permissions.open
+                ? <PermissionsDialog tab={state.permissions.tab ?? "Allow"} onTabChange={setPermissionsTab}
+                    denials={state.denials} cwd={cwd}
+                    fetchSettings={fetchPermSettings} fetchDirs={fetchPermDirs}
+                    addRule={addPermRule} removeRule={removePermRule} removeDir={removeWorkspaceDir}
+                    addDirValidate={addDirValidate} confirmAddDir={confirmAddDir} cancelAddDir={cancelAddDir}
+                    // WAVE S t6b: its rule and workspace lists are windowed now, so this dialog joins the set
+                    // that is handed Task 1's size state rather than falling through to `process.stdout` behind
+                    // the app's pin (the ModelPicker arm above spells the whole argument out).
+                    onDone={closePermissions} rows={overlayRows()} columns={terminalColumns()} />
+                : state.themeDialog.open
+                ? <ThemeDialog onDone={closeThemeDialog} savePrefs={deps?.savePrefs} />
+                : state.addDir.open
+                  ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
+                  : state.picker.open
+                  ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker}
+                      loadMessages={previewSession} renameSession={renamePickedSession} reload={reloadSessions}
+                      hasWorktree={state.picker.hasWorktree} rows={overlayRows()} columns={terminalColumns()} />
+                  // F6 TASK 5 (t5-fix) — THE COMPOSER'S SLOT IS EMPTY WHILE A DIALOG IS VISIBLE. `owner ===
+                  // "decision"` is exactly upstream's `on === "visible"` (a decision is parked, no overlay is
+                  // over it, and the draft is idle), and `KVf`'s gate at L549494 renders no prompt input in
+                  // that state. The inline kinds have already drawn above this slot; exit-plan-mode — the one
+                  // `layout:"modal"` entry in `ypi` (L507338) — draws HERE, in the modal slot, which in this
+                  // single-column tree is the same place the composer would have been. `key = toolUseID` for
+                  // the reason the inline pair carries it: dropPending promotes the NEXT queued decision
+                  // straight into `pending` with no intermediate null render, and a reused instance would
+                  // carry stale scroll/feedback state into an unrelated decision.
+                  : inputOwnerRef.current === "decision"
+                  ? state.pending?.kind === "plan"
+                    // `model`/`bypassAvailable` decide WHICH of upstream's one-of approval arms the dialog can
+                    // offer (Wave T t10). The launch mode is the bypass source because resolveOptions.ts:67
+                    // sets `allowDangerouslySkipPermissions` from exactly that — a session that did not launch
+                    // in bypass cannot be granted it. `state.model` is undefined on an attach client until a
+                    // turn ends, which PlanDialog reads as "auto not available".
+                    // T13b: `rows` is the height it may SIZE against and `maxRows` the ceiling it may not
+                    // compose past. In the seam they are the same number; on the main screen there is no
+                    // ceiling at all, which is what keeps the classic dialog byte-identical.
+                    ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)}
+                        model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} rows={overlayRows()}
+                        {...(fullscreen ? { maxRows: overlayRows() } : {})}
+                        // I1: ctrl+g from this dialog is the same terminal handoff the composer's is.
+                        {...(editExternalHere ? { editor: editExternalHere } : {})} />
+                    : null
+                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} onInputActivity={noteInputActivity} waitingForPermission={inputOwnerRef.current === "typing"} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
+                      // F5 t12: the composer's disk seed, its history append and now its inline search all
+                      // read this. Threaded from `deps.env` — the same source useChat's own `historyEnv`
+                      // takes — so a test that points ChatApp at a temp fleet root points BOTH surfaces
+                      // there. Undefined in the product, where the composer falls back to `process.env`.
+                      historyEnv={deps?.env}
+                      // FSW T12 review (I1): ctrl+g / ctrl+x ctrl+e inside the alt screen. Present on every
+                      // product launch — a main-screen one gets the same wrapper around an UNARMED guard, which
+                      // is inert — and absent only where no guard was handed down at all (embedders, component
+                      // tests), where the composer keeps its own `realEditExternal`.
+                      {...(editExternalHere ? { editExternal: editExternalHere } : {})}
+                      queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
+                      submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef}
+                      // WAVE C TASK 2: one queue for the whole app (useChat owns it), and the composer's
+                      // footer-state channel. Both are how the one-row footer and the one-row overlay stay
+                      // in sync with a component that unmounts behind every dialog.
+                      notifications={notifications} onFooterState={setFooterState} onSuggestOpen={setSuggestOpen}
+                      // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
+                      // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
+                      // arm clock every double-press in this tree shares.
+                      clearDraftToken={clearDraftToken} consumedClearTokenRef={consumedClearTokenRef} onOpenAgents={openBgPanel} doublePressDeps={doublePressDeps}
+                      // WAVE C TASK 12 (EP-C5): the suggestion's text down, and the composer's two facts back
+                      // up — whether it could paint one right now, and that a key accepted it. The SLICE stays
+                      // in useChat (it has to survive this component's remounts and Ctrl-C's buffer clear).
+                      // `suggestionEnabled` is the SAME setting one rung down: it also gates the first-run
+                      // `Try "…"` template (upstream's L1542 rule), so with suggestions off by default a fresh
+                      // ccx session shows no template either — recorded in the spec as an accepted change.
+                      suggestion={suggestionText(state.promptSuggestion)} suggestionEnabled={state.promptSuggestionEnabled}
+                      onSuggestionSlot={noteSuggestionSlot} onSuggestionAccept={acceptSuggestion} />
+  );
   const dock = (
     <>
       {todosOpen && !paneOwned ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
@@ -1077,188 +1340,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           // the cwd plus every `/add-dir` grant — which is what the file body's in-directory test runs over
           // (F6 T7 fix; without it an Edit under an added directory reads as out-of-directory and its grant
           // re-adds a directory the session already holds).
-          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} directories={state.workDirs} onDecision={(d) => resolveDecision(d)} />
+          // `maxRows` is the dock band's remaining rows (T13b), present in fullscreen only — see
+          // `dockDialogRows`. Without it a long diff pushed the question and every option off the frame.
+          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} directories={state.workDirs} onDecision={(d) => resolveDecision(d)}
+              {...(fullscreen ? { maxRows: dockDialogRows() } : {})} />
         : null}
-      {/* Wave-T T15: the head of the chain, above even the `?` overlay. `/yolo` is a request to stop being
-          asked before dangerous commands run, and until it is answered nothing else may take the keyboard —
-          this is the one dialog in the tree whose whole job is to be in the way. */}
-      {state.bypassConsent.open
-        ? <BypassConsent onAccept={acceptBypassConsent} onRefuse={refuseBypassConsent}
-            {...(deps?.savePrefs ? { savePrefs: deps.savePrefs } : {})} {...(deps?.env ? { env: deps.env } : {})} />
-        : state.shortcutsOpen
-        ? <ShortcutsOverlay onClose={closeShortcuts} />
-        // F6 T14: `/help`'s dialog sits directly behind the `?` overlay — they render the SAME grid, and the
-        // one that was opened last is the one on screen. Both are USER surfaces (no parked decision under
-        // them), so this pair keeps the head of the chain.
-        : state.helpOpen
-        ? <HelpDialog commands={state.commandCatalog} onClose={closeHelp} rows={terminalRows()} columns={terminalColumns()} />
-        : transcriptOpen
-        // The ONLY route from the retained document to the pager: useChat's detailItems closure re-projects
-        // it at whichever detail projection the pager currently wants. ChatApp never projects detail itself
-        // and never owns show-all state — Ctrl-E is pager-local, Ctrl-O/Escape are all this arm decides.
-        // FSW T11: in fullscreen the pager has already drawn in the REGION (see `region` above) and this arm
-        // renders NOTHING — but it stays an arm rather than dropping out of the chain, because what it leaves
-        // empty is the composer's slot. That emptiness is the point: it is how the composer's `Chat` scope
-        // comes off the keymap stack, which is what stops Chat's `escape`/`ctrl+d` shadowing the pager's own
-        // exit and half-page keys. On the main screen the same emptiness arrives for free, from the pager
-        // itself occupying the slot.
-        ? (fullscreen ? null : <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} />)
-        : state.historyOpen
-        // CM59: the preview pane's side-by-side/stacked switch is a function of the live terminal width, read
-        // the same per-render way the composer's is so a resize reaches it on the next frame.
-        // `onExecute` is WRAPPED, and the wrapper is the in-session half of one gesture whose other half is
-        // useChat's (see `executeHistory`'s comment there). Running a prompt from the picker has to promote
-        // it in BOTH history lists the typed submit path promotes it in: the persisted log, which useChat
-        // re-appends to, and the composer's Up-arrow list, which is this app-scoped ref — a composer instance
-        // seeds it once and `submitTurn` pushes onto it thereafter. The composer is unmounted while this
-        // overlay is up, so the push lands on the ref and the remount right behind `setHistoryOpen(false)`
-        // reads it, which is the same machinery that already carries a draft across every dialog.
-        ? <HistorySearchOverlay load={loadHistory} onAccept={acceptHistory} onExecute={(e) => { promoteExecuted(e); executeHistory(e); }} onCancel={closeHistorySearch} columns={terminalColumns} />
-        // A confirmed rewind takes seconds (file restore + engine swap). Hold a modal until it settles:
-        // if the composer came back first, a prompt typed in that window would be cleared from the editor,
-        // sent, and refused by the host as busy — the user's text lost rather than queued.
-        //
-        // NB (F3, final review): every arm ABOVE this one — shortcuts/pager/history — still renders over a
-        // pending decision dialog too (state.pending is checked further below in this chain). That is an
-        // accepted oddity, not a new gap this fix introduces: the park is state-owned on the host, not
-        // reachable/answerable through the overlay, and closing the overlay remounts the dialog fresh via
-        // its `key={state.pending.toolUseID}` — so no answer can be lost, only its rendering briefly hidden.
-        : state.rewinding
-        ? <RestoringModal />
-        : state.rewindPicker.open
-          ? <RewindPicker anchors={state.rewindPicker.anchors} onDryRun={rewindDryRun} onConfirm={confirmRewind} onClose={closeRewindPicker} rows={terminalRows()} columns={terminalColumns()} />
-          : state.bgPanelOpen
-            ? <BgTasksPanel tasks={state.bgRows} onStop={stopBgTask} onClose={closeBgPanel} columns={terminalColumns()} />
-            : state.effortDialog.open
-              // WAVE C TASK 11 (EP-C6) — the standalone `/effort` dialog. It slots HERE, between the bg panel
-              // and the model picker, and NOT after it: `modelPicker` and `settings` are deliberately
-              // adjacent (the Settings Model row hides SettingsDialog behind the picker and falls back
-              // through to it on close, see the settings arm below), so a new arm between them would break
-              // that handoff. Nothing hands off to or from this dialog — `/effort` is the only route in.
-              //   It is NOT in `paneOwned`: one row plus an optional caveat line is a fixed-height dialog,
-              // which is the other half of that partition (see the enumeration above it).
-              ? <EffortDialog level={state.effortDialog.level ?? "high"}
-                  {...(state.effortDialog.levels ? { levels: state.effortDialog.levels } : {})}
-                  defaultEffort={state.defaultEffort}
-                  {...(state.effortDialog.modelName !== undefined ? { modelName: state.effortDialog.modelName } : {})}
-                  {...(state.effortDialog.supported !== undefined ? { supported: state.effortDialog.supported } : {})}
-                  onConfirm={confirmEffort} onCancel={closeEffortDialog} />
-            : state.modelPicker.open
-              // F6 T11: `savePrefs` reaches the picker for the same reason it reaches SettingsDialog and
-              // ThemeDialog — Enter here writes the default model, and the write seam is injectable so a
-              // test never touches the real prefs file.
-              //
-              // WAVE R TASK 5 (qa2-10a) — `rows`/`columns` are Task 1's state, and every dialog in this chain
-              // that ACCEPTS them now gets them (ModelPicker, RewindPicker, SessionPicker, PlanDialog's height).
-              // They were declared and never passed, so each fell through to `Select`'s own
-              // `process.stdout.rows ?? 24` / `.columns ?? 80` defaults.
-              //
-              // WHY THAT MATTERS IS SINGLE-SOURCE-OF-TRUTH, NOT STALENESS (fix round 1 — the first version of
-              // this comment claimed the default was read "once, at mount, with no route back", which is
-              // false: a default parameter is re-evaluated on every render, and after Task 1 every SIGWINCH
-              // re-renders this tree). The real cost is that `process.stdout` is a SECOND source of size and
-              // an uninjectable one: `deps.columns`/`terminalRows()` is what the app, the composer and every
-              // test/frame-capture fixture treat as authoritative, and a dialog reading stdout behind its back
-              // silently ignores that pin — under `ink-testing-library` the fake stdout reports the runner's
-              // own geometry (and no `rows` at all), so the dialog and the composer disagree about the size of
-              // the same terminal. Threading the state is the whole fix: one size for the whole tree.
-              // WAVE S T12: `outputTokens`/`ackedAt` are the switch-confirm's gate inputs, both owned by
-              // useChat (`openModelPicker` reads the usage, `pickModel` stamps the ack) and threaded through
-              // here as plain state. The confirm itself is a STAGE OF THE PICKER, not a new arm in this
-              // chain — see ModelSwitchConfirm.tsx's header for why, and note that it therefore adds nothing
-              // to `paneOwned` above: `state.modelPicker.open` already covers the whole surface, and a
-              // fixed-height dialog does not belong in that set anyway.
-              ? <ModelPicker models={state.modelPicker.models} current={state.modelPicker.current} sessionModel={state.modelPicker.sessionModel}
-                  outputTokens={state.modelPicker.outputTokens} ackedAt={state.modelPicker.ackedAt} activeModel={state.modelPicker.activeModel}
-                  {...(state.effort ? { effort: state.effort } : {})} defaultEffort={state.defaultEffort} onEffortChange={applyEffort}
-                  onPick={pickModel} onCancel={closeModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
-              // W3 T4/T5/T7: the four new settings-surface dialogs slot HERE, between modelPicker and picker,
-              // in the order settings → permissions → theme → addDir (plan Global Constraints line 38);
-              // settings goes immediately after this modelPicker arm precisely so its Model row can reuse
-              // THIS SAME modelPicker overlay: opening it hides SettingsDialog behind it, closing it falls
-              // back through to state.settings.open still being true. PermissionsDialog needs no such
-              // handoff — its own "Add directory…" row EMBEDS AddDirDialog directly (PermissionsDialog.tsx's
-              // own header comment) rather than reaching for the top-level state.addDir slot below, which
-              // sits AFTER this arm and so would otherwise be unreachable while permissions stays open.
-              : state.settings.open
-                ? <SettingsDialog tab={state.settings.tab ?? "Config"} onTabChange={setSettingsTab}
-                    model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
-                    showTurnDuration={state.showTurnDuration} setShowTurnDuration={setShowTurnDuration}
-                    promptSuggestionEnabled={state.promptSuggestionEnabled} setPromptSuggestionEnabled={setPromptSuggestionEnabled}
-                    onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
-                    fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
-                    // WAVE S t5: the Config list is windowed now, so this dialog joins the set that is handed
-                    // Task 1's size state rather than falling through to `process.stdout` behind the app's
-                    // pin (the ModelPicker arm above spells the whole argument out).
-                    onOpenModelPicker={openModelPicker} savePrefs={deps?.savePrefs} rows={terminalRows()} columns={terminalColumns()} />
-                : state.permissions.open
-                ? <PermissionsDialog tab={state.permissions.tab ?? "Allow"} onTabChange={setPermissionsTab}
-                    denials={state.denials} cwd={cwd}
-                    fetchSettings={fetchPermSettings} fetchDirs={fetchPermDirs}
-                    addRule={addPermRule} removeRule={removePermRule} removeDir={removeWorkspaceDir}
-                    addDirValidate={addDirValidate} confirmAddDir={confirmAddDir} cancelAddDir={cancelAddDir}
-                    // WAVE S t6b: its rule and workspace lists are windowed now, so this dialog joins the set
-                    // that is handed Task 1's size state rather than falling through to `process.stdout` behind
-                    // the app's pin (the ModelPicker arm above spells the whole argument out).
-                    onDone={closePermissions} rows={terminalRows()} columns={terminalColumns()} />
-                : state.themeDialog.open
-                ? <ThemeDialog onDone={closeThemeDialog} savePrefs={deps?.savePrefs} />
-                : state.addDir.open
-                  ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
-                  : state.picker.open
-                  ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker}
-                      loadMessages={previewSession} renameSession={renamePickedSession} reload={reloadSessions}
-                      hasWorktree={state.picker.hasWorktree} rows={terminalRows()} columns={terminalColumns()} />
-                  // F6 TASK 5 (t5-fix) — THE COMPOSER'S SLOT IS EMPTY WHILE A DIALOG IS VISIBLE. `owner ===
-                  // "decision"` is exactly upstream's `on === "visible"` (a decision is parked, no overlay is
-                  // over it, and the draft is idle), and `KVf`'s gate at L549494 renders no prompt input in
-                  // that state. The inline kinds have already drawn above this slot; exit-plan-mode — the one
-                  // `layout:"modal"` entry in `ypi` (L507338) — draws HERE, in the modal slot, which in this
-                  // single-column tree is the same place the composer would have been. `key = toolUseID` for
-                  // the reason the inline pair carries it: dropPending promotes the NEXT queued decision
-                  // straight into `pending` with no intermediate null render, and a reused instance would
-                  // carry stale scroll/feedback state into an unrelated decision.
-                  : inputOwnerRef.current === "decision"
-                  ? state.pending?.kind === "plan"
-                    // `model`/`bypassAvailable` decide WHICH of upstream's one-of approval arms the dialog can
-                    // offer (Wave T t10). The launch mode is the bypass source because resolveOptions.ts:67
-                    // sets `allowDangerouslySkipPermissions` from exactly that — a session that did not launch
-                    // in bypass cannot be granted it. `state.model` is undefined on an attach client until a
-                    // turn ends, which PlanDialog reads as "auto not available".
-                    ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)}
-                        model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} rows={terminalRows()}
-                        // I1: ctrl+g from this dialog is the same terminal handoff the composer's is.
-                        {...(editExternalHere ? { editor: editExternalHere } : {})} />
-                    : null
-                  : <ChatComposer onSubmit={(t) => { submit(t); disarm(); }} cwd={cwd} commandCatalog={state.commandCatalog} onExit={exit} onCycleMode={onCycleMode} onInterrupt={onInterrupt} onHelp={openShortcuts} onDraftStart={disarmEsc} onInputActivity={noteInputActivity} waitingForPermission={inputOwnerRef.current === "typing"} inputOwnerRef={inputOwnerRef} editorStateRef={editorStateRef} consumedPrefillTokenRef={consumedPrefillTokenRef} searchHintFiredRef={searchHintFiredRef} prefill={state.composerPrefill} onPrefillApplied={clearPrefill} onKillAgents={killAgents} yankHintMs={yankHintMs} busy={state.busy} escClearMs={escClearMs} columns={terminalColumns} rows={terminalRows} sessionId={state.sessionId} project={cwd}
-                      // F5 t12: the composer's disk seed, its history append and now its inline search all
-                      // read this. Threaded from `deps.env` — the same source useChat's own `historyEnv`
-                      // takes — so a test that points ChatApp at a temp fleet root points BOTH surfaces
-                      // there. Undefined in the product, where the composer falls back to `process.env`.
-                      historyEnv={deps?.env}
-                      // FSW T12 review (I1): ctrl+g / ctrl+x ctrl+e inside the alt screen. Present on every
-                      // product launch — a main-screen one gets the same wrapper around an UNARMED guard, which
-                      // is inert — and absent only where no guard was handed down at all (embedders, component
-                      // tests), where the composer keeps its own `realEditExternal`.
-                      {...(editExternalHere ? { editExternal: editExternalHere } : {})}
-                      queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
-                      submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef}
-                      // WAVE C TASK 2: one queue for the whole app (useChat owns it), and the composer's
-                      // footer-state channel. Both are how the one-row footer and the one-row overlay stay
-                      // in sync with a component that unmounts behind every dialog.
-                      notifications={notifications} onFooterState={setFooterState} onSuggestOpen={setSuggestOpen}
-                      // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
-                      // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
-                      // arm clock every double-press in this tree shares.
-                      clearDraftToken={clearDraftToken} consumedClearTokenRef={consumedClearTokenRef} onOpenAgents={openBgPanel} doublePressDeps={doublePressDeps}
-                      // WAVE C TASK 12 (EP-C5): the suggestion's text down, and the composer's two facts back
-                      // up — whether it could paint one right now, and that a key accepted it. The SLICE stays
-                      // in useChat (it has to survive this component's remounts and Ctrl-C's buffer clear).
-                      // `suggestionEnabled` is the SAME setting one rung down: it also gates the first-run
-                      // `Try "…"` template (upstream's L1542 rule), so with suggestions off by default a fresh
-                      // ccx session shows no template either — recorded in the spec as an accepted change.
-                      suggestion={suggestionText(state.promptSuggestion)} suggestionEnabled={state.promptSuggestionEnabled}
-                      onSuggestionSlot={noteSuggestionSlot} onSuggestionAccept={acceptSuggestion} />}
+      {seamActive ? null : overlayChain}
       {/* WAVE C TASK 2 (EP-C1b) — ONE FOOTER ROW, where `ChatStatusBar` and two armed-hint rows used to be.
           It stays UNCONDITIONAL, exactly as the status bar was, because three dialog height budgets count it
           as their one unconditional sibling (`rewindModel.REWIND_CHROME_ROWS` and the two dialog constants
@@ -1315,7 +1402,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // because ccx has two of them and they live on opposite sides of the dock: `/history`'s overlay replaces the
   // composer (it is one of the dialog arms above), while ctrl+r's inline search grows the composer in place
   // (`footerState.searching`, the composer's own report). Both are the same claim — the search results ARE the
-  // content while they are up — so both earn the wider cap.
-  if (fullscreen) return <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching} regionChildren={region} dock={dock} />;
+  // content while they are up — so both earn the wider cap. Since T13 the FIRST of the two is a seam surface
+  // and takes `seamCap`'s identical `rows − 2` from the other side; the flag stays because the composer's
+  // inline search is still a dock that has to grow.
+  //   THE DOCK IS STILL PASSED WHILE THE SEAM IS UP, and the frame ignores it — canon's overlay is `opaque`
+  // over the dock rather than instead of it, and keeping the prop shaped that way is what lets the frame own
+  // the "occlusion is omission" decision in one place (FullscreenFrame's header) instead of two.
+  if (fullscreen) return <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching} dialogInDock={inlineDecision !== null} regionChildren={region} dock={dock} seam={seamActive ? overlayChain : null} />;
   return <Box flexDirection="column">{region}{dock}</Box>;
 }

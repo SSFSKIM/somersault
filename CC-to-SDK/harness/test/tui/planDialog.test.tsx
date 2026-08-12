@@ -17,7 +17,7 @@ import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { join } from "node:path";
 import {
   PlanDialog, planOptions, planGrant, SHIFT_TAB_HINT, SAVED_FLASH_MS, SCROLL_HINT,
-  EMPTY_PLAN_TITLE, EMPTY_PLAN_BODY, optionBoxRows, planWindow, planRegionRows,
+  EMPTY_PLAN_TITLE, EMPTY_PLAN_BODY, optionBoxRows, planWindow, planRegionRows, planLayout,
 } from "../../src/tui/PlanDialog.js";
 // Moved out of PlanDialog by t17, when the file dialog's write body became its second consumer.
 import { DASHED_BORDER } from "../../src/tui/boxStyles.js";
@@ -261,6 +261,74 @@ describe("<PlanDialog> — the plan body's dashed rules (`SM` L424994-425003, mo
     // exists. Pinned as arithmetic so a rule added to the body can never be paid for out of the plan's rows.
     expect(planRegionRows(40, opts, true, false)).toBe(40 - optionBoxRows(opts, true) - 12);
     expect(planRegionRows(40, opts, true, true)).toBe(40 - optionBoxRows(opts, true) - 13);
+  });
+});
+
+// ── FSW T13b — THE INVERSION UNDER A HARD BUDGET ───────────────────────────────────────────────────────
+// In the fullscreen seam this dialog is handed a ceiling (`Q0r = rows − 3`) and everything past it is clipped
+// off the bottom of the frame — which is the OPTION BOX, every answer the dialog exists to collect. The T13
+// review measured options 2–3 gone at 18 rows and the whole block gone at 14, because the composed height was
+// a constant eighteen whatever it was handed. So under a budget the arithmetic runs the other way: the option
+// box is reserved and the plan windows into what is left, shedding its decorations before an option row and
+// the ctrl+g detour before the option box itself.
+describe("<PlanDialog> — the row budget (T13b)", () => {
+  const opts = planOptions({ autoAvailable: false, bypassAvailable: false });
+  const optionBox = optionBoxRows(opts, true);            // 9 with the ctrl+g row, 7 without
+
+  it("reserves the option box first and gives the plan the remainder", () => {
+    // 24 rows in the seam → a 21-row budget: 3 frame rows + 5 body decorations + 9 option rows, plan takes 4.
+    expect(planLayout(21, opts, true, false)).toEqual({ region: 21 - 3 - optionBox - 5, decorated: true, hint: true });
+  });
+
+  it("spends the plan's DECORATIONS before it spends an option row", () => {
+    // 18 rows → 15. The label, the two dashed rules and the margins do not fit; the option box still must.
+    expect(planLayout(15, opts, true, false)).toEqual({ region: 15 - 3 - optionBox, decorated: false, hint: true });
+  });
+
+  it("spends the ctrl+g row before the option box, and never the option box itself", () => {
+    // 14 rows → 11, which is one row short of the frame plus the option box WITH its detour row.
+    const tight = planLayout(11, opts, true, false);
+    expect(tight.hint).toBe(false);
+    expect(tight.decorated).toBe(false);
+    expect(tight.region).toBe(11 - 3 - optionBoxRows(opts, false));
+    expect(tight.region).toBeGreaterThanOrEqual(1);                          // …and the plan keeps a row
+  });
+
+  it("floors the region at one row — the marker ALONE, never a clipped option box", () => {
+    expect(planLayout(4, opts, true, false).region).toBe(1);
+    expect(planWindow(1, 30)).toBe(0);                                       // …spent on the marker, not a line
+  });
+
+  it("a consent line is chrome too, and comes out of the plan's rows", () => {
+    expect(planLayout(21, opts, true, true).region).toBe(planLayout(21, opts, true, false).region - 1);
+  });
+
+  for (const [budget, rows] of [[21, 24], [15, 18], [11, 14]] as const) {
+    it(`composes into ${budget} rows at a ${rows}-row pane with the whole option box on screen`, async () => {
+      const longPlan = Array.from({ length: 30 }, (_, i) => `- line ${i}`).join("\n");
+      const { lastFrame } = mount({ req: { input: { plan: longPlan } }, rows, maxRows: budget });
+      await waitFor(() => frame(lastFrame).includes("Would you like to proceed?"));
+      const f = frame(lastFrame);
+      expect(f.split("\n")).toHaveLength(budget);
+      expect(f).toContain("1. Yes, auto-accept edits");
+      expect(f).toContain("2. Yes, manually approve edits");
+      expect(f).toContain("Tell Claude what to change");
+      expect(f).toMatch(/\+\d+ more lines/);                                 // the plan is windowed, not clipped
+    });
+  }
+
+  // THE CLASSIC PIN. No budget, no ladder: the same dialog the whole suite above measures, decorations and
+  // ctrl+g row intact, sized by `planRegionRows` off the TERMINAL exactly as it was before this task.
+  it("renders byte-identically with no budget — the main screen is untouched", async () => {
+    const longPlan = Array.from({ length: 30 }, (_, i) => `- line ${i}`).join("\n");
+    const budgeted = mount({ req: { input: { plan: longPlan } }, rows: 40 });
+    await waitFor(() => frame(budgeted.lastFrame).includes("line 0"));
+    const f = frame(budgeted.lastFrame);
+    expect(f).toContain("Here is Claude's plan:");
+    expect(f.split("\n").filter((r) => r.includes("╌╌╌"))).toHaveLength(2);
+    expect(f).toContain("ctrl+g to edit in vim");
+    // …and the plan region is still `planRegionRows`' answer, not a budget's.
+    expect(f.split("\n").filter((r) => /^ - line \d+$/.test(r))).toHaveLength(planRegionRows(40, opts, true, false) - 1);
   });
 });
 
@@ -511,7 +579,11 @@ describe("<PlanDialog> — pure geometry and literal pins (T9-fix 4/5/6)", () =>
     expect(planWindow(10, 9)).toBe(10);          // fits
     expect(planWindow(10, 10)).toBe(10);         // fits exactly — no marker, no clip
     expect(planWindow(10, 11)).toBe(9);          // one over: the marker earns its row
-    expect(planWindow(1, 5)).toBe(1);            // never collapses to zero
+    // T13b: a ONE-ROW region spends it on the marker, not on the first of thirty lines. Unreachable on the
+    // unbudgeted path (`planRegionRows` floors the region at three) and the whole point of the budgeted one —
+    // "if the remainder is no rows of content, show the marker alone rather than clip the chrome".
+    expect(planWindow(1, 5)).toBe(0);
+    expect(planWindow(2, 5)).toBe(1);            // …and two rows are a line AND its marker
   });
 
   // The off-by-one, pinned against the REAL geometry rather than a guessed constant: one list item renders as

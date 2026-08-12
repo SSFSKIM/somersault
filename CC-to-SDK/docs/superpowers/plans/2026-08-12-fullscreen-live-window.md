@@ -334,6 +334,46 @@ squeezed above — grounding §L2.6 "Two overlay mechanisms, not one"). Test
   above, slot ≤ `rows−2`; classic rendering of the same surfaces unchanged.
 - [ ] **Step 2:** implement. Commit `f5(fsw-t13): one seam for pickers, and dialogs take the dock — both canon mechanisms`.
 
+### Task 13b: Honest row budgets for dock and seam tenants (inserted from the T13 review, 2026-08-13)
+
+The T13 review measured three places where a surface's row budget exceeds the rows that paint,
+and one place where fullscreen erases the signs a turn is running. The permission case is
+BLOCKING for the wave: at 24 AND 40 rows, a permission dialog with a long diff shows the diff
+mid-clip with the question, all options, and `Esc to cancel` off-screen — and the held dock
+divergence (dialogs pinned in the dock band, not canon's scrollable) removes the only scroll
+path that could reveal them. The user would be authorising an edit they cannot see.
+
+**Files:** Modify `src/tui/PermissionDialog.tsx` (+ the diff-rendering child under
+`src/tui/dialogs/` if split there), `src/tui/PlanDialog.tsx` (`planRegionRows` :177 floors the
+plan region at max(3,…) but nothing shrinks the whole dialog to a budget — below ~21 rows it
+composes to a fixed 18 and the OPTION BOX falls off), `src/tui/ChatApp.tsx` (`overlayRows()`
+:1076; the paneOwned blanking :1029), `src/tui/FullscreenFrame.tsx` (seam rule styling).
+Tests: extend `test/tui/fullscreen-overlays.test.tsx`.
+
+- [ ] **Step 1 — the budget inversion (Critical + Important 2):** dialogs that render inside a
+  row budget must shrink their CONTENT, never their chrome: reserve the question, the full
+  option box, and the hint/cancel rows first; window the diff (permission) / plan body (plan)
+  into whatever remains, with a `… +N more lines` marker INSIDE the windowed region (a marker
+  after the content would itself clip). Red-first at 24 and 40 rows for permission (question +
+  all options + Esc row visible with a 25-line diff), and at 14/18/24 rows for the plan dialog
+  (option box always visible; T13 review measured the option block gone at 14, options 2–3
+  gone at 18). Both components are classic-shared: classic (no budget / tall budget) renders
+  byte-identically — pin one classic case each.
+- [ ] **Step 2 — the off-by-one (Important 1):** `overlayRows()` fullscreen arm becomes
+  `seamCap(size.rows) - 1` — the `▔` rule is charged against the cap, so the slot paints
+  `seamCap − 1` content rows (canon hands down `rows − 3`: Q0r = Wbt − aIr − 1, aIr = 2, bundle
+  L456240). Update the seam tests' literals accordingly.
+- [ ] **Step 3 — live signals under the seam (Important 3):** gate the `paneOwned` blanking of
+  `pendingItems`/`streaming` on `!fullscreen` (ChatApp :1029) so an open overlay mid-turn keeps
+  the spinner/stream visible in the region (canon keeps its spinner in `scrollable`, above the
+  absolute overlay, never occluded). Red-first: `/model` open mid-turn in fullscreen → the
+  region still shows the streaming/pending tail.
+- [ ] **Step 4 — seam rule colour (T13 review Minor 1):** canon paints the `▔` rule
+  `color:"permission"` and NOT dimmed (Sg, bundle L183955, refuting the T13 report's
+  "unknowable" residual). Match it. Also add the missing positive assertion to the
+  plan-crossing test (the plan DID page: assert on its `… +N more lines` marker moving).
+- [ ] **Step 5:** commit `f5(fsw-t13b): what a dialog cannot shrink, it must not clip`.
+
 ### Task 14: Fullscreen surface deltas (D1, D10-D14)
 
 **Files:** Modify `src/tui/Footer.tsx` (D1: fullscreen && configured && text empty/undefined →
