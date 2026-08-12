@@ -39,16 +39,53 @@
 // `thread/capabilities/changed` after replying — the same ping router.ts's routeCapabilities sends for an
 // engine-pushed commands list (spec: "fresh init payload -> also refreshes the capabilities mirror").
 import { ERR } from "./rpc.js";
+import type { RequestId } from "./rpc.js";
 import { beginTurn } from "./turns.js";
-import { threadBusyReason } from "./registry.js";
-import type { AppServer, Handler } from "./server.js";
+import { replyEngineThrow } from "./engineThrow.js";
+import { threadBusyReason, type ThreadRecord } from "./registry.js";
+import type { AppServer, ConnCtx, Handler } from "./server.js";
 import { threadCompactStartParams, threadReinitializeParams } from "./schema/threads.js";
+
+const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors settings.ts/mcp.ts — registry.ts's `updatedAt` is unix seconds
+
+/** `thread/compact/start` on a FLEET thread — spec §1d's RECORDED DEVIATION, and the one place this
+ *  bridge is deliberately not transparent.
+ *
+ *  Everything the inProcess arm below does with the turn machinery is wrong for this origin. The host's
+ *  `compact` op runs no turn: it emits no `turn` events and, crucially, leaves the host PROMPTABLE while
+ *  the summarization runs — any client of that host can start a real turn mid-compact. Claiming a turn
+ *  here would therefore (a) fabricate busy state no other client of that session observes, (b) mint a
+ *  local `turn_<thread>_<n>` id onto a thread whose turn ids are DERIVED from the host seq
+ *  (`fleetTurnId`), and (c) put a second lifecycle owner beside the fleet event layer, which §1b makes
+ *  the sole one — two owners racing `record.busy` for one thread. So: no busy gate, no claim, no
+ *  `turn/started`/`turn/completed`. The reply is the host's own receipt.
+ *
+ *  UN-CHAINED, unlike this file's `thread/reinitialize`: a compaction is routinely 30-120 s
+ *  (fleetEngine.ts's own deadline is 300 s), and parking `record.chain` behind it would stall every
+ *  chain-scoped op on the thread — a mid-compact `thread/model/set` would hang for minutes for no reason,
+ *  since nothing here mutates local state the chain protects.
+ *
+ *  `thread/compacted` still goes out, off the op's own OUTCOME. Spec §1d expected the frame router to
+ *  carry it (from the `system/compact_boundary` frame), but M2b retired that route for the reason
+ *  router.ts records — a boundary marker is not a verdict — so the notification would otherwise never
+ *  fire for this origin. It carries no `turnId`: there is no turn to name, which is the deviation stated
+ *  in the payload rather than only in prose. */
+function fleetCompact(srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord): void {
+  record.session.compact!().then((outcome) => {
+    record.updatedAt = nowSec();
+    ctx.peer.reply(id, { ok: true, outcome });
+    srv.broadcast(record.id, "thread/compacted", { threadId: record.id, outcome });
+  }, (e: unknown) => {
+    replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
+  });
+}
 
 export const threadCompactStart: Handler = (srv: AppServer, ctx, id, params) => {
   const parsed = threadCompactStartParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  if (record.origin === "fleet") { fleetCompact(srv, ctx, id, record); return; }
   // NOT `async` — same reasoning as turns.ts's turnStart runner: a plain function lets compact()
   // throwing SYNCHRONOUSLY propagate synchronously into beginTurn's try/catch (reportFailed), rather than
   // being absorbed into a rejected promise that would route through onFailure instead.

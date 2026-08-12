@@ -96,7 +96,12 @@ export const mcpToggle: Handler = (srv, ctx, id, params) => {
     if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }
     try {
       await fn(parsed.data.name, parsed.data.enabled);
-      record.mcpToggles[parsed.data.name] = parsed.data.enabled; // COMMIT-AFTER-ACCEPT — see the module header
+      // COMMIT-AFTER-ACCEPT — see the module header. NOT on a fleet thread (M3 §1b, Task 10): the
+      // accumulator exists to be REPLAYED by `repushThreadState` across a local engine swap, and this
+      // origin never performs one (the host owns its engine and replays its own state across its own
+      // swaps). A row written here would be state this server keeps, can never use, and would hand to a
+      // replay path that only ever runs for the other origin.
+      if (record.origin !== "fleet") record.mcpToggles[parsed.data.name] = parsed.data.enabled;
       record.updatedAt = nowSec();
       ctx.peer.reply(id, { ok: true });
       pingCapabilities(srv, record.id); // an enabled/disabled server is a different capabilities catalog

@@ -39,6 +39,22 @@ function broadcastSettings(srv: AppServer, record: ThreadRecord): void {
   });
 }
 
+/** Whether THIS handler writes the mirror, or only asks (M3 §1a-c, Task 10).
+ *
+ *  For an inProcess thread the write-back above is the mirror's only reliable source, so the setter is the
+ *  writer. For a FLEET thread the opposite holds: the host keeps its own settings truth, republishes it on
+ *  every accepted setter as a `state` event, and the fleet event layer (fleet.ts's `onState`) writes the
+ *  mirror and announces `thread/settings/changed {source:"engine"}` from it. Writing here too would give
+ *  one change two announcements — the local one claiming `source:"client"` for a value the host had
+ *  already published — and, worse, would let this server record a value the host never confirmed: the
+ *  host answers a model RESET by publishing `model` ABSENT, which §1a-c reads as "unknown", not "cleared",
+ *  while a local write would blank the mirror outright.
+ *
+ *  The forwarding itself is unconditional — the setter still reaches the host through the same optional
+ *  member either origin's engine implements (fleetEngine.ts's `setModel`/`setPermissionMode`/
+ *  `setMaxThinkingTokens`). Only the bookkeeping is origin-scoped. */
+const writesMirror = (record: ThreadRecord): boolean => record.origin !== "fleet";
+
 // All four setters' catches go through engineThrow.ts's shared -33005 re-check (see its header): these
 // bodies are chain-deferred, so the engine can die after dispatch's arrival-time gate has let them
 // through, and a dead read loop is not the -32603 the caller would otherwise read. -32603 stays the ALIVE
@@ -54,9 +70,8 @@ export const modelSet: Handler = (srv, ctx, id, params) => {
       // model: null -> session.setModel(undefined) (SDK: reset to default; mirror stores undefined).
       const model = parsed.data.model ?? undefined;
       await record.session.setModel?.(model);
-      record.settings.model = model;
       record.updatedAt = nowSec();
-      broadcastSettings(srv, record);
+      if (writesMirror(record)) { record.settings.model = model; broadcastSettings(srv, record); }
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
       replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
@@ -79,17 +94,20 @@ export const permissionModeSet: Handler = (srv, ctx, id, params) => {
       if (mode === "auto") {
         const healed = resolveAutoModel(record.settings.model);
         if (healed !== record.settings.model) {
+          // The heal FORWARDS on both origins — the host runs this one only for a plan-approved upgrade
+          // (host.ts's applyPlanUpgrade), never for a client's own `set_permission_mode`, so a fleet
+          // thread needs it here just as much. Only the mirror write is origin-scoped, and with it
+          // `healedMirror`: on a fleet thread the host's own `state` event is what announces the swapped
+          // model, so there is nothing for the catch below to rescue.
           await record.session.setModel?.(healed);
-          record.settings.model = healed;
-          healedMirror = true;
+          if (writesMirror(record)) { record.settings.model = healed; healedMirror = true; }
         }
       }
       await record.session.setPermissionMode?.(mode);
-      record.settings.permissionMode = mode;
       record.updatedAt = nowSec();
       // source:"client" always — even when this leg also healed the model, the CLIENT's permissionMode
       // request caused the change; no engine decided anything (spec Wave 1, unit-pinned per the brief).
-      broadcastSettings(srv, record);
+      if (writesMirror(record)) { record.settings.permissionMode = mode; broadcastSettings(srv, record); }
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
       // The heal can have already changed the engine's model — and written the mirror — before
@@ -116,9 +134,8 @@ export const thinkingSet: Handler = (srv, ctx, id, params) => {
       // budget 0 there, so no separate special-casing is needed); `maxTokens` passes through raw.
       const resolved: number | null = "level" in data ? thinkBudget(data.level!) : (data.maxTokens as number | null);
       await record.session.setMaxThinkingTokens?.(resolved);
-      record.settings.thinkingTokens = resolved ?? undefined;
       record.updatedAt = nowSec();
-      broadcastSettings(srv, record);
+      if (writesMirror(record)) { record.settings.thinkingTokens = resolved ?? undefined; broadcastSettings(srv, record); }
       ctx.peer.reply(id, { ok: true });
     } catch (e) {
       replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);

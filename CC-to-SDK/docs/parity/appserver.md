@@ -29,8 +29,9 @@
 > **Origin-scope legend** (spec §2): `both` — reachable whether the thread is `inProcess` or adopted
 > from a fleet host; `inProcess` — no corresponding host-wire op exists yet, so a fleet-origin thread
 > gets `-33006 unsupportedForOrigin`; `fleet-only` — the mirror case (see gap 4); `N/A` — no method,
-> so no origin question applies. M2a still registers only `inProcess` threads, so `-33006` remains
-> defined-but-unemitted until M3's `thread/attach`.
+> so no origin question applies. M2a still registered only `inProcess` threads, so `-33006` stayed
+> defined-but-unemitted until M3 Task 7's `thread/attach`; since Task 10 the whole `both` column is
+> LITERAL — every one of those methods has been exercised against a real host over its own op.
 
 ## Shipped, per the code (post-merge 2026-08-11)
 
@@ -45,7 +46,8 @@ store, deduped on `sessionId`, live wins, cursor-paged), `thread/fork`, `thread/
 `thread/tag/set`, `thread/delete` (busy-guarded), `thread/close`, `thread/reinitialize` (busy-gated),
 `thread/subscribe`, `thread/unsubscribe`, `thread/read` (row-windowed, absolute-offset cursor,
 limit clamped to 500 + `warning`), `thread/compact/start` (compaction is a turn — same `beginTurn`
-spine), `turn/start` (Wave 4's `queue: true` flag enqueues instead of refusing when the thread is busy
+spine — on an inProcess thread; a fleet thread forwards the bare host op with no turn at all, §1d),
+`turn/start` (Wave 4's `queue: true` flag enqueues instead of refusing when the thread is busy
 with a turn — see gap 1), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
 `decision/list`, `decision/respond`, `thread/model/set`,
 `thread/permissionMode/set` (`auto` self-heals the model first), `thread/thinking/set`,
@@ -228,6 +230,18 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 
 ## Host ops — `harness/src/host/ops.ts` (34 tokens)
 
+**Since M3 Task 10 the `both` in this table is literal, not forward-looking.** Every row below whose
+method is not origin-refused now reaches a fleet thread's host over that host's own op, and the
+`FleetEngineSession` forwarders (`fleetEngine.ts`, Task 6) are what carry the plain ones —
+`capabilities`, `usage`, `context_usage`, `mcp_status`, `mcp_reconnect`, `tasks`, `background`,
+`stop_task` forward with **no handler change at all**, which `test/unit/appserver/fleet-bridge.test.ts`
+proves per method rather than asserting once. Rows whose fleet behavior DIFFERS from the inProcess one
+say so in their own status cell — and the six **flag writers** share one difference, stated once here:
+on a fleet thread each forwards its own dedicated op and writes NOTHING locally, because the host keeps
+the accumulator (`host/host.ts`'s layer, replayed by its own `replayFlagState`) and the local copy's two
+jobs — feeding `thread/directory/list` and being replayed by `repushThreadState` — belong to the host on
+this origin. The dedup guard goes with it: a re-add forwards, and the host decides what it means.
+
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
 | `status` | host/ops.ts | `thread/status/changed` (+ `thread/list` status field) | both | shipped(M1) |
@@ -238,16 +252,16 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `interrupt` | host/ops.ts | `turn/interrupt` | both | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
 | `follow` | host/ops.ts | `thread/subscribe` | both | shipped(M1) |
 | `unfollow` | host/ops.ts | `thread/unsubscribe` | both | shipped(M1) |
-| `set_model` | host/ops.ts | `thread/model/set` | both | shipped(M2a) |
-| `set_permission_mode` | host/ops.ts | `thread/permissionMode/set` | both | shipped(M2a) — `auto` self-heals; `bypassPermissions` target launch-time-only (acceptance run 1) |
-| `set_thinking` | host/ops.ts | `thread/thinking/set` | both | shipped(M2a) |
+| `set_model` | host/ops.ts | `thread/model/set` | both | shipped(M2a) — M3 T10: a fleet thread forwards the op and takes its mirror off the host's `state` event, never off the setter reply (§1a-c single source), so the change announces as `source:"engine"` |
+| `set_permission_mode` | host/ops.ts | `thread/permissionMode/set` | both | shipped(M2a) — `auto` self-heals (on both origins: the host runs its own heal only for a plan-approved upgrade); `bypassPermissions` target launch-time-only (acceptance run 1); fleet mirror is event-driven, as `set_model` |
+| `set_thinking` | host/ops.ts | `thread/thinking/set` | both | shipped(M2a) — fleet mirror is event-driven, as `set_model` |
 | `capabilities` | host/ops.ts | `thread/capabilities/read` | both | shipped(M2a) |
-| `compact` | host/ops.ts | `thread/compact/start` | both | shipped(M2a) — compact-as-turn |
+| `compact` | host/ops.ts | `thread/compact/start` | both | shipped(M2a) — compact-as-turn for inProcess; **fleet deviates (§1d, M3 T10)**: the bare op, un-chained, with NO busy claim and NO `turn/started`/`turn/completed` — the host emits no turn events and stays promptable mid-compact, so a local turn would fabricate busy state no other client of that host observes and mint a second lifecycle owner beside the fleet event layer. Reply is the op receipt `{ok,outcome}`; `thread/compacted` still fires, off that outcome, carrying no `turnId` |
 | `usage` | host/ops.ts | `thread/usage/read` | both | shipped(M2a) |
 | `context_usage` | host/ops.ts | `thread/contextUsage/read` | both | shipped(M2a) |
 | `mcp_status` | host/ops.ts | `mcpServer/status/list` | both | shipped(M2b) |
 | `mcp_reconnect` | host/ops.ts | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
-| `mcp_toggle` | host/ops.ts | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
+| `mcp_toggle` | host/ops.ts | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602; M3 T10: a fleet thread writes no `mcpToggles` row (the accumulator exists for `repushThreadState`, which this origin never runs) |
 | `resume` | host/ops.ts | `thread/resume` | both | shipped(M1) — via `resumeSession` (lib), see gap 2 |
 | `tasks` | host/ops.ts | `task/list` | both | shipped(M2b) — un-chained read of the engine's live task set; answerable on a dead engine (cached set) |
 | `background` | host/ops.ts | `turn/background` | both | shipped(M2b) — relays the engine's boolean receipt |
@@ -256,30 +270,38 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 | `rewind_dryrun` | host/ops.ts | `thread/rewind/dryRun` | both | shipped(M2b) |
 | `rewind` | host/ops.ts | `thread/rewind` | both | shipped(M2b) — engine swap, host-order validation |
 | `clear` | host/ops.ts | `thread/clear` | both | shipped(M2b) — engine swap to a FRESH conversation, rewind's gate order |
-| `get_settings` | host/ops.ts | `thread/settings/read` | both | shipped(M2b) — untyped engine passthrough |
-| `list_dirs` | host/ops.ts | `thread/directory/list` | both | shipped(M2b) — three-source assembly; record-only, so exempt from the -33005 gate |
-| `add_dir` | host/ops.ts | `thread/directory/add` | both | shipped(M2b) — flag accumulator, commit-after-accept; supersedes probe 5's `register_repo_root` |
-| `remove_dir` | host/ops.ts | `thread/directory/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept |
-| `set_output_style` | host/ops.ts | `thread/outputStyle/set` | both | shipped(M2b) — flag accumulator, commit-after-accept; emits no notification (deliberate, as `thread/settings/apply` — gap 6) |
-| `add_rule` | host/ops.ts | `thread/permissionRule/add` | both | shipped(M2b) — flag accumulator, commit-after-accept |
-| `remove_rule` | host/ops.ts | `thread/permissionRule/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept |
-| `set_effort` | host/ops.ts | `thread/effort/set` | both | shipped(M2b) — closed level enum, host/ops.ts's verbatim (probe 102); emits no notification (deliberate, as `thread/settings/apply` — gap 6) |
+| `get_settings` | host/ops.ts | `thread/settings/read` | both | shipped(M2b) — untyped engine passthrough; on fleet the `getSettings` forwarder IS this op, so the handler is unchanged |
+| `list_dirs` | host/ops.ts | `thread/directory/list` | both | shipped(M2b) — three-source assembly; record-only, so exempt from the -33005 gate. M3 T10: fleet forwards the op instead — the HOST assembles the same three sources, and answering from this server's record would report a fleet thread's cwd alone |
+| `add_dir` | host/ops.ts | `thread/directory/add` | both | shipped(M2b) — flag accumulator, commit-after-accept; supersedes probe 5's `register_repo_root`; M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
+| `remove_dir` | host/ops.ts | `thread/directory/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept; M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
+| `set_output_style` | host/ops.ts | `thread/outputStyle/set` | both | shipped(M2b) — flag accumulator, commit-after-accept; emits no notification (deliberate, as `thread/settings/apply` — gap 6); M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
+| `add_rule` | host/ops.ts | `thread/permissionRule/add` | both | shipped(M2b) — flag accumulator, commit-after-accept; M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
+| `remove_rule` | host/ops.ts | `thread/permissionRule/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept; M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
+| `set_effort` | host/ops.ts | `thread/effort/set` | both | shipped(M2b) — closed level enum, host/ops.ts's verbatim (probe 102); emits no notification (deliberate, as `thread/settings/apply` — gap 6); M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
 
 ## ControlFrame — `harness/src/bridge/types.ts` (11 tokens)
 
+**The origin column here tracks the METHOD, not the bridge.** It went stale across M3: these eleven rows
+all read `inProcess` because they were written when no fleet thread could exist, and nine of them name a
+method a fleet thread now serves over a host op. Re-scored at M3 Task 10 by the legend's own test — does
+a fleet-origin thread get `-33006`? — which leaves exactly the two methods `FLEET_UNSUPPORTED` holds
+(`account/read`, `thread/reinitialize`) reading `inProcess`. Seven of the nine are Task 10's own
+forwarding surface; `turn/interrupt` and `thread/capabilities/read` were already real on fleet from
+Tasks 6–8 and are corrected in the same pass rather than left saying something false.
+
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
-| `initialize` | bridge/types.ts | `thread/capabilities/read` (bridge `initialize` returns `capabilities()`) | inProcess | shipped(M2a) |
-| `set_model` | bridge/types.ts | `thread/model/set` | inProcess | shipped(M2a) |
-| `set_permission_mode` | bridge/types.ts | `thread/permissionMode/set` | inProcess | shipped(M2a) |
-| `set_thinking` | bridge/types.ts | `thread/thinking/set` | inProcess | shipped(M2a) |
-| `interrupt` | bridge/types.ts | `turn/interrupt` | inProcess | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
-| `context_usage` | bridge/types.ts | `thread/contextUsage/read` | inProcess | shipped(M2a) |
+| `initialize` | bridge/types.ts | `thread/capabilities/read` (bridge `initialize` returns `capabilities()`) | both | shipped(M2a) |
+| `set_model` | bridge/types.ts | `thread/model/set` | both | shipped(M2a) |
+| `set_permission_mode` | bridge/types.ts | `thread/permissionMode/set` | both | shipped(M2a) |
+| `set_thinking` | bridge/types.ts | `thread/thinking/set` | both | shipped(M2a) |
+| `interrupt` | bridge/types.ts | `turn/interrupt` | both | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
+| `context_usage` | bridge/types.ts | `thread/contextUsage/read` | both | shipped(M2a) |
 | `account_info` | bridge/types.ts | `account/read` | inProcess | shipped(M2a) — see gap 3 |
 | `reinitialize` | bridge/types.ts | `thread/reinitialize` | inProcess | shipped(M2a) — busy-gated |
-| `background_tasks` | bridge/types.ts | `task/list` | inProcess | shipped(M2b) |
-| `stop_task` | bridge/types.ts | `task/stop` | inProcess | shipped(M2b) |
-| `background_all` | bridge/types.ts | `turn/background` | inProcess | shipped(M2b) |
+| `background_tasks` | bridge/types.ts | `task/list` | both | shipped(M2b) |
+| `stop_task` | bridge/types.ts | `task/stop` | both | shipped(M2b) |
+| `background_all` | bridge/types.ts | `turn/background` | both | shipped(M2b) |
 
 ## Session store wrappers — `harness/src/sessions/index.ts` (7 tokens)
 
@@ -382,10 +404,15 @@ retires the `fleet-only` scope, gap 4), and the two `N/A` rows, `seedReadState` 
 protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
 `probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
-Origin scope splits **57 `both` / 21 `inProcess` / 0 `fleet-only` / 6 `N/A`**, recounted off the tables at
-M3 Task 9 across all **84** rows — the snapshot block above still says 82 because it predates M3 Task 7's
-two new server-origin rows (`fleet/list`, `thread/attach`, both `N/A`), and `thread/stop` moved from
-`fleet-only` to `both` when it shipped origin-branched (gap 4).
+Origin scope splits **66 `both` / 12 `inProcess` / 0 `fleet-only` / 6 `N/A`**, recounted off the tables at
+M3 Task 10 across all **84** rows — the snapshot block above still says 82 because it predates M3 Task 7's
+two new server-origin rows (`fleet/list`, `thread/attach`, both `N/A`). This line has now gone stale twice,
+which is the point of recounting it at every landing rather than trusting it between them: Task 9 corrected
+it to 57/21/0/6 when `thread/stop` moved from `fleet-only` to `both` (gap 4), and Task 10 moved nine more
+when the forwarded control + settings surface went live on fleet threads — all nine in the ControlFrame
+table, whose origin column had been scoring the bridge rather than the method (see the note above it). The
+twelve that remain `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods (§1c) plus the
+Query-side seams behind them.
 
 **The live surface those rows cover: 51 registered methods and 26 notifications.** 51 is the size of
 `appserver/schema/index.ts`'s `methodSchemas` — the number `scripts/drift-check.mjs` prints on every run

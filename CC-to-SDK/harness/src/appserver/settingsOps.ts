@@ -26,13 +26,27 @@
 // performs (rewind.ts's `swapEngine`), against a fresh conversation instead of a resumed one. It reuses
 // that seam whole — including the post-swap state re-push, which is what carries this file's accumulator
 // across the replacement.
+//
+// FLEET THREADS TAKE NONE OF THAT (M3 §1b, Task 10). Everything above describes one server owning one
+// engine; a fleet thread's engine belongs to a running host that other clients are also pushing flag state
+// into, and that host keeps the very accumulator this file keeps — `host/host.ts`'s own layer, replayed by
+// its own `replayFlagState` across its own swaps. So the fleet arm forwards each request as the host's own
+// dedicated op (`add_dir`, `set_effort`, … — `host/ops.ts`'s shapes) and writes NOTHING locally:
+//  - No accumulator. A second copy could only ever disagree with the host's, and nothing here would ever
+//    replay it (`repushThreadState` runs on a local engine swap, which this origin never performs).
+//  - No dedup guard. The membership test that makes an inProcess re-add a no-op reads that local copy, so
+//    on a fleet thread it would answer for state it does not own — the host decides what a re-add means.
+//  - No `applyFlagSettings`. The fleet engine deliberately lacks the member (§1b's absent list): per-key
+//    replacement of a whole bucket is exactly the wrong primitive when the bucket's truth is the host's.
 import { ERR } from "./rpc.js";
+import type { RequestId } from "./rpc.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { swapEngine } from "./rewind.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
+import type { FleetEngineSession } from "./fleetEngine.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
-import type { AppServer, Handler } from "./server.js";
+import type { AppServer, ConnCtx, Handler } from "./server.js";
 import {
   settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams,
   outputStyleSetParams, effortSetParams, threadClearParams,
@@ -46,15 +60,38 @@ const UNSUPPORTED = "unsupported by this engine"; // introspect.ts:36's exact wo
 // -32603 as the ALIVE mapping: the engine's failures on this seam are untyped strings, so there is no
 // sub-class to relay.
 
+/** The fleet arm of every flag mutation (see the module header): one host op, one `{ok:true}`, nothing
+ *  written here. Chain-scoped like its inProcess twin, so two writes from one client reach the host in the
+ *  order the client made them.
+ *
+ *  The receipt is checked rather than assumed — a host handler that threw answers the generic
+ *  `{ok:false, error}` `host/server.ts` wraps every dispatch in — and the failure goes through the same
+ *  `replyEngineThrow` the local arm uses, so a socket that died while this op waited its turn in the chain
+ *  reads as -33005 rather than as an internal error. */
+async function forwardFlagOp(record: ThreadRecord, ctx: ConnCtx, id: RequestId, op: Record<string, unknown>): Promise<void> {
+  try {
+    const rep = await (record.session as FleetEngineSession).sendOp<{ ok: boolean; error?: string }>(op);
+    if (!rep.ok) throw new Error(rep.error ?? "host refused");
+    record.updatedAt = nowSec();
+    ctx.peer.reply(id, { ok: true });
+  } catch (e) {
+    replyEngineThrow(record, ctx, id, e, ERR.INTERNAL);
+  }
+}
+
 /** The whole of a flag mutation's body, minus the delta each one computes. `next` returns the accumulator
  *  value this op WANTS; returning `undefined` means "nothing changes" — an idempotent re-add — which
  *  replies ok WITHOUT touching the engine and WITHOUT bumping `updatedAt` (host's addDir/addRule early
  *  return; the timestamp tracks work the engine accepted, and no work happened).
  *
  *  `apply` is handed the whole post-push accumulator to commit. The order inside the try is fixed: push,
- *  commit, bump, reply — a throw anywhere before the commit leaves the record exactly as it was. */
+ *  commit, bump, reply — a throw anywhere before the commit leaves the record exactly as it was.
+ *
+ *  `hostOp` is the same request said in the HOST's vocabulary, for the fleet arm. Every writer supplies
+ *  both, side by side, because they are one request in two dialects — writing them apart is how the two
+ *  drift. */
 function flagMutation(
-  parse: (params: Record<string, unknown>) => { ok: true; threadId: string; delta: FlagDelta } | { ok: false },
+  parse: (params: Record<string, unknown>) => { ok: true; threadId: string; hostOp: Record<string, unknown>; delta: FlagDelta } | { ok: false },
 ): Handler {
   return (srv, ctx, id, params) => {
     const parsed = parse(params);
@@ -62,6 +99,7 @@ function flagMutation(
     const record = srv.registry.get(parsed.threadId);
     if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
     record.chain = record.chain.then(async () => {
+      if (record.origin === "fleet") { await forwardFlagOp(record, ctx, id, parsed.hostOp); return; }
       const fn = record.session.applyFlagSettings?.bind(record.session);
       if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }
       const delta = parsed.delta(record);
@@ -102,11 +140,22 @@ export const settingsRead: Handler = async (srv, ctx, id, params) => {
   ctx.peer.reply(id, { settings: await fn() });
 };
 
-export const directoryList: Handler = (srv, ctx, id, params) => {
+export const directoryList: Handler = async (srv, ctx, id, params) => {
   const parsed = directoryListParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // FLEET: the host assembles the identical three sources from ITS launch config and ITS accumulator
+  // (`host.listDirs`, the op this forwards to). Answering from the fields below instead would report a
+  // fleet thread's cwd alone — `record.config` is absent on this origin and `flagPerms` is deliberately
+  // empty — i.e. every grant the session actually holds, missing. Un-chained like the read it is; a
+  // rejection propagates into dispatch's own try/catch (introspect.ts's convention).
+  if (record.origin === "fleet") {
+    const rep = await (record.session as FleetEngineSession).sendOp<{ ok: boolean; error?: string; dirs?: unknown[] }>({ op: "list_dirs" });
+    if (!rep.ok) { ctx.peer.replyError(id, ERR.INTERNAL, rep.error ?? "host refused"); return; }
+    ctx.peer.reply(id, { data: rep.dirs ?? [], nextCursor: null });
+    return;
+  }
   // Three sources in host order (`host.listDirs`), and the three are what a directory UI needs to tell
   // apart: cwd is implicit and always granted, the launch list is fixed for the thread's life, and only
   // the session grants are removable. `process.cwd()` is not a guess when the start config named no cwd:
@@ -128,6 +177,7 @@ export const directoryAdd = flagMutation((params) => {
   if (!p.success) return { ok: false };
   return {
     ok: true, threadId: p.data.threadId,
+    hostOp: { op: "add_dir", path: p.data.path },
     delta: (record) => record.flagPerms.additionalDirectories.includes(p.data.path)
       ? undefined
       : permsDelta(record, { ...record.flagPerms, additionalDirectories: [...record.flagPerms.additionalDirectories, p.data.path] }),
@@ -141,6 +191,7 @@ export const directoryRemove = flagMutation((params) => {
   // already absent from is how a caller re-asserts the layer against an engine it does not trust.
   return {
     ok: true, threadId: p.data.threadId,
+    hostOp: { op: "remove_dir", path: p.data.path },
     delta: (record) => permsDelta(record, { ...record.flagPerms, additionalDirectories: record.flagPerms.additionalDirectories.filter((d) => d !== p.data.path) }),
   };
 });
@@ -151,6 +202,7 @@ export const permissionRuleAdd = flagMutation((params) => {
   const { behavior, rule } = p.data;
   return {
     ok: true, threadId: p.data.threadId,
+    hostOp: { op: "add_rule", behavior, rule },
     delta: (record) => record.flagPerms[behavior].includes(rule)
       ? undefined
       : permsDelta(record, { ...record.flagPerms, [behavior]: [...record.flagPerms[behavior], rule] }),
@@ -163,6 +215,7 @@ export const permissionRuleRemove = flagMutation((params) => {
   const { behavior, rule } = p.data;
   return {
     ok: true, threadId: p.data.threadId,
+    hostOp: { op: "remove_rule", behavior, rule },
     delta: (record) => permsDelta(record, { ...record.flagPerms, [behavior]: record.flagPerms[behavior].filter((r) => r !== rule) }),
   };
 });
@@ -172,6 +225,7 @@ export const outputStyleSet = flagMutation((params) => {
   if (!p.success) return { ok: false };
   return {
     ok: true, threadId: p.data.threadId,
+    hostOp: { op: "set_output_style", style: p.data.style },
     // No dedup: unlike the list ops there is nothing to double up, and re-asserting the current style is a
     // legitimate way to push it onto an engine whose layer a client believes has drifted.
     delta: (record) => ({ settings: { outputStyle: p.data.style }, commit: () => { record.flagOutputStyle = p.data.style; } }),
@@ -183,6 +237,7 @@ export const effortSet = flagMutation((params) => {
   if (!p.success) return { ok: false }; // the enum refuses an unknown level HERE, before the engine is touched
   return {
     ok: true, threadId: p.data.threadId,
+    hostOp: { op: "set_effort", level: p.data.level },
     delta: (record) => ({ settings: { effortLevel: p.data.level }, commit: () => { record.flagEffort = p.data.level; } }),
   };
 });
