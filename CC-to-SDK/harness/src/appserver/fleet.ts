@@ -110,6 +110,18 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   let mapper: TurnMapper | undefined;
   let windowId: string | undefined;
 
+  /** Run a TERMINAL wire emission behind the SAME ack the onFrame item starts/deltas are deferred on (R4/F2).
+   *  So a terminal event of a trivially-fast OR socket-killed OWN turn flushes AFTER those starts, preserving
+   *  the item lifecycle (SR2). Registration order is what makes it correct: onFrame registered the item
+   *  starts on the ack when the frames arrived (before this turn-end/death); this registers the terminal
+   *  after, and `.then` callbacks on one promise run in registration order → starts flush first. A FOREIGN
+   *  turn (or one whose reply is already out, so the ack was cleared) sets no ack → `emit` runs live, exactly
+   *  as today. */
+  const afterAck = (emit: () => void): void => {
+    const ack = record.fleetStartAck;
+    if (ack) void ack.then(emit); else emit();
+  };
+
   /** Every host-event subscription this layer takes, so the uninstaller can give all of them back. The
    *  frame subscription is NOT in here — it is re-taken on every swap (see `installFrames`), so only its
    *  current value can be released. */
@@ -189,26 +201,24 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     // Either is `failed` on the wire; there is no local status synthesis, and an interrupt is not one —
     // it reaches this client as the host's own turn end (§1e), whatever that end says.
     const failure = e.error ?? e.failure?.message;
-    if (mapper) emitItems(srv, record, turnId, mapper.finalize(failure !== undefined));
+    const endMapper = mapper;             // captured for the deferred finalize below (mapper is nulled now)
     mapper = undefined; windowId = undefined;
     record.busy = false;
     record.turnStartedBroadcast = false;
     record.fleetTurnTruncated = false;    // this turn is over — its truncation no longer describes anything (R5)
     record.updatedAt = nowSec();
     // `currentTurnId` is deliberately left standing (registry.ts: the replay path wants the last turn's id).
-    const complete = (): void => {
+    // SR2: the finalize items, turn/completed and statusChanged are ALL wire emissions, and all three must
+    // flush AFTER the onFrame item starts this turn deferred behind the ack — so fold the finalize into the
+    // same deferred closure the F2 completed edge already used, and route the whole thing through `afterAck`.
+    // Pre-SR2 the finalize fired synchronously here while the item starts were still pending, so a
+    // trivially-fast own turn put item/completed ahead of item/started. Only the WIRE emissions defer; the
+    // record STATE above is mutated synchronously. A foreign turn (no ack) still emits live and in order.
+    afterAck(() => {
+      if (endMapper) emitItems(srv, record, turnId, endMapper.finalize(failure !== undefined));
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: failure === undefined ? { id: turnId, status: "completed" } : { id: turnId, status: "failed", error: failure } });
       statusChanged(srv, record);
-    };
-    // F2: an OWN turn's turn/start REPLY (fleetTurnStart's onAccepted) is published on the microtask after
-    // the host's prompt reply resolves, while this end edge is broadcast synchronously as the frame routes.
-    // A trivially-fast turn whose end shares a data chunk with (or precedes) that reply would put
-    // turn/completed on the wire before the inProgress reply. `fleetStartAck` is set while that reply is
-    // pending and resolved the instant it publishes — so hold the completed edge behind it. Foreign turns
-    // set no ack, and once the reply is out it is cleared, so a normal completion stays synchronous. Mirrors
-    // the in-process spine, where turn/started strictly precedes turn/completed.
-    const ack = record.fleetStartAck;
-    if (ack) void ack.then(complete); else complete();
+    });
   }));
 
   // A park raised host-side, mirrored as a VIEW (broker.ts's parkView) — looked up per event rather than
@@ -284,29 +294,45 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   // layer owns it (§1b), for foreign turns as much as our own — so the broadcast is ours to make, rendered
   // exactly as turns.ts's `onFailure` renders a rejected in-process turn.
   track(engine.onSocketDeath(() => {
+    // SR2: the §1f terminal sequence (finalize → turn/completed → warning → statusChanged) is all WIRE
+    // emissions, and every one must flush AFTER the onFrame item starts an OWN turn deferred behind the ack —
+    // so route the whole ordered unit through `afterAck`. Pre-SR2 they fired synchronously while those starts
+    // were still pending (die() rejects the submit — scheduling fleetTurnStart's `.catch` → clearAck as a
+    // microtask — then fans THIS synchronously, so `record.fleetStartAck` is still set here), which put
+    // item/completed and turn/completed ahead of item/started. The record STATE mutations and the silent
+    // decision `discard()` stay synchronous; only the wire goes behind the ack. An idle-at-death (no ack) or
+    // an already-replied turn emits live, exactly as before.
+    let finalizeAndComplete: (() => void) | undefined;
     if (windowId !== undefined) {
-      // The open items are finalized FAILED first, same as every other failure path: a client left with an
-      // `item/started` that never completes cannot render the turn at all.
-      if (mapper) emitItems(srv, record, windowId, mapper.finalize(true));
       const turnId = windowId;
+      const endMapper = mapper;         // captured for the deferred finalize below (mapper is nulled now)
       mapper = undefined; windowId = undefined;
       record.busy = false;
       record.turnStartedBroadcast = false;
       record.fleetTurnTruncated = false;  // the turn failed at death — its truncation no longer describes anything (R5)
       // `currentTurnId` is left standing, exactly as the normal turn end leaves it (the replay path wants
       // the last turn's id).
-      srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: CONNECTION_LOST } });
+      finalizeAndComplete = (): void => {
+        // The open items are finalized FAILED first, same as every other failure path: a client left with an
+        // `item/started` that never completes cannot render the turn at all. Then the turn's terminal event.
+        if (endMapper) emitItems(srv, record, turnId, endMapper.finalize(true));
+        srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: { id: turnId, status: "failed", error: CONNECTION_LOST } });
+      };
     }
     record.busy = false;               // idle-at-death holds too: there may have been no turn to fail
     record.updatedAt = nowSec();
     // SILENTLY (§1f, and broker.ts's `discard`): the host may be dead or alive — a crashed host's parks
     // died with it, a network loss left them exactly where they were — and this server cannot tell which,
-    // so it must not claim either.
+    // so it must not claim either. A silent state op, kept synchronous before the deferred wire below so the
+    // statusChanged there reads the post-discard decision set.
     srv.threadDecisions(record.id)?.discard();
-    // A fact about what the thread now IS, not an aside to whoever last asked for something — so it fans
-    // to subscribers and watchers alike, the same shape rewind.ts's re-push warning uses.
-    broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "warning", { threadId: record.id, code: "fleetConnectionLost", message: CONNECTION_LOST_HINT });
-    statusChanged(srv, record);
+    afterAck(() => {
+      finalizeAndComplete?.();
+      // A fact about what the thread now IS, not an aside to whoever last asked for something — so it fans
+      // to subscribers and watchers alike, the same shape rewind.ts's re-push warning uses.
+      broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "warning", { threadId: record.id, code: "fleetConnectionLost", message: CONNECTION_LOST_HINT });
+      statusChanged(srv, record);
+    });
     // The RECORD stays: a zombie answering -33005 to everything but the exempt set, until a client's own
     // `thread/close` drops it (§1f — recovery is close plus a fresh attach; there is no auto-reconnect,
     // D-M3-13).

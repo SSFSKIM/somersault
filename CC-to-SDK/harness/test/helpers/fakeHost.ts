@@ -76,6 +76,12 @@ export interface FakeHostControls {
   /** Make the NEXT prompt DESTROY this connection instead of answering — a host death after the op is
    *  dispatched but before its reply is written (external review F6). */
   killNextPrompt(): void;
+  /** Like `killNextPrompt`, but AFTER the turn-start and any `emitOnNextPrompt` frames rather than before
+   *  them: the host opened a turn and streamed an item, then died — still before the prompt reply, so an
+   *  OWN turn's `fleetStartAck` stays pending with a deferred item/started queued when onSocketDeath fans.
+   *  This is what puts the §1f terminal sequence (finalize → turn/completed → warning) up against those
+   *  still-pending item starts (scoped review SR2). */
+  killNextPromptAfterMessages(): void;
   /** Emit these message frames SYNCHRONOUSLY inside the next prompt handler, right after its turn-start
    *  and BEFORE the prompt reply is written — a host that streams an assistant frame in the same breath as
    *  accepting the prompt (real: `submit()`'s onMessage can fire before its first await). It puts an OWN
@@ -151,6 +157,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   let seq = busy ? 1 : 0;                            // a turn in flight is a turn that started
   let inlineComplete: { error?: string; result?: unknown; failure?: TurnFailure } | undefined; // F2: end this prompt inline
   let killPrompt = false;                            // F6: destroy the connection on the next prompt
+  let killAfterMessages = false;                     // SR2: destroy AFTER the turn-start + frames, before the reply
   let promptMessages: unknown[] | undefined;         // R4: frames to emit synchronously inside the next prompt handler
   const patch: Partial<HostStatus> = { ...opts.status };
   const ops: string[] = [];
@@ -280,6 +287,9 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
         const ms = promptMessages; promptMessages = undefined;
         for (const m of ms) { if ((m as { type?: unknown } | null)?.type !== "stream_event") buffered.push(m); emit({ kind: "message", data: m }); }
       }
+      // SR2: the turn-start and its frames are now on the wire; destroy the connection before the reply, so
+      // the death lands with the OWN turn's fleetStartAck still pending and its item/started still deferred.
+      if (killAfterMessages) { killAfterMessages = false; void server.close(); return; }
       // F2: complete the turn INLINE — turn/end is emitted here, before this handler returns, so it precedes
       // the prompt reply the server writes next (turnSeq() still reads this turn's seq, the reply matches).
       if (inlineComplete !== undefined) { const o = inlineComplete; inlineComplete = undefined; emitEnd(seq, o); }
@@ -359,6 +369,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     endTurn: (n, o = {}) => emitEnd(n, o),
     completeNextPromptInline: (o) => { inlineComplete = o ?? {}; },
     killNextPrompt: () => { killPrompt = true; },
+    killNextPromptAfterMessages: () => { killAfterMessages = true; },
     emitOnNextPrompt: (messages) => { promptMessages = messages; },
     park: (e) => {
       const entry: PendingDecision = { sessionId: "s-fake", toolName: "Bash", kind: "permission", input: {}, createdAt: Date.now(), ...e };

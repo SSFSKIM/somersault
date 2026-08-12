@@ -78,3 +78,52 @@ describe("own fleet turn item order (final review R4)", () => {
     expect(notifs(lines, "turn/completed")[0].params.turn).toEqual({ id: "t1@e0", status: "completed" });
   });
 });
+
+// scoped re-review SR2 — the R4 barrier held only the item START/DELTA emissions; the TERMINAL wire
+// emissions (finalize at turn-end, and finalize/turn-completed/warning on socket-death) still fired
+// synchronously while the ack was pending, so a trivially-fast OR socket-killed OWN turn put item/completed
+// and turn/completed on the wire BEFORE the deferred item/started — an inverted lifecycle. A tool_use item
+// is the honest reproduction: its item/started comes from onFrame (deferred behind the ack), while its
+// item/completed is produced by finalize AT turn-end (the terminal emission the fix must also route behind
+// the ack). The fix routes every terminal wire emission through the same afterAck barrier, in order.
+describe("own fleet turn TERMINAL order behind the ack (scoped review SR2)", () => {
+  it("(a) trivially-fast own turn: item/started precedes item/completed and turn/completed", async () => {
+    const { fh, conn, lines, threadId } = await bootAttached();
+    // The host opens a tool item (started only — its completed is a finalize emission), then ends the turn,
+    // BOTH synchronously inside the prompt handler, before the reply — so the ack is still pending when the
+    // terminal finalize would otherwise fire synchronously ahead of the deferred item/started.
+    fh.emitOnNextPrompt([{ type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "tool-1", name: "Bash", input: { cmd: "ls" } }] } }]);
+    fh.completeNextPromptInline({ result: "done" });
+    send(conn, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await waitFor(() => expect(notifs(lines, "turn/completed")).toHaveLength(1));
+
+    const seq = parsed(lines);
+    const iStarted = seq.findIndex((f) => f.method === "item/started" && f.params?.item?.id === "tool-1");
+    const iCompleted = seq.findIndex((f) => f.method === "item/completed" && f.params?.item?.id === "tool-1");
+    const iTurnDone = seq.findIndex((f) => f.method === "turn/completed");
+    expect(iStarted).toBeGreaterThanOrEqual(0);
+    expect(iCompleted).toBeGreaterThan(iStarted);   // THE FIX: the terminal finalize is held behind the ack
+    expect(iTurnDone).toBeGreaterThan(iCompleted);  // …and turn/completed lands after the item it completes
+  });
+
+  it("(b) socket death before the reply: item/started precedes the terminal, and the loss warning lands last", async () => {
+    const { fh, conn, lines, threadId } = await bootAttached();
+    // The host opens a turn and a tool item, then the socket dies — all before the prompt reply, so the OWN
+    // turn's fleetStartAck is still pending and its deferred item/started is still queued when onSocketDeath
+    // fans the §1f terminal sequence.
+    fh.emitOnNextPrompt([{ type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "tool-1", name: "Bash", input: { cmd: "ls" } }] } }]);
+    fh.killNextPromptAfterMessages();
+    send(conn, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+    await waitFor(() => expect(notifs(lines, "warning").some((n) => n.params.code === "fleetConnectionLost")).toBe(true));
+
+    const seq = parsed(lines);
+    const iStarted = seq.findIndex((f) => f.method === "item/started" && f.params?.item?.id === "tool-1");
+    const iCompleted = seq.findIndex((f) => f.method === "item/completed" && f.params?.item?.id === "tool-1");
+    const iTurnDone = seq.findIndex((f) => f.method === "turn/completed" && f.params?.turn?.status === "failed");
+    const iWarning = seq.findIndex((f) => f.method === "warning" && f.params?.code === "fleetConnectionLost");
+    expect(iStarted).toBeGreaterThanOrEqual(0);      // the frame reached the wire before the death
+    expect(iCompleted).toBeGreaterThan(iStarted);    // item/started precedes the finalize (failed) completed…
+    expect(iTurnDone).toBeGreaterThan(iCompleted);   // …then the failed turn/completed…
+    expect(iWarning).toBeGreaterThan(iTurnDone);     // …then the fleetConnectionLost warning, the §1f order
+  });
+});
