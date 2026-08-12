@@ -254,13 +254,24 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
   let catalogMoved = false;
   const servers = record.mcpServersSet;
   if (servers !== undefined && s.setMcpServers) await step("mcpServers", async () => { await s.setMcpServers!(servers); catalogMoved = true; });
-  const toggles = Object.entries(record.mcpToggles);
-  if (toggles.length && s.toggleMcpServer) {
-    await step("mcpToggles", async () => { for (const [name, enabled] of toggles) await s.toggleMcpServer!(name, enabled); catalogMoved = true; });
+  // Toggles and overrides replay ENTRY BY ENTRY, and reconcile per entry (final review R10). Each is an
+  // independent engine call, so an early toggle that APPLIED is live on the replacement — clearing the
+  // WHOLE map because a LATER entry threw would leave the accumulator claiming less than the engine has,
+  // and the NEXT swap would then silently revert the survivor. Drop only the entries that threw; name the
+  // label in `lost` once if any did (the warning stays per-layer, the reconciliation is per-entry — which
+  // is why the coarse `record.mcpToggles = {}` / `record.mcpOverrides = {}` clears below are gone).
+  const noteLost = (label: string): void => { if (!lost.includes(label)) lost.push(label); };
+  if (s.toggleMcpServer) {
+    for (const [name, enabled] of Object.entries(record.mcpToggles)) {
+      try { await s.toggleMcpServer!(name, enabled); catalogMoved = true; }
+      catch { delete record.mcpToggles[name]; noteLost("mcpToggles"); }
+    }
   }
-  const overrides = Object.entries(record.mcpOverrides);
-  if (overrides.length && s.setMcpPermissionModeOverride) {
-    await step("mcpOverrides", async () => { for (const [name, mode] of overrides) await s.setMcpPermissionModeOverride!(name, mode); });
+  if (s.setMcpPermissionModeOverride) {
+    for (const [name, mode] of Object.entries(record.mcpOverrides)) {
+      try { await s.setMcpPermissionModeOverride!(name, mode); }
+      catch { delete record.mcpOverrides[name]; noteLost("mcpOverrides"); }
+    }
   }
   // Reconciliation FIRST, then the warning: by the time a client is told what was lost, the state it will
   // re-read already tells the truth. A step whose mirror value already equals the seed changed nothing —
@@ -293,12 +304,11 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
   if (lost.includes("permissions")) record.flagPerms = emptyFlagPerms();
   if (lost.includes("outputStyle")) record.flagOutputStyle = undefined;
   if (lost.includes("effortLevel")) record.flagEffort = undefined;
-  // The MCP layer reconciles by the same rule, label by label: the replacement's real topology is the one
-  // `record.config` built it with, so a refused label has nothing left to carry — and, as with the flag
-  // layer, a stale row would be silently re-pushed onto every LATER replacement too.
+  // The wholesale MCP SET reconciles like the flag layer — one atomic call, so a refusal drops the whole
+  // base. The toggle/override maps were already reconciled per entry in the replay loop above (R10), so no
+  // coarse clear here: clearing the whole map would discard the entries that DID apply and are live on the
+  // replacement, reverting them on the next swap.
   if (lost.includes("mcpServers")) record.mcpServersSet = undefined;
-  if (lost.includes("mcpToggles")) record.mcpToggles = {};
-  if (lost.includes("mcpOverrides")) record.mcpOverrides = {};
   // The catalog the replacement announced at init is not the one it is running now — the same fact
   // mcp.ts's own set/toggle handlers ping for, so it rides the identical bare `{threadId}` payload.
   if (catalogMoved) srv.broadcast(record.id, "thread/capabilities/changed", { threadId: record.id });
