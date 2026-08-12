@@ -340,10 +340,27 @@ afterAll(() => { if (priorFleetRoot === undefined) delete process.env.CCX_FLEET_
 // FSW T12, A SAFETY THIS FILE EARNED THE HARD WAY. `v` in the real tree spawns `$VISUAL`/`$EDITOR` with stdio
 // "inherit" — measured while sabotage-testing the gate below, which launched the developer's own vim into the
 // test runner and hung it. Unset for the whole file: the dump still writes its file, `openInEditor` answers
-// "no-editor", and no test can ever take the terminal hostage. The stub is FILE-level rather than per-test on
-// purpose — the hazard belongs to any test that presses `v`, including ones nobody has written yet.
+// "no-editor", and nothing is spawned. The stub is FILE-level rather than per-test on purpose — the hazard
+// belongs to any test that presses `v`, including ones nobody has written yet.
+//   IT IS NOT A BLANKET SHIELD, AND THE EXCEPTION HAS A NAME (t12 re-review). Unsetting is total only for the
+// callers that have no default: `openInEditor` (the `v` dump, `/keybindings`) answers "no-editor" and spawns
+// nothing. `editExternal` DEFAULTS TO `vi` (externalEditor.ts:107) precisely so an unset environment cannot
+// crash the composer — so any test that reaches the composer's or the plan dialog's ctrl+g with these unset
+// launches a real vi into the runner. Those tests must point $VISUAL at `fakeEditor()` below, and restore it
+// in a `finally` so a failing assertion cannot leak a live editor into the next test.
 beforeAll(() => { vi.stubEnv("VISUAL", ""); vi.stubEnv("EDITOR", ""); });
 afterAll(() => { vi.unstubAllEnvs(); });
+
+/** THE ONLY EDITOR ANY TEST IN THIS FILE MAY SPAWN — a two-line script, never a real `$EDITOR`. It rewrites the
+ *  file handed to it, so `EDITED` arriving on the surface under test is what proves the child ran INSIDE
+ *  whatever brackets that test is pinning, rather than that a wrapper merely wrote two escape sequences
+ *  somewhere. File-level for the same reason the unset above is: the next author needs to find it. */
+const fakeEditor = () => {
+  const dir = mkdtempSync(join(tmpdir(), "ccx-t12-editor-"));
+  const path = join(dir, "editor.sh");
+  writeFileSync(path, '#!/bin/sh\nprintf EDITED > "$1"\n', { mode: 0o755 });
+  return { path, clean: () => rmSync(dir, { recursive: true, force: true }) };
+};
 
 describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
   const alphaEntries = (n = 60) => Array.from({ length: n }, (_, i) => ({
@@ -457,17 +474,9 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
   // stdio "inherit" while the alternate screen is up issues its OWN rmcup on exit: the terminal is back on the
   // main screen and the guard still believes it is not, so the very next frame paints over the user's shell
   // scrollback — the one thing fullscreen promises never to touch.
-  //   THE EDITOR IS OURS, a two-line script and never a real `$EDITOR` (the file-level unset above stays in
-  // force for every other test). It rewrites the temp file `editExternal` round-trips, so `EDITED` arriving in
-  // the composer is what proves the spawn happened INSIDE the brackets rather than that the wrapper merely
-  // wrote two escape sequences somewhere.
+  //   THE EDITOR IS OURS — file-level `fakeEditor` above, never a real `$EDITOR` (the file-level unset stays in
+  // force for every other test).
   const SPAWN = "<spawnSync $VISUAL>";
-  const fakeEditor = () => {
-    const dir = mkdtempSync(join(tmpdir(), "ccx-t12-editor-"));
-    const path = join(dir, "editor.sh");
-    writeFileSync(path, '#!/bin/sh\nprintf EDITED > "$1"\n', { mode: 0o755 });
-    return { path, clean: () => rmSync(dir, { recursive: true, force: true }) };
-  };
   /** The guard exactly as `chatMain` builds it — armed for fullscreen, never armed for a classic launch, which
    *  passes `aroundSubprocess` down all the same — plus a marker written at the point the child runs. */
   const guarded = (armed: boolean) => {
@@ -477,10 +486,11 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     const around = <T,>(run: () => T): T => guard.aroundSubprocess(() => { writes.push(SPAWN); return run(); });
     return { writes, guard, around };
   };
-  const guardedApp = (mode: "fullscreen" | "classic", around: <T>(run: () => T) => T, session = fakeRemote()) => (
+  const guardedApp = (mode: "fullscreen" | "classic", around: <T>(run: () => T) => T, session = fakeRemote(),
+                      extraDeps: Partial<NonNullable<Parameters<typeof ChatApp>[0]["deps"]>> = {}) => (
     <ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
       renderer={{ mode, reason: "env_on" }} initialEntries={alphaEntries()}
-      deps={{ columns: () => 80, rows: () => 24 }} aroundSubprocess={around} />
+      deps={{ columns: () => 80, rows: () => 24, ...extraDeps }} aroundSubprocess={around} />
   );
   const planEntry = (): PendingEntry =>
     ({ sessionId: "s", toolUseID: "p", toolName: "ExitPlanMode", kind: "plan", input: { plan: "ship it" }, createdAt: Date.now() });
@@ -532,12 +542,64 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       await waitFor(() => (r.lastFrame() ?? "").includes("Ready to code?"));
       r.stdin.write("\x07");
       await waitFor(() => writes.includes(ENTER_ALT));
+      // …AND THE ROUND TRIP LANDED (t12 re-review). Without this the escape order alone would pass on a child
+      // that never ran: a `spawnSync` failure comes back as `r.error`, `editExternal` answers null, and the
+      // dialog keeps its original plan while the brackets look perfect. The dialog adopts a changed edit
+      // (`applyEdit`), so `EDITED` on the body is the same proof the composer's case takes.
+      await waitFor(() => (r.lastFrame() ?? "").includes("EDITED"));
       const child = writes.indexOf(SPAWN);
       expect(child).toBeGreaterThan(0);
       expect(writes.slice(0, child)).toContain(EXIT_ALT);
       expect(writes.slice(child + 1)).toEqual([ENTER_ALT]);
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); }
+  });
+
+  // ── FSW T12 RE-REVIEW — THE FOURTH EDITOR, and the only one that is not a key ────────────────────────────
+  // `/keybindings` hands the user their own `~/.claude/keybindings.json` through useChat's `deps.openEditor`,
+  // whose default called `openInEditor` with no `around` — so from a fullscreen session it reproduced exactly
+  // the defect the composer's case above describes. The command dispatcher never sees the composer's prop, so
+  // this needs wiring and a case of its own. `home` is a mkdtemp dir: the seed write, and the fake editor's
+  // rewrite of it, stay inside it and never touch the developer's real shortcuts file.
+  const tmpHome = () => mkdtempSync(join(tmpdir(), "ccx-t12-home-"));
+  const kbFile = (home: string) => join(home, ".claude", "keybindings.json");
+
+  it("brackets the /keybindings editor the same way", async () => {
+    const ed = fakeEditor(), { writes, guard, around } = guarded(true);
+    const home = tmpHome();
+    process.env.VISUAL = ed.path;
+    try {
+      const r = renderWithKeymap(guardedApp("fullscreen", around, fakeRemote(), { home }));
+      await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+      await tick();
+      r.stdin.write("/keybindings"); await waitFor(() => (r.lastFrame() ?? "").includes("/keybindings"));
+      r.stdin.write("\r");
+      await waitFor(() => writes.includes(ENTER_ALT));
+      expect(readFileSync(kbFile(home), "utf8")).toBe("EDITED");         // the child really opened the real file
+      const child = writes.indexOf(SPAWN);
+      expect(child).toBeGreaterThan(0);
+      expect(writes.slice(0, child)).toContain(EXIT_ALT);                // rmcup BEFORE the child
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT]);              // …and smcup after it, nothing between
+      expect(guard.active()).toBe(true);
+      r.unmount();
+    } finally { process.env.VISUAL = ""; ed.clean(); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("writes no alt-screen bytes for /keybindings when the guard is not armed", async () => {
+    const ed = fakeEditor(), { writes, around } = guarded(false);
+    const home = tmpHome();
+    process.env.VISUAL = ed.path;
+    try {
+      const r = renderWithKeymap(guardedApp("classic", around, fakeRemote(), { home }));
+      await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+      await tick();
+      r.stdin.write("/keybindings"); await waitFor(() => (r.lastFrame() ?? "").includes("/keybindings"));
+      r.stdin.write("\r");
+      await waitFor(() => writes.includes(SPAWN));
+      expect(readFileSync(kbFile(home), "utf8")).toBe("EDITED");
+      expect(writes).toEqual([SPAWN]);
+      r.unmount();
+    } finally { process.env.VISUAL = ""; ed.clean(); rmSync(home, { recursive: true, force: true }); }
   });
 
   // The classic renderer is untouched: there the committed transcript is in scrollback above the frame, so the

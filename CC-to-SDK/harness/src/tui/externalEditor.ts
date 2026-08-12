@@ -2,6 +2,14 @@
 // chat:externalEditor). spawnSync blocks the whole event loop, so Ink cannot repaint while the editor
 // owns the terminal — that blocking IS the handoff. Raw mode must be released first or the editor
 // inherits a raw stdin and its own keymap breaks; always restored in finally.
+//
+// THE RULE FOR NEW CALLERS (FSW T12): any caller reachable from the FULLSCREEN renderer must pass `around`
+// — the alt-screen guard's `aroundSubprocess` — or the child's own rmcup on exit silently desynchronizes the
+// guard from the terminal and the next frame paints over the user's shell scrollback. Wiring it is free on
+// the main screen: an unarmed guard's wrapper just runs the child where we stand. The four wired today, all
+// through ChatApp's `aroundSubprocess` prop: the composer's ctrl+g / ctrl+x ctrl+e and the plan dialog's
+// editor (both `editExternal`), the transcript dump's `v` and `/keybindings` (both `openInEditor`, the
+// latter via useChat's `deps.openEditor`).
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

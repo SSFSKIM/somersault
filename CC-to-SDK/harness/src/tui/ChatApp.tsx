@@ -48,7 +48,7 @@ import { FullscreenFrame } from "./FullscreenFrame.js";
 import { FullscreenViewport } from "./FullscreenViewport.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
-import { editExternal } from "./externalEditor.js";
+import { editExternal, openInEditor } from "./externalEditor.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
@@ -263,7 +263,19 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
-  const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, deps);
+  // FSW T12 RE-REVIEW — `/keybindings` IS AN EDITOR TOO, and it is the one that is not a key. useChat's own
+  // default calls `openInEditor` with no `around` (useChat.ts:653), so the slash command that hands the user
+  // their `~/.claude/keybindings.json` was still spawning its child ONTO the alternate screen: the editor's own
+  // rmcup on exit drops the terminal to the main screen while the guard believes it holds the alt one, and the
+  // next frame paints over the user's shell scrollback. Same defect and same seam as the composer's ctrl+g
+  // below (`EditorIO.around`) — wired HERE because this is where `aroundSubprocess` arrives and where useChat's
+  // `deps` are assembled; `chatMain` builds no deps object of its own.
+  //   AN INJECTED `openEditor` STILL WINS, so every test that fakes the opener is untouched — and without a
+  // guard the deps object is handed on exactly as it came, so an embedder sees no new field.
+  const chatDeps = useMemo(() => (aroundSubprocess && !deps?.openEditor
+    ? { ...deps, openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundSubprocess }) }
+    : deps), [deps, aroundSubprocess]);
+  const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, chatDeps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
   // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
@@ -974,9 +986,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // editor left on the alternate screen is worse than one that never got it: the child's OWN rmcup on exit
   // drops the terminal to the main screen while the guard still believes it holds the alt one, so the next
   // frame paints over the user's shell scrollback. Same handoff, same seam — `EditorIO.around`.
-  //   `undefined` WITHOUT A GUARD, deliberately: both children then take their own defaults (the composer's
-  // `realEditExternal`, the dialog's default `editor` param) and run the child where we stand, which is what a
-  // main-screen editor has always done. Memoized on the guard so the composer's prop identity is stable.
+  //   `undefined` ONLY WHERE THERE IS NO GUARD AT ALL — an embedder or a component test that passes no
+  // `aroundSubprocess`; both children then take their own defaults (the composer's `realEditExternal`, the
+  // dialog's default `editor` param). A PRODUCT launch is never that case: `chatMain` passes the wrapper in
+  // BOTH modes and a main-screen launch simply has an UNARMED guard, whose `aroundSubprocess` short-circuits
+  // to running the child where we stand — which is what a main-screen editor has always done. Memoized on the
+  // guard so the composer's prop identity is stable.
   const editExternalHere = useMemo(
     () => (aroundSubprocess ? (text: string) => editExternal(text, { around: aroundSubprocess }) : undefined),
     [aroundSubprocess]);
@@ -1221,8 +1236,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // takes — so a test that points ChatApp at a temp fleet root points BOTH surfaces
                       // there. Undefined in the product, where the composer falls back to `process.env`.
                       historyEnv={deps?.env}
-                      // FSW T12 review (I1): ctrl+g / ctrl+x ctrl+e inside the alt screen. Absent without a
-                      // guard, so the composer keeps its own `realEditExternal` on every main-screen launch.
+                      // FSW T12 review (I1): ctrl+g / ctrl+x ctrl+e inside the alt screen. Present on every
+                      // product launch — a main-screen one gets the same wrapper around an UNARMED guard, which
+                      // is inert — and absent only where no guard was handed down at all (embedders, component
+                      // tests), where the composer keeps its own `realEditExternal`.
                       {...(editExternalHere ? { editExternal: editExternalHere } : {})}
                       queuePop={popQueueToComposer} queueHasEditable={state.queue.some(isEditableQueueEntry)}
                       submitCount={state.submitCount} hasMessages={state.hasMessages} queueHintCountedRef={queueHintCountedRef} placeholderMemoRef={placeholderMemoRef}
