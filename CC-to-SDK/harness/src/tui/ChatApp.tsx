@@ -237,7 +237,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  (plan review C5), so `chatMain` holds the choice as state above this element and never keys or wraps it.
    *    Absent means classic, which is what every embedder and every component test that does not care gets.
    *  `hookOpts.rendererChoice` carries the SAME value for `/status` to print; both are handed down from the one
-   *  `selectRenderer` call, so the two cannot disagree about the mode. */
+   *  `selectRenderer` call, so the two cannot disagree about the mode — TRUE UNTIL T15, and T15 is the task that
+   *  breaks it: `/tui` flips this prop on a live session while `hookOpts` keeps the boot-fixed value, so
+   *  `/status` would report the mode the session started in. T15 must route the live value into `useChat`
+   *  rather than let this invariant lapse silently. */
   renderer?: RendererChoice;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat

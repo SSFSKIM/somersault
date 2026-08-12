@@ -45,6 +45,15 @@ const band = (n: number, tag: string) => (
 const frame = (f: () => string | undefined) => f() ?? "";
 /** The composer's ready prompt: `❯` + a NON-BREAKING space (U+00A0), which is what it actually paints. */
 const PROMPT = "\u276f\u00a0";
+/** Sixty committed assistant rows — enough transcript to reach `state.staticItems`, which is the ONLY input
+ *  that makes a `<Static>` visible: Ink commits static children once and `ink-testing-library` renders with
+ *  `debug: true`, whose arm writes `fullStaticOutput + output`. So a tree that mounts a `<Static>` with these
+ *  in it paints them into `lastFrame()` and the frame stops being `rows − 1`. Shared by the no-`<Static>` pin
+ *  below and the tall-branch case at the bottom of the file, which are the two halves of the same claim. */
+const alphaEntries = (n = 60) => Array.from({ length: n }, (_, i) => ({
+  kind: "sdk" as const, source: "disk" as const,
+  message: { type: "assistant", parent_tool_use_id: null, uuid: `u-${i}`, message: { id: `m-${i}`, content: [{ type: "text", text: `ALPHA-${i}` }] } },
+}));
 async function waitFor(cond: () => boolean, timeout = 3000) {
   const start = Date.now();
   for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -145,6 +154,20 @@ describe("ChatApp's fullscreen branch", () => {
     await waitFor(() => frame(r.lastFrame).includes(PROMPT));
     expect(rowsOf(r.lastFrame())).toHaveLength(23);
     r.unmount();
+
+    // …AND THE SAME FRAME WITH A TRANSCRIPT THAT REACHES `state.staticItems` — the pin for "no `<Static>` in
+    // the fullscreen tree", which is the invariant T12's switch safety and T15's step-1 acceptance both rest
+    // on and which nothing else in the repository catches. The two facts are independent: the root box carries
+    // an explicit `height`, so the paint is `rows − 1` whether or not a `<Static>` is mounted, and Ink's tall
+    // branch stays unreachable either way. What DOES separate them is the serializer — `debug: true` writes
+    // `fullStaticOutput + output`, so committed static rows land in `lastFrame()` directly. Measured both
+    // ways: `<LiveRegion>` gives 23 lines, swapping in `<Transcript>` gives 75 with `ALPHA-0` in them.
+    const s = mount({ renderer: FULLSCREEN, initialEntries: alphaEntries() });
+    await waitFor(() => frame(s.lastFrame).includes(PROMPT));
+    await tick();
+    expect(rowsOf(s.lastFrame())).toHaveLength(23);
+    expect(frame(s.lastFrame)).not.toContain("ALPHA-0");
+    s.unmount();
   });
 
   // …and the contrast that keeps the case above from being vacuous: the classic tree is as tall as its content.
@@ -196,10 +219,7 @@ describe.skipIf(isInCi)("the fullscreen frame never reaches Ink's tall-frame bra
   // thing keeping a fullscreen session from ever replaying a committed transcript is that `outputHeight >=
   // stdout.rows` never fires. That is invisible to `ink-testing-library`; here it is counted.
   it("writes no tall chunk with a full transcript at 24 rows", async () => {
-    const entries = Array.from({ length: 60 }, (_, i) => ({
-      kind: "sdk" as const, source: "disk" as const,
-      message: { type: "assistant", parent_tool_use_id: null, uuid: `u-${i}`, message: { id: `m-${i}`, content: [{ type: "text", text: `ALPHA-${i}` }] } },
-    }));
+    const entries = alphaEntries();
     const tty = renderRealInk(
       <ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
         renderer={{ mode: "fullscreen", reason: "env_on" }} initialEntries={entries} resyncViewport={() => false}

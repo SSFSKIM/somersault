@@ -358,6 +358,22 @@ the root; a flip re-renders `<ChatApp renderer={choice}/>` at the SAME element p
 guard + enters; leaving runs exit BEFORE the classic paint). Attach: `/tui` remounts the local
 client only. Test `test/tui/tui-switch.test.tsx`.
 
+**Two hand-offs from T9 (its report §7, confirmed by the T9 review's F5).** They are the mechanism
+behind Step 1's two acceptance clauses, not extra scope:
+
+1. **ChatApp not unmounting is not enough — the HOST subtree still remounts.** T9's two branches
+   return different root component types (`<FullscreenFrame>` vs a bare `<Box>`), so React
+   reconciles them as different elements and unmounts everything below on a live flip, even though
+   `ChatApp` itself and every child ELEMENT are the same. Component state above the seam survives;
+   Ink's host nodes do not. The cheap fix is to make `FullscreenFrame` the wrapper in BOTH modes —
+   unbounded height in classic (no `height`, no dock cap, `overflow` unset), so the root component
+   type is stable across the flip and only its props change.
+2. **`/status` reads the boot-fixed value.** `hookOpts.rendererChoice` is set once at boot; the
+   live mode lives in the `renderer` prop. T15 must route the flipped value into `useChat` (or have
+   `/status` read the prop), or `/status` reports the mode the session started in. The comment at
+   `ChatApp.tsx`'s `renderer` prop that says the two "cannot disagree" is annotated "true until
+   T15" — retire that annotation as part of this task.
+
 - [ ] **Step 1 — red:** the flip preserves ChatState — transcript content present after BOTH
   flips AND the component identity holds (a probe ref/state survives — the C5 pin);
   refuse-while-busy prints canon's copy; terminal bytes on the flip are exit-then-classic-paint /

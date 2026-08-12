@@ -4,7 +4,8 @@
 // damage is repaired afterwards — the park, the frame corrector, the resize repaint, the reflow oracle, the
 // tall-branch resync. Here the tree gets a BUDGET and whatever does not fit is clipped, which is what makes the
 // whole Wave-R correction stack unnecessary rather than merely disabled (spec §A2a): a frame that is always
-// `rows − 1` rows can never take Ink's `outputHeight >= stdout.rows` branch, so there is no residue to correct.
+// `rows − 1` rows can never take Ink's `outputHeight >= stdout.rows` branch, so there is no residue to correct
+// — for `rows ≥ 2`, which is the bound `frameHeight`'s floor puts on the claim (see there; measured).
 //
 // WHY `rows − 1` AND NOT `rows` — the recorded divergence. Ink paints through log-update, which terminates every
 // frame with a trailing `'\n'` (log-update.js:12). Writing into the last cell of the last row and then a newline
@@ -19,6 +20,19 @@
 // <AlternateScreen>. Overflow clipped." — and then clipped. `onOverflow` is that diagnostic. It reports rather
 // than repairs on purpose: growing the frame is the one response that breaks the invariant above, and silently
 // clipping is how a region that has quietly stopped showing its last rows goes unnoticed for a release.
+//   ITS SCOPE IS THE REGION, WHICH IS NARROWER THAN CANON'S — say so rather than let a reader assume parity.
+// L180318 measures the WHOLE tree against `terminalRows`; this measures the region's content against the
+// region's own budget. Finer (it names which slot overspent, and it fires while the frame as a whole still
+// fits) but narrower: a dock that overruns its cap — T13's tall dialog is the case that will arrive — is
+// clipped by the frame with nothing said. A second measurement on the dock box is the fix when that lands;
+// until then the dock's clip is silent on the debug seam by construction, not by oversight.
+//   THE THREE CLIPS ARE NOT EQUALLY LOAD-BEARING. Only the region's is: it is what turns overlong content into
+// a clip instead of a shove, and removing it reddens the I9a case. The root's and the dock's are DEFENSIVE —
+// measured on both instruments (`ink-testing-library` and real Ink through `helpers/fakeTty`), removing either
+// leaves the painted bytes identical, because Ink allocates its `Output` buffer at the root's computed height
+// and truncates anything past it before a byte is written. They are kept because that truncation is Ink's
+// implementation detail and this frame's budget is a contract; they are deliberately left unpinned, since a
+// test asserting them would be asserting the absence of a difference no instrument can see.
 //
 // THE CONTAINER SHAPE IS THE PRODUCT, not the children. T10 replaces `regionChildren` with the virtualized
 // viewport, T13 adds the two overlay slots (the absolute-bottom seam and the dock replacement), and M4's
@@ -31,7 +45,13 @@ import { Box, measureElement, type DOMElement } from "ink";
 export const PARK_ROW = 1;
 
 /** Total frame height. Floored at 1 — a one-row terminal is a degenerate pane, not a reason to hand Yoga a
- *  height of 0 (which is "auto" to nobody and a crash to some layouts). */
+ *  height of 0 (which is "auto" to nobody and a crash to some layouts).
+ *    THE FLOOR IS WHERE THE HEADER'S "no tall write, ever" CLAIM STOPS. At `rows = 1` the floor wins, the frame
+ *  is 1 row, and `1 >= stdout.rows` is exactly the condition of Ink's tall branch — measured: one tall write at
+ *  `rows = 1`, none at 2 or 3. The consequence today is nil, and only for the reason the whole shell exists:
+ *  with no `<Static>` in the fullscreen tree `fullStaticOutput` is empty, so the tall chunk carries a clear and
+ *  nothing to replay. A one-row terminal is therefore harmless rather than handled — and it is one more thing
+ *  resting on the no-`<Static>` invariant, which is pinned in `test/tui/fullscreen-frame.test.tsx`. */
 export function frameHeight(rows: number): number { return Math.max(1, rows - PARK_ROW); }
 
 /** How many of the frame's rows the dock may take. `floor(rows/2)` is spec §A4's steady-state cap: the composer
