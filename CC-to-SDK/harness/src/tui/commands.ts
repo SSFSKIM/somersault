@@ -311,11 +311,14 @@ export function formatStatus(s: { model?: string; mode: string; thinkLevel?: str
   // handed down; this formatter never re-derives it, because a `/status` that re-decided could name a
   // renderer other than the one on screen. Absent when the caller has no decision to report — a `useChat`
   // mounted outside chatMain — exactly like every other optional row above.
-  //   `corrections:` IS A PLACEHOLDER. Both stacks are named in §A2a, but only the main-screen one exists
-  // today: the park, `createResizeRepaint`, the frame corrector and the reflow oracle. TASK 9 owns the wiring
-  // — it builds the fullscreen branch that deliberately constructs NONE of them — and retires this literal
-  // for the live value at the same time.
-  if (s.renderer) out.push({ text: `  renderer   ${s.renderer.mode} (${s.renderer.reason}) · corrections: main-screen stack`, dim: true });
+  //   `corrections:` NAMES A REAL STACK NOW (T9 retired T5's placeholder). The two are not two settings of one
+  // mechanism, they are two answers to the residue problem, and only one of them is CONSTRUCTED per launch:
+  // classic builds the main-screen stack (the park, `createResizeRepaint`, the frame corrector, the reflow
+  // oracle) because its frame may be taller than the terminal; fullscreen builds none of it and holds a frame
+  // fixed at `rows − 1` whose only repaint rule is D21's one-shot erase after a resize (spec §A2a,
+  // `chatMain.tsx`'s gate). Derived from the mode rather than carried as a third field: they are the same
+  // decision, and a launch whose stack disagreed with its screen would be the bug this row exists to reveal.
+  if (s.renderer) out.push({ text: `  renderer   ${s.renderer.mode} (${s.renderer.reason}) · corrections: ${s.renderer.mode === "fullscreen" ? "alt-screen repaint contract" : "main-screen stack"}`, dim: true });
   return out;
 }
 export function formatUnknown(name: string): RenderLine[] {

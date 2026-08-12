@@ -333,6 +333,63 @@ describe("ResumeSafeStdout altMode", () => {
     expect(terminal.chunks.join("")).toBe("\x1b[2J\x1b[H" + "scrollback\n".repeat(3) + "frame\n");
   });
 
+  // ── (4) FSW T9 / D21 — THE ONE-SHOT ERASE BEFORE PAINT ────────────────────────────────────────────────
+  // A resize on the alternate screen invalidates the whole frame: log-update's `previousLineCount` describes
+  // rows that have moved, so its next erase lands in the wrong place and the repaint composes over residue.
+  // Canon's answer is a FLAG, not a per-frame cost — `needsEraseBeforePaint` is set by the resize handler
+  // (L180640) and cleared on use (L180759), where it unshifts `$uy` in front of the paint. `$uy` is
+  // `h1 + fI` = `ESC[2J` + `ESC[H` (L181490; `h1 = uA(2,"J")`, `fI = uA("H")`, both L166401-166402) — the
+  // 2J form and NOT the `Rms()` 2J+3J+H that `clearAltScreen` carries: this is a repaint, not a reset, and
+  // the alternate screen's saved lines are not the resize's business.
+  const ALT_ERASE = "\x1b[2J\x1b[H";                     // canon `$uy`, L181490
+
+  it("prefixes the next recorded paint with canon's erase, exactly once", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write(eraseLines(2) + "first\n");
+    out.eraseNextPaint();                                // …what chatMain's resize listener does in fullscreen
+    out.stdout.write(eraseLines(2) + "second\n");
+    out.stdout.write(eraseLines(2) + "third\n");
+    expect(terminal.chunks).toEqual([
+      BSU + eraseLines(2) + "first\n" + ESU,
+      BSU + ALT_ERASE + eraseLines(2) + "second\n" + ESU,   // the erase rides INSIDE the synchronized update
+      BSU + eraseLines(2) + "third\n" + ESU,                // …and is gone by the paint after it
+    ]);
+    expect(out.lastFrame()).toBe("third\n");             // the record is unaffected — `record` saw Ink's raw chunk
+  });
+
+  // THE NEXT *PAINT*, not the next write. Ink's clear→static→frame burst puts two non-paints in front of the
+  // frame, and an erase spent on the `log.clear()` would be an erase the frame behind it never gets.
+  it("waits for a frame write, not for the erase or the <Static> flush in front of it", () => {
+    const { terminal, out } = alt(80, 24);
+    out.eraseNextPaint();
+    out.stdout.write(eraseLines(2));                     // log.clear()
+    out.stdout.write("committed transcript row\n");      // staticOutput
+    out.stdout.write("new frame\n");                     // log(output)
+    expect(terminal.chunks).toEqual([eraseLines(2), "committed transcript row\n", BSU + ALT_ERASE + "new frame\n" + ESU]);
+  });
+
+  // Composes with T4b's corrector rather than competing with it: the corrector rewrites the chunk, this puts
+  // the erase in FRONT of whatever chunk is going out, and the 2026 wrap still closes over both. Fullscreen
+  // constructs no corrector (that is the whole point of T9's gating), so this pins the composition only.
+  it("goes outside the frame corrector's rewrite and inside the 2026 wrap", () => {
+    const { terminal, out } = alt(80, 24);
+    out.setFrameCorrector(() => "\x1b[2K");
+    out.stdout.write("first\n");
+    out.eraseNextPaint();
+    out.stdout.write(eraseLines(2) + "second\n");
+    expect(terminal.chunks[1]).toBe(BSU + ALT_ERASE + eraseLines(2) + "\x1b[2K" + "second\n" + ESU);
+  });
+
+  // …and it cannot reach the main screen. `ESC[2J` there blanks a viewport whose live `<Static>` rows are not
+  // in scrollback yet — the t8 over-erase, in its most direct form. Inert off the alternate screen for the
+  // same reason `park()` is inert on it: the guard belongs with the mode, not with the caller's discipline.
+  it("is inert on the main screen", () => {
+    const { terminal, out } = proxy();                   // no width, so the park adds no chunk of its own
+    out.eraseNextPaint();
+    out.stdout.write(eraseLines(2) + "frame\n");
+    expect(terminal.chunks.join("")).toBe(eraseLines(2) + "frame\n");
+  });
+
   // The frame record is T4's gate and altMode must not touch it: the whole burst vocabulary still classifies.
   it("keeps the frame record maintained across a burst", () => {
     const { out } = alt(80, 24);

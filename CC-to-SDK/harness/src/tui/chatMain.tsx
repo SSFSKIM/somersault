@@ -109,6 +109,19 @@ export interface ResumeSafeStdout {
    *  injected between that prefix and the body, inside the SAME write. Set once, from `runChatClient` — the proxy
    *  is built before the resize machinery exists, which is the only reason this is a setter. */
   setFrameCorrector(fn: (info: FrameWriteInfo) => string): void;
+  /** FSW T9 (D21) — ARM AN ERASE IN FRONT OF THE NEXT PAINT. A resize invalidates the whole alternate-screen
+   *  frame: log-update's `previousLineCount` describes rows the terminal has since moved, so its next erase
+   *  lands in the wrong place and the repaint composes over residue. Canon's answer is a one-shot FLAG rather
+   *  than a per-frame cost — `needsEraseBeforePaint`, set by the resize handler (bundle L180640) and cleared on
+   *  use (L180759), where it unshifts `$uy` in front of the paint.
+   *    A SEPARATE CROSS-CALL FLAG, not a `setFrameCorrector` in disguise (T8 review, amendment two). The
+   *  corrector's channel is set and consumed inside ONE `write` call and is guarded by `frame !== undefined` —
+   *  which is false on exactly the first paint after a resize, the paint this exists for — and fullscreen
+   *  constructs no corrector at all. This flag is set from the resize listener and read by a later call.
+   *    ALT-SCREEN ONLY, like `park()`. `ESC[2J` on the main screen blanks a viewport whose live `<Static>` rows
+   *  may not be in scrollback yet (the t8 over-erase). The guard lives here rather than in the caller's
+   *  discipline because the mode is what makes the escape safe. */
+  eraseNextPaint(): void;
 }
 
 /** Ink's erase prefix: `ansiEscapes.eraseLines(n)` is a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It is
@@ -163,6 +176,14 @@ const CLEAR_SCROLLBACK_HEAD = "\x1b[2J\x1b[3J";
  *  cosmetic and user-initiated. That asymmetry, not flush difficulty, is why m1 stays unfixed. */
 const SYNC_BEGIN = "\x1b[?2026h", SYNC_END = "\x1b[?2026l";
 
+/** FSW T9 (D21) — canon `$uy` (bundle L181490) = `h1 + fI` = `ESC[2J` + `ESC[H`, byte for byte, and it is
+ *  DELIBERATELY NOT the `Rms()` form (`2J` + `3J` + `H`, L176982) that `clearAltScreen` carries. The two answer
+ *  different questions on the same screen: `Rms` is a RESET — `/clear`'s payload, which is entitled to drop the
+ *  alternate screen's own saved lines — while this is a REPAINT, the one-shot in front of the first frame after
+ *  a resize, and the saved lines are not the resize's business. Canon keeps them apart at exactly that seam:
+ *  L180759 unshifts `$uy`, L177121 selects `Rms()`. */
+const ALT_ERASE = "\x1b[2J\x1b[H";
+
 export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; this stays the import site it had
 
 /** FSW T3 FIX ROUND (review C1) — ONE SIGWINCH listener, three things to do, and the order is the contract.
@@ -199,6 +220,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
   let detached = 0;                              // qa2-09: writes that re-laid the screen above the frame (see `detachedWrites`)
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
   let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
+  let pendingErase = false;                      // FSW T9 (D21): a resize is owed a full repaint — see `eraseNextPaint`
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
   // Five kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
   // none, at first paint) and content: record what remains. ERASE-ONLY writes (`log.clear()`, `Instance.clear()`)
@@ -341,6 +363,16 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
         parkedCol, widthAtPaint, width: stdout.columns ?? 0, rows: stdout.rows ?? 0 });
       if (seq) rewritten = prefix + seq + body;
     }
+    // FSW T9 (D21) — AND THE ONE-SHOT ERASE RIDES OUT HERE, on the recorded-frame path and nowhere else. It is
+    // read-and-cleared rather than merely read: "the next PAINT", not the next write, is the contract — Ink's
+    // clear→static→frame burst puts two non-paints in front of the frame, and an erase spent on the `log.clear()`
+    // is an erase the frame behind it never gets. It composes OUTSIDE the corrector's rewrite above (the erase
+    // precedes whatever chunk is going out, corrected or raw) and INSIDE the 2026 wrap applied at the write site,
+    // which is what makes the wipe and the repaint one atomic update — the m1 tear, closed for this one case.
+    // Injecting through `rewritten` and not around `record` is also what keeps the classification honest: `record`
+    // has already read Ink's raw bytes, so the `\x1b[2J` we are about to prepend cannot be mistaken for the
+    // tall-frame head by the very branch that tests for it.
+    if (pendingErase) { pendingErase = false; rewritten = ALT_ERASE + (rewritten ?? chunk); }
     justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0; tall = 0;   // …and the screen is back in sync (see above)
     return true;
   };
@@ -425,6 +457,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     takeTallAtSignal() { const was = tallAtSignal; tallAtSignal = false; return was; },
     detachedWrites() { return detached; },
     setFrameCorrector(fn) { corrector = fn; },
+    eraseNextPaint() { if (altMode) pendingErase = true; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
@@ -467,9 +500,12 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // FSW T5 (spec §A2): WHICH RENDERER, DECIDED ONCE. Here and nowhere else — this is the only point in the
   // process that has the real TTY, the real env and the prefs file in hand at the same time, and the
   // decision must not move again: a resize never re-evaluates it (§L2.1), so every consumer reads this one
-  // value. Today only `/status` does (F9); T8/T9 add the branch that actually mounts a different renderer,
-  // which is why nothing below this line changes shape yet.
+  // value. `/status` prints it (F9), the output proxy takes its screen rules from it (T8), and from T9 it is
+  // what decides which machinery below gets CONSTRUCTED at all.
   const renderer = selectRenderer({ isTTY: Boolean(process.stdout.isTTY), env: process.env, prefs });
+  // FSW T9 (spec §A2a) — THE ONE BOOLEAN THE WHOLE BRANCH READS. Derived once, beside the decision, so no
+  // line below re-derives it and none of them can disagree about which screen this process is painting into.
+  const fullscreen = renderer.mode === "fullscreen";
   // W3 T5: seed the Settings dialog's Output-style row from the same saved prefs (defaulting like useChat's
   // own opts.initialOutputStyle fallback does) — client-tracked, no engine round-trip needed just to boot.
   // W-C T7: and the `Show turn duration` row from the same read (`Dc("showTurnDuration", !0)` — default TRUE).
@@ -499,7 +535,9 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // pointer names whatever conversation the user was actually in when they quit.
   let liveSession: ChatSession | undefined;
   const makeSession = (resume?: string) => { const s = buildSession(resume); liveSession = s; return s; };
-  const output = createResumeSafeStdout(process.stdout);
+  // FSW T8/T9: the proxy's screen rules are the renderer's, fixed at construction — 2026-wrapped paints, no
+  // park, no `ESC[3J` strip, and the D21 erase-before-paint channel armed (see `eraseNextPaint`).
+  const output = createResumeSafeStdout(process.stdout, { altMode: fullscreen });
   const bridge = createDeferredClearBridge();                 // created BEFORE render: useChat may ask on mount
   // F2 task 5: the keymap owns raw stdin for the whole tree (its own parser + binding table + chord machine),
   // which is only safe because this render already passes `exitOnCtrlC: false` — Ink must not exit underneath
@@ -532,8 +570,16 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // not in yet) goes through Ink's own stdout so its erase-plus-frame write re-records the frame and re-parks the
   // cursor on it. The DSR reply comes back the long way round: the keymap provider owns the ONE raw-stdin reader,
   // and forwards unclaimed escape sequences to `onUnknownSequence` — a forward that has existed since task 3.
+  //   FSW T9 (spec §A2a) — AND NONE OF IT IS CONSTRUCTED IN FULLSCREEN. Every line of the stack below is an
+  // answer to one question — "the frame is taller than the terminal thinks it is; where is the residue?" — and
+  // the fullscreen frame makes that question unaskable by giving the tree `rows − 1` rows and clipping. So this
+  // is a GATE ON CONSTRUCTION, not a disabled feature: no `createResizeRepaint` (nothing to repair), no frame
+  // corrector (nothing to correct — and `record`'s corrector branch is dead there anyway, which is why D21's
+  // erase needed its own channel), no reflow probe (an alternate screen does not reflow; the probe would write
+  // a DSR into a frame that owns every cell), and no park (T8, same argument one layer down). Fullscreen's
+  // whole repaint contract is the D21 one-shot below.
   const reports = createCursorReports();
-  const resize = createResizeRepaint({
+  const resize = fullscreen ? undefined : createResizeRepaint({
     lastFrame: output.lastFrame, parkedColumn: output.parkedColumn,
     size: () => ({ columns: process.stdout.columns ?? 0, rows: process.stdout.rows ?? 0 }),
     repaint: (s) => { if (process.stdout.isTTY) output.stdout.write(s); },
@@ -545,7 +591,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument. The
   // decision lives in the resize module, not in a closure here: a write is either corrected where it is made or
   // its shortfall is owed to the repair that runs when the verdict lands, and only one of those two can be true.
-  output.setFrameCorrector(resize.frameWrite);
+  if (resize) output.setFrameCorrector(resize.frameWrite);
   // W2 t7 (s2qa2-05): THE ORDER IS THE WHOLE POINT OF DOING IT HERE. This listener is ahead of Ink's, so it is
   // the last moment at which "a tall write is outstanding" is still true for the screen the user is looking at —
   // Ink's own handler repaints synchronously on the next line of the same signal and stands the count down.
@@ -565,7 +611,15 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // whether a tall write is outstanding, and `resize.onResize` measures off the last recorded frame. A size
   // commit ahead of them writes a frame, stands `tallWrites()` down and re-records — and the W2-t7 grow
   // resync, whose whole job is to repair a stranded tall surface, would never fire again.
-  const resizeChain = createResizeChain(() => { output.noteResizeSignal(); resize.onResize(); });
+  //   FSW T9 — THE CHAIN STAYS, ITS READERS CHANGE. What is being fanned out here is the terminal's new size,
+  // and ChatApp needs that on either screen (every geometry consumer in the tree reads its resize state, and
+  // the fullscreen frame's own height IS `size.rows`). Only the two READERS are main-screen measurements, and
+  // in fullscreen they are replaced by the one thing a resize owes the alternate screen: D21's erase before the
+  // next paint. Same position in the same chain, and for the same reason the readers hold it — this runs before
+  // Ink's own synchronous handler, so the flag is up before the repaint that must carry it.
+  const resizeChain = createResizeChain(fullscreen
+    ? () => { output.eraseNextPaint(); }
+    : () => { output.noteResizeSignal(); resize!.onResize(); });
   const onTerminalResize = resizeChain.fire;
   process.stdout.on("resize", onTerminalResize);
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
@@ -609,7 +663,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // the user's shell screen AFTER rmcup.
   const teardown = createChatTeardown({
     offResizeListener: () => process.stdout.off("resize", onTerminalResize),
-    stopResize: () => resize.stop(),           // W2 t7 — drop the settle window with it: it WRITES when it fires
+    stopResize: () => resize?.stop(),          // W2 t7 — drop the settle window with it: it WRITES when it fires
+                                               // (…and in fullscreen there is nothing to stop — T9 built none)
     clearTitle: () => title.clear(),           // `a0u` (L148428) — hand the terminal back with an empty title
     parkedColumn: output.parkedColumn,
     stopSignalSafety,
@@ -618,6 +673,18 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); },
   });
   if (opts.beforeExit) opts.beforeExit.push(teardown);
+  // ── FSW T9 — TAKE THE SCREEN. `enter()` IS the arming (T6): every other method on the guard has been inert
+  // until this line, and a classic launch never reaches it. The position is the contract in both directions.
+  // AFTER the teardown is registered, because from here on an exit of any kind — signal, throw, `/exit` — owes
+  // the terminal an rmcup, and a screen taken before anything can give it back is the one failure §A3 exists
+  // to prevent. BEFORE `render()`, because `render()` paints Ink's first frame synchronously: armed any later
+  // and that frame lands on the user's shell screen and is then hidden behind the smcup, which is both a
+  // visible flash and a scrollback line nobody asked for.
+  //   …and `renderer={renderer}` below is a PROP at a stable element position (plan review C5) — no `key`, no
+  // wrapper that exists in only one mode — because T15's `/tui` flips it on a LIVE session and ChatApp may not
+  // unmount when it does. Today the value is a constant; the state that will drive it belongs here, above this
+  // element, and nothing about that line changes when it arrives.
+  if (fullscreen) altGuard.enter();
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
@@ -626,6 +693,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
         hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
         initialTodosOpen={prefs.showExpandedTodos ?? true}
+        renderer={renderer}
         {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
     </UserKeymap>,
     { exitOnCtrlC: false, stdout: output.stdout },

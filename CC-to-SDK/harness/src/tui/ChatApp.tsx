@@ -43,7 +43,8 @@ import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type Doubl
 import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
-import { Transcript } from "./Transcript.js";
+import { LiveRegion, Transcript } from "./Transcript.js";
+import { FullscreenFrame } from "./FullscreenFrame.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
@@ -167,7 +168,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -229,6 +230,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  listener) and merely DRIVEN here. Absent in component tests, and absent by construction in every
    *  non-REPL surface: a daemon/HOST session never renders this tree, so it can never emit a title. */
   terminalTitle?: TerminalTitle;
+  /** FSW TASK 9 — WHICH RENDERER THIS TREE IS PAINTING INTO. A PROP, and deliberately not a `hookOpts` field or
+   *  a context: `/tui` (T15) flips it on a LIVE session, and the one thing that flip may not do is unmount this
+   *  component — the transcript, the composer draft, every dialog's internal state and the keymap registry's
+   *  mount order all live in here. A prop at a stable element position is the only shape that survives it
+   *  (plan review C5), so `chatMain` holds the choice as state above this element and never keys or wraps it.
+   *    Absent means classic, which is what every embedder and every component test that does not care gets.
+   *  `hookOpts.rendererChoice` carries the SAME value for `/status` to print; both are handed down from the one
+   *  `selectRenderer` call, so the two cannot disagree about the mode. */
+  renderer?: RendererChoice;
 }) {
   const { exit } = useApp();                                        // declared FIRST: /exit hands it to useChat
   // suspend.ts needs the REAL tty object, not Ink's ref-counted `setRawMode` function — see that module's
@@ -275,6 +285,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // a plain number would be a prop identity that only changes when the parent re-renders for another reason.
   const terminalColumns = () => size.columns;
   const terminalRows = () => size.rows;
+  /** FSW TASK 9 — the one derivation of the renderer choice this file makes; everything below reads THIS. */
+  const fullscreen = renderer?.mode === "fullscreen";
   const queueWidth = Math.max(8, terminalColumns() - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
   /** WAVE C TASK 4 (EP-C7b) — THE CLEAR CHANNEL, and it is a TOKEN for the reason `prefill` is one. Ctrl-C's
@@ -542,7 +554,20 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // an event of the app's own and reads the count live, while the grow is an event of the TERMINAL's that Ink
   // handles first, and by the time React runs the count it would read has already been stood down (see the
   // second edge below). One shared `resyncViewportNow`; two gates, each measuring at the only moment it can.
+  //   FSW TASK 9 — AND IT DOES NOT RUN AT ALL ON THE ALTERNATE SCREEN (T8 review, obligation A). Two reasons,
+  // and only the first is the one this gate is for. (1) THE REPAIR HAS NOTHING TO REPAIR: everything above is a
+  // recovery from Ink's tall-frame branch, and the fullscreen frame is fixed at `rows − 1`, so `outputHeight >=
+  // stdout.rows` never fires, no tall chunk ever reaches the pane, and `tallWrites()` is 0 for the life of the
+  // process. Both gates below already read that count and would decline — so the erase is dead code there BY
+  // THE FRAME CONSTRAINT, and this line makes it dead BY CONSTRUCTION, which is the difference between an
+  // invariant and a coincidence. (2) The fallback's payload would be the WRONG ARM besides: `clearViewport`
+  // defaults to `eraseViewport(rows)`, the main-screen half of the D6 split (clearViewport.ts:74), and the
+  // alternate screen's arm is `Rms()`. Threading the mode in would have fixed the bytes and left a viewport
+  // wipe armed on a screen where the only thing that could ever fire it is a bug in the frame — so the gate is
+  // the honest shape and the thread is not. A `resyncViewport` INJECTED by a test still runs on the classic
+  // path, which is how the pin below can tell "declined" from "not wired".
   const resyncViewportNow = (): void => {
+    if (fullscreen) return;
     const output = resumeOutputRef.current;
     if ((resyncViewport ?? (() => clearViewport({ stdout, write })))()) output?.screenResynced?.();
   };
@@ -893,9 +918,29 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   useEffect(() => { if (paneOwned) publishLiveWindow(); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [paneOwned, state.finalizedItems]);
-  return (
-    <Box flexDirection="column">
-      <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
+  // ── FSW TASK 9 — TWO RENDERERS, ONE TREE ──────────────────────────────────────────────────────────────
+  // The split below is the SHAPE of the whole M2b renderer, so it is worth saying what it deliberately is not.
+  // It is not two component trees: the transcript region and everything under it (the "dock" — panels, turn
+  // indicator, queue, the dialog chain, the composer, the footer) are built ONCE and then either stacked in a
+  // content-sized Box, as they always were, or handed to `FullscreenFrame` as two slots. Every stateful child
+  // is the same element in the same order on both paths, which is what makes `/tui`'s live flip (T15) a prop
+  // change rather than a session-losing remount, and what keeps the twenty-four existing ChatApp suites
+  // measuring the classic path byte for byte — the only thing above them that moved is the wrapper.
+  //   THE REGION IS THE ONE ASYMMETRY, and it is the point: fullscreen renders `LiveRegion`, which is this
+  // same subtree WITHOUT `<Static>`. Ink resets `fullStaticOutput` only in its constructor, so a `<Static>`
+  // mounted even once puts committed transcript into a buffer that every later tall write replays, for the
+  // life of the process — and the fixed frame's promise that no tall write ever happens is the only thing
+  // standing between fullscreen and that replay. Never mounting it is the guarantee; T12 rests on it.
+  //   WHAT T10 REPLACES, stated because this intermediate is visibly incomplete: the region is `windowItems`
+  // today — the UNPUBLISHED tail — so rows that `useChat` has already committed to `state.staticItems` are on
+  // neither surface here (no `<Static>`, and no scrollback on the alternate screen to hold them). T10 swaps
+  // `regionChildren` for `FullscreenViewport`, whose input is the WHOLE document (`finalizedItems ⧺ pending ⧺
+  // streaming`) virtualized over an anchor, and the omission goes with it. This commit is the shell.
+  const region = fullscreen
+    ? <LiveRegion windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
+    : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
+  const dock = (
+    <>
       {todosOpen && !paneOwned ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
       {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407975, mounted at L407973)
           takes the whole slot over while a retry status exists, so the row REPLACES the spinner rather than
@@ -1162,6 +1207,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // flashes and its own 2500 ms window (`Lci`); a producer sets `awaiting`/`done` here and gets them.
         agents={{ count: state.bgTasks.length }}
         bindings={bindings} composerOwnsKeys={composerOwns(inputOwnerRef.current)} />
-    </Box>
+    </>
   );
+  // `historySearchOpen` widens the dock's cap from `floor(rows/2)` to `rows − 2`, and it is a DISJUNCTION
+  // because ccx has two of them and they live on opposite sides of the dock: `/history`'s overlay replaces the
+  // composer (it is one of the dialog arms above), while ctrl+r's inline search grows the composer in place
+  // (`footerState.searching`, the composer's own report). Both are the same claim — the search results ARE the
+  // content while they are up — so both earn the wider cap.
+  if (fullscreen) return <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching} regionChildren={region} dock={dock} />;
+  return <Box flexDirection="column">{region}{dock}</Box>;
 }

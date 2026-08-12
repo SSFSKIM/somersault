@@ -798,9 +798,11 @@ describe("useChat", () => {
     await waitFor(() => frame(lastFrame).includes("IDLE"));
     api.run!("/status");
     await waitFor(() => flat(lastFrame).includes("renderer fullscreen (settings_on)"));
-    expect(flat(lastFrame)).toContain("corrections: main-screen stack");
+    // FSW T9 retired T5's placeholder: the stack named here is now derived from the mode, and a fullscreen
+    // launch constructs none of the main-screen machinery this line used to claim for it.
+    expect(flat(lastFrame)).toContain("corrections: alt-screen repaint contract");
     const tab = (await api.tab!()).map((l) => l.text);
-    expect(tab.at(-1)).toBe("  renderer   fullscreen (settings_on) · corrections: main-screen stack");
+    expect(tab.at(-1)).toBe("  renderer   fullscreen (settings_on) · corrections: alt-screen repaint contract");
   });
 
   it("a hook mounted with no renderer decision reports none rather than guessing one", async () => {

@@ -132,6 +132,11 @@ describe("formatters", () => {
     // The reason travels verbatim: a tmux -CC launch must not read as "the default did this".
     expect(formatStatus({ mode: "default", renderer: { mode: "classic", reason: "tmux_cc_off" } }).map((l) => l.text).at(-1))
       .toBe("  renderer   classic (tmux_cc_off) · corrections: main-screen stack");
+    // FSW T9 — and the OTHER stack is real now. Fullscreen constructs none of the main-screen machinery
+    // (chatMain's gate); what it has instead is the fixed frame plus D21's post-resize erase, and this row is
+    // where a launch that somehow ran one screen's stack under the other screen would be visible.
+    expect(formatStatus({ mode: "default", renderer: { mode: "fullscreen", reason: "env_on" } }).map((l) => l.text).at(-1))
+      .toBe("  renderer   fullscreen (env_on) · corrections: alt-screen repaint contract");
     // No decision to report → no row, like every other optional row here. Not a guessed "classic".
     expect(formatStatus({ mode: "default" }).map((l) => l.text).join("\n")).not.toContain("renderer");
   });
