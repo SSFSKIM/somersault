@@ -26,6 +26,10 @@
                               permission rules, effort, output style, settings read).
     F. Turn queue           — wave 4: turn/start {queue:true}, the turn/queued-driven queue list,
                               per-turn cancel, stop-everything, and the threadView queue depth.
+    G. Fleet adoption       — M3 §1e: the machine's roster (fleet/list), adopting a row this server
+                              never spawned (thread/attach), and ending the session (thread/stop).
+    H. Workspace            — M3 §2+§3: fs/search + fs/read (server-scoped, this machine's tree) and
+                              thread/shellCommand, the display-only shell escape on the active thread.
     Z. Wire log             — every request, reply, and notification, chronological, for the whole
                               session — this is where protocol awkwardness becomes visible.
 -->
@@ -469,6 +473,129 @@
   </div>
 </section>
 
+<!-- ======================= Panel G: Fleet adoption (M3 §1e) ======================= -->
+<section id="panelFleet">
+  <h2>G. Fleet adoption</h2>
+  <div class="callout">
+    The first panel here whose subject is <b>not a thread</b>: <code>fleet/list</code> reports every
+    session on THIS MACHINE — the roster on disk joined with a live probe of each host — most of which
+    this server has never seen. <code>thread/attach</code> is what turns one of those rows into a thread
+    it holds; <code>threadId</code> is the one column the server itself owns, and a row that has one is a
+    row already adopted here.
+  </div>
+  <div class="row">
+    <button id="btnFleetRefresh">Refresh roster <span class="wirename">(fleet/list)</span></button>
+    <label>attach target <input type="text" id="attachTarget" placeholder="short | sessionId | name" /></label>
+    <button id="btnAttachTarget">Attach <span class="wirename">(thread/attach)</span></button>
+    <span id="fleetNote">(no roster read yet)</span>
+  </div>
+  <table id="fleetTable">
+    <thead><tr>
+      <th>short</th><th>name</th><th>kind</th><th>state</th><th>pid</th><th>cwd</th><th>sessionId</th><th>started</th><th>threadId</th><th>actions</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    <b>The free-text target box is not a duplicate of the row buttons.</b> A row attaches by
+    <code>short</code>, the roster's primary key, which can never be ambiguous — but the wire resolves a
+    target as a <em>simultaneous</em> filter over <code>short</code> | <code>sessionId</code> |
+    <code>name</code>, and two hits is an <b>error carrying its matches</b> (<code>-33008</code> with
+    <code>data.matches</code>) rather than a precedence, because a wrong guess would attach to someone
+    else's session. Typing a shared <code>name</code> is the only way to reach that payload from here, so
+    this console renders the matches as handles you can re-ask with instead of burying them in a blob.
+    <br />
+    <b>Attach is idempotent, and its reply is what selects the thread here</b> — deliberately, against
+    this console's usual notification-only rule. A first attach announces <code>thread/started</code> to
+    every watcher (so panel A's table fills itself), but a re-attach to a target this server already
+    holds mints nothing and <em>announces nothing</em>: it just replies with the same thread. A console
+    that selected only off the notification would silently do nothing the second time.
+    <br />
+    <b>Stop ends the SESSION</b>, not this server's hold on it — that is <code>thread/close</code> in
+    panel A, and the two being identically shaped with opposite consequences is why stop is its own
+    method. It answers <code>{ok:true}</code> only once the host's socket is at EOF <em>and</em> the
+    roster row reads terminal, and <code>thread/closed {reason:"stopped"}</code> rides the same event.
+    A <code>-33008</code> here is that poll running out of its 10 s cap: the host would not die, and the
+    <b>record survives</b> — the thread stays addressable, so nothing is dropped locally either.
+    <br />
+    No notification carries this table (the roster is disk state, not wire state): it changes when you
+    press Refresh, and attach/stop each re-read it because they change what it says.
+    <br />
+    <b>An attached fleet thread is not an inProcess one.</b> The panels above will answer
+    <code>-33006</code> (<code>unsupportedForOrigin</code>) for the methods whose subject is an engine
+    this server owns — the host owns a fleet thread's — and <code>-33005</code> once its host dies, for
+    everything but <code>thread/close</code>.
+  </div>
+</section>
+
+<!-- ======================= Panel H: Workspace (M3 §2 + §3) ======================= -->
+<section id="panelWorkspace">
+  <h2>H. Workspace &middot; files &amp; shell</h2>
+  <div class="callout">
+    <code>fs/search</code> and <code>fs/read</code> are <b>server-scoped</b> like <code>fleet/list</code>
+    — neither names a thread, because the subject is a path on this machine rather than a conversation,
+    which is also why a fleet thread's tree is as readable as an inProcess one's. Root them on a thread
+    by pasting that thread's <code>cwd</code> (panel A's table) as a search root. Both are
+    <b>unsandboxed and trusted-client</b>, and every refusal is <code>-32602</code>: an fs failure is a
+    fact about the request, not a server that broke.
+  </div>
+  <div class="row">
+    <label>query <input type="text" id="fsQuery" placeholder="fuzzy filename query" /></label>
+    <label>roots <input type="text" id="fsRoots" class="wide" placeholder="(blank = the server process's own cwd) — comma-separated absolute paths" /></label>
+    <button id="btnFsSearch">Search <span class="wirename">(fs/search)</span></button>
+    <span id="fsSearchNote">(no search yet)</span>
+  </div>
+  <table id="fsTable">
+    <thead><tr><th>score</th><th>root</th><th>path (root-relative)</th><th>actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="callout">
+    <code>path</code> comes back <b>root-relative with <code>root</code> beside it</b>, so a match is
+    readable without knowing which root produced it and the client does the join — which is what Read
+    does below, textually, since this console has no path library and no idea what the server's cwd is.
+    A <b>trailing slash means a directory</b> (the walker's own invariant, and the only way to tell
+    without a field); reading one answers <code>-32602</code> naming the kind, which is shown rather
+    than pre-blocked. An <b>empty query is a legal request with an empty answer</b>, not a client bug,
+    and an unwalkable root contributes nothing while the request still succeeds. Scores are comparable
+    across roots (all ranked against the same query) and the walk is re-done every call — there is no
+    warm index, and the cap is 50 matches.
+  </div>
+  <div class="row">
+    <label>path <input type="text" id="fsPath" class="wide" placeholder="/absolute/path" /></label>
+    <button id="btnFsRead">Read <span class="wirename">(fs/read)</span></button>
+    <span id="fsReadNote">(no read yet — click Read on a match above, or paste an absolute path)</span>
+  </div>
+  <pre id="fsPreview">(fs/read's dataBase64 is decoded here — as text when the bytes are valid UTF-8, as a hex dump when they are not)</pre>
+  <div class="callout">
+    The payload is <b>base64 because it is BYTES</b>: an image, a lockfile or a half-written UTF-8
+    sequence has to survive the trip, and a JSON string cannot carry that. So the text rendering is
+    <em>attempted, not assumed</em> — a strict UTF-8 decode that throws (or a NUL byte in what decodes)
+    falls back to hex. The note reports the reply's own <code>size</code> next to the decoded byte count:
+    they can only disagree if the base64 got mangled between here and there. The server refuses above a
+    <b>4 MiB</b> read cap; the preview cap below it is this console's own and is always named when it
+    truncates — the whole file did arrive.
+  </div>
+
+  <h3 style="margin:.6rem 0 .2rem; font-size:.9em; opacity:.8;">shell escape (active thread)</h3>
+  <div class="row">
+    <input type="text" id="shellCmd" class="wide" placeholder="shell command, e.g. git status --short" />
+    <button id="btnShellRun">Run <span class="wirename">(thread/shellCommand)</span></button>
+    <span id="shellNote">(no command run yet)</span>
+  </div>
+  <pre id="shellOut">(thread/shellCommand's output appears here)</pre>
+  <div class="callout">
+    <b>Display-only — the model never sees this.</b> That is the recorded deviation from Codex, whose
+    <code>thread/shellCommand</code> streams output into the turn; ours returns it to the one client that
+    asked and leaves the conversation untouched (the terminal's <code>!cmd</code> semantics). It names a
+    thread for one reason: the thread is what knows <em>where</em> to run — the command lands in that
+    thread's own <code>cwd</code>, the same value panel A's table shows. It is <b>un-chained</b>, so it
+    runs concurrently with a turn in flight rather than queueing behind it, but it is <b>not</b> exempt
+    from <code>-33005</code>: a thread whose engine is gone is gone for this too. Unsandboxed, like the
+    reads above. Two timeouts stand behind it — the shared seam SIGTERMs the child at 30 s, and the
+    handler abandons a TERM-proof child at 40 s and <em>says so in the output</em> rather than claiming a
+    clean timeout, because that child may still be running.
+  </div>
+</section>
+
 <!-- ======================= Panel Z: Wire log ======================= -->
 <section>
   <h2>Wire log</h2>
@@ -711,6 +838,11 @@ function setActiveThread(id) {
   document.querySelector("#dirTable tbody").innerHTML = "";
   document.getElementById("settingsOpsDump").textContent = "(thread/settings/read and thread/directory/list replies are dumped here verbatim)";
   document.getElementById("queueNote").textContent = "";
+  // Panel H's SHELL half only — a command's output belongs to the thread whose cwd it ran in. The fs
+  // half above it is deliberately left standing: it is server-scoped, so a search result and a file
+  // preview mean exactly the same thing whichever thread is selected.
+  document.getElementById("shellNote").textContent = "(no command run yet)";
+  document.getElementById("shellOut").textContent = "(thread/shellCommand's output appears here)";
   renderQueue();
 }
 function activeThreadOrAlert() {
@@ -1283,6 +1415,223 @@ document.getElementById("btnSteer").onclick = () => {
   const input = document.getElementById("queueInput").value;
   if (!input.trim()) { alert("type the steering instruction in the prompt box first"); return; }
   callActive("turn/steer", { input }, () => { document.getElementById("queueNote").textContent = "turn/steer → {ok:true} (pushed onto the live input stream — watch the running turn's items)"; });
+};
+
+// ---------------------------------------------------------------------------------------------
+// Panel G: fleet adoption (M3 §1e). The first two methods in this console whose subject is not a
+// thread at all — `fleet/list` reports the machine's roster and `thread/attach` is what turns one of
+// those rows into a thread — plus `thread/stop`, which does name one and ends the SESSION behind it.
+// ---------------------------------------------------------------------------------------------
+
+/** `-33008` (attachFailed) is the one code on this wire carrying a STRUCTURED payload a client can act
+ *  on: an ambiguous target answers with `data.matches`, so the client can re-ask with a handle that is
+ *  unique. Rendered as handles here rather than left inside the blob — the error itself still goes out
+ *  VERBATIM alongside them, the same rule callActive follows, because the message names which of the
+ *  four -33008 conditions (no match / ambiguous / already ended / dial failure) this one was. */
+function wireErrText(e) {
+  const matches = e && e.data && Array.isArray(e.data.matches) ? e.data.matches : null;
+  if (!matches) return JSON.stringify(e);
+  return JSON.stringify(e) + "\n\nmatches — re-ask with one of these:\n" + matches.map((m) => `  ${m.short}${m.name ? `  (${m.name})` : ""}`).join("\n");
+}
+
+// Roster stamps are epoch MILLISECONDS (registry timestamps elsewhere in this wire are seconds — the
+// fleet handler divides when it seeds a record, which is the tell).
+const fmtStamp = (ms) => (typeof ms === "number" ? new Date(ms).toLocaleTimeString() : "");
+// `working`/`blocked` are the two live states; the other three are terminal. `unresponsive` is a
+// separate field, not a state: the row is alive on the roster and its host would not answer the probe.
+const FLEET_BADGE = { working: "active", blocked: "waiting", done: "idle", error: "idle", stopped: "idle" };
+function fmtFleetState(row) {
+  return `<span class="badge ${FLEET_BADGE[row.state] || "idle"}">${esc(row.state)}</span>`
+    + (row.unresponsive ? ' <span class="badge waiting">unresponsive</span>' : "");
+}
+
+let fleetRows = [];
+function renderFleet() {
+  const tbody = document.querySelector("#fleetTable tbody");
+  tbody.innerHTML = "";
+  for (const row of fleetRows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${esc(row.short)}</td>
+      <td>${esc(row.name)}</td>
+      <td>${esc(row.kind)}</td>
+      <td>${fmtFleetState(row)}</td>
+      <td>${esc(row.pid)}</td>
+      <td>${esc(row.cwd)}</td>
+      <td>${esc(row.sessionId)}</td>
+      <td>${esc(fmtStamp(row.startedAt))}${row.endedAt === undefined ? "" : ` → ${esc(fmtStamp(row.endedAt))}`}</td>
+      <td>${esc(row.threadId)}</td>
+      <td></td>`;
+    const actions = tr.lastElementChild;
+    // Attach by `short` — the roster's primary key, so a row button can never hit the ambiguity error
+    // the free-text box above can (see the panel's callout). Offered on an already-held row too: the
+    // call is idempotent and its reply is how this console re-selects that thread.
+    actions.append(mkBtn("Attach", () => doAttach(row.short)));
+    // Stop names a THREAD, so only a row this server already holds can be stopped from here — a
+    // session it has never adopted has no threadId to name, and `ccx stop` is that row's own path.
+    if (row.threadId) actions.append(mkBtn("Stop", () => doFleetStop(row.threadId)));
+    tbody.appendChild(tr);
+  }
+  document.getElementById("fleetNote").textContent = `${fleetRows.length} roster row(s), read at ${new Date().toLocaleTimeString()}`;
+}
+
+async function refreshFleet() {
+  try {
+    const r = await send("fleet/list", {});
+    fleetRows = r.data || [];
+    renderFleet();
+  } catch (e) { alert("fleet/list failed: " + wireErrText(e)); }
+}
+document.getElementById("btnFleetRefresh").onclick = refreshFleet;
+
+async function doAttach(target) {
+  try {
+    const r = await send("thread/attach", { target });
+    // Reply-driven, and here that is REQUIRED rather than a shortcut — see the panel's callout: a
+    // re-attach to a held target announces nothing at all, so a notification-only selection would do
+    // nothing the second time. The first attach's `thread/started` still arrives and still repaints
+    // panel A's table through the dispatch; this merge just does not wait for it.
+    upsertLiveThread(r.thread); renderThreadTable();
+    setActiveThread(r.thread.id);
+    refreshFleet();
+  } catch (e) { alert("thread/attach failed: " + wireErrText(e)); }
+}
+document.getElementById("btnAttachTarget").onclick = () => {
+  const target = document.getElementById("attachTarget").value.trim();
+  if (!target) { alert("enter a target first — a short, a sessionId, or a session name"); return; }
+  doAttach(target);
+};
+
+async function doFleetStop(threadId) {
+  if (!confirm(`thread/stop ends the SESSION behind ${threadId} — for a fleet row that is the host process itself, not just this server's hold on it (that is Close, in panel A). continue?`)) return;
+  try {
+    await send("thread/stop", { threadId });
+    // {ok:true} means the poll ALREADY saw the roster row terminal — but the rows on screen were read
+    // before that, so the honest repaint is a re-read rather than a local edit of the state cell.
+  } catch (e) { alert("thread/stop failed: " + wireErrText(e)); }
+  // On both paths, and after the reply either way: a timed-out stop (-33008) leaves the record standing
+  // and the host possibly mid-exit, which is exactly when a stale table misleads most.
+  refreshFleet();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Panel H: workspace (M3 §2 + §3). The fs pair is server-scoped — no threadId, no record, no gate —
+// while the shell escape names a thread only because a command has to run somewhere.
+// ---------------------------------------------------------------------------------------------
+
+/** How much of a file this console will PAINT. The SERVER's cap is 4 MiB and everything under it
+ *  arrives in full; this one is only about keeping a <pre> scrollable, and is always named when it
+ *  bites so the two are never confused. */
+const PREVIEW_CHARS = 64 * 1024;
+const HEX_BYTES = 1024;
+
+let fsMatches = [];
+function renderFsMatches() {
+  const tbody = document.querySelector("#fsTable tbody");
+  tbody.innerHTML = "";
+  for (const m of fsMatches) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(m.score)}</td><td>${esc(m.root)}</td><td>${esc(m.path)}</td><td></td>`;
+    tr.lastElementChild.append(mkBtn("Read", () => {
+      const path = joinRoot(m.root, m.path);
+      document.getElementById("fsPath").value = path;
+      doFsRead(path);
+    }));
+    tbody.appendChild(tr);
+  }
+}
+/** The join the wire deliberately leaves to the client (root-relative `path`, `root` beside it). Purely
+ *  textual: there is no path library here and no way to know the server's cwd, so a RELATIVE root
+ *  produces a relative path — which is sent as is, because the `-32602 path must be absolute` the
+ *  server answers is the honest report of that. Pre-blocking it here would hide which side of the wire
+ *  could not resolve the path. */
+function joinRoot(root, path) {
+  const r = String(root ?? ""); const p = String(path ?? "");
+  if (!r) return p;
+  return r.endsWith("/") ? r + p : r + "/" + p;
+}
+
+document.getElementById("btnFsSearch").onclick = async () => {
+  const query = document.getElementById("fsQuery").value;
+  const rootsRaw = document.getElementById("fsRoots").value.trim();
+  // `roots` is genuinely optional, not nullable — an empty box omits the key and the server roots on
+  // its own cwd, the same "absent means the default" rule panel E's turn/background follows.
+  const params = { query };
+  if (rootsRaw) params.roots = rootsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+  try {
+    const r = await send("fs/search", params);
+    fsMatches = r.matches || [];
+    renderFsMatches();
+    document.getElementById("fsSearchNote").textContent = `${fsMatches.length} match(es)`
+      + (query.trim() ? "" : " — an empty query is answered empty by contract, not refused");
+  } catch (e) { alert("fs/search failed: " + wireErrText(e)); }
+};
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+/** Classic 16-per-line dump with an ascii gutter — the readable rendering for the bytes that are not
+ *  text, which is the whole reason this payload is base64 rather than a string. */
+function hexDump(bytes, limit) {
+  const n = Math.min(bytes.length, limit);
+  const lines = [];
+  for (let off = 0; off < n; off += 16) {
+    const slice = Array.from(bytes.subarray(off, Math.min(off + 16, n)));
+    const hex = slice.map((b) => b.toString(16).padStart(2, "0")).join(" ").padEnd(47, " ");
+    const ascii = slice.map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : ".")).join("");
+    lines.push(`${off.toString(16).padStart(8, "0")}  ${hex}  |${ascii}|`);
+  }
+  return lines.join("\n");
+}
+async function doFsRead(path) {
+  if (!path) { alert("enter an absolute path first (or click Read on a match above)"); return; }
+  try {
+    const r = await send("fs/read", { path });
+    const bytes = b64ToBytes(r.dataBase64);
+    // ATTEMPTED, not assumed: a STRICT utf-8 decode is the test (a lone continuation byte throws), and
+    // a NUL disqualifies a file that decodes but is not text.
+    let text = null;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch (e) { text = null; }
+    if (text !== null && text.indexOf("\u0000") !== -1) text = null;
+    const truncated = text !== null ? text.length > PREVIEW_CHARS : bytes.length > HEX_BYTES;
+    document.getElementById("fsReadNote").textContent =
+      `${path} — size ${r.size} · decoded ${bytes.length} byte(s) · rendered as ${text !== null ? "text" : "hex"}`
+      + (truncated ? " · truncated to this console's own preview cap (the whole file did arrive)" : "");
+    document.getElementById("fsPreview").textContent = text !== null ? text.slice(0, PREVIEW_CHARS) : hexDump(bytes, HEX_BYTES);
+  } catch (e) {
+    // Dumped rather than alerted, like panel B's reads: every fs refusal is -32602 carrying the fs
+    // message VERBATIM (`ENOENT: …`, `not a regular file (directory)`, `path must be absolute`), which
+    // names the errno and the path — the whole of what a client can act on.
+    document.getElementById("fsReadNote").textContent = `fs/read ${path} failed`;
+    document.getElementById("fsPreview").textContent = JSON.stringify(e, null, 2);
+  }
+}
+document.getElementById("btnFsRead").onclick = () => doFsRead(document.getElementById("fsPath").value.trim());
+
+// Not routed through callActive: this is the one thread-scoped call that can take 40 s, so the note has
+// to say "running" and then has to be CORRECTED on a failure — which an alert-and-return helper cannot
+// do. The verbatim-error rule it follows is the same one.
+document.getElementById("btnShellRun").onclick = async () => {
+  const threadId = activeThreadOrAlert(); if (!threadId) return;
+  const command = document.getElementById("shellCmd").value;
+  if (!command.trim()) { alert("enter a command first"); return; }
+  const note = document.getElementById("shellNote");
+  note.textContent = "running… (the seam SIGTERMs the child at 30 s; the handler gives up at 40)";
+  try {
+    const r = await send("thread/shellCommand", { threadId, command });
+    // Every outcome is a RESULT, never an RPC error — the primitive's promise does not reject — so the
+    // rendering reads the fields. A nonzero code and a timeout are shown as separate facts because they
+    // are: a timed-out command also reports code 1, and only `timedOut` says why.
+    note.innerHTML = `<span class="badge ${r.timedOut || r.code !== 0 ? "waiting" : "idle"}">exit ${esc(r.code)}</span>`
+      + (r.timedOut ? ' <span class="badge active">timedOut</span> — the output\'s trailing note says whether the child took the SIGTERM or outlived the deadline' : "");
+    document.getElementById("shellOut").textContent = r.output === "" ? "(no output)" : r.output;
+  } catch (e) {
+    note.textContent = "thread/shellCommand failed";
+    document.getElementById("shellOut").textContent = JSON.stringify(e, null, 2);
+  }
 };
 
 // ---------------------------------------------------------------------------------------------
