@@ -146,11 +146,19 @@ export function footerStatusRows({ statusLineConfigured, statusLineText, bashMod
  *
  *  D11 (bundle L494644) suppresses the notification block wholesale in fullscreen — `Utl = LRn ? null : <zRr/>`
  *  — and in canon that is harmless, because canon's own `v` lives on a transcript screen with its own hint row.
- *  Here it is not: ccx's `v` dump posts `wrote <file>` at `priority:"immediate"` and the composer's slot is the
- *  ONLY thing that draws it (FSW T14, amendment 1). So the suppression keeps a home for the immediate rank, and
- *  the home is canon's own: `Wtl` (L494681), the footer's right region, which carries the chip lane and a
- *  `notifications` slot side by side on the mode row. It costs no rows — which is the whole reason it is the
- *  right answer rather than a second line the dock's budget would have to learn about. */
+ *  Here it is not: the composer's slot is the ONLY reader of the notification queue, so the suppression would
+ *  take the whole immediate rank with it (FSW T14, amendment 1).
+ *    THE IMMEDIATE RANK IS NOT ONE PRODUCER, and the fix round says so where the predicate is rather than in a
+ *  report. SIX surfaces post at `priority:"immediate"` today (`grep 'priority: "immediate"'`): the yank hint,
+ *  the `←←` agents hint, the history-search hint and the Esc-again-to-clear arm (ChatComposer), and the
+ *  Esc-again-to-rewind arm and the `v` dump's `wrote <file>` receipt (ChatApp). All six are keystroke feedback
+ *  with no other surface — the dump receipt is merely the one whose absence a test caught — so all six move
+ *  here together in fullscreen, and everything BELOW immediate is genuinely silenced, which is canon's
+ *  behaviour for all of them.
+ *    THE HOME IS CANON'S OWN MECHANISM: `Wtl` (L494681), the footer's right region, a column flushed right on
+ *  the mode row. THE TENANT IS OURS — see the render site: canon's fullscreen right region carries chips and
+ *  explicitly NO notification. It costs no rows, which is the whole reason it beats a second line the dock's
+ *  budget would have to learn about. */
 export function footerNotice(input: Pick<FooterProps, "notice" | "fullscreen">): CcxNotification | null {
   return input.fullscreen && input.notice?.priority === "immediate" ? input.notice : null;
 }
@@ -266,7 +274,12 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
   // rendered from a predicate nothing can set would be the dishonest affordance this port's help/hint
   // discipline exists to prevent.
   //   THE TENANT IT DOES HAVE is amendment 1's: the immediate-rank notification D11 would otherwise silence.
-  // `footerNotice` owns that predicate.
+  // `footerNotice` owns that predicate — and the fix round is explicit about whose idea it is. `Wtl` takes a
+  // `notifications` child (L494681) and canon's fullscreen call site passes NOTHING into it: `Utl = LRn ? null
+  // : <zRr/>` (L494644), so upstream's alternate-screen right region is chips and only chips. THE MECHANISM IS
+  // CANON'S, THE TENANT IS OURS. The mechanism is what makes it defensible — a slot canon already reserves on
+  // this row, at zero row cost — but nobody should read this file and conclude upstream paints a notification
+  // here, because it does not.
   //   `flexWrap` GOES TO `nowrap` ON THIS ARM, and only on it. With two children a wrapping row can put the
   // right region on a SECOND line when the hint list is long — which would make the footer two rows tall
   // without `footerRows` knowing, and the dock's reservation is exact (T13b review I4). Classic keeps canon's
@@ -276,9 +289,17 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
     <Box flexDirection="row" flexWrap={fullscreen ? "nowrap" : "wrap"} alignItems="flex-start" paddingLeft={2} paddingRight={fullscreen ? 1 : 2} columnGap={1}>
       <Box flexDirection="column" flexShrink={1} overflow="hidden">{statusRow}{row}</Box>
       {/* `flexGrow` IS canon's `marginLeft:"auto"` here — Ink 5.2.1's `Styles` types margins as numbers, so the
-          auto margin is expressed as the region absorbing the row's slack instead, and `NotificationSlot`'s own
-          `justifyContent:"flex-end"` does the flush. Same pixels, one property. */}
-      {right ? <Box height={1} flexGrow={1} flexShrink={1} alignItems="flex-end" overflow="hidden"><NotificationSlot notification={right} /></Box> : null}
+          auto margin is expressed as the region absorbing the row's slack instead, and `alignItems:"flex-end"`
+          on this COLUMN (canon's own `Wtl` shape) plus `NotificationSlot`'s `justifyContent:"flex-end"` do the
+          flush. Same pixels, one property.
+            `alignSelf` IS THE FIX-ROUND CORRECTION (review I2), and it is the one property canon does not need.
+          Canon's outer row is `alignItems:"flex-start"` (L494667) and its fullscreen right region holds only
+          CHIPS, so the top of the row is where a chip belongs. Ours holds a NOTIFICATION, and the top of the
+          row is D1's reserved blank — a row whose entire purpose is to stay blank so an arriving statusLine
+          cannot shove the frame — or, once the script answers, the script's own first line. `flex-end` on the
+          cross axis puts this one-row box on the LAST row of the left column, which is the mode row under
+          every statusLine state (none, held-blank, one line, many). */}
+      {right ? <Box height={1} alignSelf="flex-end" flexDirection="column" alignItems="flex-end" flexGrow={1} flexShrink={1} overflow="hidden"><NotificationSlot notification={right} /></Box> : null}
     </Box>
   );
 }

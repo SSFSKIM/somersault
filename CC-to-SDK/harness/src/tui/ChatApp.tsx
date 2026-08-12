@@ -1160,12 +1160,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         ? <BypassConsent onAccept={acceptBypassConsent} onRefuse={refuseBypassConsent}
             {...(deps?.savePrefs ? { savePrefs: deps.savePrefs } : {})} {...(deps?.env ? { env: deps.env } : {})} />
         : state.shortcutsOpen
-        ? <ShortcutsOverlay onClose={closeShortcuts} />
+        // FSW T14 review (M5): the grid carries one row that exists in this renderer only — `v`, the
+        // scrollback's editor escape, which is a printable letter in the classic tree. `fullscreen` is the
+        // gate, and it is this component's own derivation, so the row appears exactly where the key can fire.
+        ? <ShortcutsOverlay onClose={closeShortcuts} fullscreen={fullscreen} />
         // F6 T14: `/help`'s dialog sits directly behind the `?` overlay — they render the SAME grid, and the
         // one that was opened last is the one on screen. Both are USER surfaces (no parked decision under
         // them), so this pair keeps the head of the chain.
         : state.helpOpen
-        ? <HelpDialog commands={state.commandCatalog} onClose={closeHelp} rows={overlayRows()} columns={terminalColumns()} />
+        ? <HelpDialog commands={state.commandCatalog} onClose={closeHelp} rows={overlayRows()} columns={terminalColumns()} fullscreen={fullscreen} />
         : transcriptOpen
         // The ONLY route from the retained document to the pager: useChat's detailItems closure re-projects
         // it at whichever detail projection the pager currently wants. ChatApp never projects detail itself
@@ -1346,9 +1349,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     <>
       {/* D10 (bundle 456219-456226 `rCn`, mounted at 455945 as the band's FIRST child) — the suggestion
           palette's fullscreen home. Canon floats it at `bottom:"100%" opaque`, i.e. over the region and out
-          of the band's own height; stock Ink cannot, so it takes the top of the band in flow and the frame's
-          `paletteOpen` widens the cap to pay for it (FullscreenFrame). Empty on the classic arm — nothing is
-          ever published there, because `ChatComposer` only hoists in fullscreen. */}
+          of the band's own height; stock Ink cannot, so it takes the top of the band in flow — at canon's own
+          five-row overlay size, `overlay`/`noPad` (suggestPopup.tsx), which is what keeps that in-flow cost to
+          five rows instead of half the terminal. The frame's `paletteOpen` is the short-pane valve underneath
+          it (FullscreenFrame). Empty on the classic arm — nothing is ever published there, because
+          `ChatComposer` only hoists in fullscreen. */}
       {fullscreen ? <PaletteSlot /> : null}
       {todosOpen && !paneOwned ? <TaskPanel tasks={state.tasks} columns={terminalColumns()} rows={terminalRows()} /> : null}
       {/* Wave T Task 13 — the live-turn indicator is ONE slot. Canon `qyn` (L407975, mounted at L407973)

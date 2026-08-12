@@ -93,10 +93,15 @@ export function isFileish(id: string): boolean {
 const fileIcon = (_id: string): string => "+";
 
 /** `DXe`'s `d` (bundle L432431, the `let { rows: c, columns: u } = Br(), d = …` line) — the ONLY thing that
- *  decides how tall the region is. Not the item count. */
+ *  decides how tall the INLINE region is. Not the item count. The overlay arm of that same expression is
+ *  `OVERLAY_ROWS` below. */
 export function popupHeight(rows: number): number {
   return Math.max(1, Math.min(Math.max(6, Math.floor(rows / 2)), rows - 3));
 }
+/** `s0H = 5` (bundle L432478) — the other arm of L432431, `d = o ? s0H : …`. The OVERLAY palette is a flat five
+ *  rows at every pane height: it floats over the transcript rather than sitting in the flow, so canon has no
+ *  reason to scale it with the terminal and every reason not to bury the screen under it. */
+export const OVERLAY_ROWS = 5;
 
 /** `DXe`'s `p` (L432438): `maxColumnWidth ?? max(displayText widths) + 5`.
  *
@@ -319,18 +324,28 @@ const blanks = (n: number, key: string) => Array.from({ length: Math.max(0, n) }
  * `DXe`. `rows`/`columns` are the terminal's, threaded from ChatComposer the same way everything else in this
  * port is. `emptyMessage` is upstream's `n`: when there are no items and no message the popup is `null`, and
  * when there are no items and a message the message takes ONE line and the padding is `d - 1` (L432433–L432436).
+ *
+ * `overlay` (`o`) AND `noPad` (`i`) ARE ONE ARRANGEMENT WITH TWO SWITCHES, and canon only ever throws both at
+ * once: `rCn` is the sole caller that passes either (L456226, `overlay: !0, noPad: !0`). `overlay` swaps `d`
+ * from `popupHeight(rows)` to the flat `OVERLAY_ROWS`; `noPad` drops the blank padding (`w = i ? 0 : …`,
+ * L432446) and the bottom-justification with it (`justifyContent: o ? void 0 : "flex-end"`) — a floating
+ * palette has no region to fill out, so it is exactly as tall as the rows it drew.
+ *   THE PORT NEEDS THEM MORE THAN CANON DOES. Canon's overlay is `position:absolute … opaque` and costs the
+ * layout nothing whatever it pads to; ours is in flow (paletteSlot.tsx's header), so a popup padded to
+ * `popupHeight(rows)` charges the transcript twelve rows at a 24-row terminal to show one match.
  */
-export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, emptyMessage }: {
+export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, emptyMessage, overlay = false, noPad = false }: {
   items: readonly SuggestItem[]; selected: number; columns: number; rows: number;
-  maxColumnWidth?: number; emptyMessage?: string | null;
+  maxColumnWidth?: number; emptyMessage?: string | null; overlay?: boolean; noPad?: boolean;
 }) {
-  const d = popupHeight(rows);
+  const d = overlay ? OVERLAY_ROWS : popupHeight(rows);
+  const justify = overlay ? undefined : "flex-end";
   if (items.length === 0) {
     if (!emptyMessage) return null;
     return (
-      <Box flexDirection="column" justifyContent="flex-end" paddingX={2}>
+      <Box flexDirection="column" justifyContent={justify} paddingX={2}>
         <Text dimColor>{emptyMessage}</Text>
-        {blanks(d - 1, "pad")}
+        {blanks(noPad ? 0 : d - 1, "pad")}
       </Box>
     );
   }
@@ -342,13 +357,13 @@ export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, e
   const { start, end, rendered } = scrollWindow(lineCounts, selected, d);
   const sel = Math.max(0, Math.min(selected, items.length - 1));
   return (
-    <Box flexDirection="column" justifyContent="flex-end" paddingX={2}>
+    <Box flexDirection="column" justifyContent={justify} paddingX={2}>
       {items.slice(start, end).map((item, i) => (
         isFileish(item.id)
           ? <FileRow key={item.id} item={item} columns={columns} selected={start + i === sel} />
           : <GeneralRow key={item.id} item={item} columns={columns} nameCol={nameCol} selected={start + i === sel} allowWrap={allowWrap} />
       ))}
-      {blanks(d - rendered, "pad")}
+      {blanks(noPad ? 0 : d - rendered, "pad")}
     </Box>
   );
 }

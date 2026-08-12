@@ -112,12 +112,16 @@ export function browserOptions(commands: readonly CommandEntry[], columns: numbe
 /** `K_f` (L459450): how many rows of the list fit under this dialog's chrome. */
 export const browserVisibleRows = (rows: number): number => Math.max(1, Math.floor((rows - 10) / 2));
 
-export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80, initialTab = "general" }: {
+export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80, initialTab = "general", fullscreen = false }: {
   commands: readonly CommandEntry[];
   onClose: () => void;
   rows?: number;
   columns?: number;
   initialTab?: HelpTab;
+  /** The alternate-screen renderer is mounting this, so the grid's fullscreen-only rows are live (FSW T14
+   *  review M5). Passed straight through: this dialog and the `?` overlay print the SAME grid, and a row that
+   *  appeared in one and not the other would be two answers to one question. */
+  fullscreen?: boolean;
 }) {
   const [tab, setTab, tabRef] = useRefState<HelpTab>(initialTab);
   // Ref-backed for the reason SettingsDialog's is: one stdin chunk dispatches several events with no render
@@ -192,7 +196,7 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
           <Box flexShrink={0}><Text>{HELP_INTRO}</Text></Box>
           <Box flexDirection="column">
             <Box flexShrink={0}><Text bold>Shortcuts</Text></Box>
-            <ShortcutsGrid gap={2} fixedWidth />
+            <ShortcutsGrid gap={2} fixedWidth fullscreen={fullscreen} />
           </Box>
         </Box>
       ) : tab === "commands" ? browser(defaults, BROWSE_DEFAULT_TITLE)

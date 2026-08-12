@@ -2,7 +2,7 @@
 // the composer does not own (FSW Task 14).
 //
 // WHY A CONTEXT PAIR AND NOT A PROP. In fullscreen the palette belongs ABOVE the dock (grounding §4's D10 row;
-// bundle `rCn` L456219-456226 is `position:absolute bottom:"100%" … opaque`, mounted at L455945 as the FIRST
+// bundle `rCn` L456219-456226 is `position:absolute bottom:"100%" … opaque` — full cite below — mounted at L455945 as the FIRST
 // child of the dock band `IDa` and therefore floating over the region, not inside the band). The element it
 // paints is a function of the composer's own editor state — the matching list, the selected index, the catalog's
 // name-column width — none of which leaves that component. Canon solves it with exactly this shape: a provider
@@ -13,6 +13,16 @@
 // into ChatApp's own state would re-render the whole tree — the viewport included, on the one hot path this
 // renderer has — for every keystroke that narrows a slash list. Here the setState lands on the HOST, whose
 // `children` element is unchanged across it, so React re-renders the consumer and nothing else.
+//
+// WHAT `rCn` WRAPS ITS POPUP IN, cited in full (L456226): `position:"absolute", bottom:"100%", left:0, right:0,
+// paddingX:2, paddingTop:1, flexDirection:"column", opaque:true` — and the popup itself takes `overlay:!0,
+// noPad:!0`, which is what holds it to five rows with no blank padding (suggestPopup.tsx's `OVERLAY_ROWS`).
+//   `paddingTop:1` IS THE ONE PIECE NOT REPRODUCED, deliberately, and it is a row rather than a detail. Canon's
+// box is absolute, so its top padding is a blank line painted OVER the transcript at no cost to the layout;
+// ours is in flow, so the same line would be a transcript row spent on a gap. `paddingX:2` is already inside
+// the popup (`SuggestPopup`'s own Box, which the classic inline path shares), so the slot adds nothing at all
+// and the palette's height is exactly the rows it drew. Recorded here rather than in a report, because the next
+// reader comparing the two files will see one property missing and should not have to re-derive why.
 //
 // THE PUBLISH IS AN EFFECT, canon's own `useEffect(…, [set, node])`, so the palette lands one flush behind the
 // keystroke that opened it. That is invisible next to Ink's 32 ms throttle, and it is NOT the report the frame's

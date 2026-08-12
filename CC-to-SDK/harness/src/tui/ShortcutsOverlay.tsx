@@ -34,16 +34,25 @@ import { ACCENT } from "./theme.js";
  *  It is the KEY-COLUMN rendering of the very rows the grid prints as sentences (keys/hints.ts's `ShortcutRow`
  *  header): one entry, two grammars, so auditing this corpus audits what the grid advertises. */
 export const ROWS: [string, string][] = shortcutRows(defaultLookup);
+/** The rows the ALTERNATE-SCREEN renderer adds on top of `ROWS` (FSW T14 review M5) — today, `v`. A set
+ *  DIFFERENCE rather than a hand-kept list, so a second conditional row joins the audit by existing.
+ *  `honesty.test.tsx` demands a live proof for these exactly as it does for `ROWS`: conditional is a statement
+ *  about WHERE a row prints, never a discount on whether the key works. */
+export const FULLSCREEN_ROWS: [string, string][] =
+  shortcutRows(defaultLookup, process.platform, true).filter(([k]) => !ROWS.some(([classic]) => classic === k));
 
 /** `Y6t` (L459475-634). `dimColor`/`fixedWidth`/`gap`/`paddingX` are its four props, and the two call sites
  *  pass exactly what upstream's do: the `?` overlay `{dimColor, fixedWidth, paddingX:2}` (L494617), the Help
  *  dialog's General panel `{gap:2, fixedWidth}` (L459654). */
-export function ShortcutsGrid({ dimColor = false, fixedWidth = false, gap, paddingX }: {
-  dimColor?: boolean; fixedWidth?: boolean; gap?: number; paddingX?: number;
+export function ShortcutsGrid({ dimColor = false, fixedWidth = false, gap, paddingX, fullscreen = false }: {
+  dimColor?: boolean; fixedWidth?: boolean; gap?: number; paddingX?: number; fullscreen?: boolean;
 }) {
   // `hasUsedBackslashReturn` is EditorState the grid cannot see (no composer is mounted while it shows), so
   // the ladder stands on its long rung here — see `ShortcutGridOptions.newline`.
-  const columns = shortcutGrid(useBindingLookup(), { newline: newlineHint(false) });
+  //   `fullscreen` ADDS THE ROWS WHOSE KEY ONLY EXISTS IN THAT RENDERER (`hints.ts`'s `ShortcutRow.fullscreen`).
+  // It is a prop and not a context read because both call sites already know which tree they are in, and a
+  // bare render — every test that mounts this component alone — must get the classic set.
+  const columns = shortcutGrid(useBindingLookup(), { newline: newlineHint(false), fullscreen });
   return (
     <Box flexDirection="row" gap={gap} paddingX={paddingX}>
       {/* Keyed by POSITION in both directions: a cell is derived text, so two of them can read the same
@@ -57,7 +66,7 @@ export function ShortcutsGrid({ dimColor = false, fixedWidth = false, gap, paddi
   );
 }
 
-export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
+export function ShortcutsOverlay({ onClose, fullscreen = false }: { onClose: () => void; fullscreen?: boolean }) {
   useKeyScope("Help");
   useSwallowKeys(true);
   useKeyActions({ "help:dismiss": () => onClose() });    // KB6: Escape, and only Escape, closes the overlay
@@ -67,7 +76,7 @@ export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Keyboard shortcuts  <Text dimColor>(esc closes)</Text></Text>
-      <ShortcutsGrid dimColor fixedWidth paddingX={2} />
+      <ShortcutsGrid dimColor fixedWidth paddingX={2} fullscreen={fullscreen} />
     </Box>
   );
 }

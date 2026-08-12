@@ -295,9 +295,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  user's scrollback. This fires from the single editor-state writer, inside the same stdin handler as the
    *  keystroke that opened the popup, so the cap and the popup land in the same frame.
    *
-   *  A BOOLEAN AND NOT A ROW COUNT: the popup is blank-padded to `popupHeight(rows)` whenever it draws at all,
-   *  so the app already holds the other half of the geometry and re-derives it per render — which is what
-   *  keeps a resize honest without a second report. */
+   *  A BOOLEAN AND NOT A ROW COUNT: on the INLINE arm — the one `mainWindowCap` budgets for — the popup is
+   *  blank-padded to `popupHeight(rows)` whenever it draws at all, so the app already holds the other half of
+   *  the geometry and re-derives it per render, which is what keeps a resize honest without a second report.
+   *  (The fullscreen arm pads to nothing and is capped at five rows; the frame's `paletteOpen` reads this same
+   *  boolean, and it needs no count either — see FullscreenFrame.) */
   onSuggestOpen?: (open: boolean) => void;
   /** Upstream's `hasSuppressedDialogs` prop (L549494), which gates the dim `Waiting for permission…` row
    *  (L496241): true while a decision is parked behind this draft. */
@@ -1211,8 +1213,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // nowhere else. `null` on the classic arm and whenever nothing is drawn, which withdraws the slot.
   //   ABOVE the `editorInFlight` early return, like every other hook, so the hook order is unconditional —
   // and the effect's cleanup is what takes the palette down when a dialog unmounts us mid-list.
+  //   AND IT IS THE OVERLAY POPUP, NOT THE INLINE ONE. `rCn` hands `DXe` `overlay: !0, noPad: !0` (L456226) and
+  // the two together are what make a floating palette affordable: five rows flat (`s0H`, L432478) instead of
+  // `popupHeight(rows)`, and no blank padding under the last match. Here they are not a nicety — the slot is IN
+  // FLOW, so canon's padding would charge the transcript twelve rows at a 24-row pane to show one command. The
+  // inline arm below passes neither and is unchanged.
   const hoisted = fullscreen && popupShown && suggest
-    ? <SuggestPopup {...suggest} columns={cols} rows={termRows} />
+    ? <SuggestPopup {...suggest} columns={cols} rows={termRows} overlay noPad />
     : null;
   usePaletteHoist(hoisted);
   // CM8's early return, upstream's own shape (L496236): while the editor holds the terminal the composer

@@ -9,7 +9,7 @@
 // verbatim (a local `waitFor(cond)` polling loop, plus a bare `await new Promise((r) => setTimeout(r, N))`
 // where a settle is needed with nothing to poll for) rather than a fictitious shared helper — chat.test.tsx
 // does not export one, and these helpers are file-local by convention across this whole test suite.
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, beforeAll, vi } from "vitest";
 import React from "react";
 // F2 task 6: ChatApp/ChatComposer read stdin through <KeymapProvider> now, not `useInput` — rendered bare
 // they have no input path at all, so every render here goes through the provider wrapper.
@@ -18,14 +18,23 @@ import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
 import { Footer } from "../../src/tui/Footer.js";
 import { defaultLookup } from "../../src/tui/keys/hints.js";
-import { ROWS } from "../../src/tui/ShortcutsOverlay.js";
+import { FULLSCREEN_ROWS, ROWS } from "../../src/tui/ShortcutsOverlay.js";
 import { applyKey, initialEditorState, inputMode, UNDO_COALESCE_MS, type EditorState } from "../../src/tui/editor.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
 import { appendHistory } from "../../src/tui/promptHistory.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { dumpDir } from "../../src/tui/transcriptDump.js";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// The `v` proof presses a key that spawns `$VISUAL`/`$EDITOR` with stdio "inherit" in the real tree — which,
+// unstubbed, launches the developer's own editor into the test runner and hangs it (the hazard
+// `fullscreen-scroll.test.tsx` records at length). Blanked for the whole file: the dump still writes its file
+// and `openInEditor` answers "no-editor". Every other proof here injects its editor seam explicitly, so
+// nothing else in this file reads either variable.
+beforeAll(() => { vi.stubEnv("VISUAL", ""); vi.stubEnv("EDITOR", ""); });
+afterAll(() => { vi.unstubAllEnvs(); });
 
 /** TaskPanel's pending row (F6 T13). Ink lays the row out by MEASURED width and `◻` measures two columns
  *  while printing as one, so the gutter is one space or two — this is a regex rather than a literal for that
@@ -341,6 +350,36 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
   "@": () => { expect(typed("@").mention).not.toBeNull(); },
   "/": () => { expect(typed("/").command).not.toBeNull(); },
 
+  // FSW T14 review (M5) — THE FIRST CONDITIONAL ROW, and the audit treats it exactly like an unconditional
+  // one. `v` prints only in the alternate-screen grid (`ShortcutRow.fullscreen`), because in the classic tree
+  // it is an ordinary letter; inside that renderer it is live only while the viewport is scrolled off its
+  // tail, which the cell itself says. So the proof has to show BOTH halves through the real tree: scrolled, it
+  // dumps; at the tail, the same key types.
+  //   No editor is spawned — `VISUAL`/`EDITOR` are blanked for this file (see the stub below), so the dump
+  // writes its file and reports `wrote …`. The file it leaves behind is removed here rather than left in the
+  // machine's temp dir.
+  v: async () => {
+    const alpha = Array.from({ length: 60 }, (_, i) => ({
+      kind: "sdk" as const, source: "disk" as const,
+      message: { type: "assistant", parent_tool_use_id: null, uuid: `v-${i}`, message: { id: `mv-${i}`, content: [{ type: "text", text: `VROW-${i}` }] } },
+    }));
+    const before = new Set(readdirSync(dumpDir()).filter((f) => f.startsWith("cc-transcript-")));
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/work"
+        renderer={{ mode: "fullscreen", reason: "env_on" }} initialEntries={alpha}
+        deps={{ columns: () => 80, rows: () => 24 }} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("v");                                // at the tail the key is the composer's: it TYPES
+    await waitFor(() => frame(lastFrame).includes("❯ v"));
+    stdin.write("\x7f");                             // backspace it away again
+    await settle();
+    stdin.write("\x1b[5~");                          // page up — the pill is up, so `v` is the viewport's
+    await settle();
+    stdin.write("v");
+    await waitFor(() => frame(lastFrame).includes("wrote /"));
+    for (const f of readdirSync(dumpDir()).filter((x) => x.startsWith("cc-transcript-") && !before.has(x))) rmSync(join(dumpDir(), f), { force: true });
+  },
+
   "?": async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
@@ -350,10 +389,20 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
   },
 };
 
+// CONDITIONAL ROWS ARE AUDITED, NOT EXEMPTED (FSW T14 review M5). `FULLSCREEN_ROWS` is what the alternate-screen
+// grid prints ON TOP of `ROWS`; a row that only appears in one renderer is still a promise while it is on
+// screen, so it owes the same executable proof. The corpus is the union, and a new conditional row joins it by
+// existing rather than by someone remembering to extend this list.
+const ADVERTISED = [...ROWS, ...FULLSCREEN_ROWS];
+
 it("every advertised chord has a proof", () => {
-  for (const [k] of ROWS) expect(PROOFS[k], `overlay advertises "${k}" with no proof — add one or delete the row`).toBeDefined();
+  for (const [k] of ADVERTISED) expect(PROOFS[k], `overlay advertises "${k}" with no proof — add one or delete the row`).toBeDefined();
 });
-for (const [k] of ROWS) it(`"${k}" is live`, async () => { await PROOFS[k](); });
+it("no proof outlives its row — every PROOFS key is something the grid really prints", () => {
+  const advertised = new Set(ADVERTISED.map(([k]) => k));
+  for (const k of Object.keys(PROOFS)) expect(advertised.has(k), `PROOFS carries "${k}" but no grid row advertises it`).toBe(true);
+});
+for (const [k] of ADVERTISED) it(`"${k}" is live`, async () => { await PROOFS[k](); });
 
 it("the footer and the composer's contextual hints only advertise chords that ROWS carries", async () => {
   // WAVE C TASK 2 REWROTE THE CORPUS, NOT THE RULE. The eleven-row hint stack this test used to sweep is

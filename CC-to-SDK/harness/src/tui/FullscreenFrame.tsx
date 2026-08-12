@@ -99,9 +99,10 @@ export function frameHeight(rows: number): number { return Math.max(1, rows - PA
 /** How many of the frame's rows the dock may take. `floor(rows/2)` is spec §A4's steady-state cap: the composer
  *  can grow, but never past the point where the transcript stops being the thing on screen. `wide` is the
  *  exception — `rows − 2`, canon's cap for a bottom-anchored surface that IS the content while it is up
- *  (grounding §4.3, bundle L455951), the same number `seamCap` takes. Two tenants earn it: history search,
- *  whose results are the content, and (T13b) a parked DECISION, whose dialog is the only thing on screen the
- *  user can act on.
+ *  (grounding §4.3, bundle L455951), the same number `seamCap` takes. Three tenants earn it: history search,
+ *  whose results are the content; (T13b) a parked DECISION, whose dialog is the only thing on screen the user
+ *  can act on; and (T14) the suggestion palette, which is neither — see `paletteOpen` for what that one is
+ *  actually protecting and at which pane heights.
  *    THE DECISION TENANT IS A TRADE, NOT A NECESSITY — correcting T13b's report, which called it "required".
  *  The narrow cap does reach the acceptance: at 24 rows a permission dialog's ten rows of chrome fit inside
  *  `floor(24/2) = 12` with room for the marker, so the question, the options and `esc cancel` all survive —
@@ -152,12 +153,15 @@ export interface FullscreenFrameProps {
   /** T13b — a parked decision's dialog is in the dock. It takes `dockCap`'s wide arm for the reason history
    *  search does; see there. */
   dialogInDock?: boolean;
-  /** T14 / D10 — the suggestion palette is in the band, above the dock. THIRD tenant of `dockCap`'s wide arm,
-   *  and the least avoidable of the three: the popup is blank-padded to `popupHeight(rows)` = `max(6,
-   *  floor(rows/2))` whenever it draws at all, which IS the narrow cap — so left on it the composer and the
-   *  footer are the rows the frame clips, on the keystrokes of every slash command. Canon does not pay this
-   *  because its palette is `position:absolute bottom:"100%" opaque` and contributes no height to the band at
-   *  all (L456226); ours is in flow, for the "occlusion is omission" reason this file's header gives. */
+  /** T14 / D10 — the suggestion palette is in the band, above the dock. Third tenant of `dockCap`'s wide arm,
+   *  and the only one that is a SAFETY VALVE rather than a claim on the screen.
+   *    THE FIX ROUND MEASURED WHAT IT IS WORTH, correcting T14's report (which called it unavoidable and
+   *  blamed it for a sliver of transcript). With canon's `overlay`/`noPad` arms now ported (suggestPopup.tsx)
+   *  the palette is at most five rows, so at 24 rows the band wants nine and the cap — wide or narrow — does
+   *  not bind at all: the region is 18 rows either way, because a cap is a ceiling and the dock takes its
+   *  natural height under it. Where it still bites is the SHORT pane: at 16 rows a five-row palette plus the
+   *  composer and the footer is nine rows against a narrow cap of eight, and the row the frame clips is the
+   *  footer. So the arm stays — measured, on that case — and it costs the tall pane nothing. */
   paletteOpen?: boolean;
   /** The L180317 diagnostic. Default writes to stderr only under `CCX_DEBUG`, the same seam and the same reason
    *  `statusLine.ts` has one: an unguarded stderr write lands in the middle of a live frame. */

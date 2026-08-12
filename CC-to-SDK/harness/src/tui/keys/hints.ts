@@ -182,6 +182,13 @@ export interface ShortcutRow {
    *  `composerFrame.tsx` (`newlineHint`), which imports Ink — so the caller supplies the string and this pure
    *  module never reaches for it. */
   ladder?: true;
+  /** THIS ROW EXISTS IN THE ALTERNATE-SCREEN RENDERER ONLY, and is absent everywhere else — the same shape as
+   *  the Windows rule below, one axis over. It is what lets the grid advertise a key that is a printable
+   *  letter in the other renderer: the honesty contract is "no string may advertise a chord that is not live",
+   *  and a row the classic grid never prints cannot break it there. The CELL still has to carry whatever
+   *  narrows the key inside this renderer (`v` is the scrollback's, not the composer's), because the reader is
+   *  looking at one grid and cannot see the gate. */
+  fullscreen?: true;
 }
 
 /** THE MERGED ENTRY SET (F6 T14, DG62/DG63). Upstream's `Y6t` entries FIRST, in upstream's own three-column
@@ -216,6 +223,14 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
   { action: "chat:cancel", repeat: 2, label: "clear input · rewind when empty", col: 1, prefix: "double tap ", phrase: "clear input" },
   { action: "chat:cycleMode", label: "mode ladder", col: 1, phrase: "auto-accept edits" },
   { action: "app:toggleTranscript", label: "transcript pager", col: 1, connector: "for", phrase: "verbose output" },
+  // FSW T14 review (M5). Canon advertises this one on its transcript screen — `v to open in ${editor}`
+  // (L547303) — and ccx's jump pill carries that wording while it is up. The pill is not enough on its own: a
+  // user who never scrolls never sees it, and never learns the escape exists. The row is FULLSCREEN-ONLY
+  // because `scroll:dumpTranscript` is registered by the viewport for exactly as long as the pill is
+  // (FullscreenViewport), and in the classic renderer `v` is a letter and nothing else. `$EDITOR` is the
+  // spelling this grid already uses for the composer's own external-editor row; `when scrolled` is the gate,
+  // stated because the reader of a grid cannot see it.
+  { key: "v", label: "open transcript in $EDITOR (while scrolled)", col: 1, cell: "v to open in $EDITOR when scrolled", fullscreen: true },
   { action: "app:toggleTodos", label: "todo panel", col: 1, phrase: "toggle tasks" },
   { key: "\\⏎ / Ctrl-J", label: "newline", col: 1, ladder: true },
   { key: "⏎", label: "send", col: 1, cell: "⏎ to send" },
@@ -245,12 +260,17 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
 export const DEFAULT_TABLE = compileBindings(DEFAULT_BINDINGS);
 export const defaultLookup = (action: string): string[] => bindingsFor(DEFAULT_TABLE, action);
 
-/** Resolve the grid against a live lookup (`useBindingLookup()` in a component, the default table elsewhere).
- *  Windows drops the Ctrl-Z row: `suspendProcess` is a no-op there, so advertising it would be a false promise. */
-export function shortcutRows(lookup: (action: string) => readonly string[], platform: NodeJS.Platform = process.platform): [string, string][] {
+/** The two gates every rendering of the entry set applies, in one place so the audit corpus and the printed
+ *  grid cannot disagree about which rows exist. Windows drops the Ctrl-Z row (`suspendProcess` is a no-op
+ *  there, so advertising it would be a false promise); the classic renderer drops the `fullscreen` rows. */
+const rowHidden = (row: ShortcutRow, platform: NodeJS.Platform, fullscreen: boolean): boolean =>
+  (platform === "win32" && row.key === "Ctrl-Z") || (row.fullscreen === true && !fullscreen);
+
+/** Resolve the grid against a live lookup (`useBindingLookup()` in a component, the default table elsewhere). */
+export function shortcutRows(lookup: (action: string) => readonly string[], platform: NodeJS.Platform = process.platform, fullscreen = false): [string, string][] {
   const rows: [string, string][] = [];
   for (const row of SHORTCUT_ROWS) {
-    if (platform === "win32" && row.key === "Ctrl-Z") continue;
+    if (rowHidden(row, platform, fullscreen)) continue;
     let key: string;
     if (row.key !== undefined) key = row.key;
     else {
@@ -280,6 +300,9 @@ export interface ShortcutGridOptions {
    *  EditorState, and the grid renders with no composer mounted, so the ladder shows its LONG rung here even
    *  after the short one has taken over below the composer. Recorded divergence (T15). */
   newline: string;
+  /** The grid is being rendered by the ALTERNATE-SCREEN tree, so the `fullscreen` rows are live and print.
+   *  Defaults false — a bare render, and the classic renderer, get the classic set. */
+  fullscreen?: boolean;
 }
 
 /** One cell, or `null` for a row that must not print. The null arm is `$e`'s own three-state contract
@@ -298,12 +321,12 @@ function gridCell(row: ShortcutRow, lookup: (action: string) => readonly string[
   return `${row.prefix ?? ""}${chord}${row.chordSuffix ?? ""} ${row.connector ?? "to"} ${row.phrase}`;
 }
 
-/** The grid as THREE columns of composed sentences, resolved against a live lookup. Same Windows rule as
- *  `shortcutRows`: no Ctrl-Z row where `suspendProcess` is a no-op. */
-export function shortcutGrid(lookup: (action: string) => readonly string[], { platform = process.platform, newline }: ShortcutGridOptions): string[][] {
+/** The grid as THREE columns of composed sentences, resolved against a live lookup. Same two gates as
+ *  `shortcutRows` — `rowHidden` is the one copy of them. */
+export function shortcutGrid(lookup: (action: string) => readonly string[], { platform = process.platform, newline, fullscreen = false }: ShortcutGridOptions): string[][] {
   const cols: string[][] = [[], [], []];
   for (const row of SHORTCUT_ROWS) {
-    if (platform === "win32" && row.key === "Ctrl-Z") continue;
+    if (rowHidden(row, platform, fullscreen)) continue;
     const cell = gridCell(row, lookup, platform, newline);
     if (cell !== null) cols[row.col]!.push(cell);
   }

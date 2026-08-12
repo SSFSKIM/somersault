@@ -134,6 +134,42 @@ describe("CM30 rendering — SuggestPopup", () => {
     expect(lastFrame()).not.toContain("/c12");
   });
 
+  // ── the OVERLAY arms (FSW T14 fix round) — `DXe`'s `o`/`i`, which only `rCn` passes (L456226) ────────────
+  // `d = o ? s0H : …` (L432431, `s0H = 5` at L432478) and `w = i ? 0 : Math.max(0, d − E)` (L432446). Canon
+  // uses them for a palette floating at `bottom:"100%"`; the port uses them for one sitting in the flow above
+  // the dock, where every padded row is a row of transcript.
+  it("overlay+noPad: the popup is exactly as tall as the rows it drew, whatever the pane", () => {
+    for (const rows of [24, 40, 12]) {
+      const one = render(<SuggestPopup items={items.slice(0, 1)} selected={0} columns={80} rows={rows} maxColumnWidth={12} overlay noPad />);
+      expect(lines(one.lastFrame()).length).toBe(1);
+      const three = render(<SuggestPopup items={items} selected={0} columns={80} rows={rows} maxColumnWidth={12} overlay noPad />);
+      expect(lines(three.lastFrame()).length).toBe(3);
+    }
+  });
+
+  it("overlay windows a long list to canon's FIVE rows at every pane height", () => {
+    const many: SuggestItem[] = Array.from({ length: 30 }, (_, i) => ({ id: `cmd-c${i}`, displayText: `/c${i}` }));
+    for (const rows of [24, 40, 12]) {
+      const { lastFrame } = render(<SuggestPopup items={many} selected={0} columns={80} rows={rows} maxColumnWidth={12} overlay noPad />);
+      expect(lines(lastFrame()).length).toBe(5);
+      expect(lastFrame()).toContain("/c4");
+      expect(lastFrame()).not.toContain("/c5");
+    }
+  });
+
+  it("overlay+noPad: an empty list with a message is ONE row, not a padded region", () => {
+    const { lastFrame } = render(<SuggestPopup items={[]} selected={0} columns={80} rows={24} emptyMessage="no matches" overlay noPad />);
+    expect(lines(lastFrame()).length).toBe(1);
+    expect(lastFrame()).toContain("no matches");
+  });
+
+  it("the INLINE arm is untouched — no props, canon's padded `popupHeight` region", () => {
+    const one = render(<SuggestPopup items={items.slice(0, 1)} selected={0} columns={80} rows={24} maxColumnWidth={12} />);
+    expect(lines(one.lastFrame()).length).toBe(popupHeight(24));
+    const empty = render(<SuggestPopup items={[]} selected={0} columns={80} rows={24} emptyMessage="no matches" />);
+    expect(lines(empty.lastFrame()).length).toBe(popupHeight(24));
+  });
+
   it("the selected row carries the `suggestion` colour SGR and NO inverse; unselected rows are dim", () => {
     const { lastFrame } = render(<SuggestPopup items={items} selected={1} columns={80} rows={24} maxColumnWidth={12} />);
     const out = lastFrame() ?? "";

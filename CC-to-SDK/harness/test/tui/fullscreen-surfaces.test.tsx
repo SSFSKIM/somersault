@@ -147,6 +147,36 @@ describe("D13 / amendment 1 — the footer's right region, and what ccx puts in 
   it("does not exist in classic — the composer's slot is still the one home there", () => {
     expect(footerFrame({ fullscreen: false, notice: receipt })[0]).not.toContain("wrote /tmp");
   });
+
+  // FIX ROUND (review I2). "On the mode row" was only true with NO statusLine configured: the region is the
+  // second child of a `alignItems="flex-start"` row, so it landed on the LEFT column's FIRST row — which with
+  // a statusLine configured is D1's reserved blank (whose whole purpose is to be blank) or the script's own
+  // first line. The vertical placement is now `alignSelf="flex-end"`: the last row of the left column, which
+  // is the mode row in every statusLine configuration.
+  describe("lands on the MODE row whatever the statusLine is doing", () => {
+    const withStatus = (statusLineText: string | undefined) =>
+      footerFrame({ fullscreen: true, notice: receipt, statusLineConfigured: true, statusLineText, rows: 24 });
+    const charge = (statusLineText: string | undefined) =>
+      footerRows({ statusLineConfigured: true, statusLineText, bashMode: false, pasting: false, rows: 24, fullscreen: true });
+
+    it("keeps D1's reserved row BLANK and puts the receipt one row down", () => {
+      const lines = withStatus(undefined);
+      expect(lines).toHaveLength(charge(undefined));                  // 2 — the paint and the reservation agree
+      expect(lines[0]!.trim()).toBe("");                              // the held row is still a held row
+      expect(lines[1]).toContain("manual mode on");
+      expect(lines[1]).toContain("wrote /tmp/cc-transcript-1.txt");
+    });
+
+    it("stays on the mode row under a RESOLVED two-line statusLine", () => {
+      const lines = withStatus("L1\nL2");
+      expect(lines).toHaveLength(charge("L1\nL2"));                   // 3
+      expect(lines[0]).toContain("L1");
+      expect(lines[0]).not.toContain("wrote /tmp");                   // never beside the script's own output
+      expect(lines[1]).toContain("L2");
+      expect(lines[2]).toContain("manual mode on");
+      expect(lines[2]).toContain("wrote /tmp/cc-transcript-1.txt");
+    });
+  });
 });
 
 // ── the app-level deltas ──────────────────────────────────────────────────────────────────────────────────
@@ -198,6 +228,67 @@ describe("D10 — the command palette is hoisted above the dock in fullscreen", 
     // half, so a palette left inside a `floor(rows/2)` band takes the composer and the footer with it.
     expect(frameOf(r.lastFrame)).toContain(PROMPT);
     expect(frameOf(r.lastFrame)).toContain("manual mode on");
+    r.unmount();
+  });
+
+  // ── FIX ROUND (review I1): canon's `overlay` / `noPad` arms ──────────────────────────────────────────────
+  // `DXe` takes both (L432431 `d = o ? s0H : …` with `s0H = 5` at L432478; L432446 `w = i ? 0 : max(0, d − E)`)
+  // and `rCn` passes both (L456226). The first port passed neither, so the hoisted palette blank-padded to
+  // `popupHeight(rows)` — TWELVE rows at a 24-row terminal and twenty at forty, whether the list held one entry
+  // or thirty. Typing `/mode` therefore left eleven blank rows of visible gap and cost eleven rows of
+  // transcript for nothing.
+  /** The composer's top rule: the first `────` run under the palette. */
+  const ruleRow = (lines: string[]) => lines.findIndex((l) => /^─+$/.test(l.trim()));
+  const alphaRows = (lines: string[]) => lines.filter((l) => l.includes("ALPHA-")).length;
+  const typeInto = async (r: ReturnType<typeof renderWithKeymap>, text: string) => {
+    await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+    await tick();
+    r.stdin.write(text);
+    await waitFor(() => rowsOf(r.lastFrame()).some((l) => /^\s{2}\//.test(l)));
+    await settle();
+  };
+
+  it("pays for the suggestions it has and nothing else — one match is one row, no gap above the composer", async () => {
+    const r = renderWithKeymap(app("fullscreen"));
+    await typeInto(r, "/mode");                                       // exactly one match: `/model`
+    const lines = rowsOf(r.lastFrame());
+    expect(ruleRow(lines) - popupRow(lines)).toBe(1);                 // the rule sits directly under the one row
+    expect(alphaRows(lines)).toBe(18);                                // …and the transcript keeps the rest
+    r.unmount();
+  });
+
+  it("windows a long list to canon's FIVE rows", async () => {
+    const r = renderWithKeymap(app("fullscreen"));
+    await typeInto(r, "/");                                           // the whole catalog
+    const lines = rowsOf(r.lastFrame());
+    expect(ruleRow(lines) - popupRow(lines)).toBe(5);
+    expect(alphaRows(lines)).toBe(14);
+    r.unmount();
+  });
+
+  // WHY `paletteOpen` SURVIVED THE FIX ROUND, as a measurement rather than an argument. At 24 rows the cap no
+  // longer binds (the band wants nine rows against a narrow cap of twelve), so the review's proposal to drop
+  // the tenant is invisible there — and at 16 rows it is not: five palette rows plus the composer's three and
+  // the footer's one is nine against a narrow cap of eight, and the row the frame clips is the footer.
+  it("keeps the footer on a SHORT pane, where five palette rows still overrun the narrow cap", async () => {
+    const r = renderWithKeymap(
+      <ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+        renderer={{ mode: "fullscreen", reason: "env_on" }} initialEntries={alphaEntries()}
+        deps={{ columns: () => 80, rows: () => 16 }} />,
+    );
+    await typeInto(r, "/");
+    const lines = rowsOf(r.lastFrame());
+    expect(lines).toHaveLength(15);
+    expect(ruleRow(lines) - popupRow(lines)).toBe(5);
+    expect(lines[14]).toContain("manual mode on");                    // the last row of the frame is the footer
+    r.unmount();
+  });
+
+  it("leaves the CLASSIC popup on `popupHeight` — the padded region is the inline path's own", async () => {
+    const r = renderWithKeymap(app("classic"));
+    await typeInto(r, "/mode");
+    const lines = rowsOf(r.lastFrame());
+    expect(lines.length - popupRow(lines)).toBe(13);                  // popupHeight(24) = 12 + the frame's tail row
     r.unmount();
   });
 });
@@ -290,6 +381,29 @@ describe("amendment 2 — `v` is announced where it is live", () => {
     expect(jumpPillText(3, "ctrl+end", 26, "editor")).not.toContain("v to open");
     expect(jumpPillText(3, "ctrl+end", 26, "editor")).toContain("3 new messages");
     expect(jumpPillText(3, "ctrl+end", 80)).not.toContain("v to open");
+  });
+
+  // FIX ROUND (review M5) — THE SECOND HOME, and the reason there is one. The pill announces `v` only while
+  // the transcript is scrolled, so a user who never scrolls never learns the escape exists. The `?` grid can
+  // say so because the row is CONDITIONAL on the renderer (`ShortcutRow.fullscreen`): it prints where the key
+  // is the viewport's and nowhere else, and it names the gate that narrows it further inside this renderer.
+  it("adds a fullscreen-only `?` row for `v`, absent from the classic grid", async () => {
+    const openHelp = async (mode: "fullscreen" | "classic") => {
+      const r = renderWithKeymap(
+        <ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+          renderer={{ mode, reason: "env_on" }} initialEntries={alphaEntries()}
+          deps={{ columns: () => 80, rows: () => 40 }} />,
+      );
+      await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+      await tick();
+      r.stdin.write("?");
+      await waitFor(() => frameOf(r.lastFrame).includes("Keyboard shortcuts"));
+      const out = frameOf(r.lastFrame);
+      r.unmount();
+      return out;
+    };
+    expect(await openHelp("fullscreen")).toContain("v to open in $EDITOR when scrolled");
+    expect(await openHelp("classic")).not.toContain("v to open in");
   });
 
   it("is on screen the moment the frame is scrolled off its tail", async () => {
