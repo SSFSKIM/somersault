@@ -57,11 +57,18 @@ export interface FakeTty {
   textSince: (mark: number) => string;
 }
 
-export function renderRealInk(tree: React.ReactElement, { columns = 80, rows = 24 }: { columns?: number; rows?: number } = {}): FakeTty {
+/** FSW TASK 4 — `wrap` is the seam the corrections gate needs: production does NOT hand Ink the terminal, it
+ *  hands it `createResumeSafeStdout(process.stdout).stdout`, and everything the resize corrections know about
+ *  the screen (`lastFrame`, `parkedColumn`, `tallWrites`) is learned inside that proxy from the bytes passing
+ *  through it. A test that wants to ask "are the corrections still awake with a live window on screen?" has to
+ *  mount the REAL proxy, and it can only build one once the terminal exists — hence a callback rather than an
+ *  argument. Everything else (`writes`, `resize`, `mark`) stays on the terminal underneath, which is where the
+ *  bytes actually land. Omitted, Ink gets the raw terminal exactly as before. */
+export function renderRealInk(tree: React.ReactElement, { columns = 80, rows = 24, wrap }: { columns?: number; rows?: number; wrap?: (raw: NodeJS.WriteStream) => NodeJS.WriteStream } = {}): FakeTty {
   const stdout = new FakeStdout(columns, rows);
   const stdin = new FakeStdin();
   const instance = inkRender(tree, {
-    stdout: stdout as unknown as NodeJS.WriteStream,
+    stdout: (wrap ? wrap(stdout as unknown as NodeJS.WriteStream) : stdout) as unknown as NodeJS.WriteStream,
     stderr: stdout as unknown as NodeJS.WriteStream,
     stdin: stdin as unknown as NodeJS.ReadStream,
     debug: false, exitOnCtrlC: false, patchConsole: false,

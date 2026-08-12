@@ -32,6 +32,7 @@ import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
+import { RESIZE_SETTLE_MS } from "./resizeRepaint.js";
 import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState } from "./foldPendingState.js";
@@ -924,6 +925,38 @@ export function useChat(
     for (const item of unpublished) publishedIds.current.add(item.id);
     setStaticItems((s) => [...s, ...unpublished]);
   }
+  /** FSW TASK 4 — THE SECOND THING THAT MAKES A PROJECTION STALE, and the only one this hook could not see.
+   *  Every row below is projected AT A WIDTH (`projectionContext().columns`): a user echo is a band padded to
+   *  `width − 1`, a tool result is folded and clipped to `columns`, a table is fitted to it. Reconcile ran on
+   *  DOCUMENT movement alone, so after a resize every one of those rows kept the wrapping of a terminal that
+   *  no longer exists — and the render-time window (ChatApp) cannot repair it, because it SELECTS from these
+   *  items and does not re-make them. A rows-only change needs nothing here (the selector re-runs at render
+   *  time and the projection does not depend on height); a COLUMNS change invalidates the projection itself.
+   *
+   *  AND IT WAITS FOR THE DRAG TO STOP, which is the same rule the commit phase already lives by. Re-running
+   *  reconcile is not free of consequence: it can COMMIT (a narrowing makes the tail taller, so rows fall out
+   *  of the budget), and a commit is irreversible — publishing rows at a width the drag is passing through
+   *  would freeze them at a geometry the user never stopped on. `RESIZE_SETTLE_MS` is `resizeRepaint`'s own
+   *  settle window, reused rather than re-chosen: it is the number this codebase already means by "the drag
+   *  has stopped", and the two repairs should not disagree about when that is.
+   *
+   *  THE TRIGGER IS A RENDER, not a subscription, and that is deliberate: the terminal size is ChatApp's React
+   *  state (`ChatApp.tsx`'s `size`), so a SIGWINCH the app acts on IS a re-render of this hook — this effect
+   *  has no dep array and therefore gets to ask "did the width move?" at every one of them, for the cost of a
+   *  comparison. A second subscription here would need its own listener ordering against Ink's, which
+   *  `chatMain`'s resize chain already owns and which nothing about a re-projection needs. */
+  const reflowWidth = useRef(columnsFn());
+  const reflowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    const width = columnsFn();
+    if (width === reflowWidth.current) return;
+    reflowWidth.current = width;
+    if (reflowTimer.current !== undefined) clearTimeout(reflowTimer.current);
+    const handle = setTimeout(() => { reflowTimer.current = undefined; reconcile(); }, RESIZE_SETTLE_MS);
+    handle.unref?.();                    // a drag in flight at exit must not hold the process open
+    reflowTimer.current = handle;
+  });
+  useEffect(() => () => { if (reflowTimer.current !== undefined) clearTimeout(reflowTimer.current); }, []);
   /** The transient region: `projectPending` returns everything the compact projection cannot publish yet, and
    *  the live-open set narrows the OPEN calls to the ones a live turn is actually running — so a
    *  disk-bootstrapped dangling call, or one orphaned by a turn that ended without a result, is retained

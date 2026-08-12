@@ -47,9 +47,11 @@
 # once wrote to the operator's live ~/.claude), and the content above the composer comes from `/status`, a
 # local command.
 #
-# THE ONE EXCEPTION IS THE A3 CELL (Wave R task 6, `run_a3_cell` below), which resizes DURING a streaming turn
-# and therefore cannot be faked: it runs only when `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is already
-# in the environment, and SKIPS with a message otherwise. It is not part of the CI-required set — CI has no
+# THE EXCEPTIONS ARE THE MID-TURN ONES: the A3 CELL (Wave R task 6, `run_a3_cell` below), which resizes DURING
+# a streaming turn, and the STREAMING HALF of the M1 cell (FSW T4), which resizes under a live window and an
+# in-flight turn at once. Neither can be faked, so each runs only when `CLAUDE_CODE_OAUTH_TOKEN` or
+# `ANTHROPIC_API_KEY` is already in the environment, and SKIPS with a message otherwise. M1's steady-state half
+# is keyless and always runs. It is not part of the CI-required set — CI has no
 # credential, `RESIZE_MATRIX_REQUIRE_TMUX` does not reach it, and a skipped A3 records neither a pass nor a
 # fail. Nothing here ever reads `../.env` or prints either variable. The remaining live cell of the wave's
 # matrix (the two-turn cell) is still controller-run and deliberately not here.
@@ -723,6 +725,149 @@ run_a3_cell() {
   record "a3" "$rc"
 }
 
+# ── the M1 cell: the live window must not push the frame over Ink's tall-frame cliff (FSW T4) ─────────────
+# WHAT IS NEW ABOUT IT. Every cell above measures the WIDTH corrections. This one measures the wave that put a
+# LIVE WINDOW on the main screen: from FSW T3 the last `rows − 16` rows of transcript are re-rendered on every
+# frame instead of sitting frozen in scrollback, which is `rows − 16` rows of new material for Ink's
+# `outputHeight >= stdout.rows` branch (`ink.js:121`) to trip over. When it trips, the whole session is
+# reprinted, the resume-safe proxy loses the frame every correction in this script measures against
+# (chatMain.tsx: "downward is the only direction available"), and the repairs go quiet for the rest of the
+# session. The component tests bound that in a fake tty; this is the same claim on a real terminal.
+#
+# THE NEEDLE IS G1'S, AND G1 IS THIS CELL'S POSITIVE CONTROL. Ink's tall branch is not visible in a pane
+# capture, but its side effect is: the chunk carries `fullStaticOutput`, and the proxy strips the `ESC[3J` out
+# of its head, so every tall render APPENDS one complete copy of the COMMITTED transcript to scrollback.
+# Copies of a committed marker row over `capture-pane -S -` therefore COUNT the branch. Every assertion here
+# is that the count did not move — an absence — and what proves the counter is not simply blind is `g1`, which
+# runs in this same script, uses this same method, and FAILS ITS PRECONDITION unless the count rises.
+#
+# THE STAGING IS `! echo`, NOT `/status`, AND THAT IS A FILED DEFECT AND NOT A CONVENIENCE. Typing a SLASH
+# command opens the command popup, which is up to ~20 rows and is NOT in `mainWindowCap`'s fourteen-row dock
+# budget (`liveWindow.ts` enumerates the todo panel, the live-turn slot, the queue, the composer and the
+# footer — the popup is none of them). Window plus dock plus popup then clears the pane and Ink takes the
+# branch on every keystroke of the command. Measured here, six `/status` submissions at 80x40, counting copies
+# of the echo row in scrollback: pre-live-window (a4636befd8) 6 copies / 78 scrollback rows; with the window
+# (this build) 139 copies / 2035 rows, i.e. every real scrollback line the user had, evicted at tmux's default
+# history-limit of 2000. It is a live-window regression on an ordinary interaction and it is NOT what this cell
+# is about — the cell asserts the RESIZE claim — so the staging avoids the popup (bash mode paints two rows per
+# marker and draws no menu) and this paragraph carries the finding until the dock budget learns about the
+# popup. Restoring `/status` staging here would only re-report that defect under this cell's name.
+#
+# THE GEOMETRIES ARE THE ONES THAT HURT. 80x40 fills a 24-row window (40 − 14 dock − 2 slack); 80x24 is the
+# row-shrink T3's own review reproduced as a tall write (a 44-row tree measured against a 24-row pane before
+# the fix); 120x24 is a width change at the short height, where the window is tightest and the settled
+# re-projection FSW T4 added runs under it. A transcript TALLER THAN THE PANE is a precondition rather than an
+# assumption — with everything on one screen nothing has been committed, so `fullStaticOutput` is empty, a tall
+# render would append nothing and the needle could not fire.
+M1_MARKS=16                                 # two rows each: enough transcript to overflow a 40-row pane
+m1_needle() { printf '! echo M1-1'; }       # the FIRST marker's echo row: committed early, so a tall render copies it
+m1_copies() {                               # m1_copies <session> <scratch-file>
+  tmux capture-pane -t "$1" -p -S - > "$2"; grep -c "^$(m1_needle)\$" "$2"
+}
+m1_flat() {                                 # m1_flat <session> <scratch> <baseline> <label>
+  local now; now=$(m1_copies "$1" "$2")
+  if [ "$now" = "$3" ]; then printf '      ok   %-28s scrollback copies still %s (no tall render)\n' "$4" "$now"; return 0; fi
+  printf '      FAIL %-28s scrollback copies %s -> %s: Ink reprinted the session, i.e. the live subtree went over the pane\n' "$4" "$3" "$now"
+  return 1
+}
+# `! echo` is a LOCAL bash run — no model turn, no API key, and no popup (bash mode replaces the menu). Two
+# rows per marker: the `! echo M1-n` echo and its ` M1-n` output. Polled for the OUTPUT row, which is the one
+# that only exists once the command has actually run.
+m1_stage() {                                # m1_stage <session> <n> <scratch>
+  local s="$1" n="$2" cap="$3" i=0
+  type_line "$s" "! echo M1-$n"
+  while [ "$i" -lt 40 ]; do
+    tmux capture-pane -t "$s" -p -S - > "$cap"
+    grep -q "^  M1-$n\$" "$cap" && return 0
+    sleep 0.25; i=$((i+1))
+  done
+  echo "      FAIL $s never painted the staged marker M1-$n"; return 1
+}
+M1_PROMPT='Write two paragraphs of flowing prose, roughly 200 words in total, about why a terminal interface must re-wrap its transcript when the window width changes. No lists, no headings, no code, no tools.'
+run_m1_cell() {
+  local s="fsw-t4-m1-$RUN_ID" rc=0 cap="$MATRIX_ROOT/cap-m1" hist="$MATRIX_ROOT/hist-m1" i=1 base=0 lines=0
+  echo "  cell m1: launch 80x40 over a transcript taller than the pane -> 80x24 -> 120x24, staged-row copies flat"
+  launch "$s" 80 40 || { record "m1" 1; kill_cell "$s"; return; }
+  while [ "$i" -le "$M1_MARKS" ]; do
+    m1_stage "$s" "$i" "$hist" || { record "m1" 1; kill_cell "$s"; return; }
+    i=$((i+1))
+  done
+  base=$(m1_copies "$s" "$hist"); lines=$(wc -l < "$hist" | tr -d ' ')
+  if [ "$base" != 1 ]; then
+    echo "      FAIL m1 precondition: the first marker appears $base times in scrollback before any resize — the branch this cell measures has ALREADY fired during staging"
+    kill_cell "$s"; record "m1" 1; return
+  fi
+  if [ "$lines" -le 40 ]; then
+    echo "      FAIL m1 precondition: the whole transcript ($lines rows) fits the 40-row pane — nothing is committed, so a tall render would copy nothing and the needle cannot fire"
+    kill_cell "$s"; record "m1" 1; return
+  fi
+  printf '      ok   %-28s %s markers staged, %s rows of transcript over a 40-row pane\n' "m1 preconditions" "$M1_MARKS" "$lines"
+  settle_frame "$s" 80 "m1 start 80x40" || rc=1
+  m1_flat "$s" "$hist" "$base" "m1 start 80x40" || rc=1
+  resize_to "$s" 80 24 "m1 shrink 80x24" || rc=1          # the row shrink T3's review reproduced
+  m1_flat "$s" "$hist" "$base" "m1 shrink 80x24" || rc=1
+  resize_to "$s" 120 24 "m1 widen 120x24" || rc=1         # …and a width change with the window at its tightest
+  m1_flat "$s" "$hist" "$base" "m1 widen 120x24" || rc=1
+  kill_cell "$s"
+
+  # ── the STREAMING half, keyed only ──────────────────────────────────────────────────────────────────────
+  # The window shares the frame with the in-flight turn, and only the window is bounded (T3's C2: the render
+  # cap subtracts the streamed rows for exactly this reason). A resize DURING a turn is therefore the tightest
+  # frame this build ever composes, and there is no keyless way to hold one open — `/status` and `! echo`
+  # both paint and stop. Same credential handling as `run_a3_cell`, for the same reasons: `-e` rather than
+  # argv, and a SKIP (not a failure) with no credential or on tmux older than 3.2.
+  #   THE SHRINK IS WIDTH-ONLY AT 40 ROWS ON PURPOSE. At 24 rows a long enough stream reaches the branch on
+  # this build AND on its parent — the streaming region is unbounded until T10 lands the fullscreen viewport,
+  # and T3's C2 fix restored the parent's threshold rather than removing it — so a cell asserting zero there
+  # would be measuring an open defect instead of this task's claim.
+  local t="fsw-t4-m1s-$RUN_ID" fwd="" sbase=0 wide=0 j=0
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then fwd=CLAUDE_CODE_OAUTH_TOKEN
+  elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then fwd=ANTHROPIC_API_KEY
+  fi
+  if [ -z "$fwd" ]; then
+    echo "      SKIP m1 streaming half (live): no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment — a mid-turn frame needs a real streaming turn. The steady-state half above still ran."
+  elif ! tmux_has_session_env; then
+    echo "      SKIP m1 streaming half (live): tmux is older than 3.2, which is where 'new-session -e' arrived."
+  else
+    echo "  cell m1 (live, forwarding \$$fwd): 120x40 over the same transcript, submit a turn -> shrink 80x40 mid-stream"
+    if ! launch "$t" 120 40 "$fwd"; then rc=1
+    else
+      i=1
+      while [ "$i" -le "$M1_MARKS" ]; do
+        m1_stage "$t" "$i" "$hist" || { rc=1; break; }
+        i=$((i+1))
+      done
+      sbase=$(m1_copies "$t" "$hist")
+      if [ "$sbase" != 1 ]; then
+        echo "      FAIL m1 stream precondition: the first marker appears $sbase times before the turn — the branch fired during staging"; rc=1
+      else
+        type_line "$t" "$M1_PROMPT"
+        if ! settle_spinner "$t" 1 "m1 stream spinner up"; then
+          echo "      FAIL m1 stream precondition: no live turn to resize under"; rc=1
+        else
+          j=0                                # SP-R0 condition 2, asserted as a3 asserts it
+          while [ "$j" -lt 40 ]; do
+            tmux capture-pane -t "$t" -p > "$cap"
+            wide=$(wide_rows_above_frame 80 "$cap"); [ "$wide" != 0 ] && break
+            sleep 0.25; j=$((j+1))
+          done
+          if [ "$wide" = 0 ]; then
+            echo "      FAIL m1 stream precondition: no streamed row is wider than 80 — the shrink below is not the frame this half is about"; rc=1
+          else
+            printf '      ok   %-28s %s streamed row(s) wider than 80, spinner live over a full window\n' "m1 stream preconditions" "$wide"
+            tmux resize-window -t "$t" -x 80 -y 40 || { echo "      FAIL resize-window failed"; rc=1; }
+            settle_frame_hold "$t" 80 "m1 stream frame 80x40" || rc=1
+            m1_flat "$t" "$hist" "$sbase" "m1 stream 80x40" || rc=1
+          fi
+        fi
+        tmux send-keys -t "$t" Escape        # end the turn before teardown
+      fi
+    fi
+    kill_cell "$t"
+  fi
+  record "m1" "$rc"
+}
+
 # ── run ───────────────────────────────────────────────────────────────────────────────────────────────────
 echo "Wave R — QA-2 width matrix (A12)"
 self_test
@@ -748,8 +893,8 @@ MATRIX_ROOT=$(mktemp -d /tmp/wr-t5-matrix-XXXXXX)
 # The QA-2 width matrix (plan Global Constraints). The first four shrink; the last two are the height-only
 # controls, which must stay clean — they are the "did the fix over-erase?" half of the matrix.
 #
-# CELL SELECTION, for iterating on one cell without paying for the other eight: `RESIZE_MATRIX_CELLS=a3`
-# (space- or comma-separated names) runs only what it names. Unset — the CI and the DoD form — runs all nine.
+# CELL SELECTION, for iterating on one cell without paying for the other nine: `RESIZE_MATRIX_CELLS=a3`
+# (space- or comma-separated names) runs only what it names. Unset — the CI and the DoD form — runs all ten.
 # A filtered run still prints its own tally, so it can never be mistaken for a full one.
 want_cell() {                               # want_cell <name>
   [ -z "${RESIZE_MATRIX_CELLS:-}" ] && return 0
@@ -763,6 +908,7 @@ want_cell h1 && run_cell h1 120x24 120x40               # height-only control
 want_cell h2 && run_cell h2 80x40 80x15                 # height-only control
 want_cell a5 && run_a5_cell
 want_cell g1 && run_g1_cell                    # W2 t7 (s2qa2-05): clip-then-grow out of Ink's tall branch
+want_cell m1 && run_m1_cell                    # FSW T4: the live window must not reach the tall branch; streaming half is keyed
 want_cell a3 && run_a3_cell                    # live (task 6, A3); skips cleanly with no credential
 
 PREFS_AFTER=$(prefs_stamp)

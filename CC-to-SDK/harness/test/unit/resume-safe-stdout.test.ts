@@ -1,10 +1,29 @@
 // test/unit/resume-safe-stdout.test.ts — Wave R task 2: the stdout proxy is the ONE place every byte Ink emits
 // passes through code we own, so it is where we learn what is currently painted and how tall it really is.
 // Task 4 erases on resize from exactly these two answers, so both are pinned here rather than inferred later.
-import { describe, expect, it } from "vitest";
-import { createResizeChain, createResumeSafeStdout, physicalRows } from "../../src/tui/chatMain.js";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createResizeChain, createResumeSafeStdout, physicalRows, runChatClient } from "../../src/tui/chatMain.js";
 import { eraseViewport } from "../../src/tui/clearViewport.js";
 import { parkColumn } from "../../src/tui/resizeRepaint.js";
+
+/** FSW TASK 4 — the wiring pin below needs `render()` to hand back the element tree instead of painting it.
+ *  Only that one export is replaced; everything else in `ink` is the real module, because the tree being
+ *  inspected is built out of it. */
+let renderedTree: any;
+let exitTree!: () => void;
+vi.mock("ink", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("ink")>();
+  return {
+    ...actual,
+    render: (tree: unknown) => {
+      renderedTree = tree;
+      return { waitUntilExit: () => new Promise<void>((resolve) => { exitTree = resolve; }), clear() {}, unmount() {}, cleanup() {}, rerender() {} };
+    },
+  };
+});
 
 // Ink's erase prefix, byte-for-byte: ansiEscapes.eraseLines(n) === "\x1b[2K" + ("\x1b[1A\x1b[2K" * (n-1)) + "\x1b[G".
 // eraseLines(0) is the EMPTY string, which is why a first frame (and any frame right after log.clear()) arrives bare.
@@ -291,5 +310,53 @@ describe("createResizeChain", () => {
     chain.subscribe(() => log.push("b"));
     chain.fire(); chain.fire();
     expect(log).toEqual(["readers", "a", "b", "readers", "b"]);
+  });
+});
+
+// ── FSW TASK 4 — THE HANDOFF, not just the order (T3 review, carried forward) ────────────────────────────
+// `createResizeChain`'s three cases above pin what the chain DOES once something is subscribed to it. What
+// they cannot see is the one line that makes any of it reach the app: `runChatClient` passing
+// `resizeChain.subscribe` to ChatApp as `onResize`. T3 shipped that line covered by reading only — and it is
+// exactly the kind of line a later refactor drops or replaces with a fresh inline arrow (which ChatApp's own
+// docblock forbids, because the subscribing effect lists it as its only dependency). The failure would be
+// silent: ChatApp falls back to its embedder default, which prepends on Ink's stdout and works — while the two
+// readers that must run FIRST (`noteResizeSignal`, `resizeRepaint.onResize`) lose their head start, which is
+// the W2-t7 grow resync and the whole first-shrink repair.
+//
+// So this drives the real function with `render` stubbed, takes the prop off the tree, and proves it is the
+// live chain rather than any function of the right shape: a callback subscribed THROUGH THE PROP must run when
+// the PROCESS's own `resize` event fires, and stop when its unsubscribe is called.
+describe("runChatClient wires the resize chain into ChatApp", () => {
+  it("hands ChatApp an `onResize` that subscribes to the process resize listener it installed", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ccx-wire-"));
+    const priorHome = process.env.HOME, priorRoot = process.env.CCX_FLEET_ROOT;
+    process.env.HOME = home; process.env.CCX_FLEET_ROOT = join(home, ".claude", "ccx");
+    const before = process.stdout.listenerCount("resize");
+    const run = runChatClient({
+      socketPath: join(home, "s.sock"), client: { kind: "loopback" }, cwd: home,
+      makeSession: () => ({}) as never,                    // never called: `render` is stubbed, so no tree mounts
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      expect(process.stdout.listenerCount("resize")).toBe(before + 1);
+      const chat = renderedTree.props.children;            // <UserKeymap><ChatApp …/></UserKeymap>
+      const onResize = chat.props.onResize;
+      expect(typeof onResize).toBe("function");
+
+      const log: string[] = [];
+      const off = onResize(() => log.push("subscriber"));
+      process.stdout.emit("resize");
+      expect(log).toEqual(["subscriber"]);                 // the prop reaches the listener runChatClient installed
+      off();
+      process.stdout.emit("resize");
+      expect(log).toEqual(["subscriber"]);                 // …and its unsubscribe is the chain's
+    } finally {
+      exitTree();
+      await run;
+      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      if (priorRoot === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = priorRoot;
+      rmSync(home, { recursive: true, force: true });
+    }
+    expect(process.stdout.listenerCount("resize")).toBe(before);   // …and the `finally` takes it back off
   });
 });
