@@ -140,7 +140,9 @@ const toolUseOnly = () => ({ type: "assistant", parent_tool_use_id: null, messag
 // the "same predicate" pin is decorative: every other row shape is classified identically by the pane's old
 // private text-emptiness test and by upstream's `$$_`/`B$_`, so reverting `previewLines` stayed green.
 //  · an image-only user turn — upstream COUNTS it, the old pane dropped it (no text to print);
-//  · a meta user turn carrying text — upstream EXCLUDES it, the old pane drew it.
+//  · a meta user turn carrying text — upstream EXCLUDES it, the old pane drew it. Probe 107 has since shown
+//    the reader never delivers this shape at all (the row is dropped and the flag stripped), so it survives
+//    here as a row shape the fixture mixes in, not as a classification the two predicates differ on.
 const imageOnly = () => ({ type: "user", message: { content: [{ type: "image", source: { type: "base64", data: "x" } }] } });
 const metaText = () => ({ type: "user", isMeta: true, message: { content: "<system-reminder>caveat</system-reminder>" } });
 // Eight-row cycle, and deliberately NOT symmetric between the two predicates: two image rows against one meta
@@ -188,9 +190,14 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
   it("counts only the rows the preview pane actually renders (qa4-07 ii, `Pqs` L369043)", () => {
     const rows = [userPrompt("hi"), assistantText("hello"), toolResultOnly(), userPrompt("again")];
     expect(previewMessageCount(rows)).toBe(3);              // the tool-result-only row is not a message
-    // `$$_`/`B$_` (L369021/L369035) in full: meta user turns, blank text, tool-use-only and thinking-only
-    // assistant turns, and every attachment/system/progress entry are all out.
-    expect(isPreviewMessage({ type: "user", isMeta: true, message: { content: "caveat" } })).toBe(false);
+    // `$$_`/`B$_` (L369021/L369035) in full: blank text, tool-use-only and thinking-only assistant turns,
+    // and every attachment/system/progress entry are all out.
+    // UPSTREAM'S `isMeta` CLAUSE IS NOT PORTED, and this pins the reason rather than the omission. Probe 107
+    // measured the only reader feeding this predicate: `getSessionMessages` drops meta rows and strips every
+    // field outside its fixed projection, so no row reaching here can carry the flag — the test that used to
+    // exclude one could never fire. A row that somehow does carry it is classified on its CONTENT like any
+    // other, which is what this line says out loud.
+    expect(isPreviewMessage({ type: "user", isMeta: true, message: { content: "caveat" } })).toBe(true);
     expect(isPreviewMessage({ type: "user", message: { content: "   " } })).toBe(false);
     expect(isPreviewMessage({ type: "user", message: { content: [{ type: "image" }] } })).toBe(true);
     expect(isPreviewMessage(toolUseOnly())).toBe(false);
@@ -207,9 +214,10 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
   // draws the tool traffic the count excludes, which is exactly upstream's arrangement (it renders the whole
   // transcript and counts through `Pqs`).
   it("count and pane agree on the messages, with the pane drawing the tool traffic the count excludes", () => {
-    // The COUNT is still `isPreviewMessage` and nothing else — the meta row out, the image row in.
+    // The COUNT is still `isPreviewMessage` and nothing else — the image row in, and (since probe 107 retired
+    // the unreachable `isMeta` test) the meta row counted on its content like any other user turn.
     const disagree = [userPrompt("plain ask"), imageOnly(), metaText(), assistantText("reply")];
-    expect(previewMessageCount(disagree)).toBe(3);
+    expect(previewMessageCount(disagree)).toBe(4);
     expect(previewMessageCount(disagree)).toBe(disagree.filter(isPreviewMessage).length);
     const drawn = text(previewItems(disagree, { width: 60 }));
     expect(drawn).toContain("plain ask");

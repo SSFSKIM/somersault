@@ -84,6 +84,13 @@ export const INTERRUPT_TOOL = "[Request interrupted by user for tool use]";
 export const INTERRUPT_CANCELLED = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
 /** `zWo` (L422222–422229): two dim `Text` nodes, `"Interrupted "` and `"· What should Claude do instead?"`. */
 export const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
+/** `EAr` (L421286): the heading upstream paints instead of `zWo` when a plan comes back rejected. Upstream
+ *  reaches it by CONTENT — `v4t` (L427687) tests the tool_result for the `rmn` prefix (L376058, "The agent
+ *  proposed a plan that was rejected by the user… Rejected plan:") and renders the plan itself under this
+ *  heading in a rounded box. Neither half of that is available to us: the SDK writes its own rejection text
+ *  (probe 106 A4 measured `Dpt`, not `rmn`), so `toolRenderer` discriminates on the TOOL plus the interrupted
+ *  status instead, and the box stays a recorded divergence — the heading is what QA scored. */
+export const PLAN_REJECTED_TEXT = "User rejected Claude's plan:";
 /** `Cr`'s gutter children (L406895): `"  "` then `"⎿ \xa0"` — two spaces, ⎿ (U+23BF), space, NBSP. Five
  *  columns. It lives HERE rather than in toolRenderer.tsx so this pure module can use it without dragging
  *  React into `sessions/rows.ts`'s import graph; toolRenderer re-exports it, so every existing importer is

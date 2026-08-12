@@ -104,7 +104,10 @@ describe("reserved keys", () => {
   // pager half-page-down on a surface that scrolls, it REPLACED an explicit unbind rather than a live exit
   // binding, and shadowing Global's app:exit was that unbind's only job — so the reserved key's reason
   // ("used for exit") is still honoured, not overridden.
-  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c", "SelectDecision ctrl+d"];
+  // `Help ctrl+c` (QA wave 2 delta) joins on the `Transcript ctrl+c` precedent and then some: it does not
+  // shadow Global's exit gesture, it NAMES Global's own `app:interrupt` so the same arm runs — the binding
+  // exists only because a swallowing context cannot inherit (see bindings.ts).
+  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Help ctrl+c", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c", "SelectDecision ctrl+d"];
   it("no default binding collides with an error-reserved key beyond the grandfathered pairs", () =>
     expect(reservedCollisions(DEFAULT_BINDINGS).sort()).toEqual([...GRANDFATHERED].sort()));
   it("the collision check bites — a new reserved binding is caught", () =>
@@ -148,9 +151,19 @@ describe("overlay gating, expressed as null bindings", () => {
   // and stops the walk before `Global`'s `app:interrupt` is ever reached. `Transcript` and `HistorySearch` are
   // deliberately absent from this list: they REBIND the key to their own exit/cancel, which is a different
   // claim, pinned by their own cases below.
-  it.each(["Select", "Settings", "MessageSelector", "Help", "EffortDialog", "SessionPicker"])("%s must not touch ctrl+c — the exit arm has to reach Global", (context) => {
+  it.each(["Select", "Settings", "MessageSelector", "EffortDialog", "SessionPicker"])("%s must not touch ctrl+c — the exit arm has to reach Global", (context) => {
     expect("ctrl+c" in block(context).bindings, `${context} must leave ctrl+c to Global`).toBe(false);
   });
+  // QA WAVE 2 DELTA — `Help` LEFT that list, and the reason is a mechanism the list cannot express. Falling
+  // through to `Global` is what makes absence sufficient, and a SWALLOWING context has no fall-through:
+  // `swallowContexts` (registry.ts) narrows resolution to the swallower's own context, so the `?` overlay ate
+  // the exit gesture with no null anywhere to blame. The repair is the narrowest one available — bind Global's
+  // OWN action, so the key resolves in `Help` and still reaches the one `app:interrupt` handler and the 800 ms
+  // arm behind it. `null` here would be the very bug Task 3 removed, and any other action would move the
+  // gesture's meaning; both are what this case exists to catch. The behaviour half (a first press arms, a
+  // second exits, with the overlay still on screen) is in keys-migration-dialogs.test.tsx's Wave 2 t3 block.
+  it("Help REBINDS ctrl+c to Global's own action, because a swallow cannot fall through", () =>
+    expect(block("Help").bindings["ctrl+c"]).toBe("app:interrupt"));
   // t8 review, Minor B: `Task` stays pushed for the whole turn and sits BELOW any overlay, so unbinding plain
   // ctrl+b without its chord alias left `ctrl+x ctrl+b` still backgrounding the turn from inside the bg panel
   // or /config — one key unbound while its alias worked, exactly the split this table exists to remove.

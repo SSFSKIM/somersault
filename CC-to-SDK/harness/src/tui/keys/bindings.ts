@@ -82,8 +82,19 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // leave only the tab strip's four keys live and eat its own Escape. It is an "overlay" owner like Settings
   // and Select, so it takes their suppression set instead: FIVE root globals (see CTRL-C-FALLS-THROUGH below)
   // plus the two Chat keys whose scope survives one passive flush, plus ctrl+b's chord alias.
+  // QA WAVE 2 DELTA — and the `?` overlay needs ctrl+c SPELLED OUT, which is why this context binds a key it
+  // could otherwise inherit. Absence is enough everywhere Task 3 reached, because an unbound key falls through
+  // to `Global`. It is not enough under a SWALLOW: `swallowContexts` narrows resolution to the swallower's own
+  // context and `Global` is not in that list, so the overlay ate the exit gesture with no null anywhere to
+  // explain it. Naming Global's own action here is the narrowest repair — the press resolves in `Help`,
+  // `handlerFor` finds ChatApp's one `app:interrupt` handler (action lookup spans the whole stack), and the
+  // 800 ms arm behind it is the same one every other surface reaches. The dialog that shares this context —
+  // `/help`, which does not swallow — is unaffected: it resolved to the identical action through `Global`.
+  // First press ARMS only: `onFirstPress`'s draft clear is gated on `composerOwns`, and this overlay owns the
+  // input (ChatApp's `inputOwnerRef` reads "shortcuts"), which is canon's own `h5u`/`Pee` split (D-W10).
   { context: "Help", bindings: {
     "escape": "help:dismiss",
+    "ctrl+c": "app:interrupt",
     "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null, "ctrl+x ctrl+b": null,
   }},

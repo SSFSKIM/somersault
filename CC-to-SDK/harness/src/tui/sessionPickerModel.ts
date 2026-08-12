@@ -144,9 +144,18 @@ export function previewMeta(s: SessionRow, count: number, now: Date = new Date()
 export const PREVIEW_ROWS = 12;
 
 /** Upstream's countable-message predicate, `$$_` + `B$_` (L369021/L369035) as `Pqs` (L369043) applies them:
- *  a USER row that is not `isMeta` and carries non-blank text or an image/document block, or an ASSISTANT row
- *  carrying at least one non-blank text block. Everything else — tool-result-only user rows, tool-use-only and
- *  thinking-only assistant rows, and every `attachment`/`system`/`progress` entry — is not a message.
+ *  a USER row carrying non-blank text or an image/document block, or an ASSISTANT row carrying at least one
+ *  non-blank text block. Everything else — tool-result-only user rows, tool-use-only and thinking-only
+ *  assistant rows, and every `attachment`/`system`/`progress` entry — is not a message.
+ *
+ *  UPSTREAM'S THIRD CLAUSE IS ABSENT ON PURPOSE. `$$_` also excludes a user row flagged `isMeta`, and this
+ *  function carried that test until probe 107 (`probes/probes/107-getsessionmessages-ismeta.ts`) measured what
+ *  our one input actually delivers: `getSessionMessages` DROPS the meta row entirely and projects every
+ *  surviving row onto a fixed shape (`message,parent_agent_id,parent_tool_use_id,session_id,timestamp,type,
+ *  uuid`), so no `isMeta` field reaches this predicate on any transcript — reproduced against two real CLI
+ *  sessions holding 53 and 14 such rows, zero of which came back. A test that cannot fire is not a safeguard,
+ *  it is a claim about the reader that nobody re-checks; the reader's own behaviour is the safeguard. Do not
+ *  re-add it without a probe showing the reader started carrying the field.
  *
  *  THE COUNT'S ONE PREDICATE — and, since wave2 T8, its ONLY consumer. The pane below no longer answers "is
  *  this a message?" at all: it draws the whole projected transcript, tool traffic included, exactly as
@@ -158,7 +167,6 @@ export const PREVIEW_ROWS = 12;
 export function isPreviewMessage(m: unknown): boolean {
   const r = m as any;
   if (r?.type === "user") {
-    if (r.isMeta) return false;
     const c = r.message?.content;
     if (!c) return false;
     if (typeof c === "string") return c.trim().length > 0;
