@@ -178,6 +178,47 @@ describe("FleetEngineSession", () => {
     expect(accepted).toEqual([]);   // no seq was resolved, so Task 7 has no turn to own
   });
 
+  it("does not leak a FOREIGN turn-end into the ends ledger on a busy refusal (F5)", async () => {
+    // The busy window is full of a foreign turn's frames (that turn is why the host is busy). If that foreign
+    // turn ENDS during the submit's round trip, settle() ledgers its end into `ends` — keyed by a seq this
+    // engine never submitted and that no future own submit will ever consume, so `ends` grows unbounded
+    // under repeated multi-client busy races. A busy refusal accepted no seq of our own, so any end recorded
+    // in that window is foreign and must be discarded. The fake's `endTurn` flips its host-side busy flag,
+    // which would let the prompt be accepted rather than refused, so this drives the exact frame ORDER by
+    // hand over a raw peer (through the SHARED codec): the foreign end lands strictly BEFORE the busy reply.
+    const socketPath = join(mkdtempSync(join(tmpdir(), "fleet-f5-")), "h.sock");
+    let peer: Socket | undefined;
+    const srv = createServer((sock) => {
+      peer = sock;
+      sock.on("error", () => {});
+      sock.on("data", (c) => {
+        for (const line of c.toString("utf8").split("\n")) {
+          if (!line.trim()) continue;
+          const f = decodeFrame(line) as { id?: number; op?: string } | undefined;
+          if (!f || typeof f.id !== "number") continue;
+          if (f.op === "prompt") {
+            peer!.write(encodeEvent({ kind: "turn", phase: "end", seq: 99, result: "foreign" })); // foreign end, mid-round-trip
+            peer!.write(JSON.stringify({ ok: false, error: "busy", id: f.id }) + "\n");            // then the busy refusal
+          } else {
+            peer!.write(JSON.stringify({ ok: true, id: f.id }) + "\n");                            // follow, etc.
+          }
+        }
+      });
+    });
+    await new Promise<void>((r) => srv.listen(socketPath, () => r()));
+    try {
+      const s = await connectFleetEngine(socketPath); eng = s;
+      const ledger = (s as unknown as { ends: Map<number, unknown> }).ends;
+      s.activate();
+      await expect(s.submit("go", () => {})).rejects.toBeInstanceOf(FleetBusyError);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(ledger.size).toBe(0);                    // the foreign end was discarded, not retained
+    } finally {
+      await eng?.dispose().catch(() => {}); eng = undefined;
+      peer?.destroy(); await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
   it("FLUSHES a straggler that arrived before the prompt reply — after onAccepted, ahead of live frames", async () => {
     // The other half of the quarantine: our own turn's first frame can be on the wire before the reply
     // that names its seq (the host emits it inside the prompt handler), so holding pre-reply frames must

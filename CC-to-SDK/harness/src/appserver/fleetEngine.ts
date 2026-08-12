@@ -276,6 +276,15 @@ class FleetEngine implements FleetEngineSession {
     if (this.turnSink) this.ends.set(e.seq, e);
   }
 
+  /** Drop every ledgered end when a submit fails BEFORE it accepted a seq (the busy/refusal reply and the
+   *  sendOp-throw path). Such a submit owns no seq of its own, and this engine runs one submit at a time
+   *  while a successful one deletes its own matched end — so at this moment `ends` can only hold FOREIGN
+   *  entries ledgered by settle() during the round trip (the host is busy precisely because someone else's
+   *  turn is streaming, and its end lands with no waiter to consume it). Left behind they accumulate
+   *  unbounded across repeated multi-client busy races; there is never a legitimately-pending OWN end to
+   *  drop here, so clearing is correct rather than lossy (external review F5). */
+  private discardWindowEnds(): void { this.ends.clear(); }
+
   private die(e: Error): void {
     if (this.closed) return;                     // first close wins; a later error is not a second death
     this.closed = true;
@@ -324,9 +333,10 @@ class FleetEngine implements FleetEngineSession {
     this.turnSink = (m) => { pending.push(m); };
     let rep: { ok: boolean; accepted?: boolean; seq?: number; error?: string };
     try { rep = await this.sendOp({ op: "prompt", text: prompt, ...(opts?.uuid ? { uuid: opts.uuid } : {}) }); }
-    catch (e) { this.turnSink = undefined; throw e; }
+    catch (e) { this.turnSink = undefined; this.discardWindowEnds(); throw e; }
     if (!rep.ok || rep.seq === undefined) {
       this.turnSink = undefined;
+      this.discardWindowEnds();
       // The host's ONE refusal token, matched exactly (host/server.ts:169) — not a message heuristic:
       // every other failure is a real error and must not read as a retryable busy.
       if (rep.error === "busy") throw new FleetBusyError();
