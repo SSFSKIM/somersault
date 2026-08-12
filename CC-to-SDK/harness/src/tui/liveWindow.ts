@@ -27,14 +27,24 @@ export interface LiveWindowResult { window: readonly RenderItem[]; commit: reado
  *  overshoot, so a frame that grows by a line does not immediately fall out of the selected window. */
 export const WINDOW_SLACK = 2;
 
-/** The measured steady-state main-screen dock: the rows that are never the transcript's. Todo panel up to 5
- *  (`taskPanelModel.ts:16-18`) + chrome, the live-turn row (`ChatApp.tsx:776`/`:788`/`:800`), the composer's
- *  ≥3 (`:968`) and the footer's 1 (`:1021`). It is a measurement, not a guess (plan review C3) — change it
- *  only against a re-measured dock. */
+/** The measured steady-state main-screen dock: the rows that are never the transcript's. It is a measurement,
+ *  not a guess (plan review C3) — change it only against a re-measured dock, which means re-checking these
+ *  fourteen rows one at a time:
+ *    · 5 — the todo panel's task rows at their maximum (`todoWindowSize` caps the window at 5, `taskPanelModel.ts:16-18`)
+ *    · 1 — the todo panel's `marginTop={1}` (`TaskPanel.tsx:106`)
+ *    · 1 — the todo panel's count header, "N tasks (…)" (`TaskPanel.tsx:107-111`)
+ *    · 1 — the todo panel's "+N more" overflow line (`TaskPanel.tsx:116`)
+ *    · 1 — the live-turn slot: spinner, retry row or compaction row, whichever holds it (`ChatApp.tsx:776`/`:788`/`:800`)
+ *    · 1 — the queue band at its minimum: one echoed queued prompt (`ChatApp.tsx:800-804`)
+ *    · 3 — the composer at its minimum (`ChatApp.tsx:968`)
+ *    · 1 — the footer (`ChatApp.tsx:1021`) */
 const MAIN_DOCK_ROWS = 14;
 
 /** The main screen's hard cap: whatever the terminal has left once the dock is paid for, floored at zero (a
- *  terminal shorter than the dock simply has no live window — the window is empty, everything commits). */
+ *  terminal shorter than the dock simply has no live window — the window has no rows, so everything with any
+ *  height commits). NB for downstream: `capRows === 0` does not imply `window.length === 0`. Zero-height items
+ *  are admitted rows-free by the walk below, so a window can be non-empty while summing to zero rows; read
+ *  `rows(window)`, never `window.length`, to decide whether anything is live. */
 export function mainWindowCap(rows: number): number { return Math.max(0, rows - MAIN_DOCK_ROWS); }
 
 /** The smallest SUFFIX of whole items whose summed `renderItemHeight` reaches `targetRows`, hard-bounded at

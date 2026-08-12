@@ -15,7 +15,9 @@ import { describe, expect, it } from "vitest";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "../../src/tui/liveWindow.js";
 import { renderItemHeight } from "../../src/tui/pager.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
-import { TOOL_RESULT_GUTTER } from "../../src/tui/toolRenderer.js";
+// From `species.ts`, NOT `toolRenderer.tsx` (which merely re-exports it at :38): toolRenderer is a `.tsx`
+// module and importing it would pull React + Ink into this file's graph, contradicting the header above.
+import { TOOL_RESULT_GUTTER } from "../../src/tui/species.js";
 
 /** Height 1 — `renderItemHeight` gives every `line` item exactly one row. */
 const line = (id: string): RenderItem => ({ kind: "line", id, line: { text: id } });
@@ -52,9 +54,15 @@ describe("selectLiveWindow", () => {
     expect(ids(r.window)).toEqual(["c", "d"]);
   });
 
-  it("never exceeds capRows, over 400 random height profiles", () => {
+  it("never exceeds capRows and is never short without a reason, over 400 random height profiles", () => {
     // Property-style: the cap is the invariant that keeps Ink off its whole-session-reprint branch, so it is
     // checked against arbitrary shapes rather than the handful of profiles a human would think to write.
+    //
+    // The cap bound alone is one-sided — it is an UPPER bound, and a selector that returned an empty window
+    // for every input would satisfy it forever. So each profile also carries the complementary LOWER bound:
+    // a window that stops short of the target must have been stopped by the cap, never by choice. Exactly one
+    // of three things must be true of every result — the walk consumed the whole input, or the window reached
+    // the target, or the one item just above the cut would have pushed the window past the cap.
     let seed = 0x5eed;
     const rand = (n: number): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
     for (let trial = 0; trial < 400; trial++) {
@@ -63,6 +71,12 @@ describe("selectLiveWindow", () => {
       const r = selectLiveWindow(items, target, cap);
       expectSuffixSplit(items, r);
       expect(rows(r.window)).toBeLessThanOrEqual(cap);
+      const cut = items.length - r.window.length;
+      const wholeInput = cut === 0;
+      const reachedTarget = rows(r.window) >= target;
+      const nextWouldOverflow = cut > 0 && rows(r.window) + renderItemHeight(items[cut - 1]!) > cap;
+      expect({ trial, cap, target, cut, windowRows: rows(r.window), stoppedForAReason: wholeInput || reachedTarget || nextWouldOverflow })
+        .toMatchObject({ stoppedForAReason: true });
     }
   });
 
