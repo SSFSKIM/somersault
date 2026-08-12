@@ -127,11 +127,17 @@ export const mcpSet: Handler = (srv, ctx, id, params) => {
     try {
       const receipt = await fn(parsed.data.servers);
       record.mcpServersSet = parsed.data.servers; // COMMIT-AFTER-ACCEPT — see the module header
-      // A WHOLESALE replacement removed every server the new set does not name, so the two refining maps
-      // are pruned to it: replaying a toggle or an override for a server the topology no longer contains
-      // is a push against a name no engine has.
-      for (const name of Object.keys(record.mcpToggles)) if (!(name in parsed.data.servers)) delete record.mcpToggles[name];
-      for (const name of Object.keys(record.mcpOverrides)) if (!(name in parsed.data.servers)) delete record.mcpOverrides[name];
+      // Prune the two refining maps by what the SDK ACTUALLY removed — `receipt.removed` — NOT by absence
+      // from the request (external review F7). `setMcpServers` only drops dynamically-added servers, so a
+      // plugin/settings-owned server omitted from this request is RETAINED by the SDK; deleting its
+      // toggle/override on absence alone would drop a refinement that still applies, and the next swap's
+      // `repushThreadState` would silently revert that retained server to its launch state. Defensive on the
+      // receipt shape: an absent or non-array `removed` prunes nothing rather than crashing.
+      const removed = Array.isArray((receipt as { removed?: unknown }).removed) ? new Set((receipt as { removed: string[] }).removed) : undefined;
+      if (removed) {
+        for (const name of Object.keys(record.mcpToggles)) if (removed.has(name)) delete record.mcpToggles[name];
+        for (const name of Object.keys(record.mcpOverrides)) if (removed.has(name)) delete record.mcpOverrides[name];
+      }
       record.updatedAt = nowSec();
       ctx.peer.reply(id, receipt); // the engine's {added, removed, errors} receipt, verbatim
       pingCapabilities(srv, record.id); // wholesale replacement of the server set — the biggest catalog change of the three

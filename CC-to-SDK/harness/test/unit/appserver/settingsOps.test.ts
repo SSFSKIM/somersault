@@ -107,8 +107,19 @@ function mkEngine(opts: {
   }
   if (!opts.noMcp) {
     // The receipt shape mcp.ts relays verbatim — a fake that answered a bare `undefined` would put a
-    // result-less frame on the wire, which is not what a real `setMcpServers` does.
-    e.setMcpServers = async (servers) => { e.mcpSetCalls.push(servers); return { added: Object.keys(servers), removed: [], errors: {} }; };
+    // result-less frame on the wire, which is not what a real `setMcpServers` does. `removed` is MODELLED
+    // realistically (external review F7): the real `setMcpServers` drops the dynamically-added servers a
+    // new set no longer names and reports them in the receipt — which is what mcp.ts now prunes by. All
+    // servers these tests add are dynamically-added via `mcpServer/set`, so a name dropped from the set is
+    // a name the receipt removes. A fake that always answered `removed:[]` only passed while the prune keyed
+    // off request-absence instead.
+    let mcpSet: Record<string, unknown> = {};
+    e.setMcpServers = async (servers) => {
+      e.mcpSetCalls.push(servers);
+      const removed = Object.keys(mcpSet).filter((n) => !(n in servers));
+      mcpSet = servers;
+      return { added: Object.keys(servers), removed, errors: {} };
+    };
     e.toggleMcpServer = async (name, enabled) => { e.mcpToggleCalls.push([name, enabled]); };
     e.setMcpPermissionModeOverride = async (name, mode) => { e.mcpOverrideCalls.push([name, mode]); return {}; };
   }

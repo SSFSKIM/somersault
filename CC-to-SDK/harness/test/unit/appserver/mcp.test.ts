@@ -330,6 +330,45 @@ describe("appserver MCP quintet — absent engine method answers -32601", () => 
   });
 });
 
+// `mcpServer/set` PRUNES the two refining maps (toggles/overrides) after a wholesale replacement, so a swap's
+// repushThreadState never replays a refinement for a server the topology no longer holds. The prune must key
+// off what the SDK ACTUALLY removed (receipt.removed), not absence from the request: `setMcpServers` only
+// drops dynamically-added servers, so a plugin/settings-owned server omitted from the request is RETAINED —
+// deleting its refinement on absence alone would silently revert it on the next swap (external review F7).
+describe("appserver MCP quintet — mcpServer/set prunes by receipt.removed, not request absence (F7)", () => {
+  it("keeps a toggle/override the SDK RETAINED (omitted from the request but absent from receipt.removed)", async () => {
+    const calls = mkCalls();
+    const receipt = { added: [], removed: ["gone"], errors: {} };   // the SDK dropped only "gone"
+    const { connA, threadId, srv } = await bootOneThread(() => fakeSession(calls, { setReceipt: receipt }));
+    const record = srv.registry.get(threadId)!;
+    // seed refinements for two servers through the real toggle/override handlers (commit-after-accept)
+    send(connA, { id: 3, method: "mcpServer/toggle", params: { threadId, name: "retained", enabled: false } });
+    send(connA, { id: 4, method: "mcpServer/toggle", params: { threadId, name: "gone", enabled: false } });
+    send(connA, { id: 5, method: "mcpServer/permissionModeOverride/set", params: { threadId, name: "retained", mode: "acceptEdits" } });
+    await tick();
+    expect(record.mcpToggles).toEqual({ retained: false, gone: false });
+    expect(record.mcpOverrides).toEqual({ retained: "acceptEdits" });
+
+    // a wholesale set omits BOTH from the request, but receipt.removed lists only "gone"
+    send(connA, { id: 6, method: "mcpServer/set", params: { threadId, servers: { other: { command: "node" } } } });
+    await tick();
+    // "retained" survives (SDK kept it — its refinement still applies); "gone" is pruned (the SDK removed it)
+    expect(record.mcpToggles).toEqual({ retained: false });
+    expect(record.mcpOverrides).toEqual({ retained: "acceptEdits" });
+  });
+
+  it("prunes nothing when the receipt carries no usable `removed` array (defensive)", async () => {
+    const calls = mkCalls();
+    const { connA, threadId, srv } = await bootOneThread(() => fakeSession(calls, { setReceipt: { added: [], errors: {} } }));
+    const record = srv.registry.get(threadId)!;
+    send(connA, { id: 3, method: "mcpServer/toggle", params: { threadId, name: "keep", enabled: false } });
+    await tick();
+    send(connA, { id: 4, method: "mcpServer/set", params: { threadId, servers: {} } });
+    await tick();
+    expect(record.mcpToggles).toEqual({ keep: false });   // no `removed` to trust → prune nothing, never crash
+  });
+});
+
 // The mutations' bodies are DEFERRED into record.chain, so they run after dispatch's arrival-time -33005
 // gate has already passed. An engine that dies in between throws, and scoring that throw -32602 would
 // blame the caller for the server's dead read loop — hence the catch's own isEnded() re-check
