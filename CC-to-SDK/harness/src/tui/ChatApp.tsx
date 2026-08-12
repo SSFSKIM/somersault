@@ -1070,6 +1070,23 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           .map((l, j) => ({ kind: "line" as const, id: `queued:${i}:${j}`, line: indentRenderLine(l, QUEUE_INSET) })))
       : EMPTY_ITEMS),
     [fullscreen, state.queue, queueWidth]);
+  // ── THE REGION IS THE HALF OF THE FLIP THAT *DOES* REMOUNT, AND THAT IS THE DECISION (T15 fix round, I2) ──
+  // `FullscreenFrame` keeps its own element type across `/tui` so the frame, the dock and everything mounted
+  // in them are re-propped rather than reborn (its header; pinned in `test/tui/tui-switch.test.tsx`). This
+  // slot deliberately does not: the two renderers put genuinely different components here — a virtualised
+  // band that owns a fixed row budget, and an append-only `<Static>` that owns scrollback — and there is no
+  // shared component that is honestly either. So on a flip the element type changes, React unmounts what was
+  // there, and the classic arm's `<Static>` starts from index 0 and rewrites the ENTIRE committed
+  // conversation to the main screen (measured: one 54-row chunk at a 60-entry transcript).
+  //   THAT REPLAY IS CANON-SHAPED, which is why it is accepted rather than engineered away. Canon's `/tui`
+  // does not flip a live renderer at all — it RELAUNCHES: `fTb` ends in `YGt` (`relaunchInto`, bundle
+  // L482509/L482620), which is `GBe({ freshIfNoTranscript: true, … })` (L353362), and `freshIfNoTranscript`
+  // means the new process re-execs with `--resume <id>` whenever a transcript exists (L353366-353370). The
+  // user's whole conversation is therefore reprinted onto the new screen there too. Ours arrives by Ink's
+  // `<Static>` rather than by a resume, and costs one screenful of scrollback instead of a process.
+  //   WHAT IS NOT ACCEPTABLE, and is pinned: a SECOND copy. The replay must REPLACE — every committed row
+  // appears exactly once in the bytes after the flip — because Ink's `fullStaticOutput` only ever grows
+  // (ink.js:57 resets it in the constructor and nowhere else) and a duplicating flip would compound per use.
   const region = fullscreen
     ? (transcriptOpen
       ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
@@ -1488,11 +1505,14 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   THE DOCK IS STILL PASSED WHILE THE SEAM IS UP, and the frame ignores it — canon's overlay is `opaque`
   // over the dock rather than instead of it, and keeping the prop shaped that way is what lets the frame own
   // the "occlusion is omission" decision in one place (FullscreenFrame's header) instead of two.
-  //   AND THE HOST WRAPS ONLY THE FULLSCREEN ARM (T14/D10). `PaletteHost` holds the published element and
+  //   AND THE HOST WRAPS BOTH ARMS (T14/D10, as T15 left it). `PaletteHost` holds the published element and
   // nothing else; its setState re-renders the slot alone, because the `children` element handed to it here is
-  // unchanged across that write (paletteSlot.tsx's header). Classic renders no host, so the composer's
-  // `usePaletteHoist` finds no setter and is inert — which is the whole of "classic is byte-identical" for
-  // this delta.
+  // unchanged across that write (paletteSlot.tsx's header). It sits OUTSIDE the mode branch for the same
+  // reason `FullscreenFrame` does — a wrapper that exists in one mode only is a changed root type, and a
+  // changed root type unmounts everything under it on a flip. Classic stays byte-identical anyway: the
+  // composer's `hoisted` is `fullscreen && …`, so it publishes `null` into a host whose state is already
+  // `null` and React bails out of the re-render, and the `<PaletteSlot/>` that would draw it is not rendered
+  // on the classic arm at all.
   //   AND THERE IS EXACTLY ONE RETURN SINCE T15, which is the whole of `/tui`'s live flip. Two returns meant
   // two ROOT ELEMENT TYPES, and React unmounts the host subtree under a changed type however stable the
   // children are; the frame's classic arm is unbounded and paints what the `<Box>` here used to (argued in

@@ -404,6 +404,140 @@ describe("ResumeSafeStdout altMode", () => {
   });
 });
 
+// ── FSW TASK 15 FIX ROUND — THE PROXY WHOSE ANSWER CHANGES MID-STREAM ────────────────────────────────────
+// Every case above pins a proxy that is on one screen for its whole life, which is every launch that never
+// runs `/tui`. These are the other kind. `altMode` is a reader precisely so it CAN change, and two of the
+// rules keyed off it are cross-call — the park's record and D21's armed erase both outlive the write that
+// set them — so each of them has a state that can be carried onto the wrong screen. The third thing carried
+// across is not ours at all: Ink's own `previousLineCount`, which is a fact about a screen held by a
+// log-update that has no idea there are two (`noteScreenChange`'s header, review C1).
+describe("ResumeSafeStdout across a live renderer flip", () => {
+  const BSU = "\x1b[?2026h", ESU = "\x1b[?2026l";
+  const ALT_ERASE = "\x1b[2J\x1b[H";                     // canon `$uy`, L181490 — D21's armed one-shot
+  /** The proxy under `/tui`: `live.alt` is `runChatClient`'s mode holder and `flip` is exactly what
+   *  `createRendererSwitch.apply` does with it — move the holder, then tell the proxy the screen moved. */
+  const flippable = (start: "alt" | "main", columns?: number, rows?: number) => {
+    const terminal = new RecordingTerminal(columns, rows);
+    const live = { alt: start === "alt" };
+    const out = createResumeSafeStdout(terminal as any, { altMode: () => live.alt });
+    return { terminal, out, live, flip: (to: "alt" | "main") => { live.alt = to === "alt"; out.noteScreenChange(to); } };
+  };
+  /** How many rows a chunk's leading erase run spends. A prefix with no `\x1b[2K` in it is somebody homing a
+   *  cursor, not log-update erasing rows, so it spends none. */
+  const eraseRows = (chunk: string): number => {
+    const prefix = chunk.match(/^(?:\x1b\[2K|\x1b\[1A|\x1b\[G)+/)?.[0] ?? "";
+    return prefix.includes("\x1b[2K") ? (prefix.match(/\x1b\[1A/g)?.length ?? 0) + 1 : 0;
+  };
+
+  // THE CRITICAL ONE (review C1). A session that booted fullscreen never painted a row of the main screen, so
+  // the rows log-update wants to erase after rmcup are the USER'S SHELL — measured at 24 rows as
+  // `eraseLines(24)` in front of an 8-row frame, sixteen rows of somebody else's screen gone and never
+  // repainted. Zero is the whole budget the main screen owes here.
+  it("spends nothing on the shell when a fullscreen-booted session leaves the alternate screen", () => {
+    const { terminal, out, flip } = flippable("alt", 80, 24);
+    out.stdout.write(eraseLines(23) + "alt frame\n");
+    flip("main");
+    out.stdout.write(eraseLines(24) + "classic frame\n");
+    expect(terminal.chunks[1]).toBe("classic frame\n");
+    expect(eraseRows(terminal.chunks[1]!)).toBe(0);
+  });
+
+  // …and where the main screen really was left holding a frame, the budget is THAT frame — canon resets to
+  // zero on its one edge, but canon's leave edge does not exist and ours returns to a restored buffer.
+  it("restores the count the main screen was left holding, and no more", () => {
+    const { terminal, out, flip } = flippable("main");
+    out.stdout.write("a\nb\nc\n");                       // log-update's previousLineCount for this is 4
+    flip("alt");
+    out.stdout.write(eraseLines(23) + "alt frame\n");
+    flip("main");
+    out.stdout.write(eraseLines(24) + "back on the main screen\n");
+    expect(terminal.chunks[2]).toBe(eraseLines(4) + "back on the main screen\n");
+  });
+
+  // The enter edge was covered by luck — `ENTER_ALT` ends in `2J`+`H`, so a stale erase runs against a blank
+  // screen at home — and this is that luck written down as a contract: nothing is on the alternate screen we
+  // just cleared, so nothing may be erased off it.
+  it("strips the stale erase on the way IN, where the screen was just cleared", () => {
+    const { terminal, out, flip } = flippable("main");   // no width, so the park adds no chunk of its own
+    out.stdout.write("a\nb\nc\n");
+    flip("alt");
+    out.stdout.write(eraseLines(4) + "first alt frame\n");
+    expect(terminal.chunks[1]).toBe(BSU + "first alt frame\n" + ESU);
+  });
+
+  // ONE clamp, not a standing cap: the write that carries it re-derives log-update's counter from what it
+  // just painted, so every erase behind it is honest and passes through untouched.
+  it("clamps the first erase after the flip and nothing after it", () => {
+    const { terminal, out, flip } = flippable("alt");
+    out.stdout.write(eraseLines(20) + "alt\n");
+    flip("main");
+    out.stdout.write(eraseLines(20) + "one\n");
+    out.stdout.write(eraseLines(20) + "two\n");
+    expect(terminal.chunks[1]).toBe("one\n");
+    expect(terminal.chunks[2]).toBe(eraseLines(20) + "two\n");
+  });
+
+  // The head of a `<Static>` commit is a bare `log.clear()`, and on the leave edge it is the FIRST thing out
+  // — so the clamp has to reach a write with no body at all, or the erase-only chunk spends the whole debt
+  // before any frame is there to catch it.
+  it("clamps an erase-only log.clear(), which is what the leave edge actually emits first", () => {
+    const { terminal, out, flip } = flippable("alt");
+    out.stdout.write(eraseLines(20) + "alt\n");
+    flip("main");
+    out.stdout.write(eraseLines(20));                    // log.clear()
+    out.stdout.write("committed transcript row\n");      // staticOutput
+    out.stdout.write("new frame\n");                     // log(output)
+    expect(terminal.chunks.slice(1)).toEqual(["", "committed transcript row\n", "new frame\n"]);
+  });
+
+  // (2) THE PARK'S RECORD CROSSES WITH THE SCREEN IT DESCRIBES. Nothing is parked on the alternate screen, so
+  // 0 is the truth there — and `1049l` restores the main buffer AND the cursor `1049h` saved, so the column
+  // is the truth again the moment we are back.
+  it("drops the park on the way in and hands it back on the way out", () => {
+    const { terminal, out, flip } = flippable("main", 80, 24);
+    out.stdout.write("classic\n");
+    expect(out.parkedColumn()).toBe(parkColumn(80));
+    flip("alt");
+    expect(out.parkedColumn()).toBe(0);
+    const mark = terminal.chunks.length;
+    out.stdout.write("\x1b[?2004h");                     // a foreign escapes-only write, straight after the flip
+    out.stdout.write(eraseLines(3) + "alt frame\n");
+    // No stale column math reached either one — which is exactly what a `parkedCol` carried over from the
+    // classic screen would have bought: a `\x1b[G` home written in front of the foreign write, and a row of
+    // padding written after the frame, both onto a fixed-height frame that owns every cell it has.
+    expect(terminal.chunks[mark]).toBe("\x1b[?2004h");
+    expect(terminal.chunks.slice(mark).join("")).not.toContain(parkSequence(parkColumn(80)));
+    expect(out.parkedColumn()).toBe(0);
+    flip("main");
+    expect(out.parkedColumn()).toBe(parkColumn(80));
+  });
+
+  // (3) D21's ARMED ERASE IS SPENT ON THE SCREEN THAT ARMED IT. A resize can land between `/tui default` and
+  // the paint behind it; `\x1b[2J` in front of THAT chunk would blank a main-screen viewport whose live
+  // `<Static>` rows are not in scrollback yet. Consumed either way — the frame it was armed for is not coming.
+  it("drops an armed alt-screen erase when the flip beats the paint to it", () => {
+    const { terminal, out, flip } = flippable("alt");
+    out.stdout.write(eraseLines(20) + "alt\n");
+    out.eraseNextPaint();                                // …the resize listener, one instant before the flip
+    flip("main");
+    out.stdout.write(eraseLines(20) + "first classic paint\n");
+    out.stdout.write(eraseLines(2) + "second\n");
+    expect(terminal.chunks[1]).not.toContain(ALT_ERASE);               // …nor the 2026 wrap that would carry it
+    expect(terminal.chunks[1]).not.toContain(BSU);
+    expect(terminal.chunks[2]).toBe(eraseLines(2) + "second\n");       // …and it was not merely deferred
+  });
+
+  // …and the arming itself is mode-gated, so a resize that lands while the main screen is up cannot leave a
+  // `2J` sitting in the chamber for the next `/tui fullscreen` to fire.
+  it("refuses to arm one at all while the main screen is up", () => {
+    const { terminal, out, flip } = flippable("main");
+    out.eraseNextPaint();
+    flip("alt");
+    out.stdout.write(eraseLines(3) + "alt frame\n");
+    expect(terminal.chunks[0]).not.toContain(ALT_ERASE);
+  });
+});
+
 describe("physicalRows", () => {
   it("counts a line that is EXACTLY the width as one row", () => {
     expect(physicalRows("x".repeat(40) + "\n", 40)).toBe(1);

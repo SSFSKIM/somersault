@@ -122,12 +122,48 @@ export interface ResumeSafeStdout {
    *  may not be in scrollback yet (the t8 over-erase). The guard lives here rather than in the caller's
    *  discipline because the mode is what makes the escape safe. */
   eraseNextPaint(): void;
+  /** FSW T15 FIX ROUND (review C1) — THE SCREEN CHANGED UNDER LOG-UPDATE, WHICH DOES NOT KNOW.
+   *
+   *  Ink owns ONE log-update for the process, and its `previousLineCount` is a fact about a SCREEN rather than
+   *  about a buffer: `/tui` swaps the screen without swapping the renderer, so the first write after the swap
+   *  opens with `eraseLines(the count from the screen we just left)` and spends it on the one we just arrived
+   *  at. The LEAVE edge is where that is destructive — measured at 24 rows, a fullscreen-booted session
+   *  flipping to `default` wrote `eraseLines(24)` after rmcup and took sixteen rows of the user's own shell
+   *  with it, rows nothing in this process will ever repaint. (The ENTER edge survives on luck: `ENTER_ALT`
+   *  ends in `2J`+`H`, so the stale erase runs against a blank alternate screen with the cursor at home.
+   *  `EXIT_ALT` carries no such cover, which is the whole difference between the two edges.)
+   *
+   *  Canon discharges the same obligation and never meets the second edge, because it has none:
+   *  `resetFramesForAltScreen` (bundle L181086) ends in `this.log.reset()` on every alt-screen ENTRY, and
+   *  canon's own `/tui` relaunches the process instead of flipping a live one. Ink 5.2.1 exposes no such
+   *  reset — `render()` hands back five methods and `build/instances.js` is not an importable subpath — so the
+   *  discharge happens HERE, where the erase bytes are already parsed and already rewritable: the count owed
+   *  to the main screen is saved on the way out, restored on the way back, and the first log-update erase on
+   *  the destination screen is clamped to it. ONE clamp is enough — the write carrying it re-syncs
+   *  log-update's own counter to the screen it just painted.
+   *
+   *  IT IS A RESTORE AND NOT CANON'S RESET-TO-ZERO, because our leave edge really does return to a screen with
+   *  our own frame still on it: `1049l` puts back the main buffer and the cursor `1049h` saved, so the rows the
+   *  last classic frame painted are exactly what the next erase is entitled to take. Zero would strand a
+   *  duplicate of that frame above the new one — the under-erase direction, cosmetic, and the wrong answer
+   *  where a better one is in hand. The one case the saved count cannot cover is a RESIZE during the
+   *  alternate-screen trip, which reflows the main buffer under a count taken before it; that lands on the
+   *  under-erase side as well. */
+  noteScreenChange(to: "alt" | "main"): void;
 }
 
 /** Ink's erase prefix: `ansiEscapes.eraseLines(n)` is a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It is
  *  terminal bookkeeping, not frame content — and `eraseLines(0)` is the empty string, which is why the first frame
  *  of a session (and any frame right after a `log.clear()`) arrives with no prefix at all. */
 const INK_ERASE_PREFIX = /^(?:\x1b\[2K|\x1b\[1A|\x1b\[G)+/;
+
+/** How many rows one of those prefixes erases: `eraseLines(n)` carries n − 1 `\x1b[1A`s. */
+const eraseDepth = (prefix: string): number => (prefix.match(/\x1b\[1A/g)?.length ?? 0) + 1;
+
+/** `ansiEscapes.eraseLines(n)` rebuilt — the ONE place this file writes an erase prefix instead of reading
+ *  one (`noteScreenChange`, below, is the only caller). `eraseLines(0)` is the empty string, which is already
+ *  the exact bytes for "erase nothing", so the clamp needs no special case at the bottom of its range. */
+const eraseLinesSeq = (n: number): string => (n <= 0 ? "" : "\x1b[2K" + "\x1b[1A\x1b[2K".repeat(n - 1) + "\x1b[G");
 
 /** Writes that begin their own line: Ink's erase run, and the `clearTerminal` the tall-frame branch opens with.
  *  Everything else would start painting from wherever the park left the cursor, so it gets homed first. */
@@ -223,7 +259,18 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
   let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
   let pendingErase = false;                      // FSW T9 (D21): a resize is owed a full repaint — see `eraseNextPaint`
+  let mainScreenCount = 0;                       // T15 fix: log-update's line count for the MAIN screen, held across an alt trip
+  let mainScreenPark = 0;                        // …and the column its cursor was parked in when we left it
+  let eraseBudget: number | undefined;           // …and what the first erase on the screen we just moved to may spend
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
+  /** The clamp itself (see `noteScreenChange`). Armed at a screen boundary and spent on the first prefix that
+   *  is genuinely log-update's — a bare `\x1b[G` is somebody homing a cursor, not an erase, so it is left alone
+   *  and the budget waits for the write that matters. */
+  const spendEraseBudget = (prefix: string): string => {
+    if (eraseBudget === undefined || !prefix.includes("\x1b[2K")) return prefix;
+    const budget = eraseBudget; eraseBudget = undefined;
+    return eraseDepth(prefix) <= budget ? prefix : eraseLinesSeq(budget);
+  };
   // Five kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
   // none, at first paint) and content: record what remains. ERASE-ONLY writes (`log.clear()`, `Instance.clear()`)
   // leave nothing after the strip — including the ZERO-LENGTH `eraseLines(0)` Ink emits when `previousLineCount` is
@@ -321,6 +368,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     if (typeof chunk !== "string") return false;
     if (chunk.startsWith("\x1b[2J")) {
       justErased = false; dropped = undefined; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1; detached += 1;
+      eraseBudget = undefined;                   // T15 fix: this chunk blanks the screen itself, so nothing is owed in front of it
       // …ON THE MAIN SCREEN ONLY (FSW T8, plan m2/D6). Everything the paragraph above argues is an argument
       // about SCROLLBACK: `\x1b[3J` erases it, and inline that is where this app's committed transcript and the
       // user's pre-launch screen live. The alternate screen has no scrollback — that is what it is — so the
@@ -331,8 +379,15 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
       if (!altMode() && chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
       return false;
     }
-    const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
-    const body = chunk.slice(prefix.length);
+    const inkPrefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
+    const body = chunk.slice(inkPrefix.length);
+    // FSW T15 FIX ROUND (review C1) — AND IT IS CLAMPED HERE, in front of every other rule, because every one
+    // of them wants the prefix that is actually going to the terminal: the corrector measures Ink's erase off
+    // it, the `justErased` latch is decided by whether it is empty, and the depth is the whole finding. The
+    // rewrite is seeded into `rewritten` — the same one-chunk channel the corrector and D21's erase use, and
+    // both of them compose on top of it below by rebuilding from `prefix`.
+    const prefix = spendEraseBudget(inkPrefix);
+    if (prefix !== inkPrefix) rewritten = prefix + body;
     if (body === "") { justErased = true; if (frame !== undefined) dropped = frame; frame = undefined; parkedCol = 0; detached += 1; return false; }
     // Ink's log() writes `str + "\n"` and its <Static> chunk ends the same way, so a body that does NOT end in a
     // newline is nobody's frame — it is another consumer of this same stdout (W-R t4: the keymap's DECSET writes,
@@ -361,7 +416,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     // correct (`eraseLines(0)` is empty — first frame of a session, or the one after a clear), and with no recorded
     // frame there is no measurement to correct FROM, which is the same refusal `lastFrame()` has always meant.
     if (prefix !== "" && frame !== undefined && corrector !== undefined) {
-      const seq = corrector({ inkErases: (prefix.match(/\x1b\[1A/g)?.length ?? 0) + 1, prevFrame: frame,
+      const seq = corrector({ inkErases: eraseDepth(prefix), prevFrame: frame,
         parkedCol, widthAtPaint, width: stdout.columns ?? 0, rows: stdout.rows ?? 0 });
       if (seq) rewritten = prefix + seq + body;
     }
@@ -379,7 +434,9 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     // `<Static>` rows are not in scrollback yet — the t8 over-erase, arriving by a new route. Consumed either
     // way, because the erase belongs to a frame that is no longer coming.
     if (pendingErase) { pendingErase = false; if (altMode()) rewritten = ALT_ERASE + (rewritten ?? chunk); }
-    justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0; tall = 0;   // …and the screen is back in sync (see above)
+    // …and the screen is back in sync (see above) — INCLUDING log-update's own counter, which this write has
+    // just re-derived from the frame it painted, so a boundary clamp that was never spent is now stale (T15 fix).
+    justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0; tall = 0; eraseBudget = undefined;
     return true;
   };
   // W-R t4: PARK THE CURSOR ON EVERY FRAME. `probeReflow` can only answer when the cursor is past the new right
@@ -469,6 +526,17 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     detachedWrites() { return detached; },
     setFrameCorrector(fn) { corrector = fn; },
     eraseNextPaint() { if (altMode()) pendingErase = true; },
+    noteScreenChange(to) {
+      // The two facts that BELONG to the main screen are saved and restored as a pair, because they describe
+      // the same thing: what this process left painted there. Everything else is dropped, which is the honest
+      // record for a screen nothing in here has painted yet — `frame` is the erase the corrector would measure
+      // from and `tall` is a claim about log-update's counters, and after a screen change neither describes
+      // what the user is looking at. `pendingErase` is deliberately NOT touched: the D21 flag is already
+      // spend-gated on `altMode()` at the paint, and one rule in one place beats two.
+      if (to === "alt") { mainScreenCount = frame === undefined ? 0 : frame.split("\n").length; mainScreenPark = parkedCol; parkedCol = 0; eraseBudget = 0; }
+      else { eraseBudget = mainScreenCount; parkedCol = mainScreenPark; }
+      frame = undefined; widthAtPaint = 0; justErased = false; dropped = undefined; tall = 0;
+    },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
@@ -532,13 +600,19 @@ export interface RendererSwitch {
  *
  *  Extracted from `runChatClient` so the ordering has somewhere to be asserted, exactly as `createResizeChain`
  *  was; it has no other caller. */
-export function createRendererSwitch(deps: { prefs: CcxPrefs; isTTY: boolean; env: NodeJS.ProcessEnv; guard: AltScreenGuard; live: { mode: RendererMode } }): RendererSwitch {
+export function createRendererSwitch(deps: { prefs: CcxPrefs; isTTY: boolean; env: NodeJS.ProcessEnv; guard: AltScreenGuard; live: { mode: RendererMode }; output: Pick<ResumeSafeStdout, "noteScreenChange"> }): RendererSwitch {
   return {
     select: (tui) => selectRenderer({ isTTY: deps.isTTY, env: deps.env, prefs: { ...deps.prefs, tui } }),
     apply(next) {
       const was = deps.live.mode;
       deps.live.mode = next.mode;
       if (next.mode === was) return;
+      // FIX ROUND (review C1) — AND THE THIRD SIDE EFFECT IS THE ONE NOBODY CAN SEE, so it goes first. Ink's
+      // log-update owes the screen we are leaving an erase it is about to spend on the screen we are arriving
+      // at; `noteScreenChange` moves that debt with us. Ahead of the escape because it only READS this
+      // process's record of what is painted — no bytes — and behind it the guard's rmcup would already have
+      // handed the terminal back with the debt still standing (`noteScreenChange`'s header).
+      deps.output.noteScreenChange(next.mode === "fullscreen" ? "alt" : "main");
       if (next.mode === "fullscreen") deps.guard.enter(); else deps.guard.leave();
     },
   };
@@ -783,7 +857,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // there on, and this line is unchanged, which was the point of writing it this way.
   if (fullscreen) altGuard.enter();
   // FSW T15 — the flip's two halves, over the guard built above and the holder every screen rule reads.
-  const rendererSwitch = createRendererSwitch({ prefs, isTTY: Boolean(process.stdout.isTTY), env: process.env, guard: altGuard, live });
+  const rendererSwitch = createRendererSwitch({ prefs, isTTY: Boolean(process.stdout.isTTY), env: process.env, guard: altGuard, live, output });
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
