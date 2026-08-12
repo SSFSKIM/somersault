@@ -953,6 +953,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     "chat:externalEditor": () => {
       const ended = interceptChord();
       if (!ended || editorInFlightRef.current) return;               // a second chord mid-edit is a no-op
+      // …and the popup goes FIRST (M1 review, finding 2). The `editorInFlight` early return below draws no
+      // popup, but the state that says one is showing survived the flight — so the app went on holding
+      // `popupHeight(rows)` back from the live window for the whole edit, and when the editor exits non-zero
+      // `done` returns before any `commitState`, which left it held until the next keystroke. Closed through
+      // `commitState` — the one writer — so the `false` report rides with it, in this same stdin handler and
+      // before the flag that swaps the composer out.
+      if (ended.command || ended.mention) commitState({ ...ended, command: null, mention: null });
       editorInFlightRef.current = true; setEditorInFlight(true);
       const done = (edited: string | null) => {
         if (disposed.current) return;

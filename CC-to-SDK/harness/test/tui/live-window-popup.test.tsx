@@ -20,6 +20,9 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import isInCi from "is-in-ci";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { renderRealInk, type FakeTty } from "./helpers/fakeTty.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
@@ -46,11 +49,11 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
   /** ChatApp under the real keymap (bare, it has no input path at all — F2 task 6) over a real Ink whose
    *  stdout can be resized. `deps.rows`/`deps.columns` read the SAME fake tty Ink was handed, so `useChat`'s
    *  commit cap and the render window are sizing against one terminal. */
-  function mount(geo: { columns: number; rows: number }, lie: (rows: number) => number = (r) => r) {
+  function mount(geo: { columns: number; rows: number }, lie: (rows: number) => number = (r) => r, cwd = "/work") {
     const fake = fakeRemote();
     const tty = renderRealInk(
       <KeymapProvider>
-        <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" resyncViewport={() => false}
+        <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={cwd} resyncViewport={() => false}
           deps={{ now: () => 0, columns: () => geo.columns, rows: () => lie(geo.rows), scheduleRepaint: () => () => {} }} />
       </KeymapProvider>,
       geo,
@@ -107,6 +110,66 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
       expect(back).toContain(`ALPHA-${firstLive}`);
     });
   }
+
+  // ── THE ONE-DERIVATION RULE, ENFORCED (M1 review, finding 1) ─────────────────────────────────────────────
+  // `suggestPopupShown` is three terms (a matching command list, a matching `@`-mention list, CM38's "no
+  // commands match" message) and the whole point of it living in completions.ts is that the render gate and
+  // the cap read the SAME one. The cases above only ever exercise the first term — the arm where a WEAKER
+  // derivation still agrees — so replacing the composer's report with `commandActive` left the entire suite
+  // green while the cap stopped paying for the other two. That is not hypothetical: the reviewer measured 6
+  // tall writes on a real mention popup. One case per missed term, so the rule has teeth.
+  it("an @-mention popup — the term a command-only derivation misses — writes NO tall frame", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ccx-fsw-mention-"));
+    // A dozen files whose names are recognisable ON THE SCREEN: the popup rows are the paths themselves
+    // (`suggestProps`'s `file-` arm: `displayText: path`), so the assertion that the popup really drew can be
+    // a filename rather than a proxy for one.
+    for (let n = 1; n <= 12; n++) await writeFile(join(dir, `zebra-${String(n).padStart(2, "0")}.md`), "x");
+    try {
+      const geo = { columns: 80, rows: 40 };
+      const { fake, tty } = mount(geo, (r) => r, dir);
+      await fill(fake, tty);
+      const firstLive = 40 - (mainWindowCap(geo.rows) - WINDOW_SLACK) + 1;
+      expect(screen(tty)).toContain(`ALPHA-${firstLive}`);            // the window is FULL before the popup
+
+      const mark = tty.mark();
+      // This list arrives off the debounced `readdir` WALK, not off the keystroke — the report therefore has
+      // to ride the walk's own `commitState` rather than a key handler. `settle` outlasts both
+      // MENTION_WALK_DEBOUNCE_MS and Ink's 32 ms throttle, so the popup is up before anything is counted.
+      for (const ch of "@zebra") { tty.stdin.write(ch); await settle(); }
+      expect(screen(tty)).toContain("zebra-01.md");
+      expect(tty.tallWritesSince(mark)).toBe(0);                      // reviewer measured 6 without the subtraction
+
+      // …and it is a budgeted yield here too, released whole on Escape.
+      const live = Math.max(0, mainWindowCap(geo.rows) - WINDOW_SLACK - popupHeight(geo.rows));
+      if (live < 40) expect(screen(tty)).not.toContain(`ALPHA-${40 - live}`);
+      tty.stdin.write(ESC);
+      await settle();
+      expect(tty.tallWritesSince(mark)).toBe(0);
+      expect(screen(tty)).toContain(`ALPHA-${firstLive}`);
+      tty.unmount();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("the \"no commands match\" popup — the third term — writes NO tall frame", async () => {
+    const geo = { columns: 80, rows: 40 };
+    const { fake, tty } = mount(geo);
+    await fill(fake, tty);
+    const firstLive = 40 - (mainWindowCap(geo.rows) - WINDOW_SLACK) + 1;
+    expect(screen(tty)).toContain(`ALPHA-${firstLive}`);
+
+    const mark = tty.mark();
+    // `/z` still matches commands, `/zzz` matches none — so this walks the list arm INTO the empty-message
+    // arm, which is exactly where a `commandActive` cap would let go of the rows while CM38's message is
+    // still drawn and blank-padded to the full `popupHeight`.
+    for (const ch of "/zzz") { tty.stdin.write(ch); await settle(); }
+    expect(screen(tty)).toContain('No commands match "/zzz"');
+    expect(tty.tallWritesSince(mark)).toBe(0);
+
+    tty.stdin.write(ESC);
+    await settle();
+    expect(tty.tallWritesSince(mark)).toBe(0);
+    expect(screen(tty)).toContain(`ALPHA-${firstLive}`);
+  });
 
   // THE NEGATIVE CONTROL, and it is not optional: every count above is a ZERO, and a harness that had quietly
   // stopped seeing Ink's writes would satisfy all of them. Same tree, same keystrokes, with ChatApp sizing its
