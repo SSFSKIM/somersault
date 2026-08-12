@@ -9,8 +9,9 @@ import { randomUUID } from "node:crypto";
 import { ERR } from "./rpc.js";
 import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
-import { mintTurnId, threadBusyReason, threadStatus, ORIGIN_REFUSAL_MESSAGE } from "./registry.js";
+import { fleetTurnId, mintTurnId, threadBusyReason, threadStatus, ORIGIN_REFUSAL_MESSAGE } from "./registry.js";
 import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
+import type { FleetEngineSession } from "./fleetEngine.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
@@ -79,7 +80,12 @@ export function itemEventNotification(threadId: string, turnId: string, ev: Item
   return { method: deltaMethod(ev.channel), params: { threadId, turnId, itemId: ev.itemId, delta: ev.delta } };
 }
 
-function emitItems(srv: AppServer, record: ThreadRecord, turnId: string, events: ItemEvent[]): void {
+/** Exported for ONE caller (fleet.ts's event layer, M3 Task 7): a fleet turn's items are mapped outside
+ *  this module — the host's frames are the only place an own turn and a FOREIGN turn meet — but the
+ *  buffer discipline they land in (clone-at-emit, drop-oldest with the start-folding exception, the cap)
+ *  is not something a second emitter may re-implement, or the two paths drift on what a replayable buffer
+ *  is. Nothing else about turn ownership crosses that seam. */
+export function emitItems(srv: AppServer, record: ThreadRecord, turnId: string, events: ItemEvent[]): void {
   for (const ev of events) {
     pushBounded(record.buffer, turnId, ev);
     const { method, params } = itemEventNotification(record.id, turnId, ev);
@@ -292,6 +298,49 @@ function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
   };
 }
 
+/** The fleet arm of `turn/start` (M3 §1b): gate, submit, reply — and NOTHING else. No mint (the id is
+ *  derived from the host's seq, registry.ts's `fleetTurnId`), no busy claim, no broadcast: the fleet event
+ *  layer (fleet.ts) is the SOLE turn-lifecycle owner for this origin, because the host's `turn` events are
+ *  the only channel on which this client's own turn and another client's look the same. Claiming any of it
+ *  here would double every edge for own turns and leave foreign ones unclaimed.
+ *
+ *  The seq — hence the id this caller is owed — arrives on `onAccepted`, the engine's one race-free seq
+ *  channel (fleetEngine.ts): deriving it from "the next turn-start we saw" is wrong on the refusal path,
+ *  where a foreign turn's start can land between the op leaving and the busy reply coming back. The reply
+ *  therefore goes out from that callback, and the `turn/started` this turn has ALREADY provoked (the host
+ *  emits turn-start before the prompt reply) is legitimately ahead of it — the derived id is the same one
+ *  either way, which is the whole point of deriving it.
+ *
+ *  `onMessage` is inert: those same frames reach fleet.ts's mapper through `onFrame`, and feeding both
+ *  would itemize every own turn twice. The uuid is minted and stamped anyway (§1a-b): it is what keeps the
+ *  live user item's id equal to the row the host will persist, so the two join under the normal id-dedup
+ *  stitch instead of appearing twice in a client's transcript. */
+function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord, input: string): void {
+  const userUuid = randomUUID();
+  let replied = false;
+  const onAccepted = (seq: number): void => {
+    const turnId = fleetTurnId(record, seq);
+    replied = true;
+    ctx.peer.reply(id, { turn: { id: turnId, status: "inProgress" } });
+    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(input, userUuid) }]);
+  };
+  // Cast, not a widened `EngineSession`: `onAccepted` is a FLEET engine's member (fleetEngine.ts widens
+  // submit for it), and declaring it on the shared interface would promise a callback the in-process
+  // engine never fires. `record.origin === "fleet"` is the guarantee behind it — fleet.ts is the only
+  // writer of that pair.
+  const engine = record.session as unknown as FleetEngineSession;
+  engine.submit(input, () => {}, { uuid: userUuid, onAccepted }).catch((e: unknown) => {
+    // Once the reply is out, this turn's outcome belongs to `turn/completed` off the host's own turn end
+    // — a rejection here (the connection died mid-turn) is §1f's death sequence, not a second answer.
+    if (replied) return;
+    // The host's busy refusal, carrying the code the turns spine answers with (FleetBusyError). Read off
+    // the value rather than by class, so any engine that refuses the same way answers the same way.
+    const code = (e as { code?: unknown } | null)?.code;
+    if (code === ERR.BUSY) ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)");
+    else ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+  });
+}
+
 /** The two queue-full refusals, spelled off the caps themselves so the message can never drift from the
  *  number it quotes. Which cap was hit is the whole content of the message: the client's next move is the
  *  same either way (retry after the drain), but a queue full of small turns and a queue full of one huge
@@ -344,6 +393,10 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
     }
     return;
   }
+  // The origin branch (M3 §1b) sits AFTER the gates and replaces only the spine: everything above — the
+  // params, the thread lookup, the queue-flag refusal, the busy gate — is origin-blind on purpose, so a
+  // fleet thread answers the same refusals in the same order as an inProcess one.
+  if (record.origin === "fleet") { fleetTurnStart(srv, ctx, id, record, parsed.data.input); return; }
   beginTurn(srv, ctx, id, record, submitRunner(srv, record, parsed.data.input));
 };
 

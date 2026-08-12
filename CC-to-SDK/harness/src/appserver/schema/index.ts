@@ -10,6 +10,7 @@ import { rewindAnchorsParams, rewindDryRunParams, rewindParams } from "./rewind.
 import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./mcp.js";
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
+import { fleetListParams, threadAttachParams } from "./fleet.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -75,4 +76,8 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "turn/steer": { params: turnSteerParams, experimental: true },
   "plugin/reload": { params: threadIdParams },
   "skill/reload": { params: threadIdParams },
+  // M3 Task 7's adoption pair (§1e). STABLE, not experimental: neither rides an unproven SDK seam — both
+  // read this machine's own roster and the host wire that `ccx attach` has spoken since A2a.
+  "fleet/list": { params: fleetListParams },
+  "thread/attach": { params: threadAttachParams },
 };

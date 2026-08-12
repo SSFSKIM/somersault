@@ -1,10 +1,10 @@
 // test/unit/appserver/origin-gate.test.ts — M3 Task 3: the `ThreadOrigin` widening and the -33006
 // origin gate that rides it (spec §1b/§1c).
 //
-// Nothing in this milestone can produce a fleet record yet (thread/attach lands later), so every case
-// here drives a HAND-BUILT `origin:"fleet"` record with a fake engine behind it — which is also the
-// honest fixture for the property under test: the gate is a property of the RECORD's origin, not of the
-// engine build behind it. Everything is driven WIRE-LEVEL (srv.connect + feed), never by calling the
+// Every case here drives a HAND-BUILT `origin:"fleet"` record with a fake engine behind it. That began as
+// a necessity (nothing produced a fleet record until Task 7's `thread/attach`) and stays one by choice: the
+// gate is a property of the RECORD's origin, not of the engine build behind it or of the path that
+// admitted it — fleet-adoption.test.ts owns the real-socket half. Everything is driven WIRE-LEVEL (srv.connect + feed), never by calling the
 // helper directly: the load-bearing claim is about dispatch ordering, and only the real dispatch can
 // prove where the gate sits relative to the handlers' own refusals.
 import { describe, it, expect, afterEach } from "vitest";
@@ -164,17 +164,27 @@ describe("appserver origin gate (M3 Task 3)", () => {
     expect(frame(lines, 2).error).toMatchObject({ code: ERR.UNSUPPORTED_FOR_ORIGIN });
   });
 
-  it("turn/start WITHOUT the queue flag on a fleet thread reaches the ordinary busy gate (-33001), not the origin gate", async () => {
+  it("turn/start WITHOUT the queue flag on a fleet thread is not origin-gated: it reaches the engine, and a busy one answers -33001", async () => {
+    // `busy` is set from the RECORD here, not by running a turn: since Task 7 a fleet turn's lifecycle
+    // rides the host's own turn events (spec §1b — the fleet event layer is the sole owner), so a turn a
+    // bare DI engine cannot report never claims the thread. What this case is about is unchanged: the
+    // METHOD is allowed for this origin, only its `queue` flag refuses, and the busy refusal still names
+    // its reason.
     const { srv, conn, lines } = boot();
-    const threadId = addRecord(srv, "fleet", fakeSession({ submit: () => new Promise(() => {}) })); // never settles: the thread stays busy
+    const submitted: unknown[] = [];
+    const threadId = addRecord(srv, "fleet", fakeSession({
+      submit: (_input: string, _onMessage: unknown, opts: unknown) => { submitted.push(opts); return new Promise(() => {}); },
+    }));
 
     send(conn, { id: 2, method: "turn/start", params: { threadId, input: "one" } });
     await tick();
+    expect(submitted).toHaveLength(1); // reached the engine: turn/start itself is not gated
+
+    srv.registry.get(threadId)!.busy = true;
     send(conn, { id: 3, method: "turn/start", params: { threadId, input: "two" } });
     send(conn, { id: 4, method: "turn/start", params: { threadId, input: "three", queue: true } });
     await tick();
 
-    expect(frame(lines, 2).result.turn.status).toBe("inProgress"); // the first turn ran: turn/start itself is not gated
     expect(frame(lines, 3).error.code).toBe(ERR.BUSY);
     expect(frame(lines, 4).error.code).toBe(ERR.UNSUPPORTED_FOR_ORIGIN); // busy + queue is still the flag's refusal
   });
@@ -184,14 +194,11 @@ describe("appserver origin gate (M3 Task 3)", () => {
     // in flight' cannot fire) and its engine has no `steer` (so the handler's -32601 would fire if the gate
     // ran after handler entry). Only dispatch-level ordering produces -33006 here.
     const { srv, conn, lines } = boot();
-    const threadId = addRecord(srv, "fleet", fakeSession({ submit: () => new Promise(() => {}) }));
-    send(conn, { id: 2, method: "turn/start", params: { threadId, input: "one" } });
-    await tick();
+    const threadId = addRecord(srv, "fleet", fakeSession(), { busy: true, turnStartedBroadcast: true });
 
     send(conn, { id: 3, method: "turn/steer", params: { threadId, input: "go" } });
     await tick();
 
-    expect(frame(lines, 2).result.turn.status).toBe("inProgress");
     expect(frame(lines, 3).error.code).toBe(ERR.UNSUPPORTED_FOR_ORIGIN);
   });
 });

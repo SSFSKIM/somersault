@@ -239,6 +239,18 @@ export function mintTurnId(record: ThreadRecord): string {
   return `turn_${record.id}_${++record.turnSeq}`;
 }
 
+/** The fleet counterpart, and the reason `mintTurnId` is never called for a fleet thread (spec §1b): a
+ *  fleet turn id is DERIVED from the host's own turn seq. Two properties fall out of that and neither is
+ *  reachable by minting. The host's `turn start` event BEATS the prompt reply that names the seq, so a
+ *  bridge that minted on start would give its own turn a foreign turn's id whenever the two interleave;
+ *  and a FOREIGN turn — one another client of the same host prompted — has no local mint site at all, yet
+ *  still owes this server's subscribers a `turn/started`/`turn/completed` pair. `epoch` qualifies the seq
+ *  because a host-side engine swap (§1a-a) starts a fresh conversation on the same socket: without it a
+ *  turn from before the swap and one from after could answer to the same id. Lives here beside
+ *  `mintTurnId` for the same reason that one does — two callers (fleet.ts's event layer and turns.ts's
+ *  fleet branch), and importing it from either would make the pair a cycle. */
+export const fleetTurnId = (record: ThreadRecord, seq: number): string => `t${seq}@e${record.epoch}`;
+
 /** The ONE answer to "is this thread busy?" (spec D-M2-8). Gates never re-assemble these terms — every
  *  later gate (queue drain, close, rewind, compact) calls this instead. Precedence is deliberate: a
  *  closing thread is not merely "busy with a turn" even if one happens to still be in flight, and a

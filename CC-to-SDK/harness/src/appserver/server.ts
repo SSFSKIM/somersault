@@ -26,6 +26,7 @@ import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverri
 import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
 import { pluginReload, skillReload } from "./reloads.js";
+import { fleetList, threadAttach } from "./fleet.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
@@ -179,6 +180,14 @@ export class AppServer {
    *  the delete re-checks the live set after reserving, so whichever lands first wins and the other is
    *  refused — never both. */
   readonly deletingSessions = new Set<string>();
+  /** M3 §1e: the attaches in flight, keyed by roster `short` — the reservation that makes two simultaneous
+   *  `thread/attach` calls for one target collapse onto ONE admission (the second awaits the first's
+   *  promise) instead of dialling the host twice and registering two threads for one session. Taken and
+   *  consulted SYNCHRONOUSLY in the dispatch tick, before the dial's first await, for the same reason
+   *  `deletingSessions` is: a reservation taken after an await is a reservation both callers miss.
+   *  fleet.ts owns the add/remove, and removes in a `finally` — a failed attach must leave its target
+   *  attachable rather than poisoned. */
+  readonly attachingShorts = new Map<string, Promise<ThreadRecord>>();
   private handlers: Record<string, Handler> = {
     "server/status": (srv, ctx, id) => {
       ctx.peer.reply(id, { uptimeMs: Date.now() - srv.startedAt, threads: srv.registry.list().length, listeners: srv.conns.size });
@@ -325,6 +334,11 @@ export class AppServer {
     "turn/steer": turnSteer,
     "plugin/reload": pluginReload,
     "skill/reload": skillReload,
+    // M3 Task 7 (§1e): the adoption pair. Both are SERVER-scoped — no `threadId`, so neither passes
+    // through the -33005 or origin gates below, and `thread/attach` is what CREATES the fleet records
+    // those gates exist for.
+    "fleet/list": fleetList,
+    "thread/attach": threadAttach,
   };
 
   private readonly token: string;
@@ -373,6 +387,22 @@ export class AppServer {
     ctx.peer.reply(id, { thread: threadView(this, record) });
     this.broadcastServer("thread/started", { thread: threadView(this, record) });
   }
+
+  /** M3 Task 7: admit a FLEET record (fleet.ts) — the register-half of the admission `thread/start` does
+   *  inline, for a record whose engine has already been dialled, wired and (per §1e's activation
+   *  protocol) deliberately NOT activated yet. Registering the decisions here rather than in fleet.ts is
+   *  what makes `decision/list`, the park broadcast and the close-time teardown work for the thread
+   *  exactly as they do for an inProcess one; `unattended` is read off the record because a fleet thread
+   *  has no start config to carry it. */
+  admitFleetThread(record: ThreadRecord): void {
+    this.decisions.set(record.id, this.makeDecisions(record.id, record.unattended));
+    this.registry.add(record);
+  }
+
+  /** One thread's decision registry — fleet.ts parks the HOST's decisions into it as views (§1b, and
+   *  broker.ts's `parkView`). Deliberately narrower than exposing the map: a caller can reach the thread
+   *  it is wiring and nothing else. */
+  threadDecisions(threadId: string): ThreadDecisions | undefined { return this.decisions.get(threadId); }
 
   /** The shutdown latch, readable by the handlers that create a thread out of band (sessionLib.ts's
    *  thread/fork writes to the store BEFORE it reaches startThread's own refusal, so it has to consult

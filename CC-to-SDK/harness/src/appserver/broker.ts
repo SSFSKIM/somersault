@@ -4,7 +4,7 @@
 // connected; any client can later answer it via decision/respond. The awaited broker.request() promise
 // and the decision/resolved notification settle off the SAME inner.respond() call.
 import { PendingDecisions, type PendingDecision } from "../permissions/pending.js";
-import type { DecisionKind, DecisionOutcome, PermissionBroker } from "../permissions/types.js";
+import type { DecisionKind, DecisionOutcome, PermissionBroker, PermissionRequest } from "../permissions/types.js";
 
 /** Which answer kinds are valid for a parked decision of a given kind — mirrors the real host wire
  *  (host/ops.ts): a flat 3-way for `permission`, structured answers for `question`/`plan`, `deny` is
@@ -69,6 +69,25 @@ export class ThreadDecisions {
         return settled;
       },
     };
+  }
+
+  /** M3 §1b: park a VIEW of a decision the HOST is holding (fleet threads). It joins the same registry a
+   *  local park does, so `decision/list` lists it and `decision/requested` announces it exactly as before
+   *  — but the promise it parks belongs to nobody here: the host owns the answer, and `decision/respond`
+   *  forwards to the host's `answer` op (Task 8), with view removal driven by the host's own
+   *  `decision_settled`. The `unattended` deny rule is deliberately NOT consulted: that rule decides
+   *  whether THIS server answers on an absent human's behalf, and a fleet park is not ours to answer —
+   *  denying it locally would hide a decision the host stays blocked on regardless. The `closed` latch
+   *  still holds, for the reason it holds everywhere else: nothing may park into a torn-down thread. */
+  parkView(threadId: string, entry: PendingDecision): void {
+    if (this.closed) return;
+    // Through the same `park()` the broker uses, so the view is a real PendingDecision with real
+    // registry semantics; its `sessionId` is the threadId, matching every locally-parked entry on this
+    // wire (a client must not have to tell two spellings of the same field apart by origin). `signal` is
+    // the one PermissionRequest member a view has no counterpart for — park() reads it optionally.
+    void this.inner.brokerFor(threadId).request(entry as unknown as PermissionRequest);
+    const parked = this.inner.list().find((e) => e.toolUseID === entry.toolUseID);
+    if (parked) this.emit({ type: "requested", entry: parked });
   }
 
   pending(): PendingDecision[] { return this.inner.list(); }

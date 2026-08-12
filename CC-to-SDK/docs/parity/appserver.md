@@ -324,21 +324,26 @@ calls the SDK's own `Query.close()`.
 
 ## Server-origin methods — no seam token, so never walked
 
-Three methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
+Five methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
 no walker can ever produce a row for them: `initialize` is special-cased in `dispatch()` ahead of the
 handlers table, `server/status` reports this process, and `thread/start` *creates* the thread the other
-four tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). They were
+four tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). M3 Task 7 adds
+the adoption pair for the same reason: `fleet/list` reports this machine's roster — sessions no thread
+here exists for yet — and `thread/attach` is what turns one of those rows into a thread. They were
 therefore invisible to a scorecard whose rows all came from the walked-token direction, and the M2b
 Task 6 gate (every registered method must be named by some row — the "zero schema-less methods"
 acceptance) is what surfaced the omission. Origin scope is a question about an *existing* thread and
-none of the three has one, so all three read `N/A` there. The seam-token column repeats the method
-name: there is no upstream token to put in it.
+none of the five has one, so all five read `N/A` there — the adoption pair included, whose SUBJECT is a
+fleet session but whose caller names no thread at all. The seam-token column repeats the method name:
+there is no upstream token to put in it.
 
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
 | `initialize` | appserver/server.ts | `initialize` | N/A | shipped(M1) — Bearer-token handshake, connection-scoped; `watchThreads` opts into the server-scoped notifications |
 | `server/status` | appserver/server.ts | `server/status` | N/A | shipped(M1) |
 | `thread/start` | appserver/server.ts | `thread/start` | N/A | shipped(M1) — registers an `inProcess` thread; a client's whole `config` reaches `openSession` |
+| `fleet/list` | appserver/fleet.ts | `fleet/list` | N/A | shipped(M3) — roster + live-projection join over the same probe seams `collectFleet` uses; terminal and unresponsive rows are listed, and `threadId` marks the rows this server holds |
+| `thread/attach` | appserver/fleet.ts | `thread/attach` | N/A | shipped(M3) — registers a `fleet` thread over `FleetEngineSession`; short/sessionId/name resolution with `-33008` on ambiguity, a terminal row or an unreachable socket; reservation-idempotent, and admitted behind the activation barrier |
 
 ## Totals
 

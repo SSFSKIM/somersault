@@ -1125,6 +1125,24 @@
         "threadId"
       ],
       "additionalProperties": false
+    },
+    "fleet/list": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "thread/attach": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
     }
   }
 }
