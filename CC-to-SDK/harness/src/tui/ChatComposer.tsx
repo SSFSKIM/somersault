@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdir } from "node:fs/promises";
-import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, suggestPopupShown, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
@@ -242,8 +242,13 @@ function suggestProps(state: EditorState, env: NodeJS.ProcessEnv): { items: Sugg
  *  wrong for an empty `@zz` (state present, nothing drawn, two rows silently gone) and which t10's head gate
  *  made worse: a mid-text `/zzz` that matches nothing, or any visible ghost, now draws no popup at all, and
  *  before the gate the un-head-gated empty message at least filled the slot. The composer lost two lines and
- *  put nothing there — the very jump the blank padding exists to prevent, reintroduced one layer up. */
-const popupDrawn = (s: ReturnType<typeof suggestProps>): boolean => s !== null && (s.items.length > 0 || !!s.emptyMessage);
+ *  put nothing there — the very jump the blank padding exists to prevent, reintroduced one layer up.
+ *
+ *  THE PREDICATE MOVED to `suggestPopupShown` (completions.ts) and is stated over the EDITOR STATE rather than
+ *  over `suggestProps`'s output: the live window's cap needs the same answer one level up, and it needs it
+ *  from the state a keystroke has just produced rather than from a rendered result. One derivation, two
+ *  readers — the alias is kept so this file still reads in upstream's vocabulary. */
+const popupDrawn = suggestPopupShown;
 
 /** An injected editor may be sync (the pre-F5 DI shape, still used by several tests) or async (what the
  *  real one is now). Both are normalized through `Promise.resolve` at the one call site. */
@@ -268,12 +273,25 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
    *  real text change — an arrow key calls no `onChange` upstream either, so it must not refresh the window. */
   onInputActivity?: (nonEmpty: boolean) => void;
+  /** IS THE SUGGESTION POPUP ON SCREEN? Reported to the app for ONE reason: the popup is half the terminal
+   *  (`popupHeight`) and it is not in `mainWindowCap`'s dock, so the live window's render cap has to subtract
+   *  it or the frame clears Ink's tall-frame cliff on the keystrokes of every slash command.
+   *
+   *  IT RIDES `commitState`, NOT AN EFFECT, and that is the whole design. `onFooterState` is a passive effect
+   *  — a flush behind — and one late frame is exactly one tall write, i.e. one whole reprinted session in the
+   *  user's scrollback. This fires from the single editor-state writer, inside the same stdin handler as the
+   *  keystroke that opened the popup, so the cap and the popup land in the same frame.
+   *
+   *  A BOOLEAN AND NOT A ROW COUNT: the popup is blank-padded to `popupHeight(rows)` whenever it draws at all,
+   *  so the app already holds the other half of the geometry and re-derives it per render — which is what
+   *  keeps a resize honest without a second report. */
+  onSuggestOpen?: (open: boolean) => void;
   /** Upstream's `hasSuppressedDialogs` prop (L549494), which gates the dim `Waiting for permission…` row
    *  (L496241): true while a decision is parked behind this draft. */
   waitingForPermission?: boolean; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
@@ -393,6 +411,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   stateRef.current = state;
   const commitState = (next: EditorState | ((current: EditorState) => EditorState)) => {
     const previousText = bufferText(stateRef.current);
+    const popupWasShown = popupDrawn(stateRef.current);
     const resolved = typeof next === "function" ? next(stateRef.current) : next;
     stateRef.current = resolved;
     if (editorStateRef) editorStateRef.current = resolved;
@@ -401,7 +420,21 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // spaces is not typing, and must not hold a permission prompt off the screen.
     const text = bufferText(resolved);
     if (text !== previousText) onInputActivityRef.current?.(text.trim().length > 0);
+    // …and the popup's own visibility, from the same one writer, for the reason in `onSuggestOpen`'s doc.
+    // SHRINK LEADS, GROW FOLLOWS — the report straddles `setState` instead of sitting on one side of it. The
+    // app's cap and this component's popup are two separate setStates, and the frame BETWEEN them (if there
+    // is one) must not be the tall one: reporting an OPENING popup before our own `setState` makes that frame
+    // "small window, no popup", and reporting a CLOSING one after makes it "small window, no popup" again.
+    // A single call site would put "big window WITH popup" on screen for one frame in one of the two
+    // directions, which is the whole defect, one keystroke rarer.
+    //   MEASURED, so the reader knows what this is buying: with one report after `setState` the popup suite is
+    // still green — the two updates land in a single Ink commit today, so no in-between frame exists. That is
+    // an emergent property of legacy-mode React under this pinned Ink, not a guarantee either of them makes,
+    // and the thing on the other side of it is the user's whole scrollback. Two lines to not depend on it.
+    const popupShown = popupDrawn(resolved);
+    if (popupShown && !popupWasShown) onSuggestOpenRef.current?.(true);
     setState(resolved);
+    if (!popupShown && popupWasShown) onSuggestOpenRef.current?.(false);
     return resolved;
   };
   const endInterceptedEditorAction = (editor: EditorState) => {
@@ -465,6 +498,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // listener, so a closure read would lag a render. (Declared below its one caller for the same reason
   // `onDraftStartRef` is: nothing calls it during render.)
   const onInputActivityRef = useRef(onInputActivity); onInputActivityRef.current = onInputActivity;
+  const onSuggestOpenRef = useRef(onSuggestOpen); onSuggestOpenRef.current = onSuggestOpen;
   const onKillAgentsRef = useRef(onKillAgents); onKillAgentsRef.current = onKillAgents;
   const onOpenAgentsRef = useRef(onOpenAgents); onOpenAgentsRef.current = onOpenAgents;
   // W-C T12: both read from `handleKey`, which runs off the keymap's passive listener — the standing ref rule.
@@ -919,6 +953,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     "chat:externalEditor": () => {
       const ended = interceptChord();
       if (!ended || editorInFlightRef.current) return;               // a second chord mid-edit is a no-op
+      // …and the popup goes FIRST (M1 review, finding 2). The `editorInFlight` early return below draws no
+      // popup, but the state that says one is showing survived the flight — so the app went on holding
+      // `popupHeight(rows)` back from the live window for the whole edit, and when the editor exits non-zero
+      // `done` returns before any `commitState`, which left it held until the next keystroke. Closed through
+      // `commitState` — the one writer — so the `false` report rides with it, in this same stdin handler and
+      // before the flag that swaps the composer out.
+      if (ended.command || ended.mention) commitState({ ...ended, command: null, mention: null });
       editorInFlightRef.current = true; setEditorInFlight(true);
       const done = (edited: string | null) => {
         if (disposed.current) return;
@@ -1079,6 +1120,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // reaches the popup on the very next frame.
   const termRows = Math.max(1, Math.floor(rows?.() ?? DEFAULT_ROWS));
   const suggest = suggestProps(state, historyEnvRef.current);
+  const popupShown = popupDrawn(state);
   const ghost = ghostText(state);
   const argHint = commandArgumentHint(bufferText(state), commandCatalog);
   // WAVE C TASK 2 — THE HINT STACK IS GONE, AND WITH IT `showFooter`. Ten of the eleven rows this component
@@ -1152,6 +1194,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [footerState.searching, footerState.pasting, footerState.pasteExpandHint, footerState.bashMode, footerState.exitArm?.key, footerState.exitArm?.verb, owns]);
   useEffect(() => () => { onFooterStateRef.current?.(IDLE_COMPOSER_FOOTER_STATE); }, []);
+  // …and the popup goes with it. A dialog unmounting this component while a list was up would otherwise leave
+  // the app holding rows back for a region that is no longer on screen — for the rest of the session.
+  useEffect(() => () => { onSuggestOpenRef.current?.(false); }, []);
   // CM8's early return, upstream's own shape (L496236): while the editor holds the terminal the composer
   // is JUST the framed literal — no glyph, no input, and none of the hint rows below, because upstream
   // returns before it builds any of them. Placed after every hook so the hook order is unconditional.
@@ -1201,7 +1246,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
           child of the footer ROW (annex §C1.2); ccx keeps it here, one line up, because the search query and
           its failed-match flag live in this component's hook — see `Footer.tsx`'s divergence 4. */}
       {search.searching ? <InlineSearchRow query={search.query} failed={search.failed} /> : null}
-      {suggest ? <SuggestPopup {...suggest} columns={cols} rows={termRows} /> : null}
+      {/* The GATE is `popupDrawn`, not `suggest !== null`, and the two differ: an `@zz` that matches nothing
+          produces a `suggest` whose list is empty and whose message is absent, and `SuggestPopup` draws
+          nothing for it. That difference is now load-bearing rather than cosmetic — `ChatApp` subtracts
+          `popupHeight(rows)` from the live window on exactly this predicate, so mounting the component on a
+          weaker one would hold rows back for a region nobody can see. */}
+      {popupShown && suggest ? <SuggestPopup {...suggest} columns={cols} rows={termRows} /> : null}
     </Box>
   );
 }

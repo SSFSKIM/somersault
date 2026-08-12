@@ -27,6 +27,14 @@ import { ACCENT } from "./theme.js";
 
 export interface TranscriptPagerProps { makeItems(projection: "detail-all" | "detail-collapsed"): readonly RenderItem[]; onClose(): void; height?: number }
 
+/** The key-hint row, hoisted out of the JSX so a caller that has to BUDGET for this component can measure it
+ *  (FSW T11: `RegionPager` subtracts the pager's chrome from the frame's region grant, and this row is the one
+ *  part of that chrome whose height depends on the terminal's width). The two projections produce the same
+ *  display width — `collapse` and `show all` are both eight columns — so a measurement taken from either is
+ *  valid for both, which is what lets the budget be a function of `columns` alone. */
+export const pagerHint = (projection: "detail-all" | "detail-collapsed"): string =>
+  `j/k ↑↓ line · Ctrl-U/D ½page · Ctrl-B/F b/space page · g/G top/bottom · Ctrl-E ${projection === "detail-all" ? "collapse" : "show all"} · q/Esc close`;
+
 export function TranscriptPager({ makeItems, onClose, height }: TranscriptPagerProps) {
   const { stdout } = useStdout();
   const h = height ?? Math.max(8, (stdout?.rows ?? 24) - 10);
@@ -66,7 +74,7 @@ export function TranscriptPager({ makeItems, onClose, height }: TranscriptPagerP
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Transcript <Text dimColor>{total === 0 ? "(empty)" : `lines ${off + 1}–${Math.min(off + h, total)} of ${total}`}</Text></Text>
       {slices.map((s, i) => <RenderItemView key={`${s.item.id}:${i}`} item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />)}
-      <Text dimColor>j/k ↑↓ line · Ctrl-U/D ½page · Ctrl-B/F b/space page · g/G top/bottom · Ctrl-E {projection === "detail-all" ? "collapse" : "show all"} · q/Esc close</Text>
+      <Text dimColor>{pagerHint(projection)}</Text>
     </Box>
   );
 }

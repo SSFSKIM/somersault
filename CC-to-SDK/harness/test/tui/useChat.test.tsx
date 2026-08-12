@@ -39,9 +39,12 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
 // F1 Task 4: the transcript is `RenderItem[]` now — published Static rows, then the transient pending
 // region, then the in-flight partial lines, in exactly the order a reader sees them.
 const itemLines = (item: RenderItem): string[] => (item.kind === "line" ? [item.line.text] : item.body.map((l) => l.text));
-type ProjectedState = { state: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: { text: string }[] } };
+// FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
+// the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
+// these content assertions are actually about.
+type ProjectedState = { state: { finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: { text: string }[] } };
 function allText(c: ProjectedState): string {
-  return [...[...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines), ...c.state.streaming.map((l) => l.text)].join("|");
+  return [...[...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines), ...c.state.streaming.map((l) => l.text)].join("|");
 }
 function Host({ makeSession, prompt, initialPrompt }: { makeSession: () => ChatSession; prompt?: string; initialPrompt?: string }) {
   const c = useChat(makeSession, { initialPrompt });
@@ -529,7 +532,9 @@ describe("useChat", () => {
   it("clear() empties the transcript and fires the terminal viewport reset", async () => {
     let cleared = 0;
     const api: { run?: (s: string) => void; clear?: () => void } = {};
-    function H() { const c = useChat(() => fakeRemote(), {}, { clearViewport: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.staticItems.length}</Text>; }
+        // FSW T3: `finalizedItems`, not `staticItems` — the finalized projection is what this claim is about;
+    // `staticItems` is now only the part of it already committed to <Static>.
+    function H() { const c = useChat(() => fakeRemote(), {}, { clearViewport: () => { cleared++; } }); api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.finalizedItems.length}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));
     api.run!("hi");  await waitFor(() => !frame(lastFrame).includes("L:0"));   // lines present
@@ -776,6 +781,40 @@ describe("useChat", () => {
     expect(submitted).toBe(0);
   });
 
+  // FSW T5: the renderer decision is made once in `chatMain` and handed to the hook, and BOTH reporting
+  // surfaces read it through the one `statusRenderer()` helper — the `/status` command and the Settings
+  // dialog's Status tab. They are pinned together deliberately: wave 2 already caught the effort axis
+  // disagreeing across exactly this pair, one surface gated and the other not, and a renderer row that
+  // appeared in one place and not the other would be the same defect in a new field.
+  it("threads the boot renderer decision into /status AND the Settings status tab, identically", async () => {
+    const fake = fakeRemote({ usage: () => ({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: null }) });
+    const api: { run?: (s: string) => void; tab?: () => Promise<{ text: string }[]> } = {};
+    function H() {
+      const c = useChat(() => fake, { rendererChoice: { mode: "fullscreen", reason: "settings_on" } });
+      api.run = c.submit; api.tab = c.fetchSettingsStatus;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/status");
+    await waitFor(() => flat(lastFrame).includes("renderer fullscreen (settings_on)"));
+    // FSW T9 retired T5's placeholder: the stack named here is now derived from the mode, and a fullscreen
+    // launch constructs none of the main-screen machinery this line used to claim for it.
+    expect(flat(lastFrame)).toContain("corrections: alt-screen repaint contract");
+    const tab = (await api.tab!()).map((l) => l.text);
+    expect(tab.at(-1)).toBe("  renderer   fullscreen (settings_on) · corrections: alt-screen repaint contract");
+  });
+
+  it("a hook mounted with no renderer decision reports none rather than guessing one", async () => {
+    const fake = fakeRemote({ usage: () => ({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: null }) });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/status");
+    await waitFor(() => frame(lastFrame).includes("Status"));
+    expect(frame(lastFrame)).not.toContain("renderer");
+  });
+
   it("submit sets turnStartedAt and busy during the turn", async () => {
     let hung: (() => void) | null = null;
     let fake!: FakeRemote;
@@ -976,8 +1015,10 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
 
   it("a task_started arriving mid-run does NOT break the fold: one group row, not two", async () => {
     const fake = fakeRemote();
-    let snap!: { staticItems: readonly RenderItem[] };
-    function H() { const c = useChat(() => fake); snap = { staticItems: c.state.staticItems }; return <Text>{allText(c)}</Text>; }
+    let snap!: { finalizedItems: readonly RenderItem[] };
+    // FSW T3: `finalizedItems`, not `staticItems` — the finalized projection is what this claim is about;
+    // `staticItems` is now only the part of it already committed to <Static>.
+    function H() { const c = useChat(() => fake); snap = { finalizedItems: c.state.finalizedItems }; return <Text>{allText(c)}</Text>; }
     render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
@@ -987,8 +1028,8 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
     fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-2", content: [{ type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/src/b.ts" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", uuid: "user-result-b", message: { content: [{ type: "tool_result", tool_use_id: "read-2", content: "b" }] } } });
     fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-3", content: [{ type: "text", text: "all done" }] } } });   // the breaker that publishes the run
-    await waitFor(() => snap.staticItems.some((i) => i.id.startsWith("group:")));
-    const groups = snap.staticItems.filter((i) => i.id.startsWith("group:"));
+    await waitFor(() => snap.finalizedItems.some((i) => i.id.startsWith("group:")));
+    const groups = snap.finalizedItems.filter((i) => i.id.startsWith("group:"));
     expect(groups).toHaveLength(1);
     expect(itemLines(groups[0]!)[0]).toContain("Read 2 files");
   });
@@ -1851,7 +1892,7 @@ describe("useChat's own emitted lines carry semantic tokens, not ANSI literals",
   function ColorHost({ makeSession, api, deps }: { makeSession: () => ChatSession; api: { run?: (s: string) => void; colors?: () => { text: string; color?: string }[] }; deps?: Parameters<typeof useChat>[2] }) {
     const c = useChat(makeSession, { cwd: "/proj" }, deps);
     api.run = c.submit;
-    api.colors = () => [...[...c.state.staticItems, ...c.state.pendingItems].flatMap((i) => (i.kind === "line" ? [i.line] : i.body)), ...c.state.streaming];
+    api.colors = () => [...[...c.state.finalizedItems, ...c.state.pendingItems].flatMap((i) => (i.kind === "line" ? [i.line] : i.body)), ...c.state.streaming];
     return <Text>{allText(c)}</Text>;
   }
   it("the ! echo reads `bashBorder` and a failed command's exit line reads `error`", async () => {
@@ -1901,10 +1942,13 @@ describe("useChat: one retained document behind every surface", () => {
   // the case below pins what the row does to the same sequence when it is on.
   it("keeps a settled-but-unclosed fold run visible in the dynamic region until a breaker publishes it", async () => {
     const fake = fakeRemote();
-    let snap!: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
+    // FSW T3: the split this case draws is compact-projection-vs-transient (`finalizedItems` vs
+    // `pendingItems`), which is what `staticItems` used to stand in for. Publication to <Static> is a
+    // separate, later boundary now, and is not what "published by a breaker" means here.
+    let snap!: { finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
     function H() {
       const c = useChat(() => fake, { initialShowTurnDuration: false });
-      snap = { staticItems: c.state.staticItems, pendingItems: c.state.pendingItems };
+      snap = { finalizedItems: c.state.finalizedItems, pendingItems: c.state.pendingItems };
       return <Text>{allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
@@ -1916,22 +1960,22 @@ describe("useChat: one retained document behind every surface", () => {
     await waitFor(() => snap.pendingItems.some((i) => i.id === "group:read-1:unclosed-row"));
     expect(frame(lastFrame)).toContain("Read 1 file (ctrl+o to expand)");
     expect(frame(lastFrame)).not.toContain("Reading 1 file");                       // settled form, not the active one
-    expect(snap.staticItems.filter((i) => i.id.startsWith("group:"))).toEqual([]);  // still unpublished — Static is append-only
+    expect(snap.finalizedItems.filter((i) => i.id.startsWith("group:"))).toEqual([]);  // still withheld: a growable run is not finalized
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });                         // a turn boundary is NOT a breaker
     await waitFor(() => frame(lastFrame).includes("Read 1 file (ctrl+o to expand)"));
     expect(snap.pendingItems.map((i) => i.id)).toEqual(["group:read-1:unclosed-row"]);
     fake.pushEvent({ kind: "message", data: CLOSING_PROSE });                       // the breaker publishes it
-    await waitFor(() => snap.staticItems.some((i) => i.id === "group:read-1:row"));
+    await waitFor(() => snap.finalizedItems.some((i) => i.id === "group:read-1:row"));
     expect(snap.pendingItems).toEqual([]);                                          // and the dynamic copy is gone the same render
     expect(frame(lastFrame).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);
   });
 
   it("with the duration row ON, turn end IS the breaker — the run publishes above it, exactly once", async () => {
     const fake = fakeRemote();
-    let snap!: { staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
+    let snap!: { finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] };
     function H() {
       const c = useChat(() => fake, {}, { pickTurnVerb: () => "Worked" });
-      snap = { staticItems: c.state.staticItems, pendingItems: c.state.pendingItems };
+      snap = { finalizedItems: c.state.finalizedItems, pendingItems: c.state.pendingItems };
       return <Text>{allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
@@ -1941,11 +1985,11 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "message", data: READ_RESULT_FLAT });
     await waitFor(() => snap.pendingItems.some((i) => i.id === "group:read-1:unclosed-row"));
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
-    await waitFor(() => snap.staticItems.some((i) => i.id === "group:read-1:row"));
+    await waitFor(() => snap.finalizedItems.some((i) => i.id === "group:read-1:row"));
     expect(snap.pendingItems).toEqual([]);
     // ORDER MATTERS: the run is published at a lower sequence than the row that broke it, so the fold row
     // reads above `✻ Worked for …` rather than under it.
-    const texts = snap.staticItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text)));
+    const texts = snap.finalizedItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text)));
     expect(texts.findIndex((t) => t.includes("Read 1 file"))).toBeLessThan(texts.findIndex((t) => t.startsWith("Worked for")));
     expect(frame(lastFrame).match(/Read 1 file \(ctrl\+o to expand\)/g)).toHaveLength(1);
   });
@@ -1975,7 +2019,12 @@ describe("useChat: one retained document behind every surface", () => {
   it("publishes every stable RenderItem id exactly once — local visual, assistant text and divider alike", async () => {
     const fake = fakeRemote();
     let ids: string[] = [];
-    function H() { const c = useChat(() => fake); ids = [...c.state.staticItems].map((i) => i.id); return <Text>{allText(c)}</Text>; }
+    // FSW TASK 3 FIX ROUND (review I1) — reads `finalizedItems`, not `staticItems`. This case was NOT among
+    // the twelve the task re-pointed, because it stayed green: at the default 24-row geometry with three
+    // items nothing is ever committed, so `ids` was empty and `new Set(ids).size === ids.length` was
+    // comparing 0 to 0. "Every stable RenderItem id" is a claim about the finalized projection — which is
+    // what `staticItems` used to be, and is now only its committed head.
+    function H() { const c = useChat(() => fake); ids = [...c.state.finalizedItems].map((i) => i.id); return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     const text = { type: "assistant", parent_tool_use_id: null, message: { id: "stable-text", content: [{ type: "text", text: "stable reply" }] } };
@@ -1985,6 +2034,7 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "turn", phase: "start", truncated: true, seq: 4 });   // a divider-shaped local record, twice
     fake.pushEvent({ kind: "turn", phase: "start", truncated: true, seq: 4 });
     await waitFor(() => frame(lastFrame).includes("stable reply") && frame(lastFrame).includes("Earlier live output unavailable"));
+    expect(ids.length).toBeGreaterThan(0);                                // …and it is not comparing 0 to 0
     expect(new Set(ids).size).toBe(ids.length);
     expect(frame(lastFrame).match(/stable reply/g)).toHaveLength(1);
     expect(frame(lastFrame).match(/Earlier live output unavailable/g)).toHaveLength(1);
@@ -2106,7 +2156,7 @@ describe("useChat: one retained document behind every surface", () => {
   it("publishes ONE compact-summary row when the same compact_boundary frame is redelivered", async () => {
     const fake = fakeRemote();
     let items: readonly RenderItem[] = [];
-    function H() { const c = useChat(() => fake); items = c.state.staticItems; return <Text>{allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake); items = c.state.finalizedItems; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     const boundary = { type: "system", subtype: "compact_boundary", uuid: "compact-boundary-1" };
@@ -2126,7 +2176,7 @@ describe("useChat: one retained document behind every surface", () => {
     const fake = fakeRemote();
     const api: { detail?: (p: "detail-all" | "detail-collapsed") => readonly RenderItem[] } = {};
     let items: readonly RenderItem[] = [];
-    function H() { const c = useChat(() => fake); api.detail = c.detailItems; items = c.state.staticItems; return <Text>{allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake); api.detail = c.detailItems; items = c.state.finalizedItems; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "message", data: { type: "system", subtype: "informational", uuid: "sys-info-1", level: "info", content: "QUIET-INFO-LINE" } });
@@ -2687,15 +2737,22 @@ describe("W-S5: the context percentage never outlives the conversation it measur
       getContextUsage: async () => ctx, submitMessages: reply,
       compact: async () => { ctx = { totalTokens: 12, maxTokens: 100 }; return { ok: true, preTokens: 90000, postTokens: 12000 }; },
     });
-    const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const api: { run?: (s: string) => void; text?: () => string } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.text = () => allText(c); return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("hi");
     await waitFor(() => frame(lastFrame).includes("ctx:90"));           // a real, near-full reading to invalidate
     api.run!("/compact");
-    await waitFor(() => frame(lastFrame).includes("✦ compacted"));      // the outcome line — again, not the assertion
-    await expect.poll(() => frame(lastFrame)).toContain("ctx:12");
+    // WAIT ON THE PROJECTION, NOT THE FRAME (wave 2 acceptance, gate flake). This wait timed out in 2 runs
+    // in 5 — and at 20 s as readily as at 2 s, so it was never the budget. The row IS there; the frame spells
+    // it `✦  compacted` because Ink wraps this single joined <Text> at the viewport edge and `frame` turns
+    // the inserted newline into a second space. WHERE it wraps moves run to run, because the duration row
+    // above it is `pickTurnVerb()` — a `Math.random()` pick whose verbs differ in length ("Baked" vs
+    // "Crunched"), which slides every later column by up to three. The projected transcript has no viewport
+    // and no wrap, so the needle means what it says.
+    await waitFor(() => api.text!().includes("✦ compacted"));           // the outcome line — again, not the assertion
+    await expect.poll(() => frame(lastFrame)).toContain("ctx:12");      // safe on the frame: it is at column 0
     expect(frame(lastFrame)).not.toContain("ctx:90");
   });
 
@@ -2708,14 +2765,14 @@ describe("W-S5: the context percentage never outlives the conversation it measur
       getContextUsage: async () => { if (!ctx) throw new Error("context unavailable"); return ctx; }, submitMessages: reply,
       compact: async () => { ctx = undefined; return { ok: true, preTokens: 90000, postTokens: 12000 }; },
     });
-    const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
+    const api: { run?: (s: string) => void; text?: () => string } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; api.text = () => allText(c); return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("hi");
     await waitFor(() => frame(lastFrame).includes("ctx:90"));
     api.run!("/compact");
-    await waitFor(() => frame(lastFrame).includes("✦ compacted"));
+    await waitFor(() => api.text!().includes("✦ compacted"));           // the projection, not the wrapped frame — see above
     await expect.poll(() => frame(lastFrame)).toContain("ctx:-");
   });
 
@@ -3043,6 +3100,55 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
     expect(r.runs).toHaveLength(2);                       // turn end + both refreshers, coalesced into one
   });
 
+  // ── WAVE 2 ACCEPTANCE A8 — ONE REFRESH PER TURN, AND IT IS THE ONE THAT CARRIES THE NEW NUMBERS ──────
+  // The cell above proves the turn-end coalescing with a fake whose readings resolve in the same microtask.
+  // A real session's do not: `getContextUsage()` and `usage()` are control round-trips measured at ~1.2 s,
+  // four times the 300 ms window, so the live cadence was a turn-end run carrying the PREVIOUS turn's cost
+  // and a second run once the readings landed. Deferring the readings past the window is the whole fix's
+  // test: it reproduces the live shape that instant fakes hide.
+  it("A8: a turn refreshes ONCE even when the readings land after the debounce window, and that run carries them", async () => {
+    const clock = slClock(), r = statusRunner();
+    let ctxCalls = 0;
+    let landCtx!: (u: unknown) => void, landUsage!: (u: unknown) => void;
+    let facts: any = {};
+    const latch = { read: () => facts, clear: () => { facts = {}; }, hooks: () => ({}) };
+    const fake = fakeRemote({
+      // The MOUNT read answers at once (the boot gate has its own cells); the TURN-END read is the slow one.
+      getContextUsage: () => (++ctxCalls === 1
+        ? Promise.resolve({ totalTokens: 12_000, maxTokens: 1_000_000 })
+        : new Promise((res) => { landCtx = res; })),
+      usage: () => new Promise((res) => { landUsage = res; }),
+    });
+    // THE FIRST turn, so `adoptAiTitle` fires here too — a LOCAL disk read that answers long before the two
+    // control calls. It used to poke on its own and cost this turn a second run; it is awaited now instead.
+    function H() {
+      useChat(() => fake, { statusLine: STATUS_CFG, promptLatch: latch } as any,
+        { statusLine: { runStatusLine: r.run, ...clock.deps }, getSessionInfo: async () => ({ summary: "Engine's own title" }) } as any);
+      return <Text>ok</Text>;
+    }
+    render(<H />);
+    await settle(clock, 2);
+    expect(r.runs).toHaveLength(1);                                   // boot: one run, as EP-D4 already had it
+    expect(r.runs[0].payload.cost.total_cost_usd).toBe(0);
+
+    facts = { transcriptPath: "/home/u/.claude/projects/-repo/s.jsonl", promptId: "pid-turn-1" };
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await settle(clock, 3);                                           // 900 ms with both readings still out
+    expect(r.runs).toHaveLength(1);                                   // was 2: a run with the OLD cost and the new prompt_id
+
+    landCtx({ totalTokens: 22_690, maxTokens: 1_000_000 });
+    landUsage({ session: { total_cost_usd: 0.0664025, model_usage: { m: { outputTokens: 21 } } } });
+    await settle(clock, 2);
+    expect(r.runs).toHaveLength(2);                                   // the turn's ONE refresh
+    const refresh = r.runs[1].payload;
+    expect(refresh.cost.total_cost_usd).toBe(0.0664025);              // updated, not the previous total
+    expect(refresh.context_window.total_output_tokens).toBe(21);
+    expect(refresh.prompt_id).toBe("pid-turn-1");                     // and still the turn's own prompt id
+    expect(refresh.transcript_path).toBe("/home/u/.claude/projects/-repo/s.jsonl");
+    expect(refresh.session_name).toBe("Engine's own title");          // the title rides IN it, not in a run of its own
+  });
+
   it("a context read that never answers cannot suppress the row forever: the cap fires, one run, zero window", async () => {
     const clock = slClock(), r = statusRunner();
     const fake = fakeRemote({ getContextUsage: () => new Promise(() => {}) });   // a control call that hangs
@@ -3187,6 +3293,49 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
     const afterClear = r.runs[r.runs.length - 1].payload.session_id;
     expect(afterClear).toMatch(UUID_RE);                              // still an identity, never absent
     expect(afterClear).not.toBe(mintedAtMount);                       // canon's `UHi()` rotation, reproduced
+  });
+
+  // ── EXTERNAL REVIEW (codex, finding A) — THE LOSING SIDE OF THE MOUNT RACE ───────────────────────────
+  // The boot gate races a control read against a 1500 ms cap, and BOTH sides of that race outlive the thing
+  // they were about. The read is a second-scale round trip: `--resume`, `--continue` and `/clear` can all
+  // replace the conversation while it is still out, and `refreshCtx` wrote its answer against whatever
+  // conversation was on screen when it landed — W-S5's rule (`replaceDocument` above) inverted, with the
+  // number arriving AFTER the boundary cleared it instead of surviving across it. And when the CAP wins the
+  // read still lands later, still pokes, and turns the one boot run D-W11 exists to guarantee into two.
+  it("a mount read that lands after /clear writes NOTHING — not the chip, not the payload, not the warning", async () => {
+    const clock = slClock(), r = statusRunner();
+    let landRead!: (u: unknown) => void;
+    const reading = new Promise<unknown>((res) => { landRead = res; });
+    const fake = fakeRemote({ getContextUsage: () => reading, clearSession: async () => {} });
+    const api: { run?: (s: string) => void } = {};
+    function H() {
+      const c = useChat(() => fake, { statusLine: STATUS_CFG } as any, { statusLine: { runStatusLine: r.run, ...clock.deps }, clearViewport: () => {} });
+      api.run = c.submit;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} notif:{c.state.notification?.text ?? "-"}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await settle(clock, 1);
+    api.run!("/clear");                                               // the conversation the read describes is gone
+    await settle(clock, 1);                                           // …600 virtual ms, still inside the cap
+    landRead({ totalTokens: 95_000, maxTokens: 100_000 });            // …and only now does the boot read answer
+    await settle(clock, 2);
+    expect(frame(lastFrame)).toContain("ctx:-");                      // was: ctx:95, measured against the wiped one
+    expect(frame(lastFrame)).not.toContain("Context low");            // …and the row replaceDocument just removed
+    expect(r.runs).toHaveLength(1);                                   // the gate still opens: a boot run happened
+    expect(r.runs[0].payload.context_window.context_window_size).toBe(0);   // …carrying no reading at all
+  });
+
+  it("a read that lands after the CAP has already run the boot script does not run it a second time", async () => {
+    const clock = slClock(), r = statusRunner();
+    let landRead!: (u: unknown) => void;
+    const fake = fakeRemote({ getContextUsage: () => new Promise((res) => { landRead = res; }) });
+    mountStatus(fake, r, clock);
+    await settle(clock, 7);                                           // past 1500 ms: the cap wins, one run, zero window
+    expect(r.runs).toHaveLength(1);
+    expect(r.runs[0].payload.context_window.context_window_size).toBe(0);
+    landRead({ totalTokens: 12_000, maxTokens: 1_000_000 });          // …and the slow read answers behind it
+    await settle(clock, 3);
+    expect(r.runs).toHaveLength(1);                                   // was 2: the boot run, then its correction
   });
 });
 

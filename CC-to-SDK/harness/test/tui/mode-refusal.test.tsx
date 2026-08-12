@@ -25,7 +25,10 @@ async function tick() { await act(async () => { await new Promise((r) => setTime
 type Ctl = { applyMode(next: string): Promise<void> };
 function Host({ fake, env, sink, ctl, initialMode, initialModel }: { fake: FakeRemote; env: NodeJS.ProcessEnv; sink: { text: string }; ctl: { c?: Ctl }; initialMode?: string; initialModel?: string }) {
   const c = useChat(() => fake, { initialMode, initialModel }, { env });
-  sink.text = [...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
+  // FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
+  // the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
+  // these content assertions are actually about.
+  sink.text = [...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
   ctl.c = { applyMode: c.applyMode };
   return <Text>m:{c.state.mode}|mo:{c.state.model ?? "-"}</Text>;
 }

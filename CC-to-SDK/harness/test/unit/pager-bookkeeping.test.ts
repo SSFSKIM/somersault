@@ -181,13 +181,32 @@ describe("the tall-frame chunk resynchronizes the proxy's geometry", () => {
     out.stdout.write(eraseLines(2) + "an ordinary frame\n");
     out.noteResizeSignal();                                             // the tall episode is already over
     expect(out.takeTallAtSignal()).toBe(false);
-    // …and a stale latch cannot be inherited by a later signal: every signal re-states the fact.
+    // …and a READ latch cannot be inherited by a later signal: the consume is what re-states the fact.
     out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
     out.noteResizeSignal();
     expect(out.takeTallAtSignal()).toBe(true);
     out.stdout.write(eraseLines(2) + "an ordinary frame\n");
     out.noteResizeSignal();
     expect(out.takeTallAtSignal()).toBe(false);
+  });
+
+  // EXTERNAL REVIEW (codex, finding C) — AND AN UNREAD LATCH ACCUMULATES, because the signals of one drag reach
+  // the proxy faster than React flushes the effect that reads it, and only the FIRST of them can see the tall
+  // write standing: Ink handles each signal synchronously and its fitting frame stands the count down before
+  // the next arrives. Re-stating at every signal (`= tall > 0`, which is what shipped) therefore reported
+  // `false` to the one effect the whole burst got, and the stranded header stayed on screen.
+  //   WHAT BOUNDS THE ACCUMULATION IS THE READ, and it has to: a latch that survived an arbitrary run of later
+  // signals would fire a viewport wipe on an ordinary screen and destroy the rows above it (the t8 over-erase).
+  // So the consumer drains it at EVERY size it observes rather than only on the grows — pinned where that rule
+  // lives, in test/tui/resize-state.test.tsx.
+  it("accumulates an unread latch across the signals of one burst", () => {
+    const { out } = proxyOn(120, 40);
+    out.stdout.write(CLEAR_TERMINAL + HISTORY + PAGER);
+    out.noteResizeSignal();                                             // armed with a tall write outstanding…
+    out.stdout.write(eraseLines(2) + "an ordinary frame\n");            // …and the frame that stands the count down lands
+    out.noteResizeSignal();                                             // the next signal of the same drag, nothing read yet
+    expect(out.takeTallAtSignal()).toBe(true);                          // was false: the burst's own fact, re-stated away
+    expect(out.takeTallAtSignal()).toBe(false);                         // …and the read is still what clears it
   });
 });
 

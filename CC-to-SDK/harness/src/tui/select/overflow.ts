@@ -10,7 +10,10 @@
 // indentation, which is the part that is genuinely per-frame.
 import type { SelectWindow } from "./selectModel.js";
 
-export const moreAbove = (n: number): string => `↑ ${n} more above`;
+/** `atLeast` spells the count as a FLOOR (`↑ 188+ more above`). A list that windowed its input before
+ *  projecting knows its own number is short; printing the bare one would state a total it has evidence
+ *  against. Off by default — every windowed `Select` here counts over the whole list. */
+export const moreAbove = (n: number, atLeast = false): string => `↑ ${n}${atLeast ? "+" : ""} more above`;
 export const moreBelow = (n: number): string => `↓ ${n} more below`;
 
 /** How many rows a reported `Select` window leaves off each end. `end` is exclusive (selectModel.ts). */

@@ -319,6 +319,32 @@ describe("external editor in flight (CM8)", () => {
     await waitFor(() => strip(frame(lastFrame)).includes("keep me"));
     expect(strip(frame(lastFrame))).not.toContain(EDITOR_IN_FLIGHT_TEXT);
   });
+  // M1 review, finding 2. The in-flight early return draws no popup, so a completion state left standing is
+  // a claim about the screen that is no longer true — and it is not cosmetic: `ChatApp` subtracts
+  // `popupHeight(rows)` from the live window's cap for as long as this component reports the popup open, so a
+  // stale `true` shrinks the window for the whole edit. The null arm is the one that used to persist (`done`
+  // returns before any `commitState`), which is why the report is re-checked after the editor comes back.
+  it("closes an open suggestion popup — releasing the live window's cap — before the editor takes the terminal", async () => {
+    const open: boolean[] = [];
+    let release: (v: string | null) => void = () => {};
+    const pending = new Promise<string | null>((r) => { release = r; });
+    const { stdin, lastFrame } = renderWithKeymap(
+      <ChatComposer onSubmit={() => {}} cwd={tmpdir()} columns={() => 40} rows={() => 40}
+        commandCatalog={[{ name: "status", description: "show model", source: "local" }]}
+        onSuggestOpen={(v) => open.push(v)} editExternal={() => pending} />,
+    );
+    await settle();
+    stdin.write("/");
+    await waitFor(() => strip(frame(lastFrame)).includes("show model"));
+    expect(open).toEqual([true]);
+    stdin.write("\x07");                                               // ctrl+g = chat:externalEditor
+    await waitFor(() => strip(frame(lastFrame)).includes(EDITOR_IN_FLIGHT_TEXT));
+    expect(open).toEqual([true, false]);                               // released, not held for the edit
+    release(null);                                                     // the arm that skips `done`'s commitState
+    await waitFor(() => !strip(frame(lastFrame)).includes(EDITOR_IN_FLIGHT_TEXT));
+    expect(open).toEqual([true, false]);                               // …and it stays released
+    expect(strip(frame(lastFrame))).not.toContain("show model");
+  });
 });
 
 // F5 Task 3: paste ingestion as the composer actually experiences it — real bracketed-paste bytes down the

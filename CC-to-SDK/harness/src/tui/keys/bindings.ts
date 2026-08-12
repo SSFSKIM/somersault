@@ -82,8 +82,19 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // leave only the tab strip's four keys live and eat its own Escape. It is an "overlay" owner like Settings
   // and Select, so it takes their suppression set instead: FIVE root globals (see CTRL-C-FALLS-THROUGH below)
   // plus the two Chat keys whose scope survives one passive flush, plus ctrl+b's chord alias.
+  // QA WAVE 2 DELTA — and the `?` overlay needs ctrl+c SPELLED OUT, which is why this context binds a key it
+  // could otherwise inherit. Absence is enough everywhere Task 3 reached, because an unbound key falls through
+  // to `Global`. It is not enough under a SWALLOW: `swallowContexts` narrows resolution to the swallower's own
+  // context and `Global` is not in that list, so the overlay ate the exit gesture with no null anywhere to
+  // explain it. Naming Global's own action here is the narrowest repair — the press resolves in `Help`,
+  // `handlerFor` finds ChatApp's one `app:interrupt` handler (action lookup spans the whole stack), and the
+  // 800 ms arm behind it is the same one every other surface reaches. The dialog that shares this context —
+  // `/help`, which does not swallow — is unaffected: it resolved to the identical action through `Global`.
+  // First press ARMS only: `onFirstPress`'s draft clear is gated on `composerOwns`, and this overlay owns the
+  // input (ChatApp's `inputOwnerRef` reads "shortcuts"), which is canon's own `h5u`/`Pee` split (D-W10).
   { context: "Help", bindings: {
     "escape": "help:dismiss",
+    "ctrl+c": "app:interrupt",
     "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,
     "alt+p": null, "alt+t": null, "ctrl+x ctrl+b": null,
   }},
@@ -110,6 +121,47 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // reaching `Task` from inside the pager: `ctrl+x ctrl+b` backgrounded the running turn from a surface that
     // owns every other key on screen (final review, deferred t8 minor). Same null, same zero cost, as Select's.
     "ctrl+x ctrl+b": null,
+  }},
+  // FSW TASK 11 — `Scroll`, upstream's own name for "a scrollable view is focused (fullscreen layout)". It has
+  // been in VALID_CONTEXTS since F2 and bound NOTHING, because until the fullscreen renderer grew a virtual
+  // region there was no such view: the main screen scrolls in the TERMINAL, not in the app.
+  //
+  // FOUR KEYS OF CANON'S BLOCK (bundle 446135-446250, grounding §3.5), and the rest deliberately left unbound.
+  // The block there also carries `wheelup`/`wheeldown` and seven selection-extension/copy chords; mouse and
+  // in-frame selection are not in this wave, and an action name that resolves but reaches no handler is the
+  // dishonest rebind F2 exists to remove (the same reasoning that held ModelPicker's effort pair back at F6).
+  //
+  // PGUP/PGDN ARE HALF PAGES, AND THAT IS NOT A TYPO OF UPSTREAM'S OR OURS. Canon binds them to
+  // `scroll:pageUp`/`pageDown` and then its handler moves `floor(getViewportHeight() / 2)` (446159-446174) —
+  // the action NAME says page, the behaviour is half. We keep the behaviour and fix the name by pointing the
+  // keys at the half-page entries of the SAME `PAGER_ACTIONS` map, which is why this is a per-context binding
+  // rather than an edit to that map: `Transcript` (ctrl+O) names the full-page entries with the same two keys,
+  // and its own PgUp semantics are separately grounded. One map, two contexts, no surface renamed to describe
+  // the other.
+  //
+  // NO SUPPRESSION BLOCK, unlike every dialog above. This is the BACKGROUND context of the fullscreen renderer,
+  // not an overlay over it: the composer is still live in the dock below, and all six root globals must keep
+  // falling through to `Global`. The context is registered by `FullscreenViewport` with canon's own gate —
+  // `isActive: t && !cbr()` (446211), i.e. live in fullscreen EXCEPT while a history search owns the dock,
+  // where the search's own PgUp/PgDn are the ones that must fire.
+  //
+  // FSW TASK 12 ADDS THE FIFTH KEY, AND IT IS A PRINTABLE ONE. `v` is canon's transcript dump (L549336, and
+  // advertised on canon's own transcript screen as `v to open in ${editor}`, L547303): render the whole
+  // conversation to a file and open it in `$VISUAL`/`$EDITOR`. It is the scrollback escape hatch — this
+  // renderer's exit gives the user their shell back with the conversation absent, on purpose — so it belongs
+  // to the surface that HAS no scrollback, i.e. here rather than in the ctrl+O pager's block (plan review I5).
+  //   THE COLLISION IS REAL AND IS HANDLED ONE LAYER OUT. Canon can bind a bare letter because its `v` lives
+  // on a transcript SCREEN with no composer (`zPe = lr === "transcript"`, L549291); ours is the background
+  // context of a renderer whose composer is live in the dock, resolution finds no `v` in `Chat`, and a
+  // handler registered unconditionally would eat the letter out of every word typed. It is not the TABLE's
+  // job to know that — a per-key gate is not something a context block can express — so `FullscreenViewport`
+  // registers the handler only while the jump pill is up, and `KeymapProvider` falls a matched action with no
+  // handler through to the composer (`:177-180`). The key is bound here; whether it is LIVE is a property of
+  // what the screen is currently saying.
+  { context: "Scroll", bindings: {
+    "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
+    "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+    "v": "scroll:dumpTranscript",
   }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",
@@ -240,7 +292,11 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // the key shadows Global just as an unbind does. It has to be a binding rather than the Select's
     // `onUnhandledKey`, because an explicit unbind resolves to `{type:"unbound"}`, which `dispatch` treats as
     // CONSUMED — an unbound key never reaches a fallback at all. A dialog that registers no handler for these
-    // (every permission body) falls through exactly where it did before: nowhere.
+    // (every permission body) falls through to whoever owns the actions below it: nowhere on the main screen,
+    // but in FULLSCREEN the region's `Scroll` context claims both, so ctrl+u/ctrl+d scroll the transcript
+    // above the dock while a permission dialog is up. Safe — the dialog lives in the dock's disjoint row band
+    // and PlanDialog registers its own handlers and still wins — but a DELIBERATE DIVERGENCE: the live capture
+    // (fullscreen grounding L2.3) records both keys as inert in canonical fullscreen.
     "ctrl+u": "scroll:halfPageUp", "ctrl+d": "scroll:halfPageDown",
     // alt+p/alt+t are CHAT keys whose scope is already off the stack (the nulls only close the passive-flush
     // sub-tick). ctrl+c/ctrl+o/ctrl+t/ctrl+r/ctrl+b are deliberately ABSENT — a decision dialog keeps every
@@ -312,6 +368,7 @@ export const VALID_ACTIONS: readonly string[] = [
   "transcript:exit", "transcript:toggleShowAll",
   "scroll:halfPageUp", "scroll:halfPageDown", "scroll:fullPageUp", "scroll:fullPageDown", "scroll:lineUp", "scroll:lineDown",
   "scroll:top", "scroll:bottom", "scroll:pageUp", "scroll:pageDown",
+  "scroll:dumpTranscript",                        // FSW T12 — `v`, the fullscreen scrollback escape hatch
   "historySearch:next", "historySearch:accept", "historySearch:cancel", "historySearch:execute", "historySearch:cycleScope",
   // The other five messageSelector actions retired with F6 T10 (see the MessageSelector block): the picker's
   // list IS a `Select` now, so moving/accepting there are Select's actions, and a name this table no longer

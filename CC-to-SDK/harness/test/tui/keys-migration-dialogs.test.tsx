@@ -396,10 +396,15 @@ describe("Wave 2 task 3 — ctrl+c falls through an overlay to the exit arm", ()
     stdin.write("\r");                                            // separate write: "text\r" in one chunk reads as a paste
     await waitFor(() => frame(lastFrame).includes(marker));
   };
-  /** Three overlays, three different reasons the arm was unreachable:
+  /** Four overlays, four different reasons the arm was unreachable:
    *   · the bg tasks panel is a bare `Select` and is NOT `paneOwned` — only the keymap null stood in the way;
    *   · `/config` is `Settings` AND `paneOwned` — it needed the footer gate relaxed as well;
-   *   · `/model` is `Select` + `ModelPicker` and `paneOwned` — the surface the QA report actually drove. */
+   *   · `/model` is `Select` + `ModelPicker` and `paneOwned` — the surface the QA report actually drove;
+   *   · the `?` overlay (QA wave 2 delta) is the one that SWALLOWS, and a swallow runs above the binding
+   *     table: `swallowContexts` narrows resolution to the swallower's own context, so ctrl+c never reached
+   *     `Global` no matter that no null was left in its way. Task 3 un-nulled six contexts and could not
+   *     reach this one. `Help` therefore BINDS the key — the same shape `Transcript`/`HistorySearch` use,
+   *     except it names Global's own action so the root arm still runs. */
   const OVERLAYS: { name: string; marker: string; session: () => ReturnType<typeof fakeRemote>;
     open: (stdin: { write: (s: string) => void }, lastFrame: () => string | undefined) => Promise<void> }[] = [
     { name: "the bg tasks panel (Select)", marker: "No tasks currently running", session: () => fakeRemote(),
@@ -408,6 +413,8 @@ describe("Wave 2 task 3 — ctrl+c falls through an overlay to the exit arm", ()
       open: openSlash("/config", "Default permission mode") },
     { name: "/model (Select + ModelPicker)", marker: "Select model", session: modelRemote,
       open: openSlash("/model", "Select model") },
+    { name: "the ? shortcuts overlay (Help, swallowing)", marker: "Keyboard shortcuts", session: () => fakeRemote(),
+      open: async (stdin, lastFrame) => { stdin.write("?"); await waitFor(() => frame(lastFrame).includes("Keyboard shortcuts")); } },
   ];
 
   it.each(OVERLAYS)("$name: Ctrl-C arms the exit hint and the surface stays up", async ({ marker, session, open }) => {

@@ -30,11 +30,26 @@ export const PAGER_ACTIONS: Record<string, PagerAction> = Object.assign(Object.c
 export function clampOffset(offset: number, total: number, height: number): number {
   return Math.max(0, Math.min(offset, Math.max(0, total - height)));
 }
+/** How far a `pages` move travels: FLOOR ON THE MAGNITUDE, floored at one row.
+ *
+ *  It was `Math.round(a.n * height)`, and that is wrong twice over on a fractional page. `Math.round` is
+ *  round-HALF-UP, not round-half-away-from-zero — `round(18.5)` is 19 while `round(-18.5)` is −18 — so on
+ *  every ODD height a half page down travelled one row further than a half page up and the pair did not
+ *  return the reader to the row they started on. Worse at height 1: `round(-0.5)` is `-0`, so the up key
+ *  moved nothing at all and a one-row window could only ever scroll one way.
+ *  Taking the floor of the ABSOLUTE value and re-applying the sign makes the two directions the same
+ *  distance by construction, and the `max(1, …)` floor keeps a fractional page from rounding away to a dead
+ *  key in a window too short to halve. Integer pages are untouched (`floor(1 * h) === h`), so `fullPage*`
+ *  and `page*` behave exactly as they did; the only actions that move are the half-page pair, on odd
+ *  heights, by one row — in the direction that makes them reversible. */
+function pageDelta(n: number, height: number): number {
+  return Math.sign(n) * Math.max(1, Math.floor(Math.abs(n) * height));
+}
 export function applyPager(offset: number, a: PagerAction, total: number, height: number): number {
   if (a.kind === "top") return 0;
   if (a.kind === "bottom") return Math.max(0, total - height);
   if (a.kind === "lines") return clampOffset(offset + a.n, total, height);
-  return clampOffset(offset + Math.round(a.n * height), total, height);
+  return clampOffset(offset + pageDelta(a.n, height), total, height);
 }
 
 /** Scrolling is by PHYSICAL row, never by item: a tool result's body has already been wrapped to visual rows

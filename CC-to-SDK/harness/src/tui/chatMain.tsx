@@ -1,7 +1,9 @@
 // harness/src/tui/chatMain.tsx — the dynamic-import target for every interactive invocation. Renders
 // ChatApp over a remote adapter; owning the HOST is the caller's job (loopback owns one, attach does not).
 import React from "react";
+import { writeSync } from "node:fs";
 import { render } from "ink";
+import { createAltScreenGuard, createChatTeardown, resolveTerminalName } from "./altScreen.js";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
@@ -10,6 +12,7 @@ import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
+import { selectRenderer } from "./renderer.js";
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
@@ -17,7 +20,7 @@ import { turnDurationEnabled } from "./durationRow.js";
 import { promptSuggestionEnabled } from "./suggester.js";
 import { refreshExampleFiles } from "./placeholder.js";
 import { createCursorReports, probeReflow } from "./reflowOracle.js";
-import { createResizeRepaint, frameWriteCorrection, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
+import { createResizeRepaint, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
 import { setTheme } from "./theme.js";
 import { createTerminalTitle } from "./terminalTitle.js";
 
@@ -39,6 +42,14 @@ export interface ChatClientOpts {
   /** WAVE C TASK 8 (EP-C4a) — `--name`, so the terminal title can say what this session is before the engine
    *  has generated an ai-title for it. Only the foreground launch has one; `ccx attach` does not. */
   name?: string;
+  /** FSW T6 (spec §A3, plan review I8) — THE SIGNAL INTERLOCK'S TRANSPORT. `cli/main.ts`'s
+   *  SIGINT/SIGTERM/SIGHUP handler exits via `process.exit`, which never runs the `finally` below; anything
+   *  that must happen before the process dies registers itself here and the handler drains it
+   *  SYNCHRONOUSLY, ahead of `host.stop`. The owner is main, not this module: only one place may own a
+   *  signal handler, and the launch that registered all three at :424 is it. ITS PRESENCE IS ALSO THE
+   *  DECLARATION (fix round F8): absent means `ccx attach` — no host to stop, no handler at all — and the
+   *  alt-screen guard takes those signals itself. */
+  beforeExit?: Array<() => void>;
 }
 
 // Ink owns a stable stdout identity from initial render. On resume it clears based on stale terminal-relative
@@ -73,16 +84,44 @@ export interface ResumeSafeStdout {
    *  count down. A consumer reading the count from an effect therefore reads 0 in exactly the case it needs a
    *  1. So ccx's own resize listener — attached before `render()`, and therefore ahead of Ink's — calls
    *  `noteResizeSignal()`, and the recovery reads the latch instead. The stand-down itself is NOT loosened
-   *  (`:135`-`:150`, the t8 over-erase); this only moves the READ to before the erasure. */
+   *  (`:135`-`:150`, the t8 over-erase); this only moves the READ to before the erasure.
+   *    IT SPANS THE SIGNALS OF ONE FLUSH, NOT THE LAST OF THEM (external review, finding C). A drag emits
+   *  SIGWINCHes faster than React flushes passive effects, and only the FIRST of a burst can see the tall write
+   *  standing — Ink handles each signal synchronously and its fitting frame stands the count down before the
+   *  next one arrives. Re-stating the fact at every signal therefore reported `false` to the one effect that
+   *  ran for the whole burst. So the observations accumulate; what bounds them is the READ (see below), not a
+   *  reset here. */
   noteResizeSignal(): void;
-  /** …and it is one-shot: a fact about ONE signal, consumed by the reader so a later grow with nothing tall
-   *  outstanding cannot inherit it. */
+  /** …and it is one-shot: a fact about the signals since the reader last looked, consumed when it looks. THAT
+   *  is what keeps the accumulation above from becoming a latch that outlives its burst and fires a viewport
+   *  wipe on an ordinary screen (the t8 over-erase): ChatApp consumes on every size it observes, a shrink
+   *  included, so nothing survives a flush that saw it. */
   takeTallAtSignal(): boolean;
+  /** qa2-09 — how many writes have DETACHED THE SCREEN FROM THE FRAME RECORD: an erase-only write (`log.clear()`,
+   *  which is the head of every `<Static>` commit) or Ink's tall-frame `clearTerminal`. Both re-lay everything
+   *  above the live frame — the first puts committed transcript in between it and whatever was above it, the
+   *  second wipes the screen — and the resize repairs are counts of rows ABOVE the frame, taken earlier. A
+   *  COUNT, not a flag, because the only question is whether the screen moved BETWEEN two instants the reader
+   *  chooses; nothing here is consumed, so two readers cannot rob each other. */
+  detachedWrites(): number;
   /** W-R t4b: the resize correction, applied to the write that would otherwise create residue. Called for every
    *  frame write that carries an erase prefix and has a recorded frame in front of it; whatever it returns is
    *  injected between that prefix and the body, inside the SAME write. Set once, from `runChatClient` — the proxy
    *  is built before the resize machinery exists, which is the only reason this is a setter. */
   setFrameCorrector(fn: (info: FrameWriteInfo) => string): void;
+  /** FSW T9 (D21) — ARM AN ERASE IN FRONT OF THE NEXT PAINT. A resize invalidates the whole alternate-screen
+   *  frame: log-update's `previousLineCount` describes rows the terminal has since moved, so its next erase
+   *  lands in the wrong place and the repaint composes over residue. Canon's answer is a one-shot FLAG rather
+   *  than a per-frame cost — `needsEraseBeforePaint`, set by the resize handler (bundle L180640) and cleared on
+   *  use (L180759), where it unshifts `$uy` in front of the paint.
+   *    A SEPARATE CROSS-CALL FLAG, not a `setFrameCorrector` in disguise (T8 review, amendment two). The
+   *  corrector's channel is set and consumed inside ONE `write` call and is guarded by `frame !== undefined` —
+   *  which is false on exactly the first paint after a resize, the paint this exists for — and fullscreen
+   *  constructs no corrector at all. This flag is set from the resize listener and read by a later call.
+   *    ALT-SCREEN ONLY, like `park()`. `ESC[2J` on the main screen blanks a viewport whose live `<Static>` rows
+   *  may not be in scrollback yet (the t8 over-erase). The guard lives here rather than in the caller's
+   *  discipline because the mode is what makes the escape safe. */
+  eraseNextPaint(): void;
 }
 
 /** Ink's erase prefix: `ansiEscapes.eraseLines(n)` is a run of `\x1b[2K` / `\x1b[1A` closed by `\x1b[G`. It is
@@ -106,9 +145,70 @@ const ESCAPES_ONLY = /^(?:\x1b\[[0-9;?]*[a-zA-Z]|\x1b[78])+$/;
  *  needs, it paints from there — is untouched, as is any `\x1b[3J` occurring later in the chunk as content. */
 const CLEAR_SCROLLBACK_HEAD = "\x1b[2J\x1b[3J";
 
+/** FSW T8 (spec §A4a) — DECSET 2026, the SYNCHRONIZED UPDATE pair (canon's mode table L177069,
+ *  `SYNCHRONIZED_UPDATE: 2026`). The fullscreen renderer paints through stock log-update with no `<Static>` in
+ *  its tree, so every paint is a full-frame erase-and-rewrite and the window between the two halves is the
+ *  flicker the renderer is named after ("flicker-free" is canon's own word for it, settings copy L42039). A
+ *  terminal that implements 2026 buffers everything between the pair and presents it as one update.
+ *    DELIBERATE DIVERGENCE — WE EMIT IT UNCONDITIONALLY AND CANON DOES NOT. Canon gates the pair: `Dms`
+ *  (L177106) emits it only when its skip flag is false, and both call sites (L180802, L181310) pass
+ *  `skipSyncMarkers()` (L180678), which skips unless stdout is a TTY, TTY handlers are attached, AND `Lee()`
+ *  says the terminal is on a twelve-branch capability ALLOW-LIST: `TERM_PROGRAM` in {iTerm.app, WezTerm,
+ *  WarpTerminal, ghostty, contour, vscode, alacritty, mintty, rio, Tabby}, JetBrains terminals,
+ *  `KONSOLE_VERSION >= 211200`, kitty, `xterm-ghostty`, `foot*`, `ZED_TERM`, `VTE_VERSION >= 6800`, or the
+ *  `CLAUDE_CODE_FORCE_SYNC_OUTPUT` override — and under `TMUX` only when a LIVE PROBE said yes (`E2u`/`b2u`,
+ *  L176997). An allow-list that specific exists because 2026 to an unknown terminal is NOT free: one that
+ *  honors BSU and drops ESU holds the display. The named exposure is our own: TMUX is this wave's QA
+ *  environment, and it is precisely the case canon refuses without a positive probe. Nothing here can
+ *  unbalance the pair (one concatenation, one `targetWrite`), so the divergence is recorded rather than gated
+ *  — but T17 OWES the matrix a proof, BEFORE T16 flips the renderer default on: the wrap must be shown INERT
+ *  on a terminal outside canon's allow-list and on bare tmux with no probe.
+ *    KNOWN BOUNDED DIVERGENCE (plan m1): the pair goes around ONE write, and two of Ink's seams are three.
+ *  `writeToStdout` (`ink.js:140`-`:155`) and `writeToStderr` (`:157`-`:171`) are each `log.clear()` →
+ *  `write(data)` → `log(lastOutput)`, and only that third call is a recorded frame write — the erase and the
+ *  payload go out unwrapped ahead of it, so a paint reached through those seams can tear. `/clear` and every
+ *  `console.*` under `patchConsole` (render.js's default, which this app does not turn off) reach them.
+ *  RECORDED, NOT FIXED — and NOT because bytes would have to be held: opening on the erase and closing on the
+ *  frame behind it would hold nothing (the `justErased`/`dropped` latch already models that triple). The
+ *  reason is that an erase-only write is not guaranteed to HAVE a frame behind it — a bare `app.clear()`, an
+ *  unmount, a crash between the two — and each of those would leave the terminal inside an OPEN synchronized
+ *  update with no closer. An unbalanced pair is the one failure here that can freeze a display; a tear is
+ *  cosmetic and user-initiated. That asymmetry, not flush difficulty, is why m1 stays unfixed. */
+const SYNC_BEGIN = "\x1b[?2026h", SYNC_END = "\x1b[?2026l";
+
+/** FSW T9 (D21) — canon `$uy` (bundle L181490) = `h1 + fI` = `ESC[2J` + `ESC[H`, byte for byte, and it is
+ *  DELIBERATELY NOT the `Rms()` form (`2J` + `3J` + `H`, L176982) that `clearAltScreen` carries. The two answer
+ *  different questions on the same screen: `Rms` is a RESET — `/clear`'s payload, which is entitled to drop the
+ *  alternate screen's own saved lines — while this is a REPAINT, the one-shot in front of the first frame after
+ *  a resize, and the saved lines are not the resize's business. Canon keeps them apart at exactly that seam:
+ *  L180759 unshifts `$uy`, L177121 selects `Rms()`. */
+const ALT_ERASE = "\x1b[2J\x1b[H";
+
 export { physicalRows } from "./resizeRepaint.js";   // W-R t4 moved it there; this stays the import site it had
 
-export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeStdout {
+/** FSW T3 FIX ROUND (review C1) — ONE SIGWINCH listener, three things to do, and the order is the contract.
+ *  `readers` runs first: those are the two measurements that must see the screen as it stands BEFORE anything
+ *  repaints it (`noteResizeSignal` latches whether a tall write is outstanding; `resizeRepaint.onResize`
+ *  measures off the last recorded frame). Subscribers run second: today that is ChatApp's size commit, which
+ *  synchronously re-renders and therefore WRITES — put ahead of the readers it would destroy their evidence,
+ *  put behind Ink's own handler (`ink.js:77`, registered during `render()`) it would arrive after Ink had
+ *  already measured the old, taller tree against the new row count and taken the tall-frame branch.
+ *  Extracted from `runChatClient` only so that ordering has somewhere to be asserted; it has no other caller. */
+export function createResizeChain(readers: () => void): { fire: () => void; subscribe: (cb: () => void) => () => void } {
+  const subscribers = new Set<() => void>();
+  return {
+    fire: () => { readers(); for (const cb of [...subscribers]) cb(); },
+    subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
+  };
+}
+
+/** FSW T8: `altMode` is the alternate screen, and it is FIXED PER CONSTRUCTION because the renderer choice is —
+ *  `selectRenderer` runs once at boot and a resize never re-runs it (spec §L2.1), so a proxy cannot outlive the
+ *  screen it was built for. `runChatClient` has the choice in hand before it builds this (the `selectRenderer`
+ *  call precedes the `createResumeSafeStdout` one), so no setter is needed and none is offered: a mode that
+ *  could change mid-session would mean a frame recorded under one set of rules and erased under another. */
+export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMode?: boolean } = {}): ResumeSafeStdout {
+  const altMode = opts.altMode === true;
   let suppressNextWrite = false;
   let frame: string | undefined;                 // the last live frame, as painted
   let widthAtPaint = 0;                          // W-R t4b: …and the terminal width it was painted at
@@ -116,9 +216,11 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   let dropped: string | undefined;               // …and the frame that erase threw away, for the restore check below
   let parkedCol = 0;                             // W-R t4: where the cursor sits between frames, 0 if nowhere
   let tall = 0;                                  // W-R t8: tall-frame chunks written since the screen was last in sync
-  let tallAtSignal = false;                      // W2 t7: …and whether one was outstanding when the last SIGWINCH arrived
+  let tallAtSignal = false;                      // W2 t7: …and whether one was outstanding at any SIGWINCH since the last read
+  let detached = 0;                              // qa2-09: writes that re-laid the screen above the frame (see `detachedWrites`)
   let corrector: ((info: FrameWriteInfo) => string) | undefined;   // W-R t4b: the resize correction, set by runChatClient
   let rewritten: string | undefined;             // …and the chunk it produced, consumed by the write that made it
+  let pendingErase = false;                      // FSW T9 (D21): a resize is owed a full repaint — see `eraseNextPaint`
   const targetWrite = stdout.write.bind(stdout) as (...args: any[]) => boolean;
   // Five kinds of write reach here and only one of them is the live frame. FRAME writes carry the erase prefix (or
   // none, at first paint) and content: record what remains. ERASE-ONLY writes (`log.clear()`, `Instance.clear()`)
@@ -216,13 +318,20 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   const record = (chunk: unknown): boolean => {
     if (typeof chunk !== "string") return false;
     if (chunk.startsWith("\x1b[2J")) {
-      justErased = false; dropped = undefined; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1;
-      if (chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
+      justErased = false; dropped = undefined; parkedCol = 0; frame = undefined; widthAtPaint = 0; tall += 1; detached += 1;
+      // …ON THE MAIN SCREEN ONLY (FSW T8, plan m2/D6). Everything the paragraph above argues is an argument
+      // about SCROLLBACK: `\x1b[3J` erases it, and inline that is where this app's committed transcript and the
+      // user's pre-launch screen live. The alternate screen has no scrollback — that is what it is — so the
+      // escape has nothing to destroy there, and canon writes both deliberately: `Rms()` (L176982) is `2J`+`3J`
+      // +`H` and L177121 selects it precisely on `altScreen`. The strip is a main-screen rule and it comes off
+      // with the main screen. `clearViewport.ts`'s `screenClear` is the same decision on the same axis, for
+      // `/clear`'s own payload rather than for Ink's tall-frame head.
+      if (!altMode && chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
       return false;
     }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
     const body = chunk.slice(prefix.length);
-    if (body === "") { justErased = true; if (frame !== undefined) dropped = frame; frame = undefined; parkedCol = 0; return false; }
+    if (body === "") { justErased = true; if (frame !== undefined) dropped = frame; frame = undefined; parkedCol = 0; detached += 1; return false; }
     // Ink's log() writes `str + "\n"` and its <Static> chunk ends the same way, so a body that does NOT end in a
     // newline is nobody's frame — it is another consumer of this same stdout (W-R t4: the keymap's DECSET writes,
     // suspend's cursor show/hide). Recording those used to clobber `lastFrame()` with a bare escape sequence, and
@@ -254,6 +363,16 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
         parkedCol, widthAtPaint, width: stdout.columns ?? 0, rows: stdout.rows ?? 0 });
       if (seq) rewritten = prefix + seq + body;
     }
+    // FSW T9 (D21) — AND THE ONE-SHOT ERASE RIDES OUT HERE, on the recorded-frame path and nowhere else. It is
+    // read-and-cleared rather than merely read: "the next PAINT", not the next write, is the contract — Ink's
+    // clear→static→frame burst puts two non-paints in front of the frame, and an erase spent on the `log.clear()`
+    // is an erase the frame behind it never gets. It composes OUTSIDE the corrector's rewrite above (the erase
+    // precedes whatever chunk is going out, corrected or raw) and INSIDE the 2026 wrap applied at the write site,
+    // which is what makes the wipe and the repaint one atomic update — the m1 tear, closed for this one case.
+    // Injecting through `rewritten` and not around `record` is also what keeps the classification honest: `record`
+    // has already read Ink's raw bytes, so the `\x1b[2J` we are about to prepend cannot be mistaken for the
+    // tall-frame head by the very branch that tests for it.
+    if (pendingErase) { pendingErase = false; rewritten = ALT_ERASE + (rewritten ?? chunk); }
     justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0; tall = 0;   // …and the screen is back in sync (see above)
     return true;
   };
@@ -265,6 +384,16 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
   // is equally load-bearing: after an erase-only write Ink's `previousLineCount` is 0, its next write carries no
   // erase prefix, and a parked column would displace that frame sideways.
   const park = (): void => {
+    // …AND NOT ON THE ALTERNATE SCREEN (FSW T8, plan m3). The park is padding written into a row of the screen
+    // so that a REFLOW carries the cursor with it; the alternate screen does not reflow (no scrollback to reflow
+    // out of), and T9 does not construct `createResizeRepaint` there at all — so the one consumer the padding
+    // exists for, `probeReflow`, is never built. The frame is fixed-height and owns every row it has, so the
+    // padding would be damage rather than merely useless. WHAT ELSE READS THE PARK, AND WHY 0 IS FINE FOR EACH:
+    // the exit teardown's unpark is `> 0`-guarded (`altScreen.ts:233`), so it writes nothing; the `foreign`
+    // branch below is `parkedCol > 0 && …`, so it goes dark and every non-Ink write passes through unhomed and
+    // un-re-parked; and `createChatTeardown`/`createResizeRepaint` both take `parkedColumn` as a reader that has
+    // always been allowed to answer 0 (it does, on any non-tty and any terminal under 8 columns).
+    if (altMode) return;
     const col = stdout.isTTY ? parkColumn(stdout.columns) : 0;
     if (col > 0) targetWrite(parkSequence(col));
     parkedCol = col;
@@ -292,7 +421,16 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
       // ONE CHUNK, ALWAYS (W-R t4b). The correction and Ink's own erase are two halves of one erase run: split
       // across two writes, anything else sharing this tty could land between them.
       const corrected = rewritten; rewritten = undefined;
-      const wrote = corrected === undefined ? targetWrite(...args) : targetWrite(corrected, ...args.slice(1));
+      // …AND IN ALTMODE THAT ONE CHUNK IS ALSO ONE UPDATE (FSW T8). The wrap goes HERE, at the write, and not
+      // one line earlier, for the same reason the correction is applied inside `record` rather than around it:
+      // `record` matches `INK_ERASE_PREFIX` against the bytes INK wrote, and a chunk opening on `\x1b[?2026h`
+      // matches no erase prefix — the frame would stop being recorded, which is the gate task 4 erases from.
+      // It also goes OUTSIDE the injected correction, because that erase is part of the paint it corrects and
+      // the two must land in the same update. Only a RECORDED FRAME WRITE is wrapped: `recorded` already draws
+      // the line between a paint of the live frame and the erases, <Static> flushes and foreign escapes that
+      // are not one, and wrapping those would nest a second update inside the frame write behind them.
+      const payload = altMode && recorded ? SYNC_BEGIN + (corrected ?? args[0] as string) + SYNC_END : corrected;
+      const wrote = payload === undefined ? targetWrite(...args) : targetWrite(payload, ...args.slice(1));
       if (recorded || (foreign && ESCAPES_ONLY.test(chunk))) park();
       return wrote;
     }
@@ -315,9 +453,11 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream): ResumeSafeSt
     parkedColumn() { return parkedCol; },
     tallWrites() { return tall; },
     screenResynced() { tall = 0; },
-    noteResizeSignal() { tallAtSignal = tall > 0; },
+    noteResizeSignal() { tallAtSignal ||= tall > 0; },   // accumulates over the burst; the READ is what clears it
     takeTallAtSignal() { const was = tallAtSignal; tallAtSignal = false; return was; },
+    detachedWrites() { return detached; },
     setFrameCorrector(fn) { corrector = fn; },
+    eraseNextPaint() { if (altMode) pendingErase = true; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
@@ -357,6 +497,15 @@ export function createNoticeBridge(): NoticeBridge {
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
   if (prefs.theme) setTheme(prefs.theme);
+  // FSW T5 (spec §A2): WHICH RENDERER, DECIDED ONCE. Here and nowhere else — this is the only point in the
+  // process that has the real TTY, the real env and the prefs file in hand at the same time, and the
+  // decision must not move again: a resize never re-evaluates it (§L2.1), so every consumer reads this one
+  // value. `/status` prints it (F9), the output proxy takes its screen rules from it (T8), and from T9 it is
+  // what decides which machinery below gets CONSTRUCTED at all.
+  const renderer = selectRenderer({ isTTY: Boolean(process.stdout.isTTY), env: process.env, prefs });
+  // FSW T9 (spec §A2a) — THE ONE BOOLEAN THE WHOLE BRANCH READS. Derived once, beside the decision, so no
+  // line below re-derives it and none of them can disagree about which screen this process is painting into.
+  const fullscreen = renderer.mode === "fullscreen";
   // W3 T5: seed the Settings dialog's Output-style row from the same saved prefs (defaulting like useChat's
   // own opts.initialOutputStyle fallback does) — client-tracked, no engine round-trip needed just to boot.
   // W-C T7: and the `Show turn duration` row from the same read (`Dc("showTurnDuration", !0)` — default TRUE).
@@ -374,9 +523,21 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     // test mounts — none of them may touch `~/.claude`. `resolveStatusLineConfig` also owns the
     // `disableAllHooks` guard, so the whole setting is decided in this one expression.
     statusLine: opts.hookOpts?.statusLine ?? resolveStatusLineConfig(readSettingsFile("userSettings", opts.cwd)),
+    // FSW T5: handed down, never re-derived — see the `selectRenderer` call above. No `??` override on this
+    // one: unlike the seeded prefs beside it, a caller-supplied renderer choice could contradict the terminal
+    // this process is actually painting into.
+    rendererChoice: renderer,
   };
-  const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
-  const output = createResumeSafeStdout(process.stdout);
+  const buildSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
+  // FSW T6: the resume pointer needs an id, and this is the only place upstream of the tree that can see
+  // one. The adapter's `sessionId` is a LIVE getter (client/chatAdapter.ts:98) that tracks clears, rewinds
+  // and resumes, so holding the latest session is enough — no new channel out of the React tree, and the
+  // pointer names whatever conversation the user was actually in when they quit.
+  let liveSession: ChatSession | undefined;
+  const makeSession = (resume?: string) => { const s = buildSession(resume); liveSession = s; return s; };
+  // FSW T8/T9: the proxy's screen rules are the renderer's, fixed at construction — 2026-wrapped paints, no
+  // park, no `ESC[3J` strip, and the D21 erase-before-paint channel armed (see `eraseNextPaint`).
+  const output = createResumeSafeStdout(process.stdout, { altMode: fullscreen });
   const bridge = createDeferredClearBridge();                 // created BEFORE render: useChat may ask on mount
   // F2 task 5: the keymap owns raw stdin for the whole tree (its own parser + binding table + chord machine),
   // which is only safe because this render already passes `exitOnCtrlC: false` — Ink must not exit underneath
@@ -409,21 +570,57 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // not in yet) goes through Ink's own stdout so its erase-plus-frame write re-records the frame and re-parks the
   // cursor on it. The DSR reply comes back the long way round: the keymap provider owns the ONE raw-stdin reader,
   // and forwards unclaimed escape sequences to `onUnknownSequence` — a forward that has existed since task 3.
+  //   FSW T9 (spec §A2a) — AND NONE OF IT IS CONSTRUCTED IN FULLSCREEN. Every line of the stack below is an
+  // answer to one question — "the frame is taller than the terminal thinks it is; where is the residue?" — and
+  // the fullscreen frame makes that question unaskable by giving the tree `rows − 1` rows and clipping. So this
+  // is a GATE ON CONSTRUCTION, not a disabled feature: no `createResizeRepaint` (nothing to repair), no frame
+  // corrector (nothing to correct — and `record`'s corrector branch is dead there anyway, which is why D21's
+  // erase needed its own channel), no reflow probe (an alternate screen does not reflow; the probe would write
+  // a DSR into a frame that owns every cell), and no park (T8, same argument one layer down). Fullscreen's
+  // whole repaint contract is the D21 one-shot below.
   const reports = createCursorReports();
-  const resize = createResizeRepaint({
+  const resize = fullscreen ? undefined : createResizeRepaint({
     lastFrame: output.lastFrame, parkedColumn: output.parkedColumn,
     size: () => ({ columns: process.stdout.columns ?? 0, rows: process.stdout.rows ?? 0 }),
     repaint: (s) => { if (process.stdout.isTTY) output.stdout.write(s); },
     probe: (a) => probeReflow({ write: (s) => { process.stdout.write(s); }, onReply: reports.onReply, ...a }),
+    detached: output.detachedWrites,
   });
   // …and this is the correction itself: every frame write Ink makes passes the proxy, and the ones that would
   // leave residue get the missing erase injected into the same chunk. The proxy is built before the resize
-  // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument.
-  output.setFrameCorrector((info) => frameWriteCorrection(info, resize.verdict()));
+  // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument. The
+  // decision lives in the resize module, not in a closure here: a write is either corrected where it is made or
+  // its shortfall is owed to the repair that runs when the verdict lands, and only one of those two can be true.
+  if (resize) output.setFrameCorrector(resize.frameWrite);
   // W2 t7 (s2qa2-05): THE ORDER IS THE WHOLE POINT OF DOING IT HERE. This listener is ahead of Ink's, so it is
   // the last moment at which "a tall write is outstanding" is still true for the screen the user is looking at —
   // Ink's own handler repaints synchronously on the next line of the same signal and stands the count down.
-  const onTerminalResize = (): void => { output.noteResizeSignal(); resize.onResize(); };
+  // FSW T3 FIX ROUND (review C1): …AND CHATAPP'S SIZE COMMIT IS THE THIRD LINK OF THIS SAME CHAIN, for the
+  // same reason the other two are here. Ink's own handler (`ink.js:77`, registered inside `render()` below)
+  // re-lays-out and re-serializes the EXISTING element tree against the NEW row count and checks
+  // `outputHeight >= stdout.rows` while doing it — so a component that learns the new size any later than
+  // this has already had its old, taller tree measured against the shorter terminal. Measured before this
+  // wiring, at 40 → 24 rows with a full live window: one `clearTerminal` write and a 44-row frame against a
+  // 24-row pane, i.e. the whole session reprinted on the one frame the wave exists to protect. Afterwards:
+  // none. It works because Ink runs React in LEGACY mode (`ink.js:59`), where a `setState` from a plain
+  // event callback flushes synchronously — the re-render, the re-layout and the write all land before Node
+  // reaches the next listener.
+  //   ORDER WITHIN THE CHAIN IS NOT FREE EITHER, which is why this is a fan-out from here rather than
+  // ChatApp prepending its own listener (its default does exactly that, for embedders that have no chain).
+  // Both lines above read the screen as it stands BEFORE anything repaints it: `noteResizeSignal` latches
+  // whether a tall write is outstanding, and `resize.onResize` measures off the last recorded frame. A size
+  // commit ahead of them writes a frame, stands `tallWrites()` down and re-records — and the W2-t7 grow
+  // resync, whose whole job is to repair a stranded tall surface, would never fire again.
+  //   FSW T9 — THE CHAIN STAYS, ITS READERS CHANGE. What is being fanned out here is the terminal's new size,
+  // and ChatApp needs that on either screen (every geometry consumer in the tree reads its resize state, and
+  // the fullscreen frame's own height IS `size.rows`). Only the two READERS are main-screen measurements, and
+  // in fullscreen they are replaced by the one thing a resize owes the alternate screen: D21's erase before the
+  // next paint. Same position in the same chain, and for the same reason the readers hold it — this runs before
+  // Ink's own synchronous handler, so the flag is up before the repaint that must carry it.
+  const resizeChain = createResizeChain(fullscreen
+    ? () => { output.eraseNextPaint(); }
+    : () => { output.noteResizeSignal(); resize!.onResize(); });
+  const onTerminalResize = resizeChain.fire;
   process.stdout.on("resize", onTerminalResize);
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
   // reasons: it is a process-level concern with a teardown obligation (the `finally` below clears the title
@@ -434,25 +631,77 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // THIS IS ALSO THE CONTAINMENT: only the REPL builds one, so a daemon/HOST session — which never
   // calls `runChatClient` — cannot retitle a terminal it does not own.
   const title = createTerminalTitle({ write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); } });
+  // ── FSW T6 (spec §A3/§A6) — THE ALT-SCREEN GUARD AND THE EXIT GUARANTEE ──────────────────────────────
+  // CONSTRUCTED ON EVERY LAUNCH, ARMED BY NOBODY YET. `enter()` is the arming, and only the fullscreen
+  // renderer calls it (T9); until then every method here is inert and this block costs a classic launch two
+  // signal listeners and nothing on the wire. It is built BEFORE `render()` because that is where T9 enters
+  // — the screen has to be taken before Ink paints its first frame into it.
+  //   `writeSync` on fd 1, not `process.stdout.write`: the teardown's callers are `process.exit` and a dying
+  // process, neither of which drains an async write queue. `appRef` gives the guard canon `zuy`'s unmount
+  // attempt (L181502) without a forward reference — Ink does not exist yet on this line.
+  //   THE UPGRADE GATE READS A RESOLVED NAME, NOT `TERM_PROGRAM` (T6 review F5). Canon feeds `Ybe()` from
+  // `Z.terminal` = `oeh()` (L22139), and kitty — the terminal the feature is named after — sets no
+  // `TERM_PROGRAM` at all, so the raw variable could never reach two of canon's seven.
+  //   AND WHO OWNS THE SIGNALS IS DECLARED, NOT SNIFFED (review F8). `beforeExit` present means main
+  // registered the handlers and will drain our teardown out of that array; absent (`ccx attach`) means
+  // nobody will, and the guard takes the signals itself. One expression decides both, so they cannot
+  // disagree — a launch that owned the signals but passed no array used to get no cleanup at all.
+  const appRef: { current?: { unmount(): void } } = {};
+  const terminalName = resolveTerminalName(process.env);
+  const altGuard = createAltScreenGuard({
+    writeSync: (s) => { if (process.stdout.isTTY) writeSync(1, s); },
+    ...(terminalName ? { termProgram: terminalName } : {}),
+    unmount: () => { appRef.current?.unmount(); },
+    signalsOwned: opts.beforeExit !== undefined,
+  });
+  const stopSignalSafety = altGuard.installSignalSafety();
+  // ONE TEARDOWN, BOTH ROUTES (review F1). Everything the REPL owes the terminal, in the order §A6 requires,
+  // latched so the route that does not win runs nothing. The signal route drains it out of `beforeExit`
+  // (`cli/main.ts:424`) ahead of `host.stop` and `process.exit`; the graceful route reaches the `finally`
+  // below. They are not exclusive — the guard's unmount settles `waitUntilExit()`, so a signal makes the
+  // `finally` run too, which is exactly the microtask that used to paint the title reset and the unpark onto
+  // the user's shell screen AFTER rmcup.
+  const teardown = createChatTeardown({
+    offResizeListener: () => process.stdout.off("resize", onTerminalResize),
+    stopResize: () => resize?.stop(),          // W2 t7 — drop the settle window with it: it WRITES when it fires
+                                               // (…and in fullscreen there is nothing to stop — T9 built none)
+    clearTitle: () => title.clear(),           // `a0u` (L148428) — hand the terminal back with an empty title
+    parkedColumn: output.parkedColumn,
+    stopSignalSafety,
+    guard: altGuard,
+    sessionId: () => liveSession?.sessionId,   // read LATE — see the live-getter note above
+    write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); },
+  });
+  if (opts.beforeExit) opts.beforeExit.push(teardown);
+  // ── FSW T9 — TAKE THE SCREEN. `enter()` IS the arming (T6): every other method on the guard has been inert
+  // until this line, and a classic launch never reaches it. The position is the contract in both directions.
+  // AFTER the teardown is registered, because from here on an exit of any kind — signal, throw, `/exit` — owes
+  // the terminal an rmcup, and a screen taken before anything can give it back is the one failure §A3 exists
+  // to prevent. BEFORE `render()`, because `render()` paints Ink's first frame synchronously: armed any later
+  // and that frame lands on the user's shell screen and is then hidden behind the smcup, which is both a
+  // visible flash and a scrollback line nobody asked for.
+  //   …and `renderer={renderer}` below is a PROP at a stable element position (plan review C5) — no `key`, no
+  // wrapper that exists in only one mode — because T15's `/tui` flips it on a LIVE session and ChatApp may not
+  // unmount when it does. Today the value is a constant; the state that will drive it belongs here, above this
+  // element, and nothing about that line changes when it arrives.
+  if (fullscreen) altGuard.enter();
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
       <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
         initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
-        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output}
+        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
         initialTodosOpen={prefs.showExpandedTodos ?? true}
+        renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess}
         {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
     </UserKeymap>,
     { exitOnCtrlC: false, stdout: output.stdout },
   );
+  appRef.current = app;
   bridge.bind(() => app.clear());
-  try { await app.waitUntilExit(); }
-  finally {
-    process.stdout.off("resize", onTerminalResize);
-    resize.stop();                       // W2 t7 — …and drop the settle window with it: it WRITES when it fires
-    title.clear();                     // `a0u` (L148428) — hand the terminal back with an empty title
-    // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our spaces.
-    if (process.stdout.isTTY && output.parkedColumn() > 0) process.stdout.write("\x1b[2K\x1b[G");
-  }
+  // `/exit`, the double-ctrl-C arm and `ccx attach`'s onDetach all reach here the same way — they settle
+  // Ink's `waitUntilExit()` — so all three print the resume pointer (the deliberate divergence from canon's
+  // graceful-only hint). A signal got there first? Then this is a no-op and the pointer is already out.
+  try { await app.waitUntilExit(); } finally { teardown(); }
 }

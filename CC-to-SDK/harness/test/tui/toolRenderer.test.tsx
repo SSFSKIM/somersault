@@ -8,6 +8,7 @@ import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8File
 import { FoldPendingState } from "../../src/tui/foldPendingState.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
+import { INTERRUPT_CANCELLED } from "../../src/tui/species.js";
 import { resolveThemeColor, setTheme, THEMES, themeTokens } from "../../src/tui/theme.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
@@ -131,6 +132,24 @@ describe("F1 shared tool renderer", () => {
   it("renders interruption and rejection dim rather than error-coloured, and clips a rejection to one row", () => {
     expect(bodyOf(renderToolEvent(read, { ...normalized, status: "interrupted", output: "Interrupted", outputLines: ["Interrupted"] }, options))).toEqual([{ text: "Interrupted · What should Claude do instead?", dim: true }]);
     expect(bodyOf(renderToolEvent(read, { ...normalized, status: "rejected", output: "Tool use rejected\ntrailing detail", outputLines: ["Tool use rejected", "trailing detail"] }, options))).toEqual([{ text: "Tool use rejected", dim: true }]);
+  });
+  // ── QA WAVE 2 DELTA — an interrupted `ExitPlanMode` is a PLAN REJECTION, and upstream names it.
+  // Wave 2's A4 fix made a feedback-less plan rejection end the turn by sending the SDK deny arm's
+  // `interrupt: true` (gate.ts, probe 106), and the row it leaves behind took the generic interrupted-tool
+  // copy. Canon prints its own row for this: `EAr` (bundle L421286) renders the literal below, and paints it with
+  // the `subtle` theme token (`color: "subtle"`) rather than the SGR dim attribute the generic prompt takes.
+  // The three negatives are the whole discrimination: an ESC-cancelled plan is not a rejection (the engine
+  // writes `INTERRUPT_CANCELLED` as that tool_result's content — toolResult.ts), the WITH-FEEDBACK arm is an
+  // `error` carrying the human's sentence verbatim and must be untouched, and no other tool takes this copy.
+  it("names an interrupted ExitPlanMode as upstream's plan rejection, and nothing else", () => {
+    const plan = { ...read, id: "plan-1", name: "ExitPlanMode", input: { plan: "# do the thing" } };
+    const rejected = { ...normalized, tool: "ExitPlanMode", status: "interrupted" as const, summary: "ExitPlanMode", flatText: "", output: "", outputLines: [] };
+    expect(bodyOf(renderToolEvent(plan, rejected, options))).toEqual([{ text: "User rejected Claude's plan:", color: resolveThemeColor(themeTokens().subtle) }]);
+    const cancelled = { ...rejected, flatText: INTERRUPT_CANCELLED, output: INTERRUPT_CANCELLED, outputLines: [INTERRUPT_CANCELLED] };
+    expect(bodyOf(renderToolEvent(plan, cancelled, options))).toEqual([{ text: "Interrupted · What should Claude do instead?", dim: true }]);
+    const feedback = { ...rejected, status: "error" as const, flatText: "use argparse only", output: "use argparse only", outputLines: ["use argparse only"] };
+    expect(bodyOf(renderToolEvent(plan, feedback, options))).toEqual([{ text: "use argparse only", color: resolveThemeColor(themeTokens().error) }]);
+    expect(bodyOf(renderToolEvent(read, { ...normalized, status: "interrupted", flatText: "", output: "", outputLines: [] }, options))).toEqual([{ text: "Interrupted · What should Claude do instead?", dim: true }]);
   });
   it("still marks overflow when SGR-heavy source exceeds the bound in bytes but not in visual rows", () => {
     const heavy = "\u001b[31m".repeat(200) + "x";                       // > 120-char bound at width 10, one visual row

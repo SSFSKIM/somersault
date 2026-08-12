@@ -104,7 +104,10 @@ describe("reserved keys", () => {
   // pager half-page-down on a surface that scrolls, it REPLACED an explicit unbind rather than a live exit
   // binding, and shadowing Global's app:exit was that unbind's only job — so the reserved key's reason
   // ("used for exit") is still honoured, not overridden.
-  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c", "SelectDecision ctrl+d"];
+  // `Help ctrl+c` (QA wave 2 delta) joins on the `Transcript ctrl+c` precedent and then some: it does not
+  // shadow Global's exit gesture, it NAMES Global's own `app:interrupt` so the same arm runs — the binding
+  // exists only because a swallowing context cannot inherit (see bindings.ts).
+  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Help ctrl+c", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c", "SelectDecision ctrl+d"];
   it("no default binding collides with an error-reserved key beyond the grandfathered pairs", () =>
     expect(reservedCollisions(DEFAULT_BINDINGS).sort()).toEqual([...GRANDFATHERED].sort()));
   it("the collision check bites — a new reserved binding is caught", () =>
@@ -148,9 +151,19 @@ describe("overlay gating, expressed as null bindings", () => {
   // and stops the walk before `Global`'s `app:interrupt` is ever reached. `Transcript` and `HistorySearch` are
   // deliberately absent from this list: they REBIND the key to their own exit/cancel, which is a different
   // claim, pinned by their own cases below.
-  it.each(["Select", "Settings", "MessageSelector", "Help", "EffortDialog", "SessionPicker"])("%s must not touch ctrl+c — the exit arm has to reach Global", (context) => {
+  it.each(["Select", "Settings", "MessageSelector", "EffortDialog", "SessionPicker"])("%s must not touch ctrl+c — the exit arm has to reach Global", (context) => {
     expect("ctrl+c" in block(context).bindings, `${context} must leave ctrl+c to Global`).toBe(false);
   });
+  // QA WAVE 2 DELTA — `Help` LEFT that list, and the reason is a mechanism the list cannot express. Falling
+  // through to `Global` is what makes absence sufficient, and a SWALLOWING context has no fall-through:
+  // `swallowContexts` (registry.ts) narrows resolution to the swallower's own context, so the `?` overlay ate
+  // the exit gesture with no null anywhere to blame. The repair is the narrowest one available — bind Global's
+  // OWN action, so the key resolves in `Help` and still reaches the one `app:interrupt` handler and the 800 ms
+  // arm behind it. `null` here would be the very bug Task 3 removed, and any other action would move the
+  // gesture's meaning; both are what this case exists to catch. The behaviour half (a first press arms, a
+  // second exits, with the overlay still on screen) is in keys-migration-dialogs.test.tsx's Wave 2 t3 block.
+  it("Help REBINDS ctrl+c to Global's own action, because a swallow cannot fall through", () =>
+    expect(block("Help").bindings["ctrl+c"]).toBe("app:interrupt"));
   // t8 review, Minor B: `Task` stays pushed for the whole turn and sits BELOW any overlay, so unbinding plain
   // ctrl+b without its chord alias left `ctrl+x ctrl+b` still backgrounding the turn from inside the bg panel
   // or /config — one key unbound while its alias worked, exactly the split this table exists to remove.
@@ -243,6 +256,66 @@ describe("overlay gating, expressed as null bindings", () => {
     expect(b["ctrl+b"]).toBe("scroll:fullPageUp");
     for (const k of ["ctrl+r", "ctrl+t"]) expect(b[k], `Transcript ${k} must be null`).toBeNull();
     for (const k of GLOBAL_KEYS) expect(b, `Transcript ${k} must be spoken for`).toHaveProperty(k);
+  });
+  // ── FSW TASK 11: the `Scroll` context ────────────────────────────────────────────────────────────────
+  // `Scroll` has been in VALID_CONTEXTS since F2 and bound NOTHING until now — canon's own name for "a
+  // scrollable view is focused (fullscreen layout)", and there was no such view until the fullscreen renderer
+  // grew one. Canon's block (grounding §3.5, bundle 446135-446250) also carries wheel, selection-extension and
+  // copy keys; this wave is keyboard-only, so exactly four keys land and the rest stay unbound rather than
+  // resolving to actions no handler could answer.
+  // FSW TASK 12 adds the fifth: `v`, the transcript dump (canon L549336, advertised on canon's own transcript
+  // screen as `v to open in ${editor}`, L547303). It is the escape hatch for a renderer that leaves no
+  // scrollback behind, and it is the one PRINTABLE key in this block — see `FullscreenViewport` for the
+  // reachability gate that keeps it off a composer the user is typing into.
+  it("Scroll binds the four keyboard scroll keys plus the v dump, and nothing else", () => {
+    expect(block("Scroll").bindings).toEqual({
+      "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
+      "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+      "v": "scroll:dumpTranscript",
+    });
+  });
+  // The dump is bound HERE and not in `Transcript` (plan review I5): the ctrl+O pager is a second reading
+  // surface, but the scrollback that vanishes is the FULLSCREEN region's, and that is the surface `Scroll`
+  // names. A stray copy in the pager's block would be a second home for one key.
+  it("the v dump is a Scroll action, declared and unbound anywhere else", () => {
+    expect(VALID_ACTIONS).toContain("scroll:dumpTranscript");
+    expect(all.filter((x) => x.action === "scroll:dumpTranscript").map((x) => x.context)).toEqual(["Scroll"]);
+  });
+  // THE HALF-PAGE IS PER-CONTEXT, and that is the whole reason the fix is a second binding rather than an edit
+  // to `PAGER_ACTIONS`. Canon's `scroll:pageUp`/`pageDown` handlers move `floor(viewport/2)` DESPITE THE NAME
+  // (446159-446174), while the ctrl+O transcript view's PgUp is a full page. One shared action map, two
+  // contexts naming different entries in it — so `Transcript` keeps `scroll:pageUp` and `Scroll` names
+  // `scroll:halfPageUp`, and neither surface has to be renamed to describe the other.
+  it("Scroll's PgUp/PgDn are HALF pages while Transcript's are FULL — same map, different entries", () => {
+    expect(block("Scroll").bindings["pageup"]).toBe("scroll:halfPageUp");
+    expect(block("Transcript").bindings["pageup"]).toBe("scroll:pageUp");
+  });
+  // THE CENSUS THAT CATCHES DRIFT. Task 11 was allowed to touch the `Scroll` block and nothing else, and the
+  // grandfathered-collision list above only sees reserved keys — a `Transcript` entry retargeted while adding
+  // the sibling context would slip past every other case in this file. So the pager's block is pinned WHOLE.
+  it("the Transcript block is unchanged, key for key", () => {
+    expect(block("Transcript").bindings).toEqual({
+      "escape": "transcript:exit", "q": "transcript:exit", "ctrl+c": "transcript:exit",
+      "ctrl+u": "scroll:halfPageUp", "ctrl+d": "scroll:halfPageDown",
+      "ctrl+b": "scroll:fullPageUp", "ctrl+f": "scroll:fullPageDown",
+      "ctrl+n": "scroll:lineDown", "ctrl+p": "scroll:lineUp",
+      "g": "scroll:top", "shift+g": "scroll:bottom", "j": "scroll:lineDown", "k": "scroll:lineUp",
+      "space": "scroll:fullPageDown", "b": "scroll:fullPageUp",
+      "up": "scroll:lineUp", "down": "scroll:lineDown", "pageup": "scroll:pageUp", "pagedown": "scroll:pageDown",
+      "home": "scroll:top", "end": "scroll:bottom",
+      "ctrl+e": "transcript:toggleShowAll", "ctrl+o": "transcript:exit",
+      "ctrl+r": null, "ctrl+t": null, "alt+p": null, "alt+t": null, "ctrl+x ctrl+b": null,
+    });
+  });
+  // Not an overlay owner and not a decision surface: `Scroll` is the BACKGROUND context of the fullscreen
+  // renderer — the transcript region is what the user is looking at, with the composer still live below it —
+  // so every root global must keep falling through to `Global`, and both composer keys must keep reaching the
+  // composer. A suppression block copied from the dialogs would have killed ctrl+o, ctrl+t and ctrl+r for the
+  // whole of a fullscreen session.
+  it("Scroll suppresses nothing: it is the background of the fullscreen renderer, not an overlay", () => {
+    const b = block("Scroll").bindings;
+    for (const k of [...GLOBAL_KEYS, "alt+p", "alt+t", "ctrl+x ctrl+b"])
+      expect(k in b, `Scroll must leave ${k} alone`).toBe(false);
   });
   it("Confirmation is the decision owner: the gate deliberately keeps the root globals live", () => {
     const b = block("Confirmation").bindings;

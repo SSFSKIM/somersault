@@ -122,6 +122,24 @@ describe("formatters", () => {
     expect(withId).toContain("session    0d7a7a9d");
     expect(formatStatus({ mode: "default", thinkLevel: "default" }).map((l) => l.text).join("\n")).not.toContain("session");
   });
+  // FSW T5, acceptance F9 quoted: "`/status` names the renderer, its provenance reason, and which correction
+  // stack is live (§A2a)." All three in one row, byte-pinned — the reason word is the whole point of the row
+  // (a user who cannot see WHY the renderer is what it is cannot tell a deliberate pin from a silent
+  // fallback), and the padding puts it in the same label column as every row above it.
+  it("status: names the renderer, its provenance reason and the live correction stack", () => {
+    const lines = formatStatus({ mode: "default", renderer: { mode: "classic", reason: "default_off" } }).map((l) => l.text);
+    expect(lines.at(-1)).toBe("  renderer   classic (default_off) · corrections: main-screen stack");
+    // The reason travels verbatim: a tmux -CC launch must not read as "the default did this".
+    expect(formatStatus({ mode: "default", renderer: { mode: "classic", reason: "tmux_cc_off" } }).map((l) => l.text).at(-1))
+      .toBe("  renderer   classic (tmux_cc_off) · corrections: main-screen stack");
+    // FSW T9 — and the OTHER stack is real now. Fullscreen constructs none of the main-screen machinery
+    // (chatMain's gate); what it has instead is the fixed frame plus D21's post-resize erase, and this row is
+    // where a launch that somehow ran one screen's stack under the other screen would be visible.
+    expect(formatStatus({ mode: "default", renderer: { mode: "fullscreen", reason: "env_on" } }).map((l) => l.text).at(-1))
+      .toBe("  renderer   fullscreen (env_on) · corrections: alt-screen repaint contract");
+    // No decision to report → no row, like every other optional row here. Not a guessed "classic".
+    expect(formatStatus({ mode: "default" }).map((l) => l.text).join("\n")).not.toContain("renderer");
+  });
   it("cost/status are in the command table", () => {
     expect(COMMANDS.some((c) => c.name === "cost")).toBe(true);
     expect(COMMANDS.some((c) => c.name === "status")).toBe(true);

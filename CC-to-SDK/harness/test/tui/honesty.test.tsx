@@ -133,7 +133,8 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     expect(s.stashed).toBeNull();
   },
 
-  // ChatApp exposes NO editExternal injection point (it never forwards the prop to <ChatComposer>), so
+  // ChatApp exposes NO editExternal injection point (the one prop it forwards is the REAL editor wrapped in
+  // the fullscreen alt-screen handoff, and only when it holds that guard — FSW t12 review I1), so
   // proving this through ChatApp would either shell out to a real $EDITOR or silently prove nothing. The
   // chord is owned entirely by ChatComposer, so this proof renders it directly with an injected fake —
   // exactly what test/tui/components.test.tsx already does for the same chord.

@@ -16,6 +16,7 @@ import { validateAddDir, formatAddDirVerdict, formatAddDirResult, type AddDirVer
 import { mergeSettingsFile, appendToArray, type SettingsFileDeps, type SettingsTarget } from "./settingsFile.js";
 import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsModel.js";
 import type { CcxPrefs } from "./prefs.js";
+import type { RendererChoice } from "./renderer.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
 import { isInterruptSentinelFrame, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
 import { createSuggester as realCreateSuggester, formatTranscriptTail, markSuggestionAccepted, suggestionRenderStep, suggestionSuppression, EMPTY_SUGGESTION, TAIL_MESSAGE_CHARS, type PromptSuggestion, type Suggester, type TailMessage } from "./suggester.js";
@@ -31,6 +32,8 @@ import { userEchoLines, type RenderLine } from "./render.js";
 import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
+import { RESIZE_SETTLE_MS } from "./resizeRepaint.js";
 import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState } from "./foldPendingState.js";
@@ -92,7 +95,12 @@ export interface SessionInfo { sessionId: string; summary: string; firstPrompt?:
  *  the returned state, so this closure is how a source-backed detail projection reaches the pager without
  *  anyone reaching into the document itself. */
 export type DetailItems = (projection: "detail-all" | "detail-collapsed") => readonly RenderItem[];
-export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; /** W-C T11 (EP-C6): the session's live effort level, and whether the live model has the axis at all (undefined = the catalog has not answered yet). */ effort?: EffortLevel; effortSupported?: boolean; /** What the picker's/dialog's `(default)` clause compares against — see `DEFAULT_EFFORT`. */ defaultEffort: EffortLevel; effortDialog: { open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+export interface ChatState { sessionId?: string; staticItems: readonly RenderItem[];
+  /** FSW Task 3: the WHOLE compact projection, of which `staticItems` is the committed head. The tail
+   *  (everything whose id is not in `staticItems`) is what the render-time live window selects from — see
+   *  `reconcile`. Consumers that want "the finalized transcript" want THIS; `staticItems` answers the
+   *  narrower question "what has already been written to scrollback and can never be repainted". */
+  finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; /** W-C T11 (EP-C6): the session's live effort level, and whether the live model has the axis at all (undefined = the catalog has not answered yet). */ effort?: EffortLevel; effortSupported?: boolean; /** What the picker's/dialog's `(default)` clause compares against — see `DEFAULT_EFFORT`. */ defaultEffort: EffortLevel; effortDialog: { open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -149,12 +157,22 @@ export function useChat(
      *  the engine's hooks to the statusLine payload. Created and registered by whoever OWNS the engine —
      *  `runForegroundImpl`, which builds the host config — so `ccx attach` passes none and both keys stay
      *  absent. See `hooks/promptLatch.ts` for why a hook is the only route. */
-    promptLatch?: PromptLatch } = {},
+    promptLatch?: PromptLatch;
+    /** FSW TASK 5 (F9): the renderer decided ONCE at boot, with the reason word `/status` prints. RESOLVED BY
+     *  THE CALLER (`chatMain.tsx`), like `initialOutputStyle` and `statusLine`, and for the stronger version
+     *  of the same reason: the decision reads the real TTY, the real env and the prefs file, and re-deciding
+     *  it here would let a `/status` in a test — or in a second call site — name a renderer other than the
+     *  one that is actually painting. Absent for a hook mounted outside chatMain, which has no decision. */
+    rendererChoice?: RendererChoice } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
   // on the runner's OS (the active leader glyph is `⏺` on darwin and `●` everywhere else).
-  deps: { now?: () => number; columns?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string, dir?: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
+  // `rows` (FSW Task 3) is `columns`'s sibling and exists for the same two reasons: the terminal HEIGHT is
+  // now an input to the rendering boundary (it sets the live window's budget), and `ink-testing-library`'s
+  // stdout stub reports no `rows` at all — so without a seam every component test would silently reconcile
+  // against the 24-row POSIX default and no test could pin the boundary at any other geometry.
+  deps: { now?: () => number; columns?: () => number; rows?: () => number; home?: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; scheduleRepaint?: (cb: () => void, ms: number) => () => void; listSessions?: (scope?: ResumeScope) => Promise<SessionInfo[]>; readSessions?: (opts: ListSessionsOpts) => Promise<SessionInfo[]>; hasWorktrees?: (cwd: string) => Promise<boolean>; getSessionMessages?: (id: string, dir?: string) => Promise<any[]>; runBash?: (cmd: string, cwd: string) => Promise<BashResult>; clearScreen?: () => void; clearViewport?: () => void; copyText?: (t: string) => Promise<void>; writeFile?: (path: string, text: string) => void; readFile?: (path: string) => string | null; renameSession?: (id: string, title: string, dir?: string) => Promise<void>; tagSession?: (id: string, tag: string | null) => Promise<void>; getSessionInfo?: (id: string, dir?: string) => Promise<any>; settingsFileDeps?: SettingsFileDeps; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; openEditor?: (file: string, prepare: () => void) => "no-editor" | "opened" | "failed"; rewindReplayRetry?: { attempts: number; delayMs: number };
     /** Wave C Task 1/2: the notification queue. Injected so a test can drive its timers synthetically. */
     notifications?: NotificationStore;
     /** Wave C Task 7: the duration row's verb. Upstream picks it uniformly at random (`SvH`), which would
@@ -174,6 +192,7 @@ export function useChat(
   const cwd = opts.cwd ?? process.cwd();
   const nowFn = deps.now ?? (() => Date.now());
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
+  const rowsFn = deps.rows ?? (() => process.stdout.rows ?? 24);
   const scheduleRepaint = deps.scheduleRepaint ?? ((cb: () => void, ms: number) => { const id = setInterval(cb, ms); return () => clearInterval(id); });
   const home = deps.home ?? homedir(), platform = deps.platform ?? process.platform;
   // F3 Task 9 (LT20): the background hint is DERIVED from the live binding table on every render — a rebind of
@@ -244,10 +263,29 @@ export function useChat(
   // (not `useRef(new …)`) so a re-render does not allocate a state object it immediately discards.
   const pendingStateRef = useRef<FoldPendingState | null>(null);
   if (pendingStateRef.current === null) pendingStateRef.current = new FoldPendingState({ now: nowFn });
+  // ── FSW Task 3: the rendering boundary, in two phases ─────────────────────────────────────────────────
+  /** The hard bound on the live (re-rendered) subtree, in physical rows: what the terminal has left once the
+   *  dock is paid for, LESS `WINDOW_SLACK`. The subtraction is the whole safety margin — `mainWindowCap`
+   *  measures the dock at its maximum, so a window filled to that cap under a maximal dock sums to exactly
+   *  `rows` and takes Ink's tall-frame branch. Read live (never captured): commit is settle-driven, so the
+   *  honest budget is the one the terminal has at the moment something settles. */
+  const commitCap = (): number => Math.max(0, mainWindowCap(rowsFn()) - WINDOW_SLACK);
+  /** The FULL compact projection, retained rather than discarded. It is what the render-time window is
+   *  selected from (ChatApp), and `staticItems` is now strictly its committed HEAD rather than all of it. */
+  const initialFinalized = useRef<readonly RenderItem[] | null>(null);
+  if (initialFinalized.current === null) initialFinalized.current = projectCompact(documentRef.current!, projectionContext());
+  const [finalizedItems, setFinalizedItems] = useState<readonly RenderItem[]>(initialFinalized.current);
+  /** The same list as a ref, for `publishLiveWindow` below — it is called from a passive effect in ChatApp,
+   *  which is one commit later than the render whose closure it would otherwise read. */
+  const finalizedRef = useRef<readonly RenderItem[]>(initialFinalized.current);
+  // THE MOUNT PUBLISH IS THE SAME SPLIT, not a special case: a resumed or attached session used to dump its
+  // whole history into <Static> here, which put the tail out of reach of reflow before the first frame was
+  // ever painted. Only what the window cannot hold is published; the rest is live from the start.
   const [staticItems, setStaticItems] = useState<readonly RenderItem[]>(() => {
-    const items = projectCompact(documentRef.current!, projectionContext());
-    for (const item of items) publishedIds.current.add(item.id);
-    return items;
+    const cap = commitCap();
+    const { commit } = selectLiveWindow(initialFinalized.current!, cap, cap);
+    for (const item of commit) publishedIds.current.add(item.id);
+    return commit;
   });
   const [pendingItems, setPendingItems] = useState<readonly RenderItem[]>(() => livePending());
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
@@ -409,6 +447,11 @@ export function useChat(
    *  support, and `formatStatus`'s own `default` fallback covers a session that has no level yet. */
   const statusEffort = (): { effort?: EffortLevel; effortSupported?: false } =>
     effortSupported === false ? { effortSupported: false } : (effort ? { effort } : {});
+  /** FSW T5 — the same one-helper-two-surfaces rule `statusEffort` above exists for, applied to the renderer
+   *  row: `/status` and the Settings dialog's Status tab both spread this, so neither can grow a reading the
+   *  other lacks. A CONSTANT for the life of the process (the decision is made once at boot and a resize
+   *  never re-runs it, spec §L2.1), so unlike `statusEffort` it closes over nothing that moves. */
+  const statusRenderer = (): { renderer?: RendererChoice } => opts.rendererChoice ? { renderer: opts.rendererChoice } : {};
   /** DIVERGENCE: upstream's `(default)` clause compares the level against the MODEL's default — `I5t`, off
    *  its own per-model registry (`_5(model, value)` falls back to `high`, L76470). The SDK catalog exposes
    *  `supportsEffort`/`supportedEffortLevels` and no default at all, so ccx compares against its own
@@ -628,13 +671,17 @@ export function useChat(
    *
    *  THE GENERATION GUARD (final review, finding 5) is what makes the two safe together: the id/dir pair is
    *  captured at fetch time and so is `titleGen`, and a read that returns after the boundary has moved on is
-   *  dropped instead of publishing a dead conversation's title over the live one. */
-  const adoptAiTitle = (sessionId?: string, dir?: string): void => {
+   *  dropped instead of publishing a dead conversation's title over the live one.
+   *
+   *  RETURNS ITS PROMISE (W2 A8) so the turn's one status-line refresh can wait for it — see
+   *  `statusRefreshAfterTurn`. Every caller may still ignore it; a latched or id-less call is already
+   *  settled. */
+  const adoptAiTitle = (sessionId?: string, dir?: string): Promise<void> => {
     const id = sessionId ?? session.sessionId;
-    if (aiTitleFetched.current || !id) return;
+    if (aiTitleFetched.current || !id) return Promise.resolve();
     aiTitleFetched.current = true;
     const gen = titleGen.current;
-    void getSessionInfoFn(id, dir).then(
+    return getSessionInfoFn(id, dir).then(
       (info) => { if (disposed.current || gen !== titleGen.current) return; const t = (info as any)?.customTitle ?? (info as any)?.summary; if (typeof t === "string" && t.trim()) setAiTitle(t.trim()); },
       () => {},
     );
@@ -785,7 +832,12 @@ export function useChat(
     const disarmCap = deps.statusLine?.clearTimeout ?? ((h: unknown): void => { clearTimeout(h as ReturnType<typeof setTimeout>); });
     let capTimer: unknown, unmounted = false;
     const capped = new Promise<void>((resolve) => { capTimer = armCap(() => { capTimer = undefined; resolve(); }, STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS); });
-    void Promise.race([refreshCtx(), capped]).then(() => {
+    //   AND THE READ IS QUIET, WHICHEVER SIDE WINS (external review, finding A). `refreshCtx`'s own poke is
+    // dropped while the gate is shut (the driver is not published yet), but the CAP publishes it — so a read
+    // that answers after the cap poked the driver it had just been handed, and the boot the gate exists to
+    // hold to one run went out as two: the zero-window row, then its correction. The reading is still kept;
+    // it reaches the payload through the next trigger, exactly as the cap's own comment above promises.
+    void Promise.race([refreshCtx({ quiet: true }), capped]).then(() => {
       if (capTimer !== undefined) { disarmCap(capTimer); capTimer = undefined; }
       if (unmounted) return;                              // a hook torn down mid-read leaves the ref null
       statusDriverRef.current = driver;                   // the gate opens: pokes reach the driver from here
@@ -804,15 +856,21 @@ export function useChat(
   //   THE LIST IS UPSTREAM'S, MINUS WHAT CCX HAS NO PRODUCER FOR: `vimMode`, `fastMode` and `prStatus` do not
   // exist here, and `effortValue` arrives with TASK 11 (its payload block does too). `tokenUsage` and
   // `lastAssistantMessageId` are not React state in ccx at all — they are the two refresher refs above, which
-  // poke explicitly from their own completion. `outputStyle`/`session_name` are ccx additions to the list:
+  // poke explicitly from their own completion. `outputStyle`/`renameTitle` are ccx additions to the list:
   // both are payload fields here, and both can change with no turn in sight.
+  //   `aiTitle` IS DELIBERATELY NOT ON IT (W2 A8, and it is the half the live re-run caught). Unlike
+  // `renameTitle` it has exactly one producer, `adoptAiTitle`, and exactly one moment — the first turn's
+  // end. Left on the list it poked there on its own, ~300 ms after a local disk read and so a whole run
+  // ahead of the second-scale control readings: the first turn of every conversation ran the user's script
+  // twice however well the readings were gated. `statusRefreshAfterTurn` AWAITS the same promise instead,
+  // which is what puts `session_name` in the turn's one run rather than in a run of its own.
   const statusFirstRender = useRef(true);
   useEffect(() => {
     if (statusFirstRender.current) { statusFirstRender.current = false; return; }
     pokeStatusLine("state-delta");
     // W-C T11: `effort` IS upstream's `effortValue` delta, and `effortSupported` rides with it because the
     // catalog landing is the moment the block appears or disappears from the payload.
-  }, [mode, model, thinkLevel, outputStyle, renameTitle, aiTitle, effort, effortSupported]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, model, thinkLevel, outputStyle, renameTitle, effort, effortSupported]);   // eslint-disable-line react-hooks/exhaustive-deps
   const ranInitial = useRef(false);
   const ranInitialPrompt = useRef(false);
   // Set for the whole window in which THIS client's own rewind/clear is in flight, so the host's `rewound`
@@ -845,6 +903,17 @@ export function useChat(
     if (!live) return;
     for (const [id, ms] of live.thinkingDurations(nowFn())) thoughtMsRef.current.set(`message:${id}`, ms);
   }
+  /** FSW Task 3 — THE COMMIT PHASE, and only that. What used to happen here (every unseen finalized item
+   *  goes straight into Static) is now split in two, because "this row is settled" and "this row has
+   *  scrolled out of reach" are different facts that become true at different moments:
+   *    · here, at SETTLE: an item is published once the live window can no longer hold it. Publication is
+   *      irreversible — it is a write into Ink's append-only <Static> — so it must never ride a transient
+   *      geometry. Reconcile runs when the DOCUMENT moves, which is the one cadence that is not a drag.
+   *    · in ChatApp, at RENDER: which of the still-unpublished tail is on screen this frame. That one is
+   *      cheap, reversible, and has to keep up with a resize, so it is a derivation and not a commit.
+   *  The filter order is what makes the ratchet automatic (`liveWindow.ts`'s input contract): published
+   *  items are removed BEFORE the selector sees them, so nothing already in Static can be re-selected into
+   *  the live subtree and printed a second time. `publishedIds` remains the sole authority. */
   function reconcile(): void {
     if (disposed.current) return;
     // BEFORE the projection, not after: a group row's item id is derived from its membership alone, so a
@@ -852,13 +921,63 @@ export function useChat(
     mergeThoughtMs();
     const context = projectionContext();
     const finalized = projectCompact(documentRef.current!, context);
-    const unseen = finalized.filter((item) => !publishedIds.current.has(item.id));
-    if (unseen.length) {
-      for (const item of unseen) publishedIds.current.add(item.id);
-      setStaticItems((s) => [...s, ...unseen]);
+    setFinalizedItems(finalized); finalizedRef.current = finalized;
+    const unpublished = finalized.filter((item) => !publishedIds.current.has(item.id));
+    const cap = commitCap();
+    const { commit } = selectLiveWindow(unpublished, cap, cap);
+    if (commit.length) {
+      for (const item of commit) publishedIds.current.add(item.id);
+      setStaticItems((s) => [...s, ...commit]);
     }
     setPendingItems(livePending(context));
   }
+  /** FSW T3 FIX ROUND (review I2) — publish the WHOLE live window, geometry ignored. The one caller is
+   *  ChatApp, on a pane-owning surface going up: the live subtree is blanked for as long as a dialog owns
+   *  the screen, and hiding those rows meant the last `rows − 16` of transcript disappeared for the life of
+   *  the dialog instead of sitting readable in scrollback above it, which is where they were before this
+   *  task. A dialog opening is a settled event, so the commit ratchet applies honestly — that is what makes
+   *  this a publish and not a second kind of hiding. The accepted cost is that the ratchet is now driven by
+   *  a UI event as well as by the document: rows committed this way are frozen at the width they were
+   *  projected at, exactly as any other committed row is. */
+  function publishLiveWindow(): void {
+    if (disposed.current) return;
+    const unpublished = finalizedRef.current.filter((item) => !publishedIds.current.has(item.id));
+    if (!unpublished.length) return;
+    for (const item of unpublished) publishedIds.current.add(item.id);
+    setStaticItems((s) => [...s, ...unpublished]);
+  }
+  /** FSW TASK 4 — THE SECOND THING THAT MAKES A PROJECTION STALE, and the only one this hook could not see.
+   *  Every row below is projected AT A WIDTH (`projectionContext().columns`): a user echo is a band padded to
+   *  `width − 1`, a tool result is folded and clipped to `columns`, a table is fitted to it. Reconcile ran on
+   *  DOCUMENT movement alone, so after a resize every one of those rows kept the wrapping of a terminal that
+   *  no longer exists — and the render-time window (ChatApp) cannot repair it, because it SELECTS from these
+   *  items and does not re-make them. A rows-only change needs nothing here (the selector re-runs at render
+   *  time and the projection does not depend on height); a COLUMNS change invalidates the projection itself.
+   *
+   *  AND IT WAITS FOR THE DRAG TO STOP, which is the same rule the commit phase already lives by. Re-running
+   *  reconcile is not free of consequence: it can COMMIT (a narrowing makes the tail taller, so rows fall out
+   *  of the budget), and a commit is irreversible — publishing rows at a width the drag is passing through
+   *  would freeze them at a geometry the user never stopped on. `RESIZE_SETTLE_MS` is `resizeRepaint`'s own
+   *  settle window, reused rather than re-chosen: it is the number this codebase already means by "the drag
+   *  has stopped", and the two repairs should not disagree about when that is.
+   *
+   *  THE TRIGGER IS A RENDER, not a subscription, and that is deliberate: the terminal size is ChatApp's React
+   *  state (`ChatApp.tsx`'s `size`), so a SIGWINCH the app acts on IS a re-render of this hook — this effect
+   *  has no dep array and therefore gets to ask "did the width move?" at every one of them, for the cost of a
+   *  comparison. A second subscription here would need its own listener ordering against Ink's, which
+   *  `chatMain`'s resize chain already owns and which nothing about a re-projection needs. */
+  const reflowWidth = useRef(columnsFn());
+  const reflowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    const width = columnsFn();
+    if (width === reflowWidth.current) return;
+    reflowWidth.current = width;
+    if (reflowTimer.current !== undefined) clearTimeout(reflowTimer.current);
+    const handle = setTimeout(() => { reflowTimer.current = undefined; reconcile(); }, RESIZE_SETTLE_MS);
+    handle.unref?.();                    // a drag in flight at exit must not hold the process open
+    reflowTimer.current = handle;
+  });
+  useEffect(() => () => { if (reflowTimer.current !== undefined) clearTimeout(reflowTimer.current); }, []);
   /** The transient region: `projectPending` returns everything the compact projection cannot publish yet, and
    *  the live-open set narrows the OPEN calls to the ones a live turn is actually running — so a
    *  disk-bootstrapped dangling call, or one orphaned by a turn that ended without a result, is retained
@@ -1254,21 +1373,18 @@ export function useChat(
         // ends a turn of its own, and that turn end takes the bar down before `session.compact()` returns.
         // Narrow (it needs a submit during the pass), harmless (the `finally` then no-ops on an already-clear
         // state, and the `✦ compacted N → M` row still lands), and not worth a second flag to prevent.
-        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void refreshCtx(); void refreshUsage(); drainNext();
-        // W-C T10: upstream's `lastAssistantMessageId` delta. The two refreshers above poke on their own
-        // completion, but only if they SUCCEED — and a turn that ran is news for the payload either way
-        // (the model may have changed under it, `session_name` may have just been minted). The 300 ms
-        // debounce coalesces this with whichever of the two lands first, so it costs no extra run.
-        pokeStatusLine("turn-end");
+        // W-C T8: the one read of the engine's ai-title. At turn END rather than `turn:start` because the row
+        // it reads is written mid-turn (probe (d) saw it land at row 6 of 20, before the first assistant
+        // frame) — a fetch at start would race the engine's own write. Latched, so it is a no-op from the
+        // second turn on. Its PROMISE goes to the status-line refresh below (W2 A8): the title lands in
+        // `session_name`, so the turn's one run has to be later than the read rather than racing it.
+        // W-C T10 / W2 A8: the two refreshers AND the status line's one refresh for this turn — see
+        // `statusRefreshAfterTurn`, which owns the ordering that makes it one run rather than two.
+        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void statusRefreshAfterTurn(adoptAiTitle()); drainNext();
         // W-C T12 (EP-C5), annex §C5.2: `acd(d, c?.lastResult)` — FIRE AND FORGET, at the end of an assistant
         // turn, after the last tool round-trip. Not a `useEffect`, not idle-based, no debounce and no
         // cooldown; the eligibility chain inside is the only thing that declines.
         maybeRequestSuggestion(!!ev.error);
-        // W-C T8: and the one read of the engine's ai-title. Here rather than at `turn:start` because the row
-        // it reads is written mid-turn (probe (d) saw it land at row 6 of 20, before the first assistant
-        // frame) — a fetch at start would race the engine's own write. Latched, so this is a no-op from the
-        // second turn on.
-        adoptAiTitle();
       }
       else if (ev.kind === "tasks_changed") setBgTasks(ev.tasks);
       else if (ev.kind === "task") {
@@ -1358,15 +1474,24 @@ export function useChat(
    *  in the same tick — React state is read from the render that follows, and `/status` builds its lines
    *  inside the awaiting call. `undefined` for every non-answer there is: a failed read, a reading with no
    *  window, and a hook that has been disposed under it. */
-  async function refreshCtx(): Promise<number | undefined> {
+  async function refreshCtx(opts: { quiet?: boolean } = {}): Promise<number | undefined> {
+    // …AND IT ANSWERS FOR THE CONVERSATION IT ASKED ABOUT, OR NOT AT ALL (external review, finding A). This is
+    // a control round-trip measured at ~1.2 s, and the boundary can land inside it: the mount read (D-W11
+    // below) races `--resume`/`--continue`, and a turn-end read races `/clear`. Every write below is one
+    // `replaceDocument` has just cleared for the W-S5 reason — the chip, the payload's `context_window`, the
+    // `token-warning` row — so a late answer re-posts them ABOUT A CONVERSATION THAT IS GONE, which is the same
+    // rule inverted rather than a new one. The document generation is the boundary's own counter, so every
+    // caller inherits the check and a fifth one cannot forget it.
+    const gen = docEpoch.current;
     try {
       const u = (await session.getContextUsage()) as { totalTokens?: number; maxTokens?: number };
-      if (disposed.current) return undefined;
+      if (disposed.current || docEpoch.current !== gen) return undefined;
       const pct = u?.maxTokens ? Math.round(((u.totalTokens ?? 0) / u.maxTokens) * 100) : undefined;
       if (pct !== undefined) setCtxPct(pct);
       // W-C T10: the same reading is the status line's `context_window`, and the poke is upstream's
       // `tokenUsage` delta by another name — this is the moment the number ccx reports actually moved.
-      if (u) { statusCtxRef.current = { totalTokens: u.totalTokens, maxTokens: u.maxTokens }; pokeStatusLine("context"); }
+      // `quiet` is the turn-end caller alone (`statusRefreshAfterTurn`), which pokes once for both readings.
+      if (u) { statusCtxRef.current = { totalTokens: u.totalTokens, maxTokens: u.maxTokens }; if (!opts.quiet) pokeStatusLine("context"); }
       postTokenWarning(u?.totalTokens, u?.maxTokens);
       return pct;
     } catch { /* best-effort */ return undefined; }
@@ -1400,13 +1525,39 @@ export function useChat(
   }
   // Fire-and-forget at turn-end only — never poll (spec's no-polling rule). Drives the plan-usage warning;
   // /status and /usage fetch usage() directly themselves and don't route through this.
-  async function refreshUsage() {
+  async function refreshUsage(opts: { quiet?: boolean } = {}) {
     try {
       const u = await session.usage();
-      if (!disposed.current) { postUsageWarning(usageWarning(u)); statusUsageRef.current = u as StatusLineUsage; pokeStatusLine("usage"); }   // W-C T10: `cost` + `current_usage`
+      if (!disposed.current) { postUsageWarning(usageWarning(u)); statusUsageRef.current = u as StatusLineUsage; if (!opts.quiet) pokeStatusLine("usage"); }   // W-C T10: `cost` + `current_usage`
       return u;
     }
     catch { return undefined; }
+  }
+  /** WAVE 2 ACCEPTANCE A8 — a turn's ONE status-line refresh, and the reason the two refreshers above have
+   *  a `quiet` arm at all.
+   *
+   *  EP-D4 asked for "a boot produces one run and a turn one refresh". The boot half landed in W2 T6; the
+   *  turn half did not, and the measurement says why: the turn-end poke and the two readings it wants were
+   *  fired in the same statement, so the 300 ms debounce expired long before either control round-trip
+   *  answered (~1.2 s warm, the same number that forced the boot gate). Every turn therefore ran the user's
+   *  script TWICE — once carrying the PREVIOUS turn's `cost`/`context_window`, once with the real ones. The
+   *  unit fakes could not see it because their readings resolve in the same microtask as the poke.
+   *
+   *  So the poke WAITS for both readings and the readings stay quiet until it does. `allSettled`, because a
+   *  reading that fails is not a reason to withhold the turn's refresh — the payload simply carries the last
+   *  numbers it had, which is what it did before either call existed. No cap here (unlike the boot gate): a
+   *  control call that never answers costs this turn its refresh and nothing else — the poke is local to this
+   *  function, every other trigger still reaches the driver, and the next turn end tries again.
+   *
+   *  `titleAdopted` IS THE THIRD FACT, and the live re-run is what added it: the FIRST turn of a conversation
+   *  still ran twice after the readings were gated, because `adoptAiTitle` lands `session_name` at that same
+   *  turn end and `aiTitle` was on the delta list — a poke of its own, ~300 ms after a local disk read, well
+   *  ahead of the second-scale control calls. It is awaited here and off that list instead (see the delta
+   *  effect), so the title reaches the payload through the turn's one run rather than through a run of its
+   *  own. Latched, so from the second turn on this promise is already settled. */
+  async function statusRefreshAfterTurn(titleAdopted: Promise<void> = Promise.resolve()): Promise<void> {
+    await Promise.allSettled([refreshCtx({ quiet: true }), refreshUsage({ quiet: true }), titleAdopted]);
+    pokeStatusLine("turn-end");
   }
   /** WAVE C TASK 14 (spec D-C3): `usageWarning()`'s text, on the queue instead of on the retired bar. ONLY ON
    *  CHANGE — see `usageWarnRef`. `undefined` means the warning stopped applying (a rolled-over window), and
@@ -1571,7 +1722,7 @@ export function useChat(
           // instead of taking its own; only `/status` was the filed surface, and the divergence is recorded
           // there rather than fixed by drive-by.
           const [u, measured] = await Promise.all([session.usage().catch(() => undefined), refreshCtx()]);
-          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct: measured ?? ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
+          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ...statusRenderer(), ctxPct: measured ?? ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
           break;
         }
         case "usage": append(formatUsage(await session.usage())); break;
@@ -2181,7 +2332,7 @@ export function useChat(
   // round-trip to the dialog is a decision of its own, not a consistency chore to do in passing.
   async function fetchSettingsStatus(): Promise<RenderLine[]> {
     const u = await session.usage().catch(() => undefined);
-    return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
+    return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ...statusRenderer(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
   }
   async function fetchSettingsUsage(): Promise<RenderLine[]> { return formatUsage(await session.usage()); }
   async function fetchSettingsStats(): Promise<RenderLine[]> {
@@ -2618,5 +2769,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

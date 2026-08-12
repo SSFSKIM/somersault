@@ -2,6 +2,14 @@
 // chat:externalEditor). spawnSync blocks the whole event loop, so Ink cannot repaint while the editor
 // owns the terminal — that blocking IS the handoff. Raw mode must be released first or the editor
 // inherits a raw stdin and its own keymap breaks; always restored in finally.
+//
+// THE RULE FOR NEW CALLERS (FSW T12): any caller reachable from the FULLSCREEN renderer must pass `around`
+// — the alt-screen guard's `aroundSubprocess` — or the child's own rmcup on exit silently desynchronizes the
+// guard from the terminal and the next frame paints over the user's shell scrollback. Wiring it is free on
+// the main screen: an unarmed guard's wrapper just runs the child where we stand. The four wired today, all
+// through ChatApp's `aroundSubprocess` prop: the composer's ctrl+g / ctrl+x ctrl+e and the plan dialog's
+// editor (both `editExternal`), the transcript dump's `v` and `/keybindings` (both `openInEditor`, the
+// latter via useChat's `deps.openEditor`).
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +20,14 @@ export interface EditorIO { spawn?: typeof spawnSync; setRaw?: (on: boolean) => 
    *  Inside `openInEditor` rather than at the call site so that "no editor configured" creates nothing at all. */
   prepare?: () => void;
   /** The O_NONBLOCK repair below, injectable so a test can watch it fire. Defaults to `restoreTtyNonblock`. */
-  restoreTty?: () => void }
+  restoreTty?: () => void;
+  /** FSW T12 — WHAT THE CHILD IS RUN INSIDE. On the alternate screen the editor may not paint into a surface
+   *  we are about to discard, so the fullscreen callers pass T6's `guard.aroundSubprocess`: rmcup before the
+   *  spawn, smcup after it, canon's own asymmetric handoff (L180653-180662, and `wDo`'s enter/exit pair at
+   *  L317707/L317719). Absent — classic launches, every test that does not care — means run it where we
+   *  stand, which is what a main-screen editor has always done. It wraps the spawn AND the O_NONBLOCK repair,
+   *  so nothing can run the loop between the child's exit and that fix. */
+  around?: <T>(run: () => T) => T }
 
 // ── restoreTtyNonblock: the fix for a real-TTY deadlock that only a real terminal can produce ────────────
 //
@@ -71,11 +86,15 @@ export function openInEditor(file: string, io: EditorIO = {}): "no-editor" | "op
   const setRaw = io.setRaw ?? ((on: boolean) => { try { if (process.stdin.isTTY) process.stdin.setRawMode(on); } catch { /* no tty */ } });
   const [cmd, ...args] = argv;
   const restoreTty = io.restoreTty ?? (() => restoreTtyNonblock());
+  const around = io.around ?? (<T,>(run: () => T) => run());
   io.prepare?.();
   try {
     setRaw(false);
-    const r = spawn(cmd, [...args, file], { stdio: "inherit" });
-    restoreTty();                                                 // BEFORE anything can run the loop — see restoreTtyNonblock
+    const r = around(() => {
+      const out = spawn(cmd, [...args, file], { stdio: "inherit" });
+      restoreTty();                                               // BEFORE anything can run the loop — see restoreTtyNonblock
+      return out;
+    });
     return r.error || r.status !== 0 ? "failed" : "opened";
   } finally { setRaw(true); }
 }
@@ -100,12 +119,16 @@ export function editExternal(text: string, io: EditorIO = {}): string | null {
   const dir = mkdtempSync(join(tmpdir(), "ccx-edit-"));
   const file = join(dir, "PROMPT.md");
   writeFileSync(file, text);
+  const around = io.around ?? (<T,>(run: () => T) => run());
   try {
     setRaw(false);
-    const r = spawn(cmd, [...args, file], { stdio: "inherit" });
-    // The repair runs on BOTH arms and before either of them, in the same synchronous stretch as the return:
-    // nothing else can run the loop between the editor's exit and this line.
-    restoreTty();
+    const r = around(() => {
+      const out = spawn(cmd, [...args, file], { stdio: "inherit" });
+      // The repair runs on BOTH arms and before either of them, in the same synchronous stretch as the return:
+      // nothing else can run the loop between the editor's exit and this line.
+      restoreTty();
+      return out;
+    });
     if (r.error || r.status !== 0) return null;
     try { return readFileSync(file, "utf8").replace(/\n$/, ""); } catch { return null; }   // file deleted / atomic-rename quirk — keep original buffer
   } finally {

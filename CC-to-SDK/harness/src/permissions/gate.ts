@@ -76,7 +76,23 @@ export function createPermissionGate(broker: PermissionBroker): CanUseTool {
     if (d.kind === "question_answer") return { behavior: "allow", updatedInput: { ...input, answers: d.answers, ...(d.response ? { response: d.response } : {}) } };
     // Same rule as `denyMessage`'s plan arm and the same sentence: the human's typed feedback rides verbatim,
     // and its ABSENCE is reported, never filled in with an instruction they did not give (wave 2 t2, s2qa3-12).
-    if (d.kind === "plan_reject") return { behavior: "deny", message: d.feedback?.trim() || PLAN_REJECTED, interrupt: options.signal?.aborted || undefined };
+    //
+    // AND SILENCE ALSO ENDS THE TURN (wave 2 acceptance A4). Not instructing the model to keep planning was
+    // only half of it: with nothing stopping the turn the model volunteered its own "what would you like
+    // changed?" paragraph, so a human who deliberately said nothing was asked again anyway. Upstream's bare
+    // rejection ends there. `interrupt` is the deny arm's own field (sdk.d.ts `PermissionResult`, undocumented
+    // there), and probe 106 measured it live: no assistant block follows, the turn settles
+    // `result/error_during_execution` (which `turnFailureOf` resolves rather than throws, so no `✗` row), and
+    // the session takes the next prompt with its id unchanged.
+    //   TWO CONSEQUENCES WORTH KNOWING. The engine REPLACES our `message` on this arm with its own canonical
+    // rejection text ("…STOP what you are doing and wait for the user to tell you how to proceed."), so the
+    // bare arm now puts no ccx-authored words in the human's mouth at all — `PLAN_REJECTED` survives as the
+    // message sdk.d.ts requires and as the copy the non-interrupting paths still show. And the split is the
+    // point: a TYPED sentence is a continuation the human asked for, so that arm must not interrupt.
+    if (d.kind === "plan_reject") {
+      const feedback = d.feedback?.trim();
+      return { behavior: "deny", message: feedback || PLAN_REJECTED, interrupt: !feedback || options.signal?.aborted || undefined };
+    }
     // `plan` is the DG34 edit: the human opened the plan in $EDITOR from the dialog and the text they saved
     // is what the approve consumes. Upstream REPLACES the whole input with `{plan}` there and sends `{}` when
     // untouched (`lYf` L500722); we merge instead, so a future ExitPlanMode argument we do not know about

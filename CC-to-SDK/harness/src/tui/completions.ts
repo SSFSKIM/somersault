@@ -113,6 +113,20 @@ export function commandEmptyMessage(s: EditorState): string | null {
   if (!c || !c.head || c.items.length > 0 || !c.query || !isCommandToken(c.query)) return null;
   return `No commands match "/${c.query}"`;
 }
+/** Is the SUGGESTION POPUP on screen? — i.e. does `ChatComposer` mount a `SuggestPopup` that draws anything.
+ *  The three terms are the three ways `suggestProps` produces a non-empty region (a matching command list, a
+ *  matching `@`-mention list, or CM38's "no commands match" message), and there is no fourth: the popup is
+ *  BLANK-PADDED to `popupHeight(rows)` whenever it draws at all, so this boolean plus the terminal's row count
+ *  is the region's entire geometry.
+ *
+ *  It lives here, beside the two predicates the key router already reads, because the live window's render cap
+ *  has to subtract those rows (`ChatApp`'s `windowItems` memo) and a SECOND derivation of "is it showing?"
+ *  would be a defect waiting for its first disagreement — the popup is half the terminal, so a cap that
+ *  believed it was absent while it was drawn puts the frame over Ink's tall-frame cliff and reprints the whole
+ *  session into scrollback (FSW task 4 §5 measured 139 copies over six `/status` submissions). */
+export function suggestPopupShown(s: EditorState): boolean {
+  return commandActive(s) || mentionActive(s) || commandEmptyMessage(s) !== null;
+}
 /** What the `Autocomplete` SCOPE and the Escape arm key off: anything the composer actually DRAWS below or
  *  after the input. Upstream's own predicate is `Lt = c.length > 0 || !!Y` (bundle L491072) — the suggestion
  *  list OR the inline ghost text — gating `hf("autocomplete", Lt)`, `cut("Autocomplete", Lt)` and the binding
@@ -128,7 +142,7 @@ export function commandEmptyMessage(s: EditorState): string | null {
  *  purpose. Getting this wrong in either direction is a live bug: too narrow and Escape cannot dismiss
  *  something the user is looking at, too wide and an invisible popup eats the cancel. */
 export function completionActive(s: EditorState): boolean {
-  return commandActive(s) || mentionActive(s) || commandEmptyMessage(s) !== null || ghostText(s) !== null;
+  return suggestPopupShown(s) || ghostText(s) !== null;
 }
 
 // ─── navigation ──────────────────────────────────────────────────────────────────────────────────────────

@@ -1,10 +1,29 @@
 // test/unit/resume-safe-stdout.test.ts — Wave R task 2: the stdout proxy is the ONE place every byte Ink emits
 // passes through code we own, so it is where we learn what is currently painted and how tall it really is.
 // Task 4 erases on resize from exactly these two answers, so both are pinned here rather than inferred later.
-import { describe, expect, it } from "vitest";
-import { createResumeSafeStdout, physicalRows } from "../../src/tui/chatMain.js";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createResizeChain, createResumeSafeStdout, physicalRows, runChatClient } from "../../src/tui/chatMain.js";
 import { eraseViewport } from "../../src/tui/clearViewport.js";
-import { parkColumn } from "../../src/tui/resizeRepaint.js";
+import { parkColumn, parkSequence } from "../../src/tui/resizeRepaint.js";
+
+/** FSW TASK 4 — the wiring pin below needs `render()` to hand back the element tree instead of painting it.
+ *  Only that one export is replaced; everything else in `ink` is the real module, because the tree being
+ *  inspected is built out of it. */
+let renderedTree: any;
+let exitTree!: () => void;
+vi.mock("ink", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("ink")>();
+  return {
+    ...actual,
+    render: (tree: unknown) => {
+      renderedTree = tree;
+      return { waitUntilExit: () => new Promise<void>((resolve) => { exitTree = resolve; }), clear() {}, unmount() {}, cleanup() {}, rerender() {} };
+    },
+  };
+});
 
 // Ink's erase prefix, byte-for-byte: ansiEscapes.eraseLines(n) === "\x1b[2K" + ("\x1b[1A\x1b[2K" * (n-1)) + "\x1b[G".
 // eraseLines(0) is the EMPTY string, which is why a first frame (and any frame right after log.clear()) arrives bare.
@@ -216,6 +235,173 @@ describe("ResumeSafeStdout.lastFrame", () => {
   });
 });
 
+// ── FSW TASK 8 — THE ALTERNATE SCREEN'S PROXY (plan §T8, spec §A4a/D6) ───────────────────────────────────
+// One construction-time flag and three behaviours, each of which is a MAIN-SCREEN rule that the alternate
+// screen inverts. Fixed per construction because the renderer choice is (`selectRenderer`, spec §L2.1: a
+// resize never re-decides it), so nothing can flip underneath a proxy that has already painted.
+describe("ResumeSafeStdout altMode", () => {
+  const BSU = "\x1b[?2026h", ESU = "\x1b[?2026l";      // DECSET 2026, canon's mode table L177069
+  const alt = (columns?: number, rows?: number) => {
+    const terminal = new RecordingTerminal(columns, rows);
+    return { terminal, out: createResumeSafeStdout(terminal as any, { altMode: true }) };
+  };
+
+  // (1) Fullscreen paints through stock log-update with no <Static> in the tree, so every paint is a full-frame
+  // erase-and-rewrite and the gap between the two halves is the flicker the renderer is named after. The pair
+  // makes the terminal present both as one update.
+  it("wraps a recorded frame write in DECSET 2026", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write(eraseLines(3) + "one\ntwo\n");
+    expect(terminal.chunks.join("")).toBe(BSU + eraseLines(3) + "one\ntwo\n" + ESU);
+    expect(out.lastFrame()).toBe("one\ntwo\n");         // …and the record is what it always was (T4's gate)
+  });
+
+  it("leaves the main screen's bytes exactly as they were", () => {
+    const { terminal, out } = proxy();
+    out.stdout.write(eraseLines(3) + "one\ntwo\n");
+    expect(terminal.chunks.join("")).toBe(eraseLines(3) + "one\ntwo\n");
+  });
+
+  // Only a RECORDED FRAME WRITE is a paint. `log.clear()` and a <Static> flush are not, and wrapping them would
+  // open a synchronized update the frame write behind them opens a second one inside.
+  it("wraps only the frame write of Ink's clear→static→frame burst", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write(eraseLines(2));                     // log.clear()
+    out.stdout.write("committed transcript row\n");      // staticOutput
+    out.stdout.write("new frame\n");                     // log(output)
+    expect(terminal.chunks).toEqual([eraseLines(2), "committed transcript row\n", BSU + "new frame\n" + ESU]);
+    expect(out.lastFrame()).toBe("new frame\n");
+  });
+
+  // The wrap goes OUTSIDE task 4b's injected erase (one paint, one update) and AFTER `record` has read the raw
+  // chunk — a chunk whose first bytes were `\x1b[?2026h` would match no erase prefix and stop being a frame.
+  it("wraps outside the resize correction, and the corrector still sees Ink's raw prefix", () => {
+    const { terminal, out } = alt(80, 24);
+    const seen: any[] = [];
+    out.setFrameCorrector((info) => { seen.push(info); return "\x1b[2K"; });
+    out.stdout.write("first\n");
+    out.stdout.write(eraseLines(2) + "second\n");
+    expect(seen[0].inkErases).toBe(2);
+    expect(seen[0].prevFrame).toBe("first\n");
+    expect(terminal.chunks[1]).toBe(BSU + eraseLines(2) + "\x1b[2K" + "second\n" + ESU);
+  });
+
+  // (2) The park exists to make `probeReflow`'s cursor answerable across a reflow; the alternate screen does not
+  // reflow, T9 constructs no resize machinery there, and a row of padding spaces inside a fixed-height frame is
+  // damage. Every consumer of `parkedColumn()` tolerates 0 — that is what makes removing it safe rather than
+  // merely desirable.
+  it("never parks the cursor, at a width the main screen parks at", () => {
+    const { terminal: main, out: mainOut } = proxy(80, 24);
+    mainOut.stdout.write("frame\n");
+    expect(mainOut.parkedColumn()).toBe(parkColumn(80));
+    expect(main.chunks.join("")).toContain(parkSequence(parkColumn(80)));
+
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write("frame\n");
+    expect(out.parkedColumn()).toBe(0);
+    expect(terminal.chunks.join("")).toBe(BSU + "frame\n" + ESU);
+  });
+
+  // …and with no park standing, the `foreign` branch goes dark by itself: nothing is homed, nothing is re-parked.
+  it("writes a foreign escapes-only chunk through untouched", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write("frame\n");
+    out.stdout.write("\x1b[?2004h");                     // the keymap's bracketed-paste DECSET
+    expect(terminal.chunks.join("")).toBe(BSU + "frame\n" + ESU + "\x1b[?2004h");
+    expect(out.parkedColumn()).toBe(0);
+  });
+
+  // (3) `\x1b[3J` erases the terminal's SCROLLBACK, which inline is where the committed transcript lives — hence
+  // the strip. The alternate screen HAS no scrollback, and canon writes both escapes there on purpose (`Rms()`,
+  // L176982, selected on `altScreen` at L177121). So the strip is a main-screen rule and it comes off with it.
+  it("passes Ink's clearTerminal through with its ESC[3J intact", () => {
+    const { terminal, out } = alt();
+    const tall = "\x1b[2J\x1b[3J\x1b[H" + "scrollback\n".repeat(3) + "frame\n";
+    out.stdout.write(tall);
+    expect(terminal.chunks.join("")).toBe(tall);
+    expect(out.lastFrame()).toBeUndefined();             // still nobody's frame — the seam is still unmarked
+    // …and the REST of the 2J branch still fires behind the disabled strip: the strip is the only thing altMode
+    // takes off. Pinned so a later widening of the flip cannot quietly take the bookkeeping with it.
+    expect(out.tallWrites()).toBe(1);
+    expect(out.detachedWrites()).toBe(1);
+  });
+
+  it("still strips it on the main screen", () => {
+    const { terminal, out } = proxy();
+    const tall = "\x1b[2J\x1b[3J\x1b[H" + "scrollback\n".repeat(3) + "frame\n";
+    out.stdout.write(tall);
+    expect(terminal.chunks.join("")).toBe("\x1b[2J\x1b[H" + "scrollback\n".repeat(3) + "frame\n");
+  });
+
+  // ── (4) FSW T9 / D21 — THE ONE-SHOT ERASE BEFORE PAINT ────────────────────────────────────────────────
+  // A resize on the alternate screen invalidates the whole frame: log-update's `previousLineCount` describes
+  // rows that have moved, so its next erase lands in the wrong place and the repaint composes over residue.
+  // Canon's answer is a FLAG, not a per-frame cost — `needsEraseBeforePaint` is set by the resize handler
+  // (L180640) and cleared on use (L180759), where it unshifts `$uy` in front of the paint. `$uy` is
+  // `h1 + fI` = `ESC[2J` + `ESC[H` (L181490; `h1 = uA(2,"J")`, `fI = uA("H")`, both L166401-166402) — the
+  // 2J form and NOT the `Rms()` 2J+3J+H that `clearAltScreen` carries: this is a repaint, not a reset, and
+  // the alternate screen's saved lines are not the resize's business.
+  const ALT_ERASE = "\x1b[2J\x1b[H";                     // canon `$uy`, L181490
+
+  it("prefixes the next recorded paint with canon's erase, exactly once", () => {
+    const { terminal, out } = alt(80, 24);
+    out.stdout.write(eraseLines(2) + "first\n");
+    out.eraseNextPaint();                                // …what chatMain's resize listener does in fullscreen
+    out.stdout.write(eraseLines(2) + "second\n");
+    out.stdout.write(eraseLines(2) + "third\n");
+    expect(terminal.chunks).toEqual([
+      BSU + eraseLines(2) + "first\n" + ESU,
+      BSU + ALT_ERASE + eraseLines(2) + "second\n" + ESU,   // the erase rides INSIDE the synchronized update
+      BSU + eraseLines(2) + "third\n" + ESU,                // …and is gone by the paint after it
+    ]);
+    expect(out.lastFrame()).toBe("third\n");             // the record is unaffected — `record` saw Ink's raw chunk
+  });
+
+  // THE NEXT *PAINT*, not the next write. Ink's clear→static→frame burst puts two non-paints in front of the
+  // frame, and an erase spent on the `log.clear()` would be an erase the frame behind it never gets.
+  it("waits for a frame write, not for the erase or the <Static> flush in front of it", () => {
+    const { terminal, out } = alt(80, 24);
+    out.eraseNextPaint();
+    out.stdout.write(eraseLines(2));                     // log.clear()
+    out.stdout.write("committed transcript row\n");      // staticOutput
+    out.stdout.write("new frame\n");                     // log(output)
+    expect(terminal.chunks).toEqual([eraseLines(2), "committed transcript row\n", BSU + ALT_ERASE + "new frame\n" + ESU]);
+  });
+
+  // Composes with T4b's corrector rather than competing with it: the corrector rewrites the chunk, this puts
+  // the erase in FRONT of whatever chunk is going out, and the 2026 wrap still closes over both. Fullscreen
+  // constructs no corrector (that is the whole point of T9's gating), so this pins the composition only.
+  it("goes outside the frame corrector's rewrite and inside the 2026 wrap", () => {
+    const { terminal, out } = alt(80, 24);
+    out.setFrameCorrector(() => "\x1b[2K");
+    out.stdout.write("first\n");
+    out.eraseNextPaint();
+    out.stdout.write(eraseLines(2) + "second\n");
+    expect(terminal.chunks[1]).toBe(BSU + ALT_ERASE + eraseLines(2) + "\x1b[2K" + "second\n" + ESU);
+  });
+
+  // …and it cannot reach the main screen. `ESC[2J` there blanks a viewport whose live `<Static>` rows are not
+  // in scrollback yet — the t8 over-erase, in its most direct form. Inert off the alternate screen for the
+  // same reason `park()` is inert on it: the guard belongs with the mode, not with the caller's discipline.
+  it("is inert on the main screen", () => {
+    const { terminal, out } = proxy();                   // no width, so the park adds no chunk of its own
+    out.eraseNextPaint();
+    out.stdout.write(eraseLines(2) + "frame\n");
+    expect(terminal.chunks.join("")).toBe(eraseLines(2) + "frame\n");
+  });
+
+  // The frame record is T4's gate and altMode must not touch it: the whole burst vocabulary still classifies.
+  it("keeps the frame record maintained across a burst", () => {
+    const { out } = alt(80, 24);
+    out.stdout.write(eraseLines(2) + "old frame\n");
+    expect(out.lastFrame()).toBe("old frame\n");
+    out.stdout.write(eraseLines(2));                     // log.clear() — off the screen, and not claimed painted
+    expect(out.lastFrame()).toBeUndefined();
+    out.stdout.write("old frame\n");                     // the writeToStderr restore — identical bytes
+    expect(out.lastFrame()).toBe("old frame\n");
+  });
+});
+
 describe("physicalRows", () => {
   it("counts a line that is EXACTLY the width as one row", () => {
     expect(physicalRows("x".repeat(40) + "\n", 40)).toBe(1);
@@ -250,5 +436,94 @@ describe("physicalRows", () => {
     expect(physicalRows("a\n", 40)).toBe(1);
     expect(physicalRows("a\n\n", 40)).toBe(2);
     expect(physicalRows("a", 40)).toBe(1);
+  });
+});
+
+// ── FSW T3 FIX ROUND (review C1) — the SIGWINCH chain's ORDER ────────────────────────────────────────────
+// One listener, three jobs, and the order between them is the whole reason this is a function rather than
+// three lines in `runChatClient`. The measurement that forced it: at 40 → 24 rows with a full live window,
+// ChatApp learning the new size AFTER Ink's own resize handler meant Ink measured the old, twenty-four-row
+// window against a twenty-four-row terminal and wrote `clearTerminal + the entire session` — one tall write,
+// a 44-row frame. Learning it BEFORE (this chain, driven from a listener registered before `render()`) means
+// React has already re-rendered and re-committed by the time Node reaches Ink's handler: zero tall writes.
+// The other direction is a constraint too, which is why the subscribers cannot simply prepend their own
+// listener: both readers below must see the screen as it stands before anything repaints it.
+describe("createResizeChain", () => {
+  it("runs the readers before every subscriber, in subscription order", () => {
+    const log: string[] = [];
+    const chain = createResizeChain(() => log.push("readers"));
+    chain.subscribe(() => log.push("a"));
+    chain.subscribe(() => log.push("b"));
+    chain.fire();
+    expect(log).toEqual(["readers", "a", "b"]);
+  });
+
+  it("fires the readers even with nothing subscribed, and stops a subscriber that unsubscribed", () => {
+    const log: string[] = [];
+    const chain = createResizeChain(() => log.push("readers"));
+    chain.fire();
+    const off = chain.subscribe(() => log.push("a"));
+    chain.fire();
+    off();
+    chain.fire();
+    expect(log).toEqual(["readers", "readers", "a", "readers"]);
+  });
+
+  it("survives a subscriber that unsubscribes from inside its own callback", () => {
+    // ChatApp's effect cleanup can run in response to the very re-render its sampler triggers.
+    const log: string[] = [];
+    const chain = createResizeChain(() => log.push("readers"));
+    const off = chain.subscribe(() => { log.push("a"); off(); });
+    chain.subscribe(() => log.push("b"));
+    chain.fire(); chain.fire();
+    expect(log).toEqual(["readers", "a", "b", "readers", "b"]);
+  });
+});
+
+// ── FSW TASK 4 — THE HANDOFF, not just the order (T3 review, carried forward) ────────────────────────────
+// `createResizeChain`'s three cases above pin what the chain DOES once something is subscribed to it. What
+// they cannot see is the one line that makes any of it reach the app: `runChatClient` passing
+// `resizeChain.subscribe` to ChatApp as `onResize`. T3 shipped that line covered by reading only — and it is
+// exactly the kind of line a later refactor drops or replaces with a fresh inline arrow (which ChatApp's own
+// docblock forbids, because the subscribing effect lists it as its only dependency). The failure would be
+// silent: ChatApp falls back to its embedder default, which prepends on Ink's stdout and works — while the two
+// readers that must run FIRST (`noteResizeSignal`, `resizeRepaint.onResize`) lose their head start, which is
+// the W2-t7 grow resync and the whole first-shrink repair.
+//
+// So this drives the real function with `render` stubbed, takes the prop off the tree, and proves it is the
+// live chain rather than any function of the right shape: a callback subscribed THROUGH THE PROP must run when
+// the PROCESS's own `resize` event fires, and stop when its unsubscribe is called.
+describe("runChatClient wires the resize chain into ChatApp", () => {
+  it("hands ChatApp an `onResize` that subscribes to the process resize listener it installed", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ccx-wire-"));
+    const priorHome = process.env.HOME, priorRoot = process.env.CCX_FLEET_ROOT;
+    process.env.HOME = home; process.env.CCX_FLEET_ROOT = join(home, ".claude", "ccx");
+    const before = process.stdout.listenerCount("resize");
+    const run = runChatClient({
+      socketPath: join(home, "s.sock"), client: { kind: "loopback" }, cwd: home,
+      makeSession: () => ({}) as never,                    // never called: `render` is stubbed, so no tree mounts
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      expect(process.stdout.listenerCount("resize")).toBe(before + 1);
+      const chat = renderedTree.props.children;            // <UserKeymap><ChatApp …/></UserKeymap>
+      const onResize = chat.props.onResize;
+      expect(typeof onResize).toBe("function");
+
+      const log: string[] = [];
+      const off = onResize(() => log.push("subscriber"));
+      process.stdout.emit("resize");
+      expect(log).toEqual(["subscriber"]);                 // the prop reaches the listener runChatClient installed
+      off();
+      process.stdout.emit("resize");
+      expect(log).toEqual(["subscriber"]);                 // …and its unsubscribe is the chain's
+    } finally {
+      exitTree();
+      await run;
+      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      if (priorRoot === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = priorRoot;
+      rmSync(home, { recursive: true, force: true });
+    }
+    expect(process.stdout.listenerCount("resize")).toBe(before);   // …and the `finally` takes it back off
   });
 });

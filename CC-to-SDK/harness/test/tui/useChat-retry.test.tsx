@@ -25,7 +25,10 @@ describe("useChat: system/api_retry frames drive a live retry status", () => {
     function H() {
       const c = useChat(() => fake);
       const r = c.state.retryStatus;
-      const rows = [...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
+      // FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
+      // the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
+      // these content assertions are actually about.
+      const rows = [...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
       return <Text>{r?.kind === "retrying" ? `RETRY:${r.attempt}/${r.maxRetries}:${r.label}` : "NORETRY"} [{rows}]</Text>;
     }
     const { lastFrame } = render(<H />);

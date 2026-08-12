@@ -9,7 +9,7 @@
 // face. Driving the REAL renderer instead is not available either: ink reads `is-in-ci` at import time and CI
 // sets `CI=true`, which routes `onRender` down the static-only branch (ink.js:110-116).
 // So `InkModel` below reimplements the three mechanisms that matter, line-for-line against the installed
-// `node_modules/ink@6.4.0`, and `test/tui/resumeOutput.test.ts` sets the precedent for that shape. Everything
+// `node_modules/ink@5.2.1`, and `test/tui/resumeOutput.test.ts` sets the precedent for that shape. Everything
 // it models is quoted in its comments; the production code under test (`clearViewport`, `useChat.clear`) is
 // the real thing.
 import { describe, it, expect } from "vitest";
@@ -18,7 +18,7 @@ import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { useChat } from "../../src/tui/useChat.js";
-import { clearViewport, eraseViewport } from "../../src/tui/clearViewport.js";
+import { clearAltScreen, clearViewport, eraseViewport, screenClear } from "../../src/tui/clearViewport.js";
 import { eraseRows } from "../../src/tui/resizeRepaint.js";
 
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -95,6 +95,44 @@ describe("eraseViewport — upstream's INLINE clear arm (bundle L176988 `yJr`)",
   });
 });
 
+// ── FSW TASK 8 (D6) — THE OTHER ARM, restored on upstream's own axis ─────────────────────────────────────
+// Task 7 retracted `Rms()` because it was being written INLINE, where `ESC[3J` destroys the scrollback the
+// committed transcript lives in. It was never wrong in itself: L177121 is `s += a.altScreen ? Rms() :
+// yJr(a.viewportRows)`, and on the alternate screen there is no scrollback to protect — the sequence is the
+// correct one there and the viewport-erase is the wrong one (it would leave the frame's rows blanked one at a
+// time rather than the screen reset). So the split is by SCREEN MODE, exactly as upstream splits it, and
+// `eraseViewport` keeps meaning what it has always meant to its existing callers.
+describe("screenClear — the D6 mode split (bundle L177121)", () => {
+  it("is upstream `Rms()` byte for byte on the alt arm: ESC[2J ESC[3J ESC[H", () => {
+    expect(clearAltScreen()).toBe("\x1b[2J\x1b[3J\x1b[H");
+  });
+  it("dispatches on screen mode and on nothing else", () => {
+    expect(screenClear({ altScreen: true, rows: ROWS })).toBe(clearAltScreen());
+    expect(screenClear({ altScreen: true, rows: 0 })).toBe(clearAltScreen());     // the alt arm ignores rows, as Rms() does
+    expect(screenClear({ altScreen: false, rows: ROWS })).toBe(eraseViewport(ROWS));
+  });
+  it("leaves clearViewport's existing callers on the inline arm", () => {
+    const term = new RecordingTerminal(); const ink = new InkModel(term);
+    ink.onRender(FRAME);
+    const start = term.chunks.length;
+    expect(clearViewport(ink)).toBe(true);
+    const payload = term.chunks.slice(start).join("");
+    expect(payload).toContain(eraseViewport(ROWS));
+    expect(payload).not.toContain("\x1b[3J");
+  });
+  it("…and takes the alt arm when the caller says the screen is the alternate one", () => {
+    const term = new RecordingTerminal(); const ink = new InkModel(term);
+    ink.onRender(FRAME);
+    const start = term.chunks.length;
+    expect(clearViewport(ink, { altScreen: true })).toBe(true);
+    expect(term.chunks.slice(start).join("")).toContain(clearAltScreen());
+  });
+  it("still writes nothing off a tty on either arm", () => {
+    const noTty = { stdout: { isTTY: false, rows: ROWS }, write: () => { throw new Error("wrote off a tty"); } };
+    expect(clearViewport(noTty, { altScreen: true })).toBe(false);
+  });
+});
+
 describe("/clear repaints", () => {
   // The defect, stated as the test that would have caught it: after the reset a frame must LAND. Asserting
   // that the screen "contains the composer" proves nothing — the stale frame contains it too, and leaving it
@@ -163,7 +201,9 @@ describe("/clear repaints", () => {
     function H() {
       const c = useChat(() => fakeRemote(), { clearStaticTranscript: () => ink.clear() },
         { clearViewport: () => { clearViewport(ink); } });
-      api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.staticItems.length}</Text>;
+      // FSW T3: `finalizedItems`, not `staticItems` — the finalized projection is what this claim is about;
+      // `staticItems` is now only the part of it already committed to <Static>.
+      api.run = c.submit; api.clear = c.clear; return <Text>L:{c.state.finalizedItems.length}</Text>;
     }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 10));

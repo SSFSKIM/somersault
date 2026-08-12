@@ -55,6 +55,11 @@ frames on file:
 
 ## 3 · Open worklist (ranked)
 
+> **Disposition added 2026-08-11 (post-wave).** The triage text below is left exactly as filed — the
+> `STATUS` lines are appended, nothing is rewritten. W1–W6 became the QA wave-2 delta (spec
+> `docs/superpowers/specs/2026-08-11-qa-wave-2-delta-design.md`, ten tasks, acceptance A1–A10 all passing
+> as written after a two-cell fix round). Parity re-scored in `docs/parity/tui-ux.md`'s wave-2 recount.
+
 ### W1 · `/copy` is broken and violates the boundary rule
 *(filed P1 by the fleet; owner-adjudicated **P2** 2026-08-11 — no open P1 remains in the sweep)*
 - **s2qa5-21 (P2, regressed)** — fresh foreground session, two completed replies on screen:
@@ -66,6 +71,13 @@ frames on file:
 - One defect family: whatever index `/copy` reads is not the live transcript's. Highest-priority
   candidate for the next fix round.
 
+**STATUS (wave 2, Task 1) — SHIPPED, both.** s2qa5-21 and s2qa5-22 are one family and died together:
+`/copy` reads the live wire and resets at `replaceDocument`, so it cannot pin to a replayed reply or
+survive a `/clear`. API-error frames are filtered on both paths (live flag; disk `<synthetic>` marker,
+because the session store strips the flag from persisted rows). Empty state is now canon's `No assistant
+message to copy`. **Newly named, not shipped:** canon's `/copy N` over a 20-deep list (L444892/445068) —
+backlog, and it marks the `/copy` parity row ✅ → 🟡.
+
 ### W2 · Dialog input regression + long-standing feedback loss
 - **s2qa3-10 (P2, regressed)** — Enter on an amended deny row reverts the amendment instead of
   submitting; first Enter silently swallowed (Write and Bash dialogs alike).
@@ -74,6 +86,22 @@ frames on file:
 - **s2qa4-11 (P2, new)** — double Ctrl-C inside an open dialog does not exit ccx; claude exits 0.
 - **s2qa3-11 (P2, new)** — raw `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` warning printed into the TUI
   after the bypass gate is accepted (stderr leak into the frame).
+
+**STATUS (wave 2, Tasks 2/3/4 + the acceptance fix) — all four SHIPPED.**
+- s2qa3-10 — SHIPPED. `Select` gained an `onEmptySubmit` seam; an amended row submits on Enter, an empty
+  one stays open with a nudge and the footer advertises `enter send · esc cancel`.
+- s2qa3-12 — SHIPPED, and the fault was downstream of the dialog: `gate.ts` fabricated `"User rejected
+  the plan. Continue planning."`, which the model obeyed. Removed. A bare rejection now **ends the turn**
+  via the SDK deny arm's `interrupt` field (probe 106) — found only because live acceptance cell A4 failed
+  and the verifier drove the same sequence against installed claude 2.1.227. **Residual:** the transcript
+  row reads `⎿ Interrupted · What should Claude do instead?` where upstream reads `User rejected Claude's
+  plan:` — new 🟡 parity row, backlog.
+- s2qa4-11 — SHIPPED, **partially**: `ctrl+c` nulls dropped from six overlay contexts and an armed exit
+  renders its hint over pane-owned surfaces. **Residual:** the `?` shortcuts overlay still swallows
+  `ctrl+c` (it takes a preemptive swallow scope above the binding table) — backlog.
+- s2qa3-11 — SHIPPED. Node's warning channel is taken over at the ccx entry: SDK-coded warnings to a debug
+  seam, everything else re-printed once above the frame. Dropping `canUseTool` in bypass was rejected as
+  unsafe (D-W3).
 
 ### W3 · Effort surfaces: right shape, wrong transaction semantics
 First fleet contact with Wave C's effort work found the dialogs exist and survive model swaps
@@ -87,12 +115,38 @@ First fleet contact with Wave C's effort work found the dialogs exist and surviv
   Wave C owner knob, now fleet-confirmed), silent `/effort <level>` apply (s2qa4-10), no persistent
   idle-chrome surface for non-default effort (s2qa4-20).
 
+**STATUS (wave 2, Task 5).** s2qa4-05 SHIPPED — the picker stages locally and commits on Enter across all
+three commit paths, guarded on the dirty flag **and** the picked model's own axis (canon's second effort
+write, which both the grounding and the implementer had misread); Esc reverts. s2qa4-06 SHIPPED — the
+support gate's polarity was inverted (`supportsEffort === true`), and the live catalog omits the field for
+haiku precisely because haiku has no axis (probe 103). s2qa4-10 SHIPPED as the wave's one folded tail item
+— `/effort <level>` prints a `⎿` confirmation. **Not shipped, unchanged:** s2qa4-07 (`ultracode` — label
+corrected: it exists in 2.1.220 behind the Workflows gate, L441199/76284, and ccx has no Workflows
+surface, so it is parked rather than merely unbuilt), s2qa4-08 (stepper vs slider), s2qa4-09 (sub-verbs),
+s2qa4-20 (idle-chrome surface). **Newly named:** `/effort`'s Esc prints nothing where canon prints
+`⎿ Cancelled` — backlog.
+
 ### W4 · statusLine stdin contract gaps
 - **s2qa6-04 (P2, new)** — `transcript_path` never emitted; `session_id` null at startup and after
   `/clear`.
 - Tail: `fast_mode`/`prompt_id`/`rate_limits` absent, `context_window_size` 0 pre-first-turn
   (s2qa6-05); stale-forever vs claude's remove-row-on-failure (s2qa6-06, divergence-question);
   refresh triggers missing Ctrl-C + resize (s2qa6-22); SGR 2 dim vs palette grey 246 (s2qa6-23).
+
+**STATUS (wave 2, Task 6 + the acceptance fix).** s2qa6-04 SHIPPED — `transcript_path` and `prompt_id`
+latch off the headless-firing `UserPromptSubmit` hook (probe
+`104b-userpromptsubmit-transcript-path.ts`; both absent pre-first-turn, since `SessionStart` is dormant
+headlessly — accepted and documented), and `session_id` is mint-and-reconcile, so it is never null.
+s2qa6-05 SHIPPED except its `context_window_size` half's boundary case: `fast_mode`, `rate_limits` and a
+real window at first paint all ship, but there is deliberately **no boundary read** (D-W8 — it would
+reverse Wave S's hidden-until-measured rule; s2qa5-10 returns to the backlog). s2qa6-06 SHIPPED as the
+**divergence question answered against ccx**: canon removes the row on failure (L484981), so Wave C's
+keep-last-good is reversed (D-W6). Also fixed, found by acceptance cell A8 failing live: boot fired the
+command twice and a turn fired it twice with a stale first reading — now one run per boot and one refresh
+per turn, carrying that turn's own numbers. **Adjudicated NOT defects against canon:** s2qa6-22 (2.1.220
+has no Ctrl-C/resize trigger — 2.1.226 drift) and s2qa6-23 (ccx's SGR 2 already matches canon; the sweep
+compared 2.1.226's grey). **Newly named divergence:** the first row lands ~1.5 s after mount, because the
+boot run waits on a context read measured at ~1.2 s (D-W11).
 
 ### W5 · Repaint, round two (real cells only — see §4 for the discarded one)
 - **s2qa2-06 (P2, new)** — no transcript reflow on width change; old paint hard-wraps mid-word.
@@ -101,10 +155,40 @@ First fleet contact with Wave C's effort work found the dialogs exist and surviv
 - **s2qa2-05 (P2, persists = qa2-10, narrowed)** — growing out of a height-clipped picker strands a
   stale copy of its header.
 
+**STATUS (wave 2, Task 7).** s2qa2-05 SHIPPED — a grow-edge resync latched in ccx's pre-Ink resize
+listener, because Ink's synchronous repaint both strands the header and zeroes the gate before effects
+run; the reviewer falsified the pre-fix gate on hardware and verified the latch (`Select model` ×2 → ×1).
+The matrix gains a permanent `g1` clip-then-grow cell and runs 8/8. s2qa2-07 **PARTIAL, honestly** — a
+burst now settles once (trailing debounce plus a direction-independent post-settle pass claiming only the
+legs no per-write correction measured), but a **drag faster than the handler** strands residue no
+width-history repair can reach, because the handler never observes those legs; the earlier "12 ms" figure
+is withdrawn for having no recorded method. s2qa2-06 **NOT SHIPPED** — out of wave scope, parked into
+**FULLSCREEN-1** (D-W5): inside the current Ink `<Static>` renderer every honest fix either duplicates the
+transcript into scrollback per reflow or needs the `ESC[3J` wipe Wave R rejected. Owner input wanted on
+whether FULLSCREEN-1 gets scheduled; 2.1.226's alt-screen-at-24-rows default makes it more urgent.
+  **UPDATE 2026-08-12:** owner decided BUILD (its own wave; grounding complete). The reflow grounding
+  narrowed s2qa2-06's real scope — canon re-wraps only the **visible viewport tail** on width change
+  (`TJr` L178440: main-screen erase is `ESC[2K`-per-row, `ESC[3J` is alt-screen-only); "fully re-wraps
+  history" was the 40-row-cell reading where the whole session fits on screen. Feasible in the main-screen
+  renderer without either dishonest arm; grounding in the job scratch (`reflow-ground.md`).
+**Instrument finding:** matrix cell `a3` is dead — see §5, item 5; filed, not papered over.
+
 ### W6 · /resume preview
 - **s2qa4-13 (P2, new)** — preview leaks raw `<command-name>`/`<local-command-stdout>` envelope
   tags. Cheap, ugly, user-visible.
 - **s2qa4-14 (P2, persists = qa4-07)** — preview is an excerpt, not the rendered transcript.
+
+**STATUS (wave 2, Task 8).** s2qa4-13 SHIPPED, fully — the preview renders the projected transcript
+(`projectCompact(replayDocument(...))` composed with `projectPending`; compact alone withholds the
+trailing fold run, so a session ending in a tool call previewed without it), so there is no envelope-tag
+text left to leak. s2qa4-14 SHIPPED **partially** — the preview IS the rendered transcript now,
+tail-anchored in-pane with `↑ N more above` and a floor marker when the 200-message window cut, and the
+count-vs-rows invariant holds on one predicate; but canon (L476605) **replaces the picker full-screen**
+under its own footer, and the in-pane form is a recorded divergence (D-W9) whose takeover is a separate UI
+unit in the backlog. **Newly named, not shipped:** `<system-reminder>` meta rows draw raw in the pane
+**and** in live replay (new ❌ parity row; fix sites `species.ts`/`rows.ts`, with `getSessionMessages`
+`isMeta` preservation unprobed), and an image-only session renders the empty state over a nonzero count
+(the qa4-07 ii family).
 
 The P3/P4 body (44+53 rows) stays in the findings files; persists-rows keep their sweep-1 ids in
 their titles so the chain is greppable. Notable singles: plan-authoring leaks raw `Write`/
@@ -126,6 +210,17 @@ fleet roster (s2qa5-05); roster `state:"working"` for idle sessions persists (s2
   every 24-row cell compared different renderers — the exact D10 instrument confound, now
   version-triggered. Folds into FULLSCREEN-1 with new urgency: at small panes, *default* claude is
   now the fullscreen renderer.
+  **MECHANISM CORRECTED 2026-08-12 (FULLSCREEN-1 grounding, 32 captures):** the trigger is NOT pane
+  height — it is a **rollout-flag cache in `$HOME`**, decided once at startup, never re-evaluated on
+  resize. Cold isolated home → flag default → main screen; warm home (second launch) → fullscreen at
+  EVERY size tested (8–40 rows, 40–200 cols). The fleet's geometry reading was cold-vs-warm home. The
+  confound is therefore worse than filed — any cell in a reused home may be fullscreen at any size —
+  and the driver now mandates pinning the renderer per launch
+  (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` / `CLAUDE_CODE_NO_FLICKER=1`, §4.2). Two grounding
+  corollaries recorded for the wave: upstream "bottom-anchoring" anchors the SCROLL POSITION once
+  content overflows (short content sits at the TOP of the region; only the dock pins to the bottom),
+  and quitting fullscreen discards the conversation from scrollback (rmcup) leaving only a two-line
+  `--resume` pointer. Owner decided BUILD; grounding at the job scratch (`fullscreen-ground.md`).
 - **Inline chips absent** (s2qa6-14): closed by owner decision D-C3, correctly filed as such.
 
 ## 5 · Environment facts for the next sweep

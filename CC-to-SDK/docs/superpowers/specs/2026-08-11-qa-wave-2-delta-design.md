@@ -294,10 +294,78 @@ restores the clipboard around those cells (`pbpaste` before, `pbcopy` after).
   effort axis, and on the `/model` surface (skipSettingsWrite, L471450) it is the only write.
   Third bundle-settles-testimony overturn of the wave, caught by a reviewer re-opening the
   bundle. Canon also appends ` with <level> effort` to the model-set notice (L471428).
+- Task 7 review: the s2qa2-05 gate and the damage come from the same write. Ink's synchronous
+  resize handler repaints before React effects run, and that one write both strands the tall
+  dialog's header AND zeroes the `tallWrites` count the grow edge gated on — the fix as shipped
+  could never fire in its target scenario. Pattern that resolves it: latch the fact in ccx's own
+  resize listener, which attaches before `render()` and therefore reads pre-repaint state.
+  Reviewer falsified the repaired build's new matrix cell on hardware (pre-fix gate → header
+  twice; latch → once).
+- Task 7 fix round: a fixer correctly overruled a reviewer's prescribed fix with a mechanism
+  argument — "forget the burst whenever the verdict caches" would have deleted the settle pass,
+  because the reflow probe answers mid-drag on essentially every real burst. The reviewer
+  re-derived it and withdrew. Prescribed fixes are testimony too; the recipient owes them the
+  same verification as any premise.
+- The resize-matrix `a3` live cell rotted invisibly for a full wave: it skips keyless, and
+  nobody ran the matrix keyed between Wave C (which moved `esc to interrupt` to the footer) and
+  wave 2's Task 7 fix round. Credential-gated cells rot silently — green-by-absence. Filed as an
+  open Wave C instrument repair (triage doc §5.5).
+- Acceptance found two halves-shipped defects the task reviews missed: A4 — Task 2 removed the
+  fabricated imperative but nothing ENDED the turn on a bare plan rejection (upstream 2.1.227
+  ends it, verifier-compared); A8 — Task 6 deduped boot but each turn still fired the statusLine
+  twice. Probe 106 settled the A4 mechanism live: the SDK deny arm's declared `interrupt: true`
+  ends the turn, the session survives with its id unchanged, and the engine substitutes its own
+  canonical rejection copy for our message on that arm. Residual copy divergence recorded: the
+  bare-reject row reads upstream's interrupted-tool copy, not `User rejected Claude's plan:`.
+- A8's second trigger was invisible to the unit suite: on a conversation's first turn the
+  ai-title read poked the statusLine on its own. The turn refresh now waits for all three facts
+  and pokes once — the readings are second-scale control calls; a 300 ms debounce can never
+  merge them (D-W11's lesson, third recurrence).
+- The W-S5 compaction flake was NOT the wait budget (20 s failed as often as 2 s): Ink wraps
+  `✦ compacted` at the viewport edge where a random-length verb above moves the wrap point, and
+  the test helper turns the wrap newline into a double space. The fix reads the projected
+  transcript, not the wrapped frame. Same instrument-vs-measurement class as the sweep's
+  ready-needle rot.
+- The acceptance fixer correctly declined one instruction: canon 2.1.220 does carry the longer
+  `shift+tab to approve with this feedback` hint, but ccx's shorter form is a documented honesty
+  decision (approve-side feedback cannot reach the model through `canUseTool`) — restoring
+  canon's copy would advertise a channel that silently drops the user's sentence.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped 2026-08-12.** Nine tasks + an acceptance fix wave + a codex-findings fix wave, all on
+main (wave range `c53702d6b5..f661b8eab4`, interleaved with the concurrent appserver session's
+commits). **All ten acceptance cells pass as written** — the keyed cells live over OAuth, clipboard
+saved/restored, isolation attested (prefs mtime byte-identical across every run). Final gates:
+unit 2296, tui 3268 / 9 skipped, build clean, resize matrix 8/8 (a3 keyless-skip, filed).
+
+**Worklist disposition:** W1 (both /copy cells), W2 (all four), W3, W4, W6 shipped; W5 shipped
+with s2qa2-07 honestly PARTIAL (drags faster than the handler observe strand residue no
+width-history repair reaches) and s2qa2-06 (transcript reflow) out of scope. Parity re-scored
+honest-flat at ~75% — the wave worked inside rows already marked built while naming four new gap
+rows (meta-frame raw text, bare-reject row copy, in-pane preview, `?`-overlay ctrl+c).
+
+**External review (gpt-5.6-sol, base c53702d6b5):** five findings. Three in wave code, all
+verified red-first and fixed (`c960f46bde`, `f661b8eab4`): the mount context read now dies with
+its conversation (generation-checked — the wave's own rule, found violated by its own code); the
+settle pass stays repairable when a monotonic burst ends at its deepest shrink (claims one
+excursion, under-erase side); the tall latch ORs observations and drains at every size React
+observes (codex's sticky shape and the reviewer's re-stating shape were BOTH wrong — the fix
+subsumes the two hazards each guarded). Two findings live in `src/appserver/` (owned by the
+concurrent session; handoff recorded in the ledger): engine swaps drop accepted MCP topology
+and overrides; the turn queue retains unbounded queued input.
+
+**Retrospective.** (1) Live acceptance caught two halves-shipped defects — A4's turn didn't end,
+A8's turn poked twice — that seven task reviews missed; the suite verifies the half you built.
+(2) Three reviewer/fixer overturns settled by mechanism, not authority: a reviewer proved the
+grow-edge fix couldn't fire (the gate and the damage come from the same write); a fixer proved
+the reviewer's prescribed one-liner deleted the feature (the reviewer withdrew); the codex fix
+wave proved BOTH prior latch shapes wrong. The wave's quality came from every party re-deriving
+the mechanism rather than deferring. (3) Instrument rot recurred twice more (a3's
+credential-gated invisibility; the W-S5 "flake" that was a wrapped needle) — the sweep's lesson
+generalizes: any assertion that reads a rendered frame instead of the projected document is
+measuring the instrument. (4) Fixture-derives-from-constant pins have no teeth; run the
+sabotage, don't read the test.
 
 ## Revision Notes
 

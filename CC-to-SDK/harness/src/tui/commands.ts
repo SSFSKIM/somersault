@@ -5,6 +5,7 @@ import { THINK_LEVELS } from "./thinkLevels.js";
 import type { CommandEntry } from "./commandComplete.js";
 import { formatCompactNumber, formatTokens, formatDuration, formatUsd, plural } from "./format.js";
 import type { SettingsRow } from "./settingsRows.js";
+import type { RendererChoice } from "./renderer.js";   // type-only: renderer.ts is pure, but nothing here needs its code
 import { THEME_LABELS } from "./theme.js";   // leaf module, no React — safe to import into this pure file
 import { LOCAL_OUTPUT_GUTTER } from "./species.js";   // also React-free; the ONE `⎿` local-output string
 
@@ -284,7 +285,7 @@ export function formatCost(u: SessionUsage): RenderLine[] {
 }
 
 /** `/status` — a one-glance snapshot of the live session (purely local state, no SDK call). */
-export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; effort?: string; effortSupported?: boolean; ctxPct?: number; sessionId?: string; cwd?: string; usage?: string }): RenderLine[] {
+export function formatStatus(s: { model?: string; mode: string; thinkLevel?: string; effort?: string; effortSupported?: boolean; ctxPct?: number; sessionId?: string; cwd?: string; usage?: string; renderer?: RendererChoice }): RenderLine[] {
   const out: RenderLine[] = [
     { text: "Status", bold: true },
     { text: `  model      ${s.model ?? "(default)"}`, dim: true },
@@ -305,6 +306,19 @@ export function formatStatus(s: { model?: string; mode: string; thinkLevel?: str
   if (s.cwd) out.push({ text: `  cwd        ${s.cwd}`, dim: true });
   if (s.sessionId) out.push({ text: `  session    ${s.sessionId.slice(0, 8)}`, dim: true });
   if (s.usage) out.push({ text: `  usage      ${s.usage}`, dim: true });
+  // FSW T5 (acceptance F9): the renderer, the one-word reason it was chosen for, and which residue-correction
+  // stack is live behind it. The decision is made ONCE at boot (`selectRenderer`, called from chatMain) and
+  // handed down; this formatter never re-derives it, because a `/status` that re-decided could name a
+  // renderer other than the one on screen. Absent when the caller has no decision to report — a `useChat`
+  // mounted outside chatMain — exactly like every other optional row above.
+  //   `corrections:` NAMES A REAL STACK NOW (T9 retired T5's placeholder). The two are not two settings of one
+  // mechanism, they are two answers to the residue problem, and only one of them is CONSTRUCTED per launch:
+  // classic builds the main-screen stack (the park, `createResizeRepaint`, the frame corrector, the reflow
+  // oracle) because its frame may be taller than the terminal; fullscreen builds none of it and holds a frame
+  // fixed at `rows − 1` whose only repaint rule is D21's one-shot erase after a resize (spec §A2a,
+  // `chatMain.tsx`'s gate). Derived from the mode rather than carried as a third field: they are the same
+  // decision, and a launch whose stack disagreed with its screen would be the bug this row exists to reveal.
+  if (s.renderer) out.push({ text: `  renderer   ${s.renderer.mode} (${s.renderer.reason}) · corrections: ${s.renderer.mode === "fullscreen" ? "alt-screen repaint contract" : "main-screen stack"}`, dim: true });
   return out;
 }
 export function formatUnknown(name: string): RenderLine[] {

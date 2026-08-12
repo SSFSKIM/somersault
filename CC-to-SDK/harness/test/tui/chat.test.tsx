@@ -1850,9 +1850,19 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
     stdin.write("/output-style"); await waitFor(() => frame(lastFrame).includes("/output-style"));
     stdin.write("\r");
-    await waitFor(() => frame(lastFrame).includes("/output-style moved → Output style in /config"));
     await waitFor(() => frame(lastFrame).includes("Default permission mode"));   // Settings opened, Config tab — not OutputStylePicker's own "Preferred output style" title
     expect(frame(lastFrame)).not.toContain("Preferred output style");
+    // FSW TASK 3 re-pinned this to "readable after Esc" and the FIX ROUND (review I2) puts it back. T3's
+    // premise was that a pane-owning dialog BLANKS the live window, so a notice printed in the very commit
+    // that opens Settings was not painted underneath it. A pane-owning surface now commits that window
+    // instead, which puts the row in <Static> — above the dialog, readable while it is up, which is where
+    // this line was before the task. Asserted in both places: with Settings open, and still there on the
+    // way back out (the commit is a publish, so closing the dialog cannot print it a second time).
+    await waitFor(() => frame(lastFrame).includes("/output-style moved → Output style in /config"));
+    expect(frame(lastFrame)).toContain("Default permission mode");                // …and the dialog is still up
+    stdin.write("\x1b");
+    await waitFor(() => !frame(lastFrame).includes("Default permission mode"));
+    expect(frame(lastFrame).match(/\/output-style moved → Output style in \/config/g)).toHaveLength(1);
   });
 
   // F2 task 9: /keybindings is upstream's own file-opener now — the keymap IS customizable (the file merges
@@ -2422,7 +2432,13 @@ describe("<ChatApp> — retained source", () => {
     app.stdin.write("g"); await waitFor(() => plain(frame(app.lastFrame)).includes("lines 1–"));
     // Asserted at the TOP of the pager, where a wrongly-compact pager would show its own overflow row: at the
     // bottom anchor a duplicate above the viewport is invisible and the count passes vacuously.
-    expect(plain(frame(app.lastFrame)).match(OVERFLOW) ?? []).toHaveLength(1);                  // only the static copy: the pager is NOT compact
+    // FSW TASK 3 moved this to ZERO and the FIX ROUND (review I2) moved it back to ONE, which is where it
+    // started. T3 blanked the live window while a pane-owning surface was up, so the still-uncommitted
+    // compact row was simply gone for the life of the pager; a pane-owning surface now COMMITS that window
+    // instead, so the row is in <Static> — one copy, above the pager, exactly as before the task. The claim
+    // is the one it always was, and reading it as `1` rather than `0` keeps it a claim about the PAGER: two
+    // would mean the pager is rendering the compact form as well.
+    expect(plain(frame(app.lastFrame)).match(OVERFLOW) ?? []).toHaveLength(1);                  // the pager is NOT compact
     app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40"));
     app.stdin.write("\x05"); await waitFor(() => plain(frame(app.lastFrame)).includes("… +37 lines (ctrl+e to show all)")); expect(plain(frame(app.lastFrame))).not.toContain("line 40");
     app.stdin.write("\x05"); app.stdin.write("G"); await waitFor(() => plain(frame(app.lastFrame)).includes("line 40")); app.stdin.write("\x1b"); await waitFor(() => !plain(frame(app.lastFrame)).includes("line 40"));
@@ -2443,9 +2459,25 @@ describe("<ChatApp> — retained source", () => {
     app.stdin.write("\x1b"); await waitFor(() => !plain(frame(app.lastFrame)).includes("line 40"));
     const after = app.stdout.frames.slice(before);
     expect(after.length).toBeGreaterThan(0);
-    // Every frame the toggles and the close emitted still carries that row exactly once: never republished
-    // by a re-projection, never wiped by an accidental <Static> replacement.
-    for (const f of after) expect(plain(f).split(compactRow!)).toHaveLength(2);
+    // NEVER TWICE — the half of this case that is about republication, and the half that still binds. A
+    // re-projection that appended the row a second time, or a <Static> replacement that re-emitted the whole
+    // transcript, both show up here as a frame carrying it twice.
+    // …AND EXACTLY ONCE, which is the half T3 dropped and the fix round (review I3) puts back. T3 weakened
+    // this to "≤ 2 per frame", on the premise that a pane-owning surface blanks the live window and the row
+    // legitimately vanishes while the pager is up; that premise was true then and is no longer — a
+    // pane-owning surface COMMITS the window now (review I2), so the row is in <Static> for the whole
+    // sequence. The weakened form also let a TRANSIENT wipe mid-pager pass, which is exactly the accidental
+    // `<Static>` replacement the original assertion existed to catch.
+    // The one concession the new mechanics do require: the commit runs in a passive effect, so the single
+    // frame between "the pager took the pane" and "the window was published" can carry the row zero times.
+    // Frames where the pager owns the pane are therefore `≤ 1`; every other frame is exactly 1.
+    const pagerOwned = (f: string) => plain(f).includes("line 40") || plain(f).includes("lines 1–");
+    for (const f of after) {
+      const copies = plain(f).split(compactRow!).length - 1;
+      expect(copies).toBeLessThanOrEqual(1);
+      if (!pagerOwned(f)) expect(copies).toBe(1);
+    }
+    expect(plain(frame(app.lastFrame)).split(compactRow!)).toHaveLength(2);
   });
 });
 

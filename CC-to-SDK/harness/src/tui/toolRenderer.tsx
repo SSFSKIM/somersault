@@ -15,7 +15,7 @@ import { Box, Text } from "ink";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
-import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, INTERRUPT_PLAIN, INTERRUPT_TOOL, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
+import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, INTERRUPT_CANCELLED, INTERRUPT_PLAIN, INTERRUPT_TOOL, PLAN_REJECTED_TEXT, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
 import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
@@ -174,11 +174,29 @@ function errorBody(lines: readonly string[], options: ProjectionOptions, color: 
  *  surfaces above it are NOT rerouted: `interrupted`/`rejected` are what the USER did and `running` has no body
  *  yet. `undefined` from `summaryLines` means "no typed row" — the generic fold below stays the whole story for
  *  Bash stdout, unknown tools and every error projection. */
+/** QA WAVE 2 DELTA — the one interruption that is really a REJECTION, and therefore reads as one.
+ *  Wave 2's A4 fix sends the deny arm's `interrupt: true` when a plan is waved off with no feedback
+ *  (`gate.ts`, probe 106), which is what lands this call on the interrupted arm at all; upstream paints its
+ *  own heading there rather than `zWo`'s prompt (`EAr`, L421286). Upstream discriminates by CONTENT — the
+ *  `rmn` prefix on the tool_result (L376058) — and that prefix is not on our wire: probe 106 A4 measured the
+ *  SDK writing `Dpt` instead, and the deny message we sent is discarded. So the discrimination is the TOOL,
+ *  with ONE carve-out: a plan call the human ESC-interrupted while it was pending is not a rejection, and the
+ *  engine says so by writing `INTERRUPT_CANCELLED` as that result's whole content (`toolResult.ts` reads the
+ *  same constant to reach this status). The WITH-FEEDBACK arm never arrives here — it does not interrupt, so
+ *  it stays an `error` row carrying the human's sentence verbatim. */
+const isPlanRejection = (event: ToolEvent, normalized: NormalizedToolResult): boolean =>
+  event.name === "ExitPlanMode" && !normalized.flatText.trim().startsWith(INTERRUPT_CANCELLED);
+
 function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] {
   if (normalized.status === "running") return [];
-  // Both surfaces are upstream `dimColor` prompts, not failures: they are what the USER did, so they never take the
-  // error colour, and the rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it.
-  if (normalized.status === "interrupted") return [{ text: INTERRUPTED_TEXT, dim: true }];
+  // None of these surfaces is a failure: they are what the USER did, so they never take the error colour, and the
+  // rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it. The two attributes are NOT
+  // interchangeable — `zWo`'s generic prompt and the `rejected` row are upstream `dimColor`, but `EAr` paints the
+  // plan-rejection heading with the `subtle` theme TOKEN (L421286, `color: "subtle"`), so that arm carries a colour.
+  if (normalized.status === "interrupted")
+    return [isPlanRejection(event, normalized)
+      ? { text: PLAN_REJECTED_TEXT, color: resolveThemeColor(themeTokens().subtle) }
+      : { text: INTERRUPTED_TEXT, dim: true }];
   if (normalized.status === "rejected") return [{ text: REJECTED_TEXT, dim: true }];   // upstream ignores the tool's text entirely: the row is always this literal
   const typed = summaryLines(event, normalized, options);
   if (typed !== undefined) return typed;

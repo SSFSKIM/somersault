@@ -48,7 +48,10 @@ describe("<Line> paints the duration row entirely dim (`Aha`, L428699/L428703)",
  *  toggle back out so the persistence test can drive it. */
 function Host({ fake, env, sink, clock, verb = "Worked", show, savePrefs, api }: { fake: FakeRemote; env: NodeJS.ProcessEnv; sink: { text: string }; clock: { ms: number }; verb?: string; show?: boolean; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; api?: { setShow?: (v: boolean) => void } }) {
   const c = useChat(() => fake, { ...(show === undefined ? {} : { initialShowTurnDuration: show }) }, { env, savePrefs, now: () => clock.ms, pickTurnVerb: () => verb });
-  sink.text = [...c.state.staticItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
+  // FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
+  // the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
+  // these content assertions are actually about.
+  sink.text = [...c.state.finalizedItems, ...c.state.pendingItems].flatMap(itemLines).join("|");
   if (api) api.setShow = c.setShowTurnDuration;
   return <Text>b:{String(c.state.busy)}</Text>;
 }
