@@ -119,15 +119,38 @@ tmux new-session -d -s qaccx -x 120 -y 40 -c "$CCX_PROJ" \
        CCX_FLEET_ROOT=$CCX_HOME/.claude/ccx \
        CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN \
        TERM=xterm-256color \
+       CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 \
    node /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness/dist/cli/bin.js"
 
 tmux set-option -t qaccx remain-on-exit on    # keeps the final frame + exit code readable
-wait_until qaccx '⏸ manual mode on' 30        # ready-needle for ccx (see §7.4 — '⏎ send' is GONE)
+wait_until qaccx '⏸ manual mode on' 30        # ready-needle for ccx (see §8.4 — '⏎ send' is GONE)
 ```
 
 `ccx` needs no onboarding seed at all — a bare isolated `HOME` lands straight in the REPL.
 Note `ccx --help` is not a flag it knows (`ccx: unknown flag --help`); bare invocation on a TTY
 is the interactive REPL.
+
+**Pin ccx's renderer on the launch line, exactly as §4.2 requires for `claude`.** ccx has two
+renderers of its own since the fullscreen-live-window wave, chosen ONCE at startup by
+`src/tui/renderer.ts`'s `selectRenderer()` ladder and never re-evaluated:
+
+| Pin | Renderer | Ladder rung |
+|---|---|---|
+| `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` | classic (main screen, log-update) | `env_off` |
+| `CLAUDE_CODE_NO_FLICKER=1` | fullscreen (alternate screen, live window) | `env_on` |
+
+Same spellings as `claude`'s, deliberately — a machine already configured for Claude Code is
+configured for ccx. `env_off` outranks `env_on`, so never set both. Only a non-TTY (`not_tty`) and
+`CLAUDE_AX_SCREEN_READER` outrank the pins; nothing below them — the `tui` prefs key, the built-in
+default — can override one.
+
+**`DEFAULT_ON` is `false` today**, so an *unpinned* ccx launch lands classic and every existing cell
+in this file measured classic whether it said so or not. That is a temporary accident: the wave's
+Task 16 flips the constant, after which an unpinned launch is fullscreen and every unpinned cell
+silently changes what it measures. **The rule is therefore the same one §4.2 states for `claude`:
+pin the renderer on every ccx launch line, before the flip rather than after it.** `/status` names
+the live renderer and the rung that chose it (`renderer   classic (env_off) · …`) — read it back
+whenever a cell's result surprises you, rather than inferring the mode from the frame.
 
 ### 2.2 One turn
 
@@ -297,6 +320,44 @@ open. `ccx` reports the same all-zero set. **Neither TUI ever enables mouse repo
 > or the cell is silently sampling one of two renderers depending on home warmth. "Neither TUI
 > ever enables mouse reporting" above is true only of the classic renderer.
 
+### 4.2a Two more DECSET mirrors: `alternate_on` and `cursor_flag`
+
+tmux tracks two more of the DECSET modes the fullscreen work turns on and off, and exposes them the
+same way. Both have been used ad hoc for a while — `alternate_on` carried the FULLSCREEN-1
+grounding's captures, `cursor_flag` Wave R's cursor-parking measurements — and neither was ever
+written down here. Read them with the same `display -p` invocation as the mouse flags (`display` is
+the alias for `display-message`):
+
+```bash
+tmux display -p -t qaccx 'alt=#{alternate_on} cursor=#{cursor_flag}'
+```
+
+| Variable | Meaning | Reads |
+|---|---|---|
+| `alternate_on` | the app holds the **alternate screen** (DECSET 1049 / 1047 / 47) | `1` fullscreen, `0` main screen |
+| `cursor_flag` | the cursor is **visible** (DECSET 25) | `1` shown, `0` hidden |
+
+Verified live on tmux 3.7b, 2026-08-12, against a scratch pane rather than assumed from the manual:
+baseline `alt=0 cursor=1`; after writing `\033[?1049h\033[?25l` to the pane, `alt=1 cursor=0`; after
+`\033[?1049l\033[?25h`, back to `alt=0 cursor=1`. Both appear in `tmux display-message -a`, so a
+future tmux that renames them will say so there.
+
+**Startup-only, not continuous.** For `claude`, `alternate_on` never changes on resize in either
+direction (FULLSCREEN-1 grounding, `startup-vs-live-resize.txt`: launched fullscreen it stays `1`
+from 80×40 down to 80×24 and back; launched forced-off it stays `0` across the same legs). ccx's
+`selectRenderer()` is likewise a boot-time decision. So a cell that resizes is not re-testing the
+renderer choice — pin it (§2.1) and read `alternate_on` once to confirm which one you got.
+
+**Why `cursor_flag` earns its place: it is half of the exit guarantee, checked from outside the
+process.** ccx's crash path writes mouse-off, rmcup and `\x1b[?25h` with `writeSync`
+(`src/tui/altScreen.ts`), which is exactly the class of claim a QA cell should not take on trust
+from the source. After any exit, `any=0 sgr=0 all=0 alt=0 cursor=1` is the four-way assertion that
+the terminal was handed back.
+
+**What these variables CANNOT see: termios raw mode and bracketed paste (DECSET 2004).** tmux
+exposes no format variable for either, and the crash path writes `\x1b[?2004l` too. Those two need a
+live shell — §6.
+
 ### 4.3 Injecting mouse bytes — which method actually delivers
 
 Two methods were tested against the live pane.
@@ -397,7 +458,125 @@ tmux display -p -t <session> '#{pane_width}x#{pane_height}'   # confirm the app 
 
 ---
 
-## 6. Cleanup
+## 6. Terminal-usability probe — proving the app gave the terminal back
+
+### 6.1 Why a format variable is not enough
+
+Most of the modes an exiting TUI must restore have tmux mirrors — mouse (§4.2), alternate screen and
+cursor (§4.2a). **Two do not: termios raw mode and bracketed paste (DECSET 2004).** tmux tracks
+neither, and they are precisely the two whose absence a user discovers ten minutes later in a shell
+that is not ours — no echo, or a pasted line arriving as `200~text201~`.
+
+The only instrument that sees them is a real interactive shell in the same pane, typed into after
+the app is gone. If it echoes and executes, the terminal is usable; there is no cheaper proof.
+
+### 6.2 The pattern
+
+Make the pane's command a shell that runs the app and then **`exec sh`**, so the pty survives the
+app and stays interactive:
+
+```bash
+tmux new-session -d -s qaexit -x 120 -y 40 -c "$CCX_PROJ" \
+  "sh -c 'env HOME=$CCX_HOME \
+              CCX_FLEET_ROOT=$CCX_HOME/.claude/ccx \
+              CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN \
+              TERM=xterm-256color \
+              CLAUDE_CODE_NO_FLICKER=1 \
+          node /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness/dist/cli/bin.js; exec sh'"
+
+tmux set-option -t qaexit remain-on-exit off      # NOT on — see §6.4
+wait_until qaexit '⏸ manual mode on' 30
+```
+
+**Signal the app, not the pane.** `#{pane_pid}` is the outer `sh`; the app is its child, and killing
+the pane pid tells you nothing about the app's own cleanup:
+
+```bash
+APP_PID=$(pgrep -P "$(tmux display -p -t qaexit '#{pane_pid}')" | head -1)
+kill -INT "$APP_PID"       # F5 — kill -TERM for F5b
+sleep 1
+```
+
+Then assert the mode restore from outside, and the usability from inside:
+
+```bash
+tmux display -p -t qaexit \
+  'alt=#{alternate_on} cursor=#{cursor_flag} any=#{mouse_any_flag} sgr=#{mouse_sgr_flag} all=#{mouse_all_flag}'
+# expect: alt=0 cursor=1 any=0 sgr=0 all=0
+
+tmux send-keys -t qaexit -l 'echo QA-TTY-$((6*7))'; sleep 0.3; tmux send-keys -t qaexit Enter
+sleep 0.5
+tmux capture-pane -t qaexit -p | grep -qF 'QA-TTY-42'   # THE assertion
+```
+
+**The needle is the computed `42`, not the literal typed.** §8.2's trap applies here too: the typed
+line `echo QA-TTY-$((6*7))` is itself echoed into the frame, so a needle matching what you sent is
+satisfied by the echo alone. Only `QA-TTY-42` requires that the shell also read the line and ran
+it — one needle covering echo, line discipline and execution. Verified frame:
+
+```
+sh-3.2$ echo QA-TTY-$((6*7))
+QA-TTY-42
+```
+
+### 6.3 The assertion has teeth — verified by sabotage
+
+Both halves were run live on tmux 3.7b, 2026-08-12, with a stand-in app in place of ccx:
+
+| Pane command | `#{pane_dead}` after the kill | `QA-TTY` needle |
+|---|---|---|
+| `sh -c 'sleep 60; exec sh'` (clean exit) | `0` | **present** |
+| `sh -c 'stty raw -echo; …; sleep 60; exec sh'` (tty left in raw mode) | `0` | **absent** |
+
+So the probe distinguishes a usable terminal from a wrecked one, and **`#{pane_dead}` alone does
+not** — the wrecked pane is just as alive. Liveness is a precondition, the echo is the finding.
+
+One more thing the echo does not prove: it lands on whichever screen is current, so a session that
+leaked the alternate screen still echoes normally (measured — `alt=1` with the needle present).
+Assert `alternate_on=0` separately; the two claims are independent.
+
+### 6.4 `remain-on-exit off` — the one place §8.7's rule is inverted
+
+Everywhere else in this file `remain-on-exit on` is what preserves the final frame and the exit code.
+Here it is wrong. The `exec sh` exists so the pane never reaches the dead state; with
+`remain-on-exit on`, a pane whose shell *did* die lingers and answers `capture-pane` with a frozen
+frame while silently discarding `send-keys` — "the needle is absent" and "the shell is gone" become
+the same observation. With it off, `tmux has-session -t qaexit` is a real liveness check and the
+needle is a real usability check. Check liveness first (§8.6: `display -p` returns empty, not an
+error, for a dead session).
+
+You do give up one thing: `#{pane_dead_status}` (§2.3) never fires, because the pane outlives the
+app. Capture the code inside the wrapper instead — verified live, and note `\$?` must be escaped
+past the outer double quotes so it is the *wrapper's* `$?` and not the launching shell's:
+
+```bash
+tmux new-session -d -s qaexit … "sh -c '<app>; echo EXIT=\$?; exec sh'"
+tmux capture-pane -t qaexit -p | grep '^EXIT='
+```
+
+**Do not assert 128+signal on ccx.** A foreground ccx REPL owns all three signals in
+`src/cli/main.ts`, whose handler ends in `process.exit(0)` — so a killed foreground session prints
+`EXIT=0`, not `EXIT=130`/`EXIT=143`. Only `ccx attach`, which has no host and no handler of its own,
+falls to the alt-screen guard's own map (`SIGINT` 130, `SIGTERM` 143, `SIGHUP` 129). The code is
+worth capturing; just read it as a recording, not as a pass/fail gate, and never as a substitute for
+the echo.
+
+### 6.5 Which cells need this
+
+**F5** (`kill -INT` mid-turn inside the frame) and **F5b** (`kill -TERM`, the `cli/main.ts` signal
+interlock) — both ask for "terminal usable after", and neither is checkable without a surviving
+shell. Everything else in the spec's acceptance set is answerable from format variables and frames.
+Deliver the signal **mid-turn**, as the cells say: submit a prompt and kill inside `wait_idle`'s
+window, not from an idle REPL — the interesting path is the one that interrupts a live render.
+
+The exit path they test writes mouse-off, rmcup, `\x1b[?2004l` and `\x1b[?25h` with `writeSync`
+before the process dies; **the point of these two cells is to verify that from OUTSIDE the process**,
+so read the mirrored modes with tmux and the two unmirrored ones with the shell — never from the
+source.
+
+---
+
+## 7. Cleanup
 
 ```bash
 tmux kill-session -t qaccx 2>/dev/null
@@ -414,7 +593,7 @@ isolated `HOME` from ccx.
 
 ---
 
-## 7. Fragile spots
+## 8. Fragile spots
 
 Things that needed retries or timing care. Read this before debugging a flaky QA run.
 
@@ -475,7 +654,7 @@ Things that needed retries or timing care. Read this before debugging a flaky QA
 
 ---
 
-## 8. Capabilities matrix
+## 9. Capabilities matrix
 
 What a QA agent **can** and **cannot** do with this harness.
 
@@ -489,10 +668,12 @@ What a QA agent **can** and **cannot** do with this harness.
 | Scrollback above the viewport | **YES** | `capture-pane -p -S -1000` (viewport-only by default) |
 | Pane dimensions | **YES** | `tmux display -p '#{pane_width}x#{pane_height}'` |
 | Whether the app enabled mouse reporting | **YES** | `#{mouse_any_flag}` / `#{mouse_sgr_flag}` / `#{mouse_all_flag}` — the single most useful non-obvious probe here |
-| Alternate-screen state | **YES** | `#{alternate_on}` |
+| Alternate-screen state | **YES** | `#{alternate_on}` — startup-only for both TUIs; see §4.2a |
 | Terminal title the app set | **YES** | `#{pane_title}` (claude sets it to the turn summary, e.g. `_ QA ping verification`) |
-| Process exit code | **YES** | `remain-on-exit on` + `#{pane_dead_status}` |
+| Process exit code | **YES** | `remain-on-exit on` + `#{pane_dead_status}` (lost under §6's `exec sh` — capture it in the wrapper) |
 | Cursor position | **YES** | `#{cursor_x}` / `#{cursor_y}` |
+| Cursor visibility (DECSET 25) | **YES** | `#{cursor_flag}` — half of the post-exit restore assertion (§4.2a) |
+| Termios raw mode / bracketed paste after exit | **YES, indirectly** | no format variable exists for either; prove it with §6's surviving shell and a typed-echo needle |
 | True pixel-level hover / rendered glyphs | **NO** | tmux is a character grid. No pixel raster, no font rendering, no images. |
 | Sixel / iTerm2 inline images | **NO** | not representable in `capture-pane` output |
 | Frame-by-frame animation timing | **PARTIAL** | you can poll `capture-pane` in a loop, but you get samples, not a guaranteed-complete frame sequence; a spinner tick can be missed between polls |
@@ -524,7 +705,7 @@ design, and both parse and discard injected mouse bytes without leaking them int
 
 ---
 
-## 9. Recommendations for the QA fleet design
+## 10. Recommendations for the QA fleet design
 
 1. **Make isolation structural, not procedural.** Every finding here depended on a five-line
    preamble (isolated `HOME`, `CCX_FLEET_ROOT`, scratch project, resolved-path seed) that is easy
