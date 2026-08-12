@@ -42,7 +42,7 @@ import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, tuiSetting, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -162,8 +162,15 @@ export function useChat(
      *  THE CALLER (`chatMain.tsx`), like `initialOutputStyle` and `statusLine`, and for the stronger version
      *  of the same reason: the decision reads the real TTY, the real env and the prefs file, and re-deciding
      *  it here would let a `/status` in a test — or in a second call site — name a renderer other than the
-     *  one that is actually painting. Absent for a hook mounted outside chatMain, which has no decision. */
-    rendererChoice?: RendererChoice } = {},
+     *  one that is actually painting. Absent for a hook mounted outside chatMain, which has no decision.
+     *    FSW T15: it is the LIVE choice now, not the boot one — `ChatApp` overrides this field with its
+     *  `renderer` prop, which `/tui` flips. Everything below reads it as "the renderer painting right now",
+     *  which is what `/status` has always claimed to print. */
+    rendererChoice?: RendererChoice;
+    /** FSW T15 — `/tui`'s flip, owned above the tree (`chatMain`'s `ChatRoot`). See `ChatApp`'s prop of the
+     *  same name for what it does and why it cannot live in here: the guard's bytes and the process-level live
+     *  mode are `runChatClient`'s, and a hook cannot own either. Absent = save the setting and say so. */
+    switchRenderer?: (tui: "fullscreen" | "default") => RendererChoice } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
@@ -1878,6 +1885,31 @@ export function useChat(
         // (theme.ts's setTheme has "no persistence — caller's job", and the dialog IS that caller); this
         // just opens/closes it and prints whatever result line it hands back via closeThemeDialog.
         case "theme": setThemeDialog({ open: true }); break;
+        // FSW T15 (canon `fTb`, bundle L482580-482620) — SWAP THE RENDERER UNDER A LIVE CONVERSATION.
+        // Canon's own order of business, kept: parse, refuse if busy, SAVE, then switch. Two of those
+        // deserve a word here.
+        //   THE REFUSAL IS GATED ON AN ACTUAL CHANGE (canon's `if (!l)` at L482601). `/tui fullscreen` while
+        // already fullscreen changes no screen, so background work is no reason to decline it — and the
+        // refusal names waiting for that work, which would be nonsense advice for a no-op. Why background
+        // work forbids the flip at all: a task's output lands in the transcript through the renderer that is
+        // up, and swapping the surface out from under an in-flight write is the one moment the two cannot
+        // agree about what is on screen.
+        //   THE SAVE HAPPENS EVEN WHEN THE LADDER OVERRULES THE REQUEST, also canon's shape (L482605 saves
+        // before it decides anything about applying). The setting is a preference, not an assertion about
+        // this terminal: a user who asks for fullscreen inside a pipe today means it for the next launch.
+        case "tui": {
+          const arg = cmd.args.trim().toLowerCase();
+          const before = opts.rendererChoice?.mode ?? "classic";
+          if (!TUI_SETTINGS.includes(arg as TuiSetting)) { append(formatTuiUsage(arg, before)); break; }
+          const want = arg as TuiSetting;
+          if (want !== tuiSetting(before) && bgTasksRef.current.length > 0) { append([{ text: TUI_BUSY_REFUSAL, dim: true }]); break; }
+          try { savePrefsFn({ tui: want }, historyEnv); } catch { /* best-effort, like every other pref write here */ }
+          // Outside `chatMain` there is nobody to flip: no guard, no live mode, no state above this tree.
+          // The setting is still the user's to set, and saying so is the honest end of the command.
+          if (!opts.switchRenderer) { append([{ text: `Saved. The ${want} renderer will apply at the next launch.`, dim: true }]); break; }
+          append(formatTuiResult(want, opts.switchRenderer(want), before));
+          break;
+        }
         // /config [key=value] (W3 T6): bare → open the Settings shell at Config (openSettings always seeds
         // tab:"Config"). With a key=value arg, parseConfigArg validates it against the SAME row model
         // SettingsDialog renders (buildRows(currentSettingsCtx()) — never a second copy of the row/

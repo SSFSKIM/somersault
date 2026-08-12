@@ -181,7 +181,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, aroundSubprocess, altHandoff }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, switchRenderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -249,12 +249,20 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  mount order all live in here. A prop at a stable element position is the only shape that survives it
    *  (plan review C5), so `chatMain` holds the choice as state above this element and never keys or wraps it.
    *    Absent means classic, which is what every embedder and every component test that does not care gets.
-   *  `hookOpts.rendererChoice` carries the SAME value for `/status` to print; both are handed down from the one
-   *  `selectRenderer` call, so the two cannot disagree about the mode — TRUE UNTIL T15, and T15 is the task that
-   *  breaks it: `/tui` flips this prop on a live session while `hookOpts` keeps the boot-fixed value, so
-   *  `/status` would report the mode the session started in. T15 must route the live value into `useChat`
-   *  rather than let this invariant lapse silently. */
+   *    THIS PROP IS THE ONE LIVE VALUE, AND `hookOpts.rendererChoice` IS NOT (T15 retiring T9's annotation).
+   *  `hookOpts` is assembled once at boot and never moves, so after a `/tui` it names the renderer the session
+   *  STARTED on; `/status` would then report a screen the user is no longer looking at. The prop wins where the
+   *  two meet — see the `useChat` call below, which overrides the hook's copy with this one — so there is again
+   *  a single answer to "which renderer is painting", and it is this. */
   renderer?: RendererChoice;
+  /** FSW T15 — `/tui`'s FLIP, owned above this tree. The mode is React state in `chatMain`'s `ChatRoot`, because
+   *  the two things a flip must do before the next paint — take or hand back the alternate screen, and move the
+   *  live mode every process-level consumer reads (the output proxy's screen rules, the resize chain's readers)
+   *  — are `runChatClient`'s, not this component's. Given the requested SETTING this re-runs the boot ladder and
+   *  returns the choice now in force, which may not be the one asked for: a rung above the settings rung (a
+   *  pipe, a screen reader, an env lever) still wins, and the caller prints what actually happened.
+   *    Absent for every embedder and component test, where `/tui` saves the pref and says so. */
+  switchRenderer?: (tui: "fullscreen" | "default") => RendererChoice;
   /** FSW TASK 12 — T6's `guard.aroundSubprocess`, threaded down for EVERY child this tree hands the terminal
    *  to: the `v` dump's editor, and (t12 review, I1) the composer's ctrl+g / ctrl+x ctrl+e and the plan
    *  dialog's ctrl+g, all of which must run with the main screen in front of them. A prop rather than a
@@ -285,7 +293,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const chatDeps = useMemo(() => (aroundSubprocess && !deps?.openEditor
     ? { ...deps, openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundSubprocess }) }
     : deps), [deps, aroundSubprocess]);
-  const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}), cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, chatDeps);
+  const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+    // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
+    // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
+    // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
+    // passes neither leaves `/status` exactly as silent about the renderer as it always was.
+    ...(renderer ? { rendererChoice: renderer } : {}), ...(switchRenderer ? { switchRenderer } : {}),
+    cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, chatDeps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
   // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
@@ -1479,12 +1493,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // unchanged across that write (paletteSlot.tsx's header). Classic renders no host, so the composer's
   // `usePaletteHoist` finds no setter and is inert — which is the whole of "classic is byte-identical" for
   // this delta.
-  if (fullscreen) return (
+  //   AND THERE IS EXACTLY ONE RETURN SINCE T15, which is the whole of `/tui`'s live flip. Two returns meant
+  // two ROOT ELEMENT TYPES, and React unmounts the host subtree under a changed type however stable the
+  // children are; the frame's classic arm is unbounded and paints what the `<Box>` here used to (argued in
+  // FullscreenFrame's header). `PaletteHost` moved outside the branch with it — it is a pair of context
+  // providers and no Yoga node, so a classic tree wrapped in it is byte-identical, and leaving it inside
+  // would have re-created the same changed-root-type problem one level up.
+  return (
     <PaletteHost>
-      <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching}
+      <FullscreenFrame mode={fullscreen ? "fullscreen" : "classic"} rows={size.rows}
+        historySearchOpen={state.historyOpen || footerState.searching}
         dialogInDock={inlineDecision !== null} paletteOpen={suggestOpen}
         regionChildren={region} dock={dock} seam={seamActive ? overlayChain : null} />
     </PaletteHost>
   );
-  return <Box flexDirection="column">{region}{dock}</Box>;
 }

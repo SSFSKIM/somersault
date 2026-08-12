@@ -63,8 +63,23 @@
 // paint a composer's tail through its blank rows. So when the seam is up the dock is NOT RENDERED and the seam
 // takes the band in flow. The two are visually identical whenever the slot is at least as tall as the dock,
 // which for every surface canon puts here it always is (a picker is ten-plus rows, the dock is five).
+//
+// ── AND IT IS THE WRAPPER ON THE MAIN SCREEN TOO (FSW T15) ───────────────────────────────────────────────
+// `mode="classic"` renders this same element tree with every constraint dropped: no `height`, no cap, no
+// clip, no grant, no measurement. It paints exactly what the main screen has always painted — a column of
+// the region followed by the dock — and it exists for ONE reason, which is not layout.
+//   React reconciles by element TYPE at a position. While the two renderers returned two different roots
+// (`<FullscreenFrame>` and a bare `<Box>`), `/tui`'s live flip reconciled them as different elements and
+// unmounted every host node below, even though `ChatApp` and every child ELEMENT were stable — a full
+// repaint, a `<Static>` reborn, and every piece of component state under the seam lost. One root type means
+// only PROPS move, and the conversation the flip is supposed to preserve actually survives it (T9 hand-off 1,
+// pinned in `test/tui/tui-switch.test.tsx` with the contrast case beside it).
+//   The classic arm therefore has to be BYTE-IDENTICAL to the Box it replaced, which is why the constraints
+// are OMITTED rather than passed as `undefined`: `styles.js` keys on `'flexShrink' in style`, so an explicit
+// `undefined` still sets Yoga's shrink to 1 where the old tree left it at its default.
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Box, measureElement, type DOMElement } from "ink";
+import type { RendererMode } from "./renderer.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 
 /** THE ROWS THE REGION ACTUALLY GRANTED, published to whatever is mounted inside it (FSW Task 10).
@@ -141,6 +156,11 @@ const SEAM_RULE = { top: "▔", bottom: "", left: "", right: "", topLeft: "", to
 const seamRuleColor = (): string | undefined => resolveThemeColor(themeTokens().permission);
 
 export interface FullscreenFrameProps {
+  /** FSW T15 — WHICH RENDERER THIS FRAME IS SERVING. `"fullscreen"` is the bounded shell everything above
+   *  describes; `"classic"` is the same tree with every constraint dropped, so that `/tui` can flip the two
+   *  without changing the root element type (see the header). Defaults to `"fullscreen"`: a caller that
+   *  mounts this component by name wants the frame. */
+  mode?: RendererMode;
   /** The terminal's row count — ChatApp's resize state, never `process.stdout.rows` read behind it. */
   rows: number;
   regionChildren: React.ReactNode;
@@ -170,7 +190,8 @@ export interface FullscreenFrameProps {
 
 const defaultOverflow = (msg: string): void => { if (process.env.CCX_DEBUG) process.stderr.write(`${msg}\n`); };
 
-export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearchOpen = false, dialogInDock = false, paletteOpen = false, onOverflow }: FullscreenFrameProps) {
+export function FullscreenFrame({ mode = "fullscreen", rows, regionChildren, dock, seam, historySearchOpen = false, dialogInDock = false, paletteOpen = false, onOverflow }: FullscreenFrameProps) {
+  const bounded = mode === "fullscreen";
   const height = frameHeight(rows);
   // ONE BOTTOM BAND, TWO OCCUPANTS AND TWO CAPS. Everything below — the region's floor, the measured grant's
   // stamp, the clip and the diagnostic — is written against `cap` and `bottomSlot` rather than against the dock,
@@ -206,6 +227,12 @@ export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearc
   // WANTED; `regionRef` is what they were given. An effect is the only place both are true — Yoga has laid out
   // by then — and the latch keeps a standing overflow from repeating the diagnostic on every keystroke.
   useEffect(() => {
+    // …and NOT on the main screen (T15). There is no budget there, so there is nothing to grant and nothing
+    // to clip: the region is exactly as tall as its content, `want === got` by construction, and the only
+    // thing a measurement would buy is a Yoga read on every classic render. The stamp is left standing, which
+    // is why `regionRows` re-checks it — a flip back into the frame at the same geometry re-uses the last
+    // grant, and at any other geometry falls to the floor for one frame, the safe direction either way.
+    if (!bounded) return;
     const region = regionRef.current, content = contentRef.current, bottom = bottomRef.current;
     if (!region || !content) return;
     const report = (latch: React.MutableRefObject<boolean>, over: boolean, msg: () => string) => {
@@ -226,20 +253,28 @@ export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearc
       report(bottomOverflowing, bottomGot > cap, () => `fullscreen frame: ${bottomSlot} content ${bottomGot} rows > its ${cap}-row cap — Overflow clipped.`);
     }
   });
+  // THE THREE CONSTRAINT SETS, HOISTED (T15) — every one of them is the FRAME's, and the classic arm is the
+  // same tree with all three empty. Spread rather than passed as `undefined` for the reason in the header.
+  const frameStyle = bounded ? { height, overflow: "hidden" as const } : {};
+  const regionStyle = bounded ? { flexGrow: 1, flexShrink: 1, minHeight: regionFloor, overflow: "hidden" as const } : {};
+  const slotStyle = bounded ? { flexShrink: 0, overflow: "hidden" as const } : {};
   return (
-    <Box flexDirection="column" height={height} overflow="hidden">
-      <Box ref={regionRef} flexDirection="column" flexGrow={1} flexShrink={1} minHeight={regionFloor} overflow="hidden">
-        <Box ref={contentRef} flexDirection="column" flexShrink={0}>
-          <RegionRowsContext.Provider value={regionRows}>{regionChildren}</RegionRowsContext.Provider>
+    <Box flexDirection="column" {...frameStyle}>
+      <Box ref={regionRef} flexDirection="column" {...regionStyle}>
+        <Box ref={contentRef} flexDirection="column" {...(bounded ? { flexShrink: 0 } : {})}>
+          {/* The provider is here on BOTH arms, at the same position, so the region's children are not
+              reconciled against a different element on a flip. Zero is "no grant" — see `useRegionRows`. */}
+          <RegionRowsContext.Provider value={bounded ? regionRows : 0}>{regionChildren}</RegionRowsContext.Provider>
         </Box>
       </Box>
       {/* ONE BOX, TWO TENANTS — same element position, so the swap is a prop change rather than an unmount, and
           `bottomRef` stays attached across it. The seam adds nothing but its border row: the cap, the clip and
-          the diagnostic above are the dock's, unchanged. */}
+          the diagnostic above are the dock's, unchanged. (The seam is a fullscreen-only slot: ChatApp's
+          `seamActive` is false on the main screen, so the classic arm always takes the dock branch.) */}
       {seamUp
-        ? <Box ref={bottomRef} flexDirection="column" flexShrink={0} overflow="hidden"
+        ? <Box ref={bottomRef} flexDirection="column" {...slotStyle}
             borderStyle={SEAM_RULE} borderColor={seamRuleColor()} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
-        : <Box ref={bottomRef} flexDirection="column" flexShrink={0} overflow="hidden">{dock}</Box>}
+        : <Box ref={bottomRef} flexDirection="column" {...slotStyle}>{dock}</Box>}
     </Box>
   );
 }

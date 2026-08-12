@@ -236,14 +236,16 @@ describe("ResumeSafeStdout.lastFrame", () => {
 });
 
 // ── FSW TASK 8 — THE ALTERNATE SCREEN'S PROXY (plan §T8, spec §A4a/D6) ───────────────────────────────────
-// One construction-time flag and three behaviours, each of which is a MAIN-SCREEN rule that the alternate
-// screen inverts. Fixed per construction because the renderer choice is (`selectRenderer`, spec §L2.1: a
-// resize never re-decides it), so nothing can flip underneath a proxy that has already painted.
+// One flag and three behaviours, each of which is a MAIN-SCREEN rule that the alternate screen inverts.
+// FSW T15 made the flag a READER rather than a construction-time boolean: `/tui` flips the renderer under a
+// live session, and this proxy — built once, around the one `process.stdout` — outlives the flip, so every
+// one of those rules asks at the write. The cases below pin a proxy whose answer never changes, which is
+// still every launch that never runs `/tui`.
 describe("ResumeSafeStdout altMode", () => {
   const BSU = "\x1b[?2026h", ESU = "\x1b[?2026l";      // DECSET 2026, canon's mode table L177069
   const alt = (columns?: number, rows?: number) => {
     const terminal = new RecordingTerminal(columns, rows);
-    return { terminal, out: createResumeSafeStdout(terminal as any, { altMode: true }) };
+    return { terminal, out: createResumeSafeStdout(terminal as any, { altMode: () => true }) };
   };
 
   // (1) Fullscreen paints through stock log-update with no <Static> in the tree, so every paint is a full-frame

@@ -78,6 +78,10 @@ export const COMMANDS: CommandRow[] = [
   { name: "rewind", summary: "rewind to a previous message (Esc Esc · aliases /checkpoint /undo)", aliases: ["checkpoint", "undo"] },
   { name: "add-dir", summary: "<path> — add a new working directory" },
   { name: "theme", summary: "change the theme" },
+  // FSW T15 — canon's own descriptor, verbatim (`xR_`, bundle L352074:
+  // `{type:"local-jsx", name:"tui", description:"Set the terminal UI renderer (default | fullscreen)",
+  //   argumentHint:"[default|fullscreen]"}`).
+  { name: "tui", summary: "Set the terminal UI renderer (default | fullscreen)" },
   { name: "config", summary: "open the Settings dialog (Status · Config · Usage · Stats)" },
   { name: "settings", summary: "alias of /config" },
   { name: "permissions", summary: "manage allow and deny tool permission rules" },
@@ -323,6 +327,42 @@ export function formatStatus(s: { model?: string; mode: string; thinkLevel?: str
 }
 export function formatUnknown(name: string): RenderLine[] {
   return [{ text: `Unknown command: /${name} · try /help`, color: "red" }];
+}
+
+// ---- /tui (FSW Task 15) ----
+// EVERY STRING BELOW IS CANON'S, from `fTb` (bundle L482580-482620) — the one exception is named where it
+// lives. The setting's two words are `default` and `classic`'s spelling never appears in them: canon's
+// `cKa = ["default","fullscreen"]` (L482645) is the DOMAIN, and `mode` is the renderer's own vocabulary, so
+// the two are converted at exactly one place (`tuiSetting` below) rather than each formatter guessing.
+
+/** canon's domain, in canon's order — `cKa`, L482645. */
+export const TUI_SETTINGS = ["default", "fullscreen"] as const;
+export type TuiSetting = typeof TUI_SETTINGS[number];
+/** …and the mode a setting names. `default` is the SETTING; `classic` is the RENDERER — see the note above. */
+export const tuiSetting = (mode: RendererChoice["mode"]): TuiSetting => (mode === "fullscreen" ? "fullscreen" : "default");
+/** canon `Usage: /tui <${cKa.join("|")}>` (L482583, L482585), so both arms below spell it identically. */
+export const tuiUsageLine = (): string => `Usage: /tui <${TUI_SETTINGS.join("|")}>`;
+/** canon L482603, verbatim. The `/tasks` it names is one of ccx's own aliases for `/bg` (see COMMANDS), so the
+ *  sentence is as actionable here as it is upstream. */
+export const TUI_BUSY_REFUSAL = "Cannot switch renderers while work is running in the background — wait for it to finish (or stop it via /tasks), then run /tui again.";
+
+/** `/tui` with no argument (canon L482583) and with an argument outside the domain (L482585). */
+export function formatTuiUsage(arg: string, current: RendererChoice["mode"]): RenderLine[] {
+  return [{ text: arg === "" ? `Current renderer: ${tuiSetting(current)}. ${tuiUsageLine()}` : `Unknown renderer "${arg}". ${tuiUsageLine()}`, dim: true }];
+}
+/** THE OUTCOME OF A `/tui` THAT WAS ALLOWED TO RUN, and there are only three.
+ *  · The renderer changed: NOTHING is printed. Canon prints nothing either (`YGt` re-renders the app and the
+ *    new screen is the feedback), and here the screen the user is looking at has just been rebuilt.
+ *  · It was already in force: canon's `Already using the ${i} renderer.` (L482599/L482610).
+ *  · THE ONE LINE THAT IS OURS. The setting is one rung of `selectRenderer`'s ladder and rungs above it can
+ *    still win — a screen reader, `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`, tmux `-CC`, a pipe. Canon has no
+ *    equivalent because it re-decides at launch and reports through a restart; ccx re-runs the ladder live and
+ *    therefore has an answer to give, and saying nothing would leave a saved setting looking broken. The
+ *    reason word is the same one `/status` prints, so the two surfaces name the same rung. */
+export function formatTuiResult(want: TuiSetting, next: RendererChoice, before: RendererChoice["mode"]): RenderLine[] {
+  if (next.mode !== before) return [];
+  if (tuiSetting(next.mode) === want) return [{ text: `Already using the ${want} renderer.`, dim: true }];
+  return [{ text: `Saved. The ${want} renderer does not apply here (${next.reason}).`, dim: true }];
 }
 
 // ---- U1: catalogued client-side controls (TUI/UX sprint Wave 1) ----

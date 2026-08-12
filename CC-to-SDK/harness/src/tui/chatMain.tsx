@@ -3,7 +3,7 @@
 import React from "react";
 import { writeSync } from "node:fs";
 import { render } from "ink";
-import { createAltScreenGuard, createChatTeardown, resolveTerminalName } from "./altScreen.js";
+import { createAltScreenGuard, createChatTeardown, resolveTerminalName, type AltScreenGuard } from "./altScreen.js";
 import { remoteChatSession } from "../client/chatAdapter.js";
 import type { ChatSession } from "../session/chatSession.js";
 import { ChatApp } from "./ChatApp.js";
@@ -11,8 +11,8 @@ import { UserKeymap } from "./keys/UserKeymap.js";
 import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
-import { loadPrefs } from "./prefs.js";
-import { selectRenderer } from "./renderer.js";
+import { loadPrefs, type CcxPrefs } from "./prefs.js";
+import { selectRenderer, type RendererChoice, type RendererMode } from "./renderer.js";
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
@@ -202,13 +202,15 @@ export function createResizeChain(readers: () => void): { fire: () => void; subs
   };
 }
 
-/** FSW T8: `altMode` is the alternate screen, and it is FIXED PER CONSTRUCTION because the renderer choice is —
- *  `selectRenderer` runs once at boot and a resize never re-runs it (spec §L2.1), so a proxy cannot outlive the
- *  screen it was built for. `runChatClient` has the choice in hand before it builds this (the `selectRenderer`
- *  call precedes the `createResumeSafeStdout` one), so no setter is needed and none is offered: a mode that
- *  could change mid-session would mean a frame recorded under one set of rules and erased under another. */
-export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMode?: boolean } = {}): ResumeSafeStdout {
-  const altMode = opts.altMode === true;
+/** FSW T8: `altMode` is the alternate screen — every screen rule the proxy applies keys off it (the `ESC[3J`
+ *  strip and the park are main-screen only; the 2026 wrap and D21's erase are alt-screen only).
+ *    FSW T15 MADE IT A READER, and the reason is exactly the invariant the first version of this comment
+ *  claimed: the mode may not be captured at construction, because `/tui` now changes it mid-session while this
+ *  proxy — built once, wrapping the one `process.stdout` — outlives the flip. Each of those rules is a
+ *  PER-WRITE decision, so each one asks at the write. It is not a setter: nothing here owns the mode, and a
+ *  second place that could be told about a flip is a second place that can be told late. */
+export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMode?: () => boolean } = {}): ResumeSafeStdout {
+  const altMode = opts.altMode ?? (() => false);
   let suppressNextWrite = false;
   let frame: string | undefined;                 // the last live frame, as painted
   let widthAtPaint = 0;                          // W-R t4b: …and the terminal width it was painted at
@@ -326,7 +328,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
       // +`H` and L177121 selects it precisely on `altScreen`. The strip is a main-screen rule and it comes off
       // with the main screen. `clearViewport.ts`'s `screenClear` is the same decision on the same axis, for
       // `/clear`'s own payload rather than for Ink's tall-frame head.
-      if (!altMode && chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
+      if (!altMode() && chunk.startsWith(CLEAR_SCROLLBACK_HEAD)) rewritten = "\x1b[2J" + chunk.slice(CLEAR_SCROLLBACK_HEAD.length);
       return false;
     }
     const prefix = chunk.match(INK_ERASE_PREFIX)?.[0] ?? "";
@@ -372,7 +374,11 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     // Injecting through `rewritten` and not around `record` is also what keeps the classification honest: `record`
     // has already read Ink's raw bytes, so the `\x1b[2J` we are about to prepend cannot be mistaken for the
     // tall-frame head by the very branch that tests for it.
-    if (pendingErase) { pendingErase = false; rewritten = ALT_ERASE + (rewritten ?? chunk); }
+    //   …AND IT IS SPENT ON THE SCREEN THAT ARMED IT (T15). A resize can land between `/tui default` and the
+    // paint that follows it; `\x1b[2J` in front of THAT chunk would blank a main-screen viewport whose live
+    // `<Static>` rows are not in scrollback yet — the t8 over-erase, arriving by a new route. Consumed either
+    // way, because the erase belongs to a frame that is no longer coming.
+    if (pendingErase) { pendingErase = false; if (altMode()) rewritten = ALT_ERASE + (rewritten ?? chunk); }
     justErased = false; frame = body; widthAtPaint = stdout.columns ?? 0; tall = 0;   // …and the screen is back in sync (see above)
     return true;
   };
@@ -393,7 +399,12 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     // branch below is `parkedCol > 0 && …`, so it goes dark and every non-Ink write passes through unhomed and
     // un-re-parked; and `createChatTeardown`/`createResizeRepaint` both take `parkedColumn` as a reader that has
     // always been allowed to answer 0 (it does, on any non-tty and any terminal under 8 columns).
-    if (altMode) return;
+    //   …AND IT CLEARS THE RECORD RATHER THAN MERELY DECLINING (T15). Nothing is parked on the alternate
+    // screen, so 0 is the truth there — and after a `/tui` INTO fullscreen the last classic frame's column is
+    // still sitting in this variable, where three readers would take it for a live park (the `foreign` branch
+    // below homing a cursor that is already home, the exit teardown erasing a row of the frame just before
+    // rmcup, `resizeRepaint` measuring from it if a flip back re-armed it mid-burst).
+    if (altMode()) { parkedCol = 0; return; }
     const col = stdout.isTTY ? parkColumn(stdout.columns) : 0;
     if (col > 0) targetWrite(parkSequence(col));
     parkedCol = col;
@@ -429,7 +440,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
       // the two must land in the same update. Only a RECORDED FRAME WRITE is wrapped: `recorded` already draws
       // the line between a paint of the live frame and the erases, <Static> flushes and foreign escapes that
       // are not one, and wrapping those would nest a second update inside the frame write behind them.
-      const payload = altMode && recorded ? SYNC_BEGIN + (corrected ?? args[0] as string) + SYNC_END : corrected;
+      const payload = altMode() && recorded ? SYNC_BEGIN + (corrected ?? args[0] as string) + SYNC_END : corrected;
       const wrote = payload === undefined ? targetWrite(...args) : targetWrite(payload, ...args.slice(1));
       if (recorded || (foreign && ESCAPES_ONLY.test(chunk))) park();
       return wrote;
@@ -457,7 +468,7 @@ export function createResumeSafeStdout(stdout: NodeJS.WriteStream, opts: { altMo
     takeTallAtSignal() { const was = tallAtSignal; tallAtSignal = false; return was; },
     detachedWrites() { return detached; },
     setFrameCorrector(fn) { corrector = fn; },
-    eraseNextPaint() { if (altMode) pendingErase = true; },
+    eraseNextPaint() { if (altMode()) pendingErase = true; },
     repaint(runInkWrite) {
       suppressNextWrite = true;
       try { runInkWrite(); } finally { suppressNextWrite = false; }
@@ -494,6 +505,72 @@ export function createNoticeBridge(): NoticeBridge {
   };
 }
 
+/** FSW T15 — `/tui`'s TWO HALVES ABOVE THE REACT TREE. `select` answers which renderer the setting now names;
+ *  `apply` performs everything that must be true BEFORE the next paint. They are separate because the command
+ *  needs the answer to print (and to decide whether anything changed) and the tree needs it as state — one
+ *  call, two consumers, no second evaluation of the ladder. */
+export interface RendererSwitch {
+  /** Re-run the boot ladder with `tui` in its settings rung. A rung ABOVE that one still wins — a pipe, a
+   *  screen reader, `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`, tmux `-CC`, Windows over SSH — which is why this
+   *  returns a choice rather than echoing the request, and why the reason word comes back with it. */
+  select(tui: "fullscreen" | "default"): RendererChoice;
+  /** Move the live mode and take/hand back the screen, in that order and synchronously. */
+  apply(next: RendererChoice): void;
+}
+
+/** THE FLIP, AS TWO SIDE EFFECTS THAT MUST NOT BE SEPARATED BY A PAINT.
+ *
+ *  `live.mode` is what the output proxy and the resize chain read on their next write; the guard's escape is
+ *  what the terminal reads. Both happen here, ahead of the `setState` that re-renders the tree, so the order
+ *  on the wire is enter-then-frame going in and rmcup-then-classic-paint coming out — spec §A6's rule
+ *  ("nothing fullscreen may paint to the main screen") applied to a boundary that is not an exit.
+ *
+ *  IT IS NOT `createChatTeardown`. That is latched once per process ON PURPOSE: it is the EXIT's order, and it
+ *  ends with the resume pointer. A flip is not an exit, so it takes `guard.leave()` — the same bytes minus the
+ *  unmount and the bracketed-paste reset — and the guard is re-enterable across as many flips as the user
+ *  wants (`enter()`/`leave()` are each `armed`-guarded and idempotent).
+ *
+ *  Extracted from `runChatClient` so the ordering has somewhere to be asserted, exactly as `createResizeChain`
+ *  was; it has no other caller. */
+export function createRendererSwitch(deps: { prefs: CcxPrefs; isTTY: boolean; env: NodeJS.ProcessEnv; guard: AltScreenGuard; live: { mode: RendererMode } }): RendererSwitch {
+  return {
+    select: (tui) => selectRenderer({ isTTY: deps.isTTY, env: deps.env, prefs: { ...deps.prefs, tui } }),
+    apply(next) {
+      const was = deps.live.mode;
+      deps.live.mode = next.mode;
+      if (next.mode === was) return;
+      if (next.mode === "fullscreen") deps.guard.enter(); else deps.guard.leave();
+    },
+  };
+}
+
+/** FSW T15 — THE RENDERER MODE IS REACT STATE, AND THIS IS THE ONLY COMPONENT ABOVE IT.
+ *
+ *  `ChatApp` may not unmount when `/tui` runs — the transcript, the composer draft, every dialog's internal
+ *  state and the keymap registry's mount order all live inside it — so the state that changes has to sit
+ *  ABOVE that element and reach it as a prop at a stable position: no `key`, no conditional wrapper, nothing
+ *  between them that exists in only one mode (plan review C5). That is the whole content of this component,
+ *  and it is why it is a component at all rather than a closure in `runChatClient`.
+ *
+ *  Everything else is passed straight through, which also means `spy.tree.props.children.props` still reads
+ *  ChatApp's props at boot: the only two this adds are the ones ChatApp cannot be given from outside React. */
+export function ChatRoot({ rendererSwitch, ...props }: { rendererSwitch: RendererSwitch } & React.ComponentProps<typeof ChatApp>): React.ReactElement {
+  const [choice, setChoice] = React.useState<RendererChoice>(props.renderer ?? { mode: "classic", reason: "default_off" });
+  // …and the callback closes over NOTHING that can go stale: `apply` compares against the holder above the
+  // tree, which is the same value the output proxy reads, so there is one record of "which screen are we on"
+  // and no render of this component can disagree with it.
+  const switchRenderer = React.useCallback((tui: "fullscreen" | "default"): RendererChoice => {
+    const next = rendererSwitch.select(tui);
+    // The screen and the process-level mode move FIRST; the paint is the `setState` behind them. Ink runs
+    // React in legacy mode, so this flushes synchronously — but the guard writes with `writeSync` on fd 1,
+    // so the ordering holds even where the paint is deferred by Ink's own throttle.
+    rendererSwitch.apply(next);
+    setChoice(next);
+    return next;
+  }, [rendererSwitch]);
+  return <ChatApp {...props} renderer={choice} switchRenderer={switchRenderer} />;
+}
+
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
   if (prefs.theme) setTheme(prefs.theme);
@@ -505,7 +582,16 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const renderer = selectRenderer({ isTTY: Boolean(process.stdout.isTTY), env: process.env, prefs });
   // FSW T9 (spec §A2a) — THE ONE BOOLEAN THE WHOLE BRANCH READS. Derived once, beside the decision, so no
   // line below re-derives it and none of them can disagree about which screen this process is painting into.
+  //   FSW T15 MOVED IT INTO A HOLDER, and the boolean is now only the BOOT value. `/tui` swaps the renderer
+  // under a live session, so every consumer above the React tree that keeps a screen rule — the output
+  // proxy's four, the resize chain's readers — has to ask which screen it is on AT THE MOMENT IT ACTS rather
+  // than remember which one this process started on. `live.mode` is that single answer; `ChatRoot` moves it
+  // (through `createRendererSwitch`) in the same synchronous step that takes or hands back the screen, so no
+  // paint can land between the two. The React tree does not read this holder — it reads the `renderer` prop,
+  // which is the same fact as component state.
   const fullscreen = renderer.mode === "fullscreen";
+  const live = { mode: renderer.mode };
+  const fullscreenNow = (): boolean => live.mode === "fullscreen";
   // W3 T5: seed the Settings dialog's Output-style row from the same saved prefs (defaulting like useChat's
   // own opts.initialOutputStyle fallback does) — client-tracked, no engine round-trip needed just to boot.
   // W-C T7: and the `Show turn duration` row from the same read (`Dc("showTurnDuration", !0)` — default TRUE).
@@ -535,9 +621,10 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // pointer names whatever conversation the user was actually in when they quit.
   let liveSession: ChatSession | undefined;
   const makeSession = (resume?: string) => { const s = buildSession(resume); liveSession = s; return s; };
-  // FSW T8/T9: the proxy's screen rules are the renderer's, fixed at construction — 2026-wrapped paints, no
-  // park, no `ESC[3J` strip, and the D21 erase-before-paint channel armed (see `eraseNextPaint`).
-  const output = createResumeSafeStdout(process.stdout, { altMode: fullscreen });
+  // FSW T8/T9: the proxy's screen rules are the renderer's — 2026-wrapped paints, no park, no `ESC[3J` strip,
+  // and the D21 erase-before-paint channel armed (see `eraseNextPaint`). T15: read LIVE, per write, because
+  // `/tui` can move the screen under a proxy that is built once.
+  const output = createResumeSafeStdout(process.stdout, { altMode: fullscreenNow });
   const bridge = createDeferredClearBridge();                 // created BEFORE render: useChat may ask on mount
   // F2 task 5: the keymap owns raw stdin for the whole tree (its own parser + binding table + chord machine),
   // which is only safe because this render already passes `exitOnCtrlC: false` — Ink must not exit underneath
@@ -570,16 +657,20 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // not in yet) goes through Ink's own stdout so its erase-plus-frame write re-records the frame and re-parks the
   // cursor on it. The DSR reply comes back the long way round: the keymap provider owns the ONE raw-stdin reader,
   // and forwards unclaimed escape sequences to `onUnknownSequence` — a forward that has existed since task 3.
-  //   FSW T9 (spec §A2a) — AND NONE OF IT IS CONSTRUCTED IN FULLSCREEN. Every line of the stack below is an
-  // answer to one question — "the frame is taller than the terminal thinks it is; where is the residue?" — and
-  // the fullscreen frame makes that question unaskable by giving the tree `rows − 1` rows and clipping. So this
-  // is a GATE ON CONSTRUCTION, not a disabled feature: no `createResizeRepaint` (nothing to repair), no frame
-  // corrector (nothing to correct — and `record`'s corrector branch is dead there anyway, which is why D21's
-  // erase needed its own channel), no reflow probe (an alternate screen does not reflow; the probe would write
-  // a DSR into a frame that owns every cell), and no park (T8, same argument one layer down). Fullscreen's
-  // whole repaint contract is the D21 one-shot below.
+  //   FSW T9 (spec §A2a) — NONE OF IT RUNS IN FULLSCREEN. Every line of the stack below is an answer to one
+  // question — "the frame is taller than the terminal thinks it is; where is the residue?" — and the
+  // fullscreen frame makes that question unaskable by giving the tree `rows − 1` rows and clipping. So the
+  // repaint, the frame corrector, the reflow probe and the park are all silent there, and fullscreen's whole
+  // repaint contract is the D21 one-shot below.
+  //   FSW T15 MOVED THE GATE FROM CONSTRUCTION TO EFFECT, and that is a real change of shape rather than a
+  // refactor. T9 could gate on construction because the screen was decided for the life of the process; `/tui`
+  // ends that. A session that BOOTS fullscreen and flips to classic would have no repaint stack to turn back
+  // on, and one that boots classic and flips the other way would have a live one writing main-screen repairs
+  // into an alternate-screen frame — the same bug from either end. So the stack is always BUILT (its
+  // constructor arms no timer, writes nothing and reads the size once) and every seam that could act asks the
+  // live mode: the two chain readers below, and the corrector here.
   const reports = createCursorReports();
-  const resize = fullscreen ? undefined : createResizeRepaint({
+  const resize = createResizeRepaint({
     lastFrame: output.lastFrame, parkedColumn: output.parkedColumn,
     size: () => ({ columns: process.stdout.columns ?? 0, rows: process.stdout.rows ?? 0 }),
     repaint: (s) => { if (process.stdout.isTTY) output.stdout.write(s); },
@@ -591,7 +682,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // machinery (Ink's stdout has to exist first), hence the setter rather than a constructor argument. The
   // decision lives in the resize module, not in a closure here: a write is either corrected where it is made or
   // its shortfall is owed to the repair that runs when the verdict lands, and only one of those two can be true.
-  if (resize) output.setFrameCorrector(resize.frameWrite);
+  // The empty string is the module's own "nothing to inject", so a fullscreen frame passes through untouched.
+  output.setFrameCorrector((info) => (fullscreenNow() ? "" : resize.frameWrite(info)));
   // W2 t7 (s2qa2-05): THE ORDER IS THE WHOLE POINT OF DOING IT HERE. This listener is ahead of Ink's, so it is
   // the last moment at which "a tall write is outstanding" is still true for the screen the user is looking at —
   // Ink's own handler repaints synchronously on the next line of the same signal and stands the count down.
@@ -617,9 +709,14 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // in fullscreen they are replaced by the one thing a resize owes the alternate screen: D21's erase before the
   // next paint. Same position in the same chain, and for the same reason the readers hold it — this runs before
   // Ink's own synchronous handler, so the flag is up before the repaint that must carry it.
-  const resizeChain = createResizeChain(fullscreen
-    ? () => { output.eraseNextPaint(); }
-    : () => { output.noteResizeSignal(); resize!.onResize(); });
+  //   FSW T15 — …AND WHICH READERS RUN IS DECIDED AT THE SIGNAL, not at boot. A resize is exactly the kind of
+  // event that can arrive on either side of a `/tui`, and both readers are screen-specific: `onResize`
+  // measures a main-screen frame, `eraseNextPaint` arms an alt-screen-only escape (the proxy's own guard would
+  // drop it anyway, which is precisely the belt this branch is the braces for).
+  const resizeChain = createResizeChain(() => {
+    if (fullscreenNow()) { output.eraseNextPaint(); return; }
+    output.noteResizeSignal(); resize.onResize();
+  });
   const onTerminalResize = resizeChain.fire;
   process.stdout.on("resize", onTerminalResize);
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
@@ -663,8 +760,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // the user's shell screen AFTER rmcup.
   const teardown = createChatTeardown({
     offResizeListener: () => process.stdout.off("resize", onTerminalResize),
-    stopResize: () => resize?.stop(),          // W2 t7 — drop the settle window with it: it WRITES when it fires
-                                               // (…and in fullscreen there is nothing to stop — T9 built none)
+    stopResize: () => resize.stop(),           // W2 t7 — drop the settle window with it: it WRITES when it fires
+                                               // (…and it is built on every launch since T15 — see the gate above)
     clearTitle: () => title.clear(),           // `a0u` (L148428) — hand the terminal back with an empty title
     parkedColumn: output.parkedColumn,
     stopSignalSafety,
@@ -682,13 +779,15 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // visible flash and a scrollback line nobody asked for.
   //   …and `renderer={renderer}` below is a PROP at a stable element position (plan review C5) — no `key`, no
   // wrapper that exists in only one mode — because T15's `/tui` flips it on a LIVE session and ChatApp may not
-  // unmount when it does. Today the value is a constant; the state that will drive it belongs here, above this
-  // element, and nothing about that line changes when it arrives.
+  // unmount when it does. T15 arrived: the value below is the BOOT choice, `ChatRoot` holds it as state from
+  // there on, and this line is unchanged, which was the point of writing it this way.
   if (fullscreen) altGuard.enter();
+  // FSW T15 — the flip's two halves, over the guard built above and the holder every screen rule reads.
+  const rendererSwitch = createRendererSwitch({ prefs, isTTY: Boolean(process.stdout.isTTY), env: process.env, guard: altGuard, live });
   const app = render(
     <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
       onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
-      <ChatApp makeSession={makeSession} client={opts.client} cwd={opts.cwd}
+      <ChatRoot rendererSwitch={rendererSwitch} makeSession={makeSession} client={opts.client} cwd={opts.cwd}
         initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
         clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
         hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}

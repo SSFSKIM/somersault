@@ -83,6 +83,15 @@ export interface AltScreenGuard {
   enter(): void;
   /** Hand the main screen back: mouse off, unmount, rmcup, cursor. Idempotent, never throws. */
   exit(): void;
+  /** FSW T15 — HAND THE MAIN SCREEN BACK AND KEEP RENDERING. `/tui default` leaves the alternate screen under
+   *  a session that is not ending: the same React tree paints its next frame onto the main screen, so this is
+   *  `exit()` minus the two things that belong to an exit — canon `zuy`'s unmount limb (there is nothing to
+   *  unmount; the tree is the point) and `PASTE_OFF` (the keymap provider still owns bracketed paste and will
+   *  not re-arm it until it remounts). Disarms, so a later `enter()` takes the screen again and the exit
+   *  teardown owes nothing for a screen we no longer hold.
+   *    NOT `createChatTeardown`. That is latched once per process by design — it is the EXIT's order — and a
+   *  mode flip is not an exit; routing a flip through it would spend the latch and leave the real exit silent. */
+  leave(): void;
   /** Install the crash-safety handlers. Returns the disposer that removes exactly what it added. */
   installSignalSafety(): () => void;
   /** True between `enter()` and `exit()` — including across a subprocess handoff, which the guard owns. */
@@ -140,8 +149,9 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
   // the terminal must still find a guard willing to write mouse-off and rmcup, and a redundant rmcup on the
   // main screen costs nothing. That matters more for ctrl+z than for a child process — a STOPPED process can
   // be killed outright, and the `exit` limb is then the only thing left to speak for the terminal.
-  const handoff = (): (() => void) => {
-    if (!armed) return () => {};
+  // THE BYTES OF GIVING THE SCREEN BACK WITHOUT ENDING ANYTHING — shared by the subprocess handoff and by
+  // T15's mode flip, which are the same act with different futures (one comes back, one does not).
+  const leaveScreen = (): void => {
     write(MOUSE_OFF);
     write(EXIT_ALT);
     // …and whoever takes the terminal gets a cursor they can see. Ink's log-update hides one on every render
@@ -150,11 +160,16 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
     // reset. Canon's leave is explicit about the same pair, in this order: `\x1B[0m\x1B[?25h` (L180654).
     write(SGR_RESET);
     write(CURSOR_SHOW);
+  };
+  const handoff = (): (() => void) => {
+    if (!armed) return () => {};
+    leaveScreen();
     return () => { write(enterSeq); };
   };
   return {
     enter() { if (!armed) takeScreen(); },
     exit() { if (!armed) return; armed = false; handBack(); },
+    leave() { if (!armed) return; armed = false; leaveScreen(); },
     active() { return armed; },
     handoff,
     aroundSubprocess<T>(run: () => T): T {
