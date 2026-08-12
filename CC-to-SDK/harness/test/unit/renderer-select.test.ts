@@ -23,6 +23,11 @@ import type { CcxPrefs } from "../../src/tui/prefs.js";
 const forcedOn = { isTTY: true, env: { CLAUDE_CODE_NO_FLICKER: "1" } as NodeJS.ProcessEnv, prefs: { tui: "fullscreen" } as CcxPrefs, platform: "darwin" as NodeJS.Platform };
 /** The mirror: nothing set anywhere, a real TTY, so the ladder falls all the way through to the constant. */
 const bare = { isTTY: true, env: {} as NodeJS.ProcessEnv, prefs: {} as CcxPrefs, platform: "darwin" as NodeJS.Platform };
+/** `bare` plus a settings key that says "classic" — a floor sitting BELOW every auto-off rung and ABOVE the
+ *  `DEFAULT_ON` constant. Falsification tests (the ones proving a rung did NOT fire) start here rather than
+ *  from `bare`, so their fall-through reason is `settings_off`, a literal Task 16's flip cannot move. Only
+ *  the one deliberate pin at the bottom of this file observes the default. */
+const settingsFloor = { ...bare, prefs: { tui: "default" } as CcxPrefs };
 
 describe("selectRenderer — the ladder, rung by rung", () => {
   // F11 [M2a], quoted: "Non-TTY invocation (pipe) lands classic regardless of env force-on (D-F2's
@@ -53,6 +58,16 @@ describe("selectRenderer — the ladder, rung by rung", () => {
     // The off rung also outranks the settings and the default beneath it.
     expect(selectRenderer({ ...bare, env: { CLAUDE_CODE_NO_FLICKER: "0" }, prefs: { tui: "fullscreen" } }))
       .toEqual({ mode: "classic", reason: "env_off" });
+    // `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` is the half with no off position, so "is it set?" is a real
+    // question with three answers, and the module's answer is a RECORDED DIVERGENCE from canon (which
+    // truthy-parses it). Cleared and spelled-out-negation do NOT disable; anything unrecognised DOES.
+    // `settings_off` is the sentinel below, not `default_off`, so these stay independent of `DEFAULT_ON`.
+    expect(selectRenderer({ ...settingsFloor, env: { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "" } }))
+      .toEqual({ mode: "classic", reason: "settings_off" });
+    expect(selectRenderer({ ...settingsFloor, env: { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "0" } }))
+      .toEqual({ mode: "classic", reason: "settings_off" });
+    expect(selectRenderer({ ...settingsFloor, env: { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "maybe" } }))
+      .toEqual({ mode: "classic", reason: "env_off" });
   });
 
   it("env_on beats tmux -CC, Windows-over-SSH and the settings key", () => {
@@ -73,23 +88,23 @@ describe("selectRenderer — the ladder, rung by rung", () => {
 
   it("tmux_cc_off needs all three parts — no shell-out means each one alone must falsify it", () => {
     // No TMUX at all: iTerm2 on its own is not control mode.
-    expect(selectRenderer({ ...bare, env: { TERM_PROGRAM: "iTerm.app", TERM: "xterm-256color" } })).toEqual({ mode: "classic", reason: "default_off" });
+    expect(selectRenderer({ ...settingsFloor, env: { TERM_PROGRAM: "iTerm.app", TERM: "xterm-256color" } })).toEqual({ mode: "classic", reason: "settings_off" });
     // tmux under a terminal that is not iTerm2: `-CC` is an iTerm2 integration, so nothing to avoid.
-    expect(selectRenderer({ ...bare, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "Apple_Terminal", TERM: "xterm-256color" } }))
-      .toEqual({ mode: "classic", reason: "default_off" });
+    expect(selectRenderer({ ...settingsFloor, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "Apple_Terminal", TERM: "xterm-256color" } }))
+      .toEqual({ mode: "classic", reason: "settings_off" });
     // A `screen*`/`tmux*` TERM means the client is a REAL tmux pane, i.e. not the -CC passthrough window.
-    expect(selectRenderer({ ...bare, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "screen-256color" } }))
-      .toEqual({ mode: "classic", reason: "default_off" });
-    expect(selectRenderer({ ...bare, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "tmux-256color" } }))
-      .toEqual({ mode: "classic", reason: "default_off" });
+    expect(selectRenderer({ ...settingsFloor, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "screen-256color" } }))
+      .toEqual({ mode: "classic", reason: "settings_off" });
+    expect(selectRenderer({ ...settingsFloor, env: { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "tmux-256color" } }))
+      .toEqual({ mode: "classic", reason: "settings_off" });
   });
 
   it("win_ssh_off needs BOTH Windows and an SSH marker, beats settings, and loses to tmux_cc_off", () => {
     for (const marker of ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"])
       expect(selectRenderer({ ...bare, platform: "win32", env: { [marker]: "yes" } })).toEqual({ mode: "classic", reason: "win_ssh_off" });
     // Windows with no SSH, and SSH from a non-Windows box: neither is the ConPTY re-rendering case.
-    expect(selectRenderer({ ...bare, platform: "win32", env: {} })).toEqual({ mode: "classic", reason: "default_off" });
-    expect(selectRenderer({ ...bare, platform: "linux", env: { SSH_CONNECTION: "yes" } })).toEqual({ mode: "classic", reason: "default_off" });
+    expect(selectRenderer({ ...settingsFloor, platform: "win32", env: {} })).toEqual({ mode: "classic", reason: "settings_off" });
+    expect(selectRenderer({ ...settingsFloor, platform: "linux", env: { SSH_CONNECTION: "yes" } })).toEqual({ mode: "classic", reason: "settings_off" });
     expect(selectRenderer({ ...bare, platform: "win32", env: { SSH_TTY: "yes" }, prefs: { tui: "fullscreen" } }))
       .toEqual({ mode: "classic", reason: "win_ssh_off" });
     // Order between the two auto-off rungs is fixed even though both land classic: the REASON differs, and
@@ -133,9 +148,13 @@ describe("prefs.tui", () => {
 
   // The dropped key must reach `selectRenderer` as ABSENT, not as a string it will not recognise — otherwise
   // a typo'd settings value would read as "settings said nothing" only by accident of the ladder's shape.
-  it("a dropped tui value falls through to the default rung", () => {
+  // Spreading the load over a `tui: "default"` floor is what makes that observable without watching the
+  // constant: absent leaves the floor standing (`settings_off`), whereas a surviving `"fullscren"` would
+  // overwrite it and fall past the settings rung entirely.
+  it("a dropped tui value reaches selectRenderer as absent, not as an unrecognised string", () => {
     const root = tmpRoot();
     write(root, { tui: "fullscren" });
-    expect(selectRenderer({ ...bare, prefs: loadPrefs({ CCX_FLEET_ROOT: root }) })).toEqual({ mode: "classic", reason: "default_off" });
+    expect(selectRenderer({ ...settingsFloor, prefs: { ...settingsFloor.prefs, ...loadPrefs({ CCX_FLEET_ROOT: root }) } }))
+      .toEqual({ mode: "classic", reason: "settings_off" });
   });
 });

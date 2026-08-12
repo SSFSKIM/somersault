@@ -374,7 +374,10 @@ records classic-only), `docs/parity/qa-driver.md` (ccx launch-line pins).
 
 - [ ] **Step 1:** flip; sweep: full `npm run test:tui` (24 ChatApp suites — root-above means
   untouched; this step VERIFIES that claim) + `npm run test:unit` + keyless matrix green; keyed
-  matrix 10/10.
+  matrix 10/10. **Re-evaluate the tmux `-CC` shell-out gap here** (T5 divergence 1, `renderer.ts`
+  header): T5 dropped canon's `tmux display-message` probe off the boot path, which is harmless while
+  the default is off but becomes reachable the moment this flips — decide probe vs. keep-and-document,
+  and if kept, that the escape hatch `CLAUDE_CODE_NO_FLICKER=0` is the answer we stand behind.
 - [ ] **Step 2:** commit `f5(fsw-t16): fullscreen by default; every instrument says which renderer it measures`.
 
 ### Task 17: Final verification — the spec's acceptance as written
