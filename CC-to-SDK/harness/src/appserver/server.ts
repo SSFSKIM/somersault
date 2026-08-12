@@ -26,7 +26,7 @@ import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverri
 import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
 import { pluginReload, skillReload } from "./reloads.js";
-import { fleetList, threadAttach } from "./fleet.js";
+import { fleetDecisionRespond, fleetList, threadAttach } from "./fleet.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
 import { decisionRespondParams, decisionListParams } from "./schema/decisions.js";
@@ -273,8 +273,12 @@ export class AppServer {
       const record = srv.registry.get(parsed.data.threadId);
       const dec = srv.decisions.get(parsed.data.threadId);
       if (!record || !dec) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-      const by = `${ctx.clientName}#${ctx.connId}`; // server-stamped only — a client-supplied `by` is never read (spec §6)
       const outcome = parsed.data.answer as DecisionOutcome;
+      // M3 §1b: a fleet thread's park lives on the HOST — forward the answer, map the receipt, and leave
+      // the view standing. It is the host's own `decision_settled` that removes it and names who won, so
+      // there is no local `by` to stamp on this path at all.
+      if (record.origin === "fleet") { await fleetDecisionRespond(ctx, id, record, { toolUseId: parsed.data.toolUseId, answer: outcome, abortTurn: parsed.data.abortTurn }); return; }
+      const by = `${ctx.clientName}#${ctx.connId}`; // server-stamped only — a client-supplied `by` is never read (spec §6)
       const result = dec.respond(parsed.data.toolUseId, outcome, by);
       if (!result.ok) {
         if (result.code === "alreadySettled") ctx.peer.replyError(id, ERR.ALREADY_SETTLED, "Already settled", { by: result.by });

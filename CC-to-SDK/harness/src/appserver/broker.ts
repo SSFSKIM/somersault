@@ -87,7 +87,30 @@ export class ThreadDecisions {
     // the one PermissionRequest member a view has no counterpart for — park() reads it optionally.
     void this.inner.brokerFor(threadId).request(entry as unknown as PermissionRequest);
     const parked = this.inner.list().find((e) => e.toolUseID === entry.toolUseID);
-    if (parked) this.emit({ type: "requested", entry: parked });
+    if (!parked) return;
+    // The HOST's park time, not this mirror's. `createdAt` is the one PendingDecision field a
+    // PermissionRequest has no counterpart for, so `park()` stamps its own — which would date every view
+    // from the attach instead of from the park, and a decision the host has been blocked on for an hour
+    // would reach every client reading brand new. Written onto the registered entry, which `list()` hands
+    // back by reference; every other field survives the trip unchanged (the two vocabularies are 1:1).
+    parked.createdAt = entry.createdAt;
+    this.emit({ type: "requested", entry: parked });
+  }
+
+  /** M3 §1b: the HOST settled a decision this thread holds a view of (`decision_settled` — whoever won,
+   *  this server's own `decision/respond` included). The ONLY path that removes a view: the respond path
+   *  forwards and nothing more, so one settlement produces exactly one `decision/resolved`, carrying the
+   *  `by` the host reported rather than two stories about who answered.
+   *
+   *  Deliberately NOT `respond()`: there is no kind to check (the host already took the answer), no `by`
+   *  to stamp on this server's own authority, and nothing to refuse — this is a REPORT of a settlement,
+   *  not a request to make one. A settle naming a decision no view was ever parked for settles nothing and
+   *  announces nothing: a `decision/resolved` for a `decision/requested` no client here ever heard is an
+   *  unpaired event. */
+  settleView(toolUseID: string, by: string, outcome: DecisionOutcome): void {
+    if (!this.inner.respond(toolUseID, outcome)) return;
+    this.settledBy.set(toolUseID, by);
+    this.emit({ type: "resolved", toolUseID, by, outcome });
   }
 
   pending(): PendingDecision[] { return this.inner.list(); }

@@ -21,17 +21,20 @@ import type { RosterRow } from "../fleet/roster.js";
 import { hostSocketPath } from "../fleet/paths.js";
 import { collectFleet } from "../fleet/index.js";
 import type { HostStatus } from "../host/ops.js";
+import type { DecisionOutcome } from "../permissions/types.js";
 import { connectFleetEngine } from "./fleetEngine.js";
-import type { FleetEngineSession } from "./fleetEngine.js";
+import type { AnswerReceipt, FleetEngineSession } from "./fleetEngine.js";
 import { ERR } from "./rpc.js";
+import type { RequestId } from "./rpc.js";
 import { emptyFlagPerms, fleetTurnId, threadStatus } from "./registry.js";
 import type { ThreadRecord } from "./registry.js";
 import { TurnMapper } from "./items/mapper.js";
-import { emitItems } from "./turns.js";
+import { emitItems, requestInterrupt } from "./turns.js";
+import { replyEngineThrow } from "./engineThrow.js";
 import { installRouter } from "./router.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadView } from "./server.js";
-import type { AppServer, Handler } from "./server.js";
+import type { AppServer, ConnCtx, Handler } from "./server.js";
 import { fleetListParams, threadAttachParams } from "./schema/fleet.js";
 
 const nowSec = (): number => Math.floor(Date.now() / 1000); // registry.ts's `updatedAt` is unix seconds
@@ -122,6 +125,19 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   // captured, so a park arriving after the thread closed reaches nothing instead of a dangling registry.
   engine.onDecision((entry) => { srv.threadDecisions(record.id)?.parkView(record.id, entry); });
 
+  // …and its settlement, by ANY client of that host — the sole remover of a view (§1b: this server never
+  // settles a fleet decision locally), the settlement its own `decision/respond` won included. It arrives
+  // here exactly as a foreign client's does, which is what makes `decision/resolved.by` the truth about
+  // who answered rather than a claim about who asked us.
+  //
+  // The structured `answer` is §1a-e's addition; the kind string alone is what a host predating it emits,
+  // and what the host's OWN settlements carry today (an SDK abort, an interrupt's sweep — a system deny
+  // has no payload the kind drops). Reconstructing the payload-free outcome from it is exact, and is the
+  // same `{kind:"deny"}` a local teardown resolves with.
+  engine.onDecisionSettled((e) => {
+    srv.threadDecisions(record.id)?.settleView(e.toolUseID, e.by, e.answer ?? ({ kind: e.decision } as DecisionOutcome));
+  });
+
   // Announce-only, no record-level task mirror — inProcess parity: `task/list` forwards to the engine's own
   // live set on both origins (tasks.ts, and here the host's `tasks` op), so there is no second copy to keep
   // honest. Which also means the snapshot the follow replay carries is not lost by reaching an empty
@@ -204,6 +220,51 @@ async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord>
     await engine.dispose().catch(() => {});
     throw e;
   }
+}
+
+/** `decision/respond` on a FLEET thread (§1b) — the branch server.ts's handler takes once the params, the
+ *  thread lookup and the dispatch gates have all passed, so a fleet thread refuses the same things in the
+ *  same order an inProcess one does. Two rules are the whole of it:
+ *
+ *   1. FORWARD UNCONDITIONALLY. The local view is not consulted in either direction: first-answer-wins is
+ *      host-side (every client of that host races the same park), so a view that still looks parked is not
+ *      permission to answer and a view already dropped is not proof there is nothing to answer. The host's
+ *      receipt is the only verdict, and it is mapped EXACTLY — its three shapes are P106's live recording
+ *      (2026-08-11), matched on what the host actually says rather than on a shape invented here.
+ *   2. NEVER SETTLE THE VIEW. Removal is `decision_settled`-driven only (installFleetEvents above), for
+ *      the winning respond too — it observes its own settlement like every other client of that host.
+ *      Settling here as well would announce the resolution twice, the first time under a `by` this server
+ *      made up. */
+export async function fleetDecisionRespond(ctx: ConnCtx, id: RequestId, record: ThreadRecord, p: { toolUseId: string; answer: DecisionOutcome; abortTurn?: boolean }): Promise<void> {
+  let receipt: AnswerReceipt;
+  // The cast is `turn/start`'s (turns.ts): `answer` is a FLEET engine's member, and `record.origin` is the
+  // guarantee behind it — fleet.ts is the only writer of that pair.
+  try { receipt = await (record.session as FleetEngineSession).answer(p.toolUseId, p.answer); }
+  catch (e) { replyEngineThrow(record, ctx, id, e, ERR.INTERNAL); return; }
+  // A LOST RACE, not a refusal — hence `ok:true` (host.ts): two humans answering one prompt is normal, and
+  // the loser is told who won. The same -33002 with the same `data.by` a second answer to a LOCAL park
+  // gets, so a client handles one shape whichever origin raced it.
+  if (receipt.alreadyAnsweredBy !== undefined) { ctx.peer.replyError(id, ERR.ALREADY_SETTLED, "Already settled", { by: receipt.alreadyAnsweredBy }); return; }
+  if (!receipt.ok) {
+    const error = receipt.error ?? "host refused the answer";
+    // An id the host is not holding — which is what the LOCAL path answers for an unknown id too, down to
+    // the absent `data.by` (there is no winner to name). Spelled the same way here, deliberately: the two
+    // origins must not disagree about what "I do not have that decision" is.
+    if (error.startsWith("no parked request")) { ctx.peer.replyError(id, ERR.ALREADY_SETTLED, "Already settled", { by: undefined }); return; }
+    // Kind mismatch carries the HOST's own message — it names the park's kind and the answer's, which this
+    // server cannot reconstruct: it never sees the host's park, only a view of it.
+    if (error.startsWith("kind mismatch")) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, error); return; }
+    // Anything else is the generic `{ok:false, error}` a THROWING host handler produces (host/server.ts
+    // wraps every dispatch): a failure to answer, not a verdict on the answer.
+    ctx.peer.replyError(id, ERR.INTERNAL, error);
+    return;
+  }
+  // NO local `armPlanUpgrade` for a plan approval, unlike the inProcess path: the host runs its own on the
+  // answer it has just taken (host.ts's answer -> applyPlanUpgrade) and republishes the granted mode on
+  // `state`, which the event layer mirrors. Arming here would forward a second `set_permission_mode` for a
+  // mode the host already set — the flag layer's rule (§1b), that the host is the single owner.
+  if (p.abortTurn) await requestInterrupt(record);
+  ctx.peer.reply(id, { ok: true });
 }
 
 /** `fleet/list` — every session on this machine, attached or not (§1e). The live half is `collectFleet`
