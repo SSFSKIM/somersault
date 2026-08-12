@@ -16,6 +16,7 @@ import { validateAddDir, formatAddDirVerdict, formatAddDirResult, type AddDirVer
 import { mergeSettingsFile, appendToArray, type SettingsFileDeps, type SettingsTarget } from "./settingsFile.js";
 import { appendDenial, removeFromArray, type DenialEntry } from "./permissionsModel.js";
 import type { CcxPrefs } from "./prefs.js";
+import type { RendererChoice } from "./renderer.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
 import { isInterruptSentinelFrame, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
 import { createSuggester as realCreateSuggester, formatTranscriptTail, markSuggestionAccepted, suggestionRenderStep, suggestionSuppression, EMPTY_SUGGESTION, TAIL_MESSAGE_CHARS, type PromptSuggestion, type Suggester, type TailMessage } from "./suggester.js";
@@ -156,7 +157,13 @@ export function useChat(
      *  the engine's hooks to the statusLine payload. Created and registered by whoever OWNS the engine —
      *  `runForegroundImpl`, which builds the host config — so `ccx attach` passes none and both keys stay
      *  absent. See `hooks/promptLatch.ts` for why a hook is the only route. */
-    promptLatch?: PromptLatch } = {},
+    promptLatch?: PromptLatch;
+    /** FSW TASK 5 (F9): the renderer decided ONCE at boot, with the reason word `/status` prints. RESOLVED BY
+     *  THE CALLER (`chatMain.tsx`), like `initialOutputStyle` and `statusLine`, and for the stronger version
+     *  of the same reason: the decision reads the real TTY, the real env and the prefs file, and re-deciding
+     *  it here would let a `/status` in a test — or in a second call site — name a renderer other than the
+     *  one that is actually painting. Absent for a hook mounted outside chatMain, which has no decision. */
+    rendererChoice?: RendererChoice } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
@@ -440,6 +447,11 @@ export function useChat(
    *  support, and `formatStatus`'s own `default` fallback covers a session that has no level yet. */
   const statusEffort = (): { effort?: EffortLevel; effortSupported?: false } =>
     effortSupported === false ? { effortSupported: false } : (effort ? { effort } : {});
+  /** FSW T5 — the same one-helper-two-surfaces rule `statusEffort` above exists for, applied to the renderer
+   *  row: `/status` and the Settings dialog's Status tab both spread this, so neither can grow a reading the
+   *  other lacks. A CONSTANT for the life of the process (the decision is made once at boot and a resize
+   *  never re-runs it, spec §L2.1), so unlike `statusEffort` it closes over nothing that moves. */
+  const statusRenderer = (): { renderer?: RendererChoice } => opts.rendererChoice ? { renderer: opts.rendererChoice } : {};
   /** DIVERGENCE: upstream's `(default)` clause compares the level against the MODEL's default — `I5t`, off
    *  its own per-model registry (`_5(model, value)` falls back to `high`, L76470). The SDK catalog exposes
    *  `supportsEffort`/`supportedEffortLevels` and no default at all, so ccx compares against its own
@@ -1696,7 +1708,7 @@ export function useChat(
           // instead of taking its own; only `/status` was the filed surface, and the divergence is recorded
           // there rather than fixed by drive-by.
           const [u, measured] = await Promise.all([session.usage().catch(() => undefined), refreshCtx()]);
-          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct: measured ?? ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
+          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ...statusRenderer(), ctxPct: measured ?? ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
           break;
         }
         case "usage": append(formatUsage(await session.usage())); break;
@@ -2297,7 +2309,7 @@ export function useChat(
   // round-trip to the dialog is a decision of its own, not a consistency chore to do in passing.
   async function fetchSettingsStatus(): Promise<RenderLine[]> {
     const u = await session.usage().catch(() => undefined);
-    return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
+    return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ...statusRenderer(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
   }
   async function fetchSettingsUsage(): Promise<RenderLine[]> { return formatUsage(await session.usage()); }
   async function fetchSettingsStats(): Promise<RenderLine[]> {

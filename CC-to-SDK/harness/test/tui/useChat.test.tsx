@@ -781,6 +781,38 @@ describe("useChat", () => {
     expect(submitted).toBe(0);
   });
 
+  // FSW T5: the renderer decision is made once in `chatMain` and handed to the hook, and BOTH reporting
+  // surfaces read it through the one `statusRenderer()` helper — the `/status` command and the Settings
+  // dialog's Status tab. They are pinned together deliberately: wave 2 already caught the effort axis
+  // disagreeing across exactly this pair, one surface gated and the other not, and a renderer row that
+  // appeared in one place and not the other would be the same defect in a new field.
+  it("threads the boot renderer decision into /status AND the Settings status tab, identically", async () => {
+    const fake = fakeRemote({ usage: () => ({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: null }) });
+    const api: { run?: (s: string) => void; tab?: () => Promise<{ text: string }[]> } = {};
+    function H() {
+      const c = useChat(() => fake, { rendererChoice: { mode: "fullscreen", reason: "settings_on" } });
+      api.run = c.submit; api.tab = c.fetchSettingsStatus;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/status");
+    await waitFor(() => flat(lastFrame).includes("renderer fullscreen (settings_on)"));
+    expect(flat(lastFrame)).toContain("corrections: main-screen stack");
+    const tab = (await api.tab!()).map((l) => l.text);
+    expect(tab.at(-1)).toBe("  renderer   fullscreen (settings_on) · corrections: main-screen stack");
+  });
+
+  it("a hook mounted with no renderer decision reports none rather than guessing one", async () => {
+    const fake = fakeRemote({ usage: () => ({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: null }) });
+    const api: { run?: (s: string) => void } = {};
+    const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/status");
+    await waitFor(() => frame(lastFrame).includes("Status"));
+    expect(frame(lastFrame)).not.toContain("renderer");
+  });
+
   it("submit sets turnStartedAt and busy during the turn", async () => {
     let hung: (() => void) | null = null;
     let fake!: FakeRemote;

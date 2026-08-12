@@ -40,7 +40,12 @@ import { THEMES, type ThemeId } from "./theme.js";
  *  suggester session (probe 100c), and upstream's own two feature-flag call sites default it off too. That
  *  reading lives in `suggester.ts`'s `promptSuggestionEnabled`, and it is why the `/config` row writes BOTH
  *  polarities explicitly where upstream deletes the key to mean "on". */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean }
+/** `tui` is FSW T5's renderer setting and upstream's own key + spelling (2.1.226 settings schema: `tui:
+ *  ["default","fullscreen"]`, described there as "fullscreen uses the flicker-free alt-screen renderer …
+ *  equivalent to CLAUDE_CODE_NO_FLICKER=1"). It is one rung of `renderer.ts`'s decision ladder — below the
+ *  env levers, above the shipped default — and is read ONCE at boot. Upstream keeps it in the settings FILE;
+ *  ours lives here, the client-side seam this module already owns, like `model` and `showTurnDuration`. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default" }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 
@@ -65,6 +70,11 @@ export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
     // no throw, but ACCENT and every token silently become undefined and the UI loses its colors.
     if (prefs.theme !== undefined && !Object.prototype.hasOwnProperty.call(THEMES, prefs.theme)) delete prefs.theme;
     if (prefs.model !== undefined && (typeof prefs.model !== "string" || prefs.model.trim() === "")) delete prefs.model;
+    // FSW T5: `tui` is a CLOSED set, like `theme` — a hand-edited `"alt-screen"` must not reach
+    // `selectRenderer` as a third value its ladder has no rung for. Dropping it means the settings rung says
+    // nothing and the decision falls through to the shipped default, which is the honest reading of a value
+    // this file could not understand.
+    if (prefs.tui !== undefined && prefs.tui !== "fullscreen" && prefs.tui !== "default") delete prefs.tui;
     return prefs;
   } catch { return {}; }
 }

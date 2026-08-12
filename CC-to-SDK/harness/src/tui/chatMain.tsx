@@ -10,6 +10,7 @@ import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs } from "./prefs.js";
+import { selectRenderer } from "./renderer.js";
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
@@ -390,6 +391,12 @@ export function createNoticeBridge(): NoticeBridge {
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
   if (prefs.theme) setTheme(prefs.theme);
+  // FSW T5 (spec §A2): WHICH RENDERER, DECIDED ONCE. Here and nowhere else — this is the only point in the
+  // process that has the real TTY, the real env and the prefs file in hand at the same time, and the
+  // decision must not move again: a resize never re-evaluates it (§L2.1), so every consumer reads this one
+  // value. Today only `/status` does (F9); T8/T9 add the branch that actually mounts a different renderer,
+  // which is why nothing below this line changes shape yet.
+  const renderer = selectRenderer({ isTTY: Boolean(process.stdout.isTTY), env: process.env, prefs });
   // W3 T5: seed the Settings dialog's Output-style row from the same saved prefs (defaulting like useChat's
   // own opts.initialOutputStyle fallback does) — client-tracked, no engine round-trip needed just to boot.
   // W-C T7: and the `Show turn duration` row from the same read (`Dc("showTurnDuration", !0)` — default TRUE).
@@ -407,6 +414,10 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     // test mounts — none of them may touch `~/.claude`. `resolveStatusLineConfig` also owns the
     // `disableAllHooks` guard, so the whole setting is decided in this one expression.
     statusLine: opts.hookOpts?.statusLine ?? resolveStatusLineConfig(readSettingsFile("userSettings", opts.cwd)),
+    // FSW T5: handed down, never re-derived — see the `selectRenderer` call above. No `??` override on this
+    // one: unlike the seeded prefs beside it, a caller-supplied renderer choice could contradict the terminal
+    // this process is actually painting into.
+    rendererChoice: renderer,
   };
   const makeSession = opts.makeSession ?? ((resume?: string) => remoteChatSession(opts.socketPath, { ...(resume ? { resume } : {}) }));
   const output = createResumeSafeStdout(process.stdout);

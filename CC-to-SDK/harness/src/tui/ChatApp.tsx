@@ -64,6 +64,7 @@ import { PlanDialog } from "./PlanDialog.js";
 import { Footer } from "./Footer.js";
 import type { StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
+import type { RendererChoice } from "./renderer.js";
 
 import { IDLE_COMPOSER_FOOTER_STATE, type ComposerFooterState } from "./ChatComposer.js";
 import { SessionPicker } from "./SessionPicker.js";
@@ -178,7 +179,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
    *  users already rely on. */
   initialTodosOpen?: boolean;
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
