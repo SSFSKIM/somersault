@@ -211,8 +211,10 @@ non-goals).
 - **D6** via `clearViewport.ts` mode split (§A4a). **D21** resize contract in scope for M2 (§A2a
   — F3 rests on it). **D10**: the command palette / autocomplete hoists to the absolute overlay
   above the dock in fullscreen (inline-below-composer blows the dock cap) — M3. **D11** (suppress
-  the notification block), **D12/D13** (mode-row padding / `focus` chip), **D14** (queued prompts
-  at the scrollable tail) — M3.
+  the notification block), **D12** (mode-row padding), **D13** (the footer right-region
+  MECHANISM only — the `focus` chip itself is unreachable until `/focus` (D20, deferred below)
+  exists: canon's predicate is `fullscreen && briefTranscript`, sNb L494570; T14 shipped the
+  region and recorded the chip N/A), **D14** (queued prompts at the scrollable tail) — M3.
 - **Deferred, recorded:** all mouse (D7-D9 — wheel, click, hover, selection, auto-copy: the
   largest separable chunk); D4/D5 (cell-diff + absolute addressing — §A4a); sticky prompt chip;
   `scrollHint` hardware scroll (D22); DECSTBM renderer; FleetView's permissive gate (D19);
