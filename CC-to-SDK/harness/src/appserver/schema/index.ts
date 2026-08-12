@@ -11,6 +11,7 @@ import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverr
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
+import { fsReadParams, fsSearchParams } from "./workspace.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -85,4 +86,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // host, on an inProcess one it is `thread/close` — and reading it next to `thread/attach` is what makes
   // the pairing legible.
   "thread/stop": { params: threadStopParams },
+  // M3 Task 12 (§2): the workspace pair. SERVER-scoped like the adoption pair above — no `threadId` —
+  // and STABLE: both stand on node's own fs plus the TUI's shipped ranker, not on an SDK seam. (The SDK
+  // seam that would have backed `fs/read`, `Query.readFile`, is probe-dead — probe 104.)
+  "fs/read": { params: fsReadParams },
+  "fs/search": { params: fsSearchParams },
 };

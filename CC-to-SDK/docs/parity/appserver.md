@@ -105,6 +105,27 @@ last, as their own cluster, are Wave 4's **probe promotions** (`probes/probes/10
 IS a capabilities refresh). `readFile` won no method at all: probe 104 found it callable but resolving
 null for an existing file and for a missing path alike.
 
+Registered last is **M3's cluster**, in the order `server.ts`'s table takes it — and the first three were
+missing from this list until Task 12 rewalked it, which is the same hand-carried-prose drift the paragraph
+above refuses to write a total for. `fleet/list` and `thread/attach` are §1e's adoption pair, both
+SERVER-scoped: neither names a thread, because neither has one yet (see the server-origin table).
+`thread/stop` does name one and is registered beside them anyway, its meaning origin-branched — the host
+op for a fleet thread, `thread/close`'s own path for an inProcess one. Then §2's **workspace pair**,
+`fs/read` and `fs/search` (`appserver/workspace.ts`, M3 Task 12) — server-scoped like the adoption pair,
+and the only two methods in the registry whose subject is this machine rather than a conversation, which
+is what lets a client browse a fleet thread's tree as readily as an inProcess one's (it passes
+`threadView.cwd` as the path or the search root). Trusted-client and unsandboxed, matching Codex's own
+sandbox-None reads. `fs/read` requires an absolute path, refuses anything over a **4 MiB cap** (a recorded
+deviation — Codex caps nothing, but an oversize base64 payload OOMs a browser client) and answers
+`{dataBase64, size}`; **every one of its refusals is `-32602`**, the failing `stat` and the failing read
+alike, because an fs failure names a bad request rather than a broken server. `fs/search` runs the TUI's
+own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`) once per root — so a client's search
+and the composer's `@`-picker rank a tree identically, ignore rules and walk cap included — with `roots`
+defaulting to the server's cwd, root-relative `path` beside the absolute `root`, an unwalkable root
+degrading to zero matches rather than failing the call (Codex's behavior), and the roots merged into one
+score-ordered list capped at 50 (Codex's `MATCH_LIMIT`). No highlight indices and no warm index: recorded
+deviations — our ranker produces no indices, and the TUI re-walks on every query too.
+
 **26 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
 subscribers and watchers alike — for the two losses that are facts about what the thread now IS rather
@@ -348,7 +369,7 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `mcpServerStatus` | sdk.d.ts (Query) | `mcpServer/status/list` | both | shipped(M2b) |
 | `getContextUsage` | sdk.d.ts (Query) | `thread/contextUsage/read` | both | shipped(M2a) |
 | `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET` | sdk.d.ts (Query) | `thread/usage/read` | both | shipped(M2a) |
-| `readFile` | sdk.d.ts (Query) | `fs/read` *(X, M3)* | inProcess | N/A — probe-dead (probe 104: resolves null for existing and missing paths at 0.3.220, `probes/probes/104-readfile.ts`; M3's `fs/read` cannot back onto this seam) |
+| `readFile` | sdk.d.ts (Query) | N/A — no protocol method | N/A | N/A — probe-dead (probe 104: resolves null for existing and missing paths at 0.3.220, `probes/probes/104-readfile.ts`). M3 Task 12 shipped `fs/read` anyway, on node's own `fs` — a server-origin method with no seam behind it, so its row is in the server-origin table and this one maps nothing |
 | `reloadPlugins` | sdk.d.ts (Query) | `plugin/reload` | inProcess | shipped(M2b) — probe 105 (`probes/probes/105-reload-plugins-skills.ts`); pings `thread/capabilities/changed` |
 | `reloadSkills` | sdk.d.ts (Query) | `skill/reload` | inProcess | shipped(M2b) — probe 105 (same file); pings `thread/capabilities/changed` |
 | `accountInfo` | sdk.d.ts (Query) | `account/read` | inProcess | shipped(M2a) — see gap 3 |
@@ -368,18 +389,23 @@ calls the SDK's own `Query.close()`.
 
 ## Server-origin methods — no seam token, so never walked
 
-Five methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
+Seven methods answer for the SERVER rather than mirroring a seam in one of the four sources above, so
 no walker can ever produce a row for them: `initialize` is special-cased in `dispatch()` ahead of the
 handlers table, `server/status` reports this process, and `thread/start` *creates* the thread the other
 four tables' rows presuppose (a fleet host attaches to threads it already owns — gap 4). M3 Task 7 adds
 the adoption pair for the same reason: `fleet/list` reports this machine's roster — sessions no thread
-here exists for yet — and `thread/attach` is what turns one of those rows into a thread. They were
+here exists for yet — and `thread/attach` is what turns one of those rows into a thread. M3 Task 12 adds
+the workspace pair, `fs/read` and `fs/search` (§2), whose subject is a path on this machine — the one
+kind of request a client makes without addressing a conversation at all. They were
 therefore invisible to a scorecard whose rows all came from the walked-token direction, and the M2b
 Task 6 gate (every registered method must be named by some row — the "zero schema-less methods"
 acceptance) is what surfaced the omission. Origin scope is a question about an *existing* thread and
-none of the five has one, so all five read `N/A` there — the adoption pair included, whose SUBJECT is a
-fleet session but whose caller names no thread at all. The seam-token column repeats the method name:
-there is no upstream token to put in it.
+none of the seven has one, so all seven read `N/A` there — the adoption pair included, whose SUBJECT is a
+fleet session but whose caller names no thread at all, and the workspace pair, which a client roots on a
+thread's tree by passing `threadView.cwd` as a plain path. The seam-token column repeats the method name:
+there is no upstream token to put in it. `fs/read` is the one row here with a seam it deliberately does
+NOT use — `Query.readFile`, probe-dead since probe 104; that seam keeps its own `N/A` row in the Query
+table above.
 
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
@@ -388,12 +414,15 @@ there is no upstream token to put in it.
 | `thread/start` | appserver/server.ts | `thread/start` | N/A | shipped(M1) — registers an `inProcess` thread; a client's whole `config` reaches `openSession` |
 | `fleet/list` | appserver/fleet.ts | `fleet/list` | N/A | shipped(M3) — roster + live-projection join over the same probe seams `collectFleet` uses; terminal and unresponsive rows are listed, and `threadId` marks the rows this server holds |
 | `thread/attach` | appserver/fleet.ts | `thread/attach` | N/A | shipped(M3) — registers a `fleet` thread over `FleetEngineSession`; short/sessionId/name resolution with `-33008` on ambiguity, a terminal row or an unreachable socket; reservation-idempotent, and admitted behind the activation barrier |
+| `fs/read` | appserver/workspace.ts | `fs/read` | N/A | shipped(M3) — `{path}` → `{dataBase64, size}`, absolute paths only, trusted-client and unsandboxed (Codex's reads are sandbox-None). Refuses with `-32602` and nothing else: a relative path, a failing `stat` (the fs message verbatim), a failing read (a directory's `EISDIR` is the ordinary case), and a file over the **4 MiB cap** — `file exceeds the 4 MiB read cap (N bytes)`. The cap is a recorded deviation (Codex has none); the SDK seam that would have backed this, `Query.readFile`, is probe-dead (probe 104) and its own row is in the Query table |
+| `fs/search` | appserver/workspace.ts | `fs/search` | N/A | shipped(M3) — `{query, roots?, limit?}` → `{matches: [{root, path, score}]}` over the TUI's own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`), so a client's search and the composer's `@`-picker rank a tree identically. Empty/whitespace query → `[]` before any walk; `roots` defaults to the server's cwd (this process's — the server holds no other); `path` is root-relative beside the absolute `root`; an unwalkable root degrades to zero matches rather than failing the call (Codex parity), so the reply is never an RPC error; roots merge into one score-ordered list capped at `limit`, default and max 50 (Codex's `MATCH_LIMIT`). No highlight indices, no warm index — both recorded deviations |
 
 ## Totals
 
 34 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **79 walked tokens**,
-all rowed above — plus the 3 server-origin rows just above, which no walker produces, for **82 rows**
-in all.
+all rowed above — plus the 7 server-origin rows just above, which no walker produces, for **86 rows**
+in all. (Recounted off the tables at M3 Task 12; it read "3 / 82" from the M2b close-out until then,
+having missed Task 7's adoption pair as well as this task's workspace pair.)
 
 **Per-status row tallies, recomputed at the M2b close-out sweep (Task 9, 2026-08-11)** by rewalking the
 five tables above. They are a snapshot, not a running total: every landing wave flips a handful of rows,
@@ -416,15 +445,18 @@ retires the `fleet-only` scope, gap 4), and the two `N/A` rows, `seedReadState` 
 protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
 `probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
 2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
-Origin scope splits **66 `both` / 12 `inProcess` / 0 `fleet-only` / 6 `N/A`**, recounted off the tables at
-M3 Task 10 across all **84** rows — the snapshot block above still says 82 because it predates M3 Task 7's
-two new server-origin rows (`fleet/list`, `thread/attach`, both `N/A`). This line has now gone stale twice,
-which is the point of recounting it at every landing rather than trusting it between them: Task 9 corrected
-it to 57/21/0/6 when `thread/stop` moved from `fleet-only` to `both` (gap 4), and Task 10 moved nine more
-when the forwarded control + settings surface went live on fleet threads — all nine in the ControlFrame
-table, whose origin column had been scoring the bridge rather than the method (see the note above it). The
-twelve that remain `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods (§1c) plus the
-Query-side seams behind them.
+Origin scope splits **66 `both` / 11 `inProcess` / 0 `fleet-only` / 9 `N/A`**, recounted off the tables at
+M3 Task 12 across all **86** rows — the per-status snapshot block above still says 82 because it predates
+M3 Task 7's two new server-origin rows (`fleet/list`, `thread/attach`, both `N/A`). Task 12 moved three:
+its own two workspace rows (`fs/read`, `fs/search`, both `N/A` — no thread, no origin question) and
+`readFile`, which had been scored `inProcess` while its status read `N/A`; a token backing no method has
+no origin, so it now reads `N/A` in both columns, as `seedReadState` always has. This line has gone stale
+three times, which is the point of recounting it at every landing rather than trusting it between them:
+Task 9 corrected it to 57/21/0/6 when `thread/stop` moved from `fleet-only` to `both` (gap 4), and Task 10
+moved nine more when the forwarded control + settings surface went live on fleet threads — all nine in the
+ControlFrame table, whose origin column had been scoring the bridge rather than the method (see the note
+above it). The eleven that remain `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods
+(§1c) plus the Query-side seams behind them.
 
 **The live surface those rows cover: 51 registered methods and 26 notifications.** 51 is the size of
 `appserver/schema/index.ts`'s `methodSchemas` — the number `scripts/drift-check.mjs` prints on every run

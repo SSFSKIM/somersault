@@ -27,6 +27,7 @@ import { taskList, taskStop, turnBackground } from "./tasks.js";
 import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
 import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
+import { fsRead, fsSearch } from "./workspace.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -387,6 +388,11 @@ export class AppServer {
         }
       });
     },
+    // M3 Task 12 (§2): the workspace pair. SERVER-scoped like `fleet/list` — no `threadId`, so no record
+    // lookup, no chain and no gate; the SUBJECT is a path on this machine, not a conversation. A client
+    // roots them on a thread's tree by passing `threadView.cwd` as the path or the search root.
+    "fs/read": fsRead,
+    "fs/search": fsSearch,
   };
 
   private readonly token: string;

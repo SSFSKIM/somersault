@@ -1156,6 +1156,43 @@
         "threadId"
       ],
       "additionalProperties": false
+    },
+    "fs/read": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "fs/search": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
     }
   }
 }
