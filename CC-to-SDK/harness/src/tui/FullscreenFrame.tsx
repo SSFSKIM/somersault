@@ -38,8 +38,24 @@
 // viewport, T13 adds the two overlay slots (the absolute-bottom seam and the dock replacement), and M4's
 // `/resume` launcher mounts this same component with a different dock — so the props are a region and a dock
 // from day one, and this file knows nothing about transcripts.
-import React, { useEffect, useRef } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Box, measureElement, type DOMElement } from "ink";
+
+/** THE ROWS THE REGION ACTUALLY GRANTED, published to whatever is mounted inside it (FSW Task 10).
+ *
+ *  A virtualized region has to know its budget BEFORE it renders — `pageItemSlices` needs a row count — and
+ *  the budget is not derivable from `rows` alone: it is `frameHeight − min(dockHeight, dockCap)`, and the
+ *  dock's height is its own content's. So the frame MEASURES it (the region box already has a ref for the
+ *  overflow diagnostic, and its computed height is the grant: `flexGrow: 1` makes it absorb every row the
+ *  dock does not take, and `minHeight` floors it when the dock overruns its cap — either way the value is
+ *  independent of what the region's own children rendered, so there is no measure/render feedback loop).
+ *  A context rather than a callback prop because the consumer is a grandchild: routing it up to ChatApp and
+ *  back down would make the whole tree re-render for a number only the region uses.
+ *
+ *  DEFAULT 0, deliberately: outside a `FullscreenFrame` there is no grant, and a viewport with no budget
+ *  paints nothing rather than guessing a screenful. Tests mount the viewport with an explicit row count. */
+const RegionRowsContext = createContext(0);
+export function useRegionRows(): number { return useContext(RegionRowsContext); }
 
 /** The park row: the one physical row of the terminal the frame deliberately does not own. */
 export const PARK_ROW = 1;
@@ -90,6 +106,13 @@ export function FullscreenFrame({ rows, regionChildren, dock, historySearchOpen 
   const regionRef = useRef<DOMElement>(null);
   const contentRef = useRef<DOMElement>(null);
   const overflowing = useRef(false);
+  // The measured grant, STAMPED WITH THE GEOMETRY IT WAS MEASURED AT. A resize changes `height`/`cap` a full
+  // render before the effect below can re-measure, and a stale grant from a taller terminal would have the
+  // viewport render more rows than the region now has — clipped, so nothing breaks, but the budget would be
+  // a coincidence for that frame instead of a contract. Falling back to the FLOOR while the stamp is stale
+  // under-grants for exactly one frame, which is the safe direction.
+  const [measured, setMeasured] = useState({ height, cap, rows: regionFloor });
+  const regionRows = measured.height === height && measured.cap === cap ? measured.rows : regionFloor;
   // Measured, not predicted. `contentRef` is an unshrinkable box, so its computed height is what the children
   // WANTED; `regionRef` is what they were given. An effect is the only place both are true — Yoga has laid out
   // by then — and the latch keeps a standing overflow from repeating the diagnostic on every keystroke.
@@ -97,6 +120,7 @@ export function FullscreenFrame({ rows, regionChildren, dock, historySearchOpen 
     const region = regionRef.current, content = contentRef.current;
     if (!region || !content) return;
     const want = measureElement(content).height, got = measureElement(region).height;
+    if (got !== regionRows || measured.height !== height || measured.cap !== cap) setMeasured({ height, cap, rows: got });
     if (want <= got) { overflowing.current = false; return; }
     if (overflowing.current) return;
     overflowing.current = true;
@@ -105,7 +129,9 @@ export function FullscreenFrame({ rows, regionChildren, dock, historySearchOpen 
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
       <Box ref={regionRef} flexDirection="column" flexGrow={1} flexShrink={1} minHeight={regionFloor} overflow="hidden">
-        <Box ref={contentRef} flexDirection="column" flexShrink={0}>{regionChildren}</Box>
+        <Box ref={contentRef} flexDirection="column" flexShrink={0}>
+          <RegionRowsContext.Provider value={regionRows}>{regionChildren}</RegionRowsContext.Provider>
+        </Box>
       </Box>
       <Box flexDirection="column" flexShrink={0} overflow="hidden">{dock}</Box>
     </Box>

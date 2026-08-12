@@ -43,8 +43,9 @@ import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type Doubl
 import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
-import { LiveRegion, Transcript } from "./Transcript.js";
+import { Transcript } from "./Transcript.js";
 import { FullscreenFrame } from "./FullscreenFrame.js";
+import { FullscreenViewport } from "./FullscreenViewport.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
@@ -929,18 +930,21 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // is the same element in the same order on both paths, which is what makes `/tui`'s live flip (T15) a prop
   // change rather than a session-losing remount, and what keeps the twenty-four existing ChatApp suites
   // measuring the classic path byte for byte — the only thing above them that moved is the wrapper.
-  //   THE REGION IS THE ONE ASYMMETRY, and it is the point: fullscreen renders `LiveRegion`, which is this
-  // same subtree WITHOUT `<Static>`. Ink resets `fullStaticOutput` only in its constructor, so a `<Static>`
-  // mounted even once puts committed transcript into a buffer that every later tall write replays, for the
-  // life of the process — and the fixed frame's promise that no tall write ever happens is the only thing
-  // standing between fullscreen and that replay. Never mounting it is the guarantee; T12 rests on it.
-  //   WHAT T10 REPLACES, stated because this intermediate is visibly incomplete: the region is `windowItems`
-  // today — the UNPUBLISHED tail — so rows that `useChat` has already committed to `state.staticItems` are on
-  // neither surface here (no `<Static>`, and no scrollback on the alternate screen to hold them). T10 swaps
-  // `regionChildren` for `FullscreenViewport`, whose input is the WHOLE document (`finalizedItems ⧺ pending ⧺
-  // streaming`) virtualized over an anchor, and the omission goes with it. This commit is the shell.
+  //   THE REGION IS THE ONE ASYMMETRY, and it is the point: fullscreen renders no `<Static>` at all. Ink
+  // resets `fullStaticOutput` only in its constructor, so a `<Static>` mounted even once puts committed
+  // transcript into a buffer that every later tall write replays, for the life of the process — and the fixed
+  // frame's promise that no tall write ever happens is the only thing standing between fullscreen and that
+  // replay. Never mounting it is the guarantee; T12 rests on it.
+  //   …WHICH IS WHY THE TWO SIDES TAKE DIFFERENT SLICES OF THE SAME DOCUMENT (FSW Task 10). Classic renders
+  // three tiers, because the committed one is in the terminal's scrollback above the frame: `<Static>` for
+  // what is published, `windowItems` for the unpublished tail that must still re-wrap, and the transient
+  // region. Fullscreen has no scrollback and no `<Static>`, so a tier boundary there would simply lose rows —
+  // Task 9's intermediate did exactly that, showing only the unpublished tail. `FullscreenViewport` takes the
+  // WHOLE document (`finalizedItems ⧺ pending ⧺ streaming`) and virtualizes it against T2's anchor, so the
+  // frame is a window over everything rather than a view of the newest tier. `windowItems` is therefore a
+  // main-screen concept and is not passed here; `mainWindowCap`'s fourteen-row dock reservation goes with it.
   const region = fullscreen
-    ? <LiveRegion windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />
+    ? <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} columns={size.columns} />
     : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
   const dock = (
     <>
