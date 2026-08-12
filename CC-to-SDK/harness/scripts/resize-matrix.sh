@@ -741,17 +741,20 @@ run_a3_cell() {
 # is that the count did not move — an absence — and what proves the counter is not simply blind is `g1`, which
 # runs in this same script, uses this same method, and FAILS ITS PRECONDITION unless the count rises.
 #
-# THE STAGING IS `! echo`, NOT `/status`, AND THAT IS A FILED DEFECT AND NOT A CONVENIENCE. Typing a SLASH
-# command opens the command popup, which is up to ~20 rows and is NOT in `mainWindowCap`'s fourteen-row dock
-# budget (`liveWindow.ts` enumerates the todo panel, the live-turn slot, the queue, the composer and the
-# footer — the popup is none of them). Window plus dock plus popup then clears the pane and Ink takes the
-# branch on every keystroke of the command. Measured here, six `/status` submissions at 80x40, counting copies
-# of the echo row in scrollback: pre-live-window (a4636befd8) 6 copies / 78 scrollback rows; with the window
-# (this build) 139 copies / 2035 rows, i.e. every real scrollback line the user had, evicted at tmux's default
-# history-limit of 2000. It is a live-window regression on an ordinary interaction and it is NOT what this cell
-# is about — the cell asserts the RESIZE claim — so the staging avoids the popup (bash mode paints two rows per
-# marker and draws no menu) and this paragraph carries the finding until the dock budget learns about the
-# popup. Restoring `/status` staging here would only re-report that defect under this cell's name.
+# THE STAGING IS `! echo`, NOT `/status`, AND THE DEFECT THAT FORCED IT IS NOW **RESOLVED** (71ec75d2f6).
+# The finding, kept because it is why this cell looks the way it does: typing a SLASH command opens the command
+# popup, which is up to ~20 rows and was NOT in `mainWindowCap`'s fourteen-row dock budget (`liveWindow.ts`
+# enumerates the todo panel, the live-turn slot, the queue, the composer and the footer — the popup is none of
+# them). Window plus dock plus popup then cleared the pane and Ink took the branch on every keystroke of the
+# command. Measured here, six `/status` submissions at 80x40, counting copies of the echo row in scrollback:
+# pre-live-window (a4636befd8) 6 copies / 78 scrollback rows; with the window and without the fix, 139 copies /
+# 2035 rows — every real scrollback line the user had, evicted at tmux's default history-limit of 2000. The fix
+# subtracts `popupHeight(rows)` from the live window's render cap while the popup is drawn; the same
+# measurement on the fixed build is 6 copies / 65 rows, i.e. back to one copy per submission.
+#   THE STAGING STAYS `! echo` ANYWAY, and that is now a scope decision rather than a workaround: this cell
+# asserts the RESIZE claim, and a `/status` staging would fold a second, independently-covered mechanism into
+# its needle. The popup budget has its own red-first coverage where the branch is countable —
+# `test/tui/live-window-popup.test.tsx`, the full open/filter/close lifecycle at 80x24 and 80x40.
 #
 # THE GEOMETRIES ARE THE ONES THAT HURT. 80x40 fills a 24-row window (40 − 14 dock − 2 slack); 80x24 is the
 # row-shrink T3's own review reproduced as a tall write (a 44-row tree measured against a 24-row pane before
