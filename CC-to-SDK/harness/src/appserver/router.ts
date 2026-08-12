@@ -233,10 +233,22 @@ const ROUTES: ((srv: AppServer, record: ThreadRecord, frame: any) => void)[] = [
 ];
 
 /** Installs the ONE per-thread frame router. The unsubscribe is stored on `record.routerOff`, called by
- *  `closeRecord` BEFORE the engine is disposed. */
+ *  `closeRecord` BEFORE the engine is disposed.
+ *
+ *  A REPLAYED frame runs NO route (M3 Task 7 review). Every route above either writes a mirror or
+ *  announces news, and buffered history is neither: a fleet attach's follow burst carries whatever
+ *  system/status frame the host's turn buffer happens to hold — the CLI's post-approval mode flip is
+ *  routeStatus's own example — and routing it rewrites `record.settings` with a HISTORICAL value moments
+ *  after the attach seeded the current one, then broadcasts that as an engine change. The whole burst's
+ *  live truth arrives anyway: the host closes every follow replay with a `state` frame describing right
+ *  now (host.ts:630), which is the fleet event layer's mirror seed, not this router's. Only the fleet
+ *  engine ever sets the mark, so the in-process path is untouched by construction. Itemization is a
+ *  SEPARATE subscription (fleet.ts) and deliberately keeps running on replayed frames: a replayed message
+ *  inside a replayed turn window IS that turn's own item. */
 export function installRouter(srv: AppServer, record: ThreadRecord): void {
   const epoch = record.epoch; // frames from an engine superseded by a rewind swap must never land
-  record.routerOff = record.session.onFrame((frame: any) => {
+  record.routerOff = record.session.onFrame((frame: any, replay?: true) => {
+    if (replay) return;
     if (record.epoch !== epoch) return;
     for (const route of ROUTES) {
       try { route(srv, record, frame); } catch { /* one route's failure is not another's — same frame */ }

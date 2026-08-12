@@ -221,6 +221,35 @@ describe("thread/attach admission (M3 Task 7)", () => {
     expect(hosts[0].ops.filter((o) => o === "follow")).toHaveLength(1);
   });
 
+  it("a REPLAYED frame never rewrites the settings mirror the attach just seeded", async () => {
+    // The host's turn buffer holds every non-partial frame of the turn it is replaying (host.ts:333),
+    // system/status frames included — router.ts:56-61 names exactly this one, the CLI's own post-approval
+    // mode flip. `follow` replays them MARKED (host.ts:614), ahead of the `state` frame that carries the
+    // host's truth RIGHT NOW (:630) — so a router that reads a replayed frame as news overwrites the mirror
+    // the attach's own `status` op seeded a moment earlier, and announces the overwrite as an engine
+    // change. `model` is the half that never heals: the host's `state` omits it until the host has one
+    // (fakeHost's status(), host.ts:892), so nothing later corrects a historical model back.
+    const { fh, row } = await host({ status: { permissionMode: "acceptEdits" } });
+    fh.emitMessage({ type: "system", subtype: "status", permissionMode: "plan", model: "opus-4-stale" });
+    const { srv, conn, lines } = boot({ listSessions: async () => [] });
+    const spy = vi.spyOn(srv, "broadcast");
+
+    const rep = await attach(conn, lines, 2, row.short);
+    const record = srv.registry.get(rep.result.thread.id)!;
+    // the replay's trailing `state` frame — proof the whole burst was drained before the claims below
+    await waitFor(() => expect(spy.mock.calls.some((c) => c[1] === "thread/status/changed")).toBe(true));
+
+    expect(spy.mock.calls.filter((c) => c[1] === "thread/settings/changed")).toEqual([]);
+    expect(record.settings.permissionMode).toBe("acceptEdits");
+    expect(record.settings.model).toBeUndefined();
+    // …and the view every client reads says the same
+    send(conn, { id: 3, method: "thread/list", params: {} });
+    await waitFor(() => expect(frame(lines, 3)).toBeTruthy());
+    const view = (frame(lines, 3).result.data as Array<Record<string, unknown>>).find((v) => v.id === record.id)!;
+    expect(view.permissionMode).toBe("acceptEdits");
+    expect(view.model).toBeUndefined();
+  });
+
   it("ACTIVATION: a mid-turn attach loses nothing, and nothing is broadcast ahead of thread/started", async () => {
     // The follow replay is emitted SYNCHRONOUSLY at follow time and lands before the follow reply (P106),
     // so the whole burst is already in the engine's buffer when the record is built. It is released only
@@ -249,9 +278,15 @@ describe("thread/attach admission (M3 Task 7)", () => {
     // buffer/park state asserted above, plus the subscribe-time replay below.)
     expect(parsed(lines).filter((f) => f.method)[0].method).toBe("thread/started");
 
-    lines.length = 0;
-    send(conn, { id: 3, method: "thread/subscribe", params: { threadId } });
+    // …and the replayed TASK snapshot: no record-level mirror holds it (inProcess parity — `task/list`
+    // forwards to the engine's own live set on both origins), so this is where a fresh client reads it.
+    send(conn, { id: 3, method: "task/list", params: { threadId } });
     await waitFor(() => expect(frame(lines, 3)).toBeTruthy());
+    expect(frame(lines, 3).result.data).toEqual([{ task_id: "bg-1", task_type: "shell", description: "d" }]);
+
+    lines.length = 0;
+    send(conn, { id: 4, method: "thread/subscribe", params: { threadId } });
+    await waitFor(() => expect(frame(lines, 4)).toBeTruthy());
     expect(notifs(lines, "turn/started")[0].params.turn).toEqual({ id: "t1@e0", status: "inProgress" });
     expect(notifs(lines, "item/completed")[0].params).toMatchObject({ turnId: "t1@e0", item: { type: "agentMessage", text: "half a thought" } });
     expect(notifs(lines, "decision/requested")[0].params).toMatchObject({ threadId, turnId: "t1@e0", decision: { toolUseId: "tu-1" } });
@@ -324,6 +359,18 @@ describe("the fleet event layer owns turn lifecycle (M3 Task 7)", () => {
     fh.endTurn(7, { result: "ok" });
     await waitFor(() => expect(notifs(lines, "turn/completed")).toHaveLength(1));
     expect(notifs(lines, "turn/completed")[0].params.turn).toEqual({ id: "t7@e0", status: "completed" });
+  });
+
+  it("a turn END with no open window announces nothing — an unpaired turn/completed is not a lifecycle", async () => {
+    // Unreachable through a real host's emission order (an end is always preceded by the start that opened
+    // the window), which is exactly why the fake drives it: this layer must stay well-formed on its own
+    // evidence rather than on another process's ordering.
+    const { fh, lines } = await attached();
+
+    fh.endTurn(9, { result: "whose turn?" });
+    fh.emitTasksChanged([{ task_id: "bg-9", task_type: "shell", description: "after" }]);
+    await waitFor(() => expect(notifs(lines, "task/changed")).toHaveLength(1)); // the later frame arrived…
+    expect(notifs(lines, "turn/completed")).toEqual([]);                        // …and the end still said nothing
   });
 
   it("a host tasks_changed reaches the wire as task/changed", async () => {

@@ -10,8 +10,8 @@ import type { AppServer } from "../../../src/appserver/server.js";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-function fakeSession(overrides: Partial<EngineSession> = {}): { session: EngineSession; push: (f: unknown) => void } {
-  const cbs = new Set<(m: unknown) => void>();
+function fakeSession(overrides: Partial<EngineSession> = {}): { session: EngineSession; push: (f: unknown) => void; pushReplay: (f: unknown) => void } {
+  const cbs = new Set<(m: unknown, replay?: true) => void>();
   const session: EngineSession = {
     submit: async () => ({ result: {} }),
     interrupt: async () => ({}),
@@ -20,7 +20,13 @@ function fakeSession(overrides: Partial<EngineSession> = {}): { session: EngineS
     sessionId: undefined,
     ...overrides,
   };
-  return { session, push: (f: unknown) => { for (const cb of [...cbs]) cb(f); } };
+  return {
+    session,
+    push: (f: unknown) => { for (const cb of [...cbs]) cb(f); },
+    // The fleet engine's second argument (fleetEngine.ts) — buffered history handed back by a follow
+    // replay. The in-process engine never passes it, which is why `push` above calls with one argument.
+    pushReplay: (f: unknown) => { for (const cb of [...cbs]) cb(f, true); },
+  };
 }
 
 function mkRecord(session: EngineSession, extra: Partial<ThreadRecord> = {}): ThreadRecord {
@@ -141,6 +147,30 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
 
     push({ type: "system", subtype: "init", session_id: "sess-stale" });
     expect(record.sessionId).toBeUndefined();
+  });
+
+  it("a REPLAY-marked frame runs no route at all (M3 Task 7: buffered history is neither a mirror write nor news)", async () => {
+    const modes: string[] = [];
+    const { session, push, pushReplay } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
+    const { srv: collector, calls } = fakeSrv();
+    const record = mkRecord(session, { settings: { permissionMode: "acceptEdits" }, planUpgradeMode: "acceptEdits" });
+    installRouter(collector, record);
+
+    pushReplay({ type: "system", subtype: "init", session_id: "sess-old" });
+    pushReplay({ type: "system", subtype: "status", permissionMode: "plan", model: "opus-was" });
+    pushReplay({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "gone" }] });
+    await tick();
+    expect(record.sessionId).toBeUndefined();                 // no mirror write
+    expect(record.settings).toEqual({ permissionMode: "acceptEdits" });
+    expect(calls).toEqual([]);                                // nothing announced
+    expect(modes).toEqual([]);                                // and no engine call made off history
+
+    // the same frames unmarked are ordinary news, so the guard is a replay guard and not a dead router
+    push({ type: "system", subtype: "status", permissionMode: "plan" });
+    await tick();
+    expect(record.settings.permissionMode).toBe("plan");
+    expect(calls.map((c) => c.method)).toEqual(["thread/settings/changed"]);
+    expect(modes).toEqual(["acceptEdits"]);
   });
 
   it("one route throwing does not starve the others on the same frame", async () => {

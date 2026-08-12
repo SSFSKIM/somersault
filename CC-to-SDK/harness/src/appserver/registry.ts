@@ -34,7 +34,12 @@ export interface EngineSession {
   submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
-  onFrame(cb: (m: unknown) => void): () => void;
+  /** `replay` is additive and OPTIONAL — only an engine that can hand back buffered history ever passes it
+   *  (the fleet engine's follow burst, fleetEngine.ts; the in-process engine has no history to replay and
+   *  always calls with one argument). Declared here rather than on the fleet engine alone so the ONE
+   *  consumer that must tell history from news — the frame router — can read it without knowing which
+   *  engine it is installed on. */
+  onFrame(cb: (m: unknown, replay?: true) => void): () => void;
   /** Optional (the real lib Session has it; a DI fake need not): the seam an approved plan upgrades the
    *  session's permission mode through — see appserver/planUpgrade.ts. */
   setPermissionMode?(mode: string): Promise<void>;

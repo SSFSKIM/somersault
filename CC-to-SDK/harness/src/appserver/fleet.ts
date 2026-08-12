@@ -19,9 +19,7 @@
 import { listRoster, TERMINAL } from "../fleet/roster.js";
 import type { RosterRow } from "../fleet/roster.js";
 import { hostSocketPath } from "../fleet/paths.js";
-import { isPidLive, socketAnswers } from "../fleet/liveness.js";
-import { askStatus } from "../fleet/status.js";
-import { projectRow } from "../fleet/project.js";
+import { collectFleet } from "../fleet/index.js";
 import type { HostStatus } from "../host/ops.js";
 import { connectFleetEngine } from "./fleetEngine.js";
 import type { FleetEngineSession } from "./fleetEngine.js";
@@ -67,10 +65,12 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     record.routerOff?.();
     offItems?.();
     installRouter(srv, record);
-    // `replay` (the callback's second argument) is deliberately unread: a replayed message frame inside a
-    // turn window IS that turn's own item, and the buffer it lands in is the per-turn live window, not
-    // history. There is nothing to double-count — `thread/read` is disk-only for a fleet thread (§1f) and
-    // the host's socket replay covers the live turn the disk does not have yet (probe 62; chatAdapter.ts's
+    // The two halves of the pair read the replay mark OPPOSITELY, and that is the point. The router drops
+    // a replayed frame outright (router.ts) — its routes write the settings mirror and announce news, and
+    // history is neither. Here `replay` is deliberately unread: a replayed message frame inside a turn
+    // window IS that turn's own item, and the buffer it lands in is the per-turn live window, not history.
+    // There is nothing to double-count — `thread/read` is disk-only for a fleet thread (§1f) and the
+    // host's socket replay covers the live turn the disk does not have yet (probe 62; chatAdapter.ts's
     // resume-before-follow rule is the same split from the other side).
     offItems = engine.onFrame((m) => {
       if (!mapper || windowId === undefined) return; // outside a turn there is no turn to attribute items to
@@ -96,9 +96,14 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
       statusChanged(srv, record);
       return;
     }
-    // The host runs one turn at a time, so an end naming a different turn than the open window is a stale
-    // frame rather than a second live turn — settling the open window on it would report the wrong id.
-    if (windowId !== undefined && windowId !== turnId) return;
+    // NO OPEN WINDOW, NO END. The host runs one turn at a time, so an end naming a different turn than the
+    // open window is a stale frame rather than a second live turn — settling the open window on it would
+    // report the wrong id. An end with NO window is the same refusal for a stronger reason: `turn/completed`
+    // for a turn this thread never announced started is an unpaired lifecycle event. Today only the host's
+    // emission order keeps that unreachable (an end is always preceded by the start that opened the window,
+    // and a follow replay opens one whenever the host is mid-turn — host.ts:607 before :630), and this
+    // layer must not depend on another process's ordering to stay well-formed.
+    if (windowId !== turnId) return;
     // §1b's turn-end trio: `error` is a turn that THREW, `failure` a turn that RESOLVED reporting failure.
     // Either is `failed` on the wire; there is no local status synthesis, and an interrupt is not one —
     // it reaches this client as the host's own turn end (§1e), whatever that end says.
@@ -117,6 +122,11 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   // captured, so a park arriving after the thread closed reaches nothing instead of a dangling registry.
   engine.onDecision((entry) => { srv.threadDecisions(record.id)?.parkView(record.id, entry); });
 
+  // Announce-only, no record-level task mirror — inProcess parity: `task/list` forwards to the engine's own
+  // live set on both origins (tasks.ts, and here the host's `tasks` op), so there is no second copy to keep
+  // honest. Which also means the snapshot the follow replay carries is not lost by reaching an empty
+  // subscriber set during the attach: it is the host's CURRENT task set (host.ts:624, delivered for the same
+  // reason `state` is), and the first client to ask reads it straight off the host.
   engine.onTasksChanged((tasks) => { srv.broadcast(record.id, "task/changed", { threadId: record.id, tasks }); });
 
   engine.onState((s) => {
@@ -196,33 +206,30 @@ async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord>
   }
 }
 
-/** `fleet/list` — every session on this machine, attached or not (§1e). The join is per row and
- *  fault-isolated for the same reason `collectFleet`'s is: one host that throws mid-probe must cost its
- *  own row's live state, never the listing — a terminal row nobody can read is exactly the blindness this
- *  listing exists to prevent. */
+/** `fleet/list` — every session on this machine, attached or not (§1e). The live half is `collectFleet`
+ *  ITSELF, not a copy of it: the probe fold (pid → socket → status → projectRow) and its per-row fault
+ *  isolation are one seam, so a listing here and `ccx fleet list` cannot drift on what "working" or
+ *  "unresponsive" means — an arm added to that fold reaches both or neither. This handler owns only the
+ *  join: the roster columns the projection drops (pid, kind, the two timestamps) and `threadId`, the one
+ *  column this server knows. Joined by `short`, the roster's own primary key. */
 export const fleetList: Handler = async (srv, ctx, id, params) => {
   const parsed = fleetListParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const held = new Map<string, string>();
   for (const r of srv.registry.list()) if (r.origin === "fleet" && r.short) held.set(r.short, r.id);
   const rows = listRoster();
-  const probed = await Promise.allSettled(rows.map(async (roster) => {
-    const sock = hostSocketPath(roster.pid);
-    const pidLive = await isPidLive(roster.pid, roster.procStart);
-    const answers = pidLive ? await socketAnswers(sock) : false;
-    const liveStatus = answers ? await askStatus(sock) : undefined;
-    return projectRow({ roster, pidLive, socketAnswers: answers, ...(liveStatus ? { liveStatus } : {}) });
-  }));
-  const data = rows.map((roster, i) => {
-    const settled = probed[i];
-    const live = settled.status === "fulfilled" ? settled.value : projectRow({ roster, pidLive: false, socketAnswers: false });
+  const probed = new Map((await collectFleet()).map((a) => [a.id, a])); // AgentsRow.id IS the short
+  const data = rows.map((roster) => {
+    // A row `collectFleet` did not see was written between the two roster reads — brand new, and the
+    // roster's own state is the honest answer for it rather than a probe result nobody took.
+    const live = probed.get(roster.short);
     const threadId = held.get(roster.short);
     return {
-      short: roster.short, name: roster.name, kind: roster.kind, state: live.state, pid: roster.pid, cwd: roster.cwd,
+      short: roster.short, name: roster.name, kind: roster.kind, state: live?.state ?? roster.state, pid: roster.pid, cwd: roster.cwd,
       ...(roster.sessionId ? { sessionId: roster.sessionId } : {}),
       startedAt: roster.startedAt,
       ...(roster.endedAt === undefined ? {} : { endedAt: roster.endedAt }),
-      ...(live.unresponsive ? { unresponsive: true } : {}),
+      ...(live?.unresponsive ? { unresponsive: true } : {}),
       ...(threadId ? { threadId } : {}),
     };
   });
