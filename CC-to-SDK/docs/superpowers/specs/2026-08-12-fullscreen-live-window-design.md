@@ -338,6 +338,15 @@ non-goals).
 - **Version drift is active in this exact machinery:** installed CLI is 2.1.227 (not the assumed
   2.1.226) and its own changelog names fixes to flag evaluation and `/tui`. Canon stays 2.1.220
   unless the owner re-baselines.
+- **The frame's overflow diagnostic is blind to viewport-local re-renders** (T11, measured): the
+  frame re-measures only when the frame itself re-renders, and a scroll is viewport state — so a
+  breached row grant fails as a silent clip of the region's last row, never as a diagnostic.
+  Consequence for A6/T13: anything that changes region content without a frame re-render must
+  respect the grant by construction; the diagnostic is a boot/resize-time check only.
+- Canon's jump pill is a three-LENGTH ladder whose shortest rung (bare base, no arrow) is an
+  unconditional fallback leaning on `wrap:"truncate-end"` to clip — not a fits-always guarantee.
+  The grounding's prose described the labels but missed the trailing `↓` its own live capture
+  shows; the bundle settled it (JDa, cli.pretty.js:456145–456196).
 
 ## Outcomes & Retrospective
 
