@@ -204,6 +204,15 @@ export interface ThreadRecord {
                                  // (server.ts) and never cleared — the latch M2b Task 4's queue drain
                                  // checks so no engine call starts after a close began
   swapInFlight?: boolean;       // set by M2b's rewind while an engine swap is in flight
+  fleetTurnPending?: boolean;   // FLEET ONLY (final review R2/R3): an OWN turn/start's SYNCHRONOUS admission
+                                 // reservation. fleetTurnStart (turns.ts) sets it at request arrival, BEFORE
+                                 // the chained submit, so a second same-tick turn/start is refused -33001
+                                 // (threadBusyReason -> "turn") instead of overwriting `fleetStartAck` and
+                                 // racing a second submit onto fleetEngine's one-submit guard. Handed off to
+                                 // `busy` (which the event layer sets on the host's turn-start, before the
+                                 // prompt reply that fires onAccepted) and cleared there — or on a submit that
+                                 // failed before it accepted a seq. inProcess threads latch `busy` itself, so
+                                 // this stays undefined for them.
   fleetStartAck?: Promise<void>; // FLEET ONLY (external review F2): set by fleetTurnStart (turns.ts) while an
                                  // OWN turn's turn/start REPLY is still pending — its inProgress reply + user
                                  // item are published on the microtask after the host's prompt reply resolves
@@ -279,7 +288,10 @@ export const fleetTurnId = (record: ThreadRecord, seq: number): string => `t${se
 export function threadBusyReason(r: ThreadRecord): "turn" | "closing" | "swapping" | null {
   if (r.closing) return "closing";
   if (r.swapInFlight) return "swapping";
-  return r.busy ? "turn" : null;
+  // `fleetTurnPending` is a fleet OWN turn admitted-but-not-yet-confirmed (final review R2/R3): the host
+  // has not echoed its turn-start yet, so `busy` is still false, but the turn IS reserved — reading it as
+  // "turn" is what refuses a same-tick second turn/start and any rewind/close/steer racing the admission.
+  return (r.busy || r.fleetTurnPending) ? "turn" : null;
 }
 
 /** The ONE thread-status shape emitted on the wire (spec D-M2-8): every `threadView`/`thread/status/changed`

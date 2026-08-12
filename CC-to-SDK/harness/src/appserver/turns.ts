@@ -318,42 +318,66 @@ function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
 function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord, input: string): void {
   const userUuid = randomUUID();
   let replied = false;
-  // F2: publish the promise the event layer (fleet.ts) holds a trivially-fast turn's turn/completed edge
-  // behind until this turn's inProgress reply is out. Resolved the instant onAccepted publishes the reply,
-  // and on the failure path so a deferred completed is never stranded. Only the record field is nulled
-  // conditionally (a later own turn may have replaced it); the resolver always fires.
+  // SYNCHRONOUS ADMISSION RESERVATION (final review R3), set at request arrival BEFORE the chained submit
+  // below. `threadBusyReason` now reads it as "turn", so a second turn/start dispatched in the same tick —
+  // before the host has echoed this turn's start and set `record.busy` — is refused -33001 instead of
+  // overwriting `fleetStartAck` and racing a second submit onto fleetEngine's one-submit guard (which
+  // rejected "already in flight" and cleared the FIRST turn's ack, reintroducing the F2 completed-before-
+  // reply bug under the race). Cleared on `onAccepted` (the host confirmed the turn; `record.busy`, set by
+  // the event layer's turn-start ahead of the prompt reply, now owns busy) or when the submit fails before
+  // it accepted a seq.
+  record.fleetTurnPending = true;
+  const clearReservation = (): void => { record.fleetTurnPending = false; };
+  // F2: the promise the event layer (fleet.ts) holds a trivially-fast turn's turn/completed edge (and, for
+  // R4, this turn's own item emissions) behind until the inProgress reply is out. Set on the chain right
+  // before submit (NOT at arrival): set at arrival it would sit armed while a slow prior chain item ran and
+  // wrongly defer a FOREIGN turn's completed that ran in that gap. Resolved the instant onAccepted publishes
+  // the reply, and on the failure path so a deferred completed is never stranded.
   let releaseAck!: () => void;
   const ack = new Promise<void>((r) => { releaseAck = r; });
-  record.fleetStartAck = ack;
   const clearAck = (): void => { if (record.fleetStartAck === ack) record.fleetStartAck = undefined; releaseAck(); };
   const onAccepted = (seq: number): void => {
     const turnId = fleetTurnId(record, seq);
     replied = true;
+    clearReservation();   // the host has the turn; `record.busy` (set by the event layer's turn-start) now owns busy
     ctx.peer.reply(id, { turn: { id: turnId, status: "inProgress" } });
     emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(input, userUuid) }]);
-    clearAck();   // the reply is out — release any completed edge the event layer deferred onto it
+    clearAck();   // the reply is out — release any completed edge (and own-turn items, R4) the event layer deferred onto it
   };
   // Cast, not a widened `EngineSession`: `onAccepted` is a FLEET engine's member (fleetEngine.ts widens
   // submit for it), and declaring it on the shared interface would promise a callback the in-process
   // engine never fires. `record.origin === "fleet"` is the guarantee behind it — fleet.ts is the only
   // writer of that pair.
   const engine = record.session as unknown as FleetEngineSession;
-  engine.submit(input, () => {}, { uuid: userUuid, onAccepted }).catch((e: unknown) => {
-    clearAck();   // the reply will never come — don't strand a deferred turn/completed (F2)
-    // Once the reply is out, this turn's outcome belongs to `turn/completed` off the host's own turn end
-    // — a rejection here (the connection died mid-turn) is §1f's death sequence, not a second answer.
-    if (replied) return;
-    // The host's busy refusal, carrying the code the turns spine answers with (FleetBusyError). Read off
-    // the value rather than by class, so any engine that refuses the same way answers the same way.
-    const code = (e as { code?: unknown } | null)?.code;
-    if (code === ERR.BUSY) { ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)"); return; }
-    // F6: a socket death after dispatch but before the prompt ack rejects submit with the engine's
-    // connection-closed error, which carries no `code`. `isEnded()` is the death latch dispatch's own
-    // -33005 gate reads (fleetEngine.ts), so a rejection from a dead engine maps to ENGINE_GONE — the same
-    // reconnectable-host-loss signal every other fleet op answers — while a genuine unexpected throw on a
-    // LIVE engine stays INTERNAL, so a client can tell a server bug from a host it can recover by re-attach.
-    if (engine.isEnded()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, e instanceof Error ? e.message : String(e)); return; }
-    ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+  // THROUGH record.chain (final review R2): the prompt now orders BEHIND any prior chain mutation
+  // (thread/model/set, thread/clear), so it reaches the host after the forwarded op instead of racing
+  // ahead of it — the app server's own ordering, which the pre-fix immediate submit bypassed. The
+  // reservation above was taken synchronously, so admission (busy) is still decided at arrival, not on
+  // the chain.
+  record.chain = record.chain.then(() => {
+    // Re-read: a thread/close that latched `closing` while this waited on the chain must not submit to an
+    // engine it is about to detach. No seq/id exists yet (the seq arrives on onAccepted), so the honest
+    // answer is the same -33001 the busy gate itself gives — not a synthesized cancelled turn.
+    if (record.closing) { clearReservation(); ctx.peer.replyError(id, ERR.BUSY, "Thread is busy (closing)"); return; }
+    record.fleetStartAck = ack;   // bracket only THIS turn's reply window (see the ack note above)
+    engine.submit(input, () => {}, { uuid: userUuid, onAccepted }).catch((e: unknown) => {
+      clearReservation();
+      clearAck();   // the reply will never come — don't strand a deferred turn/completed (F2)
+      // Once the reply is out, this turn's outcome belongs to `turn/completed` off the host's own turn end
+      // — a rejection here (the connection died mid-turn) is §1f's death sequence, not a second answer.
+      if (replied) return;
+      // The host's busy refusal, carrying the code the turns spine answers with (FleetBusyError). Read off
+      // the value rather than by class, so any engine that refuses the same way answers the same way.
+      const code = (e as { code?: unknown } | null)?.code;
+      if (code === ERR.BUSY) { ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)"); return; }
+      // F6: a socket death after dispatch but before the prompt ack rejects submit with the engine's
+      // connection-closed error, which carries no `code`. `isEnded()` is the death latch dispatch's own
+      // -33005 gate reads (fleetEngine.ts), so a rejection from a dead engine maps to ENGINE_GONE — the same
+      // reconnectable-host-loss signal every other fleet op answers — while a genuine unexpected throw on a
+      // LIVE engine stays INTERNAL, so a client can tell a server bug from a host it can recover by re-attach.
+      if (engine.isEnded()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, e instanceof Error ? e.message : String(e)); return; }
+      ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    });
   });
 }
 
