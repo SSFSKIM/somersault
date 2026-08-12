@@ -126,7 +126,16 @@ export const mcpSet: Handler = (srv, ctx, id, params) => {
     if (!fn) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, UNSUPPORTED); return; }
     try {
       const receipt = await fn(parsed.data.servers);
-      record.mcpServersSet = parsed.data.servers; // COMMIT-AFTER-ACCEPT — see the module header
+      // COMMIT-AFTER-ACCEPT, and only what the engine ACCEPTED (final review R9, refining F7). A partial
+      // accept reports per-server `errors`; storing the whole REQUEST would let a later swap's
+      // `repushThreadState` replay a server the engine rejected. Exclude the errored names so the
+      // accumulator reflects added/retained reality. Defensive on the receipt shape: an absent or non-object
+      // `errors` excludes nothing rather than crashing.
+      const errorsObj = (receipt as { errors?: unknown }).errors;
+      const errored = errorsObj && typeof errorsObj === "object" ? new Set(Object.keys(errorsObj as Record<string, unknown>)) : undefined;
+      record.mcpServersSet = errored && errored.size
+        ? Object.fromEntries(Object.entries(parsed.data.servers).filter(([name]) => !errored.has(name)))
+        : parsed.data.servers;
       // Prune the two refining maps by what the SDK ACTUALLY removed — `receipt.removed` — NOT by absence
       // from the request (external review F7). `setMcpServers` only drops dynamically-added servers, so a
       // plugin/settings-owned server omitted from this request is RETAINED by the SDK; deleting its
