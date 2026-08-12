@@ -30,8 +30,11 @@
 > from a fleet host; `inProcess` — no corresponding host-wire op exists yet, so a fleet-origin thread
 > gets `-33006 unsupportedForOrigin`; `fleet-only` — the mirror case (see gap 4); `N/A` — no method,
 > so no origin question applies. M2a still registered only `inProcess` threads, so `-33006` stayed
-> defined-but-unemitted until M3 Task 7's `thread/attach`; since Task 10 the whole `both` column is
-> LITERAL — every one of those methods has been exercised against a real host over its own op.
+> defined-but-unemitted until M3 Task 7's `thread/attach`; since Task 10 the `both` column is
+> LITERAL — exercised against a host over its own op — EXCEPT the four swap-family rows
+> (`rewind_anchors`/`rewind_dryrun`/`rewind`/`clear`), whose fleet branches are Task 11's: until it
+> lands, `thread/rewind` on a fleet record still runs the LOCAL swap (rewind.ts has no origin
+> branch) — the last open interim hazard, with `thread/clear`.
 
 ## Shipped, per the code (post-merge 2026-08-11)
 
@@ -230,7 +233,9 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 
 ## Host ops — `harness/src/host/ops.ts` (34 tokens)
 
-**Since M3 Task 10 the `both` in this table is literal, not forward-looking.** Every row below whose
+**Since M3 Task 10 the `both` in this table is literal, not forward-looking — except the four
+swap-family rows (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), which stay forward-looking
+until Task 11 lands their fleet forwarding.** Every other row below whose
 method is not origin-refused now reaches a fleet thread's host over that host's own op, and the
 `FleetEngineSession` forwarders (`fleetEngine.ts`, Task 6) are what carry the plain ones —
 `capabilities`, `usage`, `context_usage`, `mcp_status`, `mcp_reconnect`, `tasks`, `background`,
