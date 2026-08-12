@@ -66,25 +66,60 @@ export interface FilePermissionRequest {
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 const extensionOf = (path: string): string => { const name = basename(path), dot = name.lastIndexOf("."); return dot > 0 ? name.slice(dot + 1).toLowerCase() : ""; };
 
+// ── THE BUDGET INVERSION (FSW T13b) ───────────────────────────────────────────────────────────────────
+// This dialog is dock-pinned in the fullscreen renderer and the dock is a CAPPED band, so a body taller than
+// the band does not scroll — it pushes the question, the option list and the `esc cancel` row off the bottom
+// of the frame, where nothing can reach them. Under a budget the chrome is therefore reserved and the BODY is
+// what gives way: it windows to whatever is left and names the rows it withheld, in a marker that rides
+// INSIDE the window (put after the content, the marker would be the first row the clip took). Absent budget —
+// every classic mount, and every existing test — nothing here runs and the whole body prints as it always did.
+/** Rows this dialog spends before a single body line prints: the frame's `marginTop`, its rule, its title, the
+ *  subtitle when there is one, the symlink warning and its margin, the question, one row per option, and the
+ *  footer's margin plus its hint row. Derived from what is actually rendered below, not from a constant, so
+ *  an option arm added later cannot silently desynchronise the reservation from the list on screen.
+ *  APPROXIMATE IN ONE DIRECTION, recorded: a question or an option label that WRAPS at a narrow width costs a
+ *  row this count does not know about, and the frame clips it. */
+export function fileChromeRows({ subtitle, warning, options }: { subtitle: boolean; warning: boolean; options: number }): number {
+  return 1 + 1 + 1 + (subtitle ? 1 : 0) + (warning ? 2 : 0) + 1 + options + 2;
+}
+/** The window itself: how many of `count` rows print, and how many the marker must account for. A body that
+ *  FITS is untouched; one that does not gives a row back to the marker — and a budget of one row spends it on
+ *  the marker alone rather than on a single line of a fifty-row diff. */
+export function bodyWindow(count: number, budget: number | undefined): { keep: number; hidden: number } {
+  if (budget === undefined || count <= budget) return { keep: count, hidden: 0 };
+  const keep = Math.max(0, budget - 1);
+  return { keep, hidden: count - keep };
+}
+const MoreRow = ({ hidden }: { hidden: number }) => <Text dimColor>… +{hidden} more lines</Text>;
+
 /** `EM` — a syntax-highlighted block of the whole file, NOT the transcript's ten-line preview: this is the
- *  content the human is being asked to approve, so nothing is elided. Unknown extensions render plain (the
- *  `known` gate `toolSummaries.previewRows` uses, for its reason: dimming a `.md` file says "less important"
- *  about the only content on screen). */
-function CodeBlock({ code, filePath }: { code: string; filePath: string }) {
+ *  content the human is being asked to approve, so nothing is elided — up to the row budget, which elides the
+ *  tail and says so. Unknown extensions render plain (the `known` gate `toolSummaries.previewRows` uses, for
+ *  its reason: dimming a `.md` file says "less important" about the only content on screen). */
+function CodeBlock({ code, filePath, budget }: { code: string; filePath: string; budget?: number }) {
   const lang = extensionOf(filePath), known = KNOWN_LANGS.has(lang);
+  const all = code.split("\n");
+  const { keep, hidden } = bodyWindow(all.length, budget);
   return (
     <Box flexDirection="column">
-      {code.split("\n").map((text, index) => {
+      {all.slice(0, keep).map((text, index) => {
         const segments = known ? highlightCode(text, lang) : [];
         return <Line key={index} l={segments.length > 0 ? { text, segments } : { text }} />;
       })}
+      {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
     </Box>
   );
 }
 
-const DiffRows = ({ rows }: { rows: readonly RenderLine[] }) => (
-  <Box flexDirection="column">{rows.map((l, index) => <Line key={index} l={l} />)}</Box>
-);
+const DiffRows = ({ rows, budget }: { rows: readonly RenderLine[]; budget?: number }) => {
+  const { keep, hidden } = bodyWindow(rows.length, budget);
+  return (
+    <Box flexDirection="column">
+      {rows.slice(0, keep).map((l, index) => <Line key={index} l={l} />)}
+      {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
+    </Box>
+  );
+};
 
 /** `wem` L505860-881, arm by arm. The two diff arms go through F4's OWN pipeline — `resolvePatch` (the patch
  *  ladder) then `renderDiff` (the numbered gutter, the banded rows, the word diff) — so a diff in this dialog
@@ -93,7 +128,7 @@ const DiffRows = ({ rows }: { rows: readonly RenderLine[] }) => (
  *  carries surrounding context lines; ours diffs `old_string` against `new_string`, which is rung 2 of the
  *  ladder and shows the changed span alone. The line NUMBERS are still real whenever the snippet anchors on
  *  disk exactly once, and visibly approximate (`~`) when it does not — that ladder is the whole point. */
-function FileBody({ content, columns, fs, cwd }: { content: FileContent; columns: number; fs: FileFs; cwd: string }) {
+function FileBody({ content, columns, fs, cwd, budget }: { content: FileContent; columns: number; fs: FileFs; cwd: string; budget?: number }) {
   // Synthetic inputs are memoized because `resolvePatch` caches on the input OBJECT's identity (a WeakMap):
   // a fresh literal every render would re-run jsdiff and a synchronous `readFileSync` on every keystroke.
   //
@@ -122,7 +157,7 @@ function FileBody({ content, columns, fs, cwd }: { content: FileContent; columns
       // `Qsl` L505548: `SM paddingX: 0`, width = the full column budget. RECORDED GAP: that `SM` is the same
       // dashed-rule box the write arm below now paints, and this arm does not yet paint it — t17 scoped
       // itself to `ial`. `test/tui/file-permission.test.tsx` pins the absence, so closing it is a visible edit.
-      return patch === undefined ? null : <DiffRows rows={renderDiff(patch, columns)} />;
+      return patch === undefined ? null : <DiffRows rows={renderDiff(patch, columns)} budget={budget} />;
     case "file-write-diff":
       // `ial` L505666-696: `SM paddingX: 1` (call site L505692), width `columns - 2`; a file that does not exist yet has no diff
       // to show, so its CONTENT is the body — and an empty one says so rather than rendering a blank block.
@@ -137,20 +172,30 @@ function FileBody({ content, columns, fs, cwd }: { content: FileContent; columns
       // `isScreenReaderEnabled` context, L182559), so upstream paints NO border there. We paint
       // unconditionally — stock Ink 5 has no such context and this repo has no screen-reader surface to read
       // it off, the same class of gap DialogFrame.tsx records for `srPrefix`.
-      return (
-        <Box flexDirection="column" borderStyle={DASHED_BORDER} borderColor={role("subtle")}
-          borderLeft={false} borderRight={false} overflow="hidden" paddingX={1}>
-          {patch !== undefined
-            ? <DiffRows rows={renderDiff(patch, columns - 2)} />
-            : <CodeBlock code={content.content || "(No content)"} filePath={content.filePath} />}
-        </Box>
-      );
+      {
+        // T13b: the two dashed rules are this arm's own chrome and cost two of the budget's rows — so the
+        // content is windowed against `budget − 2`, and a budget with no room for the box at all drops the
+        // box rather than the content it exists to delimit.
+        const boxed = budget === undefined || budget >= 3;
+        const inner = budget === undefined ? undefined : Math.max(0, budget - (boxed ? 2 : 0));
+        const rows = patch !== undefined
+          ? <DiffRows rows={renderDiff(patch, columns - 2)} budget={inner} />
+          : <CodeBlock code={content.content || "(No content)"} filePath={content.filePath} budget={inner} />;
+        return boxed
+          ? (
+            <Box flexDirection="column" borderStyle={DASHED_BORDER} borderColor={role("subtle")}
+              borderLeft={false} borderRight={false} overflow="hidden" paddingX={1}>{rows}</Box>
+          )
+          : <Box flexDirection="column" paddingX={1}>{rows}</Box>;
+      }
     case "notebook-edit-diff": {
       // `fal` L505779-505816: a bold path, a dim mode line, then the cell — the OLD source for a delete, the
       // NEW source for an insert, and a diff of the two for a replace (falling back to the new source when
       // the notebook could not be read). Markdown cells highlight as markdown regardless of the `.ipynb`.
       const label = content.editMode === "insert" ? "Insert new cell" : content.editMode === "delete" ? "Delete cell" : "Replace cell contents";
       const cellPath = content.cellType === "markdown" ? "cell.md" : content.notebookPath;
+      // T13b: the path row, the mode row and the margin under them are this arm's chrome (three rows).
+      const cell = budget === undefined ? undefined : Math.max(0, budget - 3);
       return (
         <Box flexDirection="column" paddingX={1}>
           <Box flexDirection="column" paddingBottom={1}>
@@ -158,15 +203,17 @@ function FileBody({ content, columns, fs, cwd }: { content: FileContent; columns
             <Text dimColor>{label} for cell {content.cellId}{content.cellType ? ` (${content.cellType})` : ""}</Text>
           </Box>
           <Box paddingLeft={2}>
-            {content.editMode === "delete" ? <CodeBlock code={content.oldSource} filePath={cellPath} />
-              : patch !== undefined ? <DiffRows rows={renderDiff(patch, columns - 2)} />
-                : <CodeBlock code={content.newSource || "(No content)"} filePath={cellPath} />}
+            {content.editMode === "delete" ? <CodeBlock code={content.oldSource} filePath={cellPath} budget={cell} />
+              : patch !== undefined ? <DiffRows rows={renderDiff(patch, columns - 2)} budget={cell} />
+                : <CodeBlock code={content.newSource || "(No content)"} filePath={cellPath} budget={cell} />}
           </Box>
         </Box>
       );
     }
     case "tool-use-line":
-      return <Box flexDirection="column" paddingX={2} paddingY={1}><Text>{content.text}</Text></Box>;
+      // One row of text between two of padding. Under a budget with no room for all three the padding is what
+      // goes — it is the only part of this arm that carries nothing.
+      return <Box flexDirection="column" paddingX={2} {...(budget === undefined || budget >= 3 ? { paddingY: 1 } : {})}><Text>{content.text}</Text></Box>;
     case "no-changes":
       return <Box paddingX={1}><Text dimColor>{content.message}</Text></Box>;
   }
@@ -177,7 +224,7 @@ const Question = ({ q }: { q: FileQuestion }) => (q.kind === "plain"
   ? <Text>{q.text}</Text>
   : <Text>Do you want to {q.verbPhrase} <Text bold>{q.fileName}</Text>?</Text>);
 
-export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = process.cwd(), home = homedir(), directories, fs = nodeFileFs, columns = process.stdout.columns ?? 80 }: {
+export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = process.cwd(), home = homedir(), directories, fs = nodeFileFs, columns = process.stdout.columns ?? 80, maxRows }: {
   req: FilePermissionRequest;
   onDecision: (d: PermissionDecision) => void;
   /** `Vrn`'s derived path (permissionKind.ts). Required for every route except the sed one, which carries
@@ -193,6 +240,9 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
   directories?: readonly string[];
   fs?: FileFs;
   columns?: number;
+  /** A HARD CEILING on the rows this dialog may compose into — the fullscreen dock band's budget (T13b).
+   *  Absent means "as tall as it likes", which is every classic mount: the body prints whole. */
+  maxRows?: number;
 }) {
   const descriptor: FileDescriptor = useMemo(
     () => (sedEdit ? sedDescriptor(sedEdit, cwd, fs) : fileDescriptor({ toolName: req.toolName, input: req.input, filePath: filePath ?? cwd, cwd, fs })),
@@ -238,10 +288,14 @@ export function FilePermission({ req, onDecision, filePath, sedEdit, cwd = proce
   });
 
   const warning = descriptor.symlinkTarget === undefined ? undefined : symlinkWarning(descriptor.symlinkTarget, cwd);
+  // The inversion, computed once against the very list and warning this render paints.
+  const bodyBudget = maxRows === undefined
+    ? undefined
+    : Math.max(0, maxRows - fileChromeRows({ subtitle: descriptor.subtitle !== undefined, warning: warning !== undefined, options: options.length }));
   return (
     <DialogFrame title={descriptor.title} subtitle={descriptor.subtitle} subagentType={req.subagentType} innerPaddingX={0}>
       {warning ? <Box paddingX={1} marginBottom={1}><Text color={role("warning")}>{warning}</Text></Box> : null}
-      <FileBody content={descriptor.content} columns={columns} fs={fs} cwd={cwd} />
+      <FileBody content={descriptor.content} columns={columns} fs={fs} cwd={cwd} budget={bodyBudget} />
       <Box flexDirection="column" paddingX={1}>
         <Question q={descriptor.question} />
         <Select

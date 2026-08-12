@@ -44,7 +44,8 @@ import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
-import { FullscreenFrame, seamCap } from "./FullscreenFrame.js";
+import { FullscreenFrame, dockCap, seamCap } from "./FullscreenFrame.js";
+import { todoPanelRows } from "./taskPanelModel.js";
 import { FullscreenViewport } from "./FullscreenViewport.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
@@ -1026,7 +1027,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const region = fullscreen
     ? (transcriptOpen
       ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
-      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
+      // …AND THE BLANKING IS A MAIN-SCREEN TRADE THAT DOES NOT APPLY HERE (T13b). `paneOwned` hides the live
+      // rows so the dock's fourteen-row budget never has to cover a dialog as well; in the frame the region is
+      // a fixed virtualised band that the seam has ALREADY shrunk by taking the bottom one, so blanking buys
+      // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
+      // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
+      // where the overlay never occludes it (grounding §L2.6). The classic arm below keeps the trade.
+      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
     : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
   // ── FSW TASK 13 — WHICH OF CANON'S TWO OVERLAY MECHANISMS A SURFACE GETS ──────────────────────────────
   // Grounding §L2.6, "Two overlay mechanisms, not one". In fullscreen a surface the USER opened (`/model`,
@@ -1073,7 +1080,26 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  seventeen rows and a dock capped at twelve, so before T13 its whole option block — every answer the
    *  dialog exists to collect — was clipped off the bottom of the frame with nothing on screen to say so. In
    *  the seam at `rows − 2` it fits. */
-  const overlayRows = () => (fullscreen ? seamCap(size.rows) : terminalRows());
+  const overlayRows = () => (fullscreen ? seamCap(size.rows) - 1 : terminalRows());
+  /** THE ROWS A DOCK DIALOG MAY COMPOSE INTO (FSW T13b). Canon draws a permission/question consult in the
+   *  scrollable; ccx pins it in the dock band, where — unlike a pager — there is no way to reach a row the
+   *  frame clipped. So the band takes `dockCap`'s wide arm while a decision is in it (see there) and the
+   *  dialog is handed what is left of it after the band's OTHER tenants, which are the footer's unconditional
+   *  row, the live-turn slot, the queue echo and the task panel.
+   *    ARITHMETIC RATHER THAN MEASUREMENT, and biased to over-reserve: measuring would cost a ref, an effect
+   *  and a frame of lag, while an over-reservation costs one row of diff. The task panel is the one term that
+   *  can be short — `todoPanelRows` assumes the single in-progress row TodoWrite's discipline produces — and
+   *  its error is a row of the dialog's chrome, which is why the reserve rounds up rather than down.
+   *    `undefined` OFF THE FULLSCREEN PATH: the main screen has no band and no cap, so nothing is windowed
+   *  there and every classic mount renders exactly what it always did. */
+  const dockDialogRows = (): number | undefined => {
+    if (!fullscreen) return undefined;
+    const others = 1                                                                    // the footer's row
+      + (state.busy || state.compacting ? 1 : 0)                                        // the live-turn slot
+      + state.queue.reduce((n, q) => n + userEchoLines(q.value, { width: queueWidth }).length, 0)
+      + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
+    return Math.max(0, dockCap(size.rows, true) - others);
+  };
   /** THE OVERLAY CHAIN — every surface that replaces the composer, in precedence order. Extracted from the
    *  dock in FSW T13 so ONE list of elements can be handed to either slot (see `seamActive` above): on the
    *  main screen and for a parked decision it renders where it always did, directly above the footer; in
@@ -1226,8 +1252,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     // sets `allowDangerouslySkipPermissions` from exactly that — a session that did not launch
                     // in bypass cannot be granted it. `state.model` is undefined on an attach client until a
                     // turn ends, which PlanDialog reads as "auto not available".
+                    // T13b: `rows` is the height it may SIZE against and `maxRows` the ceiling it may not
+                    // compose past. In the seam they are the same number; on the main screen there is no
+                    // ceiling at all, which is what keeps the classic dialog byte-identical.
                     ? <PlanDialog key={state.pending.toolUseID} req={state.pending} onDecision={(o) => resolveDecision(o)}
                         model={state.model} bypassAvailable={hookOpts?.initialMode === "bypassPermissions"} rows={overlayRows()}
+                        {...(fullscreen ? { maxRows: overlayRows() } : {})}
                         // I1: ctrl+g from this dialog is the same terminal handoff the composer's is.
                         {...(editExternalHere ? { editor: editExternalHere } : {})} />
                     : null
@@ -1310,7 +1340,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           // the cwd plus every `/add-dir` grant — which is what the file body's in-directory test runs over
           // (F6 T7 fix; without it an Edit under an added directory reads as out-of-directory and its grant
           // re-adds a directory the session already holds).
-          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} directories={state.workDirs} onDecision={(d) => resolveDecision(d)} />
+          // `maxRows` is the dock band's remaining rows (T13b), present in fullscreen only — see
+          // `dockDialogRows`. Without it a long diff pushed the question and every option off the frame.
+          : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} directories={state.workDirs} onDecision={(d) => resolveDecision(d)}
+              {...(fullscreen ? { maxRows: dockDialogRows() } : {})} />
         : null}
       {seamActive ? null : overlayChain}
       {/* WAVE C TASK 2 (EP-C1b) — ONE FOOTER ROW, where `ChatStatusBar` and two armed-hint rows used to be.
@@ -1375,6 +1408,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   THE DOCK IS STILL PASSED WHILE THE SEAM IS UP, and the frame ignores it — canon's overlay is `opaque`
   // over the dock rather than instead of it, and keeping the prop shaped that way is what lets the frame own
   // the "occlusion is omission" decision in one place (FullscreenFrame's header) instead of two.
-  if (fullscreen) return <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching} regionChildren={region} dock={dock} seam={seamActive ? overlayChain : null} />;
+  if (fullscreen) return <FullscreenFrame rows={size.rows} historySearchOpen={state.historyOpen || footerState.searching} dialogInDock={inlineDecision !== null} regionChildren={region} dock={dock} seam={seamActive ? overlayChain : null} />;
   return <Box flexDirection="column">{region}{dock}</Box>;
 }

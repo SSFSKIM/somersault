@@ -27,6 +27,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FullscreenFrame, seamCap, useRegionRows } from "../../src/tui/FullscreenFrame.js";
+import { themeTokens } from "../../src/tui/theme.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
@@ -75,6 +76,19 @@ describe("FullscreenFrame — the seam slot", () => {
     expect(strip(lines[17]).length).toBeGreaterThan(10);             // …and it is the frame's full width
     expect(lines.slice(18)).toEqual(["S0", "S1", "S2", "S3", "S4"]);
     expect(lines.join("\n")).not.toContain("D0");                    // canon's `opaque`, by omission
+  });
+
+  // THE RULE'S COLOUR (T13b, T13 review Minor 1). The T13 report recorded it "unknowable — the captures are
+  // plain text", which the bundle refutes outright: the slot's top edge is `Sg({ color: "permission", char:
+  // "▔" })` (L455951), and `Sg` paints `<Text color={color} dimColor={!color}>` (L183955) — so a rule with a
+  // colour is NOT dimmed. Both halves are asserted, because "coloured" and "not dim" are separate SGR runs.
+  it("paints the seam rule in the permission role, undimmed (`Sg` L183955)", () => {
+    const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(themeTokens().permission);
+    const { lastFrame } = render(<FullscreenFrame rows={24} regionChildren={band(4, "R")} dock={band(2, "D")} seam={band(3, "S")} />);
+    const rule = rowsOf(lastFrame()).find((l) => isSeamRule(l));
+    expect(rule).toBeDefined();
+    expect(rule).toContain(`\x1b[38;2;${m![1]};${m![2]};${m![3]}m`);
+    expect(rule).not.toContain("\x1b[2m");
   });
 
   // THE CAP, and the row it always leaves the transcript. `rows − 2` inside a `rows − 1` frame is exactly one
@@ -213,9 +227,14 @@ describe("ChatApp routes the two mechanisms", () => {
   // …AND THE SURFACE IN IT SIZES TO THE SLOT, NOT THE TERMINAL. Canon's own `/help` loses its `Esc to cancel`
   // line off the bottom at 24 rows because the modal windows itself for a height the slot does not have —
   // "an upstream clipping defect, not something to reproduce" (grounding §L2.6). The discriminating geometry is
-  // a short pane with a long list: handed `rows − 2` the picker windows to eight and SAYS how many it hid;
-  // handed `rows` it renders one row more and the frame eats the counter, leaving a list that appears to end.
-  it("hands a seam surface the slot's rows, so its own window stays honest at a short pane", async () => {
+  // a short pane with a long list: handed the slot's budget the picker windows itself and SAYS how many it hid;
+  // handed `rows` it renders more and the frame eats the counter, leaving a list that appears to end.
+  //   THE BUDGET IS THE CAP MINUS ONE (T13b). The `▔` rule is a BORDER on the slot's box, so it is charged
+  //   against the same `rows − 2` the tenant is capped at, and the rows that actually paint content are
+  //   `rows − 3`. Canon hands its modal exactly that: `Q0r = Wbt − aIr − 1` with `aIr = 2` (bundle L455845),
+  //   while the box around it takes `maxHeight: Wbt − aIr` (L455951). So at 18 rows the picker gets fourteen,
+  //   not fifteen, and hides one model more than it did before this correction.
+  it("hands a seam surface the slot's rows MINUS the rule, so its own window stays honest at a short pane", async () => {
     const models = { models: Array.from({ length: 12 }, (_, i) => ({ value: `m${i}`, displayName: `Model ${i}` })), commands: [], mcpServers: [] };
     const r = renderWithKeymap(
       <ChatApp makeSession={() => fakeRemote({ capabilities: () => models }) as unknown as ChatSession}
@@ -226,7 +245,7 @@ describe("ChatApp routes the two mechanisms", () => {
     await tick();
     await openModel(r);
     expect(rowsOf(r.lastFrame())).toHaveLength(17);
-    expect(r.lastFrame()).toContain("… +4 models");
+    expect(r.lastFrame()).toContain("… +5 models");
     r.unmount();
   });
 
@@ -292,7 +311,11 @@ describe("ChatApp routes the two mechanisms", () => {
     r.unmount();
   });
 
-  it("lets PlanDialog keep ctrl+u for its own body — the transcript does not move", async () => {
+  // BOTH HALVES OF THE CROSSING, which the T13 version only asserted the negative of. "The region did not
+  // scroll" is also what a dead key looks like, so the marker is read too: it is the plan's own report of
+  // where its window sits, and it MOVES on ctrl+d and comes back on ctrl+u.
+  const planMarker = (f: string): string => (/… .*(?=\(ctrl)/.exec(strip(f.split("\n").find((l) => l.includes("…")) ?? "")) ?? [""])[0];
+  it("lets PlanDialog keep ctrl+u for its own body — the plan pages and the transcript does not move", async () => {
     const fake = fakeRemote();
     const r = renderWithKeymap(app("fullscreen", fake));
     await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
@@ -301,12 +324,121 @@ describe("ChatApp routes the two mechanisms", () => {
     await waitFor(() => frameOf(r.lastFrame).includes("Ready to code?"));
     await settle();
     const before = strip(rowsOf(r.lastFrame())[0]);
+    const markerBefore = planMarker(frameOf(r.lastFrame));
+    expect(markerBefore).toMatch(/\+\d+ more lines/);
     r.stdin.write("\x04");                                            // ctrl+d — the plan's own half page down
     await settle();
     expect(strip(rowsOf(r.lastFrame())[0])).toBe(before);             // the region did NOT scroll
+    const markerAfter = planMarker(frameOf(r.lastFrame));
+    expect(markerAfter).not.toBe(markerBefore);                       // …because the PLAN took the key
     r.stdin.write("\x15");                                            // …and back up
     await settle();
     expect(strip(rowsOf(r.lastFrame())[0])).toBe(before);
+    expect(planMarker(frameOf(r.lastFrame))).toBe(markerBefore);
+    r.unmount();
+  });
+
+  // ── FSW TASK 13b — THE BUDGET INVERSION: WHAT A DIALOG CANNOT SHRINK, IT MUST NOT CLIP ─────────────────
+  // The T13 review's Critical. A dock-pinned permission dialog carrying a long diff composed to sixty rows
+  // into a twelve-row band at 24 rows, and the rows the frame dropped were the QUESTION, every OPTION and the
+  // `esc cancel` row — with no marker to say so and, because the dock is not the pager's region, no scroll
+  // path to reach them. The user would have been authorising an edit they could not see. The fix inverts what
+  // gives way: chrome is reserved, the DIFF windows into whatever is left, and the `… +N more lines` marker
+  // rides INSIDE the window (a marker after the content would itself be the row that clips).
+  const OLD_TEXT = Array.from({ length: 25 }, (_, i) => `old ${i}`).join("\n");
+  const NEW_TEXT = Array.from({ length: 25 }, (_, i) => `new ${i}`).join("\n");
+  const diffEntry = (): PendingEntry => ({
+    sessionId: "s", toolUseID: "d", toolName: "Edit", kind: "permission",
+    input: { file_path: "/work/f.ts", old_string: OLD_TEXT, new_string: NEW_TEXT }, createdAt: Date.now(),
+  });
+  const appAt = (rows: number, fake: ReturnType<typeof fakeRemote>) => (
+    <ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+      renderer={{ mode: "fullscreen", reason: "env_on" }} initialEntries={alphaEntries()}
+      deps={{ columns: () => 80, rows: () => rows }} />
+  );
+
+  for (const rows of [24, 40]) {
+    it(`keeps a permission dialog's question, every option and its Esc row on screen at ${rows} rows`, async () => {
+      const fake = fakeRemote();
+      const r = renderWithKeymap(appAt(rows, fake));
+      await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+      await tick();
+      fake.parkPermission(diffEntry());
+      await waitFor(() => frameOf(r.lastFrame).includes("Edit file"));
+      await settle();
+      const lines = rowsOf(r.lastFrame());
+      expect(lines).toHaveLength(rows - 1);
+      const f = lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
+      expect(f).toContain("Do you want to make this edit to f.ts?");     // the question
+      expect(f).toContain("1. Yes");                                     // …every option…
+      expect(f).toContain("2. Yes, allow all edits during this session");
+      expect(f).toContain("3. No");
+      expect(f).toContain("esc cancel");                                 // …and the way out
+      expect(f).toMatch(/… \+\d+ more lines/);                           // the withheld rows are NAMED
+      expect(f).toContain("old 0");                                      // …and the diff still starts at its top
+      r.unmount();
+    });
+  }
+
+  // The plan dialog's own half of the inversion. It is a SEAM surface (T13), so its budget is the slot's, and
+  // below roughly 21 rows it used to compose to a fixed eighteen whatever it was handed: the T13 review
+  // measured options 2–3 gone at 18 rows and the whole option block gone at 14.
+  for (const rows of [14, 18, 24]) {
+    it(`keeps the plan dialog's whole option box on screen at ${rows} rows`, async () => {
+      const fake = fakeRemote();
+      const r = renderWithKeymap(appAt(rows, fake));
+      await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+      await tick();
+      fake.parkPermission(planEntry(Array.from({ length: 30 }, (_, i) => `- P${i}`).join("\n")));
+      await waitFor(() => frameOf(r.lastFrame).includes("Ready to code?"));
+      await settle();
+      const lines = rowsOf(r.lastFrame());
+      expect(lines).toHaveLength(rows - 1);
+      const f = lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
+      expect(f).toContain("1. Yes, auto-accept edits");
+      expect(f).toContain("2. Yes, manually approve edits");
+      expect(f).toContain("Tell Claude what to change");
+      expect(f).toMatch(/… \+\d+ more lines/);                           // …with the plan windowed, not clipped
+      r.unmount();
+    });
+  }
+
+  // ── STEP 3: THE TURN STAYS VISIBLE UNDER THE SEAM ──────────────────────────────────────────────────────
+  // `paneOwned` blanks `pendingItems`/`streaming` out of the transcript while a surface owns the keyboard.
+  // On the main screen that is a trade for dock budget; in the frame the region is a fixed virtualised band
+  // the seam has ALREADY shrunk, so the blanking bought nothing and cost the only sign the turn was still
+  // running — open `/model` mid-answer and the stream vanished until you closed it. Canon keeps its spinner in
+  // `scrollable`, above the absolute overlay, where the overlay never occludes it (grounding §L2.6).
+  const streamDelta = (text: string) => ({ kind: "message" as const, data: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } } });
+  it("keeps the streaming tail in the region while a seam surface is open mid-turn", async () => {
+    const fake = fakeRemote({ capabilities: () => MODELS });
+    const r = renderWithKeymap(app("fullscreen", fake));
+    await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+    await tick();
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } } });
+    fake.pushEvent(streamDelta("STREAMTAIL"));
+    await waitFor(() => frameOf(r.lastFrame).includes("STREAMTAIL"));
+    await openModel(r);
+    const lines = rowsOf(r.lastFrame());
+    const rule = seamRuleAt(lines);
+    expect(rule).toBeGreaterThan(0);
+    expect(lines.slice(rule + 1).join("\n")).toContain("Select model");     // the picker really is up…
+    expect(lines.slice(0, rule).join("\n")).toContain("STREAMTAIL");        // …and the turn is still on screen
+    r.unmount();
+  });
+
+  it("still blanks the live turn behind a main-screen dialog, where the dock budget needs the rows", async () => {
+    const fake = fakeRemote({ capabilities: () => MODELS });
+    const r = renderWithKeymap(app("classic", fake));
+    await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+    await tick();
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } } });
+    fake.pushEvent(streamDelta("STREAMTAIL"));
+    await waitFor(() => frameOf(r.lastFrame).includes("STREAMTAIL"));
+    await openModel(r);
+    expect(frameOf(r.lastFrame)).not.toContain("STREAMTAIL");
     r.unmount();
   });
 

@@ -14,7 +14,7 @@ import React from "react";
 import { render } from "ink-testing-library";
 import { TaskPanel } from "../../src/tui/TaskPanel.js";
 import type { TaskItem } from "../../src/tui/taskList.js";
-import { OWNER_TAG_WIDTH, todoOverflowLine, todoWindowSize } from "../../src/tui/taskPanelModel.js";
+import { OWNER_TAG_WIDTH, todoOverflowLine, todoPanelRows, todoWindowSize } from "../../src/tui/taskPanelModel.js";
 
 const plain = (s: string | undefined) => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 const oneLine = (s: string | undefined) => plain(s).replace(/\s*\n\s*/g, " ").trim();
@@ -150,5 +150,33 @@ describe("TaskPanel — window and overflow", () => {
     expect(todoOverflowLine([task({ id: "1" }), task({ id: "2", status: "completed" }), task({ id: "3", status: "in_progress" })]))
       .toBe(" … +1 in progress, 1 pending, 1 completed");
     expect(todoOverflowLine([])).toBe("");
+  });
+});
+
+// ── FSW T13b — THE PANEL'S HEIGHT, AS ARITHMETIC ───────────────────────────────────────────────────────
+// The fullscreen dock band is capped, and a decision dialog drawn in it gets what the band's other tenants
+// leave. `todoPanelRows` is how ChatApp subtracts this panel without measuring it — so it is pinned against
+// what the panel actually renders, in the shapes that change its height: empty, short, windowed, and with an
+// in-progress row carrying its activity line.
+describe("todoPanelRows — the reservation the dock band spends (T13b)", () => {
+  const heightOf = (tasks: TaskItem[], rows: number) =>
+    plain(render(<TaskPanel tasks={tasks} rows={rows} columns={80} />).lastFrame()).split("\n").length;
+  const many = (n: number) => Array.from({ length: n }, (_, i) => task({ id: String(i + 1) }));
+
+  it("is zero for an empty list, which renders nothing at all", () => {
+    expect(todoPanelRows([], 40)).toBe(0);
+    expect(render(<TaskPanel tasks={[]} rows={40} />).lastFrame()).toBe("");
+  });
+
+  for (const [n, rows] of [[2, 40], [3, 40], [9, 40], [4, 24], [3, 14]] as const) {
+    it(`agrees with the rendered panel: ${n} tasks at ${rows} rows`, () => {
+      expect(todoPanelRows(many(n), rows)).toBe(heightOf(many(n), rows));
+    });
+  }
+
+  it("counts the activity line an in-progress row carries", () => {
+    const tasks = [task({ id: "1", status: "in_progress", activeForm: "Building it" }), task({ id: "2" })];
+    expect(todoPanelRows(tasks, 40)).toBe(heightOf(tasks, 40));
+    expect(todoPanelRows(tasks, 40)).toBe(todoPanelRows([task({ id: "1", status: "in_progress" }), task({ id: "2" })], 40) + 1);
   });
 });

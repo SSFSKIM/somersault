@@ -17,6 +17,19 @@ export function todoWindowSize(rows: number): number {
   return rows <= 10 ? 0 : Math.min(5, Math.max(3, rows - 14));
 }
 
+/** HOW TALL `TaskPanel` COMPOSES (FSW T13b), so the fullscreen dock band can reserve its rows before handing
+ *  what is left to a decision dialog. Its `marginTop` and count header, one row per shown task, the activity
+ *  line under the in-progress one, and the overflow line when the window hid something.
+ *    EXACT FOR THE ORDINARY LIST, short by one per EXTRA row that is simultaneously in progress — TodoWrite's
+ *  discipline keeps that at one, and the panel's own test pins this count against what it renders. */
+export function todoPanelRows(tasks: readonly TaskItem[], rows: number): number {
+  if (tasks.length === 0) return 0;
+  const window = todoWindowSize(rows);
+  const shown = Math.min(tasks.length, window);
+  const activity = tasks.some((t) => t.status === "in_progress" && t.activeForm) ? 1 : 0;
+  return 2 + shown + activity + (window > 0 && tasks.length > shown ? 1 : 0);
+}
+
 /** `Pyn` (L407108-407113): numeric when both ids parse, lexicographic otherwise. */
 export function compareTaskIds(a: TaskItem, b: TaskItem): number {
   const x = parseInt(a.id, 10), y = parseInt(b.id, 10);

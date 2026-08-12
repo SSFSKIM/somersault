@@ -65,6 +65,7 @@
 // which for every surface canon puts here it always is (a picker is ten-plus rows, the dock is five).
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Box, measureElement, type DOMElement } from "ink";
+import { resolveThemeColor, themeTokens } from "./theme.js";
 
 /** THE ROWS THE REGION ACTUALLY GRANTED, published to whatever is mounted inside it (FSW Task 10).
  *
@@ -96,12 +97,15 @@ export const PARK_ROW = 1;
 export function frameHeight(rows: number): number { return Math.max(1, rows - PARK_ROW); }
 
 /** How many of the frame's rows the dock may take. `floor(rows/2)` is spec §A4's steady-state cap: the composer
- *  can grow, but never past the point where the transcript stops being the thing on screen. History search is
- *  the one surface allowed to own nearly the whole frame (`rows − 2`, canon's cap for the same class of
- *  bottom-anchored picker — grounding §4.3, bundle L455951), because its results ARE the content while it is up.
+ *  can grow, but never past the point where the transcript stops being the thing on screen. `wide` is the
+ *  exception — `rows − 2`, canon's cap for a bottom-anchored surface that IS the content while it is up
+ *  (grounding §4.3, bundle L455951), the same number `seamCap` takes. Two tenants earn it: history search,
+ *  whose results are the content, and (T13b) a parked DECISION, whose dialog is the only thing on screen the
+ *  user can act on — and which the steady-state cap could not even fit the chrome of at 24 rows, so the rows
+ *  it dropped were the question and the option list.
  *  Clamped into `[1, frameHeight]` so a two-row pane still yields a dock. */
-export function dockCap(rows: number, historySearchOpen: boolean): number {
-  const cap = historySearchOpen ? rows - 2 : Math.floor(rows / 2);
+export function dockCap(rows: number, wide: boolean): number {
+  const cap = wide ? rows - 2 : Math.floor(rows / 2);
   return Math.max(1, Math.min(cap, frameHeight(rows)));
 }
 
@@ -119,9 +123,13 @@ export function seamCap(rows: number): number {
  *  A CUSTOM INK BORDER OBJECT rather than a hand-painted row, and that is what keeps the frame from needing a
  *  column count: `renderBorder` builds the top edge as `box.top.repeat(width)` with no corners once both
  *  verticals are off (ink/build/render-border.js:23-27, the same arithmetic `composerFrame.tsx` transcribes for
- *  the composer's `────`), and `styles.js:196` gives the box exactly one row of Yoga border for it. Unstyled:
- *  the captures are plain text and record no colour, and inventing one would be inventing canon. */
+ *  the composer's `────`), and `styles.js:196` gives the box exactly one row of Yoga border for it.
+ *    ITS COLOUR IS THE `permission` ROLE, UNDIMMED (T13b, correcting T13's "unknowable" residual — the frame
+ *  captures are plain text, but the bundle is not). L455951 builds the edge as `Sg({ color: "permission",
+ *  char: "▔" })`, and `Sg` (L183955) paints `<Text color={color} dimColor={!color}>` — so naming a colour
+ *  is exactly what turns the dimming OFF. */
 const SEAM_RULE = { top: "▔", bottom: "", left: "", right: "", topLeft: "", topRight: "", bottomLeft: "", bottomRight: "" } as const;
+const seamRuleColor = (): string | undefined => resolveThemeColor(themeTokens().permission);
 
 export interface FullscreenFrameProps {
   /** The terminal's row count — ChatApp's resize state, never `process.stdout.rows` read behind it. */
@@ -133,6 +141,9 @@ export interface FullscreenFrameProps {
    *  the dock's, and wears the `▔▔▔▔` seam on its top edge. */
   seam?: React.ReactNode;
   historySearchOpen?: boolean;
+  /** T13b — a parked decision's dialog is in the dock. It takes `dockCap`'s wide arm for the reason history
+   *  search does; see there. */
+  dialogInDock?: boolean;
   /** The L180317 diagnostic. Default writes to stderr only under `CCX_DEBUG`, the same seam and the same reason
    *  `statusLine.ts` has one: an unguarded stderr write lands in the middle of a live frame. */
   onOverflow?: (msg: string) => void;
@@ -140,14 +151,14 @@ export interface FullscreenFrameProps {
 
 const defaultOverflow = (msg: string): void => { if (process.env.CCX_DEBUG) process.stderr.write(`${msg}\n`); };
 
-export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearchOpen = false, onOverflow }: FullscreenFrameProps) {
+export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearchOpen = false, dialogInDock = false, onOverflow }: FullscreenFrameProps) {
   const height = frameHeight(rows);
   // ONE BOTTOM BAND, TWO OCCUPANTS AND TWO CAPS. Everything below — the region's floor, the measured grant's
   // stamp, the clip and the diagnostic — is written against `cap` and `bottomSlot` rather than against the dock,
   // so the seam is not a second code path but the same one with a different tenant.
   const seamUp = seam !== undefined && seam !== null && seam !== false;
   const bottomSlot = seamUp ? "seam" : "dock";
-  const cap = seamUp ? seamCap(rows) : dockCap(rows, historySearchOpen);
+  const cap = seamUp ? seamCap(rows) : dockCap(rows, historySearchOpen || dialogInDock);
   // THE CAP IS EXPRESSED AS THE REGION'S FLOOR, because Yoga has a `maxHeight` and Ink 5.2.1 does not expose it
   // (build/styles.js applies `minHeight` and `height`, nothing else). The two are equivalent inside a
   // fixed-height container: a region that may not shrink below `height − cap` leaves at most `cap` rows for
@@ -208,7 +219,7 @@ export function FullscreenFrame({ rows, regionChildren, dock, seam, historySearc
           the diagnostic above are the dock's, unchanged. */}
       {seamUp
         ? <Box ref={bottomRef} flexDirection="column" flexShrink={0} overflow="hidden"
-            borderStyle={SEAM_RULE} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
+            borderStyle={SEAM_RULE} borderColor={seamRuleColor()} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
         : <Box ref={bottomRef} flexDirection="column" flexShrink={0} overflow="hidden">{dock}</Box>}
     </Box>
   );
