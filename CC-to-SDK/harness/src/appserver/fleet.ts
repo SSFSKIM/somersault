@@ -69,6 +69,23 @@ const STOP_POLL: StopPoll = { stepMs: 250, capMs: 10_000 };
 export interface StopPoll { stepMs: number; capMs: number }
 const sleep = (ms: number): Promise<void> => new Promise((r) => { const t = setTimeout(r, ms); (t as { unref?: () => void }).unref?.(); });
 
+/** Payload-free DecisionOutcome kinds — `{kind}` alone is a complete, schema-valid outcome for each of
+ *  these; the rest (allow_with_updates/question_answer/plan_approve) REQUIRE more fields. */
+const PAYLOAD_FREE_KINDS: ReadonlySet<string> = new Set(["allow_once", "allow_always", "deny", "plan_reject"]);
+
+/** The outcome a fleet settlement resolves its view with (final review R6). §1a-e hosts ship the whole
+ *  `answer`; a host predating it emits the KIND STRING alone — which for the current host only ever happens
+ *  for a payload-free system DENY (an SDK abort / interrupt sweep). Against a VERSION-SKEWED old host,
+ *  though, a human answering a question or approving a plan arrives as a payload-BEARING kind with no
+ *  `answer`, and `{kind}` alone is then schema-invalid. So reconstruct `{kind}` only when the kind is
+ *  payload-free, and otherwise settle DENY: the view is removed correctly either way, and a valid terminal
+ *  outcome no client will choke on beats a partial one it cannot parse (the lost payload is unrecoverable —
+ *  the old host never sent it). */
+function reconstructOutcome(e: { decision: string; answer?: DecisionOutcome }): DecisionOutcome {
+  if (e.answer) return e.answer;
+  return PAYLOAD_FREE_KINDS.has(e.decision) ? ({ kind: e.decision } as DecisionOutcome) : { kind: "deny" };
+}
+
 /** The ONE status shape (registry.ts), same as turns.ts's own private helper — `waitingOn` needs the
  *  decisions map, which the record does not have. */
 function statusChanged(srv: AppServer, record: ThreadRecord): void {
@@ -208,7 +225,7 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   // has no payload the kind drops). Reconstructing the payload-free outcome from it is exact, and is the
   // same `{kind:"deny"}` a local teardown resolves with.
   track(engine.onDecisionSettled((e) => {
-    srv.threadDecisions(record.id)?.settleView(e.toolUseID, e.by, e.answer ?? ({ kind: e.decision } as DecisionOutcome));
+    srv.threadDecisions(record.id)?.settleView(e.toolUseID, e.by, reconstructOutcome(e));
   }));
 
   // Announce-only, no record-level task mirror — inProcess parity: `task/list` forwards to the engine's own
