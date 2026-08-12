@@ -403,6 +403,129 @@ describe("ChatApp routes the two mechanisms", () => {
     });
   }
 
+  // ── T13b REVIEW — A BUDGET IS PAID IN PAINTED ROWS, NOT LOGICAL LINES ──────────────────────────────────
+  // T13b windowed `code.split("\n")`. Ink re-wraps anything wider than its box, so every over-wide line cost
+  // two rows against a budget that charged one, and the arms printing raw text walked straight back into the
+  // Critical: measured, a Write-create of twelve 150-column lines claimed eleven rows and painted nineteen —
+  // question, options and `esc cancel` gone. The diff arms escaped only because `renderDiff` pre-wraps.
+  //   THE FRAME'S OWN DIAGNOSTIC IS THE WITNESS, not just the chrome assertions. `onOverflow` fires when the
+  // dock's MEASURED content exceeds its cap, which is precisely "rows are being clipped where nothing can
+  // reach them"; ChatApp uses the default reporter, which writes to stderr under `CCX_DEBUG`. A frame can
+  // satisfy every `toContain` above and still be clipping the last diff row, and this is what sees that.
+  function watchOverflow() {
+    const prior = process.env.CCX_DEBUG;
+    process.env.CCX_DEBUG = "1";
+    const spy = vi.spyOn(process.stderr, "write");
+    return {
+      /** Forget everything reported so far — called once the pane is settled, so what the cell reads back is
+       *  the DIALOG's doing and not the boot's. (The transcript viewport reports one frame of over-render
+       *  whenever the band's height changes under it: the grant is re-measured in an effect, so it is stale
+       *  for exactly that frame, by the design FullscreenFrame's `measured` stamp records.) */
+      reset: () => { spy.mockClear(); },
+      clipped: () => spy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("fullscreen frame:")),
+      done: () => { spy.mockRestore(); if (prior === undefined) delete process.env.CCX_DEBUG; else process.env.CCX_DEBUG = prior; },
+    };
+  }
+  const plainOf = (f: string | undefined) => (f ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+  /** The reviewer's repro: twelve lines of 150 columns into an 80-column pane — 24 painted rows behind a
+   *  budget that used to be told there were twelve. */
+  const wideCreateEntry = (): PendingEntry => ({
+    sessionId: "s", toolUseID: "w", toolName: "Write", kind: "permission",
+    input: { file_path: "/work/wide.ts", content: Array.from({ length: 12 }, (_, i) => `L${i} ${"x".repeat(150)}`).join("\n") },
+    createdAt: Date.now(),
+  });
+  const bashEntry = (lines: number): PendingEntry => ({
+    sessionId: "s", toolUseID: `b${lines}`, toolName: "Bash", kind: "permission",
+    input: { command: Array.from({ length: lines }, (_, i) => `echo step-${i}`).join("\n") }, createdAt: Date.now(),
+  });
+
+  it("keeps a Write-create of OVER-WIDE lines inside the band at 24 rows", async () => {
+    const w = watchOverflow();
+    try {
+      const fake = fakeRemote();
+      const r = renderWithKeymap(appAt(24, fake));
+      await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+      await tick();
+      await settle();
+      w.reset();
+      fake.parkPermission(wideCreateEntry());
+      await waitFor(() => frameOf(r.lastFrame).includes("Create file"));
+      await settle();
+      const f = plainOf(r.lastFrame());
+      expect(rowsOf(r.lastFrame())).toHaveLength(23);
+      expect(f).toContain("Do you want to create wide.ts?");             // the question…
+      expect(f).toContain("1. Yes");                                     // …every option…
+      expect(f).toContain("3. No");
+      expect(f).toContain("esc cancel");                                 // …and the way out
+      expect(f).toMatch(/… \+\d+ more lines/);                           // the marker is INSIDE the window
+      expect(w.clipped()).toEqual([]);                                   // …and the frame clipped nothing
+      r.unmount();
+    } finally { w.done(); }
+  });
+
+  // THE BASH BODY, which T13b left out as "a task of its own" (its residual 1) and which is the kind most
+  // consults land on. At 24 rows a fifteen-line command already took options 2–3 off the frame, and a
+  // sixty-line one ended the frame mid-command with NO marker — nothing in the dialog knew it had overrun.
+  for (const lines of [15, 60]) {
+    it(`keeps a ${lines}-line Bash consult's question, options and Esc row on screen at 24 rows`, async () => {
+      const w = watchOverflow();
+      try {
+        const fake = fakeRemote();
+        const r = renderWithKeymap(appAt(24, fake));
+        await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+        await tick();
+        await settle();
+        w.reset();
+        fake.parkPermission(bashEntry(lines));
+        await waitFor(() => frameOf(r.lastFrame).includes("Bash command"));
+        await settle();
+        const f = plainOf(r.lastFrame());
+        expect(rowsOf(r.lastFrame())).toHaveLength(23);
+        expect(f).toContain("echo step-0");                              // the command still starts at its top
+        expect(f).toContain("Do you want to proceed?");
+        expect(f).toContain("1. Yes");
+        expect(f).toContain("2. No");                                    // (a multi-line command earns no rule row)
+        expect(f).toContain("esc cancel");
+        expect(f).toMatch(/… \+\d+ more lines/);
+        expect(w.clipped()).toEqual([]);
+        r.unmount();
+      } finally { w.done(); }
+    });
+  }
+
+  // THE FOOTER IS NOT ONE ROW WHEN A statusLine IS CONFIGURED (review I4). `dockDialogRows` charged it
+  // exactly one — true of the chip/hint row alone — while `Footer` draws `{statusRow}{row}`, one row per line
+  // of the script's output above it. The over-composition was contained (the footer's own rows are what got
+  // clipped), but "the reserve over-reserves" was simply not true, and the row the user configured to always
+  // be there was the row that vanished.
+  it("still fits the dialog AND the configured statusLine's row at 24 rows", async () => {
+    const w = watchOverflow();
+    try {
+      const fake = fakeRemote();
+      const r = renderWithKeymap(
+        <ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+          renderer={{ mode: "fullscreen", reason: "env_on" }} initialEntries={alphaEntries()}
+          hookOpts={{ statusLine: { type: "command", command: "my-status" } }}
+          deps={{ columns: () => 80, rows: () => 24, statusLine: { runStatusLine: async () => "STATUSROW" } } as never} />,
+      );
+      await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+      await waitFor(() => frameOf(r.lastFrame).includes("STATUSROW"));
+      await settle();
+      w.reset();
+      fake.parkPermission(diffEntry());
+      await waitFor(() => frameOf(r.lastFrame).includes("Edit file"));
+      await settle();
+      const f = plainOf(r.lastFrame());
+      expect(rowsOf(r.lastFrame())).toHaveLength(23);
+      expect(f).toContain("STATUSROW");                                  // the configured row survived…
+      expect(f).toContain("Do you want to make this edit to f.ts?");     // …and so did the whole dialog
+      expect(f).toContain("3. No");
+      expect(f).toContain("esc cancel");
+      expect(w.clipped()).toEqual([]);
+      r.unmount();
+    } finally { w.done(); }
+  });
+
   // ── STEP 3: THE TURN STAYS VISIBLE UNDER THE SEAM ──────────────────────────────────────────────────────
   // `paneOwned` blanks `pendingItems`/`streaming` out of the transcript while a surface owns the keyboard.
   // On the main screen that is a trade for dock budget; in the frame the region is a fixed virtualised band

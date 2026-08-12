@@ -43,6 +43,7 @@ import { legacyKeyDecision } from "./dialogKeys.js";
 import { destructiveWarning } from "./destructive.js";
 import { bashDecision, bashOptions } from "./bashOptions.js";
 import { collapseOnFocusChange, escapeFeedbackMode, isAmendableRow, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { bodyWindow, MoreRow, paintedRows } from "./rowBudget.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { resolveThemeColor, themeTokens } from "../theme.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
@@ -59,13 +60,36 @@ export interface BashPermissionRequest {
   decisionReason?: string;
 }
 
-export function BashPermission({ req, onDecision, cwd = process.cwd(), explainCommand }: {
+// ── THE ROW BUDGET (FSW T13b, review I2) ───────────────────────────────────────────────────────────────
+// The file body got the budget inversion first, because a fifty-row diff was the loudest case. Bash is the
+// FREQUENT one: a heredoc, a multi-command `&&` chain or one very long line is just as unbounded, and this
+// body is what the majority of consults land on. Left unwindowed at 24 rows a fifteen-line command already
+// took options 2–3 off the frame and a sixty-line one ended the frame mid-command — with no marker, because
+// nothing here knew it had overrun.
+/** Rows this dialog spends before a line of the command prints: the frame's `marginTop`, its rule and its
+ *  title; the command block's two padding rows; the description (its own painted rows); the consent reason;
+ *  the destructive warning and its margin; the question; one row per option; and the footer's margin plus its
+ *  hint row. Derived from what is rendered below, like `fileChromeRows` and with the same recorded
+ *  approximation: a question or option label that WRAPS at a narrow width costs a row this cannot see.
+ *  The EXPLANATION block is not a term — it opens only with an explain transport wired, which the shipping
+ *  app does not do (see the header), and it is a detour the reader opened rather than content pushed at them. */
+export function bashChromeRows({ descriptionRows, reason, warning, options }: { descriptionRows: number; reason: boolean; warning: boolean; options: number }): number {
+  return 1 + 1 + 1 + 2 + descriptionRows + (reason ? 1 : 0) + (warning ? 2 : 0) + 1 + options + 2;
+}
+
+export function BashPermission({ req, onDecision, cwd = process.cwd(), explainCommand, columns = process.stdout.columns ?? 80, maxRows }: {
   req: BashPermissionRequest;
   onDecision: (d: PermissionDecision) => void;
   /** The SESSION's working directory (see permissionKind.ts) — the suggestions-summary row names it. */
   cwd?: string;
   /** The explain transport (explainCommand.ts). Undefined = no explainer: no key, no hint. See the header. */
   explainCommand?: ExplainTransport;
+  /** The pane width. Only the budget reads it — it is what the command is WRAPPED at before it is windowed,
+   *  and a budget spent in logical lines rather than painted rows is the defect this whole block exists for. */
+  columns?: number;
+  /** A HARD CEILING on the rows this dialog may compose into — the fullscreen dock band's budget. Absent
+   *  means "as tall as it likes", which is every classic mount: the command prints whole. */
+  maxRows?: number;
 }) {
   const command = typeof req.input.command === "string" ? req.input.command : "";
   const suggestions = req.suggestions ?? [];
@@ -112,10 +136,18 @@ export function BashPermission({ req, onDecision, cwd = process.cwd(), explainCo
     ...(explainCommand ? { "confirm:toggleExplanation": toggleExplanation } : {}),
   });
 
+  // The inversion, against the very rows this render paints. `columns − 6` is the block's own width: the
+  // frame's `innerPaddingX: 1` plus this box's `paddingX: 2`, on each side.
+  const bodyWidth = columns - 6;
+  const descriptionRows = req.description && !explainVisible ? paintedRows(req.description, bodyWidth).length : 0;
+  const commandRows = maxRows === undefined ? [command] : paintedRows(command, bodyWidth);
+  const { keep, hidden } = bodyWindow(commandRows.length, maxRows === undefined ? undefined
+    : Math.max(0, maxRows - bashChromeRows({ descriptionRows, reason: Boolean(reason), warning: Boolean(warning), options: options.length })));
   return (
     <DialogFrame title="Bash command" subagentType={req.subagentType}>
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text dimColor={explainVisible}>{command}</Text>
+        {commandRows.slice(0, keep).map((text, index) => <Text key={index} dimColor={explainVisible}>{text}</Text>)}
+        {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
         {req.description && !explainVisible ? <Text dimColor>{req.description}</Text> : null}
         <ExplanationBlock visible={explainVisible} promise={explanation} />
       </Box>

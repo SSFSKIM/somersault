@@ -37,21 +37,24 @@ export interface PermissionDialogRequest {
  *  permissionKind.ts. `directories` is the session's WHOLE working set (cwd + every `/add-dir` grant, off
  *  `listDirs()`); only the file body reads it, for upstream's in-working-directory test (`z7`). Absent means
  *  "cwd alone", which is right for a caller that has no directory list to give. */
-export function PermissionDialog({ req, onDecision, cwd, directories, maxRows }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void; cwd?: string; directories?: readonly string[];
+export function PermissionDialog({ req, onDecision, cwd, directories, columns, maxRows }: { req: PermissionDialogRequest; onDecision: (d: PermissionDecision) => void; cwd?: string; directories?: readonly string[];
+  /** The pane width, threaded from the renderer's own resize state rather than read off `process.stdout` in
+   *  each body — the three bodies with a row budget WRAP at it, so a width that disagrees with the frame's is
+   *  a budget spent in rows nobody paints. Absent, each body falls back to `process.stdout.columns ?? 80`. */
+  columns?: number;
   /** FSW T13b — a HARD CEILING on the rows the dialog may compose into, present only where the renderer has
-   *  one (the fullscreen dock band; the main screen has none and passes nothing). It reaches the FILE body
-   *  alone, which is the one whose content is unbounded and line-shaped: a fifty-row diff is what pushed the
-   *  question and the options off the frame. RECORDED GAP, not an oversight — the bash body's command block
-   *  and the generic body's input dump are also unbounded, but they are wrapped `Text` rather than a row
-   *  list, so windowing them means measuring the wrap and is a task of its own. */
+   *  one (the fullscreen dock band; the main screen has none and passes nothing). It reaches the three bodies
+   *  whose content is UNBOUNDED: the file body's diff or file content, the bash body's command, and the
+   *  generic body's rendered input. The other three (webfetch, skill, monitor) are fixed-shape summaries a
+   *  line or two long, and are left alone. */
   maxRows?: number }) {
   const { kind, filePath, sedEdit } = permissionKind(req.toolName, req.input, cwd);
   switch (kind) {
-    case "bash": return <BashPermission req={req} onDecision={onDecision} cwd={cwd} />;
-    case "file": return <FilePermission req={req} onDecision={onDecision} cwd={cwd} directories={directories} filePath={filePath} sedEdit={sedEdit} maxRows={maxRows} />;
+    case "bash": return <BashPermission req={req} onDecision={onDecision} cwd={cwd} columns={columns} maxRows={maxRows} />;
+    case "file": return <FilePermission req={req} onDecision={onDecision} cwd={cwd} directories={directories} filePath={filePath} sedEdit={sedEdit} columns={columns} maxRows={maxRows} />;
     case "webfetch": return <FetchPermission req={req} onDecision={onDecision} />;
     case "skill": return <SkillPermission req={req} onDecision={onDecision} cwd={cwd} />;
     case "monitor": return <MonitorPermission req={req} onDecision={onDecision} />;
-    case "generic": return <GenericPermission req={req} onDecision={onDecision} cwd={cwd} />;
+    case "generic": return <GenericPermission req={req} onDecision={onDecision} cwd={cwd} columns={columns} maxRows={maxRows} />;
   }
 }

@@ -35,6 +35,7 @@ import { renderDiff } from "../diffRender.js";
 import { resolvePatch } from "../diffSource.js";
 import { KNOWN_LANGS, highlightCode } from "../highlight.js";
 import { collapseOnFocusChange, escapeFeedbackMode, isAmendableRow, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { bodyWindow, MoreRow, paintedRows } from "./rowBudget.js";
 import { useBindingLookup, useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { formatBindingLower } from "../keys/hints.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
@@ -73,6 +74,9 @@ const extensionOf = (path: string): string => { const name = basename(path), dot
 // what gives way: it windows to whatever is left and names the rows it withheld, in a marker that rides
 // INSIDE the window (put after the content, the marker would be the first row the clip took). Absent budget —
 // every classic mount, and every existing test — nothing here runs and the whole body prints as it always did.
+//   THE BUDGET IS PAID IN PAINTED ROWS (review C1). Every arm hands its body a WIDTH as well as a budget and
+// pre-wraps to it — `renderDiff` always did, which is the only reason the diff arms were honest, and
+// `rowBudget.paintedRows` is that same wrap for the arms that print raw text.
 /** Rows this dialog spends before a single body line prints: the frame's `marginTop`, its rule, its title, the
  *  subtitle when there is one, the symlink warning and its margin, the question, one row per option, and the
  *  footer's margin plus its hint row. Derived from what is actually rendered below, not from a constant, so
@@ -82,23 +86,20 @@ const extensionOf = (path: string): string => { const name = basename(path), dot
 export function fileChromeRows({ subtitle, warning, options }: { subtitle: boolean; warning: boolean; options: number }): number {
   return 1 + 1 + 1 + (subtitle ? 1 : 0) + (warning ? 2 : 0) + 1 + options + 2;
 }
-/** The window itself: how many of `count` rows print, and how many the marker must account for. A body that
- *  FITS is untouched; one that does not gives a row back to the marker — and a budget of one row spends it on
- *  the marker alone rather than on a single line of a fifty-row diff. */
-export function bodyWindow(count: number, budget: number | undefined): { keep: number; hidden: number } {
-  if (budget === undefined || count <= budget) return { keep: count, hidden: 0 };
-  const keep = Math.max(0, budget - 1);
-  return { keep, hidden: count - keep };
-}
-const MoreRow = ({ hidden }: { hidden: number }) => <Text dimColor>… +{hidden} more lines</Text>;
-
+/** Re-exported where it was first written, because it is this dialog's contract as much as the shared
+ *  module's — the window and the wrap now live in `rowBudget.tsx`, which the bash and generic bodies read too. */
+export { bodyWindow } from "./rowBudget.js";
 /** `EM` — a syntax-highlighted block of the whole file, NOT the transcript's ten-line preview: this is the
  *  content the human is being asked to approve, so nothing is elided — up to the row budget, which elides the
  *  tail and says so. Unknown extensions render plain (the `known` gate `toolSummaries.previewRows` uses, for
- *  its reason: dimming a `.md` file says "less important" about the only content on screen). */
-function CodeBlock({ code, filePath, budget }: { code: string; filePath: string; budget?: number }) {
+ *  its reason: dimming a `.md` file says "less important" about the only content on screen).
+ *    UNDER A BUDGET THE LINES ARE WRAPPED TO `width` FIRST (review C1), so a row of the window is a row of the
+ *  frame and the marker's count is truthful. Unbudgeted the block is handed to Ink whole and Ink does the
+ *  wrap, exactly as it always did — the classic mount is untouched, including the highlighter's view of a
+ *  line as one unbroken string. */
+function CodeBlock({ code, filePath, width, budget }: { code: string; filePath: string; width: number; budget?: number }) {
   const lang = extensionOf(filePath), known = KNOWN_LANGS.has(lang);
-  const all = code.split("\n");
+  const all = budget === undefined ? code.split("\n") : paintedRows(code, width);
   const { keep, hidden } = bodyWindow(all.length, budget);
   return (
     <Box flexDirection="column">
@@ -178,9 +179,12 @@ function FileBody({ content, columns, fs, cwd, budget }: { content: FileContent;
         // box rather than the content it exists to delimit.
         const boxed = budget === undefined || budget >= 3;
         const inner = budget === undefined ? undefined : Math.max(0, budget - (boxed ? 2 : 0));
+        // `paddingX: 1` on either variant of the box, and the dashed rule has no verticals, so the content
+        // gets `columns − 2` — the width the diff has always been rendered at, now also the width the create
+        // arm's code block is WRAPPED at before it is windowed.
         const rows = patch !== undefined
           ? <DiffRows rows={renderDiff(patch, columns - 2)} budget={inner} />
-          : <CodeBlock code={content.content || "(No content)"} filePath={content.filePath} budget={inner} />;
+          : <CodeBlock code={content.content || "(No content)"} filePath={content.filePath} width={columns - 2} budget={inner} />;
         return boxed
           ? (
             <Box flexDirection="column" borderStyle={DASHED_BORDER} borderColor={role("subtle")}
@@ -195,7 +199,11 @@ function FileBody({ content, columns, fs, cwd, budget }: { content: FileContent;
       const label = content.editMode === "insert" ? "Insert new cell" : content.editMode === "delete" ? "Delete cell" : "Replace cell contents";
       const cellPath = content.cellType === "markdown" ? "cell.md" : content.notebookPath;
       // T13b: the path row, the mode row and the margin under them are this arm's chrome (three rows).
+      // THE CELL'S WIDTH IS `columns − 4`, not `columns − 2` (review C1): the outer `paddingX: 1` and the
+      // inner `paddingLeft: 2` both bite. Rendered at `columns − 2` every diff row was two columns too wide
+      // for the box that holds it, so Ink wrapped EVERY one of them — the arm cost twice the rows it counted.
       const cell = budget === undefined ? undefined : Math.max(0, budget - 3);
+      const cellWidth = columns - 4;
       return (
         <Box flexDirection="column" paddingX={1}>
           <Box flexDirection="column" paddingBottom={1}>
@@ -203,17 +211,28 @@ function FileBody({ content, columns, fs, cwd, budget }: { content: FileContent;
             <Text dimColor>{label} for cell {content.cellId}{content.cellType ? ` (${content.cellType})` : ""}</Text>
           </Box>
           <Box paddingLeft={2}>
-            {content.editMode === "delete" ? <CodeBlock code={content.oldSource} filePath={cellPath} budget={cell} />
-              : patch !== undefined ? <DiffRows rows={renderDiff(patch, columns - 2)} budget={cell} />
-                : <CodeBlock code={content.newSource || "(No content)"} filePath={cellPath} budget={cell} />}
+            {content.editMode === "delete" ? <CodeBlock code={content.oldSource} filePath={cellPath} width={cellWidth} budget={cell} />
+              : patch !== undefined ? <DiffRows rows={renderDiff(patch, cellWidth)} budget={cell} />
+                : <CodeBlock code={content.newSource || "(No content)"} filePath={cellPath} width={cellWidth} budget={cell} />}
           </Box>
         </Box>
       );
     }
-    case "tool-use-line":
+    case "tool-use-line": {
       // One row of text between two of padding. Under a budget with no room for all three the padding is what
-      // goes — it is the only part of this arm that carries nothing.
-      return <Box flexDirection="column" paddingX={2} {...(budget === undefined || budget >= 3 ? { paddingY: 1 } : {})}><Text>{content.text}</Text></Box>;
+      // goes — it is the only part of this arm that carries nothing. "One row" is a NARROW-PANE ASSUMPTION and
+      // review C1's lesson says not to make it: a long Glob pattern at a narrow width is two rows, so under a
+      // budget the line is wrapped and windowed like every other body.
+      const padded = budget === undefined || budget >= 3;
+      const rows = budget === undefined ? [content.text] : paintedRows(content.text, columns - 4);
+      const { keep, hidden } = bodyWindow(rows.length, budget === undefined ? undefined : Math.max(0, budget - (padded ? 2 : 0)));
+      return (
+        <Box flexDirection="column" paddingX={2} {...(padded ? { paddingY: 1 } : {})}>
+          {rows.slice(0, keep).map((text, index) => <Text key={index}>{text}</Text>)}
+          {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
+        </Box>
+      );
+    }
     case "no-changes":
       return <Box paddingX={1}><Text dimColor>{content.message}</Text></Box>;
   }

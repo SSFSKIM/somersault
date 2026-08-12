@@ -101,8 +101,16 @@ export function frameHeight(rows: number): number { return Math.max(1, rows - PA
  *  exception — `rows − 2`, canon's cap for a bottom-anchored surface that IS the content while it is up
  *  (grounding §4.3, bundle L455951), the same number `seamCap` takes. Two tenants earn it: history search,
  *  whose results are the content, and (T13b) a parked DECISION, whose dialog is the only thing on screen the
- *  user can act on — and which the steady-state cap could not even fit the chrome of at 24 rows, so the rows
- *  it dropped were the question and the option list.
+ *  user can act on.
+ *    THE DECISION TENANT IS A TRADE, NOT A NECESSITY — correcting T13b's report, which called it "required".
+ *  The narrow cap does reach the acceptance: at 24 rows a permission dialog's ten rows of chrome fit inside
+ *  `floor(24/2) = 12` with room for the marker, so the question, the options and `esc cancel` all survive —
+ *  what the narrow cap cannot show is a single row of the DIFF, only the `… +N more lines` that stands in for
+ *  it. The wide cap buys about ten rows of that diff, and it is worth them (a consult the user cannot read is
+ *  a consent they cannot give, and canon hands its own modal the same `rows − 2`). THE PRICE, recorded: while
+ *  a long-bodied consult is up the region collapses to roughly one row at ANY pane height, so the transcript
+ *  behind it is a sliver and the ctrl+u/ctrl+d crossing pinned in keys/bindings.ts — the scroll keys reaching
+ *  the region past the dialog — has almost nothing left to scroll there.
  *  Clamped into `[1, frameHeight]` so a two-row pane still yields a dock. */
 export function dockCap(rows: number, wide: boolean): number {
   const cap = wide ? rows - 2 : Math.floor(rows / 2);

@@ -12,6 +12,7 @@ import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { FilePermission, bodyWindow, fileChromeRows } from "../../src/tui/dialogs/FilePermission.js";
+import { paintedRows } from "../../src/tui/dialogs/rowBudget.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { themeTokens } from "../../src/tui/theme.js";
 import { parseSedEdit } from "../../src/tui/dialogs/sedEdit.js";
@@ -424,7 +425,9 @@ describe("<FilePermission> — the row budget (T13b)", () => {
   // THE MARKER IS INSIDE THE WINDOW, not after it. Placed after the content it would be the FIRST row a tight
   // budget clipped — the one row whose whole job is to say that rows are missing.
   it("spends a budget with no room left on the marker ALONE rather than on chrome", async () => {
-    const v = await mount(edit, { maxRows: fileChromeRows({ subtitle: true, warning: false, options: 3 }) });
+    // TEN IS A LITERAL, not `fileChromeRows(…)` (review M2): a budget derived from the very function the cell
+    // exists to hold down cannot redden when that function is wrong. The pin below says what ten is.
+    const v = await mount(edit, { maxRows: 10 });
     const f = plain(v.frame());
     expect(f).toContain("… +50 more lines");                          // every diff row accounted for…
     expect(f).not.toContain("old 0");                                 // …and none of them printed
@@ -432,11 +435,17 @@ describe("<FilePermission> — the row budget (T13b)", () => {
     expect(f).toContain("esc cancel");
   });
 
-  it("counts its own chrome — the reservation and the rendered frame agree", async () => {
+  // THE CHROME COUNT, AT ONE PINNED GEOMETRY AND AGAINST LITERALS (review M2). The T13b version asserted
+  // `rows.length − chrome === 20 − chrome`, in which the chrome term cancels: it passed for any value the
+  // function returned, right or wrong. An Edit consult has a subtitle, no warning and three options — its
+  // chrome is TEN rows (margin + rule + title + subtitle + question + 3 options + footer margin + hint), so a
+  // twenty-row budget leaves exactly ten for the body and the frame is exactly twenty rows tall.
+  it("counts its own chrome — ten rows for an Edit consult, and the body gets the other ten", async () => {
+    expect(fileChromeRows({ subtitle: true, warning: false, options: 3 })).toBe(10);
     const v = await mount(edit, { maxRows: 20 });
-    const chrome = fileChromeRows({ subtitle: true, warning: false, options: 3 });
-    const body = rowsOf(v).length - chrome;
-    expect(body).toBe(20 - chrome);                                   // …the budget spent exactly, no more
+    const lines = rowsOf(v);
+    expect(lines).toHaveLength(20);                                   // …the budget spent exactly, no more
+    expect(lines.filter((r) => /old \d|new \d|… \+\d+ more lines/.test(r))).toHaveLength(10);
   });
 
   it("windows the CREATE arm's code block too, and keeps its dashed box", async () => {
@@ -458,6 +467,40 @@ describe("<FilePermission> — the row budget (T13b)", () => {
     expect(f).toContain("old 0");
     expect(f).toContain("new 24");                                    // …the very last row of the diff
     expect(f).not.toMatch(/… \+\d+ more lines/);
+  });
+
+  // ── THE REVIEW'S C1: THE BUDGET IS PAID IN PAINTED ROWS ──────────────────────────────────────────────
+  // T13b windowed `code.split("\n")` while the frame pays in rows Ink actually paints, and Ink re-wraps
+  // anything wider than the box. Twelve 150-column lines in an 80-column pane are TWENTY-FOUR rows, not
+  // twelve: the dialog claimed eleven rows, painted nineteen, and put the question, all three options and
+  // `esc cancel` back off the frame — the exact failure the budget exists to remove. The diff arms never had
+  // it because `renderDiff` pre-wraps to its column budget; the create arm's code block now does the same.
+  it("wraps the create arm's over-wide lines BEFORE windowing them, so the frame honours the budget", async () => {
+    const content = Array.from({ length: 12 }, (_, i) => `L${i} ${"x".repeat(150)}`).join("\n");
+    const v = await mount({ toolName: "Write", input: { file_path: "/repo/wide.ts", content } }, { maxRows: 20, columns: 80 });
+    const lines = rowsOf(v);
+    expect(lines.length).toBeLessThanOrEqual(20);
+    expect(lines.filter((r) => r.includes("xxx")).every((r) => r.length <= 80)).toBe(true);   // nothing left for Ink to re-wrap
+    // Twelve logical lines are 24 painted rows at the box's 78 columns; chrome 10 and the box's two rules
+    // leave eight, seven of which print. The marker counts what the FRAME withheld, not what `split` did.
+    expect(plain(v.frame())).toContain("… +17 more lines");
+    expect(plain(v.frame())).toContain("Do you want to create wide.ts?");
+    expect(plain(v.frame())).toContain("3. No");
+    expect(plain(v.frame())).toContain("esc cancel");
+  });
+
+  it("leaves the unbudgeted create arm exactly as it was — Ink does the wrap and nothing is counted", async () => {
+    const content = Array.from({ length: 12 }, (_, i) => `L${i} ${"x".repeat(150)}`).join("\n");
+    const f = plain((await mount({ toolName: "Write", input: { file_path: "/repo/wide.ts", content } }, { columns: 80 })).frame());
+    expect(f).toContain("L11");                                       // every line is there…
+    expect(f).not.toMatch(/… \+\d+ more lines/);                      // …and no marker was invented
+  });
+
+  it("paintedRows is Ink's own wrap: a long line costs the rows it really takes, an empty line costs one", () => {
+    expect(paintedRows("short", 10)).toEqual(["short"]);
+    expect(paintedRows("x".repeat(25), 10)).toHaveLength(3);          // hard-broken, like Ink's `wrap`
+    expect(paintedRows("a\n\nb", 10)).toEqual(["a", "", "b"]);        // a blank line still costs a row
+    expect(paintedRows("abc", 0)).toEqual(["a", "b", "c"]);           // width is floored at 1, never 0
   });
 
   it("bodyWindow: a body that fits is untouched, and one that does not gives a row to the marker", () => {

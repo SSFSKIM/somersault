@@ -26,6 +26,7 @@ import { consentReasonLine } from "./consentReason.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { clipLines, genericDecision, genericOptions, isMcpToolName, renderedToolUse } from "./smallDialogOptions.js";
 import { collapseOnFocusChange, escapeFeedbackMode, isAmendableRow, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
+import { bodyWindow, MoreRow, paintedRows } from "./rowBudget.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 
@@ -41,11 +42,27 @@ export interface GenericPermissionRequest {
   decisionReason?: string;
 }
 
-export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
+/** The rows this dialog spends before the tool-use line prints — the frame's `marginTop`, rule and title; the
+ *  body block's two padding rows; the clipped description's own painted rows; the consent reason; the
+ *  question; one row per option; the footer's margin and hint row. The same derivation, and the same recorded
+ *  approximation, as `fileChromeRows` (FSW T13b review I2). */
+export function genericChromeRows({ descriptionRows, reason, options }: { descriptionRows: number; reason: boolean; options: number }): number {
+  return 1 + 1 + 1 + 2 + descriptionRows + (reason ? 1 : 0) + 1 + options + 2;
+}
+/** The dim ` (MCP)` marker survives the wrap: it is appended to the wrapped SOURCE so it is measured like any
+ *  other text, and re-styled on whichever row it landed on. */
+const MCP_SUFFIX = " (MCP)";
+
+export function GenericPermission({ req, onDecision, cwd = process.cwd(), columns = process.stdout.columns ?? 80, maxRows }: {
   req: GenericPermissionRequest;
   onDecision: (d: PermissionDecision) => void;
   /** The SESSION's working directory (see permissionKind.ts) — the don't-ask-again row names it. */
   cwd?: string;
+  /** The pane width — what the tool-use line is WRAPPED at before it is windowed (T13b review I2). */
+  columns?: number;
+  /** A HARD CEILING on the rows this dialog may compose into (the fullscreen dock band's budget). Absent —
+   *  every classic mount — the body prints whole and nothing below runs. */
+  maxRows?: number;
 }) {
   const [feedback, setFeedback] = useState<FeedbackMode>(NO_FEEDBACK);
   // What the feedback row currently holds, mirrored off `Select`'s `onInputChange` (t5). A REF, not state:
@@ -74,11 +91,24 @@ export function GenericPermission({ req, onDecision, cwd = process.cwd() }: {
     "confirm:no": () => onDecision({ kind: "deny" }),
   });
 
+  // The row budget. `columns − 6` is this block's width (the frame's `innerPaddingX: 1` plus `paddingX: 2`),
+  // and the tool-use line is the unbounded thing here: a rendered MCP input can be a paragraph.
+  const bodyWidth = columns - 6;
+  const description = req.description ? clipLines(req.description, DESCRIPTION_LINES) : undefined;
+  const head = `${req.toolName}${rendered ? `(${rendered})` : ""}${isMcpToolName(req.toolName) ? MCP_SUFFIX : ""}`;
+  const headRows = maxRows === undefined ? [] : paintedRows(head, bodyWidth);
+  const { keep, hidden } = bodyWindow(headRows.length, maxRows === undefined ? undefined
+    : Math.max(0, maxRows - genericChromeRows({ descriptionRows: description ? paintedRows(description, bodyWidth).length : 0, reason: Boolean(reason), options: options.length })));
   return (
     <DialogFrame title="Tool use" subagentType={req.subagentType}>
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text>{req.toolName}{rendered ? `(${rendered})` : ""}{isMcpToolName(req.toolName) ? <Text dimColor> (MCP)</Text> : ""}</Text>
-        {req.description ? <Text dimColor>{clipLines(req.description, DESCRIPTION_LINES)}</Text> : null}
+        {maxRows === undefined
+          ? <Text>{req.toolName}{rendered ? `(${rendered})` : ""}{isMcpToolName(req.toolName) ? <Text dimColor>{MCP_SUFFIX}</Text> : ""}</Text>
+          : headRows.slice(0, keep).map((text, index) => (text.endsWith(MCP_SUFFIX)
+            ? <Text key={index}>{text.slice(0, -MCP_SUFFIX.length)}<Text dimColor>{MCP_SUFFIX}</Text></Text>
+            : <Text key={index}>{text}</Text>))}
+        {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
+        {description ? <Text dimColor>{description}</Text> : null}
       </Box>
       <Box flexDirection="column">
         {reason ? <Text>{reason}</Text> : null}

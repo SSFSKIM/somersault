@@ -9,7 +9,7 @@ import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { FetchPermission } from "../../src/tui/dialogs/FetchPermission.js";
 import { SkillPermission } from "../../src/tui/dialogs/SkillPermission.js";
 import { MonitorPermission } from "../../src/tui/dialogs/MonitorPermission.js";
-import { GenericPermission } from "../../src/tui/dialogs/GenericPermission.js";
+import { GenericPermission, genericChromeRows } from "../../src/tui/dialogs/GenericPermission.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../src/permissions/types.js";
 
@@ -355,6 +355,48 @@ describe("<GenericPermission> (`Gal` L506118-260)", () => {
     const v = await mountGeneric(mcpReq());
     for (const key of ["\x19", "\x0e", "\x1by", "\x1bn"]) { v.stdin.write(key); await new Promise((r) => setTimeout(r, 20)); }
     expect(v.got).toEqual([]);
+  });
+});
+
+// ── FSW T13b REVIEW (I2) — THE GENERIC BODY'S ROW BUDGET ───────────────────────────────────────────────
+// The third body that prints raw text. It is the mildest of the three — `renderedToolUse` already clips the
+// input to a couple of lines' worth of characters — but "a couple of lines' worth" is a WIDTH claim, and at a
+// narrow pane it is six rows, which is more than a dock-pinned dialog has to spare. Same shape as the file
+// and bash bodies: chrome reserved, the tool-use line wrapped to the block's width and windowed, marker in.
+describe("<GenericPermission> — the row budget (T13b review)", () => {
+  const mountBudget = async (req: Req, maxRows?: number, columns = 80) => {
+    const got: PermissionDecision[] = [];
+    return mount(<GenericPermission req={req} cwd="/repo" columns={columns} maxRows={maxRows} onDecision={(d) => got.push(d)} />, got);
+  };
+  const bigReq = (): Req => ({ toolName: "mcp__notes__append", input: { note: "N".repeat(600) } });
+
+  // ELEVEN IS A LITERAL: margin + rule + title, the block's two padding rows, the question, three option
+  // rows, and the footer's margin plus hint row.
+  it("counts its own chrome — eleven rows for a three-option consult with no description", () => {
+    expect(genericChromeRows({ descriptionRows: 0, reason: false, options: 3 })).toBe(11);
+    expect(genericChromeRows({ descriptionRows: 3, reason: true, options: 3 })).toBe(15);
+  });
+
+  it("windows the tool-use line and keeps the question, every option and the Esc row", async () => {
+    const v = await mountBudget(bigReq(), 14, 40);            // narrow pane: the clipped input is six rows there
+    const f = v.frame();
+    expect(f.split("\n").length).toBeLessThanOrEqual(14);
+    expect(f).toMatch(/… \+\d+ more lines/);
+    expect(f).toContain("Do you want to proceed?");
+    expect(f).toContain("1. Yes");
+    expect(f).toContain("3. No");
+    expect(f).toContain("esc cancel");
+  });
+
+  it("keeps the dim ` (MCP)` marker on the row the wrap put it on", async () => {
+    const v = await mountBudget({ toolName: "mcp__notes__append", input: { note: "f.ts" } }, 20);
+    expect(v.frame()).toContain("mcp__notes__append(f.ts) (MCP)");
+  });
+
+  it("prints the whole line with no budget — the main screen is untouched", async () => {
+    const v = await mountBudget(bigReq());
+    expect(v.frame()).not.toMatch(/… \+\d+ more lines/);
+    expect(v.frame()).toContain("N".repeat(40));
   });
 });
 

@@ -8,7 +8,7 @@
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
-import { BashPermission } from "../../src/tui/dialogs/BashPermission.js";
+import { BashPermission, bashChromeRows } from "../../src/tui/dialogs/BashPermission.js";
 import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { themeTokens } from "../../src/tui/theme.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../src/permissions/types.js";
@@ -323,6 +323,62 @@ describe("<BashPermission> — feedback mode (Tab on No)", () => {
     await type(v.stdin, "ad");
     expect(v.got).toEqual([]);
     expect(plain(v.frame())).toContain("npm run *ad");
+  });
+});
+
+// ── FSW T13b REVIEW (I2) — THE ROW BUDGET REACHES THE BASH BODY ────────────────────────────────────────
+// T13b gave the file body a budget and left this one out as "a task of its own" — while THIS is the kind
+// most consults land on. Dock-pinned at 24 rows a fifteen-line command already pushed options 2–3 off the
+// frame and a sixty-line one ended the frame mid-command, with no marker, because nothing here knew it had
+// overrun. Under `maxRows` the chrome is reserved and the COMMAND windows, in rows Ink will actually paint.
+describe("<BashPermission> — the row budget (T13b review)", () => {
+  const rowsOf = (v: { frame: () => string }) => plain(v.frame()).split("\n");
+  async function mountBudget(command: string, opts: { maxRows?: number; columns?: number } = {}) {
+    const got: PermissionDecision[] = [];
+    const view = render(<BashPermission req={req(command)} cwd="/repo" onDecision={(d) => got.push(d)} columns={opts.columns ?? 80} maxRows={opts.maxRows} />);
+    await waitFor(() => (view.lastFrame() ?? "").length > 0);
+    return { ...view, got, frame: () => view.lastFrame() ?? "" };
+  }
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `echo step-${i}`).join("\n");
+
+  // TEN IS A LITERAL and this is what it is made of: the frame's margin, its rule and its title; the command
+  // block's two padding rows; the question; two option rows; the footer's margin and its hint row.
+  it("counts its own chrome — ten rows for a plain command with two options", () => {
+    expect(bashChromeRows({ descriptionRows: 0, reason: false, warning: false, options: 2 })).toBe(10);
+    expect(bashChromeRows({ descriptionRows: 1, reason: true, warning: true, options: 3 })).toBe(15);
+  });
+
+  for (const n of [15, 60]) {
+    it(`windows a ${n}-line command and keeps the question, both options and the Esc row`, async () => {
+      const v = await mountBudget(lines(n), { maxRows: 20 });
+      const f = plain(v.frame());
+      expect(rowsOf(v).length).toBeLessThanOrEqual(20);
+      expect(f).toContain("echo step-0");                            // the command still starts at its top
+      expect(f).toContain(`… +${n - 9} more lines`);                 // 20 − 10 chrome = 10, nine of them printed
+      expect(f).toContain("Do you want to proceed?");
+      expect(f).toContain("1. Yes");
+      expect(f).toContain("2. No");
+      expect(f).toContain("esc cancel");
+    });
+  }
+
+  // THE PAINTED-ROW HALF (review C1's lesson, applied here from the start): one 300-column heredoc line is
+  // four rows in an 80-column pane, and a budget counting logical lines would have called it one.
+  it("wraps an over-wide command line BEFORE windowing it", async () => {
+    const v = await mountBudget(`echo ${"y".repeat(300)}`, { maxRows: 13, columns: 80 });
+    const rows = rowsOf(v);
+    expect(rows.length).toBeLessThanOrEqual(13);
+    // ONE logical line, five painted rows at the block's 74 columns (80 − the frame's 1 and the block's 2, a
+    // side): three rows of budget print two of them and the marker names the other three.
+    expect(plain(v.frame())).toContain("… +3 more lines");
+    expect(plain(v.frame())).toContain("esc cancel");
+  });
+
+  // THE CLASSIC PIN: no budget, no window, byte for byte what every other cell in this file asserts.
+  it("prints the whole command with no budget — the main screen is untouched", async () => {
+    const f = plain((await mountBudget(lines(40))).frame());
+    expect(f).toContain("echo step-39");
+    expect(f).not.toMatch(/… \+\d+ more lines/);
   });
 });
 

@@ -67,7 +67,7 @@ import { isEditableQueueEntry } from "./queue.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
-import { Footer } from "./Footer.js";
+import { Footer, footerRows, type FooterStatusInput } from "./Footer.js";
 import type { StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
 import type { RendererChoice } from "./renderer.js";
@@ -1084,17 +1084,27 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   /** THE ROWS A DOCK DIALOG MAY COMPOSE INTO (FSW T13b). Canon draws a permission/question consult in the
    *  scrollable; ccx pins it in the dock band, where — unlike a pager — there is no way to reach a row the
    *  frame clipped. So the band takes `dockCap`'s wide arm while a decision is in it (see there) and the
-   *  dialog is handed what is left of it after the band's OTHER tenants, which are the footer's unconditional
-   *  row, the live-turn slot, the queue echo and the task panel.
+   *  dialog is handed what is left of it after the band's OTHER tenants, which are the footer's rows (its
+   *  unconditional chip/hint row AND a configured statusLine's, `footerRows`), the live-turn slot, the queue
+   *  echo and the task panel.
    *    ARITHMETIC RATHER THAN MEASUREMENT, and biased to over-reserve: measuring would cost a ref, an effect
    *  and a frame of lag, while an over-reservation costs one row of diff. The task panel is the one term that
    *  can be short — `todoPanelRows` assumes the single in-progress row TodoWrite's discipline produces — and
    *  its error is a row of the dialog's chrome, which is why the reserve rounds up rather than down.
    *    `undefined` OFF THE FULLSCREEN PATH: the main screen has no band and no cap, so nothing is windowed
    *  there and every classic mount renders exactly what it always did. */
+  /** THE FOOTER'S OWN GEOMETRY, in one place. The `<Footer>` below is rendered from it and the dock's
+   *  reservation charges from it, so the two cannot disagree about how tall the footer is — which they did
+   *  (T13b review I4): the reserve charged one row for the whole component while a configured statusLine adds
+   *  one per line of the script's output, and the dialog above then composed into rows the frame clipped. */
+  const footerStatusInput = (): FooterStatusInput => ({
+    statusLineConfigured: hookOpts?.statusLine !== undefined, statusLineText: state.statusLineText,
+    bashMode: footerState.bashMode, pasting: footerState.pasting,
+    exitArm: exitArmed ? EXIT_ARM_CTRL_C : footerState.exitArm, rows: terminalRows(),
+  });
   const dockDialogRows = (): number | undefined => {
     if (!fullscreen) return undefined;
-    const others = 1                                                                    // the footer's row
+    const others = footerRows(footerStatusInput())                                      // the footer's rows
       + (state.busy || state.compacting ? 1 : 0)                                        // the live-turn slot
       + state.queue.reduce((n, q) => n + userEchoLines(q.value, { width: queueWidth }).length, 0)
       + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
@@ -1343,7 +1353,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           // `maxRows` is the dock band's remaining rows (T13b), present in fullscreen only — see
           // `dockDialogRows`. Without it a long diff pushed the question and every option off the frame.
           : <PermissionDialog key={inlineDecision.toolUseID} req={inlineDecision} cwd={cwd} directories={state.workDirs} onDecision={(d) => resolveDecision(d)}
-              {...(fullscreen ? { maxRows: dockDialogRows() } : {})} />
+              columns={terminalColumns()} {...(fullscreen ? { maxRows: dockDialogRows() } : {})} />
         : null}
       {seamActive ? null : overlayChain}
       {/* WAVE C TASK 2 (EP-C1b) — ONE FOOTER ROW, where `ChatStatusBar` and two armed-hint rows used to be.
@@ -1378,19 +1388,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       <Footer
         mode={state.mode} busy={state.busy}
         draftNonEmpty={draftNonEmpty} isInputEmpty={!draftNonEmpty}
-        searching={footerState.searching} pasting={footerState.pasting}
-        pasteExpandHint={footerState.pasteExpandHint} bashMode={footerState.bashMode}
-        exitArm={exitArmed ? EXIT_ARM_CTRL_C : footerState.exitArm}
+        searching={footerState.searching} pasteExpandHint={footerState.pasteExpandHint}
         // WAVE C TASK 10 (EP-C2b) — the statusLine, now real. CONFIGURED and TEXT are separate facts and
         // arrive from separate places on purpose: the setting is resolved once at launch (chatMain, the only
         // reader of the user settings file), and the text is whatever the driver's last SUCCESSFUL run
         // published. So `? for shortcuts` disappears the moment a statusLine is configured — before, and
         // regardless of whether, the script ever produces a line. `rows` is the pane height the guard's
         // 15-row floor reads, threaded from Task 1's resize state like every other geometry consumer here.
-        statusLineConfigured={hookOpts?.statusLine !== undefined}
-        statusLineText={state.statusLineText}
+        //   THOSE FACTS AND THE FOUR THAT SUPPRESS THE ROW (bash mode, pasting, an armed exit, the pane's
+        // height) ARRIVE AS ONE OBJECT, `footerStatusInput` — the dock's reservation is computed from the
+        // same call, which is what stops it charging fewer rows than this component paints.
+        {...footerStatusInput()}
         statusLinePadding={hookOpts?.statusLine?.padding}
-        rows={terminalRows()}
         // ccx has no "agent needs input" signal and no completion stamp the footer could read, so only the
         // COUNT is wired — it is what replaced the old `⚙ N bg` chip. `agentsAffordance` implements both
         // flashes and its own 2500 ms window (`Lci`); a producer sets `awaiting`/`done` here and gets them.

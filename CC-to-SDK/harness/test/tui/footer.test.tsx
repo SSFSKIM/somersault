@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
-import { Footer } from "../../src/tui/Footer.js";
+import { Footer, footerRows, footerStatusRows } from "../../src/tui/Footer.js";
 import { MODE_TABLE, modeIndicator, modeSymbol, modeColor, modeTitle } from "../../src/tui/modeTable.js";
 import { agentsAffordance, buildHintList, hintText, suppressHint, AGENTS_FLASH_MS } from "../../src/tui/footerModel.js";
 import { defaultLookup } from "../../src/tui/keys/hints.js";
@@ -269,6 +269,26 @@ describe("<Footer> statusLine row — the visibility guard (annex §C2.6, L49462
     const f = plain(render(<Footer {...home} statusLineConfigured statusLineText="SL" />).lastFrame());
     expect(f).toContain("SL");
     expect(f).not.toContain("? for shortcuts");
+  });
+
+  // HOW TALL THE FOOTER IS, as a number other layouts can reserve (FSW T13b review I4). The fullscreen dock
+  // charged this component exactly one row, which is the chip/hint row alone: with a statusLine drawing above
+  // it the footer is taller than the reserve believed, and the dialog it was reserving for over-composed.
+  // The same predicate the row itself is drawn from, so the two cannot drift.
+  it("reports its own height: one row bare, one more per line of a drawn statusLine", () => {
+    const base = { statusLineConfigured: true, statusLineText: "SL", bashMode: false, pasting: false, rows: 24 };
+    expect(footerRows({ ...base, statusLineConfigured: false })).toBe(1);
+    expect(footerRows(base)).toBe(2);
+    expect(footerRows({ ...base, statusLineText: "one\ntwo" })).toBe(3);
+    expect(footerStatusRows({ ...base, statusLineText: "" })).toBe(0);
+    // …and every term that HIDES the row takes its rows back with it.
+    expect(footerRows({ ...base, bashMode: true })).toBe(1);
+    expect(footerRows({ ...base, pasting: true })).toBe(1);
+    expect(footerRows({ ...base, exitArm: { key: "Ctrl-C", verb: "exit" } })).toBe(1);
+    expect(footerRows({ ...base, rows: 14 })).toBe(1);
+    // The rendered row agrees with the count at the geometry that matters most: one configured line, one row.
+    const f = plain(render(<Footer {...home} statusLineConfigured statusLineText="SL" />).lastFrame());
+    expect(f.split("\n").filter((l) => l.trim() !== "")).toHaveLength(2);
   });
 });
 

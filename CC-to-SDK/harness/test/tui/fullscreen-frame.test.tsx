@@ -61,7 +61,7 @@ async function waitFor(cond: () => boolean, timeout = 3000) {
 
 describe("FullscreenFrame — the height contract", () => {
   // §A4's arithmetic, stated once so the cases below can name it instead of re-deriving it.
-  it("frameHeight is rows − 1 and dockCap is floor(rows/2), rows − 2 under history search", () => {
+  it("frameHeight is rows − 1 and dockCap is floor(rows/2), rows − 2 for its two wide tenants (history search, a parked decision)", () => {
     expect([15, 24, 40].map(frameHeight)).toEqual([14, 23, 39]);
     expect([15, 24, 40].map((r) => dockCap(r, false))).toEqual([7, 12, 20]);
     expect([15, 24, 40].map((r) => dockCap(r, true))).toEqual([13, 22, 38]);

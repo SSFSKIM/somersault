@@ -109,6 +109,23 @@ export const STATUS_LINE_MIN_ROWS = 15;
 
 const dimRow = (text: string) => <Box height={1} overflow="hidden"><Text dimColor>{text}</Text></Box>;
 
+/** The slice of the footer's props the statusLine slot is a function of. Its own type so the two readers —
+ *  this component and the fullscreen dock's reservation — cannot be handed different facts. */
+export type FooterStatusInput = Pick<FooterProps, "statusLineConfigured" | "statusLineText" | "bashMode" | "pasting" | "exitArm" | "rows">;
+/** The statusLine slot's HEIGHT: zero when it is not drawn, one per line of the script's output when it is.
+ *  Exported for the fullscreen dock budget (FSW T13b review I4), which charged this whole component ONE row —
+ *  true of the hint/chip row alone. With a statusLine configured the footer is taller than the reserve knew,
+ *  and the dialog above it composed into rows the frame then clipped. Same predicate, same `statusLineRows`
+ *  the slot is rendered from, so the reserve cannot drift from the paint. */
+export function footerStatusRows({ statusLineConfigured, statusLineText, bashMode, pasting, exitArm, rows = 24 }: FooterStatusInput): number {
+  const visible = statusLineConfigured && statusLineText !== undefined && statusLineText !== ""
+    && !bashMode && !exitArm && !pasting && rows >= STATUS_LINE_MIN_ROWS;
+  return visible ? statusLineRows(statusLineText).length : 0;
+}
+/** Every row the footer paints: its one unconditional row (the chip / hint / arm line, which always draws)
+ *  plus the statusLine slot above it. */
+export const footerRows = (input: FooterStatusInput): number => 1 + footerStatusRows(input);
+
 /** One hint's spans. `dimColor` is `$Rr`'s default for an uncoloured run (L488834). */
 function HintSpans({ hint }: { hint: HintSegment }) {
   return <>{hint.spans.map((s, i) => <Text key={i} color={s.color ? resolveThemeColor(themeTokens()[s.color]) : undefined} dimColor={s.dim}>{s.text}</Text>)}</>;
@@ -137,8 +154,9 @@ export function Footer({ mode, busy, draftNonEmpty, isInputEmpty, searching, sta
   // (`statusLineText` returns to undefined) rather than leaving the last good line standing. So this
   // condition is what implements "the row is removed on failure", and the layout does jump by one line when
   // a script breaks — which is precisely what the sweep measured claude doing.
-  const statusVisible = statusLineConfigured && statusLineText !== undefined && statusLineText !== ""
-    && !bashMode && !exitArm && !pasting && rows >= STATUS_LINE_MIN_ROWS;
+  //   The predicate itself lives in `footerStatusRows` above, because the dock's row reservation has to ask
+  // the same question and a second copy of it is a second thing to keep in step.
+  const statusVisible = footerStatusRows({ statusLineConfigured, statusLineText, bashMode, pasting, exitArm, rows }) > 0;
   // `g3f` (L484937): one `<Text dimColor wrap="truncate">` for a single line, a `flexDirection="column"` of
   // them for several. Each row arrives from `statusLineRows` as FINISHED BYTES — see that function for why
   // Ink's `dimColor` prop cannot express "dim over the script's own ANSI" — so these are bare `<Text>`s and
