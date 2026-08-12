@@ -34,7 +34,7 @@ import type { RequestId } from "./rpc.js";
 import { installRouter } from "./router.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { emptyFlagPerms, seedSettings, threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
-import { FleetBusyError, type FleetEngineSession } from "./fleetEngine.js";
+import { FleetBusyError, SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
@@ -74,24 +74,47 @@ async function dryRunRewind(session: EngineSession, uuid: string): Promise<DryRu
   catch (e) { return { canRewind: false, error: e instanceof Error ? e.message : String(e) }; }
 }
 
+/** The refusal a parked decision earns, word for word on both origins AND on the host (host.ts's rewind).
+ *  One constant because it is now matched, not merely emitted: `forwardSwapOp` re-classes the host's copy
+ *  of it, so three separately-typed copies of the string would be three ways for that match to rot. */
+export const DECISION_PENDING = "a decision is pending — answer it first";
+
 /** The swap family's one host-op sender (§1d) — shared with `thread/clear` (settingsOps.ts), which is the
  *  fourth member of the family and must not grow a second copy of this. `{ok:false, error}` is the shape
  *  a throwing host handler produces (host/server.ts wraps every dispatch), so it is raised here and both
  *  arms answer through `replySwapThrow` below rather than each inventing a mapping.
  *
- *  ONE token is re-classed on the way past: `"busy"`. `host/server.ts` gates `rewind` and `clear` exactly
- *  as it gates `prompt`, so losing a race to another client of that host is the SAME refusal `turn/start`
- *  already answers -33001 for — raised as the same class (fleetEngine.ts's `FleetBusyError`) so a client
- *  matches one family whichever method it raced on. Only reachable in the gap before the host's own
- *  turn-start event has flipped this record's busy flag; after that the local gate refuses first.
+ *  THE DEADLINE IS THE CALLER'S, and the family splits on it (external review 2026-08-11, which found all
+ *  four members riding the 10 s default). A MUTATION — `rewind`, `clear` — passes `SWAP_TIMEOUT_MS`,
+ *  because the host side is a dry run, a filesystem checkpoint restore, a fresh CLI spawn and a flag-state
+ *  replay, which together exceed the default as a matter of course, and because the wire has no
+ *  cancellation: a fired timer errors the client for an operation the host completes anyway, and the
+ *  contradicting `rewound` lands moments later. It is long-but-finite rather than `Infinity` for a reason
+ *  that is about THIS call site specifically — these two are awaited on `record.chain`, which
+ *  `thread/close` and `AppServer.shutdown()` also wait behind; see fleetEngine.ts's constant. The two
+ *  READS (`rewind_anchors` here, `rewind_dryrun` below) pass nothing and keep the default: they change no
+ *  state, so giving up contradicts nothing later, and a picker asking "can I still rewind to this?"
+ *  against a wedged host is better answered than hung.
+ *
+ *  TWO tokens are re-classed on the way past, both of them refusals whose LOCAL twin is -33001, and both
+ *  matched exactly (never by substring) against the string the host raises:
+ *   - `"busy"`. `host/server.ts` gates `rewind` and `clear` exactly as it gates `prompt`, so losing a race
+ *     to another client of that host is the SAME refusal `turn/start` already answers -33001 for.
+ *   - the parked-decision refusal. `host.ts`'s rewind raises it for the reason this file's own gate does,
+ *     and a client that reads -32603 for one origin and -33001 for the other cannot treat them as one
+ *     retryable condition.
+ *  Both are reachable only in the gap before the host's own event (turn start, or the park) has reached
+ *  this record's mirror; after that the local gates refuse first, which is why they are races and not the
+ *  ordinary path.
  *
  *  Deliberately NOT settingsOps.ts's `forwardFlagOp`, which is send-plus-reply for a family whose reply is
  *  always the bare `{ok:true}`: each method here answers a DIFFERENT shape off the host's own body, and
- *  the flag ops are ungated host-side, so the busy re-class above would be a refusal they cannot receive. */
-export async function forwardSwapOp<T extends { ok: boolean; error?: string }>(record: ThreadRecord, op: Record<string, unknown>): Promise<T> {
-  const rep = await (record.session as FleetEngineSession).sendOp<T>(op);
+ *  the flag ops are ungated host-side, so the re-classes above would be refusals they cannot receive. */
+export async function forwardSwapOp<T extends { ok: boolean; error?: string }>(record: ThreadRecord, op: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+  const rep = await (record.session as FleetEngineSession).sendOp<T>(op, timeoutMs);
   if (rep.ok) return rep;
   if (rep.error === "busy") throw new FleetBusyError();
+  if (rep.error === DECISION_PENDING) throw new FleetBusyError(DECISION_PENDING);
   throw new Error(rep.error ?? "host refused");
 }
 
@@ -311,6 +334,10 @@ export const rewindDryRun: Handler = async (srv, ctx, id, params) => {
   // build rather than about the host's. A host-side refusal keeps `dryRunRewind`'s ONE-SHAPE contract
   // rather than becoming an RPC error: a client deciding whether to OFFER the rewind cannot be asked to
   // tell "the host said no" from "the host could not be asked".
+  // On the DEFAULT deadline, unlike the two mutations this file forwards (see `forwardSwapOp`): the host
+  // side changes nothing, so a client that gives up leaves no completed work to be contradicted by a later
+  // event — and this is the poll a picker makes before OFFERING the rewind, where a bounded failure it can
+  // retry beats a request that never settles against a wedged host.
   if (record.origin === "fleet") {
     const rep = await (record.session as FleetEngineSession).sendOp<{ ok: boolean; error?: string; dryRun?: DryRunResult }>({ op: "rewind_dryrun", uuid: parsed.data.uuid });
     ctx.peer.reply(id, rep.ok ? rep.dryRun ?? { canRewind: false } : { canRewind: false, error: rep.error ?? "host refused" });
@@ -333,7 +360,7 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
   // A parked decision blocks the rewind for a concrete reason, not out of caution: the swap awaits the
   // outgoing engine's dispose(), and dispose awaits its read loop, which cannot end while a turn sits
   // inside canUseTool holding one of our parked promises (the C1 circular wait, closeRecord's header).
-  if (srv.pendingDecisions(threadId).length) { ctx.peer.replyError(id, ERR.BUSY, "a decision is pending — answer it first"); return; }
+  if (srv.pendingDecisions(threadId).length) { ctx.peer.replyError(id, ERR.BUSY, DECISION_PENDING); return; }
   // ── FLEET (§1d): forward, and stop. Everything BELOW this line is the local swap — the one thing this
   // origin must never do (see the module header). The two gates above stayed local because the host
   // refuses the same two things for the same reasons (host.ts's rewind), and a parked VIEW counts: it
@@ -355,7 +382,9 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
   if (record.origin === "fleet") {
     record.chain = record.chain.then(async () => {
       try {
-        await forwardSwapOp(record, { op: "rewind", uuid, prevUuid, scope });
+        // The swap deadline, not the default: the host's side of this is a dry run, a filesystem restore
+        // and a fresh CLI spawn, and the protocol carries no cancellation — see `forwardSwapOp`.
+        await forwardSwapOp(record, { op: "rewind", uuid, prevUuid, scope }, SWAP_TIMEOUT_MS);
         record.updatedAt = nowSec();          // the epoch/id/announce half belongs to the host's `rewound`
         ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
       } catch (e) { replySwapThrow(record, ctx, id, e); }

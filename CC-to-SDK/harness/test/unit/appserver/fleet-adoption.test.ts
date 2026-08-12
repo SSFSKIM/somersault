@@ -416,4 +416,34 @@ describe("the fleet event layer owns turn lifecycle (M3 Task 7)", () => {
     fh.emitMessage({ type: "system", subtype: "background_tasks_changed", tasks: [] });
     await waitFor(() => expect(notifs(lines, "task/changed")).toHaveLength(1));
   });
+
+  it("a host-side rewind drops the per-turn replay buffer, so a later subscriber sees none of the discarded turn", async () => {
+    const { fh, srv, lines, threadId, record } = await attached({ status: { sessionId: "s1" } });
+
+    // A completed turn leaves its item window standing — that window is what subscribe.ts replays to
+    // every client that joins before the next turn resets it.
+    fh.beginTurn(1);
+    fh.emitMessage({ type: "assistant", message: { id: "m1", content: [{ type: "text", text: "from the discarded conversation" }] } });
+    await waitFor(() => expect(notifs(lines, "item/completed")).toHaveLength(1));
+    fh.endTurn(1, { result: "done" });
+    await waitFor(() => expect(notifs(lines, "turn/completed")).toHaveLength(1));
+    expect(record.buffer.length).toBeGreaterThan(0);
+
+    // …and then another client of that host rewinds. The turn those items belong to is no longer in the
+    // transcript the next reader will page.
+    fh.emitRewound({ sessionId: "s2" });
+    await waitFor(() => expect(record.epoch).toBe(1));
+
+    const s2 = mkSink();
+    const conn2 = srv.connect(s2.sink);
+    send(conn2, { id: 1, method: "initialize", params: { clientInfo: { name: "T2" } } });
+    await waitFor(() => expect(frame(s2.lines, 1)).toBeTruthy());
+    send(conn2, { id: 2, method: "thread/subscribe", params: { threadId } });
+    await waitFor(() => expect(frame(s2.lines, 2)).toBeTruthy());
+
+    expect(notifs(s2.lines, "item/completed")).toEqual([]);
+    expect(notifs(s2.lines, "item/started")).toEqual([]);
+    expect(JSON.stringify(s2.lines)).not.toContain("discarded conversation");
+    expect(record.buffer).toEqual([]);   // …and the window itself is gone, not merely unreplayed
+  });
 });

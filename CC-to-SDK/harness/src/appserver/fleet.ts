@@ -207,6 +207,12 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     // the rows the same offsets address now.
     record.epoch += 1;
     if (e.cleared) record.sessionId = undefined; else if (e.sessionId) record.sessionId = e.sessionId;
+    // The per-turn replay window belongs to the conversation the host just discarded — the same reason
+    // rewind.ts's `swapEngine` drops it on the inProcess origin, and the host's own swapEngine drops its
+    // turn buffer: subscribe.ts replays `record.buffer` to every client that joins before the next turn
+    // resets it, so leaving it would hand the next client item events from a turn that is no longer in
+    // the transcript it is about to read.
+    record.buffer = [];
     record.updatedAt = nowSec();
     installFrames();                    // the epoch moved — see installFrames
     broadcastToSubscribersAndWatchers(record.subscribers, srv.watchers(), "thread/rewound", { threadId: record.id, sessionId: record.sessionId ?? null, ...(e.cleared ? { cleared: true } : {}) });

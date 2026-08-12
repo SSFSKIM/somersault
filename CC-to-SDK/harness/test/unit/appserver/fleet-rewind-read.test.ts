@@ -32,6 +32,8 @@ import { writeRoster } from "../../../src/fleet/roster.js";
 import type { RosterRow } from "../../../src/fleet/roster.js";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { SWAP_TIMEOUT_MS } from "../../../src/appserver/fleetEngine.js";
+import type { FleetEngineSession } from "../../../src/appserver/fleetEngine.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -266,6 +268,74 @@ describe("thread/clear on a fleet thread forwards {op:'clear'} (§1d)", () => {
 
     expect((await call(conn, lines, 10, "thread/clear", { threadId })).error).toMatchObject({ code: ERR.BUSY, message: "Thread is busy (turn)" });
     expect(fh.ops).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// The DEADLINE the family's forwards ride, asserted where it is CHOSEN rather than by waiting on a clock:
+// the spy records the second argument `sendOp` was called with, which is the whole of the decision.
+describe("the swap family's deadlines split by mutation vs. read (review finding 1)", () => {
+  const spyOn = (record: { session: unknown }) => vi.spyOn(record.session as FleetEngineSession, "sendOp");
+
+  it("the swap deadline is long enough to cover a real swap and finite enough to release the chain", () => {
+    // Both halves are load-bearing: under the 10 s default this used to ride, a fired timer fails the
+    // client for a swap the host completes anyway; unbounded, it would hold `record.chain` — and with it
+    // `thread/close` and `AppServer.shutdown()` — forever against a host that is wedged rather than dead.
+    expect(SWAP_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+    expect(Number.isFinite(SWAP_TIMEOUT_MS)).toBe(true);
+  });
+
+  it("thread/rewind forwards under the swap deadline, not the default", async () => {
+    const { conn, lines, threadId, record } = await attached({ status: { sessionId: "s1" } });
+    const spy = spyOn(record);
+
+    expect((await call(conn, lines, 10, "thread/rewind", { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" })).result)
+      .toEqual({ ok: true, sessionId: "s1" });
+
+    expect(spy.mock.calls).toEqual([[{ op: "rewind", uuid: "u2", prevUuid: "u1", scope: "conversation" }, SWAP_TIMEOUT_MS]]);
+  });
+
+  it("thread/clear forwards under the same one", async () => {
+    const { conn, lines, threadId, record } = await attached({ status: { sessionId: "s1" } });
+    const spy = spyOn(record);
+
+    expect((await call(conn, lines, 10, "thread/clear", { threadId })).result).toEqual({ ok: true, sessionId: null });
+
+    expect(spy.mock.calls).toEqual([[{ op: "clear" }, SWAP_TIMEOUT_MS]]);
+  });
+
+  it("the two READS keep the default deadline — nothing they can contradict by giving up", async () => {
+    const { conn, lines, threadId, record } = await attached({ status: { sessionId: "s1" } });
+    const spy = spyOn(record);
+
+    await call(conn, lines, 10, "thread/rewind/dryRun", { threadId, uuid: "u2" });
+    await call(conn, lines, 11, "thread/rewind/anchors", { threadId });
+
+    expect(spy.mock.calls.map((c) => c[0])).toEqual([{ op: "rewind_dryrun", uuid: "u2" }, { op: "rewind_anchors" }]);
+    for (const c of spy.mock.calls) expect(c[1]).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────
+describe("host refusal tokens are re-classed to the code the identical local refusal uses (review finding 2)", () => {
+  it("the host's parked-decision refusal relays as -33001, message intact", async () => {
+    const { fh, conn, lines, threadId } = await attached({ status: { sessionId: "s1" } });
+    // The HOST holds a park this server's mirror has not caught up with (host.ts:758): the local gate
+    // therefore passes and the op goes out, and what comes back is the same refusal — which must not
+    // read as an internal error when the local arm answers it -33001.
+    fh.refuse.rewind = "a decision is pending — answer it first";
+
+    const rep = await call(conn, lines, 10, "thread/rewind", { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" });
+    expect(rep.error).toEqual({ code: ERR.BUSY, message: "a decision is pending — answer it first" });
+    expect(calls(fh, "rewind")).toHaveLength(1);   // the refusal is the host's; the op really was sent
+  });
+
+  it("any OTHER host refusal still relays verbatim as -32603", async () => {
+    const { fh, conn, lines, threadId } = await attached({ status: { sessionId: "s1" } });
+    fh.refuse.clear = "the engine is mid-compaction";
+
+    expect((await call(conn, lines, 10, "thread/clear", { threadId })).error)
+      .toEqual({ code: ERR.INTERNAL, message: "the engine is mid-compaction" });
   });
 });
 

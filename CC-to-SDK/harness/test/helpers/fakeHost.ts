@@ -88,6 +88,12 @@ export interface FakeHostControls {
    *  `context_usage`, `mcp_status`, …) the value is the WHOLE reply body; for `get_settings`,
    *  `list_dirs`, `rewind_anchors` and `rewind_dryrun` it is the payload the server wraps. */
   replies: Record<string, unknown>;
+  /** Planted REFUSALS, keyed by op name: the op is still recorded, then THROWS — which `host/server.ts`'s
+   *  dispatch wraps as `{ok:false, error}` (:136-137), the shape every host-side refusal reaches a client
+   *  in. For the refusals whose trigger a fake cannot stage: `rewind`'s parked-decision gate
+   *  (host.ts:758) fires when the HOST holds a park this server's mirror has not caught up with, a gap
+   *  that exists only for the width of one frame's travel. */
+  refuse: Record<string, string>;
   close(): Promise<void>;
 }
 
@@ -135,7 +141,14 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   const opCalls: Array<{ op: string; args: unknown[] }> = [];
   const promptCalls: Array<{ text: string; uuid?: string }> = [];
   const replies: Record<string, unknown> = {};
-  const record = (op: string, ...args: unknown[]): void => { ops.push(op); opCalls.push({ op, args }); };
+  const refuse: Record<string, string> = {};
+  // Recorded FIRST, then refused: a planted refusal is a host that took the op and said no, so the op log
+  // must show it arrived (see `refuse`).
+  const record = (op: string, ...args: unknown[]): void => {
+    ops.push(op); opCalls.push({ op, args });
+    const no = refuse[op];
+    if (no) throw new Error(no);
+  };
 
   /** host.ts's status() (:884-895): a park projects as blocked/idle, and the settings mirror rides BOTH
    *  arms. `permissionMode` is never absent from a real one — `private mode = "default"` (:144), seeded
@@ -290,7 +303,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   await server.listen();
 
   return {
-    socketPath, row, promptCalls, ops, opCalls, replies,
+    socketPath, row, promptCalls, ops, opCalls, replies, refuse,
     // A `stream_event` partial fans out LIVE but is deliberately kept out of the replay buffer
     // (host.ts:333, P106-measured): thousands of token deltas would evict the turn's real frames, and a
     // late follower cannot use a delta it missed anyway — the completed message supersedes them all.

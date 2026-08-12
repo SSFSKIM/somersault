@@ -41,10 +41,10 @@
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { replyEngineThrow } from "./engineThrow.js";
-import { forwardSwapOp, replySwapThrow, swapEngine } from "./rewind.js";
+import { DECISION_PENDING, forwardSwapOp, replySwapThrow, swapEngine } from "./rewind.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
-import type { FleetEngineSession } from "./fleetEngine.js";
+import { SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import {
@@ -287,7 +287,7 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   const busyReason = threadBusyReason(record);
   if (busyReason) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return; }
-  if (srv.pendingDecisions(threadId).length) { ctx.peer.replyError(id, ERR.BUSY, "a decision is pending — answer it first"); return; }
+  if (srv.pendingDecisions(threadId).length) { ctx.peer.replyError(id, ERR.BUSY, DECISION_PENDING); return; }
   // Latched synchronously, same as rewind: the work below sits behind record.chain, so a same-tick
   // turn/start would otherwise pass its own busy gate and drive an engine call against a thread being
   // swapped out from under it. Every gate reads it through threadBusyReason -> "swapping". INPROCESS
@@ -297,7 +297,9 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
   record.chain = record.chain.then(async () => {
     if (record.origin === "fleet") {
       try {
-        await forwardSwapOp(record, { op: "clear" });
+        // The swap deadline, like the rewind it shares a sender with: the host disposes one engine and
+        // spawns another, and the default would fire mid-swap on work no timer can cancel (`forwardSwapOp`).
+        await forwardSwapOp(record, { op: "clear" }, SWAP_TIMEOUT_MS);
         record.updatedAt = nowSec();
         // Read AFTER the op resolves: the host writes its swap burst — the `rewound {cleared:true}` this
         // record drops its id from — ahead of the reply to the op that caused it, and frames route in

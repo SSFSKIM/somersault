@@ -45,10 +45,26 @@ import { ERR } from "./rpc.js";
  *  hosts. The default covers a wedged (not dead) host: a genuinely dead one rejects everything in flight
  *  from the close handler, deadline or not. `compact` is the one forwarded member whose host side is a
  *  full engine summarization pass (routinely 30-120s), where a fired timer is a lie rather than a safety
- *  net — the engine finishes and succeeds after the client already reported failure. A caller that needs
- *  neither (Tasks 9's mutating `rewind`, whose protocol has no cancellation) passes `Infinity`. */
+ *  net — the engine finishes and succeeds after the client already reported failure. A caller whose
+ *  promise NOBODY READS passes `Infinity` instead: `thread/stop`'s op (fleet.ts) is written into a socket
+ *  the host is about to destroy, and there is no deadline to keep on a result no one awaits. */
 const REQUEST_TIMEOUT_MS = 10_000;
 const COMPACT_TIMEOUT_MS = 300_000;
+/** The SWAP family's deadline — `rewind` and `clear`, forwarded by `appserver/rewind.ts`'s
+ *  `forwardSwapOp` (external review 2026-08-11: both used to ride the 10 s default).
+ *
+ *  LONG for compact's reason, and more so: the host's side of a swap is a dry run, a filesystem
+ *  checkpoint restore, a fresh `claude` spawn and a flag-state replay against it, so exceeding 10 s is
+ *  ordinary rather than pathological — and the wire carries no cancellation, so a fired timer would fail
+ *  the client for a swap the host goes on to complete, with the contradicting `rewound` arriving after.
+ *
+ *  FINITE, though, where `stop` is not, and the difference is who waits: this promise is awaited ON
+ *  `record.chain`, so nothing else on that thread — `thread/close` included — runs until it settles, and
+ *  `AppServer.shutdown()` awaits the same chain. An unbounded wait on a host that is WEDGED rather than
+ *  dead (the class the default exists for; a dead one rejects from the close handler) would therefore jam
+ *  the thread permanently and take the server's own exit with it. Five minutes is far beyond any real
+ *  swap and still lets both make progress. */
+export const SWAP_TIMEOUT_MS = 300_000;
 /** THIS direction's cap (host→client event frames carry SDK messages including large tool results) —
  *  remote.ts's 32 MiB, not the server's 256 KiB op cap. Reusing the small one once destroyed a live
  *  connection on a legitimate ~500 KiB event. */
