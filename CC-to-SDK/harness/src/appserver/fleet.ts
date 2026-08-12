@@ -29,7 +29,7 @@ import type { RequestId } from "./rpc.js";
 import { emptyFlagPerms, fleetTurnId, threadStatus } from "./registry.js";
 import type { ThreadRecord } from "./registry.js";
 import { TurnMapper } from "./items/mapper.js";
-import { emitItems, requestInterrupt } from "./turns.js";
+import { emitItems, requestInterrupt, snapshot } from "./turns.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { installRouter } from "./router.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
@@ -114,7 +114,20 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     // resume-before-follow rule is the same split from the other side).
     offItems = engine.onFrame((m) => {
       if (!mapper || windowId === undefined) return; // outside a turn there is no turn to attribute items to
-      emitItems(srv, record, windowId, mapper.ingest(m));
+      const wid = windowId;
+      // R4: for an OWN turn the user item is published by onAccepted (turns.ts's fleetTurnStart), on the
+      // microtask AFTER the host's prompt reply resolves — while a host assistant frame bundled with (or
+      // ahead of) that reply routes SYNCHRONOUSLY here. Unheld, a subscriber then sees an assistant item
+      // before the user item and before the turn/start reply. `fleetStartAck` is set while that reply is
+      // pending and resolved the instant it publishes (the same barrier the turn/completed edge below uses),
+      // so hold own-turn item emission behind it and flush in order. Foreign turns set no ack, so their
+      // items emit live. Snapshotted BEFORE the defer because TurnMapper mutates its items in place — the
+      // deferred flush must carry the item as it was at ingest, not as later frames leave it.
+      const evs = mapper.ingest(m).map(snapshot);
+      if (evs.length === 0) return;
+      const ack = record.fleetStartAck;
+      if (ack) void ack.then(() => emitItems(srv, record, wid, evs));
+      else emitItems(srv, record, wid, evs);
     });
   };
   installFrames();

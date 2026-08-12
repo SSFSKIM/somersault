@@ -28,7 +28,7 @@ const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts
  *  world" — or a tool "started" already reading completed with its result.
  *  Cloned HERE, at buffer time, not at replay time: the mutation is continuous, so the only moment the
  *  snapshot is still correct is the moment the event is emitted. Deltas carry no Item and need no clone. */
-function snapshot(ev: ItemEvent): ItemEvent {
+export function snapshot(ev: ItemEvent): ItemEvent {
   return ev.kind === "delta" ? ev : { kind: ev.kind, item: structuredClone(ev.item) };
 }
 

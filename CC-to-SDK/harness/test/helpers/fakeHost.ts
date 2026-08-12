@@ -76,6 +76,12 @@ export interface FakeHostControls {
   /** Make the NEXT prompt DESTROY this connection instead of answering — a host death after the op is
    *  dispatched but before its reply is written (external review F6). */
   killNextPrompt(): void;
+  /** Emit these message frames SYNCHRONOUSLY inside the next prompt handler, right after its turn-start
+   *  and BEFORE the prompt reply is written — a host that streams an assistant frame in the same breath as
+   *  accepting the prompt (real: `submit()`'s onMessage can fire before its first await). It puts an OWN
+   *  turn's assistant frame on the wire ahead of the prompt reply that publishes the user item (final
+   *  review R4). `endTurn` is still the test's, so the turn stays open for its own assertions. */
+  emitOnNextPrompt(messages: unknown[]): void;
   park(entry: PendingDecisionLike): void;
   /** Settle a park host-side, decision_settled then state. With an `answer` this is the human path
    *  (§1a-e: the whole outcome travels, host.ts:860-861); without one it is the SDK-ABORT path — a bare
@@ -145,6 +151,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   let seq = busy ? 1 : 0;                            // a turn in flight is a turn that started
   let inlineComplete: { error?: string; result?: unknown; failure?: TurnFailure } | undefined; // F2: end this prompt inline
   let killPrompt = false;                            // F6: destroy the connection on the next prompt
+  let promptMessages: unknown[] | undefined;         // R4: frames to emit synchronously inside the next prompt handler
   const patch: Partial<HostStatus> = { ...opts.status };
   const ops: string[] = [];
   const opCalls: Array<{ op: string; args: unknown[] }> = [];
@@ -266,6 +273,13 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
       // and the client sees the death with the op unanswered. Runs before beginTurn: no turn ever starts.
       if (killPrompt) { killPrompt = false; void server.close(); return; }
       beginTurn(seq + 1);
+      // R4: stream frames synchronously, after turn-start and BEFORE the reply — an OWN turn's assistant
+      // frame reaching the wire ahead of the prompt reply that publishes the user item. Buffered like any
+      // live message (emitMessage's rule), so a later follower still replays them.
+      if (promptMessages !== undefined) {
+        const ms = promptMessages; promptMessages = undefined;
+        for (const m of ms) { if ((m as { type?: unknown } | null)?.type !== "stream_event") buffered.push(m); emit({ kind: "message", data: m }); }
+      }
       // F2: complete the turn INLINE — turn/end is emitted here, before this handler returns, so it precedes
       // the prompt reply the server writes next (turnSeq() still reads this turn's seq, the reply matches).
       if (inlineComplete !== undefined) { const o = inlineComplete; inlineComplete = undefined; emitEnd(seq, o); }
@@ -345,6 +359,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     endTurn: (n, o = {}) => emitEnd(n, o),
     completeNextPromptInline: (o) => { inlineComplete = o ?? {}; },
     killNextPrompt: () => { killPrompt = true; },
+    emitOnNextPrompt: (messages) => { promptMessages = messages; },
     park: (e) => {
       const entry: PendingDecision = { sessionId: "s-fake", toolName: "Bash", kind: "permission", input: {}, createdAt: Date.now(), ...e };
       parked.push(entry);
