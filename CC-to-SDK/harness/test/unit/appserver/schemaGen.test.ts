@@ -71,7 +71,8 @@ describe("emit-appserver-schema", () => {
   it("never requires a param that carries a default", () => {
     // A defaulted param is optional to the CLIENT and required only after the server has parsed it. zod's
     // `io:"output"` view says otherwise, so the artifact is post-processed; this is the invariant, checked
-    // over all 51 rather than over the three `unattended` fields that happen to have one today.
+    // over every registered method rather than over the three `unattended` fields that happen to have one
+    // today (a count written here would be one more thing to update per landing wave).
     for (const tier of TIERS) {
       for (const [name, schema] of Object.entries(vendored(tier).methods)) {
         const { properties = {}, required = [] } = schema as { properties?: Record<string, object>; required?: string[] };

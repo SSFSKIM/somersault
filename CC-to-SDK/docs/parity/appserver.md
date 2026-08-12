@@ -120,16 +120,16 @@ otherwise hang the request forever, and `stat` sizes one at 0 so the cap cannot 
 over a **4 MiB cap** (a recorded deviation — Codex caps nothing, but an oversize base64 payload OOMs a
 browser client) and answers `{dataBase64, size}`; **every one of its refusals is `-32602`**, the failing
 `stat`, the wrong file kind and the failing read alike, because an fs failure names a bad request rather
-than a broken server. `fs/search` runs the TUI's
-own `collectEntries` + `rankCandidates` (`src/tui/fileComplete.ts`) once per root — so a client's search
-and the composer's `@`-picker score a tree identically, ignore rules and walk cap included (equally scored
-matches can still order differently: the cross-root re-sort keeps the ranker's lexical tie-break but not
-its shorter-path-first one) — with `roots` defaulting to the server's cwd and otherwise taken as given,
-relative ones included (§2 asks absoluteness of `fs/read`'s `path` alone), each match's `path`
-root-relative beside the `root` that produced it, an unwalkable root
-degrading to zero matches rather than failing the call (Codex's behavior), and the roots merged into one
-score-ordered list capped at 50 (Codex's `MATCH_LIMIT`). No highlight indices and no warm index: recorded
-deviations — our ranker produces no indices, and the TUI re-walks on every query too.
+than a broken server. `fs/search` runs the TUI's own `collectEntries` + `rankCandidates`
+(`src/tui/fileComplete.ts`) once per root — so a client's search and the composer's `@`-picker score a
+tree identically, ignore rules and walk cap included (equally scored matches can still order differently:
+the cross-root re-sort keeps the ranker's lexical tie-break but not its shorter-path-first one) — with
+`roots` defaulting to the server's cwd and otherwise taken as given, relative ones included (§2 asks
+absoluteness of `fs/read`'s `path` alone), each match's `path` root-relative beside the `root` that
+produced it, an unwalkable root degrading to zero matches rather than failing the call (Codex's
+behavior), and the roots merged into one score-ordered list capped at 50 (Codex's `MATCH_LIMIT`). No
+highlight indices and no warm index: recorded deviations — our ranker produces no indices, and the TUI
+re-walks on every query too.
 Last in the cluster, and in the same module, is §3's **`thread/shellCommand`** (M3 Task 13) — the TUI's
 `!cmd` over the wire, `{threadId, command}` → `{code, output, timedOut?}` over the shipped `runBash`
 primitive (`src/tui/bash.ts`: a full shell string through `exec`, a 30 s SIGTERM timeout on the child, a
@@ -219,11 +219,18 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
    server-side set only; `cancelled`/`still_queued` from the engine land if the SDK ever surfaces the
    option. `thread/close` and `shutdown()` raise a `record.closing` latch and flush synchronously at
    request arrival, and the drain re-checks that latch, so no engine call starts after a close begins.
-2. **`host/ops.ts` and `bridge/types.ts` are still not imported anywhere under `appserver/`.** All
-   shipped methods reach the engine through `openSession`/`resumeSession` (lib) — the host-wire/
-   bridge path activates when fleet adoption (`thread/attach`) lands in M3. Rows are scored by the
-   *method's* shipped status, not by whether that particular seam is literally called (spec §7
-   describes multiple backing seams per method).
+2. **HALF CLOSED at M3 — the host wire is spoken under `appserver/` now; the bridge is not.** This note
+   used to read "`host/ops.ts` and `bridge/types.ts` are still not imported anywhere under `appserver/`",
+   with the host half expected to close when fleet adoption landed. It did: `appserver/fleetEngine.ts`
+   frames every fleet op onto a real host socket and decodes the replies through `host/wire.ts`'s own
+   `decodeFrame`, and both it and `appserver/fleet.ts` import `HostStatus` from `host/ops.ts` for the
+   status the mirror reads. The import is a TYPE for the ops themselves — the request frames are object
+   literals (`{op:"prompt", …}`) that the host's own zod schemas in `host/ops.ts` validate on arrival,
+   which is the direction that matters: one definition of the op, enforced where it is received.
+   `bridge/types.ts` remains unimported here, and its rows stay scored the original way — by the
+   *method's* shipped status, not by whether that particular seam is literally called (spec §7 describes
+   multiple backing seams per method). An inProcess thread still reaches its engine through
+   `openSession`/`resumeSession`; only a fleet-origin one takes the wire.
 3. **`account/read` and `thread/init/read` have no backing host op** — walking `host/ops.ts` turns up
    nothing named `account`/`init` — so they are `inProcess`-only today, beyond spec §2's explicit
    list (a documented omission; growing the host wire is named follow-up work).
@@ -497,64 +504,60 @@ row in the Query table above.
 all rowed above — plus the 9 server-origin rows just above, which no walker produces, for **88 rows**
 in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out until then,
 having missed Task 7's adoption pair as well as its own workspace pair; Task 13's `thread/shellCommand`
-is the eighth and Task 14's `thread/reopen` the ninth.)
+is the eighth and Task 14's `thread/reopen` the ninth. M3 Task 15 is the last landing that had to recount
+by hand: the gate prints the row total itself now, and both counts agreed at 88.)
 
-**Per-status row tallies, recomputed at the M2b close-out sweep (Task 9, 2026-08-11)** by rewalking the
-five tables above. They are a snapshot, not a running total: every landing wave flips a handful of rows,
-so a shipped/planned split written down mid-milestone is stale within a day (the M2a lesson, restated).
-Between sweeps the authority is the per-row `status` column and the drift gate that proves it, never
-this block.
+**The per-status and per-origin tallies are no longer written down here — the gate counts them.** A
+summary table used to sit at this spot and it went stale at three consecutive landings, for exactly the
+reason the method count above is refused: nothing but a human recount produced it, so it described the
+milestone it was written in rather than the tables it claimed to summarize. `scripts/drift-check.mjs`
+already parses every row for its staleness pass, so since M3 Task 15 it tallies them too and prints two
+lines on every run — `N rows by status` and `N rows by origin scope`. Run it; between runs the authority
+is each row's own `status` and `origin scope` column, as it always was.
 
-| status | host ops (34) | ControlFrame (11) | session wrappers (7) | Query (27) | server-origin (3) | all 82 rows |
-|---|---|---|---|---|---|---|
-| shipped(M1) | 8 | 1 | 1 | 2 | 3 | 15 |
-| shipped(M2a) | 7 | 7 | 6 | 12 | — | 32 |
-| shipped(M2b) | 18 | 3 | — | 11 | — | 32 |
-| planned(M3) | 1 | — | — | — | — | 1 |
-| probe-gated | — | — | — | — | — | 0 |
-| N/A | — | — | — | 2 | — | 2 |
+What those two lines say at this sweep (**M3 Task 15, 2026-08-12** — restated per landing, never trusted
+between them): **88 rows, 86 of them shipped**, the remaining two being the `N/A` pair — `seedReadState`
+(internal plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row).
+**Three buckets are empty, each emptied by a nameable landing:** `planned(...)` by M3 Task 9, when
+`thread/stop` shipped; `probe-gated` by M2b Wave 4's Task 5, which probed all four gated tokens live on
+2026-08-11 (three promoted — `streamInput`, `reloadPlugins`, `reloadSkills` — and one retired to `N/A`);
+and `fleet-only` by that same Task 9 (gap 4), a mirror scope that turned out to describe no method at all.
 
-**79 of the 82 rows read shipped.** The three that did not are the whole remainder: `stop`
-(`planned(M3)` at the sweep — **shipped(M3) since Task 9**, which also empties the `planned` bucket and
-retires the `fleet-only` scope, gap 4), and the two `N/A` rows, `seedReadState` (internal plumbing, no
-protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row). The
-`probe-gated` bucket is EMPTY as of Wave 4's Task 5: all four gated tokens were probed live on
-2026-08-11, three promoted (`streamInput`, `reloadPlugins`, `reloadSkills`) and one retired to `N/A`.
-Origin scope splits **67 `both` / 12 `inProcess` / 0 `fleet-only` / 9 `N/A`**, recounted off the tables at
-M3 Task 14 across all **88** rows — the per-status snapshot block above still says 82 because it predates
-all SIX of M3's new server-origin rows: Task 7's `fleet/list` and `thread/attach`, Task 12's own
-`fs/read` and `fs/search` (those four `N/A`), Task 13's `thread/shellCommand` — `both`, which was the whole
-`67 - 66` of the previous recount — and Task 14's `thread/reopen`, `inProcess` (the `12 - 11` of this one),
-the two rows in that table with a real origin scope. Task 12 moved three:
-its own two workspace rows (`fs/read`, `fs/search`, both `N/A` — no thread, no origin question) and
-`readFile`, which had been scored `inProcess` while its status read `N/A`; a token backing no method has
-no origin, so it now reads `N/A` in both columns, as `seedReadState` always has. This line has gone stale
-three times, which is the point of recounting it at every landing rather than trusting it between them:
-Task 9 corrected it to 57/21/0/6 when `thread/stop` moved from `fleet-only` to `both` (gap 4), and Task 10
+**Origin scope is the column that keeps moving**, so what is worth recording is which rows moved and why,
+not the split they add up to. Task 9 moved `thread/stop` from `fleet-only` to `both` (gap 4). Task 10
 moved nine more when the forwarded control + settings surface went live on fleet threads — all nine in the
 ControlFrame table, whose origin column had been scoring the bridge rather than the method (see the note
-above it). The twelve that remain `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods
-(§1c) plus the Query-side seams behind them — Task 14's `thread/reopen` joining that set as the one member
-whose absence from the host wire is a deliberate boundary rather than a missing op (the host owns its own
-engine lifecycle).
+above it). Task 12 moved three: its own two workspace rows (`fs/read`, `fs/search`, both `N/A` — no
+thread, no origin question) and `readFile`, which had been scored `inProcess` while its status read `N/A`;
+a token backing no method has no origin, so it now reads `N/A` in both columns, as `seedReadState` always
+has. Task 13's `thread/shellCommand` (`both`) and Task 14's `thread/reopen` (`inProcess`) are the only two
+server-origin rows with a real origin scope; every other row in that table names no thread, and those
+`N/A` origins plus the two seam rows that back no method are the whole `N/A` bucket. The rows that remain
+`inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods (§1c) plus the Query-side seams behind
+them — Task 14's `thread/reopen` joining that set as the one member whose absence from the host wire is a
+deliberate boundary rather than a missing op (the host owns its own engine lifecycle).
 
-**The live surface those rows cover: 51 registered methods and 26 notifications.** 51 is the size of
-`appserver/schema/index.ts`'s `methodSchemas` — the number `scripts/drift-check.mjs` prints on every run
-("every row status matches the live surface (N registered methods)") — and 26 is the notification list in
-"Shipped, per the code" above, each of whose names appears as a literal under `appserver/`. Both are
-recorded here as of the close-out sweep and are expected to age; the script is what is current. It has
-aged as predicted: **58** as of M3 Task 14 (the M2b 51, plus Task 7's `fleet/list` and `thread/attach`,
-Task 9's `thread/stop`, Task 12's `fs/read` and `fs/search`, Task 13's `thread/shellCommand` and Task 14's
-`thread/reopen`) — a
-number restated here per landing rather than swept, since the gate prints the true one on every run.
+**The live surface those rows cover: whatever the gate prints, and 26 notifications.** The registered-
+method count is not restated here for the reason "Shipped, per the code" gives — `scripts/drift-check.mjs`
+prints the size of `appserver/schema/index.ts`'s `methodSchemas` on every run ("every row status matches
+the live surface (N registered methods)"), it read 51 at the M2b close-out and 58 at M3's, and the run is
+the only place it is ever current. Notifications have no registry to count, so they get a **recipe**
+instead of a number: every slash-shaped string literal under `appserver/` that is not a registered method
+(24 at this sweep — the same scan the staleness pass runs for its `liveWireStrings` set), plus the two
+that carry no slash, `initialized` and `warning`. That is **26, unchanged across all of M3**: `thread/closed`
+gained an optional `reason` (Task 9) and `thread/compacted` gained a fleet emission path (Task 10), but
+neither is a new name, and none of M3's seven methods emits a notification of its own.
 
-**The gate now enforces all three directions**, which is why a hand-carried total is safe to write down
-at a sweep and unsafe to trust between them: *presence* (every walked token has a row — the original
+**The gate enforces all three directions**, which is why the row set is safe to trust between sweeps
+even where a prose summary is not: *presence* (every walked token has a row — the original
 D11 pass), *staleness* (a `shipped(...)` row's wire name must exist under `appserver/`, and a
 `planned(...)`/`probe-gated` name must not be registered — added `bfcbe7ee0e` after the M2a incident),
 and *bijection* (every registered method is named by some row — the M2b Task 6 "zero schema-less
 methods" pass, which is what surfaced the three server-origin rows). `node scripts/drift-check.mjs`
-exits 0 with all three empty.
+exits 0 with all three empty. The two tally lines it prints below them are **not** a fourth gate — a
+distribution has no wrong answer to fail on — except in one degenerate case worth knowing: a bucket
+printed as `unparsed` means some row's `status` or `origin scope` cell stopped matching the vocabulary
+this document defines, which is a row to go fix.
 
 ## Acceptance evidence (2026-08-11)
 

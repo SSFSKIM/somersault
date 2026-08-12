@@ -160,6 +160,25 @@ for (const [, token, source, methodCol, , status] of statusRows) {
   }
 }
 
+// ---- Per-status / per-origin tallies (M3 Task 15). NOT a gate — a distribution has no wrong answer to
+// fail on — but computed here for the same reason the passes above are: the scorecard used to hand-carry
+// this summary and it went stale at three consecutive landings, since nothing but a human recount produced
+// it. The rows are already parsed for the staleness pass, so the count is free, and the doc can then state
+// the claims that do not rot (which buckets are empty, and why) while writing down no number a wave can
+// falsify. An `unparsed` bucket means a row's status/origin cell stopped matching the vocabulary — read it
+// as "go look at that table", not as a count.
+const tally = (cell, re) => (cell.match(re) || [, "unparsed"])[1];
+const appserverTally = { rows: statusRows.length, status: {}, origin: {} };
+for (const row of statusRows) {
+  const status = tally(row[5], /^(shipped\([^)]*\)|planned\([^)]*\)|probe-gated|N\/A)/);
+  const origin = tally(row[4], /^(both|inProcess|fleet-only|N\/A)/);
+  appserverTally.status[status] = (appserverTally.status[status] ?? 0) + 1;
+  appserverTally.origin[origin] = (appserverTally.origin[origin] ?? 0) + 1;
+}
+/** Fixed vocabulary first (so two runs read the same way), then anything the vocabulary missed. */
+const ordered = (counts, order) => [...order.filter((k) => counts[k]), ...Object.keys(counts).filter((k) => !order.includes(k))]
+  .map((k) => `${k} ${counts[k]}`).join(", ");
+
 // ---- Registry→scorecard direction (Task 6, spec §9's "zero schema-less methods"). The two checks above
 // both start from the DOC: a walked token needs a row, a row's status needs to match. Neither can see a
 // method that is registered, dispatchable and generated into the published JSON-Schema artifact while the
@@ -186,7 +205,7 @@ const appserverUnrowed = [...liveMethods].filter((m) => !rowNamedMethods.has(m))
 
 const report = {
   package: PKG, installed: installedVersion, head: headVersion, drift: diff(installed, head),
-  appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, missing: appserverMissing, stale: appserverStale, unrowed: appserverUnrowed },
+  appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, tally: appserverTally, missing: appserverMissing, stale: appserverStale, unrowed: appserverUnrowed },
 };
 // The gate's verdict travels with the JSON too: exit 1 on a missing, stale or unrowed row, exactly as the
 // text mode does.
@@ -233,3 +252,5 @@ if (appserverUnrowed.length) {
 } else {
   console.log(`  every registered method is named by a scorecard row — zero schema-less methods`);
 }
+console.log(`  ${appserverTally.rows} rows by status: ${ordered(appserverTally.status, ["shipped(M1)", "shipped(M2a)", "shipped(M2b)", "shipped(M3)", "planned(M3)", "probe-gated", "N/A"])}`);
+console.log(`  ${appserverTally.rows} rows by origin scope: ${ordered(appserverTally.origin, ["both", "inProcess", "fleet-only", "N/A"])}`);
