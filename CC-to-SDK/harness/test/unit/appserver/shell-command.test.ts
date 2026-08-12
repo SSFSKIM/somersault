@@ -14,6 +14,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { FLEET_UNSUPPORTED, emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
@@ -200,14 +201,20 @@ describe("thread/shellCommand — the outer deadline bounds the REPLY", () => {
     expect(ok(await call({ threadId, command: "echo fast" }))).toEqual({ code: 0, output: "fast" });
   });
 
-  it("the production deadline sits ABOVE the seam's inner 30 s, so it can only fire for a TERM-proof child", async () => {
+  it("the production deadline sits ABOVE the seam's own inner timeout, so it can only fire for a TERM-proof child", async () => {
     // The tripwire for the one invariant the tests above cannot observe (they invert it on purpose). The
     // inner bound is a bare `timeout: 30_000` literal inside `src/tui/bash.ts` — not exported, and not ours
-    // to export — so the ordering is asserted against the number rather than against the symbol. Lower this
-    // under 30 s and the outer arm starts pre-empting the seam's own timeout, turning every ordinary hang
-    // into an "ignored SIGTERM" note that is simply false.
+    // to export — so it is READ OUT OF THAT SOURCE rather than restated here. Restating the number would
+    // make the tripwire one-directional: it would catch `SHELL_DEADLINE_MS` dropping under the seam's bound,
+    // but not the seam's bound being RAISED past 40 s, which breaks the ordering from the other side. Either
+    // way round the outer arm starts pre-empting the seam's own timeout, turning every ordinary hang into an
+    // "ignored SIGTERM" note that is simply false. Extracted, either constant crossing the other fails here.
+    const bashSrc = readFileSync(fileURLToPath(new URL("../../../src/tui/bash.ts", import.meta.url)), "utf8");
+    const inner = bashSrc.match(/timeout:\s*([\d_]+)/);
+    expect(inner, "src/tui/bash.ts carries no `timeout:` literal — the seam's inner bound moved or vanished").not.toBeNull();
+    const innerMs = Number(inner![1].replaceAll("_", ""));
     const { SHELL_DEADLINE_MS } = await import("../../../src/appserver/workspace.js");
-    expect(SHELL_DEADLINE_MS).toBeGreaterThan(30_000);
+    expect(SHELL_DEADLINE_MS).toBeGreaterThan(innerMs);
   });
 });
 

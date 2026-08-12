@@ -170,7 +170,12 @@ export const fsSearch: Handler = async (_srv, ctx, id, params) => {
  *  would mean reaching past `runBash` into a process the shared TUI seam owns. The child leaks — a real
  *  residual, acceptable only because this method already hands a trusted client arbitrary unsandboxed
  *  execution, so a process it deliberately made unkillable is its own to clean up. The note names the leak
- *  so a client is never told "timed out" while something of its making is still running.
+ *  so a client is never told "timed out" while something of its making is still running. The leak has a
+ *  SECOND half, and it is ours rather than the client's: the abandoned child also pins THIS process's exit.
+ *  `exec`'s stdio handles stay referenced in our event loop and `runBash` hands back only a promise, so
+ *  there is no handle here to unref — measured, the reply lands at 1503 ms and the server process exits at
+ *  10037 ms, when the child finally died. A supervisor awaiting a graceful exit therefore hangs until
+ *  something outside this handler kills the child.
  *
  *  GATED NORMALLY on -33005 (it is NOT in `ENGINE_GONE_EXEMPT`), which is the opposite choice and the
  *  right one: a thread whose engine is gone is dead for every method a client can name on it, and one
