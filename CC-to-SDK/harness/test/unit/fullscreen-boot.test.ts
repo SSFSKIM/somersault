@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ENTER_ALT, EXIT_ALT, MOUSE_OFF } from "../../src/tui/altScreen.js";
+import { TMUX_CC_NOTICE } from "../../src/tui/renderer.js";
 import { runChatClient } from "../../src/tui/chatMain.js";
 
 const spy = vi.hoisted(() => ({ fd1: [] as string[], renderMark: -1, tree: undefined as any, exit: (() => {}) as () => void }));
@@ -86,5 +87,40 @@ describe("runChatClient — the fullscreen boot", () => {
     await boot({ CLAUDE_CODE_NO_FLICKER: undefined, CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "1" }, (p) => { props = p; });
     expect(spy.fd1).toEqual([]);
     expect(props.renderer).toEqual({ mode: "classic", reason: "env_off" });
+  });
+
+  // T16 FIX ROUND — THE TMUX RUNG TELLS THE USER IT FIRED. Every other rung on the ladder is one the user
+  // asked for: they set the env var, they wrote the settings key, they piped the output. This one is ccx
+  // overruling a fullscreen default on their behalf, in a window that gives them no clue why — so the reason
+  // word in `/status` is not enough on its own, and canon logs a sentence here too.
+  //
+  // THE RUNG IS PINNED THROUGH THE CHEAP HEURISTIC, NOT THE SPAWN. This test drives the real `runChatClient`,
+  // so a `TMUX` value would reach a real `tmux display-message` on the machine running the suite — a fake
+  // socket answers "exit 1, no verdict" and the rung would silently not fire. The three-part env test is the
+  // same rung reached without a subprocess, which is what makes this deterministic and keyless.
+  it("queues canon's tmux -CC sentence on the notice bridge, exactly once, when the rung fires", async () => {
+    let props: any;
+    await boot({ CLAUDE_CODE_NO_FLICKER: undefined, CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: undefined,
+                 TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "iTerm.app", TERM: "xterm-256color" }, (p) => { props = p; });
+    expect(props.renderer).toEqual({ mode: "classic", reason: "tmux_cc_off" });
+    // The bridge is what carries text from above the tree into the transcript, and it QUEUES until `useChat`
+    // binds — which is the whole reason a boot-time notice can use it at all. Binding here is what a mounted
+    // `useChat` does, so this reads exactly what the user would have seen.
+    const seen: string[] = [];
+    props.noticeBridge.bind((t: string) => seen.push(t));
+    expect(seen).toEqual([TMUX_CC_NOTICE]);
+    expect(spy.fd1).toEqual([]);                             // …and no alt screen was taken on the way past
+  });
+
+  // The mirror, and the one that stops the notice becoming noise: a launch that is classic for any OTHER
+  // reason says nothing. `env_off` is the user's own pin — telling them what they just asked for would be the
+  // start of a boot banner nobody wants.
+  it("says nothing when some other rung chose classic", async () => {
+    let props: any;
+    await boot({ CLAUDE_CODE_NO_FLICKER: "0", CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: undefined }, (p) => { props = p; });
+    expect(props.renderer).toEqual({ mode: "classic", reason: "env_off" });
+    const seen: string[] = [];
+    props.noticeBridge.bind((t: string) => seen.push(t));
+    expect(seen).toEqual([]);
   });
 });

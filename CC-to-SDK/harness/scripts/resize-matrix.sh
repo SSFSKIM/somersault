@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # harness/scripts/resize-matrix.sh — Wave R acceptance A12: the QA-2 width matrix, scripted.
 #
-# WHICH RENDERER THIS MEASURES: THE CLASSIC ONE, ALWAYS, AND NOW EXPLICITLY (FSW T16). Every cell here is a
-# main-screen claim — residue in scrollback, a rule left at a width the pane no longer has, a second composer
-# block below the first — and all of them are claims about the renderer that lets Ink's tree be as tall as it
-# likes and repairs the damage afterwards. The fullscreen renderer has no scrollback to strand anything in.
-# Until T16 the product default was classic and this file could stay silent about it; T16 flipped
-# `DEFAULT_ON`, so silence would now mean "measures whatever the default happens to be" — the one thing an
-# instrument may not do. `launch` therefore pins `CLAUDE_CODE_NO_FLICKER=0` into every cell's environment
-# (see the note there). A matrix for the fullscreen renderer would be a different file with different needles.
+# WHICH RENDERER EACH CELL MEASURES: STATED PER CELL, AND PINNED PER CELL (FSW T16, widened in its fix round).
+# Nine cells here are main-screen claims — residue in scrollback, a rule left at a width the pane no longer
+# has, a second composer block below the first — and all of them are claims about the renderer that lets Ink's
+# tree be as tall as it likes and repairs the damage afterwards. Until T16 the product default was classic and
+# this file could stay silent about it; T16 flipped `DEFAULT_ON`, so silence would now mean "measures whatever
+# the default happens to be" — the one thing an instrument may not do. `launch` therefore writes the pin into
+# every cell's environment, defaulting to `CLAUDE_CODE_NO_FLICKER=0` (classic, the ladder's `env_off` rung).
+#   THE TENTH CELL IS `f1`, AND IT IS THE FULLSCREEN ONE (`=1`, the `env_on` rung). T16 pinned the nine and
+# thereby left the renderer most users now run with no scripted real-terminal resize corpus at all, which it
+# recorded as a concern rather than closing. f1 closes it: the same tmux driver and the same staging helper,
+# asserting the fullscreen renderer's own claims — the alternate screen survives a SIGWINCH, the frame stays
+# exactly pane-shaped with its dock on the last row it owns, nothing is emitted wider than the pane. It is
+# keyless and it lives here rather than in a second file because the driver, the isolation rules and the
+# teardown discipline below are the expensive parts and they are identical.
 #
 # WHY THIS EXISTS. Wave R's P0 (`qa2-10`, the stale full-width rules and the doubled composer block after a
 # shrink) had ZERO regression coverage: no test in this repo resizes anything. Unit and Ink tests cannot
@@ -223,14 +229,26 @@ self_test() {
   # waits for the tail before it resizes and lands its shrink in whichever regime the model chose that run.
   [ "$(spinner_rows "$dir/sp_bare")" = 1 ] && [ "$(elapsed_rows "$dir/sp_bare")" = 0 ] \
     || { echo "SELF-TEST: the shape needle misses a quiet-gated spinner row (no tail yet)"; ok=0; }
+  # …AND THE F1 GEOMETRY NEEDLES (T16 fix round), by the same construction. `f1_clean` is a healthy fullscreen
+  # frame in miniature: content, the composer's pair of rules, the dock, and the ONE blank row the fullscreen
+  # renderer never writes into (the tree is given `rows − 1`). `f1_pushed` is the shape a tall reprint leaves —
+  # the same frame scrolled down by one, so the dock is on the last row and a row of content sits under where
+  # it belongs — and if `rows_below` greens that, the cell's whole tall-render claim is decorative.
+  { echo "  M1-24"; rule_of 80; echo "$CARET "; rule_of 80; echo "  $F1_FOOTER · ? for shortcuts"; echo ""; } > "$dir/f1_clean"
+  { echo "  M1-24"; rule_of 80; echo "$CARET "; rule_of 80; echo "  $F1_FOOTER · ? for shortcuts"; echo "  M1-24"; } > "$dir/f1_pushed"
+  { echo "  M1-24"; rule_of 80; echo "$CARET "; rule_of 80; echo ""; echo ""; } > "$dir/f1_nodock"
+  [ "$(dock_row "$dir/f1_clean")" = 5 ]        || { echo "SELF-TEST: dock_row does not find the dock's row ($(dock_row "$dir/f1_clean"))"; ok=0; }
+  [ "$(rows_below 5 "$dir/f1_clean")" = 0 ]    || { echo "SELF-TEST: rows_below counts the fullscreen frame's own unwritten last row as content"; ok=0; }
+  [ "$(rows_below 5 "$dir/f1_pushed")" = 1 ]   || { echo "SELF-TEST: rows_below CANNOT SEE A ROW BELOW THE DOCK — the f1 tall-render assertion has no teeth"; ok=0; }
+  [ "$(dock_row "$dir/f1_nodock")" = 0 ]       || { echo "SELF-TEST: dock_row invents a row for a frame that has no dock on it"; ok=0; }
   rm -rf "$dir"
   [ "$ok" = 1 ] || { echo "ABORT: frame checker self-test failed."; exit 1; }
-  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above; the A3 wide-row precondition fires on a bare composer frame; the A3 spinner needles count a stranded duplicate as 2 and read neither the end-of-turn row nor the thinking placeholder as a spinner."
+  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above; the A3 wide-row precondition fires on a bare composer frame; the A3 spinner needles count a stranded duplicate as 2 and read neither the end-of-turn row nor the thinking placeholder as a spinner; the F1 geometry needles place the dock and see a row pushed below it."
 }
 
 # ── session helpers (docs/parity/qa-driver.md §2) ─────────────────────────────────────────────────────────
-launch() {                                  # launch <session> <cols> <rows> [<env-var-name-to-forward>]
-  local s="$1" x="$2" y="$3" fwd="${4-}" home proj cmd
+launch() {                                  # launch <session> <cols> <rows> [<env-var-name-to-forward>] [<no-flicker-pin>]
+  local s="$1" x="$2" y="$3" fwd="${4-}" pin="${5-0}" home proj cmd
   home="$MATRIX_ROOT/$s-home"; proj="$MATRIX_ROOT/$s-proj"; mkdir -p "$home/.claude/ccx" "$proj"
   # `CI=false` IS LOAD-BEARING, AND WITHOUT IT THIS SUITE CANNOT RUN ON ANY CI RUNNER AT ALL. Ink asks
   # `is-in-ci`, which is true when `CI` or `CONTINUOUS_INTEGRATION` is merely PRESENT, or when any variable
@@ -241,16 +259,19 @@ launch() {                                  # launch <session> <cols> <rows> [<e
   # `is-in-ci` short-circuits on the literal `"false"`, which is the one lever that beats all three clauses.
   # It is also the honest value here: the pane below is a real PTY being driven as an interactive user.
   #
-  # `CLAUDE_CODE_NO_FLICKER=0` IS THE RENDERER PIN, AND FROM FSW T16 IT IS LOAD-BEARING (see the header). Every
-  # cell in this file measures MAIN-SCREEN semantics — a stale rule left in scrollback, a doubled composer
-  # block, a stranded placeholder, residue after a grow out of Ink's tall branch. None of those exist in the
-  # fullscreen renderer, which owns a fixed viewport and repaints it whole. T16 flipped `DEFAULT_ON` to true,
-  # so an unpinned launch here would silently swap the subject: the cells would still run, still pass, and
-  # measure a renderer that cannot exhibit the defects they were written to catch. `=0` is the ladder's
-  # `env_off` rung (src/tui/renderer.ts), which sits above both the settings key and the default, so this
-  # pin holds no matter what a5 writes into its prefs file. The fullscreen renderer's own resize behaviour is
-  # a separate instrument and is not measured here.
-  cmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false CLAUDE_CODE_NO_FLICKER=0 node $BIN"
+  # `CLAUDE_CODE_NO_FLICKER` IS THE RENDERER PIN, AND FROM FSW T16 IT IS LOAD-BEARING (see the header). Nine
+  # of the ten cells in this file measure MAIN-SCREEN semantics — a stale rule left in scrollback, a doubled
+  # composer block, a stranded placeholder, residue after a grow out of Ink's tall branch. None of those exist
+  # in the fullscreen renderer, which owns a fixed viewport and repaints it whole. T16 flipped `DEFAULT_ON` to
+  # true, so an unpinned launch here would silently swap the subject: the cells would still run, still pass,
+  # and measure a renderer that cannot exhibit the defects they were written to catch.
+  #   THE VALUE IS A PARAMETER AND ITS DEFAULT IS `0`, THE CLASSIC PIN (T16 fix round). `0` is the ladder's
+  # `env_off` rung and `1` is `env_on` (src/tui/renderer.ts) — the two spellings are one variable and it is
+  # easy to read the wrong one as "off", so: `=0` means classic, `=1` means fullscreen. Both rungs sit above
+  # the settings key and the default, so either pin holds no matter what a cell writes into its prefs file.
+  # Every caller but `run_f1_cell` omits the argument and therefore gets classic; f1 passes `1` and is the one
+  # cell in this file whose subject is the fullscreen renderer.
+  cmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false CLAUDE_CODE_NO_FLICKER=$pin node $BIN"
   # THE CREDENTIAL, WHEN THERE IS ONE (task 6's A3 cell), GOES THROUGH `-e` AND NOT THROUGH `$cmd`. Appending
   # it there would put it in the argv of the shell tmux runs, visible in `ps` for the whole life of the
   # session; with `-e` the child's argv is the `env … node bin.js` line and nothing else (measured). What `-e`
@@ -344,12 +365,19 @@ _settle_frame() {                           # _settle_frame <session> <cols> <la
   tmux capture-pane -t "$s" -p > "$cap"
   check_frame "$cap" "$x" "$label"
 }
-resize_to() {                               # resize_to <session> <cols> <rows> <label>
-  local s="$1" x="$2" y="$3" label="$4"
+# The resize itself, with the pane size read BACK rather than assumed — tmux silently clamps a request that
+# does not fit the client. Split out from `resize_to` (T16 fix round) because the f1 cell needs the same
+# resize with a different assertion after it: `check_frame` is a MAIN-SCREEN verdict and says nothing true
+# about a fullscreen frame.
+resize_to_raw() {                           # resize_to_raw <session> <cols> <rows>
+  local s="$1" x="$2" y="$3" got
   tmux resize-window -t "$s" -x "$x" -y "$y" || { echo "      FAIL resize-window failed"; return 1; }
-  local got; got=$(tmux display -p -t "$s" '#{pane_width}x#{pane_height}')
+  got=$(tmux display -p -t "$s" '#{pane_width}x#{pane_height}')
   [ "$got" = "${x}x${y}" ] || { echo "      FAIL pane is $got, asked for ${x}x${y}"; return 1; }
-  settle_frame "$s" "$x" "$label"
+}
+resize_to() {                               # resize_to <session> <cols> <rows> <label>
+  resize_to_raw "$1" "$2" "$3" || return 1
+  settle_frame "$1" "$2" "$4"
 }
 # ONLY WHAT THIS RUN CREATED. `launch` registers a name AFTER `tmux new-session` succeeds, so a name missing
 # from SESSIONS is either one we never created or one somebody else owns — and every caller reaches here on
@@ -799,9 +827,11 @@ run_a3_cell() {
 # assumption — with everything on one screen nothing has been committed, so `fullStaticOutput` is empty, a tall
 # render would append nothing and the needle could not fire.
 M1_MARKS=16                                 # two rows each: enough transcript to overflow a 40-row pane
-m1_needle() { printf '! echo M1-1'; }       # the FIRST marker's echo row: committed early, so a tall render copies it
-m1_copies() {                               # m1_copies <session> <scratch-file>
-  tmux capture-pane -t "$1" -p -S - > "$2"; grep -c "^$(m1_needle)\$" "$2"
+# The marker's echo row, counted over scrollback. `<n>` defaults to 1 — the FIRST marker, committed early, so a
+# tall render copies it — which is the needle every m1 call below wants. `f1` passes its own last marker
+# instead (see that cell for why the choice differs on the alternate screen); the METHOD is this one either way.
+m1_copies() {                               # m1_copies <session> <scratch-file> [<marker-number>]
+  tmux capture-pane -t "$1" -p -S - > "$2"; grep -c "^! echo M1-${3:-1}\$" "$2"
 }
 m1_flat() {                                 # m1_flat <session> <scratch> <baseline> <label>
   local now; now=$(m1_copies "$1" "$2")
@@ -907,8 +937,141 @@ run_m1_cell() {
   record "m1" "$rc"
 }
 
+# ── the F1 cell: the FULLSCREEN renderer's own resize corpus (T16 fix round) ────────────────────────────────
+# THE ONE CELL IN THIS FILE THAT IS NOT ABOUT THE CLASSIC RENDERER, and it exists because T16 made fullscreen
+# the default and then pinned every existing cell to classic — a correct pin that left the renderer most users
+# now run with no scripted real-terminal resize corpus at all (T16's own concern 2). It launches with
+# `CLAUDE_CODE_NO_FLICKER=1`, the ladder's `env_on` rung: `=1` is the FULLSCREEN pin and `=0` the classic one,
+# which is worth spelling out because one variable carries both and the wrong reading silently swaps the
+# subject of the cell — the exact failure T16 fixed everywhere else in this file.
+#
+# WHAT IS BEING CLAIMED. The fullscreen renderer owns a fixed viewport: it takes the alternate screen, gives
+# the tree `rows − 1` rows and clips. So a resize must leave the screen still taken, the frame still exactly
+# pane-shaped, and nothing emitted that the pane cannot hold. Those are the four assertions below, and they
+# are the INVERSE of the classic cells: there, residue proves the defect; here, the absence of a viewport is
+# the defect and the frame's own geometry is the evidence.
+#
+# (i) `#{alternate_on}` IS THE PIN'S RECEIPT AND THE CELL'S PRECONDITION. It is tmux's own answer, not ours, so
+#     it cannot be faked by a frame that merely looks right — and it is asserted after EVERY leg because a
+#     SIGWINCH is the one event that could plausibly drop the alternate screen. A cell whose pin silently
+#     failed would otherwise be a fullscreen cell measuring classic, which is how this whole fix round started.
+#
+# (ii) THE STAGED-MARKER COUNT, AND ITS BOUND, STATED (measured, tmux 3.7b). `m1_copies` is reused verbatim —
+#     the same `capture-pane -S -` count of the same `! echo` marker — but on the alternate screen `-S -`
+#     returns the VIEWPORT and nothing else, because an alternate screen has no history by construction. So
+#     this needle is weaker here than in m1: it catches a reprint whose duplicate lands INSIDE the viewport,
+#     and it cannot catch one whose evidence scrolls past. It keys on the LAST marker rather than m1's first
+#     for exactly that reason — the last is the one guaranteed to be in the live window on every leg, so the
+#     baseline is 1 and a duplicate reads as 2, where a first-marker baseline would be a vacuous 0. The claim
+#     it fully carries is (iv); this is corroboration, and saying so is cheaper than a needle that looks
+#     stronger than it is.
+#
+# (iii) NOTHING EMITTED WIDER THAN THE PANE, over `capture-pane -J`. Without `-J` this assertion cannot fail:
+#     tmux folds every row to the pane width, so a wide row comes back as two narrow ones. `-J` JOINS rows the
+#     terminal itself wrapped, which is precisely the signature of a row the app emitted too wide — a frame
+#     written to the viewport's width never sets the wrap flag, because a row of exactly `width` glyphs leaves
+#     the cursor pending-wrap and the next escape clears it. `wide_rows_above_frame` is the A3 cell's helper
+#     unchanged, self-tested above.
+#
+# (iv) THE FRAME FILLS THE PANE, DOCK ON THE FRAME'S LAST ROW. This is the fullscreen form of m1's tall-render
+#     claim, and unlike (ii) it has teeth on the alternate screen. Ink's tall branch writes
+#     `clearTerminal + fullStaticOutput + output` as one chunk; when that chunk is longer than the pane the
+#     terminal scrolls, and what is left on screen is the TAIL of the chunk — so the frame's own last line
+#     lands on the terminal's last row instead of on `rows − 1`, and rows appear below where the dock belongs.
+#     Measured on a healthy build at 120x40, 80x24 and 120x24: the footer sits at `rows − 1` on every leg with
+#     the terminal's bottom row untouched, which is the `rows − 1` budget the fullscreen frame is given.
+F1_MARKS=24                                 # 48 rows of transcript: taller than the 40-row pane, asserted below
+F1_FOOTER='⏸ manual mode on'                # the dock's last row — `launch`'s ready-needle, reused as a POSITION
+# The 1-based row the dock's last line occupies, or 0 when it is not on screen at all (which is itself a
+# failure: a frame that lost its footer is not a frame that fills the pane).
+dock_row() { LC_ALL=C grep -n -F "$F1_FOOTER" "$1" | tail -1 | cut -d: -f1 | grep -E '^[0-9]+$' || echo 0; }
+# …and how many rows BELOW a given one carry anything but blanks. `capture-pane` returns exactly `pane_height`
+# lines, so "the frame ends where it should" is two questions — where the dock is, and whether anything is
+# under it — and only the pair distinguishes a correctly-placed dock from one that a scrolled reprint pushed
+# down onto content it should be sitting above.
+rows_below() {                              # rows_below <row> <capture-file>
+  LC_ALL=C awk -v n="$1" 'NR > n { line = $0; sub(/[ \t]+$/, "", line); if (line != "") c++ } END { print c+0 }' "$2"
+}
+# One leg's assertions, all of them, so the walk below reads as the walk and every leg is checked identically.
+# `loud` is what makes the polling wrapper below possible: the quiet form is the poll's predicate and the loud
+# one is the verdict, and they are the SAME code, so a leg can never be waited on by one rule and judged by
+# another.
+f1_check() {                                # f1_check <session> <cols> <rows> <baseline> <label> <loud 0|1>
+  local s="$1" x="$2" y="$3" base="$4" label="$5" loud="$6" rc=0 alt now wide dr below
+  local cap="$MATRIX_ROOT/cap-f1" capj="$MATRIX_ROOT/capj-f1" hist="$MATRIX_ROOT/hist-f1"
+  alt=$(tmux display -p -t "$s" '#{alternate_on}')
+  tmux capture-pane -t "$s" -p > "$cap"
+  tmux capture-pane -t "$s" -p -J > "$capj"
+  now=$(m1_copies "$s" "$hist" "$F1_MARKS")
+  wide=$(wide_rows_above_frame "$x" "$capj")
+  dr=$(dock_row "$cap"); below=$(rows_below "$dr" "$cap")
+  [ "$alt" = 1 ]         || { [ "$loud" = 1 ] && printf '      FAIL %-28s alternate_on=%s: the alt screen did not survive the resize (or the fullscreen pin did not take)\n' "$label" "$alt"; rc=1; }
+  [ "$now" = "$base" ]   || { [ "$loud" = 1 ] && printf '      FAIL %-28s viewport copies of the staged marker %s -> %s: the session was reprinted into the frame\n' "$label" "$base" "$now"; rc=1; }
+  [ "$wide" = 0 ]        || { [ "$loud" = 1 ] && printf '      FAIL %-28s %s emitted row(s) wider than %s columns\n' "$label" "$wide" "$x"; rc=1; }
+  [ "$dr" = $((y - 1)) ] || { [ "$loud" = 1 ] && printf '      FAIL %-28s the dock is on row %s of %s (want %s — the frame is given rows-1)\n' "$label" "$dr" "$y" "$((y - 1))"; rc=1; }
+  [ "$below" = 0 ]       || { [ "$loud" = 1 ] && printf '      FAIL %-28s %s non-blank row(s) below the dock\n' "$label" "$below"; rc=1; }
+  if [ "$rc" = 0 ]; then
+    [ "$loud" = 1 ] && printf '      ok   %-28s alt=1 dockRow=%s/%s below=0 wide=0 copies=%s\n' "$label" "$dr" "$y" "$now"
+    return 0
+  fi
+  [ "$loud" = 1 ] && { echo "      ── frame ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"; }
+  return 1
+}
+# `settle_frame`'s discipline, applied to those assertions: poll for a settled screen, hold it for three
+# consecutive captures (a repaint in flight can show a half-moved dock on a healthy build), never send a key
+# while waiting, and take the verdict from a fresh capture once the window closes — so a broken build still
+# fails, it just is not failed for being slow.
+f1_leg() {                                  # f1_leg <session> <cols> <rows> <baseline> <label>
+  local i=0 hold=0
+  while [ "$i" -lt 24 ]; do                 # 6 s, the same convergence window every idle cell here uses
+    if f1_check "$1" "$2" "$3" "$4" "$5" 0 >/dev/null 2>&1; then
+      hold=$((hold+1)); [ "$hold" -ge 3 ] && break
+    else hold=0; fi
+    sleep 0.25; i=$((i+1))
+  done
+  f1_check "$1" "$2" "$3" "$4" "$5" 1
+}
+run_f1_cell() {
+  local s="fsw-t16-f1-$RUN_ID" rc=0 cap="$MATRIX_ROOT/cap-f1" hist="$MATRIX_ROOT/hist-f1" i=1 base=0 first=0
+  echo "  cell f1 (FULLSCREEN, CLAUDE_CODE_NO_FLICKER=1): launch 120x40 over a transcript taller than the pane -> 80x24 -> 120x24"
+  launch "$s" 120 40 "" 1 || { record "f1" 1; kill_cell "$s"; return; }
+  # PRECONDITION 1 — the pin took. Asserted before anything is staged, because every later assertion is about
+  # a renderer this cell has to know it is actually running.
+  if [ "$(tmux display -p -t "$s" '#{alternate_on}')" != 1 ]; then
+    echo "      FAIL f1 precondition: the pane is not on the alternate screen — CLAUDE_CODE_NO_FLICKER=1 did not select the fullscreen renderer"
+    kill_cell "$s"; record "f1" 1; return
+  fi
+  while [ "$i" -le "$F1_MARKS" ]; do
+    m1_stage "$s" "$i" "$hist" || { record "f1" 1; kill_cell "$s"; return; }
+    i=$((i+1))
+  done
+  # PRECONDITION 2 — the transcript really is taller than the pane. m1 proves this by counting scrollback rows;
+  # there is no scrollback here, so the fullscreen-native form is that the FIRST marker has already been pushed
+  # out of the frame. If it were still on screen the whole transcript would fit, the live window would never be
+  # full, and the geometry assertions below would be measuring a frame with room to spare.
+  tmux capture-pane -t "$s" -p > "$cap"
+  first=$(grep -c "^! echo M1-1\$" "$cap")
+  if [ "$first" != 0 ]; then
+    echo "      FAIL f1 precondition: the first marker is still on screen at 120x40 — the transcript fits the pane, so the frame is not at full height"
+    sed 's/^/      | /' "$cap"; kill_cell "$s"; record "f1" 1; return
+  fi
+  base=$(m1_copies "$s" "$hist" "$F1_MARKS")
+  if [ "$base" != 1 ]; then
+    echo "      FAIL f1 precondition: the last marker appears $base time(s) in the frame before any resize (want 1) — the needle has nothing to hold flat"
+    kill_cell "$s"; record "f1" 1; return
+  fi
+  printf '      ok   %-28s %s markers staged, first pushed out of frame, last on screen once\n' "f1 preconditions" "$F1_MARKS"
+  f1_leg "$s" 120 40 "$base" "f1 start 120x40" || rc=1
+  resize_to_raw "$s" 80 24 || rc=1
+  f1_leg "$s" 80 24 "$base" "f1 shrink 80x24" || rc=1
+  resize_to_raw "$s" 120 24 || rc=1
+  f1_leg "$s" 120 24 "$base" "f1 widen 120x24" || rc=1
+  kill_cell "$s"
+  record "f1" "$rc"
+}
+
 # ── run ───────────────────────────────────────────────────────────────────────────────────────────────────
-echo "Wave R — QA-2 width matrix (A12) — CLASSIC renderer only (CLAUDE_CODE_NO_FLICKER=0 pinned per cell)"
+echo "Wave R — QA-2 width matrix (A12) — nine CLASSIC cells (CLAUDE_CODE_NO_FLICKER=0) plus one FULLSCREEN cell, f1 (=1); every cell pinned"
 self_test
 
 if [ "$BUILD" = 1 ]; then
@@ -932,8 +1095,9 @@ MATRIX_ROOT=$(mktemp -d /tmp/wr-t5-matrix-XXXXXX)
 # The QA-2 width matrix (plan Global Constraints). The first four shrink; the last two are the height-only
 # controls, which must stay clean — they are the "did the fix over-erase?" half of the matrix.
 #
-# CELL SELECTION, for iterating on one cell without paying for the other nine: `RESIZE_MATRIX_CELLS=a3`
-# (space- or comma-separated names) runs only what it names. Unset — the CI and the DoD form — runs all ten.
+# CELL SELECTION, for iterating on one cell without paying for the other ten: `RESIZE_MATRIX_CELLS=a3`
+# (space- or comma-separated names) runs only what it names. Unset — the CI and the DoD form — runs all eleven
+# (nine classic, `f1` fullscreen, and the keyed `a3`).
 # A filtered run still prints its own tally, so it can never be mistaken for a full one.
 want_cell() {                               # want_cell <name>
   [ -z "${RESIZE_MATRIX_CELLS:-}" ] && return 0
@@ -948,6 +1112,7 @@ want_cell h2 && run_cell h2 80x40 80x15                 # height-only control
 want_cell a5 && run_a5_cell
 want_cell g1 && run_g1_cell                    # W2 t7 (s2qa2-05): clip-then-grow out of Ink's tall branch
 want_cell m1 && run_m1_cell                    # FSW T4: the live window must not reach the tall branch; streaming half is keyed
+want_cell f1 && run_f1_cell                    # FSW T16 fix round: the FULLSCREEN renderer's own resize walk (keyless)
 want_cell a3 && run_a3_cell                    # live (task 6, A3); skips cleanly with no credential
 
 PREFS_AFTER=$(prefs_stamp)

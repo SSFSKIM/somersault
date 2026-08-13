@@ -12,7 +12,7 @@ import { formatIssues, userBindingsPath } from "./keys/userBindings.js";
 import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs, type CcxPrefs } from "./prefs.js";
-import { makeTmuxProbe, selectRenderer, type RendererChoice, type RendererMode } from "./renderer.js";
+import { TMUX_CC_NOTICE, makeTmuxProbe, selectRenderer, type RendererChoice, type RendererMode } from "./renderer.js";
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
@@ -631,7 +631,12 @@ export function createRendererSwitch(deps: { prefs: CcxPrefs; isTTY: boolean; en
  *  Everything else is passed straight through, which also means `spy.tree.props.children.props` still reads
  *  ChatApp's props at boot: the only two this adds are the ones ChatApp cannot be given from outside React. */
 export function ChatRoot({ rendererSwitch, ...props }: { rendererSwitch: RendererSwitch } & React.ComponentProps<typeof ChatApp>): React.ReactElement {
-  const [choice, setChoice] = React.useState<RendererChoice>(props.renderer ?? { mode: "classic", reason: "default_off" });
+  // `renderer` is optional only for tests that mount this component without one; `runChatClient` always
+  // passes the boot choice. The fallback reason is `not_tty` and NOT `default_off` (T16 review, minor 8):
+  // `default_off` is a word the post-flip ladder can no longer produce at all, so a `/status` printing it
+  // would be naming a rung that does not exist — and the launch this fallback actually describes, a mount
+  // with no terminal behind it, is the ladder's own top rung.
+  const [choice, setChoice] = React.useState<RendererChoice>(props.renderer ?? { mode: "classic", reason: "not_tty" });
   // …and the callback closes over NOTHING that can go stale: `apply` compares against the holder above the
   // tree, which is the same value the output proxy reads, so there is one record of "which screen are we on"
   // and no render of this component can disagree with it.
@@ -720,6 +725,19 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // there is no console to print into.
   const keybindingsFile = userBindingsPath();
   const notices = createNoticeBridge();
+  // FSW T16 fix round — THE ONE RUNG THAT OWES THE USER A SENTENCE, and it goes out on the bridge the
+  // keybindings watcher already uses, for the same reason: at boot there is no transcript to append to and no
+  // console to print into without corrupting the first frame. The bridge queues it and `useChat` flushes it
+  // on mount as an ordinary dim notice.
+  //   WHY THIS RUNG AND NO OTHER. Every other classic verdict is something the user did — a pin, a settings
+  // key, a pipe — and `/status` is the right place to look those up. `tmux_cc_off` is ccx overruling the
+  // fullscreen default from inside a window that gives no clue why, for a user who is in that window
+  // PRECISELY BECAUSE their environment does not advertise itself. Canon says the same sentence at the same
+  // rung (renderer.ts's `TMUX_CC_NOTICE`); it says it to a debug log, and we say it where it can be read.
+  //   ONCE, because this is the boot path and it runs once. `/tui` re-walks the ladder later and deliberately
+  // does NOT come back through here: `formatTuiResult` already answers that keystroke with the same reason
+  // word, and a second copy of this line would be the repetition canon's own once-per-process flag avoids.
+  if (renderer.reason === "tmux_cc_off") notices.notify(TMUX_CC_NOTICE);
   // F5 task 8 — `DVf` (bundle L495100): top up the `Try "${file}"` example-file cache if it is empty or over
   // a week old. Fire-and-forget and deliberately HERE rather than in the composer: it shells out to `git log`
   // exactly once per process, while the composer is remounted behind every dialog. A `setTimeout(0)` keeps

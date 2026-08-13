@@ -153,12 +153,20 @@ was taken under.** `/status` names the live renderer and the rung that chose it
 (`renderer   classic (env_off) · …`) — read it back whenever a cell's result surprises you, rather
 than inferring the mode from the frame.
 
-One more rung can overrule a *fullscreen* pin and it is not an env var: from Task 16 the tmux `-CC`
-rung asks tmux itself (`tmux display-message -p '#{client_control_mode}'`, canon's probe, restored
-because the flip made the gap reachable) whenever `TMUX` is set and `TERM_PROGRAM` is not. Inside a
-control-mode client you get `classic (tmux_cc_off)` no matter what `CLAUDE_CODE_NO_FLICKER=1` says —
-`env_on` sits above it, so the pin does win, but a cell driven from a plain `tmux` pane with no
-`TERM_PROGRAM` and no pin lands classic rather than on the new default. Read `/status` back.
+**One more rung can send an UNPINNED cell to classic, and it is not an env var — but it cannot touch a
+pin.** A fullscreen pin outranks it: `env_on` (`CLAUDE_CODE_NO_FLICKER=1`) sits ABOVE the tmux rung on the
+ladder, so a pinned cell gets the renderer it asked for wherever it runs. The rung only decides cells that
+pin nothing. From Task 16 it asks tmux itself — `tmux display-message -p '#{client_control_mode}'`, canon's
+own probe, restored because the flip made the gap reachable — whenever `TMUX` is set and `TERM_PROGRAM` is
+either unset or the literal `tmux`. That last word is ccx's deliberate divergence from canon, and it is
+what makes the rung work at all: measured on tmux 3.7b, tmux stamps `TERM_PROGRAM=tmux` into every pane it
+spawns, so canon's "entirely unset" gate can never fire inside tmux.
+
+So, for a cell driven from a tmux pane with no pin: an **ordinary** pane answers `0`, the rung does not
+fire, and the cell lands on the new default — **fullscreen**, not classic. A pane whose client is a
+`tmux -CC` control-mode session answers `1` and lands `classic (tmux_cc_off)`, saying so once in the
+transcript (`fullscreen disabled: tmux -CC (iTerm2 integration mode) detected …`). Either way: pin the
+cell, and read `/status` back.
 
 **Which instrument measures which renderer** (keep this table honest when adding one):
 
@@ -167,7 +175,10 @@ control-mode client you get `classic (tmux_cc_off)` no matter what `CLAUDE_CODE_
 | §2.1 launch line above | classic | `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` on the line |
 | §5 resize probe | classic | inherits §2.1's session |
 | §6.2 terminal-usability probe | fullscreen | `CLAUDE_CODE_NO_FLICKER=1` on the line (the alt screen is the thing whose restore it proves) |
-| `harness/scripts/resize-matrix.sh` (all ten cells) | classic | `CLAUDE_CODE_NO_FLICKER=0` injected by its `launch` helper |
+| `harness/scripts/resize-matrix.sh` — nine classic cells (`c1`–`c4`, `h1`, `h2`, `a5`, `g1`, `m1`) plus `a3` | classic | `CLAUDE_CODE_NO_FLICKER=0`, the `launch` helper's default pin |
+| `harness/scripts/resize-matrix.sh` — one fullscreen cell (`f1`) | fullscreen | `CLAUDE_CODE_NO_FLICKER=1` passed to `launch` by that cell |
+| `harness/scripts/capture-frames.py` (both binaries) | classic | `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` written into `child_env` — the goldens in `test/fixtures/upstream-frames/` are main-screen shaped |
+| `harness/scripts/drive-repl.py` | classic | `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` set on the child; a raw pty stream is a main-screen instrument |
 
 ### 2.2 One turn
 

@@ -201,6 +201,19 @@ describe("/tui — the live flip", () => {
     const line = (readFileSync(bundle, "utf8").split("\n")[482602] ?? "").replace(/\\u2014/g, "—");
     expect(line).toContain(`e(${JSON.stringify(TUI_BUSY_REFUSAL)}, { display: "system" })`);
   });
+
+  // T16 review, minor 6 — THE PROBE IS THREADED, NOT RE-MADE. `runChatClient` builds one cached probe at boot
+  // and hands it here so `/tui` never spawns a subprocess on a keystroke. Nothing above pins that the dep
+  // actually reaches `selectRenderer`: a `createRendererSwitch` that dropped it would still return a choice,
+  // just one that had asked a real tmux. Counting the calls is what says it went in.
+  it("threads its injected tmuxProbe into the ladder, once per select", () => {
+    let asked = 0;
+    const guard = createAltScreenGuard({ writeSync: () => {} });
+    const rendererSwitch = createRendererSwitch({ prefs: {}, isTTY: true, env: { TMUX: "/tmp/t,1,0" }, guard,
+      live: { mode: "classic" as const }, output: { noteScreenChange: () => {} }, tmuxProbe: () => { asked++; return true; } });
+    expect(rendererSwitch.select("fullscreen")).toEqual({ mode: "classic", reason: "tmux_cc_off" });
+    expect(asked).toBe(1);
+  });
 });
 
 // ── 3. The bytes ─────────────────────────────────────────────────────────────────────────────────────────

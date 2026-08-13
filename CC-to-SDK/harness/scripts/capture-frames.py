@@ -7,6 +7,17 @@ with minimal SGR sequences reconstructed from per-cell attributes. Frames are sc
 streams — raw pty output is not comparable across binaries (repaint strategies differ); the emulated
 grid is.
 
+WHICH RENDERER THIS MEASURES: THE CLASSIC ONE, for both binaries, PINNED (FSW T16 fix round). Every
+frame in test/fixtures/upstream-frames/ was captured on the main screen, so a capture that took the
+alternate screen would be a different shape compared against the same goldens. Until T16 that held by
+accident on both sides — canon's fullscreen sat behind an off-by-default gate and ccx's `DEFAULT_ON`
+was False — and T16 flipped ours, which would silently have swapped the subject of every ccx capture
+while leaving it green-looking. So `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` goes into the child
+environment in code (see the `child_env` block; a value from the invoking shell would be scrubbed by
+clean_child_env along with every other CLAUDE* var). It is the same spelling in both binaries and it
+is the top env rung of ccx's ladder, so nothing below it can overrule the pin. A FULLSCREEN corpus
+would be a different --out directory with its own goldens, not a flag on this one.
+
 Setup (once, PEP 668 blocks a bare pip on this machine):
     python3 -m venv "$CLAUDE_JOB_DIR/tmp/frame-python-venv" && "$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/pip" install -r scripts/frames/requirements.txt
 Run every invocation of this script with that interpreter: "$CLAUDE_JOB_DIR/tmp/frame-python-venv/bin/python3".
@@ -604,6 +615,9 @@ def main() -> int:
         (Path(config_dir) / ".claude.json").write_text(ONBOARDING_COMPLETE_CONFIG, encoding="utf-8")
         child_env["CLAUDE_CONFIG_DIR"] = config_dir
         child_env["TERM"] = "xterm-256color"
+        # THE RENDERER PIN — see "WHICH RENDERER THIS MEASURES" in the module docstring. Set here rather than
+        # inherited because clean_child_env drops every CLAUDE*-prefixed variable the invoking shell carried.
+        child_env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1"
     except OSError as error:
         sys.stderr.write(f"capture-frames: cannot create isolated Claude config: {error}\n")
         if config_dir is not None:

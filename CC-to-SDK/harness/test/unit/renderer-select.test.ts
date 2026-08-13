@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_ON, makeTmuxProbe, probeTmuxControlMode, selectRenderer } from "../../src/tui/renderer.js";
+import { DEFAULT_ON, TMUX_CC_NOTICE, makeTmuxProbe, probeTmuxControlMode, selectRenderer } from "../../src/tui/renderer.js";
 import { loadPrefs } from "../../src/tui/prefs.js";
 import type { CcxPrefs } from "../../src/tui/prefs.js";
 
@@ -116,6 +116,33 @@ describe("selectRenderer — the ladder, rung by rung", () => {
     expect(selectRenderer({ ...bare, env: bareTmux, tmuxProbe: () => false })).toEqual({ mode: "fullscreen", reason: "default_on" });
   });
 
+  // T16 FIX ROUND — THE WIDENED GATE, WALKED END TO END THROUGH THE REAL PROBE rather than through an
+  // injected verdict. This is the launch canon's gate cannot serve and ours now can: tmux stamps
+  // `TERM_PROGRAM=tmux` into every pane it spawns, so "TERM_PROGRAM entirely unset" is a state that does not
+  // occur inside tmux and the rung above only knows the word `iTerm.app`. The seam here is the SPAWN, so the
+  // gate and the ladder are exercised together — an env that reaches tmux answers `1` and lands classic, the
+  // same env answering `0` falls all the way through to the flipped default.
+  it("a pane stamped TERM_PROGRAM=tmux reaches the spawn, and its answer decides the rung", () => {
+    const stamped = { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "tmux", TERM: "screen-256color" };
+    const spawnOf = (stdout: string) => {
+      const calls: unknown[][] = [];
+      const spawn = ((...args: unknown[]) => { calls.push(args); return { status: 0, stdout, stderr: "" }; }) as never;
+      return { calls, probe: (env: NodeJS.ProcessEnv) => probeTmuxControlMode(env, spawn) };
+    };
+    const yes = spawnOf("1\n");
+    expect(selectRenderer({ ...bare, env: stamped, tmuxProbe: yes.probe })).toEqual({ mode: "classic", reason: "tmux_cc_off" });
+    expect(yes.calls).toHaveLength(1);
+    const no = spawnOf("0\n");
+    expect(selectRenderer({ ...bare, env: stamped, tmuxProbe: no.probe })).toEqual({ mode: "fullscreen", reason: "default_on" });
+    expect(no.calls).toHaveLength(1);
+    // …and the widening is ONE WORD WIDE. Any other terminal that named itself is still answered without a
+    // subprocess, which is the whole of canon's cost control and the only part of its gate that still works.
+    const boom = { ...settingsFloor, tmuxProbe: (env: NodeJS.ProcessEnv) => probeTmuxControlMode(env, (() => { throw new Error("spawned"); }) as never) };
+    for (const term of ["iTerm.app", "Apple_Terminal", "vscode", "WezTerm", "ghostty"])
+      expect(selectRenderer({ ...boom, env: { TMUX: "/tmp/t,1,0", TERM_PROGRAM: term, TERM: "screen-256color" } }))
+        .toEqual({ mode: "classic", reason: "settings_off" });
+  });
+
   it("win_ssh_off needs BOTH Windows and an SSH marker, beats settings, and loses to tmux_cc_off", () => {
     for (const marker of ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"])
       expect(selectRenderer({ ...bare, platform: "win32", env: { [marker]: "yes" } })).toEqual({ mode: "classic", reason: "win_ssh_off" });
@@ -173,15 +200,32 @@ describe("probeTmuxControlMode — the tmux -CC shell-out", () => {
     expect(probeTmuxControlMode(ccEnv, no.spawn)).toBe(false);
   });
 
+  // T16 FIX ROUND — THE ONE WORD THE GATE IS WIDER THAN CANON'S, pinned on both sides. Measured on tmux 3.7b:
+  // every pane tmux spawns carries `TERM_PROGRAM=tmux` (and `TERM_PROGRAM_VERSION`), whether or not the shell
+  // that started the server had one, so canon's "TERM_PROGRAM entirely unset" gate is unreachable from inside
+  // tmux — the only place the rung is about. `tmux` is therefore let through; every other name is not.
+  it("lets the stamp tmux writes into its own panes through to the spawn", () => {
+    const stamped = { TMUX: "/tmp/tmux-501/default,1,0", TERM_PROGRAM: "tmux", TERM: "screen-256color" } as NodeJS.ProcessEnv;
+    const yes = fakeSpawn({ status: 0, stdout: "1\n" });          // a -CC client: measured `1` on tmux 3.7b
+    expect(probeTmuxControlMode(stamped, yes.spawn)).toBe(true);
+    expect(yes.calls).toHaveLength(1);
+    const no = fakeSpawn({ status: 0, stdout: "0\n" });           // an ordinary pane: measured `0`
+    expect(probeTmuxControlMode(stamped, no.spawn)).toBe(false);
+    expect(no.calls).toHaveLength(1);
+  });
+
   it("never spawns when the cheap env test already decided, either way", () => {
     const boom = (() => { throw new Error("spawned"); }) as never;
     // Heuristic HIT: iTerm2 named itself and the TERM is a passthrough window — answered without tmux.
     expect(probeTmuxControlMode({ TMUX: "/tmp/t,1,0", TERM_PROGRAM: "iTerm.app", TERM: "xterm-256color" }, boom)).toBe(true);
     // No tmux at all.
     expect(probeTmuxControlMode({ TERM: "xterm-256color" }, boom)).toBe(false);
-    // A terminal that named itself and is not iTerm2 — canon's gate, and the reason the vast majority of
-    // launches pay nothing for this rung.
+    // A terminal that named itself and is neither iTerm2 nor tmux — canon's gate minus the one dead clause,
+    // and the reason the vast majority of launches pay nothing for this rung.
     expect(probeTmuxControlMode({ TMUX: "/tmp/t,1,0", TERM_PROGRAM: "vscode", TERM: "xterm-256color" }, boom)).toBe(false);
+    // …including iTerm2 itself once the TERM says this is a real pane rather than a `-CC` passthrough window:
+    // the heuristic above has already answered no, and the gate must not turn that into a subprocess.
+    expect(probeTmuxControlMode({ TMUX: "/tmp/t,1,0", TERM_PROGRAM: "iTerm.app", TERM: "screen-256color" }, boom)).toBe(false);
   });
 
   it("every failure is a non-verdict, never a throw", () => {
@@ -189,6 +233,15 @@ describe("probeTmuxControlMode — the tmux -CC shell-out", () => {
     expect(probeTmuxControlMode(ccEnv, fakeSpawn({ status: null }).spawn)).toBe(false);         // timeout, or tmux not on PATH
     expect(probeTmuxControlMode(ccEnv, fakeSpawn({ status: 0, stdout: "" }).spawn)).toBe(false); // no output to parse
     expect(probeTmuxControlMode(ccEnv, (() => { throw new Error("EACCES"); }) as never)).toBe(false);
+  });
+
+  // T16 FIX ROUND — THE COPY, BYTE FOR BYTE. Canon logs this string once per process when the same rung fires
+  // (2.1.220 `ds()` at L110122, behind `loggedTmuxCcDisable`). It is spelled out here as a literal rather than
+  // built from parts because the whole value of porting it is that a user who searches the sentence finds
+  // Claude Code's own answer — a paraphrase would be a different string with the same meaning, which is worth
+  // nothing. `·` is the middle dot canon escapes as `\xB7`.
+  it("the tmux -CC notice is canon's sentence, verbatim", () => {
+    expect(TMUX_CC_NOTICE).toBe("fullscreen disabled: tmux -CC (iTerm2 integration mode) detected · set CLAUDE_CODE_NO_FLICKER=1 to override");
   });
 
   it("makeTmuxProbe asks once and answers every later caller from the cache", () => {

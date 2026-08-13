@@ -6,6 +6,16 @@ invisible to the in-process Ink tests and visible here in one run: the slash-com
 palette capped at 8, `/exit` unhandled, and a quietly-successful `!` command rendering
 nothing at all. Ink tests prove components; this proves the binary.
 
+WHICH RENDERER THIS OBSERVES: THE CLASSIC ONE, PINNED (FSW T16 fix round). What this script
+prints is a RAW PTY STREAM read back after the fact, which is a main-screen way of looking at a
+terminal: on the alternate screen the interesting bytes are a repainted viewport rather than a
+running log, and everything the child wrote is discarded by the rmcup on exit. T16 flipped
+`DEFAULT_ON` to True, so an unpinned run would now be reading the wrong renderer's stream while
+looking exactly as before, and every defect this instrument has ever found was a classic one.
+`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` is therefore set on the child below. To watch the
+FULLSCREEN renderer instead, drive it under tmux and read frames with `capture-pane` — see
+harness/scripts/resize-matrix.sh's `f1` cell; a raw stream is the wrong instrument for it.
+
 Usage (from harness/):
     set -a; . ../.env; set +a
     python3 scripts/drive-repl.py /tmp/scratchdir '!echo hi' '/help' '/exit'
@@ -58,6 +68,9 @@ if pid == 0:
     os.environ["TERM"] = "xterm-256color"
     os.environ["COLUMNS"] = str(COLS)
     os.environ["LINES"] = str(ROWS)
+    # THE RENDERER PIN — see "WHICH RENDERER THIS OBSERVES" in the docstring. Written here so a value in the
+    # invoking shell cannot change what this script is about without the script saying so.
+    os.environ["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1"
     os.execvp("node", ["node", "--import", "tsx", entry, "--cwd", workdir])
 
 # Node does NOT read COLUMNS/LINES for a TTY — process.stdout.columns comes from the terminal-size
