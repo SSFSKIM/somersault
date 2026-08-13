@@ -181,7 +181,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, switchRenderer, aroundSubprocess, altHandoff }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -263,6 +263,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  pipe, a screen reader, an env lever) still wins, and the caller prints what actually happened.
    *    Absent for every embedder and component test, where `/tui` saves the pref and says so. */
   switchRenderer?: (tui: "fullscreen" | "default") => RendererChoice;
+  /** EXTERNAL REVIEW, FINDING 3 — the same ladder as `switchRenderer`, asked without performing the flip
+   *  (`RendererSwitch.select`). `/tui`'s busy refusal has to know whether the request would move the SCREEN,
+   *  and a rung above the settings rung can mean it would not. Threaded from `chatMain` beside its sibling,
+   *  and absent in exactly the same places. */
+  selectRenderer?: (tui: "fullscreen" | "default") => RendererChoice;
   /** FSW TASK 12 — T6's `guard.aroundSubprocess`, threaded down for EVERY child this tree hands the terminal
    *  to: the `v` dump's editor, and (t12 review, I1) the composer's ctrl+g / ctrl+x ctrl+e and the plan
    *  dialog's ctrl+g, all of which must run with the main screen in front of them. A prop rather than a
@@ -298,7 +303,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
     // passes neither leaves `/status` exactly as silent about the renderer as it always was.
-    ...(renderer ? { rendererChoice: renderer } : {}), ...(switchRenderer ? { switchRenderer } : {}),
+    ...(renderer ? { rendererChoice: renderer } : {}), ...(switchRenderer ? { switchRenderer } : {}), ...(selectRenderer ? { selectRenderer } : {}),
     cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, chatDeps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes

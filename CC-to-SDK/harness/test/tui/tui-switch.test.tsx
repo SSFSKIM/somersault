@@ -124,17 +124,19 @@ const FULLSCREEN: RendererChoice = { mode: "fullscreen", reason: "settings_on" }
  *  string rather than a terminal, so there is no output proxy in this instrument's loop — but the ORDER of
  *  the screen-debt hand-over against the guard's escape is exactly what the fix is about, so the announcement
  *  is recorded where the escapes are. The byte harness below runs the real proxy instead. */
-function harnessSwitch(sink: string[] = []) {
+function harnessSwitch(sink: string[] = [], env: NodeJS.ProcessEnv = {}) {
   const unmounts: number[] = [];
   const guard = createAltScreenGuard({ writeSync: (s) => { sink.push(s); }, unmount: () => { unmounts.push(1); } });
   const live = { mode: CLASSIC.mode };
   const output = { noteScreenChange: (to: "alt" | "main") => { sink.push(`<screen:${to}>`); } };
-  return { sink, guard, live, unmounts, rendererSwitch: createRendererSwitch({ prefs: {}, isTTY: true, env: {}, guard, live, output }) };
+  return { sink, guard, live, unmounts, rendererSwitch: createRendererSwitch({ prefs: {}, isTTY: true, env, guard, live, output }) };
 }
 
-function mountRepl(opts: { entries?: readonly TranscriptBootstrapEntry[] } = {}) {
+/** `env` is the LADDER's environment, not `useChat`'s: it is what decides which rung answers a `/tui`, which
+ *  is the whole subject of the forced-rung case below. */
+function mountRepl(opts: { entries?: readonly TranscriptBootstrapEntry[]; env?: NodeJS.ProcessEnv } = {}) {
   const saved: Record<string, unknown>[] = [];
-  const h = harnessSwitch();
+  const h = harnessSwitch([], opts.env ?? {});
   const session = fakeRemote();
   const r = renderWithKeymap(
     <ChatRoot rendererSwitch={h.rendererSwitch} makeSession={() => session} client={{ kind: "loopback" }}
@@ -223,6 +225,28 @@ describe("/tui — the live flip", () => {
     expect(text(lastFrame)).toContain(strip(TUI_BUSY_REFUSAL).replace(/\s+/g, " "));
     expect(saved).toEqual([]);
     expect(sink).toEqual([]);
+    unmount();
+  });
+
+  // EXTERNAL REVIEW, FINDING 3 — A REFUSAL IS OWED ONLY WHERE THERE IS A TRANSITION TO REFUSE.
+  //
+  // A rung ABOVE the settings rung — a screen reader, `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`, tmux `-CC`,
+  // Windows over SSH — holds the mode down whatever the setting says. `/tui fullscreen` there moves no screen
+  // at all, so background work is no reason to decline it, and the old gate (requested SETTING vs LIVE mode)
+  // declined it anyway: the user got advice to wait for a task before a flip that could never happen, and the
+  // `break` took the pref write with it, so the setting they meant for their NEXT launch was dropped too.
+  it("does not refuse a request an env rung has already overruled — and still saves the pref", async () => {
+    const { stdin, lastFrame, saved, sink, session, unmount } = mountRepl({ env: { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "1" } });
+    await tick();
+    session.pushEvent({ kind: "tasks_changed", tasks: [{ taskId: "t1", status: "running", description: "build" } as never] });
+    await tick();
+    await runSlash(stdin, lastFrame, "/tui fullscreen");
+    expect(text(lastFrame)).not.toContain(strip(TUI_BUSY_REFUSAL).replace(/\s+/g, " "));
+    // …and what it says instead is the overruled outcome, naming the rung that won — the same reason word
+    // `/status` prints, so a user who sees this can go and look it up.
+    expect(text(lastFrame)).toContain("Saved. The fullscreen renderer does not apply here (env_off).");
+    expect(saved).toEqual([{ tui: "fullscreen" }]);
+    expect(sink).toEqual([]);                                          // no screen was taken; there was none to take
     unmount();
   });
 

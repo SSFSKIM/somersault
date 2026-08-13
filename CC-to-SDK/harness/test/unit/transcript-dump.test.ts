@@ -14,11 +14,11 @@
 //   · L547303         the transcript screen's hint row — `v to open in ${editor}` — which is canon's proof
 //                     that this key belongs to a scrolled/READING surface, not to a focused composer.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createAltScreenGuard } from "../../src/tui/altScreen.js";
-import { dumpTranscript, transcriptText } from "../../src/tui/transcriptDump.js";
+import { dumpTranscript, transcriptText, verifiedDumpDir } from "../../src/tui/transcriptDump.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
 
@@ -136,6 +136,68 @@ describe("dumpTranscript", () => {
   it("never throws — a failure comes back as a message", () => {
     const r = dumpTranscript({ items: () => { throw new Error("projection exploded"); }, dir: () => scratch() });
     expect(r).toEqual({ status: "failed", message: "render failed: projection exploded" });
+  });
+
+  // ── EXTERNAL REVIEW, FINDING 2 — THE DESTINATION IS A SHARED DIRECTORY WITH A PREDICTABLE NAME ──────────
+  // Both halves are about the same attacker: a second local user on a machine with a shared `/tmp`, who can
+  // guess `ccx-<uid>` and can guess `cc-transcript-<ms>.txt` to within a few thousand tries. Canon has the
+  // same exposure; ours is closed. See `verifiedDumpDir`'s header for the argument.
+
+  // A planted SYMLINK at the exact name the next dump will use. `writeFileSync` follows it and the transcript
+  // lands in the attacker's file with the attacker's mode; `wx` (O_CREAT|O_EXCL) refuses to open it at all.
+  it("does not follow a symlink planted at the predicted path — it lands beside it instead", () => {
+    const dir = scratch(), victim = join(scratch(), "victim.txt");
+    writeFileSync(victim, "ORIGINAL");
+    const predicted = join(dir, "cc-transcript-42.txt");
+    symlinkSync(victim, predicted);
+    const { calls, spawn } = fakeSpawn();
+    const r = dumpTranscript({
+      items: () => [line("a", { text: "secret" })], now: () => 42, dir: () => dir,
+      editorIO: { spawn, editorCmd: "vi", setRaw: () => {}, restoreTty: () => {} },
+    });
+    expect(readFileSync(victim, "utf8")).toBe("ORIGINAL");            // the plant was never written through
+    expect(lstatSync(predicted).isSymbolicLink()).toBe(true);         // …and is still just a symlink
+    expect(r.status).toBe("opened");
+    expect(r.file).not.toBe(predicted);
+    expect(basename(r.file!)).toMatch(/^cc-transcript-42-[0-9a-f]{8}\.txt$/);
+    expect(readFileSync(r.file!, "utf8")).toBe("secret\n");
+    expect(calls).toEqual([{ cmd: "vi", args: [r.file!] }]);          // …and the editor opens the REAL dump
+  });
+
+  // The same refusal covers the ordinary collision the retry was designed around — two dumps inside one
+  // millisecond — which is why there is one code path and not two.
+  it("retries on a plain name collision rather than overwriting the earlier dump", () => {
+    const dir = scratch();
+    writeFileSync(join(dir, "cc-transcript-42.txt"), "FIRST");
+    const r = dumpTranscript({ items: () => [line("a", { text: "second" })], now: () => 42, dir: () => dir,
+      editorIO: { spawn: fakeSpawn().spawn, editorCmd: "vi", setRaw: () => {}, restoreTty: () => {} } });
+    expect(readFileSync(join(dir, "cc-transcript-42.txt"), "utf8")).toBe("FIRST");
+    expect(readFileSync(r.file!, "utf8")).toBe("second\n");
+  });
+
+  // …and the directory itself. `mkdirSync(…, {recursive:true})` accepts a name that already exists, so a
+  // pre-created `ccx-<uid>` — here a symlink to a world-readable directory — is adopted silently and the 0700
+  // mode applies to nothing. The verification catches it and the dump goes somewhere unpredictable instead.
+  it("falls back to a fresh private directory when ccx-<uid> is not a directory of ours", () => {
+    const base = scratch(), open = scratch();
+    const planted = join(base, `ccx-${process.getuid?.() ?? 0}`);
+    symlinkSync(open, planted);
+    const dest = verifiedDumpDir(base);
+    expect(dest.fellBack).toBe(true);
+    expect(dest.dir).not.toBe(planted);
+    expect(dest.dir.startsWith(join(base, "ccx-"))).toBe(true);
+    expect(lstatSync(dest.dir).isDirectory()).toBe(true);
+    if (process.getuid) expect(lstatSync(dest.dir).mode & 0o777).toBe(0o700);
+  });
+
+  // The mirror: a clean base gets canon's own directory, created 0700, and NO fallback — the check must not
+  // be a fallback that always fires, which would make every dump land in a new directory.
+  it("uses canon's ccx-<uid> when it is ours, and says nothing", () => {
+    const base = scratch();
+    const first = verifiedDumpDir(base);
+    expect(first).toEqual({ dir: join(base, `ccx-${process.getuid?.() ?? 0}`), fellBack: false });
+    expect(verifiedDumpDir(base)).toEqual(first);                     // …and again, on the second launch
+    if (process.getuid) expect(lstatSync(first.dir).mode & 0o777).toBe(0o700);
   });
 
   // The default destination, exercised for real: canon writes into a 0700 directory of its own under tmpdir

@@ -17,7 +17,9 @@ import { ENTER_ALT, EXIT_ALT, MOUSE_OFF } from "../../src/tui/altScreen.js";
 import { TMUX_CC_NOTICE } from "../../src/tui/renderer.js";
 import { runChatClient } from "../../src/tui/chatMain.js";
 
-const spy = vi.hoisted(() => ({ fd1: [] as string[], renderMark: -1, tree: undefined as any, exit: (() => {}) as () => void }));
+const spy = vi.hoisted(() => ({ fd1: [] as string[], renderMark: -1, tree: undefined as any, exit: (() => {}) as () => void,
+  // External review, finding 1: the one thing `render()` can do that the boot path never handled.
+  renderThrows: undefined as Error | undefined }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -29,6 +31,7 @@ vi.mock("ink", async (importOriginal) => {
     ...actual,
     render: (tree: unknown) => {
       spy.tree = tree; spy.renderMark = spy.fd1.length;      // …how many escapes had gone out BEFORE the first paint
+      if (spy.renderThrows) throw spy.renderThrows;          // real Ink paints the first frame synchronously — so it can
       return { waitUntilExit: () => new Promise<void>((resolve) => { spy.exit = resolve; }), clear() {}, unmount() {}, cleanup() {}, rerender() {} };
     },
   };
@@ -39,7 +42,11 @@ vi.mock("ink", async (importOriginal) => {
  *  the environment is pinned: an isolated HOME so `loadPrefs` cannot see the developer's own settings, a fake
  *  TTY (`selectRenderer`'s top rung is not-TTY, and under vitest stdout is a pipe), and `process.stdout.write`
  *  stubbed so the terminal-title writer cannot reach the real terminal. */
-async function boot(env: Record<string, string | undefined>, use: (props: any) => void): Promise<void> {
+/*  `renderThrows` makes the mocked `render` fail the way the real one can, and the return value is whatever
+ *  `runChatClient` rejected with — so a case can assert both what the terminal got back and what the CALLER
+ *  was told. The rejection is adopted on the same tick it is created: an unobserved one would take the runner
+ *  down before the teardown assertions ran. */
+async function boot(env: Record<string, string | undefined>, use: (props: any) => void, renderThrows?: Error): Promise<unknown> {
   const home = mkdtempSync(join(tmpdir(), "ccx-fsw-t9-"));
   const prior: Record<string, string | undefined> = { HOME: process.env.HOME, CCX_FLEET_ROOT: process.env.CCX_FLEET_ROOT, ...Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]])) };
   process.env.HOME = home; process.env.CCX_FLEET_ROOT = join(home, ".claude", "ccx");
@@ -47,17 +54,21 @@ async function boot(env: Record<string, string | undefined>, use: (props: any) =
   const priorTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
   Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
   const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-  spy.fd1 = []; spy.renderMark = -1; spy.tree = undefined;
-  const run = runChatClient({ socketPath: join(home, "s.sock"), client: { kind: "loopback" }, cwd: home, makeSession: () => ({}) as never });
+  spy.fd1 = []; spy.renderMark = -1; spy.tree = undefined; spy.renderThrows = renderThrows;
+  let failure: unknown;
+  const run = runChatClient({ socketPath: join(home, "s.sock"), client: { kind: "loopback" }, cwd: home, makeSession: () => ({}) as never })
+    .then(() => undefined, (e: unknown) => { failure = e; });
   await new Promise((r) => setTimeout(r, 0));
-  try { use(spy.tree.props.children.props); } finally {
+  try { use(spy.tree?.props.children.props); } finally {
     spy.exit();
     await run;
+    spy.renderThrows = undefined;
     stdout.mockRestore();
     if (priorTTY) Object.defineProperty(process.stdout, "isTTY", priorTTY); else delete (process.stdout as { isTTY?: boolean }).isTTY;
     for (const [k, v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     rmSync(home, { recursive: true, force: true });
   }
+  return failure;
 }
 
 describe("runChatClient — the fullscreen boot", () => {
@@ -80,6 +91,39 @@ describe("runChatClient — the fullscreen boot", () => {
     const joined = spy.fd1.join("");
     expect(joined).toContain(EXIT_ALT);
     expect(joined.indexOf(MOUSE_OFF)).toBeLessThan(joined.indexOf(EXIT_ALT));
+  });
+
+  // EXTERNAL REVIEW, FINDING 1 — THE FIRST PAINT IS INSIDE THE GUARD NOW.
+  //
+  // The screen is taken one line before `render()`, and `render()` paints Ink's first frame synchronously —
+  // so a component that throws on mount takes the throw out through this call. Before the fix that throw ran
+  // no teardown at all: the alternate screen stayed entered, the resize/title/signal handlers stayed live, and
+  // the error `bin.ts` prints landed on a screen the shell was about to discard. What the user saw was a
+  // launch that vanished for no stated reason.
+  //
+  // Both halves are asserted, because either alone would be satisfied by the wrong fix: the terminal must be
+  // handed back (rmcup on the wire), AND the error must still reach the caller rather than being swallowed by
+  // the cleanup that now runs first.
+  it("hands the screen back and rethrows when the FIRST RENDER throws", async () => {
+    const boom = new Error("yoga said no");
+    const failure = await boot({ CLAUDE_CODE_NO_FLICKER: "1" }, () => {}, boom);
+    expect(failure).toBe(boom);                              // …the caller still learns why it died
+    const joined = spy.fd1.join("");
+    expect(joined).toContain(ENTER_ALT);                     // the screen really had been taken…
+    expect(joined).toContain(EXIT_ALT);                      // …and it really was handed back
+    expect(joined.indexOf(ENTER_ALT)).toBeLessThan(joined.indexOf(EXIT_ALT));
+    // …in the same order a graceful exit uses, which is what says it went through the ONE teardown rather
+    // than a second copy of its bytes written by the error path.
+    expect(joined.indexOf(MOUSE_OFF)).toBeLessThan(joined.indexOf(EXIT_ALT));
+  });
+
+  // The mirror on the other screen: a classic launch that dies in `render()` owes the terminal nothing but
+  // still owes the caller the error — and must not now emit an rmcup for a screen it never took.
+  it("a classic launch whose render throws rethrows without touching the screen", async () => {
+    const boom = new Error("mount exploded");
+    const failure = await boot({ CLAUDE_CODE_NO_FLICKER: undefined, CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "1" }, () => {}, boom);
+    expect(failure).toBe(boom);
+    expect(spy.fd1).toEqual([]);
   });
 
   it("a classic launch writes nothing to fd 1 and says so on the prop", async () => {

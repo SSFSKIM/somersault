@@ -649,7 +649,10 @@ export function ChatRoot({ rendererSwitch, ...props }: { rendererSwitch: Rendere
     setChoice(next);
     return next;
   }, [rendererSwitch]);
-  return <ChatApp {...props} renderer={choice} switchRenderer={switchRenderer} />;
+  // …and `select` goes down UNWRAPPED beside it (external review, finding 3): `/tui`'s busy gate needs the
+  // ladder's verdict without the flip, and this component has nothing to add to that question — no state of
+  // its own moves when it is asked.
+  return <ChatApp {...props} renderer={choice} switchRenderer={switchRenderer} selectRenderer={rendererSwitch.select} />;
 }
 
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
@@ -882,23 +885,36 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   if (fullscreen) altGuard.enter();
   // FSW T15 — the flip's two halves, over the guard built above and the holder every screen rule reads.
   const rendererSwitch = createRendererSwitch({ prefs, isTTY: Boolean(process.stdout.isTTY), env: process.env, guard: altGuard, live, output, tmuxProbe });
-  const app = render(
-    <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
-      onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
-      <ChatRoot rendererSwitch={rendererSwitch} makeSession={makeSession} client={opts.client} cwd={opts.cwd}
-        initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
-        clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
-        hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
-        initialTodosOpen={prefs.showExpandedTodos ?? true}
-        renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess} altHandoff={altGuard.handoff}
-        {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
-    </UserKeymap>,
-    { exitOnCtrlC: false, stdout: output.stdout },
-  );
-  appRef.current = app;
-  bridge.bind(() => app.clear());
-  // `/exit`, the double-ctrl-C arm and `ccx attach`'s onDetach all reach here the same way — they settle
-  // Ink's `waitUntilExit()` — so all three print the resume pointer (the deliberate divergence from canon's
-  // graceful-only hint). A signal got there first? Then this is a no-op and the pointer is already out.
-  try { await app.waitUntilExit(); } finally { teardown(); }
+  // EXTERNAL REVIEW, FINDING 1 — THE TRY STARTS AT `render()`, NOT AT `waitUntilExit()`.
+  //   The screen is already taken on the line above, and everything between there and the await can throw:
+  // `render()` builds the Ink instance and paints the first frame SYNCHRONOUSLY, so a component that throws
+  // on mount, a Yoga failure or a bad keybindings file throws out of this call. Left outside the guard, that
+  // throw left the alternate screen entered, the resize/title/signal handlers live, and the error printed by
+  // `bin.ts` onto a screen the shell discards a moment later — a launch that dies with no visible reason.
+  //   Everything the terminal is owed is already ONE function (`teardown`), and it is already latched and
+  // already safe here: its unmount limb reads `appRef.current?`, which is simply unset when `render()` never
+  // returned. So the fix is only where the `try` begins. The error is not caught — `finally` runs the teardown
+  // FIRST, so by the time it reaches `bin.ts`'s `console.error` the main screen is back and the message is on
+  // it, which is the whole point of moving the boundary.
+  try {
+    const app = render(
+      <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
+        onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
+        <ChatRoot rendererSwitch={rendererSwitch} makeSession={makeSession} client={opts.client} cwd={opts.cwd}
+          initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
+          clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
+          hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
+          initialTodosOpen={prefs.showExpandedTodos ?? true}
+          renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess} altHandoff={altGuard.handoff}
+          {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
+      </UserKeymap>,
+      { exitOnCtrlC: false, stdout: output.stdout },
+    );
+    appRef.current = app;
+    bridge.bind(() => app.clear());
+    // `/exit`, the double-ctrl-C arm and `ccx attach`'s onDetach all reach here the same way — they settle
+    // Ink's `waitUntilExit()` — so all three print the resume pointer (the deliberate divergence from canon's
+    // graceful-only hint). A signal got there first? Then this is a no-op and the pointer is already out.
+    await app.waitUntilExit();
+  } finally { teardown(); }
 }

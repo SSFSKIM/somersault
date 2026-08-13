@@ -42,7 +42,7 @@ import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, tuiSetting, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -170,7 +170,14 @@ export function useChat(
     /** FSW T15 — `/tui`'s flip, owned above the tree (`chatMain`'s `ChatRoot`). See `ChatApp`'s prop of the
      *  same name for what it does and why it cannot live in here: the guard's bytes and the process-level live
      *  mode are `runChatClient`'s, and a hook cannot own either. Absent = save the setting and say so. */
-    switchRenderer?: (tui: "fullscreen" | "default") => RendererChoice } = {},
+    switchRenderer?: (tui: "fullscreen" | "default") => RendererChoice;
+    /** EXTERNAL REVIEW, FINDING 3 — THE SAME LADDER, ASKED WITHOUT THE SIDE EFFECT. `switchRenderer` answers
+     *  "what would happen" only by MAKING it happen; the busy gate below has to know before it decides whether
+     *  there is anything to refuse. This is `RendererSwitch.select` (chatMain), so the answer comes from the
+     *  one ladder walk the flip itself would perform — no second copy of its inputs (the real TTY, the real
+     *  env, the cached tmux probe) down here, where none of them belong. Absent = no ladder to ask, and the
+     *  gate falls back to comparing the setting, which is what it always did. */
+    selectRenderer?: (tui: "fullscreen" | "default") => RendererChoice } = {},
   // `home`/`platform` are injectable for the same reason `now`/`columns` are: the frame-capture fixture has
   // to pin the whole ProjectionContext, and `homedir()`/`process.platform` read live from the host — which
   // made a golden comparison depend on who ran it (a `/Users/…` home leaking into a `~`-shortened path) and
@@ -1902,7 +1909,16 @@ export function useChat(
           const before = opts.rendererChoice?.mode ?? "classic";
           if (!TUI_SETTINGS.includes(arg as TuiSetting)) { append(formatTuiUsage(arg, before)); break; }
           const want = arg as TuiSetting;
-          if (want !== tuiSetting(before) && bgTasksRef.current.length > 0) { append([{ text: TUI_BUSY_REFUSAL, dim: true }]); break; }
+          // EXTERNAL REVIEW, FINDING 3 — "ACTUAL CHANGE" IS THE SCREEN'S ANSWER, NOT THE SETTING'S.
+          // The gate used to compare the requested SETTING against the LIVE mode, which are different
+          // questions the moment a rung ABOVE the settings rung is holding the mode down — a screen reader, an
+          // env lever, tmux `-CC`, Windows over SSH. There `/tui fullscreen` transitions nothing (the ladder
+          // returns the same classic mode either way), yet background work made it refuse — advising the user
+          // to wait for a task before a flip that was never going to happen, and skipping the SAVE on the way
+          // out, so the preference they set for their next launch was silently dropped. Asking the ladder what
+          // it would select is the same question canon's `if (!l)` asks; ours simply has a ladder to ask.
+          const after = opts.selectRenderer ? opts.selectRenderer(want).mode : (want === "fullscreen" ? "fullscreen" : "classic");
+          if (after !== before && bgTasksRef.current.length > 0) { append([{ text: TUI_BUSY_REFUSAL, dim: true }]); break; }
           try { savePrefsFn({ tui: want }, historyEnv); } catch { /* best-effort, like every other pref write here */ }
           // Outside `chatMain` there is nobody to flip: no guard, no live mode, no state above this tree.
           // The setting is still the user's to set, and saying so is the honest end of the command.
