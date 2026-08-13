@@ -363,10 +363,60 @@ non-goals).
   Canon never faced this (its `v` lives on a composer-less screen); our answer is per-action
   handler registration gated on the scrolled-up state, so the byte falls through to the
   composer whenever the affordance (the pill) isn't showing.
+- **The palette's cost was self-inflicted, not the occlusion divergence** (T14): canon's
+  fullscreen palette takes `overlay`/`noPad` arms (s0H = 5 rows, zero blank padding) the port
+  missed — the blank-padded port cost 12–20 transcript rows regardless of suggestion count.
+- **One log-update, two screens** (T15): Ink's `previousLineCount` never resets across a screen
+  change, so a live leave edge spends the fullscreen frame's erase on the user's shell. Canon
+  never had a live leave edge (its `/tui` re-execs with `--resume`). The proxy's
+  `noteScreenChange` boundary save/restore is the discharge; the enter edge's luck (ENTER_ALT
+  ends 2J+H) is now contract.
+- **Canon's tmux -CC rung is dead on modern tmux** (T16, measured 3 ways on 3.7b): tmux stamps
+  `TERM_PROGRAM=tmux` into every pane env at spawn, so canon's spawn gate (TERM_PROGRAM
+  entirely unset) can never pass inside tmux ≥3.2 — on canon's own build too. Our gate opens
+  one word wider (unset OR "tmux"), a recorded divergence achieving canon's dead intent; a real
+  `-CC attach` pane answers `client_control_mode=1` from inside (measured + independently
+  reproduced).
+- **renderMarkdown never wraps prose** (T17): a 207-column paragraph returns as ONE logical
+  line — Ink always wrapped at paint time. Every row-counting surface built on the projection
+  inherited a 1-counted-3-painted error. Fourth and final form of the wave's lesson: dialogs
+  (T13b), the notebook arm (T14), the viewport (T17), the ctrl+O pager (post-gate) — every
+  surface that counts rows must count the rows the pane paints.
+- **Ink frees the `<Static>` yoga node on unmount but never clears the root's cached
+  reference** (T17): a use-after-free reading freed WASM memory for the rest of the process —
+  intermittent crash (2/6) because a freed yoga node silently returns another node's memory
+  and faults only when the address exits the heap. The Static-owning component must stay
+  mounted (empty in fullscreen; a bare newline is no static output).
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**The wave shipped.** ccx has an alternate-screen renderer with a fixed rows−1 frame, a
+virtualized painted-row-honest viewport with canon's scroll/pill grammar, the `v` transcript
+dump and guarded editor/suspend handoffs, both canon overlay mechanisms with budgets that hold
+by construction, the surface deltas, a live `/tui` switch that never unmounts the conversation,
+and fullscreen as the default behind a ten-rung ladder whose every instrument states what it
+measures. All eleven acceptance cells (F1–F11) pass as written under the isolated tmux harness,
+keyed and keyless; suites at close: unit 2719, tui 3496 (9 live-skips), matrix 10 keyless +
+11 keyed, typecheck/build clean.
+
+**What the process caught that no single layer would have:** the task reviews overturned
+premises in ten of seventeen tasks (the no-Static keystone unpinned, the silent-clip blind
+spot, the live fourth editor caller, the dead -CC rung); the acceptance run caught what every
+task review missed (the viewport's logical-row count against real prose, the Static
+use-after-free). The wave's recurring lesson — budgets pay in painted rows — appeared four
+times, each found one layer later than the last; its final form is a module (`wrapItems.ts`)
+and a contract, not a checklist item.
+
+**Held divergences, all recorded with prices:** dialogs dock-pinned (removes scroll-to-reveal —
+priced by the T13b windowing), subprocess handoffs exit-to-main (canon stays on-alt), the
+seam prefers pickers over the plan modal (canon drops the picker element), the -CC gate one
+word wider (canon's is dead), the transcript-dump receipt channel upgrade (canon logs to
+debug), unconditional DECSET 2026 wrap (proven inert on bare tmux).
+
+**Open tickets leaving the wave:** the subprocess-handoff dedupe hazard (exposure raised by
+/tui-armable guards; not reproduced live — urgency lowered), the classic selectLiveWindow
+logical-row self-clip (scoped: over-runs budget, never loses tail), FULLSCREEN_ROWS
+key-collision audit gap, the rebindable-chord hardcodes in the v row + jumpPillText.
 
 ## Revision Notes
 
