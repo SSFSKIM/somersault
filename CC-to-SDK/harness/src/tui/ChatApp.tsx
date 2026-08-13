@@ -1070,14 +1070,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           .map((l, j) => ({ kind: "line" as const, id: `queued:${i}:${j}`, line: indentRenderLine(l, QUEUE_INSET) })))
       : EMPTY_ITEMS),
     [fullscreen, state.queue, queueWidth]);
-  // ── THE REGION IS THE HALF OF THE FLIP THAT *DOES* REMOUNT, AND THAT IS THE DECISION (T15 fix round, I2) ──
+  // ── THE REGION'S TWO OCCUPANTS ARE DIFFERENT COMPONENTS, AND ONLY ONE OF THEM MAY COME AND GO ────────────
+  // (T15 fix round I2, as the T17 fix round below amends it — read both, in this order.)
   // `FullscreenFrame` keeps its own element type across `/tui` so the frame, the dock and everything mounted
-  // in them are re-propped rather than reborn (its header; pinned in `test/tui/tui-switch.test.tsx`). This
-  // slot deliberately does not: the two renderers put genuinely different components here — a virtualised
-  // band that owns a fixed row budget, and an append-only `<Static>` that owns scrollback — and there is no
-  // shared component that is honestly either. So on a flip the element type changes, React unmounts what was
-  // there, and the classic arm's `<Static>` starts from index 0 and rewrites the ENTIRE committed
-  // conversation to the main screen (measured: one 54-row chunk at a 60-entry transcript).
+  // in them are re-propped rather than reborn (its header; pinned in `test/tui/tui-switch.test.tsx`). Inside
+  // it the two renderers want genuinely different components — a virtualised band that owns a fixed row
+  // budget, and an append-only `<Static>` that owns scrollback — and there is no shared component that is
+  // honestly either. T15 concluded from that that the whole slot may be reconciled against a different
+  // element, and the classic arm's `<Static>` therefore starts from index 0 on the way back and rewrites the
+  // ENTIRE committed conversation to the main screen (measured: one 54-row chunk at a 60-entry transcript).
   //   THAT REPLAY IS CANON-SHAPED, which is why it is accepted rather than engineered away. Canon's `/tui`
   // does not flip a live renderer at all — it RELAUNCHES: `fTb` ends in `YGt` (`relaunchInto`, bundle
   // L482509/L482620), which is `GBe({ freshIfNoTranscript: true, … })` (L353362), and `freshIfNoTranscript`
@@ -1087,17 +1088,53 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   WHAT IS NOT ACCEPTABLE, and is pinned: a SECOND copy. The replay must REPLACE — every committed row
   // appears exactly once in the bytes after the flip — because Ink's `fullStaticOutput` only ever grows
   // (ink.js:57 resets it in the constructor and nowhere else) and a duplicating flip would compound per use.
-  const region = fullscreen
-    ? (transcriptOpen
-      ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
-      // …AND THE BLANKING IS A MAIN-SCREEN TRADE THAT DOES NOT APPLY HERE (T13b). `paneOwned` hides the live
-      // rows so the dock's fourteen-row budget never has to cover a dialog as well; in the frame the region is
-      // a fixed virtualised band that the seam has ALREADY shrunk by taking the bottom one, so blanking buys
-      // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
-      // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
-      // where the overlay never occludes it (grounding §L2.6). The classic arm below keeps the trade.
-      : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
-    : <Transcript key={state.staticEpoch} staticItems={state.staticItems} windowItems={windowItems} pendingItems={paneOwned ? EMPTY_ITEMS : state.pendingItems} streaming={paneOwned ? EMPTY_LINES : state.streaming} />;
+  // ── AND THE `<Static>` IS MOUNTED ON BOTH ARMS, WHICH IS A CRASH FIX (T17 fix round, Finding 2) ──────────
+  // The paragraph above stands as the reasoning for what the two arms SHOW; what it got wrong is that the
+  // classic tier may therefore be UNMOUNTED. Ink caches the `<Static>` box on its root node
+  // (`reconciler.js:154`, `rootNode.staticNode = node`) and never clears the reference when that box goes
+  // away, while `removeChild` frees its Yoga node (`cleanupYogaNode` → `freeRecursive`). So a flip into
+  // fullscreen left `renderer.js:11-14` reading a FREED WASM node on every frame afterwards: usually garbage
+  // (measured — a freed node answers another node's width), occasionally an address outside the heap, and
+  // then `RuntimeError: memory access out of bounds` out of a debounced render, which kills the process and
+  // the conversation with it. T17 reproduced that 2 of 6 times on `/tui fullscreen`, always on a session that
+  // had been classic first — which is exactly the sessions in which a `<Static>` had ever mounted.
+  //   THE FIX IS THAT NOTHING UNMOUNTS IT. `Transcript` renders on both arms at the same position, holding
+  // NO items in fullscreen: an empty `<Static>` renders no children, so `renderer` returns a bare `"\n"`,
+  // `hasStaticOutput` is false and `fullStaticOutput` never grows — the no-`<Static>`-in-fullscreen invariant
+  // T12 rests on is about that buffer, and it is preserved as stated (pinned in `fullscreen-frame.test.tsx`,
+  // which asserts no committed row ever reaches the alternate screen). Its Box contributes no rows either,
+  // so the region's measured grant is unchanged.
+  //   THE REPLAY ON THE WAY BACK IS UNCHANGED, and it is why the items are emptied rather than held: Ink's
+  // `<Static>` resets its `index` whenever `items.length` moves (Static.js:20-22), so `N → 0 → N` re-emits
+  // the whole committed conversation onto the main screen exactly as a remount did — the behaviour argued
+  // above and pinned in `tui-switch.test.tsx`. Holding the items instead would be worse than useless: the
+  // commit ratchet keeps publishing while fullscreen is up, and every newly committed row would be written
+  // to the alternate screen.
+  //   THE `staticEpoch` KEY STAYS. A `/clear` or a rewind still remounts this subtree — but a keyed remount
+  // deletes and re-creates in ONE commit, so `rootNode.staticNode` is repointed at the new box before any
+  // render reads it. The dangling window is unmounting with nothing taking its place, and that window is now
+  // closed for the life of the app.
+  const scrollback = (
+    <Transcript key={state.staticEpoch}
+      staticItems={fullscreen ? EMPTY_ITEMS : state.staticItems}
+      windowItems={fullscreen ? EMPTY_ITEMS : windowItems}
+      pendingItems={fullscreen || paneOwned ? EMPTY_ITEMS : state.pendingItems}
+      streaming={fullscreen || paneOwned ? EMPTY_LINES : state.streaming} />
+  );
+  const region = <>
+    {scrollback}
+    {fullscreen
+      ? (transcriptOpen
+        ? <RegionPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />
+        // …AND THE BLANKING IS A MAIN-SCREEN TRADE THAT DOES NOT APPLY HERE (T13b). `paneOwned` hides the live
+        // rows so the dock's fourteen-row budget never has to cover a dialog as well; in the frame the region is
+        // a fixed virtualised band that the seam has ALREADY shrunk by taking the bottom one, so blanking buys
+        // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
+        // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
+        // where the overlay never occludes it (grounding §L2.6). The classic arm above keeps the trade.
+        : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
+      : null}
+  </>;
   // ── FSW TASK 13 — WHICH OF CANON'S TWO OVERLAY MECHANISMS A SURFACE GETS ──────────────────────────────
   // Grounding §L2.6, "Two overlay mechanisms, not one". In fullscreen a surface the USER opened (`/model`,
   // `/help`, `/resume` and its preview — canon's captured three) renders in the absolute-bottom SEAM SLOT under

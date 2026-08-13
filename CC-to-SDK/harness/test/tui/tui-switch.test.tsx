@@ -17,7 +17,7 @@
 //      `fullStaticOutput` is never reset (ink.js:57), so the only thing standing between a fullscreen session
 //      and a replay of its classic scrollback is that the fixed frame never takes Ink's tall branch.
 import React, { useEffect } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +34,31 @@ import { createAltScreenGuard, ENTER_ALT, EXIT_ALT, PASTE_OFF } from "../../src/
 import { TUI_BUSY_REFUSAL, tuiUsageLine } from "../../src/tui/commands.js";
 import type { RendererChoice } from "../../src/tui/renderer.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
+
+/** T17 FIX ROUND — THE LIFETIME OF INK'S `<Static>`, WHICH IS NOT OBSERVABLE FROM THE PAINT.
+ *
+ *  Ink caches the `<Static>` box on its root node and never clears the reference (`reconciler.js:154`), while
+ *  unmounting that box FREES its Yoga node (`cleanupYogaNode` → `freeRecursive`). Every later frame then reads
+ *  a freed WASM node in `renderer.js:11-14` — which usually returns another node's garbage and occasionally
+ *  faults out of bounds, killing the process from inside a debounced render. Nothing in the bytes distinguishes
+ *  the two, and the fault is not deterministic, so what is pinned here is the CONDITION: the component that
+ *  owns the `<Static>` is never unmounted by a flip, and therefore the dangling reference has no window to
+ *  open in. Counted through the real `Transcript`, wrapped rather than replaced. */
+/*  Identities rather than counters, because React's unmount cleanup is scheduled and a previous case's
+ *  teardown lands inside the next one — a shared pair of totals reads that as this case's unmount. */
+const staticProbe = vi.hoisted(() => ({ born: [] as number[], live: new Set<number>() }));
+vi.mock("../../src/tui/Transcript.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/tui/Transcript.js")>();
+  const Counted = (props: React.ComponentProps<typeof actual.Transcript>) => {
+    React.useEffect(() => {
+      const id = staticProbe.born.length;
+      staticProbe.born.push(id); staticProbe.live.add(id);
+      return () => { staticProbe.live.delete(id); };
+    }, []);
+    return React.createElement(actual.Transcript, props);
+  };
+  return { ...actual, Transcript: Counted };
+});
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
 const text = (f: () => string | undefined): string => strip(f() ?? "").replace(/\s+/g, " ");
@@ -158,6 +183,24 @@ describe("/tui — the live flip", () => {
     expect(sink.join("")).not.toContain(PASTE_OFF);
     unmount();
   });
+
+  // T17 FIX ROUND, FINDING 2 — the crash `/tui fullscreen` reproduced 2 of 6 times. See `staticProbe` above
+  // for the mechanism and for why the fault itself cannot be asserted; the condition can, and this is it.
+  // Three flips, a transcript long enough to have committed rows, and the `<Static>` is born exactly once.
+  it("never unmounts the <Static>, so a flip cannot leave Ink reading a freed yoga node", async () => {
+    const before = staticProbe.born.length;
+    const { stdin, lastFrame, unmount } = mountRepl({ entries: alphaEntries(60) });
+    await tick();
+    const mine = staticProbe.born.slice(before);
+    expect(mine).toHaveLength(1);
+    await runSlash(stdin, lastFrame, "/tui fullscreen");
+    await runSlash(stdin, lastFrame, "/tui default");
+    await runSlash(stdin, lastFrame, "/tui fullscreen");
+    expect(text(lastFrame)).toContain("ALPHA-59");                    // …the conversation survived all three
+    expect(staticProbe.live.has(mine[0]!)).toBe(true);                // never unmounted…
+    expect(staticProbe.born.slice(before)).toEqual(mine);             // …and therefore never reborn
+    unmount();
+  }, 20000);
 
   it("/status reports the renderer in force NOW, not the one the session booted on", async () => {
     const { stdin, lastFrame, unmount } = mountRepl();

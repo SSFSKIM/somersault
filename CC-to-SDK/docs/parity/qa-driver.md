@@ -168,6 +168,22 @@ fire, and the cell lands on the new default — **fullscreen**, not classic. A p
 transcript (`fullscreen disabled: tmux -CC (iTerm2 integration mode) detected …`). Either way: pin the
 cell, and read `/status` back.
 
+**THE ONE EXCEPTION TO THE PIN RULE: a cell whose subject IS `/tui`.** The pins outrank the `tui` prefs
+key, so under `CLAUDE_CODE_NO_FLICKER=1` the command answers `Saved. The default renderer does not apply
+here (env_on).` and changes nothing on screen — a cell that asks `/tui` to switch renderers cannot be run
+from a pinned launch at all. Such a cell **launches unpinned from a fresh isolated home** and seeds the
+starting renderer through the rung `/tui` actually decides (write `{"tui":"fullscreen"}` or
+`{"tui":"default"}` into `$CCX_HOME/.claude/ccx/prefs.json` before launch, or take the unpinned default and
+say so). Record the departure in the result, and read `/status` back on both sides of the switch — the
+provenance word (`default_on`, `settings_off`, …) is what says which rung you actually measured.
+
+**And a cell that touches `/tui` needs its OWN isolated home, not a shared one.** `/tui` WRITES the `tui`
+pref, and it writes it even when the pin makes the switch a no-op — so a pinned attempt leaves
+`{"tui":"default"}` behind and the next *unpinned* cell in that home boots `classic (settings_off)` instead
+of the default it was written to measure. This is a quiet failure: the cell still runs and still passes,
+about a different renderer. Give every `/tui` cell a `mktemp -d` home of its own, and never reuse a home
+after a cell that could have written a pref.
+
 **Which instrument measures which renderer** (keep this table honest when adding one):
 
 | Instrument | Renderer | How it is pinned |
