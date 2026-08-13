@@ -2,13 +2,14 @@
 # harness/scripts/resize-matrix.sh — Wave R acceptance A12: the QA-2 width matrix, scripted.
 #
 # WHICH RENDERER EACH CELL MEASURES: STATED PER CELL, AND PINNED PER CELL (FSW T16, widened in its fix round).
-# Nine cells here are main-screen claims — residue in scrollback, a rule left at a width the pane no longer
+# TEN cells here are main-screen claims (the nine keyless ones plus the live `a3`) — residue in scrollback, a
+# rule left at a width the pane no longer
 # has, a second composer block below the first — and all of them are claims about the renderer that lets Ink's
 # tree be as tall as it likes and repairs the damage afterwards. Until T16 the product default was classic and
 # this file could stay silent about it; T16 flipped `DEFAULT_ON`, so silence would now mean "measures whatever
 # the default happens to be" — the one thing an instrument may not do. `launch` therefore writes the pin into
 # every cell's environment, defaulting to `CLAUDE_CODE_NO_FLICKER=0` (classic, the ladder's `env_off` rung).
-#   THE TENTH CELL IS `f1`, AND IT IS THE FULLSCREEN ONE (`=1`, the `env_on` rung). T16 pinned the nine and
+#   THE ELEVENTH CELL IS `f1`, AND IT IS THE ONLY FULLSCREEN ONE (`=1`, the `env_on` rung). T16 pinned the ten and
 # thereby left the renderer most users now run with no scripted real-terminal resize corpus at all, which it
 # recorded as a concern rather than closing. f1 closes it: the same tmux driver and the same staging helper,
 # asserting the fullscreen renderer's own claims — the alternate screen survives a SIGWINCH, the frame stays
@@ -241,9 +242,17 @@ self_test() {
   [ "$(rows_below 5 "$dir/f1_clean")" = 0 ]    || { echo "SELF-TEST: rows_below counts the fullscreen frame's own unwritten last row as content"; ok=0; }
   [ "$(rows_below 5 "$dir/f1_pushed")" = 1 ]   || { echo "SELF-TEST: rows_below CANNOT SEE A ROW BELOW THE DOCK — the f1 tall-render assertion has no teeth"; ok=0; }
   [ "$(dock_row "$dir/f1_nodock")" = 0 ]       || { echo "SELF-TEST: dock_row invents a row for a frame that has no dock on it"; ok=0; }
+  # A frame with a STALE dock above the live one answers `rows − 1` from `dock_row` and nothing below it, so
+  # only the count can fail it. Build exactly that frame and require the count to see two.
+  { echo "  $F1_FOOTER · ? for shortcuts"; echo "  M1-24"; rule_of 80; echo "$CARET "; rule_of 80; echo "  $F1_FOOTER · ? for shortcuts"; echo ""; } > "$dir/f1_twodocks"
+  [ "$(dock_count "$dir/f1_clean")" = 1 ]      || { echo "SELF-TEST: dock_count does not see the one dock on a clean frame"; ok=0; }
+  [ "$(dock_count "$dir/f1_twodocks")" = 2 ]   || { echo "SELF-TEST: dock_count CANNOT SEE A SECOND DOCK — the f1 dock-appears-once assertion has no teeth"; ok=0; }
+  [ "$(dock_row "$dir/f1_twodocks")" = 6 ] && [ "$(rows_below 6 "$dir/f1_twodocks")" = 0 ] \
+    || { echo "SELF-TEST: the doubled-dock frame is not the case the position needles already green — rebuild it"; ok=0; }
+  [ "$(dock_count "$dir/f1_nodock")" = 0 ]     || { echo "SELF-TEST: dock_count invents a dock on a frame that has none"; ok=0; }
   rm -rf "$dir"
   [ "$ok" = 1 ] || { echo "ABORT: frame checker self-test failed."; exit 1; }
-  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above; the A3 wide-row precondition fires on a bare composer frame; the A3 spinner needles count a stranded duplicate as 2 and read neither the end-of-turn row nor the thinking placeholder as a spinner; the F1 geometry needles place the dock and see a row pushed below it."
+  echo "  checker self-test: rejects the recorded broken frame and the exact-multiple residue, accepts the clean one, demands content above; the A3 wide-row precondition fires on a bare composer frame; the A3 spinner needles count a stranded duplicate as 2 and read neither the end-of-turn row nor the thinking placeholder as a spinner; the F1 geometry needles place the dock, see a row pushed below it, and count a stale second dock the position needles alone would green."
 }
 
 # ── session helpers (docs/parity/qa-driver.md §2) ─────────────────────────────────────────────────────────
@@ -985,6 +994,12 @@ F1_FOOTER='⏸ manual mode on'                # the dock's last row — `launch`
 # The 1-based row the dock's last line occupies, or 0 when it is not on screen at all (which is itself a
 # failure: a frame that lost its footer is not a frame that fills the pane).
 dock_row() { LC_ALL=C grep -n -F "$F1_FOOTER" "$1" | tail -1 | cut -d: -f1 | grep -E '^[0-9]+$' || echo 0; }
+# HOW MANY DOCKS ARE ON SCREEN, which `dock_row` alone cannot say because it takes the LAST match: a frame
+# carrying a stale dock above the live one still answers `rows − 1` and still passes the position check. The
+# doubled composer block is the main screen's signature residue (`composerBlocks` above), and the fullscreen
+# frame's equivalent is a second footer row — so count it here rather than assume the fixed frame cannot
+# produce one (T16 re-review; the fullscreen renderer's own copy of the claim the classic cells all make).
+dock_count() { LC_ALL=C grep -c -F "$F1_FOOTER" "$1"; }
 # …and how many rows BELOW a given one carry anything but blanks. `capture-pane` returns exactly `pane_height`
 # lines, so "the frame ends where it should" is two questions — where the dock is, and whether anything is
 # under it — and only the pair distinguishes a correctly-placed dock from one that a scrolled reprint pushed
@@ -997,21 +1012,22 @@ rows_below() {                              # rows_below <row> <capture-file>
 # one is the verdict, and they are the SAME code, so a leg can never be waited on by one rule and judged by
 # another.
 f1_check() {                                # f1_check <session> <cols> <rows> <baseline> <label> <loud 0|1>
-  local s="$1" x="$2" y="$3" base="$4" label="$5" loud="$6" rc=0 alt now wide dr below
+  local s="$1" x="$2" y="$3" base="$4" label="$5" loud="$6" rc=0 alt now wide dr below docks
   local cap="$MATRIX_ROOT/cap-f1" capj="$MATRIX_ROOT/capj-f1" hist="$MATRIX_ROOT/hist-f1"
   alt=$(tmux display -p -t "$s" '#{alternate_on}')
   tmux capture-pane -t "$s" -p > "$cap"
   tmux capture-pane -t "$s" -p -J > "$capj"
   now=$(m1_copies "$s" "$hist" "$F1_MARKS")
   wide=$(wide_rows_above_frame "$x" "$capj")
-  dr=$(dock_row "$cap"); below=$(rows_below "$dr" "$cap")
+  dr=$(dock_row "$cap"); below=$(rows_below "$dr" "$cap"); docks=$(dock_count "$cap")
   [ "$alt" = 1 ]         || { [ "$loud" = 1 ] && printf '      FAIL %-28s alternate_on=%s: the alt screen did not survive the resize (or the fullscreen pin did not take)\n' "$label" "$alt"; rc=1; }
   [ "$now" = "$base" ]   || { [ "$loud" = 1 ] && printf '      FAIL %-28s viewport copies of the staged marker %s -> %s: the session was reprinted into the frame\n' "$label" "$base" "$now"; rc=1; }
   [ "$wide" = 0 ]        || { [ "$loud" = 1 ] && printf '      FAIL %-28s %s emitted row(s) wider than %s columns\n' "$label" "$wide" "$x"; rc=1; }
   [ "$dr" = $((y - 1)) ] || { [ "$loud" = 1 ] && printf '      FAIL %-28s the dock is on row %s of %s (want %s — the frame is given rows-1)\n' "$label" "$dr" "$y" "$((y - 1))"; rc=1; }
   [ "$below" = 0 ]       || { [ "$loud" = 1 ] && printf '      FAIL %-28s %s non-blank row(s) below the dock\n' "$label" "$below"; rc=1; }
+  [ "$docks" = 1 ]       || { [ "$loud" = 1 ] && printf '      FAIL %-28s the dock is on screen %s time(s) (want 1 — a second footer row is the fullscreen form of the doubled composer)\n' "$label" "$docks"; rc=1; }
   if [ "$rc" = 0 ]; then
-    [ "$loud" = 1 ] && printf '      ok   %-28s alt=1 dockRow=%s/%s below=0 wide=0 copies=%s\n' "$label" "$dr" "$y" "$now"
+    [ "$loud" = 1 ] && printf '      ok   %-28s alt=1 dockRow=%s/%s docks=1 below=0 wide=0 copies=%s\n' "$label" "$dr" "$y" "$now"
     return 0
   fi
   [ "$loud" = 1 ] && { echo "      ── frame ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"; }
@@ -1071,7 +1087,7 @@ run_f1_cell() {
 }
 
 # ── run ───────────────────────────────────────────────────────────────────────────────────────────────────
-echo "Wave R — QA-2 width matrix (A12) — nine CLASSIC cells (CLAUDE_CODE_NO_FLICKER=0) plus one FULLSCREEN cell, f1 (=1); every cell pinned"
+echo "Wave R — QA-2 width matrix (A12) — ten CLASSIC cells (CLAUDE_CODE_NO_FLICKER=0; nine keyless plus the live a3) and one FULLSCREEN cell, f1 (=1); every cell pinned"
 self_test
 
 if [ "$BUILD" = 1 ]; then

@@ -7,7 +7,7 @@
 //
 // CITES IN THIS FILE CARRY THEIR BUNDLE VERSION, because they come from two of them and the names differ
 // (T16 review, minor 5). The LADDER cites are 2.1.226 (`Qs`/`PJe`/`Eku`/`kSs`, and the `yr`/`md` word lists);
-// the TMUX PROBE cites are 2.1.220 (`XOg`/`YOg`/`iau`/`ds` at L110066-110138 of `cli.pretty.js`), which is
+// the TMUX PROBE cites are 2.1.220 (`XOg`/`YOg`/`iau`/`ds` at L110065-110139 of `cli.pretty.js`), which is
 // the bundle checked out on this machine and the only one whose line numbers can be checked back.
 //
 // THE ORDER IS THE CONTRACT, not the individual rungs. Two placements are load-bearing:
@@ -166,7 +166,7 @@ export function makeTmuxProbe(spawn: SpawnSyncFn = spawnSync): (env: NodeJS.Proc
   return (env) => (probed ??= probeTmuxControlMode(env, spawn));
 }
 
-/** Canon `kSs()` (2.1.226) / `LZi()` (2.1.220 L110100): ConPTY re-renders the screen underneath us on a
+/** Canon `kSs()` (2.1.226) / `LZi()` (2.1.220 L110101): ConPTY re-renders the screen underneath us on a
  *  Windows host reached over SSH, which desynchronizes an alt-screen frame. Any of the three SSH markers
  *  counts. */
 function windowsOverSsh(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
