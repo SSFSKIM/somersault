@@ -18,14 +18,36 @@
 // Known window (t7 review): scope registrations unregister in a passive cleanup, so a key arriving in the
 // SAME stdin chunk as the close key still resolves to `scroll:*` on the unmounting pager and is dropped —
 // the safe direction (dropped, not misrouted), same blind spot Ink's own passive `useInput` always had.
+//
+// FSW T17 fix round: THE PAGER WINDOWS PAINTED ROWS, NOT LOGICAL ONES. `renderItemHeight` answers 1 for every
+// `kind: "line"` item and `renderMarkdown` never wraps prose, so a 207-column paragraph is one line the box
+// paints as three. Counted logically, every arithmetic this component does is short by the wrap overflow: the
+// clamp stops the reader before the tail, `G` lands above the last rows, the header names rows the box cannot
+// reach, and the box itself runs taller than the height it was budgeted (inside `RegionPager` the frame's clip
+// then eats the difference, which is how the tail became unreachable rather than merely mispositioned). So the
+// projection is put through `wrapItemsToWidth` at this box's INNER width before anything counts it — WRAP
+// FIRST, WINDOW SECOND, the same order `FullscreenViewport` and `streamingItems` already keep.
 import React, { useRef, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { PAGER_ACTIONS, applyPager, pageItemSlices, type PagerAction } from "./pager.js";
+import { wrapItemsToWidth } from "./wrapItems.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { ACCENT } from "./theme.js";
 
-export interface TranscriptPagerProps { makeItems(projection: "detail-all" | "detail-collapsed"): readonly RenderItem[]; onClose(): void; height?: number }
+/** Border (2) + horizontal padding (2) — what this component's box takes off its column count before Ink lays
+ *  a single row of text out inside it. Lives here rather than with `RegionPager`'s other chrome arithmetic
+ *  because it is the WRAP width now as well as a budgeting term, and the two must not be allowed to drift. */
+export const PAGER_INSET = 4;
+
+export interface TranscriptPagerProps {
+  makeItems(projection: "detail-all" | "detail-collapsed"): readonly RenderItem[];
+  onClose(): void;
+  height?: number;
+  /** The width of the slot this pager fills, borders included. Absent — a bare component test — the terminal's
+   *  own, which is what the main-screen pager fills anyway; `RegionPager` passes the region's. */
+  columns?: number;
+}
 
 /** The key-hint row, hoisted out of the JSX so a caller that has to BUDGET for this component can measure it
  *  (FSW T11: `RegionPager` subtracts the pager's chrome from the frame's region grant, and this row is the one
@@ -35,9 +57,10 @@ export interface TranscriptPagerProps { makeItems(projection: "detail-all" | "de
 export const pagerHint = (projection: "detail-all" | "detail-collapsed"): string =>
   `j/k ↑↓ line · Ctrl-U/D ½page · Ctrl-B/F b/space page · g/G top/bottom · Ctrl-E ${projection === "detail-all" ? "collapse" : "show all"} · q/Esc close`;
 
-export function TranscriptPager({ makeItems, onClose, height }: TranscriptPagerProps) {
+export function TranscriptPager({ makeItems, onClose, height, columns }: TranscriptPagerProps) {
   const { stdout } = useStdout();
   const h = height ?? Math.max(8, (stdout?.rows ?? 24) - 10);
+  const inner = Math.max(1, (columns ?? stdout?.columns ?? 80) - PAGER_INSET);
   // Ctrl-O always opens fully expanded (upstream's transcript starts show-all); Ctrl-E collapses back to the
   // detail view's OWN folded form, whose marker offers "ctrl+e to show all" rather than "ctrl+o to expand".
   const [projection, setProjection] = useState<"detail-all" | "detail-collapsed">("detail-all");
@@ -54,10 +77,12 @@ export function TranscriptPager({ makeItems, onClose, height }: TranscriptPagerP
   // State is the single writer: mirroring on every render (not only inside the handler) means a future
   // second setter call site cannot silently desynchronize the same-tick shadow from the rendered state.
   projectionRef.current = projection; offsetRef.current = offset;
-  const items = makeItems(projection);
-  const { slices, offset: off, total } = pageItemSlices(items, offset, h);
+  // The ONE route from a projection to rows, so the render and the same-tick scroll handler below can never
+  // measure the document at two different widths.
+  const rowsOf = (p: "detail-all" | "detail-collapsed") => wrapItemsToWidth(makeItems(p), inner);
+  const { slices, offset: off, total } = pageItemSlices(rowsOf(projection), offset, h);
   const scroll = (a: PagerAction) => {
-    const view = pageItemSlices(makeItems(projectionRef.current), offsetRef.current, h);
+    const view = pageItemSlices(rowsOf(projectionRef.current), offsetRef.current, h);
     offsetRef.current = applyPager(view.offset, a, view.total, h);
     setOffset(offsetRef.current);
   };

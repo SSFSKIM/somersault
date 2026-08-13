@@ -26,13 +26,20 @@
 // re-cut at the same offsets as the text, which is exact for one reason worth stating: `wrapAnsi` with
 // `trim: false` is CHARACTER-PRESERVING — the rows concatenate back to the input, verified per call rather
 // than assumed, because a style spanning a break makes wrap-ansi insert its own reset/reopen and that
-// equality is how this notices. Two lines still fall back to the plain text: one whose `segments` do not
-// concatenate to `text`, and one carrying a `preStyled` segment (raw SGR bytes, F3's bold-count rows), where
-// a character offset means nothing. Their ROW COUNT is right either way, which is what the window needs.
+// equality is how this notices. THREE lines fall back to the plain text, and `cutSegments` checks all three:
+// one carrying a `preStyled` segment (raw SGR bytes, F3's bold-count rows), where a character offset means
+// nothing; one whose `segments` do not concatenate to `text`; and one whose ROWS do not concatenate back to
+// `text`, which a line carrying an embedded newline reaches every time (`wrapRows` splits on it and the
+// character is gone from the rows) and is the shape measured on real documents; the reset/reopen the same
+// comparison also catches needs ANSI in `text`, which the `preStyled` check has already turned away. Their
+// ROW COUNT is right either way, which is what the window needs.
 //
 // THE CACHE IS PER (ITEM, WIDTH), by object identity. Re-projection mints new item objects, so a `WeakMap`
 // keyed on the item both hits on every unchanged row of an appended document and lets the whole generation go
-// when the projection is replaced. Wrapping the document costs O(new rows) per append, not O(document).
+// when the projection is replaced. What that buys is bounded, and worth stating honestly: the WRAPPING is
+// O(new rows) per append, but the walk over every item and the rebuild of the output array are O(document)
+// on any call where something changed — a caller re-projecting the whole document (`TranscriptPager`, whose
+// `makeItems` mints fresh items every render) pays that walk each time, and only the wrap itself is saved.
 import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
 import type { RenderLine, Segment } from "./render.js";

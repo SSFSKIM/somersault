@@ -25,13 +25,11 @@
 import React from "react";
 import { Box } from "ink";
 import stringWidth from "string-width";
-import { TranscriptPager, pagerHint, type TranscriptPagerProps } from "./TranscriptPager.js";
+import { TranscriptPager, pagerHint, PAGER_INSET, type TranscriptPagerProps } from "./TranscriptPager.js";
 import { useRegionRows } from "./FullscreenFrame.js";
 
 /** The pager's own frame: two border rows plus the title row. */
 export const PAGER_FIXED_CHROME = 3;
-/** Border (2) + horizontal padding (2) — what the border box takes off `columns` before its text is laid out. */
-const PAGER_INSET = 4;
 
 /** How many rows the pager spends on itself before a single transcript row, at this width. Word wrapping can
  *  need one more row than the division says on an unlucky break; that lands on the clip above rather than on
@@ -51,7 +49,9 @@ export function RegionPager({ columns, ...props }: RegionPagerProps): React.Reac
   return (
     <Box flexDirection="column" height={rows} overflow="hidden">
       <Box flexDirection="column" flexShrink={0}>
-        <TranscriptPager {...props} height={Math.max(1, rows - pagerChromeRows(columns))} />
+        {/* `columns` is handed DOWN as well as spent here: it is the width the pager's own body wraps at
+            (T17 fix round), and the region's width is not the terminal's `stdout.columns` fallback. */}
+        <TranscriptPager {...props} columns={columns} height={Math.max(1, rows - pagerChromeRows(columns))} />
       </Box>
     </Box>
   );

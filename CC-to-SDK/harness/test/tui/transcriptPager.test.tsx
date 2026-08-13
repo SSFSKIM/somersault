@@ -11,6 +11,7 @@ import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { TranscriptPager } from "../../src/tui/TranscriptPager.js";
+import { pagerChromeRows } from "../../src/tui/RegionPager.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 
@@ -78,5 +79,52 @@ describe("TranscriptPager", () => {
     await tick();
     r.stdin.write("k"); await tick();
     expect(r.lastFrame()).toContain("1–3 of 3");
+  });
+});
+
+// ── THE POSITION LINE COUNTS THE ROWS IT PAINTS (FSW T17 fix round, the pager's turn) ──────────────────────
+// `renderItemHeight` answers 1 for every `kind: "line"` item, and `renderMarkdown` does NOT wrap prose — so a
+// 200-column paragraph is ONE logical line the box paints as three. Counted logically, the pager's total is
+// short by the wrap overflow: the header names rows the box cannot reach, the clamp stops the reader before
+// the tail, and the box runs taller than the height it was budgeted. Wrap at the pager's inner width
+// (`columns − PAGER_INSET`) and all three follow from one honest total.
+describe("TranscriptPager counts painted rows, not logical ones", () => {
+  // `ink-testing-library`'s stdout stub reports 100 columns; the border (2) + paddingX (2) leave 96 inside,
+  // so a 208-column line paints three rows.
+  const COLS = 100;
+  const rowsOf = (frame: string | undefined): string[] => (frame ?? "").split("\n");
+  const wide = (n: number): RenderItem[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: "line", id: `w${i}`, line: { text: `w${i}-${"x".repeat(200)}-end${i}` } }));
+
+  it("its total is the WRAPPED row count, and the tail is reachable at the bottom", async () => {
+    const r = render(<TranscriptPager makeItems={always(wide(20))} onClose={() => {}} height={10} />);
+    await tick();
+    expect(r.lastFrame()).toContain("51–60 of 60");     // 20 items × 3 painted rows, not 20
+    expect(r.lastFrame()).toContain("-end19");          // …and the last item's LAST row is on screen
+  });
+
+  it("never paints more body rows than the height it was given", async () => {
+    const r = render(<TranscriptPager makeItems={always(wide(20))} onClose={() => {}} height={10} />);
+    await tick();
+    expect(rowsOf(r.lastFrame())).toHaveLength(10 + pagerChromeRows(COLS));
+  });
+
+  it("scrolls by painted row, so g/G bracket the wrapped document", async () => {
+    const r = render(<TranscriptPager makeItems={always(wide(20))} onClose={() => {}} height={10} />);
+    await tick();
+    r.stdin.write("g"); await tick();
+    expect(r.lastFrame()).toContain("1–10 of 60");
+    expect(r.lastFrame()).toContain("w0-");
+    r.stdin.write("k"); await tick();
+    expect(r.lastFrame()).toContain("1–10 of 60");      // already at the top; no negative row
+    r.stdin.write("G"); await tick();
+    expect(r.lastFrame()).toContain("51–60 of 60");
+  });
+
+  it("takes the width it is TOLD over the terminal's, so the region's pager wraps at the region's width", async () => {
+    // Half the width, so each line paints five rows instead of three (208 / 46 = 5).
+    const r = render(<TranscriptPager makeItems={always(wide(20))} onClose={() => {}} height={10} columns={50} />);
+    await tick();
+    expect(r.lastFrame()).toContain("of 100");
   });
 });

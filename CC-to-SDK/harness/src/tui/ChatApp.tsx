@@ -1247,7 +1247,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // comes off the keymap stack, which is what stops Chat's `escape`/`ctrl+d` shadowing the pager's own
         // exit and half-page keys. On the main screen the same emptiness arrives for free, from the pager
         // itself occupying the slot.
-        ? (fullscreen ? null : <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} />)
+        ? (fullscreen ? null : <TranscriptPager makeItems={detailItems} onClose={() => setTranscriptOpen(false)} columns={size.columns} />)
         : state.historyOpen
         // CM59: the preview pane's side-by-side/stacked switch is a function of the live terminal width, read
         // the same per-render way the composer's is so a resize reaches it on the next frame.

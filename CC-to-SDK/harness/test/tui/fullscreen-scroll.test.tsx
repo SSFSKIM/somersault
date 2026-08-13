@@ -331,6 +331,28 @@ describe("Ctrl-O mounts inside the frame", () => {
     expect(strip(rowsOf(r.lastFrame())[1])).toContain(`lines ${200 - body + 1}–200 of 200`);
     r.unmount();
   });
+
+  // …AND THE ROWS IT COUNTS ARE THE ROWS IT PAINTS (T17 fix round). A region pager that clamps against the
+  // LOGICAL row count of a document whose lines wrap is the tail-losing shape this whole wave keeps finding:
+  // the header names a last row, the clip eats everything past the grant, and no gesture reaches the end.
+  const wideDoc = (n: number): readonly RenderItem[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: "line" as const, id: `W${i}`, line: { text: `W${i}-${"x".repeat(200)}-end${i}` } }));
+
+  it("wraps at the REGION's inner width, so the bottom is the painted bottom", async () => {
+    const overflow = vi.fn();
+    const r = renderWithKeymap(
+      <FullscreenFrame rows={40} onOverflow={overflow} dock={band(2, "D")}
+        regionChildren={<RegionPager makeItems={() => wideDoc(40)} onClose={() => {}} columns={COLS} />} />,
+    );
+    await settle();
+    const body = 37 - pagerChromeRows(COLS);
+    const total = 40 * 3;                                              // 208 columns of text over 96 inner
+    expect(strip(rowsOf(r.lastFrame())[1])).toContain(`lines ${total - body + 1}–${total} of ${total}`);
+    expect(r.lastFrame()).toContain("-end39");                         // the last item's last row is REACHABLE
+    expect(rowsOf(r.lastFrame())).toHaveLength(39);                    // …and the grant is still the grant
+    expect(overflow).not.toHaveBeenCalled();
+    r.unmount();
+  });
 });
 
 let fleetRootDir = "";
