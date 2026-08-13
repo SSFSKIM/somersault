@@ -49,6 +49,15 @@ export interface AnchorState {
 }
 export type AnchorEvent =
   | { kind: "content"; total: number; height: number }
+  /** FSW T17 fix round — THE DOCUMENT WAS RE-WRAPPED, so every row below the first line whose height changed
+   *  has a new number and the retained offset is denominated in a projection that no longer exists. The
+   *  caller has already translated the position (`wrapItems.remapRowOffset`); this is where the anchor
+   *  accepts it. A width change is NOT content growth, so it also resets the high-water ceiling to the new
+   *  total — exactly as an explicit scroll clears it, and for the same reason: the hwm remembers how tall
+   *  the DOCUMENT got, and a narrower terminal saying the same document is taller is not that. Leaving it
+   *  standing would let a narrow-then-widen sequence hold an offset past the real bottom. Sticky anchors
+   *  ignore the event: they re-derive from the tail, which is width-independent by construction. */
+  | { kind: "reproject"; offset: number; total: number; height: number }
   | { kind: "scroll"; action: PagerAction; total: number; height: number }
   | { kind: "stickBottom"; total: number; height: number };
 
@@ -59,6 +68,7 @@ export function applyAnchor(s: AnchorState, e: AnchorEvent): AnchorState {
   const bottom = bottomOffset(e.total, e.height);
   let next: AnchorState;
   if (e.kind === "stickBottom") next = { offset: bottom, sticky: true };
+  else if (e.kind === "reproject") next = s.sticky ? { offset: bottom, sticky: true } : { offset: Math.max(0, Math.min(e.offset, bottom)), sticky: false, hwm: e.total };
   else if (e.kind === "content") {
     if (s.sticky) next = { offset: bottom, sticky: true };
     else {

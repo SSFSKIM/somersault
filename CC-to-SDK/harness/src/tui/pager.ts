@@ -54,7 +54,12 @@ export function applyPager(offset: number, a: PagerAction, total: number, height
 
 /** Scrolling is by PHYSICAL row, never by item: a tool result's body has already been wrapped to visual rows
  *  at `columns - 10` by the projection, so a gutter block is exactly `body.length` rows tall and a 40-row
- *  result can be paged through without the window jumping over it. */
+ *  result can be paged through without the window jumping over it.
+ *    AND THE ONE FOR A LINE IS TRUE ONLY OF A PROJECTION ALREADY WRAPPED TO THE PAINT WIDTH (T17 fix round).
+ *  Ink re-wraps anything wider than its box, so an over-wide line paints two rows and is counted here as one
+ *  — which is a windowing surface's most expensive kind of error, since the rows it loses are the newest
+ *  ones. This function stays width-unaware on purpose; the caller owes it painted rows, and `wrapItems`
+ *  (`wrapItemsToWidth`) is how every caller gets them. */
 export function renderItemHeight(item: RenderItem): number { return item.kind === "line" ? 1 : item.body.length; }
 
 /** The window `[offset, offset+rows)` over those physical rows, expressed as per-item slices. The returned

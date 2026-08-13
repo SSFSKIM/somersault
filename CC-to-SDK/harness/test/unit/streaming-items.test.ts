@@ -48,7 +48,9 @@ describe("streamingItems", () => {
   it("ids are positional and stable across calls, so React keeps its instances between deltas", () => {
     const first = streamingItems([{ text: "one" }, { text: "two" }], 80).map((i) => i.id);
     const second = streamingItems([{ text: "one" }, { text: "two!!" }], 80).map((i) => i.id);
-    expect(first).toEqual(["stream:0:0", "stream:1:0"]);
+    // T17 fix round: the id of a row that did NOT wrap is the SOURCE id, and a wrapped one wears
+    // `wrapItems`' `#w<row>` suffix — which is what lets a held scroll offset be remapped across a re-wrap.
+    expect(first).toEqual(["stream:0", "stream:1"]);
     expect(second).toEqual(first);
     // …and a wrapped line's rows are distinct ids, never a collision that would drop rows.
     expect(new Set(streamingItems([{ text: "x".repeat(25) }], 10).map((i) => i.id)).size).toBe(3);

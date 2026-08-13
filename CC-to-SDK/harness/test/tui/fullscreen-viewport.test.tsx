@@ -226,6 +226,107 @@ describe("FullscreenViewport — slices are physical rows", () => {
   });
 });
 
+// ── T17 FIX ROUND — THE VIEWPORT PAYS IN PAINTED ROWS ──────────────────────────────────────────────────────
+// The acceptance run's most serious finding, as the probe that found it. `renderItemHeight` answers 1 for a
+// `kind: "line"` item, and until T17 the FINALIZED projection reached the pager unwrapped — so a row wider
+// than the pane painted two rows, was counted as one, and the sticky window stopped short by exactly the wrap
+// overflow. The rows it lost were the NEWEST ones, the anchor believed it was at the end (so no jump pill),
+// and no gesture reached them: measured on ordinary assistant prose at 100 columns, two paragraphs of eight.
+//
+// THE CASES ARE THE THREE SHAPES THE FINDING TOOK: steady state with no resize at all, the tail after a
+// narrowing (which the T10 review expected to heal in 80 ms and which never healed), and the grant, which is
+// the contract F1/F3 pin — a document that paints more rows than it counts does not merely mis-anchor, it
+// hands the frame more rows than it granted and lets the clip decide which of them the reader loses.
+const WIDE = 30;
+/** One item whose text is two full rows at `WIDE` columns, so each half can be named on screen. */
+const wideRow = (id: string, a: string, b: string): RenderItem =>
+  ({ kind: "line", id, line: { text: a.repeat(WIDE) + b.repeat(WIDE) } });
+const filled = (c: string) => c.repeat(WIDE);
+
+describe("FullscreenViewport — the document is wrapped before it is windowed", () => {
+  // THE VERIFIER'S CONTROLLED PROBE. Four one-row markers and two rows that are each two rows wide: eight
+  // PAINTED rows, of which a six-row region must show the last six. Counted logically the document is six
+  // rows, the offset is zero, and the region emits eight — the two newest, `C`/`D`, being the ones the
+  // frame's clip then eats.
+  it("counts a wrapped finalized row as the rows it paints, and shows the true tail", () => {
+    const document = [...doc(4, "S"), wideRow("W0", "A", "B"), wideRow("W1", "C", "D")];
+    const { lastFrame } = render(view({ finalizedItems: document, columns: WIDE, rows: 6 }));
+    expect(rowsOf(lastFrame())).toEqual(["S2", "S3", filled("A"), filled("B"), filled("C"), filled("D")]);
+  });
+
+  // …and the same document at a width where nothing wraps, which is the half that says the deficit is the
+  // wrap and not the content (the verifier widened to 120 and the whole tail appeared).
+  it("shows the same document whole at a width where nothing wraps", () => {
+    const document = [...doc(4, "S"), wideRow("W0", "A", "B"), wideRow("W1", "C", "D")];
+    const { lastFrame } = render(view({ finalizedItems: document, columns: WIDE * 2, rows: 6 }));
+    expect(rowsOf(lastFrame())).toEqual(["S0", "S1", "S2", "S3", filled("A") + filled("B"), filled("C") + filled("D")]);
+  });
+
+  // A GUTTER BLOCK IS WRAPPED IN ITS BODY, not split into items — the `⎿` is printed once per block, so a
+  // block whose body rows are over-wide grows rows without growing connectors.
+  it("wraps a gutter block's body rows and still prints exactly one connector", () => {
+    const wideBlock: RenderItem = { kind: "gutter-block", id: "g", gutter: TOOL_RESULT_GUTTER,
+      body: [{ text: "A".repeat(25) + "B".repeat(25) }] };            // 50 columns in a 30-column pane, less the 5-column gutter
+    const { lastFrame } = render(view({ finalizedItems: [wideBlock], columns: WIDE, rows: 4 }));
+    const frame = lastFrame() ?? "";
+    expect(frame.split("⎿")).toHaveLength(2);
+    expect(rowsOf(frame)).toHaveLength(2);                            // …and the block reports the two rows it paints
+  });
+
+  // A TRUNCATING HEADER IS NEVER TWO ROWS. Upstream's `wrap: "truncate-end"` is what keeps an MCP-length tool
+  // name on one line; wrapping it here would both contradict the paint and inflate the document.
+  it("leaves a truncate-end header at one row however wide it is", () => {
+    const header: RenderItem = { kind: "line", id: "h", line: { text: "T".repeat(120) }, wrap: "truncate-end" };
+    const { lastFrame } = render(view({ finalizedItems: [header, ...doc(2, "S")], columns: WIDE, rows: 3 }));
+    expect(rowsOf(lastFrame())).toHaveLength(3);
+    expect(rowsOf(lastFrame()).slice(1)).toEqual(["S0", "S1"]);
+  });
+
+  // THE COST THE FIX MUST NOT PAY. `renderMarkdown` does not wrap prose — a paragraph comes back as one very
+  // long segmented line whatever width it is given, because Ink has always done the wrapping at paint time —
+  // so on the finalized document nearly EVERY assistant paragraph is a line this module has to cut. A cut
+  // that dropped `segments` would take the bold, the inline code and the colour out of the transcript in
+  // exchange for the row count. Asserted in raw SGR, since that is the only place the difference shows.
+  it("keeps inline emphasis on a paragraph it had to wrap", () => {
+    const para: RenderItem = { kind: "line", id: "p",
+      line: { text: "AAAAA BBBBB", segments: [{ text: "AAAAA ", bold: true }, { text: "BBBBB" }] } };
+    const { lastFrame } = render(view({ finalizedItems: [para], columns: 6, rows: 2 }));
+    expect(rowsOf(lastFrame()).map(strip)).toEqual(["AAAAA", "BBBBB"]);
+    expect(lastFrame()).toContain("\x1b[1m");                         // …the first row is still bold
+    expect(lastFrame() ?? "").toMatch(/\x1b\[1mAAAAA/);
+  });
+
+  // THE NARROWING THAT NEVER HEALED (carried check 2). The same document at two widths: wide, everything
+  // fits and the tail is on screen; narrow, every row is two and the tail must STILL be on screen. Before
+  // T17 the row count did not move with the width, so the deficit appeared ~41 ms into the drag and was
+  // still there two seconds later, with no pill and no gesture that reached it.
+  it("re-projects on a narrowing and keeps the true last row on screen", () => {
+    const document = [wideRow("W0", "A", "B"), wideRow("W1", "C", "D")];
+    const at = (columns: number) => view({ finalizedItems: document, columns, rows: 3 });
+    const { lastFrame, rerender } = render(at(WIDE * 2));
+    expect(rowsOf(lastFrame())).toEqual([filled("A") + filled("B"), filled("C") + filled("D")]);
+    rerender(at(WIDE));
+    expect(rowsOf(lastFrame())).toEqual([filled("B"), filled("C"), filled("D")]);   // four painted rows, the last three shown
+    rerender(at(WIDE * 2));
+    expect(rowsOf(lastFrame())).toEqual([filled("A") + filled("B"), filled("C") + filled("D")]);
+  });
+
+  // A HELD OFFSET IS TRANSLATED, NOT CARRIED. A row number means nothing across a re-wrap: at 60 columns the
+  // window's top row is `W20`, and at 30 the row with that number is halfway through `W10`. The anchor is
+  // re-derived from the document POSITION it named, so the reader stays on the row they were reading.
+  it("keeps an unstuck reader on the same row when the width changes", async () => {
+    const ref = React.createRef<ViewportScroll>();
+    const document = Array.from({ length: 40 }, (_, i) => wideRow(`W${i}`, String(i % 10), "-"));
+    const at = (columns: number) => view({ finalizedItems: document, columns, rows: 6, scrollRef: ref });
+    const { lastFrame, rerender } = render(at(WIDE * 2));
+    ref.current!.scroll({ kind: "lines", n: -14 });                   // 34 → 20, unsticky
+    await tick();
+    expect(rowsOf(lastFrame())[0]).toBe(filled("0") + filled("-"));   // W20's single row at the wide width
+    rerender(at(WIDE));
+    expect(rowsOf(lastFrame())[0]).toBe(filled("0"));                 // …and W20's FIRST row at the narrow one
+  });
+});
+
 describe("FullscreenViewport — the region's budget", () => {
   it.each([3, 7, 19])("never paints more than the %i rows it was granted", (rows) => {
     const { lastFrame } = render(view({ finalizedItems: doc(200), rows }));
@@ -266,6 +367,28 @@ describe("FullscreenViewport — the region's budget", () => {
     expect(lines[0]).toBe("L163");                                   // 39 − 2 dock rows = 37 granted, tail-anchored
     expect(lines[36]).toBe("L199");
     expect(lines.slice(37)).toEqual(["D0", "D1"]);
+    expect(overflow).not.toHaveBeenCalled();
+  });
+
+  // …AND THE SAME CONTRACT OVER CONTENT THAT WRAPS (T17 fix round). This is the case that was failing
+  // silently: the region emitted more PHYSICAL rows than it counted, the frame's clip took the difference off
+  // the bottom, and the rows it took were the newest ones — with `onOverflow` never firing, because the frame
+  // re-measures only when the FRAME re-renders and a viewport-local content event does not reach it. So the
+  // assertion is the tail, not merely the height: the last transcript row on screen must be the last row the
+  // document paints.
+  it("respects the grant when every row wraps, and still shows the newest painted row", async () => {
+    const overflow = vi.fn();
+    const document = Array.from({ length: 20 }, (_, i) => wideRow(`W${i}`, String(i % 10), "="));
+    const { lastFrame } = render(
+      <FullscreenFrame rows={12} onOverflow={overflow} dock={band(2, "D")}
+        regionChildren={view({ finalizedItems: document, columns: WIDE })} />,
+    );
+    await settle();
+    const lines = rowsOf(lastFrame());
+    expect(lines).toHaveLength(11);                                  // rows − 1
+    expect(lines.slice(9)).toEqual(["D0", "D1"]);                    // …the dock still pinned to the last row
+    expect(lines[8]).toBe(filled("="));                              // …and the tail is W19's SECOND row
+    expect(lines[7]).toBe(filled("9"));
     expect(overflow).not.toHaveBeenCalled();
   });
 

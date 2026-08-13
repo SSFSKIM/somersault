@@ -10,10 +10,10 @@
 // — `finalizedItems ⧺ pendingItems ⧺ streamingItems(...)` — and the screen is a WINDOW over it.
 //
 // THREE PIECES, each already built and each owning exactly one decision:
-//   · `streamingItems` (T3) pre-wraps the in-flight turn to the region's width, one item per PHYSICAL row, so
-//     `renderItemHeight` can be trusted before Ink lays anything out. A line three times the width is three
-//     rows here; letting Ink discover that at paint time would put the anchor's arithmetic two rows out and
-//     the region two rows over its budget.
+//   · `wrapItems` (T17, generalising `streamingItems`' T3 pre-wrap to every tier) turns the projection into
+//     the rows it will PAINT at the region's width, one item per physical row, so `renderItemHeight` can be
+//     trusted before Ink lays anything out. A line three times the width is three rows here; letting Ink
+//     discover that at paint time puts the anchor's arithmetic two rows out and hides the two newest rows.
 //   · `applyAnchor` (T2) owns WHERE the window sits: sticky follows the tail, an explicit scroll off the bottom
 //     unsticks and content never yanks it back, `stickBottom` re-sticks. It holds the RETAINED offset (canon's
 //     `Te`, clamped to a high-water ceiling so a shrink-then-regrow returns the user to the row they were on).
@@ -21,28 +21,30 @@
 //     (canon's `Se`) and cuts the window at item boundaries, so a gutter block is sliced by body row and prints
 //     its `⎿` exactly once. The dual-value split is deliberate and is T2's review finding, not an accident.
 //
-// THE BUDGET IS RESPECTED IN ROWS, AND ONLY AFTER THE DRAG SETTLES IN COLUMNS. `pageItemSlices(items, offset,
-// regionRows)` can never emit more than `regionRows` SLICE rows, so the frame's `overflow: hidden` never has to
-// clip and `onOverflow` — canon's L180317 "something is rendering outside the frame's budget" diagnostic —
-// stays silent in steady state. The clip remains, as the last line of defence; relying on it would make the
-// frame's one invariant a coincidence.
-//   A slice row is a PHYSICAL row only while the projection's width and the region's width agree, and during a
-// resize they do not. `columns` here is the live terminal's, moving on the SIGWINCH render; the finalized
-// projection is re-wrapped by `useChat` only once the drag has been stopped for `RESIZE_SETTLE_MS` (80 ms —
-// `useChat.ts:960-969`, deliberately debounced because re-projecting can COMMIT). So for the whole of a
-// narrowing drag the finalized `kind: "line"` items are wrapped for a terminal wider than the one the region
-// now has, Ink re-wraps them at paint time, and the region emits more physical rows than it was granted.
-// Measured through a real frame at 80x40: grant 37, claimed height 37, painted 39, and the diagnostic fires
-// verbatim. THE ROWS THE FRAME CLIPS ARE THE TAIL — the two NEWEST transcript rows — which is exactly what
-// bottom-anchoring exists to keep on screen, so the failure is at the worst end. Gutter blocks are not
-// exposed: their bodies are wrapped at `columns - 10` (`species.ts:486`) into a box of `columns - 5`, so they
-// tolerate five columns of drift. Only `kind: "line"` items are.
-//   NO CLAMP HERE, AND NONE IN THE PAGER (T10 review ruling). Neither module owns the truth — the pager is
-// width-unaware by design and clamping there would mean lying about heights or truncating content it cannot
-// see — and the only honest code fix threads the projection's width down beside `columns` and falls back to
-// `wrap="truncate-end"` on line items while the two disagree, trading inline emphasis for the budget. That
-// does not earn its complexity against 80 ms. **T17 owes the measurement**: whether a clipped tail lasting as
-// long as the user keeps dragging is visible on a real terminal is a question only its resize matrix can ask.
+// THE BUDGET IS RESPECTED IN ROWS, AND THE ROWS ARE THE ONES THE TERMINAL PAINTS (T17 fix round).
+// `pageItemSlices(items, offset, regionRows)` can never emit more than `regionRows` SLICE rows, so the frame's
+// `overflow: hidden` never has to clip and `onOverflow` — canon's L180317 "something is rendering outside the
+// frame's budget" diagnostic — stays silent in steady state. The clip remains, as the last line of defence;
+// relying on it would make the frame's one invariant a coincidence.
+//   THAT SENTENCE WAS ONLY TRUE OF THE STREAMING TIER UNTIL T17. `renderItemHeight` answers 1 for a
+// `kind: "line"` item, and the FINALIZED projection was handed to the pager unwrapped — so any transcript row
+// wider than the pane painted two rows and was counted as one, and the sticky window stopped short by exactly
+// the wrap overflow. T10 scoped that to the 80 ms of a narrowing drag (the projection is re-wrapped by
+// `useChat` only once the drag has stopped for `RESIZE_SETTLE_MS`) and ruled the honest fix not worth its
+// complexity. T17's acceptance run measured the real scope and the ruling does not survive it: the deficit is
+// present with NO resize at all (a bullet's three-column gutter on a full-width markdown line is already
+// over-wide — ordinary prose at 100 columns showed two paragraphs of eight), it never heals after a drag
+// (measured: six markers still missing two seconds later), and because the anchor believes it is at the end
+// there is no jump pill and no gesture that reaches the missing tail. Rows the reader cannot see and cannot
+// ask for are worse than a wrong number.
+//   SO THE DOCUMENT IS WRAPPED BEFORE IT IS WINDOWED (`wrapItems`, the module that now owns the discipline
+// T13b and T14 each learned separately). Every tier goes through it at the CURRENT `columns`, one item per
+// physical row, and `renderItemHeight` becomes true rather than approximate — which makes the grant, the
+// anchor's arithmetic, `atEnd` and the pill's visibility all agree about what is on screen. The projection
+// behind it is still re-made on the settle timer, and that is still worth waiting for (re-projecting can
+// COMMIT); the difference is that a stale-width projection is now merely wrapped for the wrong width, not
+// counted for one. The cost is one `wrapAnsi` per row per width, memoised per (item, width) — an append pays
+// for its own rows, a resize pays for the document once.
 //
 // THE CONTENT EVENT IS APPLIED DURING RENDER, not from an effect. Every append, every streamed delta, every
 // re-wrap and every resize is a content event, and an effect would paint one frame at the old offset before
@@ -60,6 +62,7 @@ import { applyAnchor, type AnchorState } from "./scrollAnchor.js";
 import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction } from "./pager.js";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
+import { remapRowOffset, wrapItemsToWidth } from "./wrapItems.js";
 import { useRegionRows } from "./FullscreenFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { JumpPill } from "./JumpPill.js";
@@ -92,7 +95,8 @@ export interface FullscreenViewportProps {
    *  the only thing that decides what fits. Pre-built by ChatApp (it owns `userEchoLines`' width and the
    *  queued rule's inset); empty in classic and in every test that does not care. */
   queuedItems?: readonly RenderItem[];
-  /** The region's width — `streamingItems` pre-wraps to it. The region is full-bleed, so this is the terminal's. */
+  /** The region's width — every tier is wrapped to it before the window is cut (T17), so a slice row is a
+   *  painted row. The region is full-bleed, so this is the terminal's. */
   columns: number;
   /** The row budget. Omitted in production: the frame publishes the rows it granted through its own context. */
   rows?: number;
@@ -124,14 +128,28 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   const height = Math.max(0, rows ?? granted);
   // Queued prompts go LAST, below even the in-flight turn — canon's own order (`fNn`'s scrollable at L549395
   // ends `… spinner, ds() && <lui/>`).
-  const items = useMemo(
-    () => [...finalizedItems, ...pendingItems, ...streamingItems(streaming, columns), ...queuedItems],
-    [finalizedItems, pendingItems, streaming, columns, queuedItems],
-  );
+  // WRAPPED PER TIER, not once over the concatenation, and that is the whole of the performance answer: the
+  // finalized document is re-wrapped only when the projection or the width moves, so a streamed delta pays
+  // for the streaming tier alone. `wrapItemsToWidth` returns the array it was given when nothing wrapped, so
+  // a settled frame allocates nothing here either.
+  const finalRows = useMemo(() => wrapItemsToWidth(finalizedItems, columns), [finalizedItems, columns]);
+  const pendingRows = useMemo(() => wrapItemsToWidth(pendingItems, columns), [pendingItems, columns]);
+  const streamRows = useMemo(() => streamingItems(streaming, columns), [streaming, columns]);
+  const queuedRows = useMemo(() => wrapItemsToWidth(queuedItems, columns), [queuedItems, columns]);
+  const items = useMemo(() => [...finalRows, ...pendingRows, ...streamRows, ...queuedRows], [finalRows, pendingRows, streamRows, queuedRows]);
   const total = useMemo(() => items.reduce((sum, item) => sum + renderItemHeight(item), 0), [items]);
 
   const [anchor, setAnchor] = useState<AnchorState>(START);
-  const settled = applyAnchor(anchor, { kind: "content", total, height });
+  // A WIDTH CHANGE RE-NUMBERS THE ROWS, so the retained offset is translated by the document position it
+  // names before anything is measured against it (`remapRowOffset`; sticky anchors ignore it and re-derive
+  // from the tail). Kept in a ref rather than state because it is a comparison against the LAST RENDER, not
+  // a fact about this one — and applied during render for the reason the content event is: an effect would
+  // paint one frame at the old numbering before correcting itself.
+  const projected = useRef({ columns, items });
+  const reprojected = projected.current.columns === columns ? anchor
+    : applyAnchor(anchor, { kind: "reproject", offset: remapRowOffset(projected.current.items, items, anchor.offset), total, height });
+  projected.current = { columns, items };
+  const settled = applyAnchor(reprojected, { kind: "content", total, height });
   if (settled !== anchor) setAnchor(settled);
 
   // The scroll handlers run from a stdin listener, outside React's render — so they read the anchor and the
