@@ -279,6 +279,15 @@ describe("resolveReviewRange", () => {
       expect(r).toEqual({});              // no git call needed, no note
     }
   });
+  it("passes the branch as a REF, never as a git option", async () => {
+    let seen: string[] = [];
+    await resolveReviewRange({ type: "baseBranch", branch: "--all-the-things" }, "/repo", {
+      git: async (args) => { seen = args; return { code: 128, stdout: "", stderr: "fatal: Not a valid object name" }; },
+    });
+    // `--end-of-options` must come BEFORE the branch, or git parses a dash-leading branch as a flag.
+    expect(seen.indexOf("--end-of-options")).toBeGreaterThan(-1);
+    expect(seen.indexOf("--end-of-options")).toBeLessThan(seen.indexOf("--all-the-things"));
+  });
 });
 ```
 
@@ -320,7 +329,12 @@ export async function resolveReviewRange(
 ): Promise<{ range?: string; note?: string }> {
   if (target.type !== "baseBranch") return {};
   const git = deps.git ?? defaultGit;
-  const r = await git(["merge-base", target.branch, "HEAD"], cwd);
+  // `--end-of-options` because `branch` arrives from a CLIENT and this is the boundary where it stops being
+  // a string and starts being an argument. `execFile` already rules out a shell, but it does not stop git
+  // from reading a dash-leading value as one of its OWN flags: measured on git 2.55, `git merge-base
+  // --all-the-things HEAD` answers "unknown option", while with the guard the identical value answers "Not
+  // a valid object name" — a ref that does not exist, which is exactly the degrade path below.
+  const r = await git(["merge-base", "--end-of-options", target.branch, "HEAD"], cwd);
   const base = r.stdout.trim();
   if (r.code !== 0 || !base) {
     return { note: `could not resolve a merge-base with ${target.branch}: ${(r.stderr || "unknown error").trim()}` };
