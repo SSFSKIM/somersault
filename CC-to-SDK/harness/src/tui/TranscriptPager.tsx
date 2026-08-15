@@ -31,7 +31,7 @@ import React, { useRef, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { PAGER_ACTIONS, applyPager, pageItemSlices, type PagerAction } from "./pager.js";
-import { wrapItemsToWidth } from "./wrapItems.js";
+import { remapRowOffset, wrapItemsToWidth } from "./wrapItems.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { ACCENT } from "./theme.js";
 
@@ -80,7 +80,23 @@ export function TranscriptPager({ makeItems, onClose, height, columns }: Transcr
   // The ONE route from a projection to rows, so the render and the same-tick scroll handler below can never
   // measure the document at two different widths.
   const rowsOf = (p: "detail-all" | "detail-collapsed") => wrapItemsToWidth(makeItems(p), inner);
-  const { slices, offset: off, total } = pageItemSlices(rowsOf(projection), offset, h);
+  const rows = rowsOf(projection);
+  // A WIDTH CHANGE RE-NUMBERS THE ROWS. `offset` is a painted-row index AT THE WIDTH IT WAS MEASURED AT, so a
+  // resize renumbers everything below the first item whose wrapped height moved and the same number now names
+  // a different document position — the reader is silently carried off the paragraph they were reading. So the
+  // held offset is translated by the position it NAMES (`remapRowOffset`, the remedy `FullscreenViewport`
+  // already applies on its own width axis) BEFORE anything windows the document, in render rather than an
+  // effect: an effect would paint one frame at the old numbering before correcting itself.
+  //   Only the WIDTH axis. A projection toggle changes the row count too, but its answer is the clamp (that is
+  // what the Infinity sentinel above is for), and the bottom sentinel needs no translation on either axis.
+  const measured = useRef({ inner, projection, rows });
+  const held = measured.current.inner !== inner && measured.current.projection === projection
+    ? remapRowOffset(measured.current.rows, rows, offset) : offset;
+  measured.current = { inner, projection, rows };
+  // State stays the single writer: the ref mirror is corrected in the same breath as the setter, so the
+  // same-tick scroll handler below reads the translated number rather than the one it replaced.
+  if (held !== offset) { offsetRef.current = held; setOffset(held); }
+  const { slices, offset: off, total } = pageItemSlices(rows, held, h);
   const scroll = (a: PagerAction) => {
     const view = pageItemSlices(rowsOf(projectionRef.current), offsetRef.current, h);
     offsetRef.current = applyPager(view.offset, a, view.total, h);

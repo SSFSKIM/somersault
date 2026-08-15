@@ -10,9 +10,10 @@
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
-import { TranscriptPager } from "../../src/tui/TranscriptPager.js";
+import { TranscriptPager, PAGER_INSET } from "../../src/tui/TranscriptPager.js";
 import { pagerChromeRows } from "../../src/tui/RegionPager.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
+import { remapRowOffset, sourceId, wrapItemsToWidth } from "../../src/tui/wrapItems.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
@@ -126,5 +127,73 @@ describe("TranscriptPager counts painted rows, not logical ones", () => {
     const r = render(<TranscriptPager makeItems={always(wide(20))} onClose={() => {}} height={10} columns={50} />);
     await tick();
     expect(r.lastFrame()).toContain("of 100");
+  });
+});
+
+// ── A WIDTH CHANGE MUST NOT MOVE THE READER (FSW backlog 1) ────────────────────────────────────────────────
+// `offset` is a PAINTED-ROW index at the width it was measured at, so a resize re-numbers every row below the
+// first item whose wrapped height changed and the same number then names a different document position. The
+// held offset is therefore translated by the position it NAMES — `remapRowOffset`, the same remedy
+// `FullscreenViewport` applies on its own width axis. The bottom sentinel needs none of it: Infinity is
+// "wherever the tail is", and `pageItemSlices` clamps it.
+describe("TranscriptPager keeps its place across a width change", () => {
+  const HEIGHT = 10, WIDE = 100, NARROW = 50;
+  // Every row of an item carries that item's own marker, so the FIRST BODY ROW of a frame names the source
+  // item at the top of the window whether it is a first row or a continuation. 180 columns: two painted rows
+  // at the wide inset (96), four at the narrow one (46).
+  const marked = (n: number): RenderItem[] =>
+    Array.from({ length: n }, (_, i) => ({ kind: "line", id: `w${i}`, line: { text: `w${i} `.repeat(60).trimEnd() } }));
+  /** Row 0 is the top border, row 1 the `lines a–b of N` header; the body starts under them. */
+  const firstBodyRow = (frame: string | undefined): string => (frame ?? "").split("\n")[2] ?? "";
+  const rowsAt = (items: readonly RenderItem[], columns: number) => wrapItemsToWidth(items, columns - PAGER_INSET);
+
+  it("translates a held offset, so the same SOURCE item stays at the top", async () => {
+    const items = marked(8);
+    const r = render(<TranscriptPager makeItems={always(items)} onClose={() => {}} height={HEIGHT} columns={WIDE} />);
+    await tick();
+    r.stdin.write("g"); await tick();
+    for (const _ of [0, 1, 2]) { r.stdin.write("j"); await tick(); }
+    const held = 3;                                                     // three rows below the top
+    const before = pageItemSlices(rowsAt(items, WIDE), held, HEIGHT);
+    expect(r.lastFrame()).toContain(`lines ${held + 1}–${held + HEIGHT} of ${before.total}`);
+    expect(firstBodyRow(r.lastFrame())).toContain("w1 ");               // the item the reader is on
+    expect(sourceId(before.slices[0]!.item.id)).toBe("w1");
+
+    r.rerender(<TranscriptPager makeItems={always(items)} onClose={() => {}} height={HEIGHT} columns={NARROW} />);
+    await tick();
+    // THE CONTRACT, not a re-derivation: the expected row is `remapRowOffset`'s own answer.
+    const expected = remapRowOffset(rowsAt(items, WIDE), rowsAt(items, NARROW), held);
+    const after = pageItemSlices(rowsAt(items, NARROW), expected, HEIGHT);
+    expect(expected).not.toBe(held);                                    // the rows really did re-number
+    expect(sourceId(after.slices[0]!.item.id)).toBe("w1");
+    expect(r.lastFrame()).toContain(`lines ${expected + 1}–${expected + HEIGHT} of ${after.total}`);
+    expect(firstBodyRow(r.lastFrame())).toContain("w1 ");
+  });
+
+  it("a scroll after the resize starts from the translated row, not the old number", async () => {
+    const items = marked(8);
+    const r = render(<TranscriptPager makeItems={always(items)} onClose={() => {}} height={HEIGHT} columns={WIDE} />);
+    await tick();
+    r.stdin.write("g"); await tick();
+    for (const _ of [0, 1, 2]) { r.stdin.write("j"); await tick(); }
+    r.rerender(<TranscriptPager makeItems={always(items)} onClose={() => {}} height={HEIGHT} columns={NARROW} />);
+    await tick();
+    const expected = remapRowOffset(rowsAt(items, WIDE), rowsAt(items, NARROW), 3);
+    r.stdin.write("j"); await tick();
+    const total = rowsAt(items, NARROW).reduce((sum, item) => sum + (item.kind === "line" ? 1 : item.body.length), 0);
+    expect(r.lastFrame()).toContain(`lines ${expected + 2}–${expected + 1 + HEIGHT} of ${total}`);
+  });
+
+  it("the bottom sentinel needs no remap — a width change still shows the last rows", async () => {
+    const items = marked(8);
+    const r = render(<TranscriptPager makeItems={always(items)} onClose={() => {}} height={HEIGHT} columns={WIDE} />);
+    await tick();
+    const wideTotal = rowsAt(items, WIDE).length;
+    expect(r.lastFrame()).toContain(`lines ${wideTotal - HEIGHT + 1}–${wideTotal} of ${wideTotal}`);
+    r.rerender(<TranscriptPager makeItems={always(items)} onClose={() => {}} height={HEIGHT} columns={NARROW} />);
+    await tick();
+    const narrowTotal = rowsAt(items, NARROW).length;
+    expect(r.lastFrame()).toContain(`lines ${narrowTotal - HEIGHT + 1}–${narrowTotal} of ${narrowTotal}`);
+    expect(r.lastFrame()).toContain("w7 ");                             // the tail is still on screen
   });
 });
