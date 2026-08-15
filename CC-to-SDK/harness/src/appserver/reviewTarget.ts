@@ -15,21 +15,32 @@ import type { ReviewTarget } from "./schema/review.js";
 
 export type GitFn = (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-const defaultGit: GitFn = (args, cwd) =>
+// `timeoutMs` is a parameter, not a constant, only because the KILL path deserves a test that runs in
+// milliseconds rather than ten seconds; production takes the default.
+export const execFileGit = (timeoutMs = 10_000): GitFn => (args, cwd) =>
   new Promise((resolve) => {
     // The try is the CONTRACT, not defensiveness: node validates argv BEFORE it spawns, so a client-supplied
     // branch carrying a NUL byte throws ERR_INVALID_ARG_VALUE synchronously right here, and an exception out of
     // this executor would escape the caller as a failure. Any pre-spawn rejection becomes a non-zero exit, like
     // every other way git can decline — which is the one shape the degrade path below knows how to read.
     try {
-      execFile("git", args, { cwd, timeout: 10_000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
-        // `code` is a NUMBER on a real exit, the STRING "ENOENT" when the spawn itself fails, and null when the
-        // timeout kills git — anything non-numeric collapses to 1, so `GitFn`'s declared `code: number` is true.
-        const c = err && (err as NodeJS.ErrnoException & { code?: number | string }).code;
-        resolve({ code: err ? (typeof c === "number" ? c : 1) : 0, stdout, stderr });
+      execFile("git", args, { cwd, timeout: timeoutMs, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+        // `code` is a NUMBER only when git RAN and exited — pass those through untouched, they are git's own
+        // verdict. It is the STRING "ENOENT" when the spawn never happened and null when the timeout kills git:
+        // a process that never ran to completion, and BOTH arrive with empty stderr, which is exactly the shape
+        // the degrade path reads as unrelated histories. So they get 127 ("could not execute") and the error's
+        // own words instead — a note that says what happened rather than inventing an ancestry that was never
+        // examined. `GitFn`'s declared `code: number` stays true either way.
+        const e = err as (Error & { code?: number | string; killed?: boolean; signal?: string }) | null;
+        const c = e?.code;
+        if (e && typeof c !== "number")
+          resolve({ code: 127, stdout, stderr: stderr || (e.killed ? `git was killed with ${e.signal} (timeout ${timeoutMs}ms)` : e.message) });
+        else resolve({ code: typeof c === "number" ? c : 0, stdout, stderr });
       });
-    } catch (e) { resolve({ code: 1, stdout: "", stderr: String(e) }); }
+    } catch (e) { resolve({ code: 127, stdout: "", stderr: String(e) }); }  // also never ran: 127, never 1
   });
+
+const defaultGit: GitFn = execFileGit();
 
 export async function resolveReviewRange(
   target: ReviewTarget,
@@ -47,7 +58,8 @@ export async function resolveReviewRange(
   const base = r.stdout.trim();
   if (r.code !== 0 || !base) {
     // UNRELATED HISTORIES are the one failure git reports mutely: exit 1 with empty stdout AND empty stderr. It
-    // is also the one with a crisp explanation, so name it instead of letting it read as "unknown error".
+    // is also the one with a crisp explanation, so name it instead of letting it read as "unknown error". The
+    // reading holds only because exit 1 now means git RAN — a spawn that failed or was killed arrives as 127.
     const why = r.stderr.trim() || (r.code === 1 ? "no common ancestor" : "unknown error");
     return { note: `could not resolve a merge-base with ${target.branch}: ${why}` };
   }
