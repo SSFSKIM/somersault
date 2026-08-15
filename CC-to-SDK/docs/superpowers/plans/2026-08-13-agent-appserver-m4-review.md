@@ -745,6 +745,16 @@ git commit -m "feat(as4): review/start — detached review thread at the target'
 - Consumes: `harvestFindings` (T4), the review record marker (T5).
 - Produces: the `review/findings` notification — **add it to the notification catalog** so the drift gate counts it (Task 9).
 
+**SCOPE THE HARVEST TO THE REVIEW'S OWN TURN — raised by Task 5's reviewer.** Task 5's marker (`reviewOf`)
+marks the **thread**, not the turn, and that is sufficient for recognition and attribution
+(`record.currentTurnId` supplies the turn id). But a review thread is an ORDINARY thread: a client holding
+the returned `reviewThreadId` can start a follow-up turn on it — asking the reviewer a question about its
+own findings, say. Under a thread-scoped harvest that follow-up looks like a review turn, so its
+`ReportFindings`-free ending fires the `unstructured: true` fallback on a turn nobody asked to be reviewed,
+and a client appending findings gets a spurious entry. Scope the harvest to the turn `review/start` began
+— or, if you deliberately keep it thread-wide, say why in the code and make the fallback fire only for the
+review turn. Either way it must be a decision in the code, not an accident of which id was available.
+
 **Behavior:**
 - On each frame of a review turn, run `harvestFindings`. On a hit, broadcast `review/findings {threadId, turnId, findings, level?, unstructured: false}` and emit a review item into the item stream.
 - On review-turn completion with **no** hit: broadcast `review/findings {threadId, turnId, findings: [], unstructured: true, prose}` where `prose` is the turn's assistant text. **Never** emit a bare empty array in this case — that is the silent-all-clear failure the spec forbids.
@@ -841,8 +851,13 @@ describe("outcomeToElicitResult — FAIL-CLOSED: never null", () => {
     expect(outcomeToElicitResult({ kind: "elicitation_decline" })).toEqual({ action: "decline" });
     expect(outcomeToElicitResult({ kind: "elicitation_cancel" })).toEqual({ action: "cancel" });
   });
-  it("maps the UNIVERSAL SYSTEM DENY to decline — the teardown path must answer, not hang", () => {
-    expect(outcomeToElicitResult({ kind: "deny" })).toEqual({ action: "decline" });
+  it("maps the UNIVERSAL SYSTEM DENY to cancel — the teardown path must answer, not hang", () => {
+    // REVISED after Task 7's review (D-M4-9). MCP separates `decline` ("the user explicitly declined")
+    // from `cancel` ("dismissed without an explicit choice"), and a thread torn down on a parked
+    // elicitation is the second: nobody declined anything. Reporting a refusal the user never made is
+    // fabricating a decision — the same sin as a silent all-clear, which this milestone rejects
+    // everywhere else. An explicit decline still has its own outcome and still maps to `decline`.
+    expect(outcomeToElicitResult({ kind: "deny" })).toEqual({ action: "cancel" });
   });
   it("maps every other outcome kind to a real result rather than returning null", () => {
     for (const o of [
@@ -973,6 +988,21 @@ Expected: FAIL — nothing wires `onElicitation`.
 `makeOnElicitation(srv, threadId): OnElicitation` — parks the request as a `kind:"elicitation"` decision,
 awaits the settle, and returns `outcomeToElicitResult(outcome)`. Never returns `null`. Wire it into the
 session config the app server builds for every thread it starts (alongside `canUseTool`).
+
+**TWO THINGS TASK 7'S REVIEWER HANDED FORWARD — they are yours, and both are fail-closed obligations:**
+
+1. **The mapper is total, but it is not defensive at its boundary.** `outcomeToElicitResult` covers every
+   well-typed `DecisionOutcome`, but a `null`/`undefined` outcome throws on `outcome.kind`, and a REJECTED
+   promise anywhere in your callback is at least as bad as returning `null` — the MCP server hangs either
+   way. So the whole body must be wrapped: any throw, rejection, or missing outcome has to fall out as a
+   real `ElicitResult`. The rule is not "the mapper never returns null", it is "the CALLBACK always
+   answers". Test it by making the park reject and by settling with a malformed outcome.
+2. **The mapper cannot see the request, so content validation is yours.** An `elicitation_accept` carrying
+   no content — or content that does not satisfy the request's `requestedSchema` — produces a well-formed
+   `{action:"accept"}` that the MCP server will then reject, which is a worse failure than declining
+   cleanly because it looks like success. You hold the `ElicitationRequest`; validate the answer against
+   its `requestedSchema`/`mode` before returning an accept, and turn a mismatch into a real result rather
+   than passing it through.
 
 - [ ] **Step 4: Run the tests and typecheck**
 

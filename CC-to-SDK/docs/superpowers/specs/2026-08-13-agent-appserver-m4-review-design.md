@@ -163,6 +163,20 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
   app server starts, which is where the capability actually lands. The honest summary is that M4 makes
   elicitation reachable through the control plane for the threads the control plane owns.
 
+- **D-M4-9 — A torn-down elicitation is CANCELLED, not DECLINED.** Raised by Task 7's reviewer, decided by
+  the controller; a one-line change if the owner disagrees. MCP separates `decline` ("the user explicitly
+  declined") from `cancel` ("dismissed without making an explicit choice"), and a server may reasonably
+  treat the first as definitive and the second as retryable. Teardown, a closed thread, and the
+  unattended-deny path all settle a park with the universal `{kind:"deny"}` — nobody declined anything
+  there. Rejected: keeping `decline` (the plan's original mandated test). The complication that makes this
+  a judgment call rather than a bug fix is that `deny` is ALSO a legal client answer for an elicitation
+  park, and the mapper cannot see the `by:"system"` marker that would separate the two sources. Decided on
+  the asymmetry of the two errors: reporting a refusal the user never made FABRICATES a decision, while
+  reporting "dismissed" for a client's generic refusal merely understates one — and a client that means
+  decline already has `elicitation_decline`, which still maps to `decline`. Not asserting a result nobody
+  asserted is the same principle as D-M4-1's honest fallback. Fail-closed is unaffected either way:
+  `cancel` is equally a real `ElicitResult`, so the MCP server is still answered rather than left hanging.
+
 ## Open forks — BOTH RESOLVED 2026-08-13 (owner)
 
 1. **MCP elicitation RIDES ALONG in M4.** Our engine already supports elicitation (`onElicitation`,
