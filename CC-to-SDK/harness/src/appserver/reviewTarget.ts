@@ -15,16 +15,16 @@ import type { ReviewTarget } from "./schema/review.js";
 
 export type GitFn = (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-// `timeoutMs` is a parameter, not a constant, only because the KILL path deserves a test that runs in
-// milliseconds rather than ten seconds; production takes the default.
-export const execFileGit = (timeoutMs = 10_000): GitFn => (args, cwd) =>
+const TIMEOUT_MS = 10_000;
+
+const defaultGit: GitFn = (args, cwd) =>
   new Promise((resolve) => {
     // The try is the CONTRACT, not defensiveness: node validates argv BEFORE it spawns, so a client-supplied
     // branch carrying a NUL byte throws ERR_INVALID_ARG_VALUE synchronously right here, and an exception out of
     // this executor would escape the caller as a failure. Any pre-spawn rejection becomes a non-zero exit, like
     // every other way git can decline — which is the one shape the degrade path below knows how to read.
     try {
-      execFile("git", args, { cwd, timeout: timeoutMs, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+      execFile("git", args, { cwd, timeout: TIMEOUT_MS, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
         // `code` is a NUMBER only when git RAN and exited — pass those through untouched, they are git's own
         // verdict. It is the STRING "ENOENT" when the spawn never happened and null when the timeout kills git:
         // a process that never ran to completion, and BOTH arrive with empty stderr, which is exactly the shape
@@ -34,13 +34,11 @@ export const execFileGit = (timeoutMs = 10_000): GitFn => (args, cwd) =>
         const e = err as (Error & { code?: number | string; killed?: boolean; signal?: string }) | null;
         const c = e?.code;
         if (e && typeof c !== "number")
-          resolve({ code: 127, stdout, stderr: stderr || (e.killed ? `git was killed with ${e.signal} (timeout ${timeoutMs}ms)` : e.message) });
+          resolve({ code: 127, stdout, stderr: stderr || (e.killed ? `git was killed with ${e.signal} (timeout ${TIMEOUT_MS}ms)` : e.message) });
         else resolve({ code: typeof c === "number" ? c : 0, stdout, stderr });
       });
     } catch (e) { resolve({ code: 127, stdout: "", stderr: String(e) }); }  // also never ran: 127, never 1
   });
-
-const defaultGit: GitFn = execFileGit();
 
 export async function resolveReviewRange(
   target: ReviewTarget,

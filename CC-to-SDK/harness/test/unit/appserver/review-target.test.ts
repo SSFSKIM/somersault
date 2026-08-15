@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveReviewRange, execFileGit } from "../../../src/appserver/reviewTarget.js";
+import { resolveReviewRange } from "../../../src/appserver/reviewTarget.js";
 
 const okGit = (out: string) => async () => ({ code: 0, stdout: out, stderr: "" });
 const failGit = async () => ({ code: 128, stdout: "", stderr: "fatal: Not a valid object name" });
@@ -40,6 +40,19 @@ describe("resolveReviewRange", () => {
     expect(r.range).toBeUndefined();
     expect(r.note).toContain("no common ancestor");   // not "unknown error" — this failure has a crisp cause
   });
+  it("names a TIMEOUT KILL by its signal, the OTHER never-ran 127 that must not read as unrelated histories", async () => {
+    // The shape a killed git reports up: never ran to completion, so 127, and the reason is the SIGNAL because
+    // git's own stderr is empty. Injected rather than raced: node's `timeout` is a `setTimeout` on the event
+    // loop, not a wall clock, so on a busy loop it fires LATE and git WINS — measured 0/40 kills with the loop
+    // congested, every miss returning a real range. No budget fixes that, and the contract worth pinning is
+    // downstream of the spawn anyway — that this reason travels, and never borrows the mute-exit-1 ancestry.
+    const r = await resolveReviewRange({ type: "baseBranch", branch: "main" }, "/repo", {
+      git: async () => ({ code: 127, stdout: "", stderr: "git was killed with SIGTERM (timeout 10000ms)" }),
+    });
+    expect(r.range).toBeUndefined();
+    expect(r.note).toMatch(/killed with SIG/);
+    expect(r.note).not.toContain("no common ancestor");
+  });
 });
 
 // The DEFAULT git — no `deps`, so the real `execFile` runs. None of these need a fixture repo or a network:
@@ -66,14 +79,6 @@ describe("resolveReviewRange over the real execFile", () => {
     expect(r.note).toContain("ENOENT");
     expect(r.note).not.toContain("no common ancestor");
     expect(r.note).not.toContain("unknown error");
-  });
-  it("DEGRADES when the TIMEOUT kills git — `code` is null, non-numeric for the OTHER reason", async () => {
-    // Measured against real git at 1ms: killed 8/8, the whole loop 32ms, because a spawn alone costs more than
-    // a millisecond. Empty stderr again, so this is the second half of the same trap and needs its own reason.
-    const r = await resolveReviewRange({ type: "baseBranch", branch: "main" }, process.cwd(), { git: execFileGit(1) });
-    expect(r.range).toBeUndefined();
-    expect(r.note).toMatch(/killed with SIG/);
-    expect(r.note).not.toContain("no common ancestor");
   });
   it("DEGRADES when cwd is not a repository (real git, real non-zero exit)", async () => {
     const r = await resolveReviewRange({ type: "baseBranch", branch: "main" }, "/tmp");
