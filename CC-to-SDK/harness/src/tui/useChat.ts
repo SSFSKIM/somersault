@@ -33,6 +33,7 @@ import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
+import { paintedHeight } from "./wrapItems.js";
 import { RESIZE_SETTLE_MS } from "./resizeRepaint.js";
 import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
@@ -284,6 +285,12 @@ export function useChat(
    *  `rows` and takes Ink's tall-frame branch. Read live (never captured): commit is settle-driven, so the
    *  honest budget is the one the terminal has at the moment something settles. */
   const commitCap = (): number => Math.max(0, mainWindowCap(rowsFn()) - WINDOW_SLACK);
+  /** …and the unit that budget is spent in (FSW backlog 3): PAINTED rows at the width the classic renderer
+   *  is currently painting, not logical lines. This has to be the measure ChatApp's render-time window uses,
+   *  because the two walks decide the same cut from opposite ends — a commit that counted a wrapped
+   *  paragraph as one row would publish a different tail than the frame shows, and publication is a one-way
+   *  write into `<Static>`. Read live, for the same reason `commitCap` is. */
+  const commitHeightOf = (item: RenderItem): number => paintedHeight(item, columnsFn());
   /** The FULL compact projection, retained rather than discarded. It is what the render-time window is
    *  selected from (ChatApp), and `staticItems` is now strictly its committed HEAD rather than all of it. */
   const initialFinalized = useRef<readonly RenderItem[] | null>(null);
@@ -297,7 +304,7 @@ export function useChat(
   // ever painted. Only what the window cannot hold is published; the rest is live from the start.
   const [staticItems, setStaticItems] = useState<readonly RenderItem[]>(() => {
     const cap = commitCap();
-    const { commit } = selectLiveWindow(initialFinalized.current!, cap, cap);
+    const { commit } = selectLiveWindow(initialFinalized.current!, cap, cap, commitHeightOf);
     for (const item of commit) publishedIds.current.add(item.id);
     return commit;
   });
@@ -938,7 +945,7 @@ export function useChat(
     setFinalizedItems(finalized); finalizedRef.current = finalized;
     const unpublished = finalized.filter((item) => !publishedIds.current.has(item.id));
     const cap = commitCap();
-    const { commit } = selectLiveWindow(unpublished, cap, cap);
+    const { commit } = selectLiveWindow(unpublished, cap, cap, commitHeightOf);
     if (commit.length) {
       for (const item of commit) publishedIds.current.add(item.id);
       setStaticItems((s) => [...s, ...commit]);

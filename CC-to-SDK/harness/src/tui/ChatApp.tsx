@@ -53,6 +53,7 @@ import { editExternal, openInEditor } from "./externalEditor.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { popupHeight } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
+import { paintedHeight } from "./wrapItems.js";
 import { renderItemHeight } from "./pager.js";
 import { clearViewport } from "./clearViewport.js";
 import { physicalRows } from "./resizeRepaint.js";
@@ -139,8 +140,14 @@ const TRANSCRIPT_DUMP_NOTICE_MS = 4000;
 const EMPTY_ITEMS: readonly RenderItem[] = [];
 const EMPTY_LINES: readonly RenderLine[] = [];
 
-/** Physical rows a run of items will occupy — the same measure `liveWindow.ts` budgets in. */
+/** Physical rows a run of ALREADY-WRAPPED items occupies — one item per row by construction, which is what
+ *  `streamingItems` returns and the only thing this may be pointed at. */
 const rowsOf = (items: readonly RenderItem[]): number => items.reduce((sum, item) => sum + renderItemHeight(item), 0);
+/** …and the same count for a run that has NOT been wrapped (FSW backlog 3). `pendingItems` comes straight
+ *  out of `projectPending`, so an open tool call's header or a long argument line is one logical item Ink
+ *  paints as several. Undercharged, this subtraction hands the difference straight to the window, which is
+ *  the same tall frame by a different route. Measured at `size.columns`, the width that frame paints at. */
+const paintedRowsOf = (items: readonly RenderItem[], width: number): number => items.reduce((sum, item) => sum + paintedHeight(item, width), 0);
 
 /** WAVE R TASK 1 (defect i) — the default terminal-resize subscription, REWRITTEN IN THE FSW T3 FIX ROUND
  *  (review C1). Two things about it are now load-bearing, and both are about ORDER rather than about the
@@ -977,10 +984,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // different number of rows at a different width. (It was inert before — the items were re-projected at
     // the new width inside `useChat`, and that fresh array identity already invalidated this memo.)
     // `nextSize` keeps the identity stable while neither dimension moves, so this costs nothing on an
-    // ordinary re-render.
-    const live = rowsOf(state.pendingItems) + rowsOf(streamingItems(state.streaming, size.columns));
+    // ordinary re-render. THE BACKLOG-3 FIX WIDENS THAT to every term below: the window's own items and the
+    // pending region are measured PAINTED at `size.columns` too, so a width change now moves every term of
+    // this arithmetic rather than only the streaming one.
+    const live = paintedRowsOf(state.pendingItems, size.columns) + rowsOf(streamingItems(state.streaming, size.columns));
     const cap = Math.max(0, mainWindowCap(size.rows) - WINDOW_SLACK - live - (suggestOpen ? popupHeight(size.rows) : 0));
-    return selectLiveWindow(unpublished, cap, cap).window;
+    // …AND THE WINDOW ITSELF PAYS IN PAINTED ROWS (FSW backlog 3). `renderMarkdown` never wraps prose, so a
+    // 200-column paragraph is ONE logical line that Ink paints as three here — a window counted logically
+    // sat at the cap and painted three times it, which is the tall-frame branch this whole memo exists to
+    // stay away from. Measured on this harness at 80x24 with twelve such paragraphs: 8 window items / 8
+    // logical rows / 24 PAINTED rows against a cap of 8, now 2 / 2 / 6. Content that already fits the width
+    // measures identically either way, so the ordinary classic frame is unchanged.
+    return selectLiveWindow(unpublished, cap, cap, (item) => paintedHeight(item, size.columns)).window;
   }, [state.finalizedItems, state.staticItems, state.pendingItems, state.streaming, size, fullscreen, paneOwned, suggestOpen]);
   // …and the commit half of I2. An EDGE would be enough (the flag is what changes), but a level is cheaper to
   // reason about and idempotent by construction: with nothing unpublished left, `publishLiveWindow` returns

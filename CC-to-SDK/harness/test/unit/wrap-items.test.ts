@@ -7,7 +7,7 @@
 // `segments` and all, which is what keeps a settled frame allocation-free), and a document POSITION survives
 // a re-wrap so a held scroll offset can be translated rather than carried.
 import { describe, it, expect } from "vitest";
-import { remapRowOffset, sourceId, wrapItemsToWidth, wrapLine } from "../../src/tui/wrapItems.js";
+import { paintedHeight, remapRowOffset, sourceId, wrapItemsToWidth, wrapLine } from "../../src/tui/wrapItems.js";
 import { renderItemHeight } from "../../src/tui/pager.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 
@@ -90,6 +90,30 @@ describe("wrapItemsToWidth", () => {
     const first = wrapItemsToWidth([item], 10), second = wrapItemsToWidth([item], 10);
     expect(second[0]).toBe(first[0]);
     expect(wrapItemsToWidth([item], 40)[0]).toBe(item);            // …and a different width is re-answered
+  });
+});
+
+// FSW BACKLOG 3 — the same measure, WITHOUT the projection. A windowing selector walks items one at a time
+// and only ever needs their heights, so building (and discarding) the wrapped array per candidate would be
+// the whole document's worth of allocation per frame. This is the height alone, off the same cache.
+describe("paintedHeight", () => {
+  it("reports the rows a wide line paints, and 1 for one that fits", () => {
+    expect(paintedHeight(line("a", "x".repeat(25)), 10)).toBe(3);   // ⌈25/10⌉
+    expect(paintedHeight(line("b", "short"), 80)).toBe(1);
+  });
+
+  it("charges a gutter block its BODY rows at width − gutter", () => {
+    // `TOOL_RESULT_GUTTER` is five columns, so a 30-character body at width 20 wraps at 15: two rows.
+    const block: RenderItem = { kind: "gutter-block", id: "g", gutter: TOOL_RESULT_GUTTER, body: [{ text: "y".repeat(30) }] };
+    expect(paintedHeight(block, 20)).toBe(2);
+    expect(paintedHeight(block, 80)).toBe(1);
+  });
+
+  it("agrees with the projection it is the height of, item for item", () => {
+    // The one property that matters: no caller may get a different answer from the cheap measure than the
+    // renderer gets from `wrapItemsToWidth`, or the window and the frame are budgeting different documents.
+    const items = [line("a", "x".repeat(25)), line("b", "fits"), { kind: "line" as const, id: "h", line: { text: "T".repeat(200) }, wrap: "truncate-end" as const }];
+    for (const item of items) expect(paintedHeight(item, 10)).toBe(rows(wrapItemsToWidth([item], 10)));
   });
 });
 

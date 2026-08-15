@@ -133,6 +133,39 @@ describe("selectLiveWindow", () => {
     expectSuffixSplit(already, r);
     expect(ids(r.window)).toEqual(["fresh"]);
   });
+
+  // ── FSW BACKLOG 3 — THE UNIT IS WHATEVER `heightOf` REPORTS ────────────────────────────────────────────
+  // Every case above measures in `renderItemHeight`, the default, and stays honest only while nothing wraps.
+  // The classic renderer's items DO wrap (`renderMarkdown` never wraps prose, so a 207-column paragraph is
+  // one logical line Ink paints as three at 80 columns), so its caller passes a painted measure instead.
+  // What the selector owes that caller is that BOTH halves of its arithmetic — the target walk and the hard
+  // cap — use the measure it was handed, since a cap enforced in the wrong unit is not a cap at all.
+  it("measures the target walk and the cap in the unit `heightOf` reports", () => {
+    const items = [line("a"), line("b"), line("wide-c"), line("wide-d")];
+    // Three painted rows for a wide item, one for anything else — the shape of a 200-column paragraph at 80.
+    const painted = (item: RenderItem): number => (item.id.startsWith("wide") ? 3 : 1);
+    // Logically the whole input is 4 rows and fits a cap of 4 exactly; painted it is 8, and only the last
+    // item fits (3 ≤ 4, and taking `wide-c` too would be 6).
+    const logical = selectLiveWindow(items, 4, 4);
+    expect(ids(logical.window)).toEqual(["a", "b", "wide-c", "wide-d"]);
+    const r = selectLiveWindow(items, 4, 4, painted);
+    expectSuffixSplit(items, r);
+    expect(ids(r.window)).toEqual(["wide-d"]);
+    expect(ids(r.commit)).toEqual(["a", "b", "wide-c"]);
+    expect(r.window.reduce((sum, item) => sum + painted(item), 0)).toBeLessThanOrEqual(4);
+  });
+
+  it("still floors on an item that is over-cap in the reported unit, and commits it whole", () => {
+    // The recorded divergence, restated in painted rows: `wide` is one logical row and can never be a lie
+    // the cap absorbs — five painted rows against a cap of four — so it commits entire and the window is
+    // what sits below it. Measured logically the same input would put all four items in the window.
+    const items = [line("a"), line("wide"), line("c"), line("d")];
+    const painted = (item: RenderItem): number => (item.id === "wide" ? 5 : 1);
+    const r = selectLiveWindow(items, 4, 4, painted);
+    expectSuffixSplit(items, r);
+    expect(ids(r.commit)).toEqual(["a", "wide"]);
+    expect(ids(r.window)).toEqual(["c", "d"]);
+  });
 });
 
 describe("mainWindowCap", () => {

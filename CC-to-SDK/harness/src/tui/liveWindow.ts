@@ -55,19 +55,27 @@ const MAIN_DOCK_ROWS = 14;
  *  `rows(window)`, never `window.length`, to decide whether anything is live. */
 export function mainWindowCap(rows: number): number { return Math.max(0, rows - MAIN_DOCK_ROWS); }
 
-/** The smallest SUFFIX of whole items whose summed `renderItemHeight` reaches `targetRows`, hard-bounded at
- *  `capRows`; everything above it is `commit`. Walking from the tail is what makes it minimal: the moment the
+/** The smallest SUFFIX of whole items whose summed height reaches `targetRows`, hard-bounded at `capRows`;
+ *  everything above it is `commit`. Walking from the tail is what makes it minimal: the moment the
  *  accumulated height satisfies the target we stop, so the live subtree never carries rows nobody asked to
  *  reflow. The cap check that stops the walk covers two cases with one condition — an item that simply does
  *  not fit alongside what is already selected, and an item taller than `capRows` all by itself, which can
  *  never be in any window and so becomes a floor: it commits WHOLE (the recorded divergence — it is excluded
  *  from reflow, rather than being split), and the window is whatever sits below it. Past the cap the target
- *  has no say at all, so `targetRows ≥ capRows` degenerates to a purely cap-bounded selection. */
-export function selectLiveWindow(items: readonly RenderItem[], targetRows: number, capRows: number): LiveWindowResult {
+ *  has no say at all, so `targetRows ≥ capRows` degenerates to a purely cap-bounded selection.
+ *
+ *  THE UNIT IS WHATEVER `heightOf` REPORTS, and both halves of the arithmetic use it — the target walk and
+ *  the cap. It defaults to `renderItemHeight`, i.e. LOGICAL lines, which is honest only over a projection
+ *  that already fits the pane it will be painted in: `renderMarkdown` does not wrap prose, so a 200-column
+ *  paragraph is one logical line Ink paints as three at 80 columns, and a cap enforced in that unit is not a
+ *  cap at all — it is the tall-frame branch above, arrived at while believing the budget was kept. A caller
+ *  that renders at a known width therefore passes a PAINTED measure (`wrapItems.paintedHeight`); the module
+ *  stays Ink-free and pure by taking the measure rather than performing it. */
+export function selectLiveWindow(items: readonly RenderItem[], targetRows: number, capRows: number, heightOf: (item: RenderItem) => number = renderItemHeight): LiveWindowResult {
   let cut = items.length, height = 0;
   for (let i = items.length - 1; i >= 0; i--) {
     if (height >= targetRows) break;
-    const next = height + renderItemHeight(items[i]!);
+    const next = height + heightOf(items[i]!);
     if (next > capRows) break;
     height = next; cut = i;
   }

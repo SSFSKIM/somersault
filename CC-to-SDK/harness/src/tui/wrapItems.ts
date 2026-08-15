@@ -121,6 +121,17 @@ export function wrapItem(item: RenderItem, width: number): readonly RenderItem[]
   return rows;
 }
 
+/** THE HEIGHT A ROW BUDGET MUST USE — the rows `item` PAINTS at `width`, which is what `renderItemHeight`
+ *  already answers for everything that fits and understates for everything that does not. The height ALONE,
+ *  because a windowing selector walks candidates one at a time and never wants their rows: building and
+ *  discarding a wrapped array per candidate would allocate the whole document per frame, where this rides
+ *  `wrapItem`'s per-(item, width) cache and costs one map lookup on an unchanged row. */
+export function paintedHeight(item: RenderItem, width: number): number {
+  let sum = 0;
+  for (const row of wrapItem(item, width)) sum += renderItemHeight(row);
+  return sum;
+}
+
 function wrapOne(item: RenderItem, width: number): readonly RenderItem[] {
   if (item.kind === "gutter-block") {
     // ONE ITEM, A TALLER BODY. The five-column connector column is a sibling Box (`RenderItemView`), so the
