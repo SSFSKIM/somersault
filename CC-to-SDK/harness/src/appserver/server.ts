@@ -28,6 +28,7 @@ import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionR
 import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
+import { reviewStart } from "./review.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -232,16 +233,7 @@ export class AppServer {
       if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadStartParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-      const threadId = srv.registry.mint();
-      const dec = srv.makeDecisions(threadId, parsed.data.unattended);
-      const config = buildConfig(parsed.data, dec.broker(threadId));
-      const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
-      const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
-      srv.decisions.set(threadId, dec);
-      const nowS = nowSec();
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
-      srv.registry.add(record);
-      installRouter(srv, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
+      const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
       ctx.peer.reply(id, { thread: threadView(srv, record) });
       srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
     },
@@ -454,6 +446,12 @@ export class AppServer {
     // was written for — the exemption lets a dead thread reach it, and the origin gate still answers
     // -33006 for a fleet one.
     "thread/reopen": threadReopen,
+    // M4 (§surface): Codex's whole review REQUEST surface is one method, and so is ours. It NAMES A THREAD
+    // but only to read where that thread runs — the review itself is an ordinary turn on a new thread — so
+    // it passes both dispatch gates and answers each honestly: -33005 applies (a dead thread is dead for
+    // everything a client can name on it, thread/shellCommand's precedent), while the origin gate never
+    // fires because a fleet thread's cwd is as reviewable as an inProcess one's.
+    "review/start": reviewStart,
   };
 
   private readonly token: string;
@@ -465,6 +463,31 @@ export class AppServer {
   constructor(opts: { token?: string } = {}, public readonly deps: AppServerDeps = {}) {
     this.authRequired = opts.token !== undefined;
     this.token = opts.token ?? "";
+  }
+
+  /** The FRESH-thread creation spine, extracted verbatim from the `thread/start` handler so M4's
+   *  `review/start` (review.ts) can raise its detached review thread the same way rather than assembling
+   *  its own: mint the id, mint the broker, build the config, build the engine, register the decisions and
+   *  the record, install the router. Everything EXCEPT the reply and the `thread/started` announcement,
+   *  which stay at the call sites because the two callers owe different ones — `thread/start` answers
+   *  `{thread}`, a review answers `{turn, reviewThreadId}` — and because the reply-then-broadcast ordering
+   *  `thread/start` has always had is then still visible where it happens.
+   *
+   *  Throws whatever the session factory throws (an invalid config); dispatch's own catch answers for it.
+   *  The `resume` sibling below is a separate spine on purpose: it admits a thread onto an EXISTING store
+   *  id, which brings the delete/resume reservation race with it — nothing this one can encounter. */
+  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny" }): ThreadRecord {
+    const threadId = this.registry.mint();
+    const dec = this.makeDecisions(threadId, opts.unattended);
+    const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId));
+    const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
+    const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
+    this.decisions.set(threadId, dec);
+    const nowS = nowSec();
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    this.registry.add(record);
+    installRouter(this, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
+    return record;
   }
 
   /** The one thread-admission spine shared by thread/resume and Task 12's thread/fork (sessionLib.ts) —

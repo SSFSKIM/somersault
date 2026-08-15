@@ -1,0 +1,242 @@
+// test/unit/appserver/review-start.test.ts — M4 Task 5: `review/start`, the one method Codex's whole review
+// REQUEST surface is.
+//
+// THE TARGET THREAD'S ENGINE IS NEVER TOUCHED, which is what every case here is really pinning. Detached
+// delivery needs exactly one fact from the target — the directory it runs in — so the target records below
+// are HAND-BUILT (shell-command.test.ts's pattern) with a fake engine that records every submit: the claim
+// is that array staying empty while a SECOND, new session is built and prompted instead.
+//
+// The `sessionFactory` dep is what makes both halves observable — the cwd the review thread was rooted at
+// and the prompt it was handed are the two facts this handler is responsible for.
+import { describe, it, expect, afterEach } from "vitest";
+import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
+import { ERR } from "../../../src/appserver/rpc.js";
+import { FLEET_UNSUPPORTED, emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
+import type { PeerSink } from "../../../src/appserver/peer.js";
+
+const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
+const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+const servers: AppServer[] = [];
+let conn: { feed(chunk: string): void };
+let lines: string[];
+let nextId = 100;
+
+/** Records every session this server built, so a test can assert the cwd the REVIEW thread was rooted at,
+ *  the config it was opened with, and the prompt it was handed. */
+function factory() {
+  const built: Array<{ config: Record<string, unknown>; submitted: unknown[] }> = [];
+  const sessionFactory: AppServerDeps["sessionFactory"] = (config) => {
+    const entry = { config, submitted: [] as unknown[] };
+    built.push(entry);
+    return { submit: async (p: unknown) => { entry.submitted.push(p); return { result: {} }; },
+      interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {},
+      sessionId: `sess-${built.length}`, isEnded: () => false } as never;
+  };
+  return { built, sessionFactory };
+}
+
+function boot(deps: AppServerDeps = {}): AppServer {
+  const srv = new AppServer({}, deps);
+  servers.push(srv);
+  const s = mkSink();
+  conn = srv.connect(s.sink);
+  // `watchThreads` throughout: `thread/started` is watcher-scoped fan-out, and a review thread appearing is
+  // exactly the kind of thing a watching client is entitled to hear about.
+  conn.feed(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "T" }, watchThreads: true } }) + "\n");
+  s.lines.length = 0;
+  lines = s.lines;
+  return srv;
+}
+
+/** A target thread to review — hand-built, because `review/start` never touches its engine. `submitted`
+ *  comes back so a case can prove the target's own engine stayed silent. */
+function addRecord(srv: AppServer, cwd: string | undefined, origin: "inProcess" | "fleet" = "inProcess", config?: Record<string, unknown>) {
+  const id = srv.registry.mint();
+  const now = Math.floor(Date.now() / 1000);
+  const submitted: unknown[] = [];
+  srv.registry.add({
+    id, origin,
+    session: { submit: async (p: unknown) => { submitted.push(p); return { result: {} }; }, interrupt: async () => ({}),
+      dispose: async () => {}, onFrame: () => () => {}, sessionId: "target", isEnded: () => false },
+    unattended: "park", busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],
+    subscribers: new Set(), chain: Promise.resolve(), createdAt: now, updatedAt: now, cwd, config,
+    settings: {}, flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
+  } as unknown as ThreadRecord);
+  return { id, submitted };
+}
+
+const send = (method: string, params: unknown) => {
+  const id = nextId++;
+  conn.feed(JSON.stringify({ id, method, params }) + "\n");
+  return id;
+};
+const replyTo = (id: number) => parsed(lines).find((m) => m.id === id) as Record<string, any> | undefined;
+const settle = () => new Promise((r) => setImmediate(r));
+
+afterEach(async () => { for (const s of servers.splice(0)) await s.shutdown().catch(() => {}); });
+
+describe("review/start — delivery", () => {
+  it("refuses delivery:inline with an actionable message naming detached", async () => {
+    const srv = boot(factory());
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" }, delivery: "inline" });
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
+    expect(String(replyTo(id)?.error?.message)).toMatch(/detached/i);
+  });
+
+  it("refuses a delivery value that is neither inline nor detached", async () => {
+    // Carried forward from the Task 1 review: the schema tests pin that `detached` is the default and that
+    // `inline` survives verbatim, but nothing pinned the enum CLOSED. Written as `z.string()` it would pass
+    // all of those and let `delivery: "streamed"` reach this handler on a path no one specified. Two
+    // supported values, and everything else is a bad request.
+    const srv = boot(factory());
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" }, delivery: "streamed" });
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
+  });
+});
+
+describe("review/start — the detached review thread", () => {
+  it("creates a NEW review thread, replies {turn, reviewThreadId}, and roots it at the target's cwd", async () => {
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo/target");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const res = replyTo(id)?.result;
+    expect(res?.reviewThreadId).toBeTruthy();
+    expect(res?.reviewThreadId).not.toBe(t.id);          // a NEW thread, not the target
+    expect(res?.turn?.id).toBeTruthy();
+    expect(f.built.at(-1)?.config.cwd).toBe("/repo/target");
+  });
+
+  it("submits a prompt naming the target and ReportFindings", async () => {
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const prompt = String(f.built.at(-1)?.submitted[0] ?? "");
+    expect(prompt).toMatch(/uncommitted|working tree/i);
+    expect(prompt).toContain("ReportFindings");
+  });
+
+  it("leaves the TARGET's engine untouched — nothing is submitted to it", async () => {
+    // The whole mechanism in one assertion: a review is a turn on a second session, so the conversation
+    // under review gains no message and its engine is never driven.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    send("review/start", { threadId: t.id, target: { type: "commit", sha: "abc123" } });
+    await settle();
+    expect(t.submitted).toEqual([]);
+    expect(f.built.at(-1)?.submitted.length).toBe(1);
+  });
+
+  it("the review thread is an ORDINARY thread — announced, and its turn runs the normal spine", async () => {
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const reviewThreadId = replyTo(id)?.result?.reviewThreadId as string;
+    // Watchers hear about it like any other thread, or a client can never learn that the turn events it is
+    // about to see belong to a thread it has.
+    const started = parsed(lines).find((m) => m.method === "thread/started" && (m.params as any)?.thread?.id === reviewThreadId);
+    expect(started).toBeDefined();
+    expect((started?.params as any)?.thread?.cwd).toBe("/repo");
+    expect(srv.registry.get(reviewThreadId)).toBeDefined();
+  });
+
+  it("works for a FLEET-origin target — the target's engine is never touched", async () => {
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo/fleet", "fleet");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    expect(replyTo(id)?.error).toBeUndefined();
+    expect(replyTo(id)?.result?.reviewThreadId).toBeTruthy();
+    expect(f.built.at(-1)?.config.cwd).toBe("/repo/fleet");
+    expect(FLEET_UNSUPPORTED.has("review/start")).toBe(false);
+  });
+
+  it("marks the review record with the thread it reviews, for the harvester to attribute", async () => {
+    const srv = boot(factory());
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const review = srv.registry.get(replyTo(id)?.result?.reviewThreadId as string);
+    expect(review?.reviewOf).toBe(t.id);
+    expect(srv.registry.get(t.id)?.reviewOf).toBeUndefined();
+  });
+});
+
+describe("review/start — read-only by policy, not only by prompt", () => {
+  it("opens the review thread with the edit tools disallowed", async () => {
+    // The prompt says "Review only — do not edit, fix, or commit anything"; a promise the server does not
+    // enforce is one it should not print. Risk reduction, not a guarantee — `Bash` stays (git needs it).
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const disallowed = f.built.at(-1)?.config.disallowedTools as string[];
+    expect(disallowed).toEqual(expect.arrayContaining(["Edit", "Write", "NotebookEdit"]));
+    expect(disallowed).not.toContain("Bash");
+  });
+
+  it("MERGES with the target config's own disallowedTools rather than clobbering them", async () => {
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo", "inProcess", { cwd: "/repo", disallowedTools: ["WebSearch", "Edit"] });
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const disallowed = f.built.at(-1)?.config.disallowedTools as string[];
+    expect(disallowed).toEqual(expect.arrayContaining(["WebSearch", "Edit", "Write", "NotebookEdit"]));
+    expect(disallowed.filter((d) => d === "Edit").length).toBe(1); // merged as a set, not concatenated
+  });
+
+  it("never resumes the target's conversation, however the target was opened", async () => {
+    // `record.config` is the FULL object the target's engine was built from — `resume` included. Carried
+    // over it would open the review ON the target's own transcript, which is precisely the contamination
+    // detached delivery exists to avoid.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo", "inProcess", { cwd: "/repo", resume: "sess-target", model: "opus" });
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    expect(f.built.at(-1)?.config.resume).toBeUndefined();
+    expect(f.built.at(-1)?.config.model).toBe("opus"); // the rest of the target's setup still travels
+  });
+});
+
+describe("review/start — gates", () => {
+  it("refuses an unknown threadId with THREAD_NOT_FOUND", async () => {
+    boot(factory());
+    const id = send("review/start", { threadId: "th_nope", target: { type: "uncommittedChanges" } });
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.THREAD_NOT_FOUND);
+  });
+
+  it("refuses a malformed target", async () => {
+    const srv = boot(factory());
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "nope" } });
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
+  });
+
+  it("refuses a target thread whose cwd is unknown instead of reviewing this server's own tree", async () => {
+    // Runtime-reachable only for a malformed fleet roster row (registry.ts's `threadCwd`), and "I don't
+    // know where that thread runs" is the honest answer — a fallback would silently review a different repo.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, undefined, "fleet");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
+    expect(f.built.length).toBe(0); // no orphaned session left behind
+  });
+});

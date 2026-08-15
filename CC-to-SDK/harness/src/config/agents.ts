@@ -1,7 +1,10 @@
 import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 import { DEFAULTS, type HarnessConfig } from "./types.js";
 
-const READONLY_DISALLOW = ["Edit", "Write", "NotebookEdit"];
+/** The tools an agent that must not change the tree gives up. Exported because it is this codebase's ONE
+ *  answer to "make this read-only" — the built-in Explore/Plan agents below and the app server's review
+ *  thread (appserver/review.ts) reach for the same set, so a fourth tool joining it reaches all of them. */
+export const READONLY_DISALLOW = ["Edit", "Write", "NotebookEdit"];
 
 export const BUILTIN_AGENTS: Record<string, AgentDefinition> = {
   "general-purpose": {
