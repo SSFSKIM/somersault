@@ -16,10 +16,11 @@
 import { ERR, type RequestId } from "./rpc.js";
 import type { Peer } from "./peer.js";
 import { threadCwd, type ThreadRecord } from "./registry.js";
-import { threadView, type ConnCtx, type Handler } from "./server.js";
-import { turnStart } from "./turns.js";
+import { threadView, type AppServer, type ConnCtx, type Handler } from "./server.js";
+import { emitItems, turnStart } from "./turns.js";
 import { buildReviewPrompt } from "./reviewPrompt.js";
 import { resolveReviewRange } from "./reviewTarget.js";
+import { harvestFindings, type ReviewFinding } from "./reviewFindings.js";
 import { reviewStartParams } from "./schema/review.js";
 import { READONLY_DISALLOW } from "../config/agents.js";
 
@@ -51,22 +52,29 @@ const NO_CWD = "the target thread's working directory is unknown, so there is no
  *  tells the reviewer "Review only — do not edit, fix, or commit anything" (reviewPrompt.ts), and a promise
  *  the server does not enforce is one it should not print. What `READONLY_DISALLOW` (config/agents.ts, the
  *  same set the built-in read-only agents use) closes is the LIKELY accidental path: a model that
- *  "helpfully" applies the fix it just found reaches for `Edit`. THREE DOORS IT LEAVES OPEN, all three named
+ *  "helpfully" applies the fix it just found reaches for `Edit`. TWO DOORS IT LEAVES OPEN, both named
  *  because a limit statement that admits one hole reads as if that were the only one:
  *   - `Bash`. A review needs git and a shell can write. Left open deliberately — this is the known trade.
  *   - MCP WRITE TOOLS. The inherited config carries the target's `mcpServers`, and MCP tool names are
  *     NAMESPACED (`mcp__<server>__<tool>`), so three native names touch none of them: a target wired to a
  *     filesystem, GitHub or Notion server hands the review the same write capability under another name.
- *   - SUBAGENTS. The reviewer can dispatch through `Task`, and whether a top-level `disallowedTools` binds
- *     the tools those children call is UNVERIFIED — a live probe is open on exactly that question, and until
- *     it answers this comment asserts neither way rather than guessing in either direction.
+ *  SUBAGENTS ARE NOT A THIRD DOOR (probe 110): a top-level `disallowedTools` DOES bind the tools a
+ *  dispatched child calls, at depth 2 as well as 1, and the denial is a session-build fact rather than a
+ *  permission decision — the tools are absent from the session's advertised list, and the SDK says so
+ *  outright ("Edit is disabled for this session, in subagents as well as here"). Verified on disk, not from
+ *  the model's narration: the child's target file was unmodified across every run, against a control
+ *  proving the top-level agent was refused the same way. What the probe does NOT touch is `Bash` — no child
+ *  tried to write through a shell it was allowed to use — so that door above is unchanged.
  *  AND THE FALLBACK IS CONDITIONAL TOO. Combined with D-M4-5 (a review turn parks like any other turn), a
  *  write that slips through `Bash` parks for a human rather than landing silently — but only while the
  *  permission broker is consulted, and `permissionMode` is INHERITED from the target VERBATIM. It is
  *  consulted under `default`, `acceptEdits`, `plan` and the `auto` default; `bypassPermissions` and
  *  `dontAsk` REPLACE `canUseTool` outright (config/types.ts), so a target opened in either of those reviews
  *  UNSUPERVISED with a shell on the user's tree. Not clamped on purpose: a client that chose a never-ask
- *  posture for unattended operation would have its reviews hang instead of run.
+ *  posture for unattended operation would have its reviews hang instead of run. THE TOOL DENIAL SURVIVES
+ *  THOSE POSTURES THOUGH (probe 110): `bypassPermissions` does not lift `disallowedTools`, because that
+ *  list never reaches the broker it bypasses — so under a never-ask posture the approval fallback is gone
+ *  while the read-only policy itself still stands.
  *  MERGED as a set, never assigned: a target thread that already denied tools keeps every one. */
 function reviewConfig(target: ThreadRecord, cwd: string): Record<string, unknown> {
   const { resume: _resume, ...inherited } = target.config ?? {};
@@ -89,6 +97,94 @@ function withReviewThreadId(ctx: ConnCtx, reviewThreadId: string): ConnCtx {
     notify: peer.notify.bind(peer),
   } as unknown as Peer;
   return { ...ctx, peer: shim };
+}
+
+/** One `review/findings` verdict, minus the `{threadId, turnId}` envelope both channels stamp themselves. */
+type Verdict = { findings: ReviewFinding[]; unstructured: boolean; level?: string; prose?: string };
+
+/** What the REVIEWER said, as opposed to what its subagents chattered about. Nested frames are excluded
+ *  here — mirroring `TurnMapper.ingest`'s own rule ("nested/subagent frame: attribution only, not
+ *  itemized") — and that is deliberately the OPPOSITE of the rule for findings below. The two are about
+ *  different things: a finding is about the review's SUBJECT, so whoever found it, it counts (D-M4-7);
+ *  prose is the reviewer's own answer, and splicing a subagent's monologue into it would misattribute
+ *  words the reviewer never wrote.
+ *
+ *  Blocks within one message CONCATENATE (they are one utterance the model happened to split); the caller
+ *  joins separate messages with a newline, because two assistant messages are two paragraphs and running
+ *  them together invents a sentence boundary that was never there. */
+function assistantText(frame: unknown): string {
+  const f = frame as { type?: unknown; parent_tool_use_id?: unknown; message?: { content?: unknown } } | null;
+  if (!f || f.type !== "assistant" || f.parent_tool_use_id || !Array.isArray(f.message?.content)) return "";
+  return (f.message.content as Array<Record<string, unknown>>)
+    .map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : ""))
+    .join("");
+}
+
+/** The turn's own end. The read loop hands EVERY frame to its callbacks before it resolves the turn's
+ *  waiter (session/session.ts's readLoop), so this fires ahead of `submit()` settling and therefore ahead
+ *  of `turn/completed` — a client never watches a review turn finish before it hears the verdict. Nested
+ *  results are excluded for the same reason `resultWaiter` only settles turn-owned ones: a child's terminal
+ *  frame is not the turn's.
+ *
+ *  A turn that ends with NO result frame — the engine died mid-review — deliberately fires no fallback. The
+ *  fallback exists to stop an unreported review reading as an all-clear; a review that never finished says
+ *  so through `turn/completed {status:"failed"}`, and announcing `findings: []` for it would claim a review
+ *  happened. */
+function isTurnEnd(frame: unknown): boolean {
+  const f = frame as { type?: unknown; parent_tool_use_id?: unknown } | null;
+  return !!f && f.type === "result" && !f.parent_tool_use_id;
+}
+
+/** THE HARVEST, SCOPED TO THE TURN `review/start` BEGAN — not to the review THREAD. `reviewOf` marks the
+ *  thread, and a review thread is an ORDINARY thread: a client holding `reviewThreadId` can start a
+ *  follow-up turn on it (asking the reviewer about its own findings, say). Under a thread-wide harvest that
+ *  turn's findings-free ending would fire the unstructured fallback on a turn nobody asked to be reviewed,
+ *  and a client that APPENDS findings would gain a spurious entry. The scope is structural rather than a
+ *  comparison made at broadcast time: this subscription is installed for one turn and unsubscribes at that
+ *  turn's end. The `currentTurnId` guard covers the one path that never reaches an end frame — `beginTurn`
+ *  settling the turn terminally under the `closing`/`interruptRequested` latch, which runs the engine not at
+ *  all — so a later turn on the same thread cannot inherit this watcher.
+ *
+ *  NO `parent_tool_use_id` GUARD, deliberately (D-M4-7). `routeTodo` (`router.ts:212`) drops nested frames
+ *  because a subagent's to-do list is its own private working state; a finding is not — a reviewing agent
+ *  may dispatch subagents, `ReportFindings` is written for that shape, and a finding from a child is still a
+ *  finding about the review's subject. Dropping them would yield a review that reports nothing while its
+ *  prose says otherwise, which is the same silent all-clear the fallback exists to prevent, arriving through
+ *  another door. Hence also: `sawReport` is set by ANY harvest, nested included.
+ *
+ *  ONE NOTIFICATION PER HARVESTED FRAME, and it is ADDITIVE — a client APPENDS, nothing here supersedes an
+ *  earlier notification. Per FRAME and not per call because `harvestFindings` MERGES every well-formed
+ *  block in one assistant message (Task 4's review found that reading only the first silently dropped the
+ *  rest), so one hit is the unit that reaches the wire; re-splitting it would publish the number of tool
+ *  calls a frame happened to carry, which is not something a client needs. */
+function watchReviewTurn(srv: AppServer, record: ThreadRecord, turnId: string): void {
+  let sawReport = false;
+  let done = false;
+  let seq = 0;
+  const prose: string[] = [];
+  const publish = (verdict: Verdict): void => {
+    srv.broadcast(record.id, "review/findings", { threadId: record.id, turnId, ...verdict });
+    // The same verdict on the ITEM channel, so a client subscribed to items alone still sees the review —
+    // and, since `emitItems` buffers, so a client that joins mid-review is replayed the verdicts already
+    // reached. Both paths emit one, not just the reporting path: a subscriber that heard only structured
+    // hits would read an unreported review as a review with nothing to say.
+    emitItems(srv, record, turnId, [{ kind: "completed", item: { type: "review", id: `review_${turnId}_${++seq}`, ...verdict } }]);
+  };
+  let off: (() => void) | undefined;
+  off = record.session.onFrame((frame: unknown) => {
+    if (done || record.currentTurnId !== turnId) return;
+    const harvested = harvestFindings(frame);
+    if (harvested) { sawReport = true; publish({ ...harvested, unstructured: false }); }
+    const text = assistantText(frame);
+    if (text) prose.push(text);
+    if (!isTurnEnd(frame)) return;
+    done = true;
+    off?.();
+    // The governing rule of this domain: a turn that ended with no report yields the empty array PLUS the
+    // `unstructured` flag PLUS what the reviewer actually said, so the truth stays on the wire. A bare
+    // empty array here would be an authoritative all-clear no reviewer asserted.
+    if (!sawReport) publish({ findings: [], unstructured: true, prose: prose.join("\n") });
+  });
 }
 
 export const reviewStart: Handler = async (srv, ctx, id, params) => {
@@ -125,4 +221,12 @@ export const reviewStart: Handler = async (srv, ctx, id, params) => {
   // (nothing has had a chance to claim the record), which is why its refusal path is not handled here —
   // the same reasoning turns.ts's queue drain records.
   turnStart(srv, withReviewThreadId(ctx, record.id), id, { threadId: record.id, input: buildReviewPrompt(parsed.data.target, resolved) });
+  // The harvest is installed AFTER the turn exists and BEFORE any frame can arrive: `beginTurn` mints and
+  // stamps `currentTurnId` synchronously, in the same step it claims the thread, while the submit it
+  // eventually issues sits behind `record.chain` — so this still runs a whole microtask ahead of the first
+  // frame. Reading the id off the record rather than minting one is what ties the watcher to THE turn this
+  // request began (see watchReviewTurn); the conditional is that read's type narrowing and nothing more —
+  // `beginTurn`'s busy gate cannot refuse for a thread created one statement ago (see the note above it).
+  const reviewTurnId = record.currentTurnId;
+  if (reviewTurnId) watchReviewTurn(srv, record, reviewTurnId);
 };
