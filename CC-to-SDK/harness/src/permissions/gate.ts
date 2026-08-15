@@ -21,7 +21,10 @@ export type CanUseTool = (toolName: string, input: Record<string, unknown>, opti
  *  THE TWO LITERALS ARE THE WHOLE SIGNAL. Probe 97 A3: of the ten fields on a consult's options bag, an
  *  ExitPlanMode call defines four and none of them discriminates, so a rename upstream would silently
  *  demote every plan approval to the generic 3-way dialog with nothing throwing. Pinned in
- *  test/unit/gate-plan-kind.test.ts. */
+ *  test/unit/gate-plan-kind.test.ts.
+ *  NO `elicitation` ARM, DELIBERATELY: that kind never comes from a tool call at all (it arrives on the
+ *  SDK's own `onElicitation`, never `canUseTool`), so no toolName maps to it — see DecisionKind in
+ *  types.js. Same reason `denyMessage` below has none. */
 export function routeDecisionKind(toolName: string): DecisionKind {
   return toolName === "AskUserQuestion" ? "question" : toolName === "ExitPlanMode" ? "plan" : "permission";
 }
@@ -38,6 +41,8 @@ const PLAN_REJECTED = "User rejected the plan.";
  *  and the human was quoted issuing an order they never gave. `message` is required by sdk.d.ts's deny arm
  *  (`PermissionResult`, no optional spelling), so the honest floor is a bare statement of what happened. */
 function denyMessage(kind: DecisionKind, toolName: string): string {
+  // `elicitation` has no arm because it never reaches here (see routeDecisionKind above), and must not get
+  // one by reflex: it has no toolName, so the final arm would print `User denied undefined`.
   return kind === "question" ? "No user is available to answer."
     : kind === "plan" ? PLAN_REJECTED
     : `User denied ${toolName}`;
