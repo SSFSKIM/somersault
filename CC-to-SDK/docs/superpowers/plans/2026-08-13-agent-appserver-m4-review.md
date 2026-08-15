@@ -952,9 +952,14 @@ Expected: every walked token has a row; no staleness; the registered-method coun
 
 - [ ] **Step 4: Commit**
 
+Stage the registry edit from Step 1 alongside the docs — the Global Constraints make this list binding, so a
+file missing from it is a file left uncommitted. Both artifacts are listed because the emitter writes
+`stable` and `experimental` on every run (`schema/emit.ts` splits on `entry.experimental`); if the
+experimental one comes back byte-identical, `git add` on it is simply a no-op.
+
 ```bash
-git add CC-to-SDK/docs/parity/appserver.md CC-to-SDK/docs/parity/coverage.md CC-to-SDK/harness/schema/json/stable/appserver.json
-git commit -m "docs(as4): scorecard rows + schema artifacts for the review domain and elicitation kind"
+git add CC-to-SDK/harness/src/appserver/schema/index.ts CC-to-SDK/docs/parity/appserver.md CC-to-SDK/docs/parity/coverage.md CC-to-SDK/harness/schema/json/stable/appserver.json CC-to-SDK/harness/schema/json/experimental/appserver.json
+git commit -m "feat(as4): register review/start in methodSchemas; scorecard rows + schema artifacts"
 ```
 
 ---
