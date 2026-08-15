@@ -515,6 +515,19 @@ git commit -m "feat(as4): harvest review findings from the ReportFindings tool_u
 - Create the review thread through the SAME path `thread/start` uses (`startThread` in `server.ts`) so it is an ordinary registry record with an ordinary turn lifecycle.
 - Reply `{turn, reviewThreadId}` — Codex's result shape.
 - `delivery: "inline"` → refuse with `ERR.INVALID_PARAMS` and a message naming detached as the supported path.
+- **Make "review only" true in policy, not just in the prompt.** Task 2's prompt tells the agent "Review
+  only — do not edit, fix, or commit anything", and a promise the server does not enforce is a promise the
+  server should not print. Create the review thread with the edit tools disallowed, reusing this
+  codebase's own convention for a read-only agent rather than inventing one: `READONLY_DISALLOW =
+  ["Edit", "Write", "NotebookEdit"]` (`src/config/agents.ts:4`), which the built-in read-only agents
+  already use, reaching the SDK through `resolveOptions` (`src/config/resolveOptions.ts:39`). Merge it with
+  whatever the caller's config already carries — do not clobber a caller's `disallowedTools`.
+  **State the limit honestly in the code comment: this is risk reduction, not a guarantee.** The review
+  needs `Bash` for git, and `Bash` can write; what this removes is the likely accidental path — a model
+  "helpfully" applying the fix it just found, which it would do through `Edit`. Combined with D-M4-5
+  (review turns park like any other turn), a write attempt that does slip through parks for a human rather
+  than landing silently. Add a test asserting the review thread is created with the edit tools disallowed
+  and that a caller-supplied `disallowedTools` survives the merge.
 
 - [ ] **Step 1: Write the failing test**
 
