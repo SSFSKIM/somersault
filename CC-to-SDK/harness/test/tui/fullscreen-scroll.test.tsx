@@ -20,7 +20,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { render } from "ink-testing-library";
 import { Box, Text } from "ink";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FullscreenViewport } from "../../src/tui/FullscreenViewport.js";
@@ -509,10 +509,12 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     return { writes, guard, around };
   };
   const guardedApp = (mode: "fullscreen" | "classic", around: <T>(run: () => T) => T, session = fakeRemote(),
-                      extraDeps: Partial<NonNullable<Parameters<typeof ChatApp>[0]["deps"]>> = {}) => (
+                      extraDeps: Partial<NonNullable<Parameters<typeof ChatApp>[0]["deps"]>> = {},
+                      resumeOutput?: NonNullable<Parameters<typeof ChatApp>[0]["resumeOutput"]>) => (
     <ChatApp makeSession={() => session as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
       renderer={{ mode, reason: "env_on" }} initialEntries={alphaEntries()}
-      deps={{ columns: () => 80, rows: () => 24, ...extraDeps }} aroundSubprocess={around} />
+      deps={{ columns: () => 80, rows: () => 24, ...extraDeps }} aroundSubprocess={around}
+      {...(resumeOutput ? { resumeOutput } : {})} />
   );
   const planEntry = (): PendingEntry =>
     ({ sessionId: "s", toolUseID: "p", toolName: "ExitPlanMode", kind: "plan", input: { plan: "ship it" }, createdAt: Date.now() });
@@ -622,6 +624,79 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       expect(writes).toEqual([SPAWN]);
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  // ── FSW BACKLOG 4 — AND THE SCREEN COMES BACK EVEN WHEN NOTHING CHANGED ─────────────────────────────────
+  // The handoff's return leg ends in `ENTER_ALT`, which ends in `2J`+`H`: the alternate screen the user is
+  // handed back is BLANK. Ink repaints it only if React state moved while the child had the terminal — its
+  // `onRender` writes on `output !== lastOutput` (ink.js:132) and log-update returns early on
+  // `output === previousOutput` (log-update.js:13). Quit the editor without saving, close `/keybindings`
+  // unchanged, and both dedupes fire: zero bytes, and the user sits looking at an empty screen until they
+  // type. T17 could not reproduce it because every arm it could reach (`:q!` clears the in-flight row,
+  // ctrl+g with changes rewrites the buffer) moves state on the way back. So the child here changes NOTHING,
+  // and what is pinned is the forced repaint — the same `resumeOutput.repaint` closure ctrl+z resumes with.
+  const REPAINT = "<forced repaint>";
+  /** `chatMain`'s `resumeOutput`, reduced to the one seam this pins and marked in the SAME write log as the
+   *  escape bytes, so the repaint's position against `ENTER_ALT` is assertable rather than merely its count. */
+  const repaintProbe = (writes: string[]) => ({ repaint: (runInkWrite: () => void) => { writes.push(REPAINT); runInkWrite(); } });
+  /** An editor that saves nothing — the arm above. It touches a marker beside the script so a test can still
+   *  prove the child RAN, which `EDITED` on the surface proves for every other case in this file. */
+  const quietEditor = () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccx-bl4-editor-"));
+    const path = join(dir, "editor.sh"), mark = join(dir, "ran");
+    writeFileSync(path, `#!/bin/sh\nprintf ran > '${mark}'\n`, { mode: 0o755 });
+    return { path, ran: () => existsSync(mark), clean: () => rmSync(dir, { recursive: true, force: true }) };
+  };
+
+  it("repaints the alternate screen after a round trip that changed nothing", async () => {
+    const ed = quietEditor(), { writes, around } = guarded(true);
+    process.env.VISUAL = ed.path;
+    try {
+      const r = renderWithKeymap(guardedApp("fullscreen", around, fakeRemote(), {}, repaintProbe(writes)));
+      await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+      await tick();
+      r.stdin.write("\x07");                                            // ctrl+g — and the editor saves nothing
+      await waitFor(() => writes.includes(ENTER_ALT));
+      await settle();
+      expect(ed.ran()).toBe(true);                                      // the child really ran…
+      const child = writes.indexOf(SPAWN);
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT, REPAINT]);    // …and smcup's blank screen was painted over
+      r.unmount();
+    } finally { process.env.VISUAL = ""; ed.clean(); }
+  });
+
+  // The main screen never went blank — nothing cleared it — so the repaint must not fire there. This is the
+  // byte-identical guarantee the classic renderer has held since T12, and the gate is the live renderer mode.
+  it("forces no repaint on the main screen", async () => {
+    const ed = quietEditor(), { writes, around } = guarded(false);
+    process.env.VISUAL = ed.path;
+    try {
+      const r = renderWithKeymap(guardedApp("classic", around, fakeRemote(), {}, repaintProbe(writes)));
+      await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+      await tick();
+      r.stdin.write("\x07");
+      await waitFor(() => writes.includes(SPAWN));
+      await settle();
+      expect(ed.ran()).toBe(true);
+      expect(writes).toEqual([SPAWN]);
+      r.unmount();
+    } finally { process.env.VISUAL = ""; ed.clean(); }
+  });
+
+  // A child that never returns normally is the case the user cannot recover from by hand: the screen is blank,
+  // the exception is swallowed upstream (the composer answers `done(null)` and keeps the buffer), and nothing
+  // else is coming. `finally`, therefore — not a line after the call.
+  it("repaints even when the handoff throws", async () => {
+    const writes: string[] = [];
+    const around = <T,>(_run: () => T): T => { writes.push(SPAWN); throw new Error("the child blew up"); };
+    const r = renderWithKeymap(guardedApp("fullscreen", around, fakeRemote(), {}, repaintProbe(writes)));
+    await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
+    await tick();
+    r.stdin.write("\x07");
+    await waitFor(() => writes.includes(SPAWN));
+    await settle();
+    expect(writes).toEqual([SPAWN, REPAINT]);
+    r.unmount();
   });
 
   // The classic renderer is untouched: there the committed transcript is in scrollback above the frame, so the

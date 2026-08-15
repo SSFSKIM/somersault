@@ -280,7 +280,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  dialog's ctrl+g, all of which must run with the main screen in front of them. A prop rather than a
    *  context for the same reason `renderer` is one, and absent everywhere the guard is (classic launches,
    *  embedders, component tests) — where the guard would be inert anyway, since it is armed only by the
-   *  fullscreen renderer. */
+   *  fullscreen renderer. Every consumer below takes it through `aroundChild`, which owes the return leg one
+   *  more thing (backlog 4); nothing reads this prop directly. */
   aroundSubprocess?: <T>(run: () => T) => T;
   /** FSW T14, AMENDMENT 3 — T6's `guard.handoff`, the same terminal handoff `aroundSubprocess` wraps, opened
    *  up so ctrl+z can hold its two halves across the SIGTSTP/SIGCONT round trip. Threaded from `chatMain`
@@ -293,6 +294,42 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // header comment for why the ref-counted one is a no-op here. `write` (real repaint, same reasoning).
   const { stdin } = useStdin();
   const { stdout, write } = useStdout();
+  /** FSW TASK 9 — the one derivation of the renderer choice this file makes; everything below reads THIS.
+   *  It sits up here, above the first consumer, because backlog 4's handoff wrapper is one. */
+  const fullscreen = renderer?.mode === "fullscreen";
+  const fullscreenRef = useRef(fullscreen); fullscreenRef.current = fullscreen;
+  const resumeOutputRef = useRef(resumeOutput); resumeOutputRef.current = resumeOutput;
+  /** THE ONE FORCED FRAME, and it has two readers: ctrl+z's resume (below) and every subprocess handoff
+   *  (`aroundChild`). Ink's `useStdout().write` IS `writeToStdout` — `log.clear()` → `stdout.write(data)` →
+   *  `log(this.lastOutput)` — and that third call is the one render log-update cannot dedupe, because the
+   *  `clear()` one line earlier just set `previousOutput = ''` (full derivation in `clearViewport.ts`, note 2).
+   *  `resumeOutput.repaint` is the output proxy's "this write is a deliberate repaint" bracket; absent (an
+   *  embedder, a component test with no proxy) the write still goes, unrecorded. */
+  const forceRepaint = useCallback(() => {
+    const paint = () => write("");
+    const output = resumeOutputRef.current;
+    if (output) output.repaint(paint); else paint();
+  }, [write]);
+  /** FSW BACKLOG 4 — THE HANDOFF, PLUS THE FRAME THE RETURN LEG OWES. `handoff()`'s return call writes
+   *  `ENTER_ALT`, which ends in `2J`+`H`: the alternate screen a child hands back is BLANK, while Ink's
+   *  log-update counters still describe the frame from before it. If the child changed nothing the tree
+   *  renders (an editor quit unsaved, `/keybindings` closed unchanged, a plan left as written), BOTH of Ink's
+   *  dedupes fire and not one byte is written — the user sits looking at an empty screen until the next
+   *  keystroke. So the repaint is owed by the RETURN itself, not by the caller, and it is `finally`: a child
+   *  that threw leaves the same blank screen, and the composer swallows that throw.
+   *    Gated on the LIVE renderer mode (through a ref, so a `/tui` flip does not churn the identity every
+   *  consumer below memoizes on) because that is exactly when the guard is armed — T15's `leave()` disarms on
+   *  the flip to classic, where the handoff writes nothing, nothing was cleared, and a forced frame would be
+   *  a write the main screen never used to get.
+   *    NOT in `altScreen.ts`: that module is Ink-free by design. And not double-painted on ctrl+z — suspend
+   *  takes `handoff` directly and hands it `forceRepaint` itself, so it never comes through here. */
+  const aroundChild = useMemo(() => {
+    const around = aroundSubprocess;
+    if (!around) return undefined;                                  // no guard handed down: nothing to wrap, nothing to repaint
+    return <T,>(run: () => T): T => {
+      try { return around(run); } finally { if (fullscreenRef.current) forceRepaint(); }
+    };
+  }, [aroundSubprocess, forceRepaint]);
   // FSW T12 RE-REVIEW — `/keybindings` IS AN EDITOR TOO, and it is the one that is not a key. useChat's own
   // default calls `openInEditor` with no `around` (useChat.ts:653), so the slash command that hands the user
   // their `~/.claude/keybindings.json` was still spawning its child ONTO the alternate screen: the editor's own
@@ -302,9 +339,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // `deps` are assembled; `chatMain` builds no deps object of its own.
   //   AN INJECTED `openEditor` STILL WINS, so every test that fakes the opener is untouched — and without a
   // guard the deps object is handed on exactly as it came, so an embedder sees no new field.
-  const chatDeps = useMemo(() => (aroundSubprocess && !deps?.openEditor
-    ? { ...deps, openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundSubprocess }) }
-    : deps), [deps, aroundSubprocess]);
+  const chatDeps = useMemo(() => (aroundChild && !deps?.openEditor
+    ? { ...deps, openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) }
+    : deps), [deps, aroundChild]);
   const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
@@ -351,8 +388,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // a plain number would be a prop identity that only changes when the parent re-renders for another reason.
   const terminalColumns = () => size.columns;
   const terminalRows = () => size.rows;
-  /** FSW TASK 9 — the one derivation of the renderer choice this file makes; everything below reads THIS. */
-  const fullscreen = renderer?.mode === "fullscreen";
   const queueWidth = Math.max(8, terminalColumns() - QUEUE_PAD * 2);
   const [exitArmed, setExitArmed] = useState(false);
   /** WAVE C TASK 4 (EP-C7b) — THE CLEAR CHANNEL, and it is a TOKEN for the reason `prefill` is one. Ctrl-C's
@@ -497,7 +532,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const rootStateRef = useRef(state); rootStateRef.current = state;
   const todosOpenRef = useRef(todosOpen); todosOpenRef.current = todosOpen;
   const suspendRef = useRef(suspend); suspendRef.current = suspend;
-  const resumeOutputRef = useRef(resumeOutput); resumeOutputRef.current = resumeOutput;
   const interruptRef = useRef(interrupt); interruptRef.current = interrupt;
   const backgroundNowRef = useRef(backgroundNow); backgroundNowRef.current = backgroundNow;
   const openBgPanelRef = useRef(openBgPanel); openBgPanelRef.current = openBgPanel;
@@ -571,11 +605,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // teardown is untouched by it — `handoff` leaves `armed` true, so a kill arriving while we are STOPPED still
   // finds a guard willing to write rmcup.
   useKeySuspend(() => {
-    const repaint = () => write("");
-    (suspendRef.current ?? suspendProcess)({ stdin, stdout, ...(altHandoff ? { handoff: altHandoff } : {}), repaint: () => {
-      const output = resumeOutputRef.current;
-      if (output) output.repaint(repaint); else repaint();
-    } });
+    (suspendRef.current ?? suspendProcess)({ stdin, stdout, ...(altHandoff ? { handoff: altHandoff } : {}), repaint: forceRepaint });
   });
   // WAVE R TASK 8 (EP-R4) — RECOVER THE SCREEN AFTER INK'S TALL-FRAME BRANCH. When a frame reaches the terminal
   // height (`ink.js:118`) Ink writes `clearTerminal + fullStaticOutput + output` straight to stdout and returns:
@@ -1021,7 +1051,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const suspendInput = useSuspendInput();
   const dumpNow = () => {
     const run = () => {
-      const r = dumpTranscript({ items: () => detailItems("detail-all"), ...(aroundSubprocess ? { around: aroundSubprocess } : {}) });
+      const r = dumpTranscript({ items: () => detailItems("detail-all"), ...(aroundChild ? { around: aroundChild } : {}) });
       // …AND THE RECEIPT PREEMPTS (t12 review, M1). Absent `priority` reads as `"low"` (notifications.ts:97),
       // so behind a hint that is still holding `current` the answer to a keystroke would arrive seconds after
       // the key — canon writes its status the moment the handler returns (L549349).
@@ -1043,8 +1073,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // to running the child where we stand — which is what a main-screen editor has always done. Memoized on the
   // guard so the composer's prop identity is stable.
   const editExternalHere = useMemo(
-    () => (aroundSubprocess ? (text: string) => editExternal(text, { around: aroundSubprocess }) : undefined),
-    [aroundSubprocess]);
+    () => (aroundChild ? (text: string) => editExternal(text, { around: aroundChild }) : undefined),
+    [aroundChild]);
   // ── FSW TASK 9 — TWO RENDERERS, ONE TREE ──────────────────────────────────────────────────────────────
   // The split below is the SHAPE of the whole M2b renderer, so it is worth saying what it deliberately is not.
   // It is not two component trees: the transcript region and everything under it (the "dock" — panels, turn
