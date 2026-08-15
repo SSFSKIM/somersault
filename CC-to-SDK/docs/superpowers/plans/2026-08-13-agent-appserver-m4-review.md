@@ -989,6 +989,13 @@ Expected: FAIL — nothing wires `onElicitation`.
 awaits the settle, and returns `outcomeToElicitResult(outcome)`. Never returns `null`. Wire it into the
 session config the app server builds for every thread it starts (alongside `canUseTool`).
 
+**ONE STALE COMMENT TO CORRECT, left for you deliberately.** `src/appserver/broker.ts:16-20` still says
+`elicitationMap` maps the universal deny "to a real `{action:"decline"}`". Since D-M4-9 it maps to
+`cancel`. Task 7's fixer spotted this but `broker.ts` was outside its allowed files, so it reported it
+rather than reaching across — the right call, and now it is yours since you are in this code anyway. The
+surrounding point of that comment (that `deny` is answerable, so no MCP server waits out its own timeout)
+is still correct and should stay; only the result word changes.
+
 **TWO THINGS TASK 7'S REVIEWER HANDED FORWARD — they are yours, and both are fail-closed obligations:**
 
 1. **The mapper is total, but it is not defensive at its boundary.** `outcomeToElicitResult` covers every
