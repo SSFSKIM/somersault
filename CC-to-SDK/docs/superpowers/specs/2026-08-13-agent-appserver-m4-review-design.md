@@ -99,6 +99,19 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
    path (M4 scope; see D-M4-2).
 6. The scorecard's drift gate stays green with the new method rowed, and the generated JSON-Schema
    artifacts include the review types.
+7. **An MCP elicitation raised by a real server reaches a client as a parked decision, and the client's
+   answer reaches the server.** Added 2026-08-16 — this section was written before the owner folded
+   elicitation into M4, and every item above it covers only the review half. Drive it through the public
+   surface: register a stdio MCP server on a thread, have the model call a tool that elicits, observe a
+   `decision/requested` of kind `elicitation`, answer it with `decision/respond`, and assert the accepted
+   content comes back out in the tool's own result. The unit tests for this cannot substitute — they
+   invoke `onElicitation` directly and so prove only that we PUT the handler in the config, never that the
+   engine calls it through our path, which is the exact declared-vs-reachable gap this project's
+   live-probe-first discipline exists to catch. Two constraints are already settled and must be honored
+   rather than rediscovered: elicitation works only for **stdio** MCP servers (an in-process SDK-type
+   server answers "Client does not support form elicitation" — probe 43, which is why probe 43b exists),
+   and the fail-closed teardown case stays at the unit level, where a torn-down park can be forced
+   deterministically.
 
 ## Decision Log
 
@@ -173,6 +186,11 @@ Pending — written at finish.
 - 2026-08-13 rev 1: initial design, grounded by `2026-08-13-codex-review-domain-ground.md`,
   `2026-08-13-reverse-request-scoping-ground.md`, `2026-08-13-our-review-substrate-ground.md`, and probe
   109.
+- 2026-08-16 rev 3: added **acceptance item 7**. The acceptance section predates the owner's decision to
+  fold elicitation into M4, so all six original items covered only the review half and the elicitation
+  half would have shipped on unit tests that invoke `onElicitation` directly — proving we populate the
+  config, not that the engine ever calls it. Probe 43b already established the live path exists for stdio
+  servers; item 7 is what proves it exists *through the app server*.
 - 2026-08-16 rev 2: added **D-M4-7** (nested findings are harvested; `review/findings` is additive) after
   reading the harvest substrate during execution. The design said "intercept the `ReportFindings`
   `tool_use` on the frame stream the app server already maps into items" without saying what happens when

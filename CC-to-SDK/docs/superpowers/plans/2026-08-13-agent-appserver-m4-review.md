@@ -1048,6 +1048,18 @@ One leg per numbered acceptance item in the spec:
    the prose retained.
 5. `delivery: "inline"` is refused with a message naming detached.
 6. The drift gate is green (run it as a step, assert exit 0).
+7. **Elicitation round-trips through the app server** (spec acceptance 7, added rev 3). Create
+   `test/live/fixtures/elicit-stdio-server.ts` — a ~15-line stdio MCP server with one tool that calls
+   `server.server.elicitInput(...)` and returns the result in its text content. Copy the shape from
+   `CC-to-SDK/probes/lib/elicit-stdio-server.ts` rather than importing across the workspace boundary.
+   Then, entirely over the wire: start a thread with that server registered, prompt the model to call the
+   tool, await a `decision/requested` whose `kind` is `elicitation`, answer it with `decision/respond`
+   carrying an accept plus content, and assert the accepted content appears in the tool's own result —
+   which is what proves the answer travelled back *into* the MCP server rather than merely settling our
+   park. **It MUST be a stdio server**: an in-process SDK-type server answers "Client does not support
+   form elicitation" (probe 43), and that is the whole reason probe 43b exists. The fail-closed teardown
+   case is NOT a leg here — it lives in Task 8's unit tests, where a torn-down park can be forced
+   deterministically instead of raced.
 
 - [ ] **Step 2: Run the full unit suite**
 
