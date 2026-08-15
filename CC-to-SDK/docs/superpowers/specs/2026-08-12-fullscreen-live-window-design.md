@@ -413,10 +413,18 @@ seam prefers pickers over the plan modal (canon drops the picker element), the -
 word wider (canon's is dead), the transcript-dump receipt channel upgrade (canon logs to
 debug), unconditional DECSET 2026 wrap (proven inert on bare tmux).
 
-**Open tickets leaving the wave:** the subprocess-handoff dedupe hazard (exposure raised by
-/tui-armable guards; not reproduced live — urgency lowered), the classic selectLiveWindow
-logical-row self-clip (scoped: over-runs budget, never loses tail), FULLSCREEN_ROWS
-key-collision audit gap, the rebindable-chord hardcodes in the v row + jumpPillText.
+**Open tickets leaving the wave** — all four closed by the backlog round of 2026-08-16
+(ledger "FSW BACKLOG ROUND", commits 90e6066422 / 69c49bbf57 / 937f70be18 / 5514455e80):
+the pager keeps its place across a width change (`remapRowOffset`, once per width change);
+the `v` row and the jump pill resolve `scroll:dumpTranscript` from the live table and
+`FULLSCREEN_ROWS` derives from the row flag (collision-proof); the classic live window
+pays in painted rows at all three `selectLiveWindow` sites — and the pending-items term
+was a second instance of the same defect (24 painted rows against a hard cap of 8 at
+80x24, now 6); the alt-screen subprocess handoff always forces Ink's `writeToStdout`
+repaint on return, closing the dedupe hazard by construction rather than by measurement.
+One recorded trade: any single answer painting past the classic cap now commits whole
+into `<Static>` (loses reflow-on-resize) where it used to stay live — the cap is hard.
+Remaining minors are in the ledger; the two app-server findings went to their owner.
 
 ## Revision Notes
 
