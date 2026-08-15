@@ -122,6 +122,19 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
   — flagged as an open question in the grounding).
 - **D-M4-6 — MCP elicitation becomes a fourth decision kind.** See the open fork below; this is the one
   genuine adoption to come out of the reverse-request scoping.
+- **D-M4-7 — A subagent's findings are the review's findings; `review/findings` is additive.** Surfaced
+  during execution, not design. The app server already has a route that reads a tool call's input off the
+  frame stream — `routeTodo` for `TodoWrite` (`appserver/router.ts:199-220`) — and it deliberately DROPS
+  frames carrying `parent_tool_use_id`, because a subagent's private todo list is not the main turn's.
+  Harvesting inherits that stream but must not inherit that reflex: a reviewing agent is free to dispatch
+  subagents (`ReportFindings` is written for precisely that fan-out shape), and a finding from a subagent
+  of the review is a finding about the review's subject. Rejected: mirroring the TodoWrite guard — it
+  would make a review that delegated report nothing at all while its prose said otherwise, which is the
+  silent all-clear D-M4-1's fallback exists to prevent, reached by a different route. Two consequences
+  follow and are specified rather than left to the implementer: one notification per `ReportFindings`
+  call, **additive** (a client appends; no notification supersedes an earlier one), and the
+  "did anything report?" latch is set by any harvest, nested included, so the `unstructured: true`
+  fallback fires only when literally nothing reported.
 
 ## Open forks — BOTH RESOLVED 2026-08-13 (owner)
 
@@ -160,3 +173,8 @@ Pending — written at finish.
 - 2026-08-13 rev 1: initial design, grounded by `2026-08-13-codex-review-domain-ground.md`,
   `2026-08-13-reverse-request-scoping-ground.md`, `2026-08-13-our-review-substrate-ground.md`, and probe
   109.
+- 2026-08-16 rev 2: added **D-M4-7** (nested findings are harvested; `review/findings` is additive) after
+  reading the harvest substrate during execution. The design said "intercept the `ReportFindings`
+  `tool_use` on the frame stream the app server already maps into items" without saying what happens when
+  that call comes from a subagent of the review — and the only existing route of that shape answers the
+  opposite way. Left unstated, the plan's Task 6 would have been implemented either way by reflex.

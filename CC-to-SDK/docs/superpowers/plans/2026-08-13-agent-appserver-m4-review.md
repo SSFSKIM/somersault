@@ -405,6 +405,17 @@ describe("harvestFindings", () => {
     ] })]));
     expect(got?.findings).toHaveLength(1);
   });
+  it("harvests a SUBAGENT's report too — this function holds no opinion about nesting", () => {
+    // D-M4-7. A reviewing agent may dispatch subagents, and `ReportFindings` is written for exactly that
+    // shape; a finding from a subagent of the review is still a finding about the review's subject. The
+    // sibling route for TodoWrite (`router.ts:213`) DROPS nested frames, and copying that reflex here
+    // would silently discard the findings of any review that fanned out. Nesting policy belongs to the
+    // wiring (Task 6), not to this pure read, so this stays blind to the field on purpose.
+    const nested = { type: "assistant", parent_tool_use_id: "toolu_parent", message: { content: [call({
+      findings: [{ file: "b.ts", summary: "leak", failure_scenario: "close() never runs on the error path" }],
+    })] } };
+    expect(harvestFindings(nested)?.findings).toHaveLength(1);
+  });
 });
 ```
 
@@ -585,6 +596,18 @@ describe("review/start", () => {
     expect(String(replyTo(id)?.error?.message)).toMatch(/detached/i);
   });
 
+  it("refuses a delivery value that is neither inline nor detached", async () => {
+    // Carried forward from the Task 1 review: the schema tests pin that `detached` is the default and that
+    // `inline` survives verbatim, but nothing pinned the enum CLOSED. Written as `z.string()` it would pass
+    // all of those and let `delivery: "streamed"` reach this handler on a path no one specified. Two
+    // supported values, and everything else is a bad request.
+    const srv = boot(factory());
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t, target: { type: "uncommittedChanges" }, delivery: "streamed" });
+    await new Promise((r) => setImmediate(r));
+    expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
+  });
+
   it("creates a NEW review thread, replies {turn, reviewThreadId}, and roots it at the target's cwd", async () => {
     const f = factory();
     const srv = boot(f);
@@ -705,6 +728,16 @@ git commit -m "feat(as4): review/start — detached review thread at the target'
 - On each frame of a review turn, run `harvestFindings`. On a hit, broadcast `review/findings {threadId, turnId, findings, level?, unstructured: false}` and emit a review item into the item stream.
 - On review-turn completion with **no** hit: broadcast `review/findings {threadId, turnId, findings: [], unstructured: true, prose}` where `prose` is the turn's assistant text. **Never** emit a bare empty array in this case — that is the silent-all-clear failure the spec forbids.
 - An explicit `{findings: []}` report is `unstructured: false` with an empty array.
+- **Harvest nested frames too, and the notification is ADDITIVE (D-M4-7).** Do NOT copy the
+  `parent_tool_use_id` guard that `router.ts:213` uses for TodoWrite. That guard is right for a todo list —
+  private working state a subagent must not attribute to the main turn — and wrong here: a reviewing agent
+  may dispatch subagents, `ReportFindings` is written for that shape, and a finding from a subagent of the
+  review is still a finding about the review's subject. Dropping them would produce a review that reports
+  nothing while prose says otherwise — the same silent all-clear the fallback exists to prevent, arriving
+  through a different door. Consequences to implement, not just to note: one notification per
+  `ReportFindings` call (a client APPENDS; nothing here supersedes an earlier notification), and
+  `sawReport` is set by ANY harvest, nested included, so the unstructured fallback fires only when
+  literally nothing reported.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -721,6 +754,10 @@ describe("review findings on the wire", () => {
   it("carries the assistant prose on the unstructured fallback", async () => {});
   it("emits a review item so an items-only subscriber still sees the review", async () => {});
   it("does NOT harvest on a non-review thread's turn", async () => {});
+  // D-M4-7, both halves: a subagent's report must reach the wire, and it must count as a report.
+  it("broadcasts a SUBAGENT's ReportFindings (frame carries parent_tool_use_id)", async () => {});
+  it("two reports in one turn broadcast TWICE — the notification is additive, not a replacement", async () => {});
+  it("a subagent-only report suppresses the unstructured fallback", async () => {});
 });
 ```
 
