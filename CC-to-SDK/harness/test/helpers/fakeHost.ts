@@ -177,13 +177,16 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
    *  arms. `permissionMode` is never absent from a real one — `private mode = "default"` (:144), seeded
    *  from the launch config in start() and spread into both arms at :892 — while `model`/`thinkingTokens`
    *  ARE omitted until set, so a mirror can tell "unset" from a value the host invented. An explicit
-   *  `setStatus` patch wins over the derivation: it is the test saying so. */
+   *  `setStatus` patch wins over the derivation: it is the test saying so.
+   *  `short` rides both arms too and is this host's OWN (peer review PF1): it is what the attach path
+   *  identifies a socket by, so a fake that omitted it would green an admission that skipped the check.
+   *  Overridable to `undefined` through `status`, which is how a host predating the field is staged. */
   const status = (): HostStatus => {
     const first = parked[0];
     const derived: HostStatus = first
       ? { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}` }
       : { state: "working", status: busy ? "busy" : "idle" };
-    return { ...derived, permissionMode: "default", ...patch };
+    return { ...derived, short, permissionMode: "default", ...patch };
   };
 
   // One follower's failure is that follower's problem (host.ts's deliver()).

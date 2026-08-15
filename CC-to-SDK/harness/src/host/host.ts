@@ -894,8 +894,13 @@ export class SessionHost {
     // most likely to be attaching, and a mirror that goes blank whenever a decision is open is not a mirror.
     // Each key is omitted when unset, so "never configured" never reads as a value the host invented.
     const settings = { permissionMode: this.mode, ...(this.model ? { model: this.model } : {}), ...(this.thinkingTokens !== undefined ? { thinkingTokens: this.thinkingTokens } : {}) };
-    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, ...settings, ...(sid ? { sessionId: sid } : {}) };
-    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", ...settings, ...(sid ? { sessionId: sid } : {}) };
+    // WHO THIS PROCESS IS, on every status and every `state` frame (peer review PF1): a client that reached
+    // this socket through a roster row's pid has no other way to tell that the pid was REUSED and the row it
+    // named belongs to a host that is gone. Unlike `sessionId` it never moves under a resume or a /clear, so
+    // a mismatch is always a stranger and never this host mid-swap.
+    const id = { short: this.short, ...(sid ? { sessionId: sid } : {}) };
+    if (first) return { state: "blocked", status: "idle", waitingFor: `${first.kind}:${first.toolName}`, ...settings, ...id };
+    return { state: this.state, status: this.turnInFlight ? "busy" : "idle", ...settings, ...id };
   }
 
   /** The host's OWN truthful busy signal, wired to the socket's `prompt` gate (see server.ts). Unlike
