@@ -33,4 +33,34 @@ describe("resolveReviewRange", () => {
     expect(seen.indexOf("--end-of-options")).toBeGreaterThan(-1);
     expect(seen.indexOf("--end-of-options")).toBeLessThan(seen.indexOf("--all-the-things"));
   });
+  it("names unrelated histories, which merge-base reports as exit 1 with NO stderr at all", async () => {
+    const r = await resolveReviewRange({ type: "baseBranch", branch: "orphan" }, "/repo", {
+      git: async () => ({ code: 1, stdout: "", stderr: "" }),
+    });
+    expect(r.range).toBeUndefined();
+    expect(r.note).toContain("no common ancestor");   // not "unknown error" — this failure has a crisp cause
+  });
+});
+
+// The DEFAULT git — no `deps`, so the real `execFile` runs. None of these need a fixture repo or a network:
+// each one dies before, or at, the spawn. The `--end-of-options` GIT BEHAVIOUR (does the flag truly neutralize
+// a dash-leading ref?) is the half that needs a real repo, and stays with Task 10's live acceptance.
+describe("resolveReviewRange over the real execFile", () => {
+  it("DEGRADES on a NUL byte in the branch, which node rejects SYNCHRONOUSLY before any spawn", async () => {
+    // `schema/review.ts` is `z.string().min(1)`, so a JSON-RPC client can put a NUL here. `execFile` validates
+    // argv up front and THROWS `ERR_INVALID_ARG_VALUE` inside the promise executor — the one path that escaped.
+    const r = await resolveReviewRange({ type: "baseBranch", branch: "ma\u0000in" }, process.cwd());
+    expect(r.range).toBeUndefined();
+    expect(r.note).toBeTruthy();
+  });
+  it("DEGRADES when cwd does not exist (spawn ENOENT, whose `code` is a STRING)", async () => {
+    const r = await resolveReviewRange({ type: "baseBranch", branch: "main" }, "/nonexistent-dir-for-review-target");
+    expect(r.range).toBeUndefined();
+    expect(r.note).toBeTruthy();
+  });
+  it("DEGRADES when cwd is not a repository (real git, real non-zero exit)", async () => {
+    const r = await resolveReviewRange({ type: "baseBranch", branch: "main" }, "/tmp");
+    expect(r.range).toBeUndefined();
+    expect(r.note).toBeTruthy();
+  });
 });
