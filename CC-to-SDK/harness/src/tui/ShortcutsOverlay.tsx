@@ -25,7 +25,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { useBindingLookup, useKeyActions, useKeyScope, useSwallowKeys } from "./keys/KeymapProvider.js";
-import { defaultLookup, shortcutGrid, shortcutRows, GRID_COLUMN_WIDTHS } from "./keys/hints.js";
+import { defaultLookup, fullscreenOnlyRows, shortcutGrid, shortcutRows, GRID_COLUMN_WIDTHS } from "./keys/hints.js";
 import { newlineHint } from "./composerFrame.js";
 import { ACCENT } from "./theme.js";
 
@@ -34,12 +34,11 @@ import { ACCENT } from "./theme.js";
  *  It is the KEY-COLUMN rendering of the very rows the grid prints as sentences (keys/hints.ts's `ShortcutRow`
  *  header): one entry, two grammars, so auditing this corpus audits what the grid advertises. */
 export const ROWS: [string, string][] = shortcutRows(defaultLookup);
-/** The rows the ALTERNATE-SCREEN renderer adds on top of `ROWS` (FSW T14 review M5) — today, `v`. A set
- *  DIFFERENCE rather than a hand-kept list, so a second conditional row joins the audit by existing.
- *  `honesty.test.tsx` demands a live proof for these exactly as it does for `ROWS`: conditional is a statement
- *  about WHERE a row prints, never a discount on whether the key works. */
-export const FULLSCREEN_ROWS: [string, string][] =
-  shortcutRows(defaultLookup, process.platform, true).filter(([k]) => !ROWS.some(([classic]) => classic === k));
+/** The rows the ALTERNATE-SCREEN renderer adds on top of `ROWS` (FSW T14 review M5) — today, the dump key.
+ *  Derived from the rows' own `fullscreen` flag rather than hand-kept, so a second conditional row joins the
+ *  audit by existing. `honesty.test.tsx` demands a live proof for these exactly as it does for `ROWS`:
+ *  conditional is a statement about WHERE a row prints, never a discount on whether the key works. */
+export const FULLSCREEN_ROWS: [string, string][] = fullscreenOnlyRows(defaultLookup);
 
 /** `Y6t` (L459475-634). `dimColor`/`fixedWidth`/`gap`/`paddingX` are its four props, and the two call sites
  *  pass exactly what upstream's do: the `?` overlay `{dimColor, fixedWidth, paddingX:2}` (L494617), the Help

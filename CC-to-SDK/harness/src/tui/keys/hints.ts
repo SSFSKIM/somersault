@@ -230,7 +230,10 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
   // (FullscreenViewport), and in the classic renderer `v` is a letter and nothing else. `$EDITOR` is the
   // spelling this grid already uses for the composer's own external-editor row; `when scrolled` is the gate,
   // stated because the reader of a grid cannot see it.
-  { key: "v", label: "open transcript in $EDITOR (while scrolled)", col: 1, cell: "v to open in $EDITOR when scrolled", fullscreen: true },
+  //   FSW BACKLOG 2 made it an ACTION row like every other table-owned key. It shipped with a literal `v` in
+  // both renderings, which is the one thing this file exists to prevent: `scroll:dumpTranscript` is rebindable
+  // (keys-user-bindings.test.ts drives `alt+v`), so the literal was a promise the table could already break.
+  { action: "scroll:dumpTranscript", label: "open transcript in $EDITOR (while scrolled)", col: 1, phrase: "open in $EDITOR when scrolled", fullscreen: true },
   { action: "app:toggleTodos", label: "todo panel", col: 1, phrase: "toggle tasks" },
   { key: "\\⏎ / Ctrl-J", label: "newline", col: 1, ladder: true },
   { key: "⏎", label: "send", col: 1, cell: "⏎ to send" },
@@ -266,19 +269,39 @@ export const defaultLookup = (action: string): string[] => bindingsFor(DEFAULT_T
 const rowHidden = (row: ShortcutRow, platform: NodeJS.Platform, fullscreen: boolean): boolean =>
   (platform === "win32" && row.key === "Ctrl-Z") || (row.fullscreen === true && !fullscreen);
 
+/** One row's KEY-COLUMN rendering. The one copy of that grammar, so every set of rows drawn from the entry
+ *  set — the classic corpus, the fullscreen-only one — keys its rows identically. */
+function rowEntry(row: ShortcutRow, lookup: (action: string) => readonly string[]): [string, string] {
+  let key: string;
+  if (row.key !== undefined) key = row.key;
+  else {
+    const bound = formatBindings(lookup(row.action!), row.show ?? 1);
+    // A repeat row prints the key twice — but never "(unbound) (unbound)", which says the same thing worse.
+    key = row.repeat && bound !== UNBOUND ? Array(row.repeat).fill(bound).join(" ") : bound;
+  }
+  return [key + (row.suffix ?? ""), row.label];
+}
+
 /** Resolve the grid against a live lookup (`useBindingLookup()` in a component, the default table elsewhere). */
 export function shortcutRows(lookup: (action: string) => readonly string[], platform: NodeJS.Platform = process.platform, fullscreen = false): [string, string][] {
   const rows: [string, string][] = [];
   for (const row of SHORTCUT_ROWS) {
     if (rowHidden(row, platform, fullscreen)) continue;
-    let key: string;
-    if (row.key !== undefined) key = row.key;
-    else {
-      const bound = formatBindings(lookup(row.action!), row.show ?? 1);
-      // A repeat row prints the key twice — but never "(unbound) (unbound)", which says the same thing worse.
-      key = row.repeat && bound !== UNBOUND ? Array(row.repeat).fill(bound).join(" ") : bound;
-    }
-    rows.push([key + (row.suffix ?? ""), row.label]);
+    rows.push(rowEntry(row, lookup));
+  }
+  return rows;
+}
+
+/** Just the rows the ALTERNATE-SCREEN renderer adds — selected by the `fullscreen` FLAG, which is the property
+ *  that defines them, rather than by subtracting the classic corpus from the fullscreen one BY KEY STRING.
+ *  That difference was silently lossy: two rows may resolve to the same key column (a rebind is enough), and
+ *  the fullscreen one then vanished from the audit corpus (`honesty.test.tsx`) while still printing on screen —
+ *  a row losing its proof by accident, which is the exact failure the corpus exists to make impossible. */
+export function fullscreenOnlyRows(lookup: (action: string) => readonly string[], platform: NodeJS.Platform = process.platform): [string, string][] {
+  const rows: [string, string][] = [];
+  for (const row of SHORTCUT_ROWS) {
+    if (row.fullscreen !== true || rowHidden(row, platform, true)) continue;
+    rows.push(rowEntry(row, lookup));
   }
   return rows;
 }

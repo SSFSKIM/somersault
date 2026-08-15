@@ -30,6 +30,9 @@ import { resolveThemeColor, themeTokens } from "./theme.js";
 /** The action the pill advertises and the pill's own gesture: canon's `scrollToBottom()`, which re-STICKS as
  *  well as re-deriving — "follow the tail again", not merely "show me the tail once". */
 export const JUMP_PILL_ACTION = "scroll:bottom";
+/** The escape the pill's longest rung announces (FSW T12's `v`), resolved from the live table beside the jump
+ *  chord rather than printed as the letter canon ships. */
+export const DUMP_PILL_ACTION = "scroll:dumpTranscript";
 
 /** The pill's rendered text INCLUDING its one-column breathing space on each side, which is what the fit rule
  *  measures: canon picks the longest of three variants that fits `columns − 2` and falls back to the SHORTEST
@@ -46,12 +49,17 @@ export const JUMP_PILL_ACTION = "scroll:bottom";
  *    THE PILL IS WHERE `v` IS HONEST, which is why the announcement landed here rather than on the footer row
  *  or in the `?` grid (the amendment named both). `scroll:dumpTranscript` is registered by the viewport for
  *  exactly as long as this pill is up — T12's own gate, "while the pill is up, `v` does not type" — so a
- *  permanent row anywhere else would advertise a key that, most of the time, is a printable letter. */
-export function jumpPillText(newRows: number, chord: string, columns: number, dumpEditor?: string): string {
+ *  permanent row anywhere else would advertise a key that, most of the time, is a printable letter.
+ *
+ *  `dumpChord` IS THE KEY THAT REALLY FIRES IT, not the letter canon happens to ship: the rung printed a
+ *  literal `v` until FSW backlog 2, and `scroll:dumpTranscript` is rebindable, so the pill could name a key
+ *  that types instead of dumping. Empty (the action is unbound) drops the rung the same way an unbound
+ *  `scroll:bottom` drops the parenthesis above — no chord reaches the handler, so there is nothing to offer. */
+export function jumpPillText(newRows: number, chord: string, columns: number, dumpEditor?: string, dumpChord = ""): string {
   const base = newRows > 0 ? `${newRows} new message${newRows === 1 ? "" : "s"}` : "Jump to bottom";
   const room = Math.max(1, columns - 2), shortest = ` ${base} `;
   const jump = `${base}${chord === "" ? "" : ` (${chord})`} ↓`;
-  const dump = dumpEditor === undefined ? "" : ` ${jump} · v to open in ${dumpEditor} `;
+  const dump = dumpEditor === undefined || dumpChord === "" ? "" : ` ${jump} · ${dumpChord} to open in ${dumpEditor} `;
   for (const variant of [dump, chord === "" ? "" : ` ${base} (${chord}) ↓ `, ` ${base} ↓ `, shortest])
     if (variant !== "" && variant.length <= room) return variant;
   return shortest;
@@ -73,12 +81,15 @@ export function JumpPill({ newRows, columns, dumpEditor }: JumpPillProps): React
   // searches active scopes first, and the viewport pushes `Scroll` before this child renders, so the answer is
   // that context's key rather than the ctrl+O pager's `end`/`shift+g`.
   const chord = formatBindingLower(useBinding(JUMP_PILL_ACTION));
+  // The dump's key comes from the same table by the same rule — the viewport's registration says the handler
+  // exists (`dumpEditor`), and this says which key reaches it.
+  const dumpChord = formatBindingLower(useBinding(DUMP_PILL_ACTION));
   return (
     <Box justifyContent="center" flexShrink={0}>
       {/* `truncate-end` is canon's own prop (456186) and load-bearing here rather than cosmetic: the shortest
           variant is returned even when it does not fit, and an Ink `Text` that wrapped it instead of clipping
           would make the pill two rows and eat a transcript row the viewport already paid for. */}
-      <Text wrap="truncate-end" backgroundColor={resolveThemeColor(themeTokens().userMessageBackground)}>{jumpPillText(newRows, chord, columns, dumpEditor)}</Text>
+      <Text wrap="truncate-end" backgroundColor={resolveThemeColor(themeTokens().userMessageBackground)}>{jumpPillText(newRows, chord, columns, dumpEditor, dumpChord)}</Text>
     </Box>
   );
 }

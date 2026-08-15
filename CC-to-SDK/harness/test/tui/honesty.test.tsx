@@ -355,10 +355,14 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
   // it is an ordinary letter; inside that renderer it is live only while the viewport is scrolled off its
   // tail, which the cell itself says. So the proof has to show BOTH halves through the real tree: scrolled, it
   // dumps; at the tail, the same key types.
+  //   THE KEY IS `"V"`, NOT `"v"` (FSW backlog 2): the row names `scroll:dumpTranscript` now instead of
+  // hardcoding its chord, so the key column is whatever `formatBinding` makes of the LIVE binding — and that
+  // formatter title-cases a bare letter, for every row alike. The proof is keyed by what the grid prints, so
+  // it moves with the row; a per-row lower-case exception would be a second grammar for one entry's sake.
   //   No editor is spawned — `VISUAL`/`EDITOR` are blanked for this file (see the stub below), so the dump
   // writes its file and reports `wrote …`. The file it leaves behind is removed here rather than left in the
   // machine's temp dir.
-  v: async () => {
+  V: async () => {
     const alpha = Array.from({ length: 60 }, (_, i) => ({
       kind: "sdk" as const, source: "disk" as const,
       message: { type: "assistant", parent_tool_use_id: null, uuid: `v-${i}`, message: { id: `mv-${i}`, content: [{ type: "text", text: `VROW-${i}` }] } },

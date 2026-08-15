@@ -76,6 +76,22 @@ describe("<HelpDialog> — the tabs and their copy", () => {
     expect(closed).toBe(0);
   });
 
+  // FSW BACKLOG 2: `/help` renders the SAME grid as the `?` overlay, so it inherits the alternate-screen-only
+  // rows — but only when the alternate screen is what mounted it. ChatApp threads its own renderer mode into
+  // the `fullscreen` prop; unpinned, a wiring slip would either hide the row from `/help` or promise a key the
+  // classic tree does not own.
+  it("prints the alternate-screen-only rows only when the alternate screen is mounting it", async () => {
+    const general = async (fullscreen: boolean) => {
+      const r = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={40} columns={100} fullscreen={fullscreen} />);
+      await waitFor(() => flat(r.lastFrame).includes(HELP_INTRO));
+      const out = flat(r.lastFrame);
+      r.unmount();
+      return out;
+    };
+    expect(await general(true)).toContain("v to open in $EDITOR when scrolled");
+    expect(await general(false)).not.toContain("to open in $EDITOR when scrolled");
+  });
+
   it("Custom commands shows upstream's empty state — the SDK catalog carries nothing that can be classed custom", async () => {
     const { stdin, lastFrame } = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={40} columns={100} />);
     await waitFor(() => flat(lastFrame).includes(HELP_INTRO));

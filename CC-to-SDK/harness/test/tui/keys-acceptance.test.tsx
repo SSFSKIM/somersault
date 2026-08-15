@@ -478,8 +478,13 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
 // and the ban list is itself generated from the default table, so adding a binding extends the guard for free.
 describe("F2 — hint derivation coverage", () => {
   /** Every display string the default keymap would produce for an action one of these surfaces advertises.
-   *  Seeing one written out in the source means someone typed a key instead of asking the table for it. */
-  const TITLE_CASE = SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!)).map(formatBinding);
+   *  Seeing one written out in the source means someone typed a key instead of asking the table for it.
+   *  SINGLE-CHARACTER FORMS ARE EXCLUDED, on the reasoning the lower-case list below already applies to bare
+   *  words: `scroll:dumpTranscript` is a plain letter, and banning `V` as a substring fires on every
+   *  identifier that happens to contain one — a guard that cannot be satisfied is a guard that gets deleted.
+   *  Nothing is lost: the surfaces swept here neither own nor hint that action, and the row that does advertise
+   *  it derives both its key column and its sentence (keys/hints.ts, shortcuts-grid.test.tsx pins both). */
+  const TITLE_CASE = SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!)).map(formatBinding).filter((s) => s.length > 1);
   /** F6 T14 review, Minor 3: the title-case grammar is no longer the only one on screen. The shortcuts grid
    *  and the Help dialog print upstream's LOWER-CASE sentence form (`ctrl + t to toggle tasks`), which the
    *  ban list above cannot see at all — a hand-typed sentence would have passed this guard untouched. Two
@@ -501,6 +506,7 @@ describe("F2 — hint derivation coverage", () => {
     expect(BANNED).toContain("⇧Tab");                                 // the list is really populated
     expect(BANNED).toContain("Ctrl-T");
     expect(BANNED).toContain("Esc");
+    expect(BANNED).not.toContain("V");                                // …but not a bare letter: see TITLE_CASE
     expect(BANNED).toContain("ctrl + t");                             // …in BOTH grammars
     expect(BANNED).toContain("ctrl + t to toggle tasks");             // …and as the whole composed sentence
     expect(BANNED).toContain("shift + tab to auto-accept edits");

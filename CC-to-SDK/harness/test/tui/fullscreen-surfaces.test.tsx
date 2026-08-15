@@ -29,7 +29,8 @@ import { Footer, footerRows, footerStatusRows } from "../../src/tui/Footer.js";
 import { jumpPillText } from "../../src/tui/JumpPill.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { createNotificationStore } from "../../src/tui/notifications.js";
-import { defaultLookup } from "../../src/tui/keys/hints.js";
+import { defaultLookup, formatBindingLower } from "../../src/tui/keys/hints.js";
+import type { KeymapDeps } from "../../src/tui/keys/KeymapProvider.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
@@ -373,14 +374,19 @@ describe("amendment 2 — `v` is announced where it is live", () => {
   // for shortcuts` (bundle 547303). ccx's `v` is registered exactly while the JUMP PILL is up (T12), so the
   // pill is the one surface that can name it without promising a key the composer currently owns.
   it("adds canon's phrase as the pill's longest variant when the dump is live", () => {
-    expect(jumpPillText(3, "ctrl+end", 80, "editor")).toContain("v to open in editor");
-    expect(jumpPillText(3, "ctrl+end", 80, "nvim")).toContain("v to open in nvim");
+    expect(jumpPillText(3, "ctrl+end", 80, "editor", "v")).toContain("v to open in editor");
+    expect(jumpPillText(3, "ctrl+end", 80, "nvim", "v")).toContain("v to open in nvim");
+    // FSW BACKLOG 2: the chord is an argument, not a literal — a user who rebinds the dump is told THEIR key.
+    expect(jumpPillText(3, "ctrl+end", 80, "nvim", "opt+v")).toContain("opt+v to open in nvim");
   });
 
   it("drops the phrase before the words when the pane is too narrow, and never promises it while `v` is not ours", () => {
-    expect(jumpPillText(3, "ctrl+end", 26, "editor")).not.toContain("v to open");
-    expect(jumpPillText(3, "ctrl+end", 26, "editor")).toContain("3 new messages");
-    expect(jumpPillText(3, "ctrl+end", 80)).not.toContain("v to open");
+    expect(jumpPillText(3, "ctrl+end", 26, "editor", "v")).not.toContain("to open");
+    expect(jumpPillText(3, "ctrl+end", 26, "editor", "v")).toContain("3 new messages");
+    expect(jumpPillText(3, "ctrl+end", 80)).not.toContain("to open");
+    // UNBOUND is the third state, and here it is the dishonest one to skip: the viewport still registers the
+    // handler, but no key reaches it, so the rung goes rather than announcing an empty chord.
+    expect(jumpPillText(3, "ctrl+end", 80, "editor", "")).not.toContain("to open");
   });
 
   // FIX ROUND (review M5) — THE SECOND HOME, and the reason there is one. The pill announces `v` only while
@@ -418,5 +424,29 @@ describe("amendment 2 — `v` is announced where it is live", () => {
     await settle();
     expect(frameOf(r.lastFrame)).toContain("v to open in");
     r.unmount();
+  });
+
+  // FSW BACKLOG 2 — through the REAL tree, because the pill is where the resolution happens: the viewport
+  // hands it the editor name, the pill asks the live table for the key. A rebind and an unbind are the two
+  // states a literal could not tell apart.
+  it("names whatever the live table binds to the dump, and says nothing when nothing does", async () => {
+    const pillAfterScroll = async (userLayers: KeymapDeps["userLayers"]) => {
+      const r = renderWithKeymap(
+        <ChatApp makeSession={() => fakeRemote() as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+          renderer={{ mode: "fullscreen", reason: "env_on" }} initialEntries={alphaEntries()}
+          deps={{ columns: () => 80, rows: () => 24 }} />,
+        { userLayers },
+      );
+      await waitFor(() => frameOf(r.lastFrame).includes(PROMPT));
+      await tick();
+      r.stdin.write(PAGE_UP);
+      await settle();
+      const out = frameOf(r.lastFrame);
+      r.unmount();
+      return out;
+    };
+    const rebound = await pillAfterScroll([{ context: "Scroll", bindings: { v: null, "alt+v": "scroll:dumpTranscript" } }]);
+    expect(rebound).toContain(`${formatBindingLower("alt+v")} to open in`);
+    expect(await pillAfterScroll([{ context: "Scroll", bindings: { v: null } }])).not.toContain("to open in");
   });
 });

@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { ShortcutsGrid, ROWS } from "../../src/tui/ShortcutsOverlay.js";
-import { SHORTCUT_ROWS, defaultLookup, shortcutGrid, withModSep } from "../../src/tui/keys/hints.js";
+import { SHORTCUT_ROWS, defaultLookup, fullscreenOnlyRows, shortcutGrid, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
 import { newlineHint } from "../../src/tui/composerFrame.js";
 
 const NEWLINE = newlineHint(false);
@@ -95,6 +95,38 @@ describe("every chord is resolved from the live table (DG62)", () => {
   it("drops the ctrl+z cell on Windows, where suspendProcess is a no-op", () => {
     expect(flat(defaultLookup, "win32")).not.toContain("ctrl + z to suspend");
     expect(flat(defaultLookup, "darwin")).toContain("ctrl + z to suspend");
+  });
+});
+
+// FSW BACKLOG 2 — the rows that exist in the ALTERNATE-SCREEN renderer only, and the two ways they can lie.
+describe("the fullscreen-only rows", () => {
+  const DUMP_LABEL = "open transcript in $EDITOR (while scrolled)";
+  const only = (lookup = defaultLookup) => fullscreenOnlyRows(lookup, "darwin");
+  const gridFs = (lookup = defaultLookup) => shortcutGrid(lookup, { platform: "darwin", newline: NEWLINE, fullscreen: true }).flat();
+
+  it("key off the LIVE table, so a rebind moves the row and an unbind empties its key column", () => {
+    expect(only()).toEqual([["V", DUMP_LABEL]]);
+    const moved = (a: string) => (a === "scroll:dumpTranscript" ? ["alt+v"] : defaultLookup(a));
+    expect(only(moved)).toEqual([["Alt-V", DUMP_LABEL]]);
+    expect(only((a) => (a === "scroll:dumpTranscript" ? [] : defaultLookup(a)))).toEqual([["(unbound)", DUMP_LABEL]]);
+  });
+
+  it("the sentence derives its chord too, and disappears when nothing binds the action", () => {
+    expect(gridFs()).toContain("v to open in $EDITOR when scrolled");
+    const moved = (a: string) => (a === "scroll:dumpTranscript" ? ["alt+v"] : defaultLookup(a));
+    expect(gridFs(moved)).toContain(`${withModSep("opt+v")} to open in $EDITOR when scrolled`);
+    expect(gridFs(moved)).not.toContain("v to open in $EDITOR when scrolled");
+    expect(gridFs((a) => (a === "scroll:dumpTranscript" ? [] : defaultLookup(a))).some((c) => c.includes("when scrolled"))).toBe(false);
+  });
+
+  // THE CHECK BITES (keys-bindings.test.ts's own pattern). This set used to be a string DIFFERENCE against the
+  // classic key columns, so a fullscreen row that happened to resolve to a key a classic row also prints fell
+  // out of it silently — out of the printed grid's audit corpus with it, which is the honesty contract losing
+  // a row by accident. Selecting on the `fullscreen` FLAG cannot do that.
+  it("keeps a fullscreen row whose key collides with a classic one", () => {
+    const collide = (a: string) => (a === "scroll:dumpTranscript" ? ["ctrl+t"] : defaultLookup(a));
+    expect(shortcutRows(collide, "darwin").some(([k]) => k === "Ctrl-T")).toBe(true);   // `app:toggleTodos` prints it too
+    expect(only(collide)).toEqual([["Ctrl-T", DUMP_LABEL]]);
   });
 });
 
