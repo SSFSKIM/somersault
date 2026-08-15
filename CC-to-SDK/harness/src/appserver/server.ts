@@ -207,8 +207,15 @@ export class AppServer {
    *  the resume reserved first (the delete is refused here) or the delete reserved `deletingSessions` first
    *  (the resume is refused at arrival / in `startThread`). The resume handler owns the add/remove and
    *  removes in a `finally`. Empty in the common no-roster-candidate case — that path never probes, so it
-   *  reaches `startThread` in its own dispatch tick with no window to reserve against. */
-  readonly resumingSessions = new Set<string>();
+   *  reaches `startThread` in its own dispatch tick with no window to reserve against.
+   *
+   *  A REFCOUNT, not a set of ids (peer review PF2): two resumes for ONE sessionId can be inside their
+   *  probes at the same time, and a shared entry deleted by whichever settles first reopens this very
+   *  window for the other — a delete then sees no reservation and no live record (the second resume has
+   *  not reached `startThread` yet) and erases the history it is about to admit onto. Held while ANY
+   *  holder is in flight, dropped at zero. Refusing the duplicate resume instead would also close it, but
+   *  a second resume of one session is legal and its refusal would be user-visible; the count is not. */
+  readonly resumingSessions = new Map<string, number>();
   /** M3 §1e: the attaches in flight, keyed by roster `short` — the reservation that makes two simultaneous
    *  `thread/attach` calls for one target collapse onto ONE admission (the second awaits the first's
    *  promise) instead of dialling the host twice and registering two threads for one session. Taken and
@@ -259,14 +266,17 @@ export class AppServer {
       // mutually exclusive even when a concurrent delete completes inside the probe (see resumingSessions
       // and sessionLib.ts's delete). Released in a `finally` — a refused probe must not reserve forever.
       if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
-      srv.resumingSessions.add(sessionId);
+      srv.resumingSessions.set(sessionId, (srv.resumingSessions.get(sessionId) ?? 0) + 1);
       try {
         for (const row of candidates) {
           if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
         }
         srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
       } finally {
-        srv.resumingSessions.delete(sessionId);
+        // MY hold, not the reservation (PF2): a sibling resume may still be inside its own probe, and the
+        // entry is gone only when the last of us leaves.
+        const held = (srv.resumingSessions.get(sessionId) ?? 1) - 1;
+        if (held > 0) srv.resumingSessions.set(sessionId, held); else srv.resumingSessions.delete(sessionId);
       }
     },
     "thread/list": threadList,
