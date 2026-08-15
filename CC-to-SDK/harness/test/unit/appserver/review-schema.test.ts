@@ -6,7 +6,10 @@ import { describe, it, expect } from "vitest";
 import { reviewStartParams } from "../../../src/appserver/schema/review.js";
 
 describe("review/start params", () => {
-  it("accepts all four Codex target variants", () => {
+  it("carries all four Codex target variants through to the parsed value", () => {
+    // Deep-equal the OUTPUT, not just `.success`: zod STRIPS undeclared keys, so a schema that dropped or
+    // misspelled `title` (the vocabulary's only optional field) would still parse green while `title`
+    // vanished from what the prompt builder later reads. Same reason threadId is read back, not assumed.
     const base = { threadId: "th_1" };
     for (const target of [
       { type: "uncommittedChanges" },
@@ -15,13 +18,20 @@ describe("review/start params", () => {
       { type: "commit", sha: "abc123", title: "fix: thing" },
       { type: "custom", instructions: "review the auth flow" },
     ]) {
-      expect(reviewStartParams.safeParse({ ...base, target }).success).toBe(true);
+      const r = reviewStartParams.safeParse({ ...base, target });
+      expect(r.success).toBe(true);
+      expect(r.data?.target).toEqual(target);
+      expect(r.data?.threadId).toBe("th_1");
     }
   });
-  it("defaults delivery to detached and accepts inline (refused later, not here)", () => {
+  it("defaults delivery to detached and preserves inline VERBATIM (refused later, not degraded here)", () => {
     const p = reviewStartParams.parse({ threadId: "th_1", target: { type: "uncommittedChanges" } });
     expect(p.delivery).toBe("detached");
-    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "uncommittedChanges" }, delivery: "inline" }).success).toBe(true);
+    // D-M4-2 is that `inline` reaches the handler intact to be REFUSED there. A `.catch("detached")` or a
+    // normalizing transform would silently degrade it and still report success — so pin the parsed value.
+    const inline = reviewStartParams.safeParse({ threadId: "th_1", target: { type: "uncommittedChanges" }, delivery: "inline" });
+    expect(inline.success).toBe(true);
+    expect(inline.data?.delivery).toBe("inline");
   });
   it("rejects an unknown target type, a blank branch, and a blank threadId", () => {
     expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "nope" } }).success).toBe(false);
