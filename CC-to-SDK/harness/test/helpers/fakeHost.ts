@@ -121,6 +121,7 @@ const KIND_ANSWERS: Record<DecisionKind, ReadonlySet<string>> = {
   permission: new Set(["allow_once", "allow_with_updates", "allow_always", "deny"]),
   question: new Set(["question_answer", "deny"]),
   plan: new Set(["plan_approve", "plan_reject", "deny"]),
+  elicitation: new Set(["elicitation_accept", "elicitation_decline", "elicitation_cancel", "deny"]),
 };
 
 /** Real-shaped bodies for the control ops a test did not plant a reply for (host.ts's control()). */

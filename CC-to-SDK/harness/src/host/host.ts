@@ -835,6 +835,12 @@ export class SessionHost {
     permission: new Set(["allow_once", "allow_with_updates", "allow_always", "deny"]),
     question: new Set(["question_answer", "deny"]),
     plan: new Set(["plan_approve", "plan_reject", "deny"]),
+    // M4: the app server owns elicitation parks (appserver/broker.ts, ANSWER_KINDS), so nothing routes one
+    // HERE yet and `ops.ts`'s answer schema does not accept the three kinds either — a host client cannot
+    // reach this row today. It is filled with the same four the app server allows rather than left narrow,
+    // because the two tables are meant to read as one vocabulary; wiring a host-side elicitation is then
+    // an `ops.ts` change alone, not a silent kind-mismatch refusal here.
+    elicitation: new Set(["elicitation_accept", "elicitation_decline", "elicitation_cancel", "deny"]),
   };
 
   /** First answer wins. A second answerer is TOLD who got there first rather than erroring: two humans

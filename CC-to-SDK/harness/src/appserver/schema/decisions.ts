@@ -19,6 +19,12 @@ export const decisionOutcomeParams = z.discriminatedUnion("kind", [
   // hand because zod schemas are values and no compiler check spans the two wires.
   z.object({ kind: z.literal("plan_approve"), mode: z.enum(["default", "acceptEdits", "bypassPermissions", "auto"]), updatedPermissions: z.array(permissionUpdateParams).optional(), plan: z.string().optional(), feedback: z.string().optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
+  // M4 elicitation. `content` is MCP's own ElicitResult value grammar (string|number|boolean|string[]),
+  // narrowed here on purpose: this is the one outcome payload we hand STRAIGHT to a third-party MCP
+  // server, so a client that sends a nested object must be refused at the wire rather than at the server.
+  z.object({ kind: z.literal("elicitation_accept"), content: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])).optional() }),
+  z.object({ kind: z.literal("elicitation_decline") }),
+  z.object({ kind: z.literal("elicitation_cancel") }),
 ]);
 export const decisionRespondParams = z.object({
   threadId: z.string().min(1),

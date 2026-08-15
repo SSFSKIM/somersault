@@ -29,8 +29,12 @@ export type PermissionDecision =
   | { kind: "deny"; feedback?: string };
 
 /** Which dialog a parked decision needs (spec Goal B): permission = 3-way, question = AskUserQuestion,
- *  plan = ExitPlanMode. The gate routes by toolName; everything else in the park lifecycle is kind-blind. */
-export type DecisionKind = "permission" | "question" | "plan";
+ *  plan = ExitPlanMode. The gate routes by toolName; everything else in the park lifecycle is kind-blind.
+ *  `elicitation` (M4) is the one member the gate NEVER produces: an MCP server's request for input arrives
+ *  on the SDK's own `onElicitation` callback, not through `canUseTool`, so no toolName maps to it and
+ *  `routeDecisionKind`/`denyMessage` deliberately have no branch for it. It joins the vocabulary because
+ *  the PARK is the same object — one registry, one `decision/respond`, one teardown. */
+export type DecisionKind = "permission" | "question" | "plan" | "elicitation";
 
 /** The permission mode a plan approval GRANTS — the whole payload of an approved ExitPlanMode, and the
  *  one field the appliers (host/host.ts's applyPlanUpgrade, appserver/planUpgrade.ts) read. These four
@@ -67,7 +71,17 @@ export type DecisionOutcome =
    *  does not forward it — so on `ccx`/`ccx attach` nothing shows it. Absent when the row was empty.
    *  PlanDialog.tsx's divergence 3 records the three near-miss channels that were checked and rejected. */
   | { kind: "plan_approve"; mode: PlanGrantMode; updatedPermissions?: PermissionUpdateLike[]; plan?: string; feedback?: string }
-  | { kind: "plan_reject"; feedback?: string };
+  | { kind: "plan_reject"; feedback?: string }
+  /** MCP elicitation (M4). Mirrors MCP's own ElicitResult action enum — `content` is only meaningful on
+   *  accept, and only for `mode:"form"` requests (an url-mode elicitation has nothing to fill in). The
+   *  value type is MCP's, verbatim (`ElicitResultSchema.content`, @modelcontextprotocol/sdk types.d.ts):
+   *  widening it here would produce a `content` the server's own schema rejects. `decline` and `cancel`
+   *  are BOTH refusals to the MCP server and are kept apart because MCP keeps them apart — decline is
+   *  "no", cancel is "the human walked away". `appserver/elicitationMap.ts` turns each into the result
+   *  the SDK owes its server. */
+  | { kind: "elicitation_accept"; content?: Record<string, string | number | boolean | string[]> }
+  | { kind: "elicitation_decline" }
+  | { kind: "elicitation_cancel" };
 
 /** What the broker is asked to decide. UI hints (title/displayName/description) are often ABSENT headlessly
  *  (the bridge that renders them is claude.ai-coupled) — consumers MUST render from toolName + input alone. */
