@@ -919,9 +919,26 @@ git commit -m "feat(as4): MCP elicitation parks as a decision and always answers
 - Modify: `CC-to-SDK/docs/parity/coverage.md` (domain 10 entry)
 - Regenerate: the app-server JSON-Schema artifacts (`--emit-schema`; see `harness/schema/json/stable/appserver.json`)
 
-- [ ] **Step 1: Regenerate the schema artifacts**
+- [ ] **Step 1: Register `review/start` in `methodSchemas`, THEN regenerate**
 
-Run the emit path the M2b/M3 tasks used (`--emit-schema`) and confirm the review types appear.
+**Plan gap found during Task 1 — this step exists because of it.** `src/appserver/schema/index.ts` is a
+method-schema REGISTRY, not a re-export barrel, and the generated artifacts are emitted from it. Dispatch
+reads the handler table in `server.ts` (Task 5), so the method *works* without an entry here — but it would
+be absent from `schema/json/stable/appserver.json`, failing spec acceptance #6 and this task's count check.
+It lands HERE rather than in Task 1 deliberately: registering a method no handler answers yet turns
+`schemaGen.test.ts` and `exports.test.ts` red for Tasks 2–8.
+
+Add the entry alongside the existing ones (match their exact shape):
+
+```ts
+  "review/start": { params: reviewStartParams },
+```
+
+Then run the emit path the M2b/M3 tasks used (`--emit-schema`) and confirm the review types appear.
+
+Also remove the unused `export * from "./review.js"` line Task 1 added to that file if it still has no
+consumer — Tasks 2/3/5 import from `schema/review.js` directly, and a registry file should not carry a
+barrel line nothing reads.
 
 - [ ] **Step 2: Add the scorecard rows**
 
