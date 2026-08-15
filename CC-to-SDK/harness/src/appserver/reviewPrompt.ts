@@ -102,10 +102,15 @@ function scopeAndMethod(target: ReviewTarget, resolved?: { range?: string }): [s
 }
 
 /** The fence has to survive scope text that spells our own terminator. Same trick as a markdown code fence:
- *  grow the rule until it appears nowhere in the payload, so every byte of client text stays inside. Pure and
- *  deterministic — the same instructions always fence to the same markers. */
+ *  the rule strictly outruns the longest run of its own character in the payload, so no substring of client
+ *  text can close the block. Measured ONCE, not once per candidate length — `instructions` is unbounded client
+ *  text off the wire, and growing-the-rule-then-rescanning is quadratic in it (400k dashes blocked the
+ *  single-threaded server for ~34 s). Pure and deterministic — the same instructions always fence the same. */
 function scopeFence(instructions: string): [open: string, close: string] {
-  let rule = "-----";
-  while (instructions.includes(rule)) rule += "-";
+  let longest = 0, run = 0;
+  for (let i = 0; i < instructions.length; i++) {
+    if (instructions.charCodeAt(i) === 0x2d /* '-' */) { if (++run > longest) longest = run; } else run = 0;
+  }
+  const rule = "-".repeat(Math.max(5, longest + 1));
   return [`${rule} BEGIN CLIENT SCOPE ${rule}`, `${rule} END CLIENT SCOPE ${rule}`];
 }

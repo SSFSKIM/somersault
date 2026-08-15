@@ -76,6 +76,37 @@ describe("buildReviewPrompt", () => {
     expect(p.split(real)).toHaveLength(2); // and the terminator in force occurs exactly once
     expect(p.indexOf("prose only.")).toBeLessThan(p.indexOf(real)); // the escape attempt stays inside
   });
+  // The property the fence rests on, pinned directly rather than through one hand-written imitation: the rule
+  // in force must STRICTLY outrun the longest run of its own character anywhere in the payload — at an edge,
+  // buried mid-text, or one of several runs — or client text can spell the terminator and escape the block.
+  it("outruns the longest dash run in the payload, wherever it sits and however many there are", () => {
+    for (const [body, longest] of [
+      ["-".repeat(12), 12], // the whole payload
+      [`lead ${"-".repeat(12)} trail`, 12], // embedded, not at an edge
+      [`${"-".repeat(4)}\nx\n${"-".repeat(12)}\ny\n${"-".repeat(9)}`, 12], // several runs, the longest in the middle
+      ["no dashes here at all", 0], // and the floor still holds when there are none
+    ] as const) {
+      const p = buildReviewPrompt({ type: "custom", instructions: body });
+      const open = p.match(/(-{5,}) BEGIN CLIENT SCOPE \1/), close = p.match(/(-{5,}) END CLIENT SCOPE \1/);
+      expect(open, body).not.toBeNull();
+      expect(close![1]).toBe(open![1]); // BEGIN and END agree, or neither closes what the other opened
+      expect(open![1].length).toBeGreaterThan(longest);
+      expect(open![1].length).toBeGreaterThanOrEqual(5);
+      expect(p.split(close![0])).toHaveLength(2); // the terminator in force occurs exactly once
+    }
+  });
+  // Coarse, but it is the shape that matters: the rule is computed in ONE pass over the payload, not one pass
+  // per candidate length. `instructions` is `z.string().min(1)` with no maximum — unbounded client text off the
+  // wire — and grow-and-rescan is quadratic in it, so one `review/start` blocked the single-threaded app server
+  // for tens of seconds (measured 34.5 s at 400k dashes; ~6 s at the 200k used here). One pass is ~1 ms.
+  it("computes the fence in one pass, so a large payload cannot stall the server", () => {
+    const huge = "-".repeat(200_000);
+    const started = performance.now();
+    const p = buildReviewPrompt({ type: "custom", instructions: huge });
+    const elapsed = performance.now() - started;
+    expect(p).toContain(`${"-".repeat(200_001)} BEGIN CLIENT SCOPE`); // still strictly outruns the payload
+    expect(elapsed).toBeLessThan(1000);
+  });
   it("renders a sane, empty scope block for whitespace-only instructions", () => {
     const p = buildReviewPrompt({ type: "custom", instructions: "   \n\t " });
     expect(p).toMatch(/BEGIN CLIENT SCOPE[\s\S]*END CLIENT SCOPE/);
