@@ -1026,6 +1026,16 @@ Run (from `CC-to-SDK/`): `node scripts/drift-check.mjs`
 Expected: every walked token has a row; no staleness; the registered-method count has risen by exactly 1
 (58 → 59) and the notification count by exactly 1.
 
+**Do not be fooled by the line `Drift found → run the ritual`.** The controller measured the baseline on
+this branch before Task 9 began: the script exits **0** and the appserver section reads "every walked token
+has a scorecard row — no drift / no staleness / zero schema-less methods", at **58 registered methods** and
+**88 rows** (shipped(M1) 15, shipped(M2a) 32, shipped(M2b) 32, shipped(M3) 7, N/A 2). That "Drift found"
+line belongs to a SEPARATE, earlier section about the SDK itself — installed 0.3.227 against 0.3.233 on
+npm, with `SDKContextUsage` and `SDKContextUsageCategory` newly exported — and it does not fail the gate.
+Assert the process exit code, not the presence of that string, and compare the appserver counts against
+the baseline above. (Also note: piping the command into `tail` reports `tail`'s exit status, not the
+script's — redirect to a file if you need the code.)
+
 - [ ] **Step 4: Commit**
 
 Stage the registry edit from Step 1 alongside the docs — the Global Constraints make this list binding, so a
