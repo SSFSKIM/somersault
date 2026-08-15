@@ -755,10 +755,14 @@ git commit -m "feat(as4): review/start — detached review thread at the target'
   may dispatch subagents, `ReportFindings` is written for that shape, and a finding from a subagent of the
   review is still a finding about the review's subject. Dropping them would produce a review that reports
   nothing while prose says otherwise — the same silent all-clear the fallback exists to prevent, arriving
-  through a different door. Consequences to implement, not just to note: one notification per
-  `ReportFindings` call (a client APPENDS; nothing here supersedes an earlier notification), and
-  `sawReport` is set by ANY harvest, nested included, so the unstructured fallback fires only when
-  literally nothing reported.
+  through a different door. Consequences to implement, not just to note: **one notification per harvested
+  FRAME** (a client APPENDS; nothing here supersedes an earlier notification), and `sawReport` is set by
+  ANY harvest, nested included, so the unstructured fallback fires only when literally nothing reported.
+  Per frame and not per call, because Task 4's review found that reading only the first `ReportFindings`
+  block silently dropped any others in the same assistant message — the harvester now merges them, so one
+  `harvestFindings` hit is the unit that reaches the wire. Do not loop to re-split it back into one
+  notification per call: what a client needs is the additive contract, not the number of tool calls a
+  given frame happened to carry.
 
 - [ ] **Step 1: Write the failing test**
 

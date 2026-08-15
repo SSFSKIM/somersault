@@ -144,10 +144,14 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
   of the review is a finding about the review's subject. Rejected: mirroring the TodoWrite guard — it
   would make a review that delegated report nothing at all while its prose said otherwise, which is the
   silent all-clear D-M4-1's fallback exists to prevent, reached by a different route. Two consequences
-  follow and are specified rather than left to the implementer: one notification per `ReportFindings`
-  call, **additive** (a client appends; no notification supersedes an earlier one), and the
+  follow and are specified rather than left to the implementer: **one notification per harvested frame,
+  additive** — a client appends, and no notification supersedes an earlier one — and the
   "did anything report?" latch is set by any harvest, nested included, so the `unstructured: true`
-  fallback fires only when literally nothing reported.
+  fallback fires only when literally nothing reported. *Per frame, not per call*: the harvester merges
+  every `ReportFindings` block within one assistant message (Task 4's review found that reading only the
+  first silently dropped the rest), so a frame is the unit that reaches the wire. The additive contract is
+  what matters to a client; how many tool calls a given frame happened to carry is not something it should
+  have to reason about.
 
 ## Open forks — BOTH RESOLVED 2026-08-13 (owner)
 
