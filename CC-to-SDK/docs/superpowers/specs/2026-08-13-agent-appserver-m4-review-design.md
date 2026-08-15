@@ -204,6 +204,18 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
   reusing the turn lifecycle. Most of the adoption cost is representation, not machinery.
 - **The SDK already had the findings contract we were about to design.** `ReportFindings` has shipped all
   along, default-on, and this project's standing policy recorded it as "rely-on, not consume".
+- **`disallowedTools` binds subagents, and `bypassPermissions` does not lift it** (probe 110, 2026-08-16).
+  A reviewer flagged the review's read-only claim as resting on an unverified premise: does denying the
+  edit tools also deny them to a subagent the review dispatches? It does. The SDK says so in its own
+  refusal text — "Edit is disabled for this session, in subagents as well as here" — the denied tools never
+  appear in the session's advertised tool list at all, and the permission broker is never consulted, so it
+  is a hard deny at session-build time rather than a permission decision. Nested subagents at depth 2 were
+  bound too. Two consequences: the read-only policy is stronger than the code claimed (it survives
+  `bypassPermissions`, which replaces the approval broker but cannot restore a denied tool), and the
+  remaining holes are exactly two — `Bash`, which a review needs for git, and MCP-namespaced write tools
+  inherited from the target's server topology, which three native tool names cannot reach. The probe
+  deliberately establishes nothing about `Bash`: no subagent ever attempted a shell write it was permitted
+  to make. Incidental: the dispatch tool is named `Agent` on the wire, not `Task`.
 
 ## Outcomes & Retrospective
 
