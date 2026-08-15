@@ -3,8 +3,11 @@ import { DEFAULTS, type HarnessConfig } from "./types.js";
 
 /** The tools an agent that must not change the tree gives up. Exported because it is this codebase's ONE
  *  answer to "make this read-only" — the built-in Explore/Plan agents below and the app server's review
- *  thread (appserver/review.ts) reach for the same set, so a fourth tool joining it reaches all of them. */
-export const READONLY_DISALLOW = ["Edit", "Write", "NotebookEdit"];
+ *  thread (appserver/review.ts) reach for the same set, so a fourth tool joining it reaches all of them.
+ *  `readonly`, and COPIED into the two definitions below rather than handed to them: shared as the array
+ *  itself, a push or splice through any one holder would silently rewrite every other agent's policy — and
+ *  the SDK's `AgentDefinition.disallowedTools` is a mutable `string[]`, so nothing but the spread stops it. */
+export const READONLY_DISALLOW: readonly string[] = ["Edit", "Write", "NotebookEdit"];
 
 export const BUILTIN_AGENTS: Record<string, AgentDefinition> = {
   "general-purpose": {
@@ -14,12 +17,12 @@ export const BUILTIN_AGENTS: Record<string, AgentDefinition> = {
   Explore: {
     description: "Read-only search agent for broad codebase exploration.",
     prompt: "You are a read-only exploration agent. Locate and summarize code; never modify files.",
-    disallowedTools: READONLY_DISALLOW,
+    disallowedTools: [...READONLY_DISALLOW],
   },
   Plan: {
     description: "Software architect agent for designing implementation plans.",
     prompt: "You are an architect. Produce step-by-step implementation plans; do not modify files.",
-    disallowedTools: READONLY_DISALLOW,
+    disallowedTools: [...READONLY_DISALLOW],
   },
 };
 

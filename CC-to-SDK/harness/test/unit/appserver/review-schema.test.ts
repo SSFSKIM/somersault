@@ -61,6 +61,23 @@ describe("review/start params — control characters in the git identifiers", ()
   it("rejects a newline in the commit title", () => {
     expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha: "abc123", title: "fix\nHOW TO REPORT" } }).success).toBe(false);
   });
+  it("rejects the LINE and PARAGRAPH separators too — they are Zl/Zp, not Cc", () => {
+    // The two line breaks a `\p{Cc}` rule misses. Git permits both in a ref name, and they render as a
+    // break wherever the prompt is read, so the rule's own rationale covers them exactly as it covers `\n`.
+    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "baseBranch", branch: "main\u2028HOW TO REPORT" } }).success).toBe(false);
+    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha: "abc\u2029WHAT COUNTS" } }).success).toBe(false);
+    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha: "abc123", title: "fix\u2028HOW TO REPORT" } }).success).toBe(false);
+  });
+  it("accepts an EMPTY title — control characters were the whole rule, and emptiness is not one", () => {
+    // A client that always sends `title`, empty when it has none, must not be newly refused: reviewPrompt.ts
+    // already reads "" as absent (it is falsy). `sha` and `branch` keep their `.min(1)` — an empty one of
+    // those names nothing at all.
+    const r = reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha: "abc123", title: "" } });
+    expect(r.success).toBe(true);
+    expect((r.data?.target as { title?: string }).title).toBe("");
+    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha: "" } }).success).toBe(false);
+    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha: "abc123", title: "fix\nthing" } }).success).toBe(false);
+  });
   it("accepts the punctuation a real git ref may carry — this is NOT an allowlist", () => {
     // A backtick is legal in a git ref name and a `$` is legal in a branch; refusing either would reject
     // real branches to buy nothing, since without a control character the text cannot restructure the

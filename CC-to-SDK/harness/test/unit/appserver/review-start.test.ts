@@ -228,6 +228,38 @@ describe("review/start — gates", () => {
     expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
   });
 
+  it("refuses SHUTTING_DOWN when the latch drops while the range resolve is in flight, and builds nothing", async () => {
+    // The handler runs SYNCHRONOUSLY through `send` down to `resolveReviewRange`'s await, so the latch below
+    // lands squarely inside this handler's one window — the reason the check sits after that await rather
+    // than at arrival. Every other thread-admitting path pins its own latch (thread/start, thread/resume,
+    // thread/fork, thread/attach); un-pinned, a later refactor hoisting this one back up to arrival reads as
+    // a tidy-up and silently re-opens the window a review thread can be admitted through after shutdown.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    const done = srv.shutdown();
+    await settle();
+    await done;
+    expect(replyTo(id)?.error?.code).toBe(ERR.SHUTTING_DOWN);
+    expect(f.built.length).toBe(0);      // no engine, and so no `claude` child, outlives the shutdown
+    expect(srv.registry.list()).toHaveLength(0);
+  });
+
+  it("refuses when the TARGET is dropped while the range resolve is in flight", async () => {
+    // Same window, the other way round: `thread/close`/`thread/delete` can remove the target record while
+    // git runs. Inheriting a closed thread's config would be odd; stamping `reviewOf` with an id that no
+    // longer resolves would leave Task 6's attribution pointing at nothing. Re-read, and refuse.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    srv.registry.delete(t.id);
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.THREAD_NOT_FOUND);
+    expect(f.built.length).toBe(0);
+  });
+
   it("refuses a target thread whose cwd is unknown instead of reviewing this server's own tree", async () => {
     // Runtime-reachable only for a malformed fleet roster row (registry.ts's `threadCwd`), and "I don't
     // know where that thread runs" is the honest answer — a fallback would silently review a different repo.

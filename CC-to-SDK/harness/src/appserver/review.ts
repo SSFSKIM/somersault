@@ -51,10 +51,23 @@ const NO_CWD = "the target thread's working directory is unknown, so there is no
  *  tells the reviewer "Review only — do not edit, fix, or commit anything" (reviewPrompt.ts), and a promise
  *  the server does not enforce is one it should not print. What `READONLY_DISALLOW` (config/agents.ts, the
  *  same set the built-in read-only agents use) closes is the LIKELY accidental path: a model that
- *  "helpfully" applies the fix it just found reaches for `Edit`. What it cannot close is `Bash` — a review
- *  needs git, and a shell can write — so the claim stops there. Combined with D-M4-5 (a review turn parks
- *  like any other turn), a write that does slip through Bash parks for a human rather than landing
- *  silently. MERGED as a set, never assigned: a target thread that already denied tools keeps every one. */
+ *  "helpfully" applies the fix it just found reaches for `Edit`. THREE DOORS IT LEAVES OPEN, all three named
+ *  because a limit statement that admits one hole reads as if that were the only one:
+ *   - `Bash`. A review needs git and a shell can write. Left open deliberately — this is the known trade.
+ *   - MCP WRITE TOOLS. The inherited config carries the target's `mcpServers`, and MCP tool names are
+ *     NAMESPACED (`mcp__<server>__<tool>`), so three native names touch none of them: a target wired to a
+ *     filesystem, GitHub or Notion server hands the review the same write capability under another name.
+ *   - SUBAGENTS. The reviewer can dispatch through `Task`, and whether a top-level `disallowedTools` binds
+ *     the tools those children call is UNVERIFIED — a live probe is open on exactly that question, and until
+ *     it answers this comment asserts neither way rather than guessing in either direction.
+ *  AND THE FALLBACK IS CONDITIONAL TOO. Combined with D-M4-5 (a review turn parks like any other turn), a
+ *  write that slips through `Bash` parks for a human rather than landing silently — but only while the
+ *  permission broker is consulted, and `permissionMode` is INHERITED from the target VERBATIM. It is
+ *  consulted under `default`, `acceptEdits`, `plan` and the `auto` default; `bypassPermissions` and
+ *  `dontAsk` REPLACE `canUseTool` outright (config/types.ts), so a target opened in either of those reviews
+ *  UNSUPERVISED with a shell on the user's tree. Not clamped on purpose: a client that chose a never-ask
+ *  posture for unattended operation would have its reviews hang instead of run.
+ *  MERGED as a set, never assigned: a target thread that already denied tools keeps every one. */
 function reviewConfig(target: ThreadRecord, cwd: string): Record<string, unknown> {
   const { resume: _resume, ...inherited } = target.config ?? {};
   const denied = Array.isArray(inherited.disallowedTools) ? (inherited.disallowedTools as string[]) : [];
@@ -94,6 +107,12 @@ export const reviewStart: Handler = async (srv, ctx, id, params) => {
   // snapshot un-staleable, so what matters is that no thread is admitted after the latch — and the only
   // window this handler has is the yield above.
   if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
+  // The SAME window, for the target rather than the server: `thread/close` and `thread/delete` can drop the
+  // record while git runs, and everything below reads a value captured before that yield — the config the
+  // review inherits and, worse, the `reviewOf` id Task 6 attributes findings by, which would point at a
+  // thread nothing can resolve. Re-read rather than trust the capture; a target that left mid-request is the
+  // same answer it would have got a moment earlier.
+  if (!srv.registry.get(target.id)) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   const record = srv.createThread({ config: reviewConfig(target, cwd), unattended: target.unattended });
   // BEFORE the turn starts, so the harvester never sees a frame from a review it cannot recognise.
   record.reviewOf = target.id;
