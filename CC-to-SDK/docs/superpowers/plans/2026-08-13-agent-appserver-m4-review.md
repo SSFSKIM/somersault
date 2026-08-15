@@ -528,6 +528,14 @@ git commit -m "feat(as4): harvest review findings from the ReportFindings tool_u
   (review turns park like any other turn), a write attempt that does slip through parks for a human rather
   than landing silently. Add a test asserting the review thread is created with the edit tools disallowed
   and that a caller-supplied `disallowedTools` survives the merge.
+- **Reject control characters in `branch` and `sha`** (`src/appserver/schema/review.ts` — add it to this
+  task's `git add`). Raised by the Task 2 fixer as out of its scope, and correct: the injection framing it
+  added covers `custom{instructions}`, but `branch` is client text too and is interpolated into the
+  prompt's example commands unframed, where a newline is all it takes to forge a section heading. The
+  boundary is the right place to stop that — a newline or other control character is not a valid git ref
+  in the first place, so rejecting it loses nothing legitimate. Do NOT go further into a character
+  allowlist: a backtick is legal in a git ref, and rejecting one would refuse real branches to buy little,
+  since without a newline the text cannot restructure the prompt anyway. One test per field.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -721,7 +729,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/appserver/review.ts src/appserver/server.ts test/unit/appserver/review-start.test.ts
+git add src/appserver/review.ts src/appserver/server.ts src/appserver/schema/review.ts test/unit/appserver/review-start.test.ts test/unit/appserver/review-schema.test.ts
 git commit -m "feat(as4): review/start — detached review thread at the target's cwd, inline refused"
 ```
 
