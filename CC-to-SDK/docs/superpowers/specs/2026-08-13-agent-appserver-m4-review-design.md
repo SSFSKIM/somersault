@@ -123,16 +123,17 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
 - **D-M4-6 — MCP elicitation becomes a fourth decision kind.** See the open fork below; this is the one
   genuine adoption to come out of the reverse-request scoping.
 
-## Open forks (need a decision before planning)
+## Open forks — BOTH RESOLVED 2026-08-13 (owner)
 
-1. **Does the MCP elicitation decision kind ride along in M4?** Our engine already supports elicitation
-   (`onElicitation`, live-verified by probe 43b) but the app server has no decision kind for it, so it is
-   currently unreachable through the control plane. Adding a fourth kind is small and converts the
-   reverse-request research into a shipped deliverable. *Recommendation: yes.*
-2. **Is detached-only acceptable for M4?** Inline is the delivery a UI most naturally wants ("review this
-   thread's work in place"), and deferring it means the first release is the less obvious one.
-   *Recommendation: yes, defer inline* — the honest inline story needs an ephemeral session whose findings
-   are emitted onto the parent turn, which is its own increment and should not gate the domain landing.
+1. **MCP elicitation RIDES ALONG in M4.** Our engine already supports elicitation (`onElicitation`,
+   live-verified by probe 43b) but the app server has no decision kind for it, so it is currently
+   unreachable through the control plane. Adding a fourth kind is small and converts the reverse-request
+   research into a shipped deliverable. → folded in as **D-M4-6**.
+2. **Detached-only delivery is ACCEPTED for the first release.** Inline is the delivery a UI most
+   naturally wants ("review this thread's work in place"), and deferring it means the first release is the
+   less obvious one — accepted knowingly, because the honest inline story needs an ephemeral session whose
+   findings are emitted onto the parent turn, which is its own increment and should not gate the domain
+   landing. → **D-M4-2** stands as written; `inline` is refused explicitly, never silently degraded.
 
 ## Surprises & Discoveries
 
