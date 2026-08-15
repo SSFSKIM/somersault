@@ -12,6 +12,10 @@ import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
+// M4 Task 1: the review vocabulary rides out through the schema module, so a reader who has the registry
+// has the target shapes too. `review/start` itself joins `methodSchemas` below with its handler (M4 §surface)
+// — an entry here with nothing answering it would make the registry claim a method this build does not have.
+export * from "./review.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
