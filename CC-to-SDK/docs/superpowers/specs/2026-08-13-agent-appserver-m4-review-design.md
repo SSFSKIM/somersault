@@ -153,6 +153,16 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
   what matters to a client; how many tool calls a given frame happened to carry is not something it should
   have to reason about.
 
+- **D-M4-8 — Elicitation reaches threads the app server starts, NOT fleet-adopted ones.** Surfaced during
+  execution and worth stating rather than leaving to be discovered. The three elicitation outcome kinds
+  ride the app server's own wire, but not the ccx host's (`src/host/ops.ts`'s answer union), so a thread
+  ADOPTED from a running host cannot carry an elicitation park end to end. Rejected: extending the host
+  wire in M4. It is not the one-line change it first appears to be — a fleet thread's session belongs to
+  the host, not to us, so the host would have to install its own `onElicitation` bridge and forward parks
+  across the socket, which is its own increment. Acceptance item 7 is unaffected: it exercises a thread the
+  app server starts, which is where the capability actually lands. The honest summary is that M4 makes
+  elicitation reachable through the control plane for the threads the control plane owns.
+
 ## Open forks — BOTH RESOLVED 2026-08-13 (owner)
 
 1. **MCP elicitation RIDES ALONG in M4.** Our engine already supports elicitation (`onElicitation`,
