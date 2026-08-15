@@ -9,7 +9,9 @@ import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
 import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
+import { makeOnElicitation } from "./elicitation.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
+import type { OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, turnSteer, requestInterrupt } from "./turns.js";
 import { flushQueue } from "./queue.js";
@@ -125,9 +127,11 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
 }
 
 /** The one seam thread/start and thread/resume both build their engine config through — extended in
- *  Task 7 to inject the thread's decision broker as the SDK's canUseTool seam. */
-function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "park" | "deny" }, broker: PermissionBroker): OpenSessionConfig {
-  return { ...(parsed.config as OpenSessionConfig | undefined), permissionBroker: broker };
+ *  Task 7 to inject the thread's decision broker as the SDK's canUseTool seam, and in M4 Task 8 to inject
+ *  the elicitation bridge as the SDK's `onElicitation` seam. The two are siblings: both turn a question the
+ *  engine would otherwise have to ask a connected client into a parked decision any client can answer. */
+function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "park" | "deny" }, broker: PermissionBroker, onElicitation: OnElicitation): OpenSessionConfig {
+  return { ...(parsed.config as OpenSessionConfig | undefined), permissionBroker: broker, onElicitation };
 }
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -479,7 +483,7 @@ export class AppServer {
   createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny" }): ThreadRecord {
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
-    const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId));
+    const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
     const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
     this.decisions.set(threadId, dec);
@@ -505,7 +509,7 @@ export class AppServer {
     if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
-    const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId)), resume: opts.resume };
+    const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
     const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
     this.decisions.set(threadId, dec);
