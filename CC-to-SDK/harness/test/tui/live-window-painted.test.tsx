@@ -18,9 +18,11 @@
 // GREEN below: 2 items · 2 logical · 6 painted, against a cap of 8.
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
+import { Box } from "ink";
 import { render } from "ink-testing-library";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { Line } from "../../src/tui/Line.js";
 import { mainWindowCap, WINDOW_SLACK } from "../../src/tui/liveWindow.js";
 import { paintedHeight } from "../../src/tui/wrapItems.js";
 import { renderItemHeight } from "../../src/tui/pager.js";
@@ -97,5 +99,20 @@ describe("FSW BL3 — the classic live window's budget is in painted rows", () =
     expect(logicalRows(window)).toBe(8);
     expect(paintedRows(window, 80)).toBe(8);
     app.unmount();
+  });
+
+  // FSW BACKLOG FIX F1 — THE MEASURE, HELD AGAINST INK ITSELF. Everything above compares one model of the
+  // paint against another; both could be wrong together, and for a gutter-carrying line they were: the budget
+  // measured the FULLSCREEN projection (gutter columns reserved on every row, continuations indented) for a
+  // document the CLASSIC renderer flows through `<Line>`, where the gutter is an inline `<Text>` inside the
+  // wrapping one and Ink therefore wraps `gutter + text` at the full width. So this counts the rows Ink
+  // actually prints, in a second root at a known width, and asserts the budget agrees with THAT.
+  it("answers the number of rows Ink really paints for a guttered line", () => {
+    const l = { text: "x".repeat(295), gutter: { text: "⏺ " } };
+    const r = render(<Box width={100}><Line l={l} wrap="wrap" /></Box>);
+    const painted = plain(r.lastFrame()).replace(/\s+$/, "").split("\n").length;
+    r.unmount();
+    expect(painted).toBe(3);                                            // three, not the projection's four…
+    expect(paintedHeight({ kind: "line", id: "b", line: l }, 100)).toBe(painted);
   });
 });

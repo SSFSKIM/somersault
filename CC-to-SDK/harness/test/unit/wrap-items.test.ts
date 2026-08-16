@@ -109,11 +109,27 @@ describe("paintedHeight", () => {
     expect(paintedHeight(block, 80)).toBe(1);
   });
 
-  it("agrees with the projection it is the height of, item for item", () => {
-    // The one property that matters: no caller may get a different answer from the cheap measure than the
-    // renderer gets from `wrapItemsToWidth`, or the window and the frame are budgeting different documents.
-    const items = [line("a", "x".repeat(25)), line("b", "fits"), { kind: "line" as const, id: "h", line: { text: "T".repeat(200) }, wrap: "truncate-end" as const }];
+  it("agrees with the projection for every item the two renderers paint identically", () => {
+    // The property that matters wherever it HOLDS: a gutterless line, a truncating header and a gutter block
+    // are laid out the same way by both renderers (the block's connector is a sibling Box in the shared
+    // `RenderItemView`), so the cheap measure and `wrapItemsToWidth` must not be able to disagree about them.
+    const items = [line("a", "x".repeat(25)), line("b", "fits"),
+      { kind: "line" as const, id: "h", line: { text: "T".repeat(200) }, wrap: "truncate-end" as const },
+      { kind: "gutter-block" as const, id: "g", gutter: TOOL_RESULT_GUTTER, body: [{ text: "y".repeat(30) }] }];
     for (const item of items) expect(paintedHeight(item, 10)).toBe(rows(wrapItemsToWidth([item], 10)));
+  });
+
+  // FSW BACKLOG FIX F1 — THE ONE SHAPE THE TWO RENDERERS DISAGREE ABOUT, and the disagreement is the subject
+  // of this test rather than an accident it tolerates. `wrapLine` reserves the gutter's columns on EVERY row
+  // and indents the continuations, which is the FULLSCREEN viewport's paint (it renders the wrapped rows).
+  // The classic renderer paints the ORIGINAL item through `<Line>`, where the gutter is an inline `<Text>`
+  // inside one wrapping `<Text>` — so Ink wraps `gutter + text` at the FULL width with no indent, and fits
+  // more. `paintedHeight` serves the classic budget only, so it must answer the classic number: 295 columns
+  // of body behind a three-column `⏺ ` is FOUR rows wrapped at 97 and THREE rows flowed at 100.
+  it("measures a gutter LINE as the CLASSIC renderer flows it, not as the projection wraps it", () => {
+    const item: RenderItem = { kind: "line", id: "b", line: { text: "x".repeat(295), gutter: { text: "⏺ " } } };
+    expect(paintedHeight(item, 100)).toBe(3);
+    expect(rows(wrapItemsToWidth([item], 100))).toBe(4);
   });
 });
 

@@ -125,8 +125,21 @@ export function wrapItem(item: RenderItem, width: number): readonly RenderItem[]
  *  already answers for everything that fits and understates for everything that does not. The height ALONE,
  *  because a windowing selector walks candidates one at a time and never wants their rows: building and
  *  discarding a wrapped array per candidate would allocate the whole document per frame, where this rides
- *  `wrapItem`'s per-(item, width) cache and costs one map lookup on an unchanged row. */
+ *  `wrapItem`'s per-(item, width) cache and costs one map lookup on an unchanged row.
+ *
+ *  IT ANSWERS FOR THE CLASSIC RENDERER, which is who asks: every call site (ChatApp's `windowItems` and
+ *  `paintedRowsOf`, useChat's two commit measures) budgets the MAIN screen, where the item is painted as
+ *  itself. The fullscreen surfaces and the pager slice `wrapItemsToWidth`'s output and must keep measuring
+ *  THAT — the two layouts are not the same one, and a gutter-carrying LINE is where they part: `wrapLine`
+ *  reserves the gutter's columns on every row and indents the continuations (which is what the viewport
+ *  paints, since it renders those rows), while `<Line>` prints the gutter as an inline `<Text>` inside the
+ *  one wrapping `<Text>`, so Ink flows `gutter + text` at the FULL width with no indent and fits more.
+ *  Measured against Ink itself in `test/tui/live-window-painted.test.tsx`. Everything else agrees between
+ *  the two: a gutter BLOCK's connector is a sibling Box in the shared `RenderItemView`, a truncating header
+ *  is one row by construction, and a plain line has no gutter to place. */
 export function paintedHeight(item: RenderItem, width: number): number {
+  if (item.kind === "line" && item.wrap !== "truncate-end" && item.line.gutter)
+    return wrapRows(item.line.gutter.text + item.line.text, Math.max(1, Math.floor(width))).length;
   let sum = 0;
   for (const row of wrapItem(item, width)) sum += renderItemHeight(row);
   return sum;
