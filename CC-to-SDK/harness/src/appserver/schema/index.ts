@@ -12,10 +12,7 @@ import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js
 import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
-// M4 Task 1: the review vocabulary rides out through the schema module, so a reader who has the registry
-// has the target shapes too. `review/start` itself joins `methodSchemas` below with its handler (M4 §surface)
-// — an entry here with nothing answering it would make the registry claim a method this build does not have.
-export * from "./review.js";
+import { reviewStartParams } from "./review.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -105,4 +102,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // "what replaces a thread's engine". STABLE: the shape is a threadId and the mechanism is `swapEngine`,
   // both of which have shipped since M2b.
   "thread/reopen": { params: reopenParams },
+  // M4 (§surface): the review domain's whole request surface, one method, registered last as `server.ts`'s
+  // table takes it. STABLE, not experimental — the shape is Codex's own (`review.rs`), and the mechanism
+  // under it is an ordinary turn on a thread this server creates, not an unproven SDK seam. The `target`
+  // union rides out with it, so the generated artifact carries the four variants a client must choose from.
+  "review/start": { params: reviewStartParams },
 };

@@ -22,7 +22,14 @@
 > 0–2 (spine, settings + introspection, lifecycle + session library), reconciled with main's Wave T
 > wire shapes and merged 2026-08-11. `shipped(M2b)` — M2 waves 3–4 (rewind, MCP, tasks, the gap-6
 > settings-ops nonet, and Wave 4's turn queue, which adds no method of its own — it rides `turn/start`'s
-> `queue` flag and `turn/interrupt`). `planned(M3)` — fleet/workspace surfaces. `probe-gated` — needs a
+> `queue` flag and `turn/interrupt`). `shipped(M3)` — fleet adoption + the workspace surfaces, merged
+> 2026-08-13. `shipped(M4)` — the review domain (`review/start` and its `review/findings` notification),
+> which is also the milestone that made MCP elicitation reachable as a fourth kind of parked decision —
+> a decision-wire addition, not a method, so it has no row of its own (see the decision-wire paragraph).
+> `planned(...)` — a row's name is in a later milestone's plan and nowhere in the code yet; the bucket has
+> been **empty since M3 Task 9** (it last read `planned(M3)`, for the fleet/workspace surfaces that
+> milestone then shipped), and the staleness pass is what keeps it that way — a `planned` name found in
+> `schema/index.ts` fails the gate. `probe-gated` — needs a
 > live probe before it can ship at all (D5 and the sessions-store note). `N/A` — no protocol method
 > backs this token by design.
 >
@@ -161,7 +168,15 @@ a fleet thread `-33006` — reopen never forwards, because rebuilding a running 
 host's lifecycle to own (§1f's recovery for a dead fleet socket is `thread/close` plus a fresh
 `thread/attach`).
 
-**26 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
+Registered after all of those, and last of all, is **M4's `review/start`** — the review domain's whole
+request surface, one method, exactly as Codex's is. It names a thread but touches only that thread's cwd:
+the review itself is an ordinary turn on a NEW thread this server creates, so both dispatch gates pass and
+each answers honestly — `-33005` applies (a dead thread is dead for everything a client can name on it),
+while the origin gate never fires, a fleet thread's working directory being as reviewable as an inProcess
+one's. Its row, and the row for the `review/findings` notification it emits, are in the review section
+below rather than in the server-origin table, so the pair reads together.
+
+**27 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
 subscribers and watchers alike — for the two losses that are facts about what the thread now IS rather
 than per-peer asides to whoever asked for something: `code:"stateRepushFailed"` when a post-swap state
@@ -180,13 +195,32 @@ and replayed FIFO by `thread/subscribe`, so a queued id is never first heard of 
 `turn/started`, `turn/completed` (carries the
 Wave T t14 `error` tag for a resolved-but-failed turn), `turn/todo/updated`, `item/started`,
 `item/completed`, `item/agentMessage/delta`, `item/reasoning/delta`, `item/toolCall/argumentsDelta`,
-`decision/requested`, `decision/resolved`, `task/changed`, `task/event`.
+`decision/requested`, `decision/resolved`, `task/changed`, `task/event`; and M4's thread-scoped
+`review/findings` (its own row below), the 27th and the only name M3 or M4 added.
 
 **Decision wire** is main's Wave T shape, not the M2 branch's original: `plan_approve` carries the
 **granted mode** (`default|acceptEdits|bypassPermissions|auto`; `default` arms nothing — probe 97),
 `allow_once` takes optional `updatedInput`, `allow_with_updates` carries `updatedPermissions`, `deny`
 takes optional `feedback`. The armed upgrade is a typed `planUpgradeMode` consumed by the per-thread
 frame router's status route (D-M2-6 architecture, t10 semantics).
+
+**M4 adds a fourth decision KIND, not a method: `elicitation`** — an MCP server's request for user input,
+parked on the same wire as a permission, a question or a plan, so it lists in `decision/list` and is
+answered by `decision/respond` with no new surface at all (which is why it has no row: nothing was
+registered and nothing new fires). It is the one kind the permission gate never produces; it arrives
+through the SDK's `onElicitation` callback, which `appserver/elicitation.ts` bridges into a park. Three
+answer outcomes mirror MCP's own `ElicitResult` action enum — `elicitation_accept` (with optional form
+`content`), `elicitation_decline`, `elicitation_cancel` — and the bridge is **fail-closed by
+construction**: resolving null would send the MCP server no response at all and a rejected promise would
+hang it identically (for a `mode:"url"` auth elicitation, a browser tab that never resolves), so every
+exit, the universal system `deny` that broker teardown settles parks with included, returns a real
+result. Which refusal each failure earns follows D-M4-9's asymmetry — `cancel` for anything that failed
+on our side, since nobody decided anything there, and `decline` only for the one refusal a human actually
+caused. Two constraints are settled and worth not rediscovering: elicitation works for **stdio** MCP
+servers only (an in-process SDK-type server answers "Client does not support form elicitation" — probe
+43, which is why 43b exists), and a park that never reaches the wire is reported as a `warning` carrying
+the server name and request id, so an operator debugging "my MCP server's auth never completes" is not
+left with nothing.
 
 **Error codes** (`rpc.ts`): the five JSON-RPC codes, `-32001 OVERLOADED` (defined, never emitted —
 no backpressure source exists yet), `-33001 BUSY`, `-33002 ALREADY_SETTLED` (carries `data.by`),
@@ -486,6 +520,12 @@ method name: there is no upstream token to put in it. `fs/read` is the one row h
 deliberately does NOT use — `Query.readFile`, probe-dead since probe 104; that seam keeps its own `N/A`
 row in the Query table above.
 
+M4's `review/start` is a **tenth** method of this kind — nothing walks it either, for the same reason
+nothing walks `thread/start`: starting a review is this server's own act, and neither the host wire nor
+`interface Query` has a "review" to mirror. Its row is **not** in the table below but in the review
+section that follows it, so it can be read beside the notification it emits; a method and its one
+announcement channel are one surface, and splitting them across two tables would hide that.
+
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
 | `initialize` | appserver/server.ts | `initialize` | N/A | shipped(M1) — Bearer-token handshake, connection-scoped; `watchThreads` opts into the server-scoped notifications |
@@ -498,14 +538,40 @@ row in the Query table above.
 | `thread/shellCommand` | appserver/workspace.ts | `thread/shellCommand` | both | shipped(M3) — `{threadId, command}` → `{code, output, timedOut?}` over `src/tui/bash.ts`'s `runBash`, the TUI's own `!cmd` primitive: a full shell string through `exec` (pipes and redirection are the point), a 4 MiB output cap, and a promise that never rejects — so a failing command is a result with a nonzero `code`, never an RPC error. **Display-only: the output goes to the calling client and the conversation is untouched — the model never sees it.** That is the recorded deviation from Codex (D-M3-2), whose version streams into the turn; ours matches the TUI's `!` semantics, and the note rides the generated schema artifact because the shape cannot carry it. Unsandboxed by design, as Codex's is. Runs in the thread's own cwd — `threadView.cwd`'s own value (`registry.ts`'s `threadCwd`), so a client is never served a directory it was not told about: the start config's cwd for an inProcess thread, this process's when the config named none, the roster cwd stamped at attach for a fleet one. Gates: the standard `-33005` applies (deliberately NOT in `ENGINE_GONE_EXEMPT` — a dead thread reads consistently dead), `-33004` for an unknown thread, `-32602` for malformed params; **no busy check and no `record.chain`** — un-chained on purpose, since the command never reaches the engine and `!` works mid-turn in the terminal. Measured, not assumed: output past the cap comes back truncated at 4 MiB with a nonzero `code` and no `timedOut` flag (node's `exec` reports `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`, a string code that `runBash` maps to a plain exit 1). **Two timeouts, and `timedOut` covers both:** the seam's inner 30 s bounds the CHILD and bounds it with a SIGTERM `runBash` never escalates, so the handler races it against its own 40 s outer deadline (`SHELL_DEADLINE_MS`, injectable via `AppServerDeps.shellDeadlineMs`) that bounds the REQUEST — set above the inner one so it fires only for a child that ignored the TERM. Without it such a child left the promise unsettled forever and the RPC never replied at all, which un-chained let one client stack up hung ids. The outer arm replies `{code:1, timedOut:true}` with a `<harness note: …>` output naming the abandonment, because it is an admission rather than a kill: the child is left running (a real residual, spelled out to the client), since escalating to SIGKILL would mean reaching past the shared TUI seam this method deliberately reuses. That residual has two further halves the note cannot carry: the abandoned child also **pins the server's own exit** — `exec`'s stdio handles stay referenced in our event loop and `runBash` returns only a promise, so there is nothing here to unref (measured: reply at 1503 ms, parent process exit only at 10037 ms, when the child died), which means a supervisor awaiting a graceful exit hangs until something else kills that child; and the child's **partial output is discarded** — `runBash` has not resolved when the outer arm fires, so its buffer is unreachable from outside the seam and the client gets only the harness note |
 | `thread/reopen` | appserver/rewind.ts | `thread/reopen` | inProcess | shipped(M3) — `{threadId}` → `{ok:true, sessionId}`, the gap-10 recovery path (§4): a record whose engine is DEAD gets a replacement in place instead of answering `-33005` until the client gives up on it. The replacement is built from `record.config` through the same `swapEngine` the rewind trio and `thread/clear` use — **resumed** on the retained `record.sessionId`, or a **fresh conversation** when the engine died before the first init frame ever latched one (documented in §4; the reply and the `thread/rewound` then carry `null` until the router's init latch learns the new id). The `resume` is folded into the config handed to the factory, which also overwrites any stale `resume` a prior `thread/clear` left behind, so a cleared thread does not quietly resurrect the conversation the clear dropped; the other three swap-family keys — `resumeAt`, `droppedTurnUuid`, `forkSession` — are nulled **explicitly** beside it (`thread/clear`'s own pattern), because `record.config` is the client's verbatim `thread/start` passthrough and a spread that merely omits them would recover the thread truncated at a stale anchor, or fork it to a new id while `record.sessionId` kept reporting the old one. Post-swap, `repushThreadState` replays the settings mirror, the flag layer and the MCP layer onto the new engine exactly as after a rewind, and `thread/rewound {threadId, sessionId}` goes to subscribers and watchers (the epoch bumped, so every outstanding `thread/read` cursor is stale). Gates: **`ENGINE_GONE_EXEMPT`** — the one method exempt because a dead engine is its subject rather than because it avoids the transport, without which dispatch's `-33005` would refuse it in precisely the state it exists for; `-33006` for a fleet thread, from the dispatch origin gate that runs right after that exemption, since reopen never forwards (a running host owns its own engine lifecycle, and §1f's recovery for a dead fleet socket is close + re-attach); `-33001` for busy/closing/swapping; `-33007` while the server is shutting down (it spawns an engine); and **`-32602` "engine is not dead; nothing to reopen"** when the engine is ALIVE, so reopen cannot be used as a covert restart of a healthy thread. Deliberately NO parked-decision gate, unlike rewind and clear: that gate guards a live engine's dispose against the C1 circular wait, and here the read loop has already ended — refusing on a park would make the recovery unreachable for exactly the threads that died holding one. **The dead conversation's parks are SETTLED instead**, in the same synchronous step as the queue flush, through the non-latching `ThreadDecisions.reset()` (`teardown()`'s settle loop without the `closed` latch — that broker rides `record.config` onto the replacement, so latching would auto-deny its every future tool call). Each resolves `deny`/`by:"system"` with its `decision/resolved`, which is what stops a ghost entry from listing forever, from blocking a later rewind/clear, and — the reachability the reopen itself introduced — from letting a post-reopen `decision/respond` fire the record-keyed side channels (`armPlanUpgrade`, `abortTurn` → `requestInterrupt`) at the REPLACEMENT engine; that answer is now `-33002 Already settled`. **Recovery is repeatable:** a factory that throws again relays its own message as `-32603` (not the `-33005` the record would otherwise answer — that message is the only signal telling a client whether a retry can work), `swapInFlight` is released in a `finally`, and the next attempt is admitted like the first. **Queued turns are flushed `cancelled`** at request arrival, in the same synchronous step as the swap latch (`thread/close`'s latch+flush pair): a queued turn was accepted against a conversation that has since died, nothing would drain it at reopen time anyway (only `settleTurn` drains), and left in place it would run against unrecognizable context the first time some later turn completed — cancelled rather than dropped, because a client told `{queued:true}` is owed a terminal event for that id |
 
+## Review domain — M4 (a method and the channel it announces on)
+
+Two rows, and they are deliberately together: `review/start` is the domain's **whole** request surface —
+Codex's is one method too (`app-server-protocol/src/protocol/common.rs`), and neither of us adds a cancel,
+a list, or review-specific turn machinery — while `review/findings` is the one channel that carries what a
+review found. Neither is walkable: no host op, no `ControlFrame` verb, no session-store wrapper and no
+`Query` method mirrors either, so the seam-token column repeats the wire name as it does in the
+server-origin table above.
+
+The domain's **recorded deviation from Codex is an improvement, not a shortfall** (D-M4-1): Codex flattens
+its findings into one string for the model to read, and we ship the array. That is affordable only because
+our engine already has a native findings contract — `ReportFindings` — which probe 109 proved present,
+callable and well-formed in a plain headless session, its payload riding `tool_use.input`. The two
+deferrals are recorded on the rows: `delivery:"inline"` (D-M4-2) and the absence of any server-owned
+git/diff seam, the reviewing agent fetching its own subject exactly as Codex's does (D-M4-3).
+
+| seam token | source | protocol method | origin scope | status |
+|---|---|---|---|---|
+| `review/start` | appserver/review.ts | `review/start` | both | shipped(M4) — `{threadId, target, delivery?}` → `{turn, reviewThreadId}`, Codex's shape verbatim including all four `target` variants (`uncommittedChanges`, `baseBranch`, `commit`, `custom`) and its method name (D-M4-4: adopting the vocabulary keeps every future parity comparison a lookup rather than a translation). **A review is an ordinary turn on a NEW thread** — no child session, no event re-stamping, no second engine loop: the request creates a thread, `turnStart` runs it verbatim, and the reply is the turn spine's own `{turn}` with `reviewThreadId` added. The review thread inherits the TARGET's config so it reads that repo with the same model, plugins and MCP topology, with three departures — `cwd` re-stamped from `registry.ts`'s `threadCwd` (the roster directory for a fleet target, not this process's), `resume` DROPPED (carrying it would open the "detached" review on the target's own transcript, the exact contamination detached delivery exists to prevent), and the edit tools merged into `disallowedTools` (`config/agents.ts`'s `READONLY_DISALLOW`, the read-only agents' own set). **Read-only in policy, and the limits are named rather than implied:** `Bash` stays open (a review needs git) and MCP write tools are namespaced so the three native denials miss them, while subagents are NOT a third door (probe 110: a top-level `disallowedTools` binds a dispatched child at depth 2 as well as 1, and `bypassPermissions` does not lift it). `permissionMode` is inherited VERBATIM and deliberately not clamped, so a target opened in `bypassPermissions`/`dontAsk` reviews with no broker to park at. **Origin scope is `both` and it is literal**: detached delivery needs exactly one thing from the target — its cwd — so the target's engine is never touched, there is no entry in `FLEET_UNSUPPORTED`, and a fleet-origin thread is as reviewable as an inProcess one. `baseBranch` is the one variant needing host-side git: `reviewTarget.ts` resolves the merge-base once and names the range in the prompt, DEGRADING to a note rather than failing when the repo cannot answer. Gates and refusals: `delivery:"inline"` → `-32602` naming detached as the path that works (D-M4-2 — Codex's inline path splices a child session's events onto the parent turn by re-stamping ids, which the SDK gives us no way to do, and running it as a plain turn on the caller's thread would contaminate the conversation); `-33004` for an unknown target, re-checked AFTER the git await because `thread/close`/`thread/delete` can drop the record while git runs and everything downstream reads a pre-yield capture; `-32602` when `threadCwd` is unknown (a review of "some directory" is not a review of the thread that was named); `-33007` if shutdown latched during that same window; and the standard `-33005`, since a dead thread reads consistently dead for everything a client can name on it. The `target` git identifiers are refused at the schema boundary if they carry any control character (`\p{Cc}` plus U+2028/U+2029) — they are interpolated UNFRAMED into the review prompt, and one line break is enough to forge a heading and countermand the `ReportFindings` instruction; `custom{instructions}` is exempt because it is multi-line by nature and the prompt fences it as data |
+| `review/findings` | appserver/review.ts | `review/findings` | both | shipped(M4) — the review verdict, broadcast to the REVIEW thread's subscribers as `{threadId, turnId, findings[], unstructured, level?, prose?, aborted?}`, each finding carrying `file`, `line`, `summary`, `short_summary`, `failure_scenario`, `category`, `verdict` and `outcome`. **Structured where Codex ships a flattened string** (D-M4-1). Harvested by intercepting the `ReportFindings` `tool_use` on the frame stream the app server already maps into items — no new engine seam — and every well-formed block in one assistant message is MERGED, so one frame is one notification (re-splitting would publish the number of tool calls a frame happened to carry). **Additive: a client APPENDS, and nothing here supersedes an earlier notification.** Nested/subagent frames are deliberately INCLUDED (D-M4-7), the opposite of the router's rule for to-dos and prose: a finding is about the review's SUBJECT, so whoever found it, it counts. The same verdict also goes out as a `review` ITEM through `emitItems`, so a client subscribed to items alone still renders the review inline — and, since that path buffers, a client joining mid-review is replayed the verdicts already reached. **The governing rule of the domain is on this row:** a turn that ends with no `ReportFindings` call yields `findings: []` PLUS `unstructured: true` PLUS the reviewer's own prose, never a bare empty array, which would be an authoritative all-clear no reviewer asserted (`prose` is OMITTED rather than sent empty when the reviewer never spoke — `""` is not something it said); PLUS **`aborted: true` when the turn did not finish**, the same rule one door further in, because an interrupt and a soft failure BOTH end on a real terminal frame and so both land in the fallback, and a client keyed on this channel would otherwise render a cancelled review as "no defects found" — the word is the item model's own (`mapper.finalize(true)` stamps `aborted` on every other item of an interrupted or failed turn, and the review item was the one type without it). A turn that produces no result frame at all (the engine died mid-review) fires NOTHING, because `turn/completed {status:"failed"}` already says so and announcing an empty array would claim a review happened. What a review thread is a review OF is **not** on this notification: `reviewOf` rides `threadView` instead, so it appears once on the row every client already reads (`thread/started`, `thread/list`) rather than repeating a constant on every message — which is also what lets a client identify a review thread raised by some OTHER client. Scoped to the TURN `review/start` began rather than to the review thread — the subscription is installed for one turn and unsubscribes at its end — because a review thread is an ordinary thread a client may take follow-up turns on, and a thread-wide harvest would fire the fallback on a turn nobody asked to be reviewed. Origin scope `both` for the same reason `review/start` has it: the notification fires identically for a review of a fleet-origin target, the review thread itself always being one this server created |
+
 ## Totals
 
 34 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **79 walked tokens**,
-all rowed above — plus the 9 server-origin rows just above, which no walker produces, for **88 rows**
-in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out until then,
-having missed Task 7's adoption pair as well as its own workspace pair; Task 13's `thread/shellCommand`
-is the eighth and Task 14's `thread/reopen` the ninth. M3 Task 15 is the last landing that had to recount
-by hand: the gate prints the row total itself now, and both counts agreed at 88.)
+all rowed above — plus the 9 server-origin rows, which no walker produces, plus M4's 2 review rows, for
+**90 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
+until then, having missed Task 7's adoption pair as well as its own workspace pair; Task 13's
+`thread/shellCommand` is the eighth server-origin row and Task 14's `thread/reopen` the ninth. M3 Task 15
+is the last landing that had to recount by hand: the gate prints the row total itself now, and both counts
+agreed at 88 there and at 90 here. **The gate would not have caught a miscount at this landing**, which is
+worth stating where the number is: its three passes check that walked tokens have rows and that a row's
+status matches the code, so a method or notification never registered and never rowed is invisible to all
+three — measured, not assumed, at M4 Task 9, where the script exited 0 and reported 58/88 with the whole
+review domain already landed. The count moving is the evidence; the exit code is only a regression guard.)
 
 **The per-status and per-origin tallies are no longer written down here — the gate counts them.** A
 summary table used to sit at this spot and it went stale at three consecutive landings, for exactly the
@@ -515,8 +581,9 @@ already parses every row for its staleness pass, so since M3 Task 15 it tallies 
 lines on every run — `N rows by status` and `N rows by origin scope`. Run it; between runs the authority
 is each row's own `status` and `origin scope` column, as it always was.
 
-What those two lines say at this sweep (**M3 Task 15, 2026-08-12** — restated per landing, never trusted
-between them): **88 rows, 86 of them shipped**, the remaining two being the `N/A` pair — `seedReadState`
+What those two lines say at this sweep (**M4 Task 9, 2026-08-16** — restated per landing, never trusted
+between them): **90 rows, 88 of them shipped** (2 of those `shipped(M4)`), the remaining two being the
+`N/A` pair — `seedReadState`
 (internal plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row).
 **Three buckets are empty, each emptied by a nameable landing:** `planned(...)` by M3 Task 9, when
 `thread/stop` shipped; `probe-gated` by M2b Wave 4's Task 5, which probed all four gated tokens live on
@@ -532,21 +599,27 @@ thread, no origin question) and `readFile`, which had been scored `inProcess` wh
 a token backing no method has no origin, so it now reads `N/A` in both columns, as `seedReadState` always
 has. Task 13's `thread/shellCommand` (`both`) and Task 14's `thread/reopen` (`inProcess`) are the only two
 server-origin rows with a real origin scope; every other row in that table names no thread, and those
-`N/A` origins plus the two seam rows that back no method are the whole `N/A` bucket. The rows that remain
+`N/A` origins plus the two seam rows that back no method are the whole `N/A` bucket. M4 added two `both`
+rows and moved none: `review/start` names a thread and reads one field off it (its cwd), which is exactly
+why the origin gate has nothing to refuse, and `review/findings` inherits that scope from the method that
+emits it. The rows that remain
 `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods (§1c) plus the Query-side seams behind
 them — Task 14's `thread/reopen` joining that set as the one member whose absence from the host wire is a
 deliberate boundary rather than a missing op (the host owns its own engine lifecycle).
 
-**The live surface those rows cover: whatever the gate prints, and 26 notifications.** The registered-
+**The live surface those rows cover: whatever the gate prints, and 27 notifications.** The registered-
 method count is not restated here for the reason "Shipped, per the code" gives — `scripts/drift-check.mjs`
 prints the size of `appserver/schema/index.ts`'s `methodSchemas` on every run ("every row status matches
-the live surface (N registered methods)"), it read 51 at the M2b close-out and 58 at M3's, and the run is
+the live surface (N registered methods)"), it read 51 at the M2b close-out, 58 at M3's and 59 at M4's, and
+the run is
 the only place it is ever current. Notifications have no registry to count, so they get a **recipe**
 instead of a number: every slash-shaped string literal under `appserver/` that is not a registered method
-(24 at this sweep — the same scan the staleness pass runs for its `liveWireStrings` set), plus the two
-that carry no slash, `initialized` and `warning`. That is **26, unchanged across all of M3**: `thread/closed`
+(25 at this sweep — the same scan the staleness pass runs for its `liveWireStrings` set), plus the two
+that carry no slash, `initialized` and `warning`. That is **27**: 26 across all of M3 — `thread/closed`
 gained an optional `reason` (Task 9) and `thread/compacted` gained a fleet emission path (Task 10), but
-neither is a new name, and none of M3's seven methods emits a notification of its own.
+neither is a new name, and none of M3's seven methods emits a notification of its own — plus M4's
+`review/findings`, the first genuinely new name since M2b. M4's other addition, the `elicitation` decision
+kind, adds none: it rides `decision/requested` and `decision/resolved` as the other three kinds do.
 
 **The gate enforces all three directions**, which is why the row set is safe to trust between sweeps
 even where a prose summary is not: *presence* (every walked token has a row — the original
