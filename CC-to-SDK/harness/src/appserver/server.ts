@@ -104,7 +104,12 @@ export interface ConnCtx {
  *  `fs/search` roots itself on this value too, a client passing it back as a search root.
  *  `short`/`name` are the roster's own handles and
  *  exist for fleet threads only; the keys are OMITTED (not undefined) on inProcess rows, which keeps this
- *  view's key set identical to sessionLib.ts's store-only projection for every row that predates M3. */
+ *  view's key set identical to sessionLib.ts's store-only projection for every row that predates M3.
+ *  `reviewOf` (M4 §review) is omitted the same way, and rides HERE rather than on `review/findings`: what a
+ *  thread is a review OF is a property of the thread, so one appearance on the row every client already
+ *  reads — `thread/started`, `thread/list` — is what lets a client identify a review thread at all,
+ *  including one another client raised. On the notification instead it would repeat a constant on every
+ *  message and still leave a thread list unable to tell the two kinds apart. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
   const waitingOn = srv.pendingDecisions(r.id).length > 0;
   return {
@@ -120,6 +125,7 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     status: threadStatus(r, waitingOn),
     queueDepth: r.queue.length,
     origin: r.origin,
+    ...(r.reviewOf ? { reviewOf: r.reviewOf } : {}),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     preview: undefined,

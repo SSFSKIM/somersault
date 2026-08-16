@@ -194,6 +194,9 @@ describe("review findings on the wire", () => {
     await settle();
     // An ordinary turn may call ReportFindings for its own reasons; nobody asked this thread to be reviewed.
     expect(notifs("review/findings")).toHaveLength(0);
+    // BOTH channels, not just the notification: the item is the durable copy, so a review item minted here
+    // would outlive the notification that wasn't sent and still tell an items-only client this turn was one.
+    expect(notifs("item/completed").map((p) => p.item).filter((i) => i?.type === "review")).toHaveLength(0);
   });
 
   // D-M4-7, both halves: a subagent's report must reach the wire, and it must count as a report.
@@ -245,5 +248,98 @@ describe("review findings on the wire", () => {
     r.session.finish();
     await settle();
     expect(notifs("review/findings")).toHaveLength(0);
+  });
+
+  // The case above does NOT isolate the `currentTurnId` comparison: it ends the review turn with a result
+  // frame, so `done` and the unsubscribe already block everything after it. This one strands the watcher —
+  // the turn settles with NO end frame (the engine died, or simply never emitted one), leaving `done` false
+  // and the callback still subscribed — so the comparison is the ONLY thing standing between a later turn's
+  // report and the review channel.
+  it("a STRANDED watcher does not harvest a later turn — the turnId comparison alone", async () => {
+    const f = factory(); const srv = boot(f);
+    const r = await startReview(srv, f);
+    r.session.finish();   // submit resolves; no `result` frame ever arrives, so the watcher is never retired
+    await settle();
+    expect(notifs("review/findings")).toHaveLength(0); // no end frame, no fallback — the documented no-result path
+    lines.length = 0;
+    send("turn/start", { threadId: r.reviewThreadId, input: "why did you say that?" });
+    await settle();
+    r.session.emit(assistant([report({ findings: [one("a.ts")] })]));
+    await settle();
+    expect(notifs("review/findings")).toHaveLength(0);
+    expect(notifs("item/completed").map((p) => p.item).filter((i) => i?.type === "review")).toHaveLength(0);
+  });
+
+  // The milestone's own failure mode through a new door. An interrupt does NOT reject the turn — the engine
+  // resolves it through a real terminal `result` frame (turns.ts's onSuccess consults interruptRequested for
+  // exactly that reason) — so the unstructured fallback DOES fire for it. Untagged, a client keyed on the
+  // review channel renders a cancelled review as "no defects found".
+  it("tags an INTERRUPTED review `aborted`, so cancelling one never reads as an all-clear", async () => {
+    const f = factory(); const srv = boot(f);
+    const r = await startReview(srv, f);
+    r.session.emit(assistant([text("Starting on the diff now...")]));
+    send("turn/interrupt", { threadId: r.reviewThreadId });
+    await settle();
+    r.session.emit(END);   // the engine's own terminal frame, exactly as an uninterrupted turn ends
+    r.session.finish();
+    await settle();
+    const got = notifs("review/findings");
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ findings: [], unstructured: true, aborted: true, prose: "Starting on the diff now..." });
+    // BOTH channels — a client rendering items alone would otherwise still get the untagged reading.
+    const items = notifs("item/completed").map((p) => p.item).filter((i) => i?.type === "review");
+    expect(items).toHaveLength(1);
+    expect(items[0].aborted).toBe(true);
+    // And it agrees with the turn's own ending, which is what makes the two readable side by side.
+    expect(notifs("turn/completed")[0].turn).toMatchObject({ status: "interrupted" });
+  });
+
+  it("does NOT tag a review that genuinely finished with nothing to report", async () => {
+    const f = factory(); const srv = boot(f);
+    // The distinction is the whole point of the tag: same empty findings, same `unstructured` flag, and a
+    // completely different fact about whether a review happened.
+    const got = await runReview(srv, f, [assistant([text("I read the diff and found nothing.")])]);
+    expect(got[0]).toMatchObject({ findings: [], unstructured: true });
+    expect(got[0].aborted).toBeUndefined();
+    const items = notifs("item/completed").map((p) => p.item).filter((i) => i?.type === "review");
+    expect(items[0].aborted).toBeUndefined();
+  });
+
+  // The other ending that reaches a terminal frame without finishing: probe 96's dead connection is a
+  // `subtype:"success"` frame carrying `is_error`, which `turnFailureOf` is the one reader of.
+  it("tags a FAILED review too — a result frame that reports failure is not a clean ending", async () => {
+    const f = factory(); const srv = boot(f);
+    const r = await startReview(srv, f);
+    r.session.emit(assistant([text("Reading the diff.")]));
+    r.session.emit({ type: "result", subtype: "success", is_error: true, result: "connection lost" });
+    r.session.finish();
+    await settle();
+    const got = notifs("review/findings");
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ findings: [], unstructured: true, aborted: true });
+  });
+
+  it("omits `prose` entirely when the reviewer said nothing at all", async () => {
+    const f = factory(); const srv = boot(f);
+    const got = await runReview(srv, f, []);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ findings: [], unstructured: true });
+    expect("prose" in got[0]).toBe(false); // "" is not something a reviewer said
+  });
+
+  // `reviewOf` is a property of the THREAD, so it rides the thread view every client already reads rather
+  // than repeating itself on every findings notification — which is also what lets a client identify a
+  // review thread it did not raise, off `thread/started` or `thread/list`.
+  it("a review thread's view names what it reviewed; an ordinary thread's carries no such key", async () => {
+    const f = factory(); const srv = boot(f);
+    const targetId = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: targetId, target: { type: "uncommittedChanges" } });
+    await settle();
+    const reviewThreadId = replyTo(id)?.result?.reviewThreadId as string;
+    const started = notifs("thread/started").map((p) => p.thread).find((t: Record<string, any>) => t.id === reviewThreadId);
+    expect(started.reviewOf).toBe(targetId);
+    const plainId = send("thread/start", { config: { cwd: "/repo" } });
+    await settle();
+    expect("reviewOf" in (replyTo(plainId)?.result?.thread as Record<string, unknown>)).toBe(false); // omitted, not undefined
   });
 });

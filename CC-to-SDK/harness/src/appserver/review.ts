@@ -22,6 +22,7 @@ import { buildReviewPrompt } from "./reviewPrompt.js";
 import { resolveReviewRange } from "./reviewTarget.js";
 import { harvestFindings, type ReviewFinding } from "./reviewFindings.js";
 import { reviewStartParams } from "./schema/review.js";
+import { turnFailureOf } from "../session/turnResult.js";
 import { READONLY_DISALLOW } from "../config/agents.js";
 
 /** Names the path that DOES work, because "not supported" without it leaves a client guessing whether the
@@ -59,12 +60,15 @@ const NO_CWD = "the target thread's working directory is unknown, so there is no
  *     NAMESPACED (`mcp__<server>__<tool>`), so three native names touch none of them: a target wired to a
  *     filesystem, GitHub or Notion server hands the review the same write capability under another name.
  *  SUBAGENTS ARE NOT A THIRD DOOR (probe 110): a top-level `disallowedTools` DOES bind the tools a
- *  dispatched child calls, at depth 2 as well as 1, and the denial is a session-build fact rather than a
- *  permission decision — the tools are absent from the session's advertised list, and the SDK says so
- *  outright ("Edit is disabled for this session, in subagents as well as here"). Verified on disk, not from
- *  the model's narration: the child's target file was unmodified across every run, against a control
- *  proving the top-level agent was refused the same way. What the probe does NOT touch is `Bash` — no child
- *  tried to write through a shell it was allowed to use — so that door above is unchanged.
+ *  dispatched child calls, and the denial is a session-build fact rather than a permission decision — the
+ *  tools are absent from the session's advertised list, and the SDK says so outright ("Edit is disabled for
+ *  this session, in subagents as well as here"). Verified on disk, not from the model's narration: the
+ *  child's target file was unmodified across every run, against a control proving the top-level agent was
+ *  refused the same way. TWO LIMITS ON WHAT THAT ACTUALLY MEASURED, both named so the claim is not read
+ *  wider than its evidence: `Bash` is untouched — no child tried to write through a shell it was allowed to
+ *  use — so that door above is unchanged; and DEPTH goes only as far as the run went. The probe observed a
+ *  nested dispatch and an unmodified file, never a denial addressed to the depth-2 child itself, so "a
+ *  child's children are bound too" is what the measurement is consistent with rather than what it proves.
  *  AND THE FALLBACK IS CONDITIONAL TOO. Combined with D-M4-5 (a review turn parks like any other turn), a
  *  write that slips through `Bash` parks for a human rather than landing silently — but only while the
  *  permission broker is consulted, and `permissionMode` is INHERITED from the target VERBATIM. It is
@@ -100,7 +104,7 @@ function withReviewThreadId(ctx: ConnCtx, reviewThreadId: string): ConnCtx {
 }
 
 /** One `review/findings` verdict, minus the `{threadId, turnId}` envelope both channels stamp themselves. */
-type Verdict = { findings: ReviewFinding[]; unstructured: boolean; level?: string; prose?: string };
+type Verdict = { findings: ReviewFinding[]; unstructured: boolean; level?: string; prose?: string; aborted?: true };
 
 /** What the REVIEWER said, as opposed to what its subagents chattered about. Nested frames are excluded
  *  here — mirroring `TurnMapper.ingest`'s own rule ("nested/subagent frame: attribution only, not
@@ -126,13 +130,34 @@ function assistantText(frame: unknown): string {
  *  results are excluded for the same reason `resultWaiter` only settles turn-owned ones: a child's terminal
  *  frame is not the turn's.
  *
- *  A turn that ends with NO result frame — the engine died mid-review — deliberately fires no fallback. The
- *  fallback exists to stop an unreported review reading as an all-clear; a review that never finished says
- *  so through `turn/completed {status:"failed"}`, and announcing `findings: []` for it would claim a review
- *  happened. */
+ *  A WEAKER OWNERSHIP TEST THAN `resultWaiter`'S, named rather than fixed. That one correlates a result to
+ *  its turn by `user_message_uuid` and only falls back to the head waiter when the frame carries none
+ *  (session/session.ts); this accepts ANY parent-less `result`, so a second turn-owned result inside one
+ *  turn would read as this turn's end and retire the harvest early. No engine we have observed emits one —
+ *  the read loop settles its waiter on the first and counts every later one as unmatched — and correlating
+ *  here would mean re-deriving a uuid the session layer already owns and does not publish. Recorded as the
+ *  known limit of this predicate rather than guarded against blind.
+ *
+ *  A turn that ends with NO result frame at all — the engine died mid-review — fires no fallback, simply
+ *  because this callback is the only thing that would fire it. That gap is left to `turn/completed`, which
+ *  still reports the turn's terminal status. What does NOT fall in that gap is an ending that reaches a
+ *  result frame WITHOUT finishing — see `endedIncomplete` below, which is the whole of what this predicate
+ *  cannot tell you. */
 function isTurnEnd(frame: unknown): boolean {
   const f = frame as { type?: unknown; parent_tool_use_id?: unknown } | null;
   return !!f && f.type === "result" && !f.parent_tool_use_id;
+}
+
+/** Did the turn this end frame belongs to actually FINISH? Read at the fallback, off the frame that ended
+ *  it plus the record's own abort latch — the two endings that reach a terminal `result` without completing:
+ *   - INTERRUPT. The engine does not reject on interrupt; it RESOLVES the turn through a real terminal frame
+ *     (turns.ts's onSuccess consults `interruptRequested` for exactly this reason), and that latch is set
+ *     synchronously by `requestInterrupt` long before the frame arrives, so it is readable here.
+ *   - FAILURE. Probe 96's dead connection is a `subtype:"success"` frame carrying `is_error`, and
+ *     `turnFailureOf` (session/turnResult.ts) is this repo's single reader of that shape — reused rather
+ *     than re-spelled, so the app server and the session layer cannot drift on what a failed turn is. */
+function endedIncomplete(record: ThreadRecord, frame: unknown): boolean {
+  return record.interruptRequested || turnFailureOf(frame) !== undefined;
 }
 
 /** THE HARVEST, SCOPED TO THE TURN `review/start` BEGAN — not to the review THREAD. `reviewOf` marks the
@@ -168,6 +193,11 @@ function watchReviewTurn(srv: AppServer, record: ThreadRecord, turnId: string): 
     // and, since `emitItems` buffers, so a client that joins mid-review is replayed the verdicts already
     // reached. Both paths emit one, not just the reporting path: a subscriber that heard only structured
     // hits would read an unreported review as a review with nothing to say.
+    // THAT REPLAY IS BOUNDED, and the durability argument is only as good as the bound. The per-turn buffer
+    // holds 500 events, drop-oldest (turns.ts) — and a review turn is a LONG turn, so a reviewer that reads
+    // fifty files can evict its own early verdicts before a late subscriber ever joins. Strictly more than
+    // the notification, which is live-only; strictly less than a record. The copy that actually survives is
+    // the `ReportFindings` tool call in the thread's transcript (items/types.ts).
     emitItems(srv, record, turnId, [{ kind: "completed", item: { type: "review", id: `review_${turnId}_${++seq}`, ...verdict } }]);
   };
   let off: (() => void) | undefined;
@@ -183,7 +213,22 @@ function watchReviewTurn(srv: AppServer, record: ThreadRecord, turnId: string): 
     // The governing rule of this domain: a turn that ended with no report yields the empty array PLUS the
     // `unstructured` flag PLUS what the reviewer actually said, so the truth stays on the wire. A bare
     // empty array here would be an authoritative all-clear no reviewer asserted.
-    if (!sawReport) publish({ findings: [], unstructured: true, prose: prose.join("\n") });
+    //
+    // AND `aborted` WHEN THE TURN DID NOT FINISH — the same rule, one door further in (Task 6 review). It is
+    // tempting to argue an unfinished review needs no tag because the turn announces itself through
+    // `turn/completed {status}`; that holds only for the ending that never reaches a result frame at all. An
+    // interrupt and a probe-96 failure BOTH end on a real terminal frame and therefore BOTH land right here,
+    // so a client keyed on the review channel — the reason that channel exists — would render a cancelled
+    // review as "no defects found". Stamped on both channels, under the word the item model already uses for
+    // this fact: `mapper.finalize(true)` puts `aborted` on every other item of an interrupted or failed turn
+    // (items/mapper.ts), and the review item was the one type without an equivalent.
+    //
+    // `prose` is OMITTED rather than sent empty when the reviewer never spoke: "" is not something it said,
+    // and a client rendering "the reviewer said:" over a blank is worse than one that knows there is nothing.
+    if (!sawReport) {
+      const said = prose.join("\n");
+      publish({ findings: [], unstructured: true, ...(said ? { prose: said } : {}), ...(endedIncomplete(record, frame) ? { aborted: true } : {}) });
+    }
   });
 }
 
@@ -205,12 +250,14 @@ export const reviewStart: Handler = async (srv, ctx, id, params) => {
   if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; }
   // The SAME window, for the target rather than the server: `thread/close` and `thread/delete` can drop the
   // record while git runs, and everything below reads a value captured before that yield — the config the
-  // review inherits and, worse, the `reviewOf` id Task 6 attributes findings by, which would point at a
-  // thread nothing can resolve. Re-read rather than trust the capture; a target that left mid-request is the
-  // same answer it would have got a moment earlier.
+  // review inherits and, worse, the `reviewOf` id stamped below, which every client reads off this thread's
+  // view (server.ts's `threadView`) and would otherwise point at a thread nothing can resolve. Re-read
+  // rather than trust the capture; a target that left mid-request is the same answer it would have got a
+  // moment earlier.
   if (!srv.registry.get(target.id)) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   const record = srv.createThread({ config: reviewConfig(target, cwd), unattended: target.unattended });
-  // BEFORE the turn starts, so the harvester never sees a frame from a review it cannot recognise.
+  // BEFORE the `thread/started` below, which is the message that carries it (server.ts's `threadView`) and
+  // a client's first and often only chance to learn that this thread is a review of that one.
   record.reviewOf = target.id;
   // Announced like any other thread, and announced FIRST: the turn's own broadcasts land a microtask later,
   // and a watcher that met `turn/started` for a thread it had never heard of could not place it.

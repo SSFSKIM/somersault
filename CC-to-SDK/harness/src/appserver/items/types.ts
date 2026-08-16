@@ -16,8 +16,13 @@ export interface ToolCallItem { type: "toolCall"; id: string; tool: string; view
  *  The ONLY Item no `TurnMapper` ever produces: it is derived from a tool call's INPUT rather than from
  *  the frame's own shape, so review.ts emits it directly. That also means it never appears in a transcript
  *  replay (items/replay.ts) — a completed review's findings live in its transcript as the `ReportFindings`
- *  tool call they came from. */
-export interface ReviewItem { type: "review"; id: string; findings: ReviewFinding[]; unstructured: boolean; level?: string; prose?: string }
+ *  tool call they came from.
+ *
+ *  `aborted` carries the same meaning it does on the two items above, and is set for the same reason: a
+ *  review turn that was interrupted or failed still reaches this item with an empty findings list, and
+ *  untagged that is indistinguishable from a review that finished and found nothing. Stamped by review.ts
+ *  rather than by `finalize` only because no mapper owns this item. */
+export interface ReviewItem { type: "review"; id: string; findings: ReviewFinding[]; unstructured: boolean; level?: string; prose?: string; aborted?: true }
 export type Item = UserMessageItem | AgentMessageItem | ReasoningItem | ToolCallItem | ReviewItem;
 export type ItemDeltaChannel = "text" | "thinking" | "arguments";
 export type ItemEvent = { kind: "started"; item: Item } | { kind: "delta"; itemId: string; channel: ItemDeltaChannel; delta: string } | { kind: "completed"; item: Item };
