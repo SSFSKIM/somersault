@@ -304,7 +304,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  `log(this.lastOutput)` — and that third call is the one render log-update cannot dedupe, because the
    *  `clear()` one line earlier just set `previousOutput = ''` (full derivation in `clearViewport.ts`, note 2).
    *  `resumeOutput.repaint` is the output proxy's "this write is a deliberate repaint" bracket; absent (an
-   *  embedder, a component test with no proxy) the write still goes, unrecorded. */
+   *  embedder, a component test with no proxy) the write still goes, unrecorded.
+   *    UNDER CI IT IS A NO-OP, which is Ink's choice and not a gap here: `writeToStdout` takes an `isInCi`
+   *  branch that writes `data` and returns WITHOUT the `log(this.lastOutput)` re-emit (ink/build/ink.js:141),
+   *  and `data` is our empty string — so the frame is not repainted. Same for the ctrl+z resume path, which
+   *  has always been written this way, and it costs nothing: a CI run has no alternate screen to blank. */
   const forceRepaint = useCallback(() => {
     const paint = () => write("");
     const output = resumeOutputRef.current;

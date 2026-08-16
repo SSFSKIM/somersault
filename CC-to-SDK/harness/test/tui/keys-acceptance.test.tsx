@@ -484,7 +484,12 @@ describe("F2 — hint derivation coverage", () => {
    *  identifier that happens to contain one — a guard that cannot be satisfied is a guard that gets deleted.
    *  Nothing is lost: the surfaces swept here neither own nor hint that action, and the row that does advertise
    *  it derives both its key column and its sentence (keys/hints.ts, shortcuts-grid.test.tsx pins both). */
-  const TITLE_CASE = SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!)).map(formatBinding).filter((s) => s.length > 1);
+  const ADVERTISED = SHORTCUT_ROWS.filter((r) => r.action).flatMap((r) => defaultLookup(r.action!)).map(formatBinding);
+  const TITLE_CASE = ADVERTISED.filter((s) => s.length > 1);
+  /** What the length filter above THREW AWAY, pinned as a set rather than trusted as a side effect. An
+   *  exclusion is a hole in a guard, so it has to be enumerable: if a second bare-letter binding is ever added
+   *  the hole silently widens, and the assertion below is what refuses to let that happen quietly. */
+  const EXCLUDED = [...new Set(ADVERTISED.filter((s) => s.length <= 1))];
   /** F6 T14 review, Minor 3: the title-case grammar is no longer the only one on screen. The shortcuts grid
    *  and the Help dialog print upstream's LOWER-CASE sentence form (`ctrl + t to toggle tasks`), which the
    *  ban list above cannot see at all — a hand-typed sentence would have passed this guard untouched. Two
@@ -493,7 +498,8 @@ describe("F2 — hint derivation coverage", () => {
    *    · every lower-case CHORD that carries a modifier (`ctrl + t`, `shift + tab`, `opt + p`).
    *  The modifier filter is not cosmetic: an unmodified chord renders as a bare word (`esc`, `tab`, `j`), and
    *  banning `esc` as a substring would fire on `escClearMs`, `escape` and every identifier that contains it.
-   *  Those single-word forms stay covered by their title-case spellings (`Esc`, `Tab`) in the first list. */
+   *  Those MULTI-character single-word forms stay covered by their title-case spellings (`Esc`, `Tab`) in the
+   *  first list; a single-CHARACTER form is covered by neither, which is exactly what `EXCLUDED` enumerates. */
   const hasModifier = (s: string) => s.includes(" + ");
   const LOWER_CASE = [
     ...shortcutGrid(defaultLookup, { newline: newlineHint(false) }).flat().filter(hasModifier),
@@ -506,7 +512,8 @@ describe("F2 — hint derivation coverage", () => {
     expect(BANNED).toContain("⇧Tab");                                 // the list is really populated
     expect(BANNED).toContain("Ctrl-T");
     expect(BANNED).toContain("Esc");
-    expect(BANNED).not.toContain("V");                                // …but not a bare letter: see TITLE_CASE
+    expect(EXCLUDED).toEqual(["V"]);                                  // …the whole hole, not just one absence
+    expect(BANNED).not.toContain("V");                                // …and it really is out of the ban list
     expect(BANNED).toContain("ctrl + t");                             // …in BOTH grammars
     expect(BANNED).toContain("ctrl + t to toggle tasks");             // …and as the whole composed sentence
     expect(BANNED).toContain("shift + tab to auto-accept edits");

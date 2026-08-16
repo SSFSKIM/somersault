@@ -648,7 +648,11 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     return { path, ran: () => existsSync(mark), clean: () => rmSync(dir, { recursive: true, force: true }) };
   };
 
-  it("repaints the alternate screen after a round trip that changed nothing", async () => {
+  //   WHAT THIS PINS is the forced repaint's INVOCATION AND POSITION — that it runs, and that it runs after
+  // `ENTER_ALT` rather than before it, which is the only order that paints over smcup's blank screen. It does
+  // NOT pin Ink's dedupe: React state moves on the way back here (the composer settles) and merely renders to
+  // the same bytes, so a test asserting "Ink wrote nothing" would be asserting the harness, not the fix.
+  it("forces a repaint after a round trip whose return frame is byte-identical", async () => {
     const ed = quietEditor(), { writes, around } = guarded(true);
     process.env.VISUAL = ed.path;
     try {
@@ -686,16 +690,20 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
   // A child that never returns normally is the case the user cannot recover from by hand: the screen is blank,
   // the exception is swallowed upstream (the composer answers `done(null)` and keeps the buffer), and nothing
   // else is coming. `finally`, therefore — not a line after the call.
+  //   Through the REAL guard, not a bare stub: the whole sequence is what has to survive the throw, and a stub
+  // that only records the spawn could not tell "the guard handed the screen back" apart from "nothing ran".
   it("repaints even when the handoff throws", async () => {
-    const writes: string[] = [];
-    const around = <T,>(_run: () => T): T => { writes.push(SPAWN); throw new Error("the child blew up"); };
+    const { writes, around: guardedAround } = guarded(true);
+    const around = <T,>(_run: () => T): T => guardedAround<T>(() => { throw new Error("the child blew up"); });
     const r = renderWithKeymap(guardedApp("fullscreen", around, fakeRemote(), {}, repaintProbe(writes)));
     await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
     await tick();
     r.stdin.write("\x07");
     await waitFor(() => writes.includes(SPAWN));
     await settle();
-    expect(writes).toEqual([SPAWN, REPAINT]);
+    const child = writes.indexOf(SPAWN);                                // the file's own idiom: the handoff's
+    expect(writes.slice(0, child)).toContain(EXIT_ALT);                 // leading leg carries mouse/cursor bytes
+    expect(writes.slice(child + 1)).toEqual([ENTER_ALT, REPAINT]);      // …and the return leg is exactly these two
     r.unmount();
   });
 

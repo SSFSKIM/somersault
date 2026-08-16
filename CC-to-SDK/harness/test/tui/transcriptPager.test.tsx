@@ -180,8 +180,25 @@ describe("TranscriptPager keeps its place across a width change", () => {
     await tick();
     const expected = remapRowOffset(rowsAt(items, WIDE), rowsAt(items, NARROW), 3);
     r.stdin.write("j"); await tick();
-    const total = rowsAt(items, NARROW).reduce((sum, item) => sum + (item.kind === "line" ? 1 : item.body.length), 0);
+    // The total comes off the pager's OWN slicer, as in the test above — a hand-rolled reduce here would be a
+    // second height model, and pinning the header against it would prove only that the two agree today.
+    const { total } = pageItemSlices(rowsAt(items, NARROW), expected + 1, HEIGHT);
     expect(r.lastFrame()).toContain(`lines ${expected + 2}–${expected + 1 + HEIGHT} of ${total}`);
+  });
+
+  // BL1 REVIEW MINOR — the guard's other side, and the one a remap keyed on the wrong thing would break:
+  // `makeItems` mints FRESH item objects on every render, so identity churn alone must not translate anything.
+  // Same width, re-projected document, header byte-identical — the reader stays exactly where they scrolled to.
+  it("leaves the header alone when the document is re-projected at an unchanged width", async () => {
+    const r = render(<TranscriptPager makeItems={() => marked(8)} onClose={() => {}} height={HEIGHT} columns={WIDE} />);
+    await tick();
+    r.stdin.write("g"); await tick();
+    for (const _ of [0, 1, 2]) { r.stdin.write("j"); await tick(); }
+    const header = (r.lastFrame() ?? "").split("\n")[1];
+    expect(header).toContain(`lines 4–${3 + HEIGHT} of `);              // the positive control: we really scrolled
+    r.rerender(<TranscriptPager makeItems={() => marked(8)} onClose={() => {}} height={HEIGHT} columns={WIDE} />);
+    await tick();
+    expect((r.lastFrame() ?? "").split("\n")[1]).toBe(header);
   });
 
   it("the bottom sentinel needs no remap — a width change still shows the last rows", async () => {
