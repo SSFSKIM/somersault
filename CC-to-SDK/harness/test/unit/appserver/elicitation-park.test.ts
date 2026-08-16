@@ -11,7 +11,7 @@
 // elicitation reaches a stdio server only (probe 43/43b).
 import { describe, it, expect, afterEach } from "vitest";
 import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
-import { makeOnElicitation } from "../../../src/appserver/elicitation.js";
+import { makeOnElicitation, type ElicitationParkSource } from "../../../src/appserver/elicitation.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 import type { OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 
@@ -64,8 +64,30 @@ const FORM = {
   serverName: "vault", message: "Enter your token", mode: "form" as const,
   requestedSchema: { type: "object", properties: { token: { type: "string" }, save: { type: "boolean" } }, required: ["token"] },
 };
-const call = (fn: OnElicitation, request: Record<string, unknown> = FORM, requestId = "req-1") =>
-  fn(request as never, { signal: new AbortController().signal, requestId });
+const call = (fn: OnElicitation, request: Record<string, unknown> = FORM, requestId = "req-1", signal = new AbortController().signal) =>
+  fn(request as never, { signal, requestId });
+/** The park keys the server actually announced. Read rather than reconstructed: the key carries a
+ *  uniqueness suffix (elicitation.ts) precisely so that nothing may predict it. */
+const parkedKeys = () => parsed(lines).filter((m) => m.method === "decision/requested").map((m) => m.params.decision.toolUseId as string);
+/** A promise that is ALLOWED to hang resolves "HUNG" instead of stalling the run — an orphaned park is one
+ *  of the failures under test, and a test that expresses it as a timeout reports it as a failure. */
+const orHang = <T>(p: Promise<T>): Promise<T | "HUNG"> => Promise.race([p, new Promise<"HUNG">((r) => setTimeout(() => r("HUNG"), 50))]);
+
+/** A callback with NO server behind it: the same members `makeOnElicitation` reads off AppServer, with the
+ *  warning fan-out captured instead of written to a wire. An `undefined` request is the thread whose
+ *  decisions registry is gone; `parks:false` is broker.ts's unattended fast path, which answers WITHOUT
+ *  ever entering the registry — so nothing was announced for it and nothing ever will be. */
+function fakeSource(request?: (req: { toolUseID: string }) => Promise<unknown>, opts: { parks?: boolean } = {}) {
+  const warnings: Array<Record<string, unknown>> = [];
+  const parked: Array<{ toolUseID: string }> = [];
+  const peer = { notify: (method: string, params: Record<string, unknown>) => void warnings.push({ method, ...params }) };
+  const decisions = request && {
+    broker: () => ({ request: (req: { toolUseID: string }) => { if (opts.parks !== false) parked.push({ toolUseID: req.toolUseID }); return request(req); } }),
+    pending: () => parked,
+  };
+  const source = { threadDecisions: () => decisions, registry: { get: () => ({ subscribers: [peer] }) }, watchers: () => [] } as unknown as ElicitationParkSource;
+  return { fn: makeOnElicitation(source, "th_1"), warnings };
+}
 
 afterEach(async () => { for (const s of servers.splice(0)) await s.shutdown().catch(() => {}); });
 
@@ -103,18 +125,34 @@ describe("MCP elicitation parks as a decision", () => {
     void call(onElicitation, FORM, "req-a");
     void call(onElicitation, { ...FORM, message: "second" }, "req-b");
     await settle();
-    const ids = parsed(lines).filter((m) => m.method === "decision/requested").map((m) => m.params.decision.toolUseId);
-    expect(ids).toEqual(["elicit:req-a", "elicit:req-b"]); // two concurrent elicitations, two distinct parks
+    const ids = parkedKeys();
+    expect(ids.map((k) => k.split("#")[0])).toEqual(["elicit:req-a", "elicit:req-b"]); // two concurrent elicitations, two distinct parks
     const listId = send("decision/list", { threadId });
     await settle();
     expect(replyTo(listId)!.result.data).toHaveLength(2);
+  });
+
+  it("keeps the park key unique even when the CLI repeats a requestId", async () => {
+    // Load-bearing, and the ONE hang the callback's own catch cannot cover: `PendingDecisions.park` stores
+    // by key into a Map (permissions/pending.ts), so a second park under a key already taken replaces the
+    // first resolver and that first promise never settles at all. The CLI's id format is not ours to
+    // assume — the binary is extracted from bunfs at runtime — so the key does not depend on it.
+    const { threadId, onElicitation } = await startThread();
+    const first = call(onElicitation, FORM, "dup");
+    const second = call(onElicitation, { ...FORM, message: "again" }, "dup");
+    await settle();
+    const keys = parkedKeys();
+    expect(new Set(keys).size).toBe(2);
+    for (const toolUseId of keys) send("decision/respond", { threadId, toolUseId, answer: { kind: "elicitation_decline" } });
+    await settle();
+    expect(await orHang(Promise.all([first, second]))).toEqual([{ action: "decline" }, { action: "decline" }]);
   });
 
   it("resolves the onElicitation promise with {action:'accept', content} when answered accept", async () => {
     const { threadId, onElicitation } = await startThread();
     const answered = call(onElicitation);
     await settle();
-    const id = send("decision/respond", { threadId, toolUseId: "elicit:req-1", answer: { kind: "elicitation_accept", content: { token: "t-1", save: true } } });
+    const id = send("decision/respond", { threadId, toolUseId: parkedKeys()[0], answer: { kind: "elicitation_accept", content: { token: "t-1", save: true } } });
     await settle();
     expect(replyTo(id)!.result).toEqual({ ok: true });
     expect(await answered).toEqual({ action: "accept", content: { token: "t-1", save: true } });
@@ -124,9 +162,23 @@ describe("MCP elicitation parks as a decision", () => {
     const { threadId, onElicitation } = await startThread();
     const answered = call(onElicitation);
     await settle();
-    send("decision/respond", { threadId, toolUseId: "elicit:req-1", answer: { kind: "elicitation_decline" } });
+    send("decision/respond", { threadId, toolUseId: parkedKeys()[0], answer: { kind: "elicitation_decline" } });
     await settle();
     expect(await answered).toEqual({ action: "decline" });
+  });
+
+  it("answers when the TURN IS INTERRUPTED while the elicitation is still parked", async () => {
+    // `signal: options.signal` is the only thing that answers the MCP server here: the park's own abort
+    // listener (pending.ts) settles on it. Without that field the promise below never resolves, which is
+    // the same hang a null return causes and the reason an interrupt is a first-class case, not an edge.
+    const { onElicitation } = await startThread();
+    const ac = new AbortController();
+    const answered = call(onElicitation, FORM, "req-int", ac.signal);
+    await settle();
+    expect(parkedKeys()).toHaveLength(1); // it really parked first — otherwise this proves nothing
+    ac.abort();
+    await settle();
+    expect(await orHang(answered)).toEqual({ action: "cancel" }); // the system deny, mapped (elicitationMap)
   });
 
   it("resolves with a real result — NOT null — when the thread is torn down while parked", async () => {
@@ -147,8 +199,7 @@ describe("MCP elicitation parks as a decision", () => {
 describe("the callback always answers — every failure path lands on a real ElicitResult", () => {
   // Not "the mapper never returns null": a REJECTED promise anywhere in the callback body hangs the MCP
   // server exactly as a null does, and the mapper throws on an outcome that is not well-typed.
-  const withBroker = (request: () => Promise<unknown>): OnElicitation =>
-    makeOnElicitation({ threadDecisions: () => ({ broker: () => ({ request }) }) } as never, "th_1");
+  const withBroker = (request: () => Promise<unknown>): OnElicitation => fakeSource(request).fn;
 
   it("answers when the park REJECTS", async () => {
     const result = await call(withBroker(() => Promise.reject(new Error("registry exploded"))));
@@ -171,8 +222,66 @@ describe("the callback always answers — every failure path lands on a real Eli
   it("answers when the thread has no decisions registry at all", async () => {
     // Reachable: the config outlives the record across a rewind/reopen swap, and a closed thread's registry
     // is gone. Nothing here can park, and a park that cannot happen still owes the server an answer.
-    const result = await call(makeOnElicitation({ threadDecisions: () => undefined }, "th_gone"));
+    const result = await call(fakeSource().fn);
     expect(result).toEqual({ action: "cancel" });
+  });
+});
+
+describe("a refusal nothing else reports gets a warning", () => {
+  // An answered elicitation is normally its own record — `decision/requested` then `decision/resolved`. The
+  // paths below never park, so neither event exists for them, and without this a `mode:"url"` OAuth
+  // elicitation is cancelled with nothing on the wire and nothing in a log: the operator debugging "my MCP
+  // server's auth never completes" has nothing at all to go on. Shape follows rewind.ts's re-push warning.
+  it("warns when there is no decisions registry to park into", async () => {
+    const { fn, warnings } = fakeSource();
+    expect(await call(fn)).toEqual({ action: "cancel" });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ method: "warning", threadId: "th_1", code: "elicitationNotParked", serverName: "vault", requestId: "req-1" });
+    expect(warnings[0].message).toEqual(expect.any(String));
+  });
+
+  it("warns when the park throws", async () => {
+    const { fn, warnings } = fakeSource(() => { throw new Error("boom"); });
+    expect(await call(fn)).toEqual({ action: "cancel" });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ method: "warning", threadId: "th_1", code: "elicitationFailed", serverName: "vault", requestId: "req-1" });
+  });
+
+  it("warns when the request is refused WITHOUT ever entering the registry", async () => {
+    // broker.ts's unattended fast path returns before the park's own emit, so this refusal is otherwise
+    // invisible — and an unattended thread between subscriptions is the default state, not an exotic one.
+    const { fn, warnings } = fakeSource(async () => ({ kind: "deny" }), { parks: false });
+    expect(await call(fn)).toEqual({ action: "cancel" });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ code: "elicitationNotParked", serverName: "vault", requestId: "req-1" });
+  });
+
+  it("stays SILENT on a park that really parked — the decision events already tell that story", async () => {
+    const { fn, warnings } = fakeSource(async () => ({ kind: "elicitation_decline" }));
+    expect(await call(fn)).toEqual({ action: "decline" });
+    expect(warnings).toEqual([]);
+  });
+
+  it("reaches a watcher on the real server, on the real unattended-deny path, with nobody subscribed", async () => {
+    // The end-to-end shape of the case above: `unattended:"deny"` with zero subscribers denies before
+    // parking (broker.ts), so no `decision/requested` is ever announced — the warning is the only frame.
+    const f = factory();
+    const srv = new AppServer({}, f);
+    servers.push(srv);
+    const s = mkSink();
+    conn = srv.connect(s.sink);
+    lines = s.lines;
+    conn.feed(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "T" }, watchThreads: true } }) + "\n");
+    const startId = send("thread/start", { unattended: "deny" });
+    await settle();
+    const threadId = replyTo(startId)!.result.thread.id as string;
+    lines.length = 0;
+    const result = await call(f.built.at(-1)!.onElicitation as OnElicitation);
+    await settle();
+    expect(result).toEqual({ action: "cancel" });
+    expect(parkedKeys()).toEqual([]);
+    const warned = parsed(lines).find((m) => m.method === "warning");
+    expect(warned!.params).toMatchObject({ threadId, code: "elicitationNotParked", serverName: "vault", requestId: "req-1" });
   });
 });
 
@@ -180,7 +289,7 @@ describe("content validation — an accept the MCP server would reject is worse 
   // The mapper cannot see the REQUEST, so this can only live here. A well-formed `{action:"accept"}` whose
   // content does not satisfy `requestedSchema` looks like success and fails at the server.
   const acceptWith = (content: unknown, request: Record<string, unknown> = FORM) =>
-    call(makeOnElicitation({ threadDecisions: () => ({ broker: () => ({ request: async () => ({ kind: "elicitation_accept", ...(content === undefined ? {} : { content }) }) }) }) } as never, "th_1"), request);
+    call(fakeSource(async () => ({ kind: "elicitation_accept", ...(content === undefined ? {} : { content }) })).fn, request);
 
   it("declines an accept that omits a required field", async () => {
     expect(await acceptWith({ save: true })).toEqual({ action: "decline" });
@@ -195,10 +304,55 @@ describe("content validation — an accept the MCP server would reject is worse 
     expect(await acceptWith({ token: "t", save: "yes" })).toEqual({ action: "decline" });
   });
 
-  it("declines a value outside a declared enum", async () => {
-    const req = { ...FORM, requestedSchema: { type: "object", properties: { pick: { type: "string", enum: ["a", "b"] } }, required: ["pick"] } };
+  // MCP's restricted subset spells an enum FOUR ways, and every one of them has to be checked — a value
+  // outside a titled enum's consts is still a string, and a multi-select answer carrying an out-of-set item
+  // is still an array, so a shape that goes unchecked produces exactly the well-formed `{action:"accept"}`
+  // the server then rejects. Each schema below is transcribed from the SDK's own declarations
+  // (@modelcontextprotocol/sdk types.d.ts: Untitled/Titled SingleSelect, LegacyTitled, Untitled/Titled
+  // MultiSelect), not from what an enum is assumed to look like.
+  const withProperty = (property: Record<string, unknown>, key = "pick") =>
+    ({ ...FORM, requestedSchema: { type: "object", properties: { [key]: property }, required: [key] } });
+
+  it("declines a value outside an UNTITLED single-select enum", async () => {
+    const req = withProperty({ type: "string", enum: ["a", "b"] });
     expect(await acceptWith({ pick: "c" }, req)).toEqual({ action: "decline" });
     expect(await acceptWith({ pick: "b" }, req)).toEqual({ action: "accept", content: { pick: "b" } });
+  });
+
+  it("declines a value outside a LEGACY titled enum (enum + enumNames)", async () => {
+    const req = withProperty({ type: "string", enum: ["a", "b"], enumNames: ["Alpha", "Bravo"] });
+    expect(await acceptWith({ pick: "c" }, req)).toEqual({ action: "decline" });
+    expect(await acceptWith({ pick: "a" }, req)).toEqual({ action: "accept", content: { pick: "a" } });
+  });
+
+  it("declines a value outside a TITLED single-select enum, which declares no `enum` key at all", async () => {
+    // `{type:"string", oneOf:[{const,title}]}` — the option set lives in `oneOf`, and the value is a plain
+    // string either way, so a check that only reads `enum` passes everything here.
+    const req = withProperty({ type: "string", oneOf: [{ const: "a", title: "Alpha" }, { const: "b", title: "Bravo" }] });
+    expect(await acceptWith({ pick: "c" }, req)).toEqual({ action: "decline" });
+    expect(await acceptWith({ pick: "b" }, req)).toEqual({ action: "accept", content: { pick: "b" } });
+  });
+
+  it("declines an out-of-set item in an UNTITLED multi-select (items.enum)", async () => {
+    const req = withProperty({ type: "array", items: { type: "string", enum: ["read", "write"] } }, "scopes");
+    expect(await acceptWith({ scopes: ["read", "admin"] }, req)).toEqual({ action: "decline" });
+    expect(await acceptWith({ scopes: ["read", "write"] }, req)).toEqual({ action: "accept", content: { scopes: ["read", "write"] } });
+    expect(await acceptWith({ scopes: [] }, req)).toEqual({ action: "accept", content: { scopes: [] } }); // minItems is not ours to enforce
+  });
+
+  it("declines an out-of-set item in a TITLED multi-select (items.anyOf[].const)", async () => {
+    const req = withProperty({ type: "array", items: { anyOf: [{ const: "read", title: "Read" }, { const: "write", title: "Write" }] } }, "scopes");
+    expect(await acceptWith({ scopes: ["admin"] }, req)).toEqual({ action: "decline" });
+    expect(await acceptWith({ scopes: ["write"] }, req)).toEqual({ action: "accept", content: { scopes: ["write"] } });
+  });
+
+  it("leaves the bounds it does not check alone rather than guessing at them", async () => {
+    // The scope line, pinned: numeric/length/format/item-count bounds belong to the server's own validator.
+    // Declining here on a bound we merely half-implement refuses answers that server would have taken.
+    const req = withProperty({ type: "number", minimum: 1, maximum: 10 }, "count");
+    expect(await acceptWith({ count: 99 }, req)).toEqual({ action: "accept", content: { count: 99 } });
+    const short = withProperty({ type: "string", minLength: 8, format: "email" }, "who");
+    expect(await acceptWith({ who: "x" }, short)).toEqual({ action: "accept", content: { who: "x" } });
   });
 
   it("accepts content that satisfies the schema, and passes it through verbatim", async () => {
@@ -223,7 +377,7 @@ describe("content validation — an accept the MCP server would reject is worse 
   });
 
   it("validates only accepts — a refusal has no content to check", async () => {
-    const declined = makeOnElicitation({ threadDecisions: () => ({ broker: () => ({ request: async () => ({ kind: "elicitation_decline" }) }) }) } as never, "th_1");
+    const declined = fakeSource(async () => ({ kind: "elicitation_decline" })).fn;
     expect(await call(declined)).toEqual({ action: "decline" });
   });
 });
