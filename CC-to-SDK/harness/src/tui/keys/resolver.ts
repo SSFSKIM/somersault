@@ -120,10 +120,15 @@ export function bindingsFor(table: CompiledTable, action: string, contexts?: rea
   return out;
 }
 
-/** The ONE key a single-key hint should print: the first plain key, else the first chord. A single key beats a
- *  chord because printing "ctrl+x ctrl+e" when "ctrl+g" exists is noise. Null when the action is unbound —
- *  which the caller must render as unbound rather than falling back to a literal (that is the whole point). */
+/** THE ONE KEY a single-key hint should print, out of a list `bindingsFor` produced: the first plain key, else
+ *  the first chord. A single key beats a chord because printing "ctrl+x ctrl+e" when "ctrl+g" exists is noise.
+ *  Exported because the rule outlives the table: a hint that resolved through a LOOKUP (a live `BindingLookup`,
+ *  which already knows which contexts to ask) still has to pick the same one, and a second spelling of
+ *  `find(k => !k.includes(" "))` is a rule that can drift. `undefined` for an unbound action. */
+export const preferredKey = (keys: readonly string[]): string | undefined => keys.find((k) => !k.includes(" ")) ?? keys[0];
+
+/** `preferredKey` over the table directly. Null when the action is unbound — which the caller must render as
+ *  unbound rather than falling back to a literal (that is the whole point). */
 export function bindingFor(table: CompiledTable, action: string, contexts?: readonly KeyContextName[]): string | null {
-  const keys = bindingsFor(table, action, contexts);
-  return keys.find((k) => !k.includes(" ")) ?? keys[0] ?? null;
+  return preferredKey(bindingsFor(table, action, contexts)) ?? null;
 }

@@ -24,7 +24,8 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { formatBindingLower } from "./keys/hints.js";
-import { useBinding } from "./keys/KeymapProvider.js";
+import { useBindingLookup } from "./keys/KeymapProvider.js";
+import { preferredKey } from "./keys/resolver.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 
 /** The action the pill advertises and the pill's own gesture: canon's `scrollToBottom()`, which re-STICKS as
@@ -77,13 +78,16 @@ export interface JumpPillProps {
 }
 
 export function JumpPill({ newRows, columns, dumpEditor }: JumpPillProps): React.ReactElement {
-  // Derived from the LIVE table, so a user who rebinds `scroll:bottom` sees their own key here. `useBinding`
-  // searches active scopes first, and the viewport pushes `Scroll` before this child renders, so the answer is
-  // that context's key rather than the ctrl+O pager's `end`/`shift+g`.
-  const chord = formatBindingLower(useBinding(JUMP_PILL_ACTION));
-  // The dump's key comes from the same table by the same rule — the viewport's registration says the handler
-  // exists (`dumpEditor`), and this says which key reaches it.
-  const dumpChord = formatBindingLower(useBinding(DUMP_PILL_ACTION));
+  // Derived from the LIVE table, so a user who rebinds either action sees their own key here — and from the
+  // ACTIVE scopes only (`{ live: true }`), which is the honesty this pill can actually keep. The unrestricted
+  // lookup walks the active contexts FIRST and then every other one, so an action a user layer moved into some
+  // context the pill's keyboard never reaches (the ctrl+O pager's, say) still resolved: a chord printed on a
+  // surface where dispatch — Scroll, pushed by the viewport, then Chat and Global — can never deliver it
+  // (FSW BACKLOG FIX F2). The live set IS the right set here precisely because the pill renders inside the
+  // scope it is talking about. Empty drops the rung, the same three-state honesty as an unbind.
+  const lookup = useBindingLookup();
+  const chord = formatBindingLower(preferredKey(lookup(JUMP_PILL_ACTION, { live: true })));
+  const dumpChord = formatBindingLower(preferredKey(lookup(DUMP_PILL_ACTION, { live: true })));
   return (
     <Box justifyContent="center" flexShrink={0}>
       {/* `truncate-end` is canon's own prop (456186) and load-bearing here rather than cosmetic: the shortest

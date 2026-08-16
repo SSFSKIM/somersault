@@ -448,5 +448,16 @@ describe("amendment 2 — `v` is announced where it is live", () => {
     const rebound = await pillAfterScroll([{ context: "Scroll", bindings: { v: null, "alt+v": "scroll:dumpTranscript" } }]);
     expect(rebound).toContain(`${formatBindingLower("alt+v")} to open in`);
     expect(await pillAfterScroll([{ context: "Scroll", bindings: { v: null } }])).not.toContain("to open in");
+
+    // FSW BACKLOG FIX F2 — THE THIRD STATE, which the first two cannot tell apart: bound, but bound somewhere
+    // this pill's keyboard never reaches. Resolution walks the ACTIVE scopes (Scroll/Chat/Global) while the
+    // pill is up, so a dump bound in the ctrl+O pager's context is a key no keystroke can deliver here — and a
+    // lookup that searched every context in the table advertised it anyway. Naming a dead key is worse than
+    // naming none: the rung drops, exactly as it does for the unbind above.
+    const elsewhere = await pillAfterScroll([
+      { context: "Scroll", bindings: { v: null } },
+      { context: "Transcript", bindings: { "alt+v": "scroll:dumpTranscript" } },
+    ]);
+    expect(elsewhere).not.toContain("to open in");
   });
 });

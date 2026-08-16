@@ -13,7 +13,18 @@
 // were written against — the derivation is proven by producing exactly the corpus it replaced.
 
 import { DEFAULT_BINDINGS } from "./bindings.js";
-import { bindingsFor, compileBindings } from "./resolver.js";
+import { bindingsFor, compileBindings, preferredKey } from "./resolver.js";
+import type { KeyContextName } from "./types.js";
+
+/** How a hint NARROWS the question it asks a binding lookup, and the two narrowings are different questions.
+ *  `live` is "what would fire HERE, right now" — the active scopes, which is what a hint rendered INSIDE its
+ *  own surface must ask (`KeymapProvider`'s header). `contexts` names the scopes explicitly, which is what a
+ *  hint rendered OUTSIDE the surface it describes must ask: the shortcut grid's `when scrolled` row is a
+ *  promise about the `Scroll` context, made from a screen where `Scroll` is not live, so neither the live set
+ *  nor the whole table answers it honestly. Absent: every context in the table, in table order. */
+export interface BindingLookupOpts { live?: boolean; contexts?: readonly KeyContextName[] }
+/** What every derived hint resolves through — `useBindingLookup()` in a component, `defaultLookup` elsewhere. */
+export type HintLookup = (action: string, opts?: BindingLookupOpts) => readonly string[];
 
 /** What a hint prints for an action nothing binds. Deliberately not "" — a blank key column reads as a render
  *  bug, and the whole point of deriving is to SHOW the user that their unbind took effect. */
@@ -81,7 +92,7 @@ export function formatBindingLower(key: string | null | undefined, platform: Nod
 export const BACKGROUND_HINT_ACTION = "run in background";
 export const TMUX_BACKGROUND_CHORD = "ctrl+b ctrl+b (twice)";
 export function backgroundHintText(keys: readonly string[], tmux: boolean, platform: NodeJS.Platform = process.platform): string | undefined {
-  const key = keys.find((k) => !k.includes(" ")) ?? keys[0];             // plain beats chord, the resolver's own rule
+  const key = preferredKey(keys);
   if (key === undefined) return undefined;
   const chord = formatBindingLower(key, platform);
   if (chord === "") return undefined;
@@ -124,7 +135,7 @@ export const SHOW_ALL_HINT = "(ctrl+e to show all)";
  *  reach a caller of ours. A three-state signature here would add an unreachable branch and an
  *  `action_not_found` distinction whose only upstream consumer is a telemetry `reason` field. */
 export function expandHintText(keys: readonly string[], platform: NodeJS.Platform = process.platform, description: string = EXPAND_HINT_ACTION): string {
-  const key = keys.find((k) => !k.includes(" ")) ?? keys[0];             // plain beats chord, the resolver's own rule
+  const key = preferredKey(keys);
   if (key === undefined) return "";
   const chord = formatBindingLower(key, platform);
   return chord === "" ? "" : `(${chord} to ${description})`;
@@ -189,6 +200,13 @@ export interface ShortcutRow {
    *  narrows the key inside this renderer (`v` is the scrollback's, not the composer's), because the reader is
    *  looking at one grid and cannot see the gate. */
   fullscreen?: true;
+  /** THE CONTEXTS THIS ROW'S PROMISE IS ABOUT, when it is about some rather than all of them. A row whose
+   *  label narrows the key to a surface (`when scrolled`) is claiming the action fires THERE, and the grid
+   *  prints it from a screen where that surface is not focused — so the unrestricted lookup, which answers
+   *  from every context in the table, can key the row with a chord that context never sees (a user layer
+   *  binding the action inside the ctrl+O pager is enough). Naming the contexts makes the row resolve the
+   *  question it is actually asking. Absent — the ordinary case — is the whole table, unchanged. */
+  contexts?: readonly KeyContextName[];
 }
 
 /** THE MERGED ENTRY SET (F6 T14, DG62/DG63). Upstream's `Y6t` entries FIRST, in upstream's own three-column
@@ -233,7 +251,10 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
   //   FSW BACKLOG 2 made it an ACTION row like every other table-owned key. It shipped with a literal `v` in
   // both renderings, which is the one thing this file exists to prevent: `scroll:dumpTranscript` is rebindable
   // (keys-user-bindings.test.ts drives `alt+v`), so the literal was a promise the table could already break.
-  { action: "scroll:dumpTranscript", label: "open transcript in $EDITOR (while scrolled)", col: 1, phrase: "open in $EDITOR when scrolled", fullscreen: true },
+  //   FSW BACKLOG FIX F2 pinned it to `Scroll`. `when scrolled` is a promise about ONE context, and the
+  // unrestricted lookup answered from all of them — so an unbind here plus a bind in the pager printed the
+  // pager's chord under this label, which is the same lie the literal was.
+  { action: "scroll:dumpTranscript", contexts: ["Scroll"], label: "open transcript in $EDITOR (while scrolled)", col: 1, phrase: "open in $EDITOR when scrolled", fullscreen: true },
   { action: "app:toggleTodos", label: "todo panel", col: 1, phrase: "toggle tasks" },
   { key: "\\⏎ / Ctrl-J", label: "newline", col: 1, ladder: true },
   { key: "⏎", label: "send", col: 1, cell: "⏎ to send" },
@@ -261,7 +282,7 @@ export const SHORTCUT_ROWS: readonly ShortcutRow[] = [
  *  (a bare test render — the defaults are the truthful answer there), and the honesty audit, which asks what the
  *  SHIPPED keymap advertises rather than what one test tree happens to have mounted. */
 export const DEFAULT_TABLE = compileBindings(DEFAULT_BINDINGS);
-export const defaultLookup = (action: string): string[] => bindingsFor(DEFAULT_TABLE, action);
+export const defaultLookup: HintLookup = (action, opts) => bindingsFor(DEFAULT_TABLE, action, opts?.contexts);
 
 /** The two gates every rendering of the entry set applies, in one place so the audit corpus and the printed
  *  grid cannot disagree about which rows exist. Windows drops the Ctrl-Z row (`suspendProcess` is a no-op
@@ -271,11 +292,11 @@ const rowHidden = (row: ShortcutRow, platform: NodeJS.Platform, fullscreen: bool
 
 /** One row's KEY-COLUMN rendering. The one copy of that grammar, so every set of rows drawn from the entry
  *  set — the classic corpus, the fullscreen-only one — keys its rows identically. */
-function rowEntry(row: ShortcutRow, lookup: (action: string) => readonly string[]): [string, string] {
+function rowEntry(row: ShortcutRow, lookup: HintLookup): [string, string] {
   let key: string;
   if (row.key !== undefined) key = row.key;
   else {
-    const bound = formatBindings(lookup(row.action!), row.show ?? 1);
+    const bound = formatBindings(lookup(row.action!, { contexts: row.contexts }), row.show ?? 1);
     // A repeat row prints the key twice — but never "(unbound) (unbound)", which says the same thing worse.
     key = row.repeat && bound !== UNBOUND ? Array(row.repeat).fill(bound).join(" ") : bound;
   }
@@ -283,7 +304,7 @@ function rowEntry(row: ShortcutRow, lookup: (action: string) => readonly string[
 }
 
 /** Resolve the grid against a live lookup (`useBindingLookup()` in a component, the default table elsewhere). */
-export function shortcutRows(lookup: (action: string) => readonly string[], platform: NodeJS.Platform = process.platform, fullscreen = false): [string, string][] {
+export function shortcutRows(lookup: HintLookup, platform: NodeJS.Platform = process.platform, fullscreen = false): [string, string][] {
   const rows: [string, string][] = [];
   for (const row of SHORTCUT_ROWS) {
     if (rowHidden(row, platform, fullscreen)) continue;
@@ -297,7 +318,7 @@ export function shortcutRows(lookup: (action: string) => readonly string[], plat
  *  That difference was silently lossy: two rows may resolve to the same key column (a rebind is enough), and
  *  the fullscreen one then vanished from the audit corpus (`honesty.test.tsx`) while still printing on screen —
  *  a row losing its proof by accident, which is the exact failure the corpus exists to make impossible. */
-export function fullscreenOnlyRows(lookup: (action: string) => readonly string[], platform: NodeJS.Platform = process.platform): [string, string][] {
+export function fullscreenOnlyRows(lookup: HintLookup, platform: NodeJS.Platform = process.platform): [string, string][] {
   const rows: [string, string][] = [];
   for (const row of SHORTCUT_ROWS) {
     if (row.fullscreen !== true || rowHidden(row, platform, true)) continue;
@@ -333,11 +354,10 @@ export interface ShortcutGridOptions {
  *  returns `null` there and renders nothing. `shortcutRows`' `(unbound)` is the KEY COLUMN's answer, and it
  *  stays what it is: a key column reading `(unbound)` tells the user their unbind took effect, whereas a
  *  sentence reading `(unbound) to switch model` would just be broken English. */
-function gridCell(row: ShortcutRow, lookup: (action: string) => readonly string[], platform: NodeJS.Platform, newline: string): string | null {
+function gridCell(row: ShortcutRow, lookup: HintLookup, platform: NodeJS.Platform, newline: string): string | null {
   if (row.ladder) return newline;
   if (row.cell !== undefined) return row.cell;
-  const keys = lookup(row.action!);
-  const key = keys.find((k) => !k.includes(" ")) ?? keys[0];             // plain beats chord, the resolver's own rule
+  const key = preferredKey(lookup(row.action!, { contexts: row.contexts }));
   if (key === undefined) return null;
   const chord = withModSep(formatBindingLower(key, platform));
   if (chord === "") return null;
@@ -346,7 +366,7 @@ function gridCell(row: ShortcutRow, lookup: (action: string) => readonly string[
 
 /** The grid as THREE columns of composed sentences, resolved against a live lookup. Same two gates as
  *  `shortcutRows` — `rowHidden` is the one copy of them. */
-export function shortcutGrid(lookup: (action: string) => readonly string[], { platform = process.platform, newline, fullscreen = false }: ShortcutGridOptions): string[][] {
+export function shortcutGrid(lookup: HintLookup, { platform = process.platform, newline, fullscreen = false }: ShortcutGridOptions): string[][] {
   const cols: string[][] = [[], [], []];
   for (const row of SHORTCUT_ROWS) {
     if (rowHidden(row, platform, fullscreen)) continue;

@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { ShortcutsGrid, ROWS } from "../../src/tui/ShortcutsOverlay.js";
-import { SHORTCUT_ROWS, defaultLookup, fullscreenOnlyRows, shortcutGrid, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
+import { SHORTCUT_ROWS, UNBOUND, defaultLookup, fullscreenOnlyRows, shortcutGrid, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
 import { newlineHint } from "../../src/tui/composerFrame.js";
 
 const NEWLINE = newlineHint(false);
@@ -128,6 +128,20 @@ describe("the fullscreen-only rows", () => {
     expect(shortcutRows(collide, "darwin").some(([k]) => k === "Ctrl-T")).toBe(true);   // `app:toggleTodos` prints it too
     expect(only(collide)).toEqual([["Ctrl-T", DUMP_LABEL]]);
   });
+
+  // FSW BACKLOG FIX F2 — THE ROW'S PROMISE IS ABOUT A CONTEXT, so the lookup has to be about that context too.
+  // `when scrolled` names `Scroll`, and the grid renders where `Scroll` is NOT live — so `{live:true}` (the
+  // pill's honest restriction) is the wrong instrument here and an unrestricted lookup is the wrong one too:
+  // it answers from every context in the table, and would print the chord a user bound in the ctrl+O pager as
+  // though it dumped from the scrollback. The row carries its own `contexts` and the lookup is asked with it.
+  it("resolves the dump from the SCROLL context alone, whatever else in the table binds it", () => {
+    const elsewhere: typeof defaultLookup = (a, opts) =>
+      a !== "scroll:dumpTranscript" ? defaultLookup(a) : opts?.contexts?.includes("Scroll") ? [] : ["alt+v"];
+    expect(only(elsewhere)).toEqual([[UNBOUND, DUMP_LABEL]]);            // the key column says the unbind took
+    expect(gridFs(elsewhere).some((c) => c.includes("when scrolled"))).toBe(false);   // …the sentence says nothing
+    // The positive control: asked WITH the Scroll context, the same row still prints the default key.
+    expect(only()).toEqual([["V", DUMP_LABEL]]);
+  });
 });
 
 describe("<ShortcutsGrid>", () => {
@@ -143,5 +157,25 @@ describe("<ShortcutsGrid>", () => {
     expect(painted).toContain(`${withModSep(process.platform === "darwin" ? "opt+k" : "alt+k")} to toggle tasks`);
     expect(painted).not.toContain("ctrl + t to toggle tasks");
     b.unmount();
+  });
+
+  // FSW BACKLOG FIX F2, through the real provider — the pure test above proves the row ASKS for `Scroll`;
+  // this proves the live lookup ANSWERS for it. Unbind the scrollback's `v`, bind the action in the ctrl+O
+  // pager instead: the sentence must go, not move to a key that dumps nothing from the scrollback.
+  it("drops the fullscreen dump sentence when the action is bound outside the Scroll context", async () => {
+    const c = render(<ShortcutsGrid fixedWidth fullscreen />, { userLayers: [
+      { context: "Scroll", bindings: { v: null } },
+      { context: "Transcript", bindings: { "alt+v": "scroll:dumpTranscript" } },
+    ] });
+    // Matched on the clause BEFORE the fixed-width column break — the cell is 35 columns wide and this row's
+    // sentence spans two of them, with a neighbouring column's text between the halves in the frame.
+    await waitFor(() => unwrapped(c.lastFrame() ?? "").includes("! for shell mode"));
+    expect(unwrapped(c.lastFrame() ?? "")).not.toContain("to open in $EDITOR");
+    c.unmount();
+
+    const d = render(<ShortcutsGrid fixedWidth fullscreen />);
+    await waitFor(() => unwrapped(d.lastFrame() ?? "").includes("! for shell mode"));
+    expect(unwrapped(d.lastFrame() ?? "")).toContain("v to open in $EDITOR");
+    d.unmount();
   });
 });

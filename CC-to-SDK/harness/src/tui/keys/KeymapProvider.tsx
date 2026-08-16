@@ -21,7 +21,7 @@ import { parseBytes } from "./parse.js";
 import type { InputEvent, KeyContextName, KeyEvent, TextEvent } from "./types.js";
 import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
 import { bindingFor, bindingsFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
-import { defaultLookup } from "./hints.js";
+import { defaultLookup, type BindingLookupOpts } from "./hints.js";
 import type { KeySpec } from "./normalize.js";
 import { activeContexts, createRegistry, fallbackHandler, handlerFor, nextSeq, suspendHandler, swallowContexts,
   type ActionEntry, type ActionHandler, type FallbackEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
@@ -449,19 +449,26 @@ export function useSwallowKeys(active: boolean): void {
  *  `{ live: true }` asks a DIFFERENT question — "what would fire HERE, right now" — and a tree with no provider
  *  has no input path at all, so the honest answer to that one is nothing. This branch used to be written as a
  *  ONE-parameter lambda typed as the two-parameter `BindingLookup`, which silently dropped `opts` and answered
- *  the live question with the defaults: a hint for a key nobody could deliver (t10 review, Important). */
-export type BindingLookup = (action: string, opts?: { live?: boolean }) => string[];
+ *  the live question with the defaults: a hint for a key nobody could deliver (t10 review, Important).
+ *
+ *  `{ contexts }` asks the THIRD question — "what is bound in THESE scopes" — for a hint whose promise names a
+ *  surface it is not rendered inside (the shortcut grid's `when scrolled` row; see `hints.BindingLookupOpts`).
+ *  It wins over `live`, because it is an explicit answer to the same "which scopes" question. */
+export type BindingLookup = (action: string, opts?: BindingLookupOpts) => string[];
 
 export function useBindingLookup(): BindingLookup {
   const ctx = useContext(KeymapCtx);
-  if (!ctx) return (action, opts) => (opts?.live ? [] : defaultLookup(action));
+  if (!ctx) return (action, opts) => (opts?.live && !opts.contexts ? [] : [...defaultLookup(action, opts)]);
   const live = activeContexts(ctx.reg);
   const rest = ([...ctx.table.contexts.keys()] as KeyContextName[]).filter((c) => !live.includes(c));
-  return (action, opts) => bindingsFor(ctx.table, action, opts?.live ? live : [...live, ...rest]);
+  return (action, opts) => bindingsFor(ctx.table, action, opts?.contexts ?? (opts?.live ? live : [...live, ...rest]));
 }
 
 /** The single display key for `action` (e.g. `"shift+tab"`), or null. Sugar over `useBindingLookup` for the
- *  call sites that want exactly one key; the plain-key-beats-chord rule lives in the resolver. */
+ *  call sites that want exactly one key; the plain-key-beats-chord rule lives in the resolver.
+ *  UNRESTRICTED, deliberately — it answers "what is bound anywhere" — so a hint that PROMISES a key will fire
+ *  where it is printed must narrow the question itself (`useBindingLookup` with `live`/`contexts`), which is
+ *  what the jump pill and the shortcut grid's scoped rows do. */
 export function useBinding(action: string): string | null {
   const ctx = useContext(KeymapCtx);
   if (!ctx) return null;
