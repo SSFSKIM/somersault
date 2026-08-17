@@ -219,7 +219,53 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped, and verified live: all seven acceptance obligations pass** (2026-08-17, keyed run). Leg 1
+uncommitted changes → findings naming real files (25s); leg 2 the planted off-by-one found and anchored
+with a concrete failure scenario; leg 3 the merge-base range honored, with a base-only file yielding no
+finding (46s); leg 4 a review with no `ReportFindings` call yielding `findings: []` **with**
+`unstructured: true` and the prose retained (21s); leg 5 `inline` refused by name; leg 6 the drift gate
+green with the review types in the generated artifacts; leg 7 an MCP elicitation parked, answered over the
+wire, and the answer observed arriving in the MCP tool's own result (7s). Surface: **59 registered methods
+/ 90 scorecard rows / 27 notifications**, 220 unit files / 2822 tests, typecheck clean.
+
+**What the reviews were actually for.** Every one of the eight code tasks passed its own tests and then had
+a real defect found by an independent reviewer — and the pattern in what they found is the lesson. Four
+distinct instances of D-M4-1's rule (never report a silent all-clear) were violated in disguises no author
+recognized as that rule: a `ReportFindings` call with no `findings` key harvested as an authoritative empty
+report; a second `ReportFindings` block in one frame silently dropped; a subagent's findings discarded by a
+reflex copied from the TodoWrite route; and — the best find of the milestone — an **interrupted or failed
+review published as a clean one**, because an interrupt ends a turn through an ordinary terminal frame.
+That last one was proven by a reviewer building a scratch harness and interrupting a real review, not by
+reading. A rule stated once in a spec does not defend itself; it has to be re-derived at every new surface.
+
+**Fix waves need their own review — now proven five times.** Five separate fixes closed their finding
+correctly and introduced a new defect doing it: a crash where the contract promised a graceful degrade, a
+fabricated failure reason for a process that never ran, a **quadratic scan reachable from unbounded client
+input** (8.2s of blocked single-threaded server at 200k characters), a flaky test whose reliability argument
+measured an event-loop timer instead of a wall clock, and a comment left stale by a sibling change.
+
+**And verification evidence needs auditing too.** Twice, a reviewer checked a *sabotage claim* — "I broke
+the guard and the test caught it" — and found it proved less than stated: once because the break removed two
+independent guards at once, once because the following `catch` masked the guard under test. Sabotage is only
+as good as the granularity of what was sabotaged. The habit that came out of it (break one guard at a time,
+count the failures) caught two hangs that had no test at all.
+
+**The environment lied last, and a control caught it.** The first keyed run failed 5 of 7 legs. Every
+model-dependent leg died in ~2.5s — too fast for a model behaving badly. Running an ordinary "reply PONG"
+turn on an ordinary thread as a CONTROL alongside the review turn showed both failing identically with
+`Your organization has disabled Claude subscription access for Claude Code`, which exonerated the entire
+domain in one measurement. Reproduced twice before escalating; the owner refreshed the token and the same
+code passed 7/7 unchanged. A red acceptance suite is a claim about the world, not necessarily about the
+code — and the cheapest way to tell them apart is a control that shares everything except the thing under
+test.
+
+**Deviations from Codex, both deliberate:** we ship structured findings where Codex flattens to a string
+(D-M4-1), and detached-only delivery for this release (D-M4-2). Neither is a shortfall in capability.
+
+**Carried forward, deliberately unshipped:** inline delivery; elicitation for fleet-*adopted* threads
+(D-M4-8, needs a host-side bridge); and one pre-existing cross-task bug this milestone only made visible —
+`thread/rewind` swaps engines without settling outstanding parks, so a client answering later resolves a
+promise whose awaiter is gone. It applies equally to permission parks and predates M4.
 
 ## Revision Notes
 
