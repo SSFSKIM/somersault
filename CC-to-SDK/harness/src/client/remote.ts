@@ -151,11 +151,14 @@ export class RemoteChatSession {
    *  an old host's schema still parses a new client's permission answer (spec: upgrade compat, read-side
    *  only). The flat field is a bare kind STRING and can carry nothing else, so the moment a permission
    *  answer has a payload — F6 T3's `allow_with_updates.updatedPermissions`, `allow_once.updatedInput`,
-   *  `deny.feedback` — it must go structured or the payload is silently dropped on the wire. */
+   *  `deny.feedback`, BL6's `deny.reason` — it must go structured or the payload is silently dropped on the
+   *  wire. That last one is not hypothetical: `reason` is the human-decline discriminator and a decline
+   *  carries no feedback by definition, so a predicate that only asked about `feedback` sent it flat and the
+   *  gate went on reporting an absent user. THE TEST IS "IS THERE ANYTHING BUT THE KIND", per arm — not a
+   *  hand-kept list of fields, which is what let a new field slip through the first time. */
   answerDecision(toolUseID: string, outcome: DecisionOutcome): Promise<{ ok: boolean; alreadyAnsweredBy?: string; error?: string }> {
-    const flat = (outcome.kind === "allow_once" && outcome.updatedInput === undefined)
-      || outcome.kind === "allow_always"
-      || (outcome.kind === "deny" && outcome.feedback === undefined);
+    const bareKind = Object.keys(outcome).length === 1;   // `kind` and nothing else
+    const flat = bareKind && (outcome.kind === "allow_once" || outcome.kind === "allow_always" || outcome.kind === "deny");
     return this.send(flat ? { op: "answer", toolUseID, decision: outcome.kind, by: this.label }
                           : { op: "answer", toolUseID, answer: outcome, by: this.label });
   }

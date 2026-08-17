@@ -14,6 +14,7 @@ import type { HostHandlers } from "../../src/host/server.js";
 import { SessionHost } from "../../src/host/host.js";
 import { daemonOp } from "../../src/daemon/types.js";
 import { ANSWER_KINDS } from "../../src/appserver/broker.js";
+import { decisionOutcomeParams } from "../../src/appserver/schema/decisions.js";
 import { AppServer } from "../../src/appserver/server.js";
 import type { PeerSink } from "../../src/appserver/peer.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
@@ -46,6 +47,15 @@ describe("host/ops.ts — the answer op's structured arm", () => {
     expect((answer({ kind: "allow_once", updatedInput: { command: "ls -a" } }) as any).answer.updatedInput).toEqual({ command: "ls -a" });
     expect((answer({ kind: "allow_always" }) as any).answer.kind).toBe("allow_always");
     expect((answer({ kind: "deny", feedback: "use rg instead" }) as any).answer.feedback).toBe("use rg instead");
+  });
+
+  // BL6. `reason` is the human-decline discriminator, and zod STRIPS what a schema does not declare — so an
+  // omission on any of the three deny schemas would swallow it silently on the way to the gate and the
+  // decline would go on being reported to the model as "No user is available to answer.". Pinned on all
+  // three wires, and pinned CLOSED: only the one literal the gate branches on gets through.
+  it("carries the BL6 decline discriminator, and refuses any other reason", () => {
+    expect((answer({ kind: "deny", reason: "declined" }) as any).answer).toEqual({ kind: "deny", reason: "declined" });
+    expect(() => answer({ kind: "deny", reason: "bored" })).toThrow();
   });
 
   it("accepts plan_approve carrying updatedPermissions (Task 9's plan-side grant)", () => {
@@ -191,6 +201,7 @@ describe("daemon/types.ts — permission_response", () => {
     expect(parse({ kind: "allow_once" }).decision).toEqual({ kind: "allow_once" });
     expect(parse({ kind: "allow_always" }).decision).toEqual({ kind: "allow_always" });   // back-compat arm
     expect(parse({ kind: "deny" }).decision).toEqual({ kind: "deny" });
+    expect(parse({ kind: "deny", reason: "declined" }).decision).toEqual({ kind: "deny", reason: "declined" });   // BL6
     expect(() => parse({ kind: "allow_with_updates" })).toThrow();
   });
 });
@@ -205,6 +216,11 @@ describe("appserver — decisionOutcomeParams + ANSWER_KINDS", () => {
     expect(ANSWER_KINDS.permission).toEqual(["allow_once", "allow_with_updates", "allow_always", "deny"]);
     expect(ANSWER_KINDS.question).toEqual(["question_answer", "deny"]);
     expect(ANSWER_KINDS.plan).toEqual(["plan_approve", "plan_reject", "deny"]);
+  });
+
+  it("decisionOutcomeParams carries the BL6 decline discriminator (the third wire into the same gate)", () => {
+    expect(decisionOutcomeParams.parse({ kind: "deny", reason: "declined" })).toEqual({ kind: "deny", reason: "declined" });
+    expect(() => decisionOutcomeParams.parse({ kind: "deny", reason: "bored" })).toThrow();
   });
 
   it("decision/respond carries allow_with_updates to the parked broker verbatim", async () => {
@@ -286,10 +302,17 @@ describe("client/remote.ts — the flat/structured answer split", () => {
     await c.answerDecision("t1", { kind: "allow_with_updates", updatedPermissions: [SUGGESTION] });
     await c.answerDecision("t2", { kind: "allow_once", updatedInput: { command: "ls -a" } });
     await c.answerDecision("t3", { kind: "deny", feedback: "use rg" });
+    // BL6, AND THE ONE THE LIVE RUN CAUGHT. `reason` is payload too. The flat arm's predicate tested
+    // `feedback === undefined` alone, so a declined deny — which carries no feedback by definition — went out
+    // as the bare legacy kind string and the discriminator died on the wire: every unit and TUI cell was green
+    // and the real REPL still answered "No user is available to answer.". Anything ON the outcome besides its
+    // kind forces the structured frame.
+    await c.answerDecision("t4", { kind: "deny", reason: "declined" });
     expect(h.ops.map((o) => o.answer)).toEqual([
       { kind: "allow_with_updates", updatedPermissions: [SUGGESTION] },
       { kind: "allow_once", updatedInput: { command: "ls -a" } },
       { kind: "deny", feedback: "use rg" },
+      { kind: "deny", reason: "declined" },
     ]);
     expect(h.ops.every((o) => o.decision === undefined)).toBe(true);   // never BOTH — dispatch refuses that
     c.detach(); srv.close();

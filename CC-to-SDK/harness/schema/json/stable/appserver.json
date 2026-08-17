@@ -308,6 +308,10 @@
                 },
                 "feedback": {
                   "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "const": "declined"
                 }
               },
               "required": [

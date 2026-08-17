@@ -279,6 +279,10 @@ describe("<ChatApp>", () => {
     expect(fake.answeredCalls[1]).toEqual({ toolUseID: "b", decision: { kind: "question_answer", answers: { "Continue?": "yes" } } });
   });
 
+  // BL6 updated the OUTCOME this sends, not the routing this cell is about: the decline now carries its own
+  // `reason` so the gate can report a present human refusing rather than an absent one, and it also ends the
+  // turn. Both are pinned in question-decline.test.tsx; what stays pinned HERE is that Esc reaches the
+  // dispatcher at all and never fabricates an answer.
   it("Esc on a parked question denies via the dispatcher (never a fabricated answer)", async () => {
     const fake = fakeRemote();
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
@@ -291,7 +295,7 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Continue?"));
     stdin.write("\x1b");
     await waitFor(() => fake.answeredCalls.length === 1);
-    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t2", decision: { kind: "deny" } });
+    expect(fake.answeredCalls[0]).toEqual({ toolUseID: "t2", decision: { kind: "deny", reason: "declined" } });
   });
 
   it("Ctrl-L now clears the composer input (the editor owns it), not the app-level screen", async () => {

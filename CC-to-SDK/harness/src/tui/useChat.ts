@@ -2663,11 +2663,15 @@ export function useChat(
   }
   // Answer the head entry via the remote feed; the dialog clears/advances on the SETTLED event (dropPending),
   // never optimistically here — a race (someone else answered first) still needs the settle to land.
-  function resolveDecision(outcome: DecisionOutcome) {
+  // Returns the ANSWER's own promise (BL6) so a caller that must act after the answer has left can sequence on
+  // it — the question dialog's Esc answers and then interrupts, and the two ops must reach the host in that
+  // order or the interrupt's park sweep settles the visible question before its real outcome arrives. It never
+  // rejects (the catch below is inside the chain), so an ignoring caller stays exactly as it was.
+  function resolveDecision(outcome: DecisionOutcome): Promise<void> {
     const entry = pendingRef.current;
-    if (!entry || !hasDecisionFeed(session)) return;
+    if (!entry || !hasDecisionFeed(session)) return Promise.resolve();
     answeredIds.current.add(entry.toolUseID);
-    void session.answerDecision(entry.toolUseID, outcome).then((r) => { if (r.alreadyAnsweredBy) notice(`answered by ${r.alreadyAnsweredBy}`); })
+    return session.answerDecision(entry.toolUseID, outcome).then((r) => { if (r.alreadyAnsweredBy) notice(`answered by ${r.alreadyAnsweredBy}`); })
       .catch((e) => {
         // A designed-for rejection path (host death mid-dialog, or the 10s request deadline on a wedged
         // host) — never leave this unhandled (F1: it used to crash the whole REPL). Un-mark it as ours so

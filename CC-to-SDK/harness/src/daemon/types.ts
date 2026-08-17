@@ -79,7 +79,7 @@ const permissionDecision = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allow_once"), updatedInput: z.record(z.string(), z.unknown()).optional() }),
   z.object({ kind: z.literal("allow_with_updates"), updatedPermissions: z.array(z.record(z.string(), z.unknown())) }),
   z.object({ kind: z.literal("allow_always") }),
-  z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
+  z.object({ kind: z.literal("deny"), feedback: z.string().optional(), reason: z.literal("declined").optional() }),  // BL6 discriminator — same wire, same gate
 ]);
 const pendingPermissionsOp = z.object({ op: z.literal("pending_permissions") });
 const permissionResponseOp = z.object({ op: z.literal("permission_response"), toolUseID: z.string(), decision: permissionDecision });

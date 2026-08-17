@@ -13,7 +13,7 @@ export const decisionOutcomeParams = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allow_once"), updatedInput: z.record(z.string(), z.unknown()).optional() }),
   z.object({ kind: z.literal("allow_with_updates"), updatedPermissions: z.array(permissionUpdateParams) }),
   z.object({ kind: z.literal("allow_always") }),
-  z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
+  z.object({ kind: z.literal("deny"), feedback: z.string().optional(), reason: z.literal("declined").optional() }),  // BL6 discriminator — same wire, same gate
   z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
   // The granted mode, not a boolean (Wave T t10) — the same enum host/ops.ts pins, kept in lockstep by
   // hand because zod schemas are values and no compiler check spans the two wires.

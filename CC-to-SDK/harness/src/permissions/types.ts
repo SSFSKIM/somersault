@@ -25,8 +25,22 @@ export type PermissionDecision =
   | { kind: "allow_always" }
   /** `feedback` IS the deny message the model sees — upstream's "tell Claude what to do differently"
    *  channel. There is no allow-side equivalent: sdk.d.ts's PermissionResult allow arm carries only
-   *  `updatedInput`/`updatedPermissions`/`toolUseID`/`decisionClassification`, no message field. */
-  | { kind: "deny"; feedback?: string };
+   *  `updatedInput`/`updatedPermissions`/`toolUseID`/`decisionClassification`, no message field.
+   *
+   *  `reason` (BL6) is WHY the deny happened, for the gate's copy alone. A bare deny is emitted by four
+   *  unrelated events — a human declining a dialog, an interrupt sweep, the zero-connection rule, teardown —
+   *  and `denyMessage` could only word one of them, so a human's Esc on a question was reported to the model
+   *  as "No user is available to answer.": the opposite of what happened. `"declined"` marks the one event a
+   *  present human performed; absent still means the system did it.
+   *    A DISCRIMINATOR AND NOT A CANNED `feedback`, deliberately. `feedback` is the human's OWN typed words
+   *  wherever it travels — the whole outcome rides `decision_settled.answer` to every other client of the
+   *  host (host.ts) and out of the app server's `decision/resolved` fan-out — so parking canon boilerplate in
+   *  it would put words in their mouth on any surface that renders "the user said: …". Upstream splits on
+   *  exactly this line too: `Dpt` when nothing was typed, `Hft` ("…the user said: <text>") when something
+   *  was. Nothing in THIS tree renders deny feedback as user text today (the recent-denials ledger keeps only
+   *  `toolName(target)`/`by`/`at`, and the `↳ … denied by …` notice only the kind), so this is the wire that
+   *  keeps it that way rather than a repair of a rendering bug. */
+  | { kind: "deny"; feedback?: string; reason?: "declined" };
 
 /** Which dialog a parked decision needs (spec Goal B): permission = 3-way, question = AskUserQuestion,
  *  plan = ExitPlanMode. The gate routes by toolName; everything else in the park lifecycle is kind-blind.

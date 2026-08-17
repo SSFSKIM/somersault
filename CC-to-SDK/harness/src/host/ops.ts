@@ -30,7 +30,10 @@ const structuredAnswer = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allow_once"), updatedInput: z.record(z.string(), z.unknown()).optional() }),
   z.object({ kind: z.literal("allow_with_updates"), updatedPermissions: z.array(permissionUpdate) }),
   z.object({ kind: z.literal("allow_always") }),
-  z.object({ kind: z.literal("deny"), feedback: z.string().optional() }),
+  // `reason` (BL6) is the human-decline discriminator (permissions/types.ts) and MUST be listed: zod strips
+  // unknown keys, so an omission here would silently swallow it on the way to the gate and the decline would
+  // go on being reported as "No user is available to answer."
+  z.object({ kind: z.literal("deny"), feedback: z.string().optional(), reason: z.literal("declined").optional() }),
   z.object({ kind: z.literal("question_answer"), answers: z.record(z.string(), z.string()), response: z.string().optional() }),
   // `mode` (permissions/types.ts PlanGrantMode) replaced a boolean `acceptEdits` in Wave T t10 — an ENUM,
   // not z.string(), because this schema is the only thing standing between a client's typo and a

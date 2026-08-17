@@ -1519,7 +1519,27 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           // forces the clean remount a new decision needs.
           ? <QuestionDialog key={inlineDecision.toolUseID} req={inlineDecision}
               onAnswer={(answers, response) => resolveDecision({ kind: "question_answer", answers, ...(response ? { response } : {}) })}
-              onDeny={() => resolveDecision({ kind: "deny" })} />
+              // BL6 — ESC ON A QUESTION ENDS THE TURN, and says who ended it. Two changes, one gesture:
+              //   `reason:"declined"` is what lets the gate answer with canon's own refusal instead of
+              // "No user is available to answer." — the bare deny this used to send is the SAME outcome
+              // teardown and the zero-connection rule produce, so the model was told nobody was at the
+              // keyboard by the very keystroke that proved someone was (permissions/types.ts, gate.ts).
+              //   AND THEN THE TURN ENDS. Native's option list routes Escape into `cancelAndAbort`
+              // (:504427-504431 → :271972), whose empty-feedback guard (:271764) aborts the turn outright;
+              // the sibling questions resolve `cancelled` and each returns the same refusal text
+              // (:503050, :279323, :298463). One Esc, turn over. THIS DELIBERATELY REMOVES ccx's
+              // decline-one-and-keep-going affordance, which had no counterpart upstream: the owner filed
+              // this as "does not work the same as native", and fidelity is the tiebreak. The cost of the
+              // old shape was measured — their transcript shows three Esc presses half a second apart to
+              // stop one turn's worth of questions.
+              //   ORDER IS LOAD-BEARING: answer first, interrupt second. `host.interrupt()` settles every
+              // remaining park itself (settleParkedForSystem), so an interrupt that arrived first would
+              // settle THIS question as a system deny and lose the decline. Sequenced on the answer's own
+              // promise rather than fired beside it.
+              //   SCOPE: questions only. A permission deny answers one tool call with the turn going on
+              // around it (upstream's behaviour and ours), and the plan family already ends its own turn
+              // from the gate's `interrupt` flag (wave 2 A4) — neither changes here.
+              onDeny={() => { void resolveDecision({ kind: "deny", reason: "declined" }).then(() => interrupt()); }} />
           // `cwd` is the SESSION's working directory, not this process's — the kind routing and the Bash
           // body's rule summary both name it (permissionKind.ts). `directories` is the WHOLE working set —
           // the cwd plus every `/add-dir` grant — which is what the file body's in-directory test runs over

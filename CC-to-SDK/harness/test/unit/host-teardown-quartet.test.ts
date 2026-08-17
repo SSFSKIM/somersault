@@ -65,3 +65,28 @@ describe.each(KINDS)("teardown quartet [$kind]", ({ kind, toolName, answer }) =>
     await host.stop();
   });
 });
+
+// BL6 Fix B, the host half. The REPL's question dialog now answers Esc with a declined deny AND an interrupt,
+// which is native's "one Esc, turn over": what makes that safe is that `interrupt()` settles the SIBLING parks
+// too, so the queued questions' dialogs cannot outlive the turn they belonged to.
+//
+// WHAT THE SIBLINGS TELL THE MODEL IS NOT DECIDED HERE, and cannot be pinned keyless. Probe 109 arm D measured
+// it live: an interrupt over parked calls never reaches `denyMessage()` at all — the CLI's own cancellation
+// wins the race and the engine sends its canonical rejection text (the same sentence `TOOL_DECLINED` quotes).
+// So the bare deny below is the outcome the PARK resolves with, not the copy the model reads.
+describe("BL6: declining one question sweeps its siblings", () => {
+  it("interrupt() settles every remaining question park, and the answered one keeps its own outcome", async () => {
+    const { host } = hostFor(); await host.start();
+    const ac = new AbortController();
+    const req = (id: string) => host.broker().request({ toolName: "AskUserQuestion", input: {}, toolUseID: id, kind: "question", signal: ac.signal });
+    const [head, sib1, sib2] = [req("q1"), req("q2"), req("q3")];
+    expect(host.answer("q1", { kind: "deny", reason: "declined" }, "human")).toEqual({ ok: true });
+    await expect(head).resolves.toEqual({ kind: "deny", reason: "declined" });
+    expect(host.pending().map((e) => e.toolUseID)).toEqual(["q2", "q3"]);
+    await host.interrupt();
+    await expect(sib1).resolves.toEqual({ kind: "deny" });      // bare: the SYSTEM settled these, not a human
+    await expect(sib2).resolves.toEqual({ kind: "deny" });
+    expect(host.pending()).toEqual([]);
+    await host.stop();
+  });
+});

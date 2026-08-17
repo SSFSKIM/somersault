@@ -32,8 +32,20 @@ export function routeDecisionKind(toolName: string): DecisionKind {
 /** The feedback-less plan rejection, in one place because both arms below reach it. */
 const PLAN_REJECTED = "User rejected the plan.";
 
+/** BL6. Upstream's `Dpt` (2.1.220 `cli.pretty.js:376056`, byte-identical in the bundled 0.3.220 binary) — the
+ *  exact text native hands the model for a tool a PRESENT human refused, and (probe 109 arm D) the text the
+ *  engine itself sends when a turn is interrupted over a parked call. Quoted verbatim from the bundle: it is
+ *  canon's sentence, not ours to paraphrase, and matching it byte-for-byte is the point of the fix.
+ *  Reached only via `reason:"declined"` — the human-decline discriminator (permissions/types.ts). */
+const TOOL_DECLINED = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+
 /** Kind-specific copy for a bare {kind:"deny"} (system teardown, zero-connection rule, broker failure).
  *  Composed HERE because the gate owns the deny message and knows the routing (spec, error-handling §).
+ *
+ *  BL6 NARROWED THIS TO THE SYSTEM CASES ONLY. The question arm says a user is UNAVAILABLE, which is true of
+ *  teardown and the zero-connection rule and of nothing else; a human's Esc used to arrive here as the same
+ *  bare deny and be reported to the model with that sentence. It is now `TOOL_DECLINED`'s, above. Keep this
+ *  arm's copy honest to its remaining callers: it must stay a statement that nobody was there to ask.
  *
  *  WAVE 2 t2 (s2qa3-12). Whatever this returns is read by the MODEL as the human's own words, so the copy
  *  may REPORT but must never INSTRUCT. The plan arm used to end `Continue planning.` — an invented imperative
@@ -77,7 +89,13 @@ export function createPermissionGate(broker: PermissionBroker): CanUseTool {
     // The deny arm's `message` is the ONLY channel back to the model (see PermissionResult above), so a
     // human's `feedback` becomes it — "tell Claude what to do differently". Bare deny (teardown, the
     // zero-connection rule, a broker failure) falls back to the kind-specific copy.
-    if (d.kind === "deny") return { behavior: "deny", message: d.feedback?.trim() || denyMessage(kind, toolName), interrupt: options.signal?.aborted || undefined };
+    //   BL6: three sentences, not one. Typed feedback still wins; a human who DECLINED in silence gets canon's
+    // own refusal (`TOOL_DECLINED`), which names them as present and refusing; and only a system deny — the
+    // one case where nobody really is there — still reaches `denyMessage`. NO `interrupt` on the declined arm:
+    // ending the turn is the CLIENT's job (ChatApp's question `onDeny`), because the SDK's own deny-arm
+    // interrupt aborts the turn without settling any park, which would leave the sibling questions' dialogs on
+    // screen. `host.interrupt()` settles them (settleParkedForSystem) and that is what native does.
+    if (d.kind === "deny") return { behavior: "deny", message: d.feedback?.trim() || (d.reason === "declined" ? TOOL_DECLINED : denyMessage(kind, toolName)), interrupt: options.signal?.aborted || undefined };
     if (d.kind === "question_answer") return { behavior: "allow", updatedInput: { ...input, answers: d.answers, ...(d.response ? { response: d.response } : {}) } };
     // Same rule as `denyMessage`'s plan arm and the same sentence: the human's typed feedback rides verbatim,
     // and its ABSENCE is reported, never filled in with an instruction they did not give (wave 2 t2, s2qa3-12).

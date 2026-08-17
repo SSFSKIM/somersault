@@ -104,6 +104,39 @@ describe("gate outcome mapping", () => {
     expect(((await gateWith({ kind: "deny" })("Bash", {}, opts)) as any).message).toBe("User denied Bash");
   });
 
+  // --- BL6 Fix A. The bare deny above is THREE different events laundered into one sentence, and only one of
+  // them makes it true (the zero-connection rule and teardown: genuinely nobody there). A human pressing Esc on
+  // a question dialog is the opposite event and now carries its own discriminator, so the gate can say so.
+  // The copy is upstream's `Dpt` verbatim (2.1.220 cli.pretty.js:376056) — the exact string native hands a tool
+  // the user refused, and the same one probe 109 arm D saw the engine send on an interrupt.
+  const DECLINED = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+
+  it("BL6-A: a DECLINED deny gets canon's rejection copy, byte-for-byte", async () => {
+    expect(((await gateWith({ kind: "deny", reason: "declined" })("AskUserQuestion", {}, opts)) as any).message).toBe(DECLINED);
+  });
+
+  // The whole defect was that these two produced ONE sentence. They must never converge again.
+  it("BL6-A: the decline and the bare deny are DIFFERENT sentences", async () => {
+    const declined = ((await gateWith({ kind: "deny", reason: "declined" })("AskUserQuestion", {}, opts)) as any).message;
+    const bare = ((await gateWith({ kind: "deny" })("AskUserQuestion", {}, opts)) as any).message;
+    expect(declined).not.toBe(bare);
+    expect(declined).not.toContain("No user is available");
+    expect(bare).toBe("No user is available to answer.");
+  });
+
+  // A human who TYPED something still wins — upstream splits on exactly that (`Dpt` with nothing typed, `Hft`
+  // "…the user said: <text>" with). Our channel for the second half is `feedback`, unchanged.
+  it("BL6-A: typed feedback still outranks the decline boilerplate", async () => {
+    expect(((await gateWith({ kind: "deny", reason: "declined", feedback: "ask me later" })("AskUserQuestion", {}, opts)) as any).message).toBe("ask me later");
+  });
+
+  // Fix B ends the turn from the CLIENT (useChat's interrupt → host.interrupt → settleParkedForSystem, which
+  // is what settles the SIBLING parks too). The gate must not also raise `interrupt`: the SDK's own deny-arm
+  // interrupt aborts the turn without settling any park, so the siblings' dialogs would linger on screen.
+  it("BL6-B scope: the declined deny does NOT carry the gate's own interrupt", async () => {
+    expect(((await gateWith({ kind: "deny", reason: "declined" })("AskUserQuestion", {}, opts)) as any).interrupt).toBeUndefined();
+  });
+
   // --- F6 Task 3: the widened wire. sdk.d.ts's CanUseTool options carry the engine's own suggestion
   // payload; PermissionResult's allow arm carries `updatedPermissions` back. Probe 78 proved the round
   // trip; these pin that the gate neither drops nor reshapes either direction.
