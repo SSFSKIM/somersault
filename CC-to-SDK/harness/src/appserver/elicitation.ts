@@ -85,7 +85,14 @@ export function makeOnElicitation(srv: ElicitationParkSource, threadId: string):
       // The mapper is total over well-typed outcomes but reads `outcome.kind` unguarded; a park that
       // settles with nothing at all is not its problem to solve.
       if (!outcome) return { action: "cancel" };
-      if (outcome.kind === "elicitation_accept" && !contentSatisfies(request, outcome.content)) return { action: "decline" };
+      // THE BACKSTOP, not the primary check. `decision/respond` now runs the same predicate against the parked
+      // request BEFORE it settles anything (server.ts), because settling first meant the wire had already
+      // reported `elicitation_accept` by the time this line downgraded the answer — an acceptance every client
+      // and audit log recorded and the MCP server never received. This stays because not every settlement
+      // comes through that handler: a fleet host's forwarded answer arrives via `settleView`, and teardown and
+      // the abort listener settle parks with no client involved at all. Fail-closed either way — a refusal is
+      // still a real `ElicitResult`.
+      if (outcome.kind === "elicitation_accept" && !elicitationContentSatisfies(request, outcome.content)) return { action: "decline" };
       return outcomeToElicitResult(outcome);
     } catch (err) {
       warn("elicitationFailed", `elicitation from "${request.serverName}" (${options.requestId}) was cancelled: ${err instanceof Error ? err.message : String(err)}`);
@@ -97,6 +104,11 @@ export function makeOnElicitation(srv: ElicitationParkSource, threadId: string):
 /** Does this accept's content satisfy what the server ASKED for? The mapper cannot answer this — it never
  *  sees the request — and a well-formed `{action:"accept"}` the server then rejects is a worse failure than
  *  a clean refusal, because it reads as success on the way out.
+ *
+ *  EXPORTED because the answer is needed one step EARLIER than this module: `decision/respond` calls it against
+ *  the parked request before it settles the decision, so the wire never announces an acceptance the MCP server
+ *  will not be given. One predicate, two call sites — the alternative was two implementations of "does this
+ *  answer fit", which is precisely the drift that produced the disagreement in the first place.
  *
  *  WHAT IS CHECKED, exactly: every `required` field is present; a declared primitive `type` matches; a
  *  declared option set contains the value, in all FOUR spellings MCP's restricted subset allows (an enum
@@ -110,7 +122,7 @@ export function makeOnElicitation(srv: ElicitationParkSource, threadId: string):
  *  whereas the shapes above are the failures a client's dialog cannot render its way out of (an option
  *  that was never offered, a field that is not there), which is where an accept-then-reject actually
  *  costs the human a round trip. A check we only half-implement declines answers the server would take. */
-function contentSatisfies(request: ElicitationRequest, content?: Record<string, string | number | boolean | string[]>): boolean {
+export function elicitationContentSatisfies(request: ElicitationRequest, content?: Record<string, string | number | boolean | string[]>): boolean {
   if (request.mode === "url") return true;      // an url-mode elicitation has no form to fill in
   const schema = request.requestedSchema;
   if (!schema) return true;                     // nothing declared, so nothing to fail against

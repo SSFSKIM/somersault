@@ -12,6 +12,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
 import { makeOnElicitation, type ElicitationParkSource } from "../../../src/appserver/elicitation.js";
+import { ERR } from "../../../src/appserver/rpc.js";
 import { resolveOptions } from "../../../src/config/resolveOptions.js";
 import type { HarnessConfig } from "../../../src/config/types.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
@@ -45,7 +46,7 @@ const replyTo = (id: number) => parsed(lines).find((m) => m.id === id);
 
 /** A started, SUBSCRIBED thread plus the elicitation callback its engine was configured with — decision
  *  fan-out is per-thread-subscriber, so a test that never subscribes hears no `decision/requested`. */
-async function startThread(config?: Record<string, unknown>): Promise<{ threadId: string; onElicitation: OnElicitation; built: Record<string, unknown> }> {
+async function startThread(config?: Record<string, unknown>): Promise<{ srv: AppServer; threadId: string; onElicitation: OnElicitation; built: Record<string, unknown> }> {
   const f = factory();
   const srv = new AppServer({}, f);
   servers.push(srv);
@@ -60,7 +61,7 @@ async function startThread(config?: Record<string, unknown>): Promise<{ threadId
   await settle();
   lines.length = 0;
   const built = f.built.at(-1)!;
-  return { threadId, onElicitation: built.onElicitation as OnElicitation, built };
+  return { srv, threadId, onElicitation: built.onElicitation as OnElicitation, built };
 }
 
 const FORM = {
@@ -402,5 +403,86 @@ describe("content validation — an accept the MCP server would reject is worse 
   it("validates only accepts — a refusal has no content to check", async () => {
     const declined = fakeSource(async () => ({ kind: "elicitation_decline" })).fn;
     expect(await call(declined)).toEqual({ action: "decline" });
+  });
+});
+
+describe("the wire and the MCP server agree about what was answered", () => {
+  // The check above is a BACKSTOP, and on its own it produced a contradiction: `decision/respond` had already
+  // replied {ok:true} and broadcast `decision/resolved {elicitation_accept}` by the time the callback
+  // downgraded the result to `decline`, so every client and every audit log recorded an acceptance that never
+  // reached the MCP server. The fix validates against THIS request before the decision settles — the answer is
+  // refused, nothing is announced, and the park stands so the client can correct itself. Nothing is lost by
+  // waiting: the MCP server was already blocked on this park and stays exactly as blocked.
+  it("refuses an accept the request's schema rejects, and announces nothing", async () => {
+    const { threadId, onElicitation } = await startThread();
+    const answered = call(onElicitation);
+    await settle();
+    const toolUseId = parkedKeys()[0];
+    lines.length = 0;
+    const bad = send("decision/respond", { threadId, toolUseId, answer: { kind: "elicitation_accept", content: { save: true } } });
+    await settle();
+    expect(replyTo(bad)!.error.code).toBe(ERR.INVALID_PARAMS);
+    expect(String(replyTo(bad)!.error.message)).toMatch(/requestedSchema|content/i);
+    expect(parsed(lines).filter((m) => m.method === "decision/resolved")).toEqual([]);
+    // The MCP server is still waiting — which is where it already was, and the only honest state until an
+    // answer it can actually use arrives.
+    expect(await orHang(answered)).toBe("HUNG");
+  });
+
+  it("leaves the park answerable, so the corrected answer settles it exactly once", async () => {
+    const { threadId, onElicitation } = await startThread();
+    const answered = call(onElicitation);
+    await settle();
+    const toolUseId = parkedKeys()[0];
+    send("decision/respond", { threadId, toolUseId, answer: { kind: "elicitation_accept", content: { save: true } } });
+    await settle();
+    const listId = send("decision/list", { threadId });
+    await settle();
+    expect(replyTo(listId)!.result.data).toHaveLength(1);   // still parked, not consumed by the refusal
+    lines.length = 0;
+    const good = send("decision/respond", { threadId, toolUseId, answer: { kind: "elicitation_accept", content: { token: "t-1" } } });
+    await settle();
+    expect(replyTo(good)!.result).toEqual({ ok: true });
+    expect(await answered).toEqual({ action: "accept", content: { token: "t-1" } });
+    const resolved = parsed(lines).filter((m) => m.method === "decision/resolved");
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].params.answer.kind).toBe("elicitation_accept");
+  });
+
+  it("does not stand in the way of a refusal, or of an accept the schema takes", async () => {
+    // The check is scoped to the one answer that carries content against a schema. A decline has none, and a
+    // valid accept must not acquire a new way to fail.
+    const a = await startThread();
+    const declined = call(a.onElicitation);
+    await settle();
+    const declineId = send("decision/respond", { threadId: a.threadId, toolUseId: parkedKeys()[0], answer: { kind: "elicitation_decline" } });
+    await settle();
+    expect(replyTo(declineId)!.result).toEqual({ ok: true });
+    expect(await declined).toEqual({ action: "decline" });
+    const b = await startThread();
+    const accepted = call(b.onElicitation);
+    await settle();
+    const acceptId = send("decision/respond", { threadId: b.threadId, toolUseId: parkedKeys()[0], answer: { kind: "elicitation_accept", content: { token: "t", save: false } } });
+    await settle();
+    expect(replyTo(acceptId)!.result).toEqual({ ok: true });
+    expect(await accepted).toEqual({ action: "accept", content: { token: "t", save: false } });
+  });
+
+  it("holds a NON-elicitation decision to its own rules — this check is not a second kind gate", async () => {
+    // `input` is the one FREE-FORM field a PendingDecision carries, so another kind of park can perfectly well
+    // hold something shaped like a `requestedSchema` — a question's own rendering hints, say. Read there, this
+    // check would answer for a decision it has no business judging and would report a content error where the
+    // kind gate owns the answer. Parked through the real broker rather than through the elicitation bridge,
+    // because that bridge is the one thing that cannot produce this case.
+    const { srv, threadId } = await startThread();
+    void srv.threadDecisions(threadId)!.broker(threadId).request({
+      toolName: "AskUserQuestion", kind: "question", toolUseID: "toolu_q",
+      input: { requestedSchema: { type: "object", properties: { token: { type: "string" } }, required: ["token"] } },
+    } as never);
+    await settle();
+    const id = send("decision/respond", { threadId, toolUseId: "toolu_q", answer: { kind: "elicitation_accept", content: {} } });
+    await settle();
+    expect(replyTo(id)!.error.code).toBe(ERR.INVALID_PARAMS);
+    expect(String(replyTo(id)!.error.message)).toMatch(/kind/i);   // the kind gate's own words, not the new check's
   });
 });

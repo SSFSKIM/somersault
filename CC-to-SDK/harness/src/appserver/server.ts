@@ -9,9 +9,9 @@ import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
 import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
-import { makeOnElicitation } from "./elicitation.js";
+import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
-import type { OnElicitation } from "@anthropic-ai/claude-agent-sdk";
+import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, turnSteer, requestInterrupt } from "./turns.js";
 import { flushQueue } from "./queue.js";
@@ -334,6 +334,21 @@ export class AppServer {
       // the view standing. It is the host's own `decision_settled` that removes it and names who won, so
       // there is no local `by` to stamp on this path at all.
       if (record.origin === "fleet") { await fleetDecisionRespond(ctx, id, record, { toolUseId: parsed.data.toolUseId, answer: outcome, abortTurn: parsed.data.abortTurn }); return; }
+      // M4 (final review): an `elicitation_accept` whose content satisfies the generic wire type but violates
+      // THIS request's `requestedSchema` is refused BEFORE anything settles. `elicitation.ts` used to catch it
+      // afterwards and answer the MCP server `decline` — by which point this handler had replied {ok:true} and
+      // broadcast `decision/resolved {elicitation_accept}`, so clients and audit logs recorded an acceptance
+      // that never happened. Refusing here keeps one story on the wire and costs nothing: the park stays
+      // listed and answerable, and the MCP server goes on waiting exactly as it already was, so a client can
+      // simply correct its answer. The predicate is elicitation.ts's own — one implementation, two call sites.
+      // NOT applied on the fleet path above: the authoritative request lives on the HOST, this server holds a
+      // mirrored view of it, and the host runs this same check when it settles its own park.
+      const parked = dec.pending().find((e) => e.toolUseID === parsed.data.toolUseId);
+      if (parked?.kind === "elicitation" && outcome.kind === "elicitation_accept"
+        && !elicitationContentSatisfies(parked.input as unknown as ElicitationRequest, outcome.content)) {
+        ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Answer content does not satisfy the elicitation's requestedSchema");
+        return;
+      }
       const by = `${ctx.clientName}#${ctx.connId}`; // server-stamped only — a client-supplied `by` is never read (spec §6)
       const result = dec.respond(parsed.data.toolUseId, outcome, by);
       if (!result.ok) {
