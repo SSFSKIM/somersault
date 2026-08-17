@@ -153,7 +153,7 @@ export interface HarnessConfig {
   agentProgressSummaries?: boolean;        // 🟡 PARTIAL (probe 54: task_progress fires; summary never populated in a 45s subagent)
   // escape hatches
   env?: Record<string, string | undefined>;
-  extraOptions?: Record<string, unknown>;  // merged last into SDK Options
+  extraOptions?: Record<string, unknown>;  // merged last into SDK Options, except resolveOptions' SERVER_OWNED keys
 }
 
 export const DEFAULTS = {
