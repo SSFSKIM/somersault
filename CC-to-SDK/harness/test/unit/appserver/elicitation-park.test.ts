@@ -12,6 +12,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
 import { makeOnElicitation, type ElicitationParkSource } from "../../../src/appserver/elicitation.js";
+import { resolveOptions } from "../../../src/config/resolveOptions.js";
+import type { HarnessConfig } from "../../../src/config/types.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 import type { OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 
@@ -43,7 +45,7 @@ const replyTo = (id: number) => parsed(lines).find((m) => m.id === id);
 
 /** A started, SUBSCRIBED thread plus the elicitation callback its engine was configured with — decision
  *  fan-out is per-thread-subscriber, so a test that never subscribes hears no `decision/requested`. */
-async function startThread(): Promise<{ threadId: string; onElicitation: OnElicitation }> {
+async function startThread(config?: Record<string, unknown>): Promise<{ threadId: string; onElicitation: OnElicitation; built: Record<string, unknown> }> {
   const f = factory();
   const srv = new AppServer({}, f);
   servers.push(srv);
@@ -51,13 +53,14 @@ async function startThread(): Promise<{ threadId: string; onElicitation: OnElici
   conn = srv.connect(s.sink);
   lines = s.lines;
   conn.feed(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "T" } } }) + "\n");
-  const startId = send("thread/start", {});
+  const startId = send("thread/start", config ? { config } : {});
   await settle();
   const threadId = replyTo(startId)!.result.thread.id as string;
   send("thread/subscribe", { threadId });
   await settle();
   lines.length = 0;
-  return { threadId, onElicitation: f.built.at(-1)!.onElicitation as OnElicitation };
+  const built = f.built.at(-1)!;
+  return { threadId, onElicitation: built.onElicitation as OnElicitation, built };
 }
 
 const FORM = {
@@ -179,6 +182,26 @@ describe("MCP elicitation parks as a decision", () => {
     ac.abort();
     await settle();
     expect(await orHang(answered)).toEqual({ action: "cancel" }); // the system deny, mapped (elicitationMap)
+  });
+
+  it("cannot be switched off by the client's own extraOptions", async () => {
+    // The bridge is the SERVER's to install (server.ts's `buildConfig`), but the config it installs it into is
+    // the CLIENT's — `extraOptions` included, and that is merged LAST into the SDK `Options`
+    // (resolveOptions.ts). With `onElicitation: null` in the hatch the real engine was built with no handler
+    // at all, so a stdio MCP server's elicitation reached nothing and waited out its own timeout while M4
+    // reported the bridge as installed: the difference between a shipped capability and a claimed one.
+    // Asserted through `resolveOptions` because that is the function the real `openSession` runs on this
+    // config (session/index.ts), and it is the only place the hatch is applied.
+    const { threadId, built } = await startThread({ extraOptions: { onElicitation: null, maxTurns: 3 } });
+    const options = resolveOptions(built as HarnessConfig);
+    expect(typeof options.onElicitation).toBe("function");
+    expect(options.maxTurns).toBe(3);          // the hatch itself still works — only this key is reserved
+    // And it is the real bridge, not merely a function: driving it parks a decision a client can answer.
+    void call(options.onElicitation as OnElicitation);
+    await settle();
+    const req = parsed(lines).find((m) => m.method === "decision/requested");
+    expect(req!.params.threadId).toBe(threadId);
+    expect(req!.params.decision.kind).toBe("elicitation");
   });
 
   it("resolves with a real result — NOT null — when the thread is torn down while parked", async () => {

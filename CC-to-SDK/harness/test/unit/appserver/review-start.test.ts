@@ -12,6 +12,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { FLEET_UNSUPPORTED, emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
+import { resolveOptions } from "../../../src/config/resolveOptions.js";
+import type { HarnessConfig } from "../../../src/config/types.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -209,6 +211,65 @@ describe("review/start — read-only by policy, not only by prompt", () => {
     await settle();
     expect(f.built.at(-1)?.config.resume).toBeUndefined();
     expect(f.built.at(-1)?.config.model).toBe("opus"); // the rest of the target's setup still travels
+  });
+
+  it("drops EVERY knob that names or reopens the target's conversation, not just `resume`", async () => {
+    // `resume` was the only one stripped, and it is one of six ways a config can point an engine at an
+    // existing transcript. A target opened with `sessionId` writes the review INTO that session's id; one
+    // opened with `continueSession` reopens the most recent conversation in the cwd — the review's own cwd,
+    // which is the target's. Either hands the "detached" review the target's history back, which is the one
+    // thing D-M4-2 exists to prevent, so the whole family goes.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo", "inProcess", {
+      cwd: "/repo", model: "opus",
+      resume: "sess-target", resumeAt: "uuid-7", droppedTurnUuid: "uuid-8",
+      forkSession: true, sessionId: "11111111-2222-3333-4444-555555555555", continueSession: true,
+    });
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const config = f.built.at(-1)!.config;
+    for (const key of ["resume", "resumeAt", "droppedTurnUuid", "forkSession", "sessionId", "continueSession"])
+      expect(config, key).not.toHaveProperty(key);   // omitted, not undefined — nothing downstream reads a hole
+    expect(config.model).toBe("opus");               // and the rest of the target's setup still travels
+  });
+
+  it("drops the same family out of the target's `extraOptions`, which reaches Options directly", async () => {
+    // The escape hatch is inherited too, and it does not go through the typed fields at all — `extraOptions`
+    // is merged straight into the SDK `Options` (resolveOptions.ts), in the SDK's OWN spellings. Stripping
+    // only the typed knobs above would leave the identical reopen one key deeper.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo", "inProcess", { cwd: "/repo", extraOptions: {
+      resume: "sess-target", resumeSessionAt: "uuid-7", resumeDropsTurn: "uuid-8",
+      forkSession: true, sessionId: "11111111-2222-3333-4444-555555555555", continue: true,
+      maxTurns: 12,   // an ordinary escape-hatch value, which must survive
+    } });
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const extra = f.built.at(-1)!.config.extraOptions as Record<string, unknown>;
+    for (const key of ["resume", "resumeSessionAt", "resumeDropsTurn", "forkSession", "sessionId", "continue"])
+      expect(extra, key).not.toHaveProperty(key);
+    expect(extra.maxTurns).toBe(12);
+    // And the TARGET's own config is not edited on the way past — it is still the object its live engine was
+    // built from, and a review must not mutate the thread it reviews.
+    expect((srv.registry.get(t.id)!.config!.extraOptions as Record<string, unknown>).resume).toBe("sess-target");
+  });
+
+  it("wins over an `extraOptions` that tries to un-root or re-arm the review", async () => {
+    // The other half of the same inheritance: `extraOptions` is spread LAST into the SDK Options, so before
+    // resolveOptions reserved these keys a target could carry `{cwd, disallowedTools}` in its hatch and the
+    // review's own re-rooting and read-only policy would both lose to it — a "read-only review of the
+    // target's tree" pointed somewhere else with Edit and Write handed back. Asserted through `resolveOptions`
+    // because that is the function the real `openSession` runs on this config (session/index.ts).
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo/target", "inProcess", { cwd: "/repo/target", extraOptions: { cwd: "/etc", disallowedTools: [] } });
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const options = resolveOptions(f.built.at(-1)!.config as HarnessConfig);
+    expect(options.cwd).toBe("/repo/target");
+    expect(options.disallowedTools).toEqual(expect.arrayContaining(["Edit", "Write", "NotebookEdit"]));
   });
 });
 

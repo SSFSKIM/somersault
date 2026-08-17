@@ -36,6 +36,13 @@ const INLINE_REFUSAL =
  *  defects against this thread. */
 const NO_CWD = "the target thread's working directory is unknown, so there is nothing to root a review at";
 
+/** Every knob that names, reopens or re-anchors an EXISTING conversation — in this repo's vocabulary
+ *  (config/types.ts) and then in the SDK's own, since `extraOptions` reaches `Options` directly. Kept as two
+ *  lists rather than one mapping because they are two different wires, and a rename on either side should
+ *  fail loudly here rather than silently stop stripping. */
+const SESSION_IDENTITY = ["resume", "resumeAt", "droppedTurnUuid", "forkSession", "sessionId", "continueSession"] as const;
+const SESSION_IDENTITY_OPTIONS = ["resume", "resumeSessionAt", "resumeDropsTurn", "forkSession", "sessionId", "continue"] as const;
+
 /** The review thread's start config: the TARGET's, re-rooted and read-only.
  *
  *  Inherited rather than invented, so the review runs with the same model, plugins and MCP topology as the
@@ -43,10 +50,16 @@ const NO_CWD = "the target thread's working directory is unknown, so there is no
  *  Three deliberate departures:
  *   - `cwd` is re-stamped from `threadCwd`, the one answer to "where does this thread run" (registry.ts),
  *     which for a fleet target is its roster directory and not this process's.
- *   - `resume` is DROPPED. `record.config` is the FULL object the target's engine was built from, that id
- *     included; carried over it would open the "detached" review on the target's own transcript, which is
- *     the exact contamination detached delivery exists to avoid. (The broker needs no such care — the
- *     creation spine overwrites it with the review thread's own.)
+ *   - EVERY SESSION-IDENTITY KNOB IS DROPPED, not just `resume`. `record.config` is the FULL object the
+ *     target's engine was built from, that id included; carried over it would open the "detached" review on
+ *     the target's own transcript, which is the exact contamination detached delivery exists to avoid. And
+ *     `resume` is one of six ways a config says "that conversation": `sessionId` writes the review INTO the
+ *     target's session id, `continueSession` reopens the most recent conversation in the cwd — which is the
+ *     target's, since we just re-rooted there — and `resumeAt`/`droppedTurnUuid`/`forkSession` are the same
+ *     anchor by other names. Stripping one of the six is not a detached review. The list is dropped TWICE,
+ *     once in this vocabulary and once in the SDK's, because `extraOptions` is inherited too and reaches the
+ *     SDK `Options` without passing through a typed field at all (resolveOptions.ts). (The broker needs no
+ *     such care — the creation spine overwrites it with the review thread's own.)
  *   - the edit tools are disallowed — see below.
  *
  *  READ-ONLY IN POLICY, NOT ONLY IN THE PROMPT — AND THIS IS RISK REDUCTION, NOT A GUARANTEE. The prompt
@@ -79,9 +92,19 @@ const NO_CWD = "the target thread's working directory is unknown, so there is no
  *  THOSE POSTURES THOUGH (probe 110): `bypassPermissions` does not lift `disallowedTools`, because that
  *  list never reaches the broker it bypasses — so under a never-ask posture the approval fallback is gone
  *  while the read-only policy itself still stands.
- *  MERGED as a set, never assigned: a target thread that already denied tools keeps every one. */
+ *  MERGED as a set, never assigned: a target thread that already denied tools keeps every one. And the two
+ *  overrides below WIN over the inherited `extraOptions`, which resolveOptions reserves them against — before
+ *  that, a target carrying `{cwd, disallowedTools}` in its escape hatch turned this whole function into a
+ *  suggestion (its `SERVER_OWNED` note is the other half of this one). */
 function reviewConfig(target: ThreadRecord, cwd: string): Record<string, unknown> {
-  const { resume: _resume, ...inherited } = target.config ?? {};
+  const inherited = { ...(target.config ?? {}) };   // a copy: the target's own config belongs to its live engine
+  for (const key of SESSION_IDENTITY) delete inherited[key];
+  const extra = inherited.extraOptions;
+  if (extra && typeof extra === "object") {
+    const hatch = { ...(extra as Record<string, unknown>) };
+    for (const key of SESSION_IDENTITY_OPTIONS) delete hatch[key];
+    inherited.extraOptions = hatch;
+  }
   const denied = Array.isArray(inherited.disallowedTools) ? (inherited.disallowedTools as string[]) : [];
   return { ...inherited, cwd, disallowedTools: [...new Set([...denied, ...READONLY_DISALLOW])] };
 }
