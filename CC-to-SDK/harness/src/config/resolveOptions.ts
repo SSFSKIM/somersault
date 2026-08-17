@@ -10,6 +10,30 @@ import { resolveAutoModel } from "./autoModel.js";
 import { resolveModelAlias } from "./models.js";
 import { createPermissionGate } from "../permissions/gate.js";
 
+/** The four keys `extraOptions` may NOT overwrite once this function has computed one.
+ *
+ *  `extraOptions` is spread LAST on purpose — it is the escape hatch for SDK options this config has no
+ *  first-class field for, and features rely on it winning. That ordering is only safe while ONE actor writes
+ *  the whole config. It is not: the app server builds a config AROUND a client-supplied one (`server.ts`'s
+ *  `buildConfig` injects the decision broker and the elicitation bridge; `review.ts`'s `reviewConfig`
+ *  re-roots `cwd` and adds the read-only denials), and the client's own `extraOptions` travels inside it. So
+ *  for these keys "the hatch wins" meant a client could switch off a guarantee the server established for
+ *  someone else — a review pointed at another tree, its edit tools handed back, every parked decision
+ *  auto-approved, an MCP elicitation that never reaches a client.
+ *
+ *  WHY A NAMED LIST RATHER THAN REVERSING THE SPREAD: reversing it would make every typed field beat the
+ *  hatch and break its whole purpose. These four are the ones where the value is a POLICY the server owns
+ *  rather than a preference the caller expressed — the isolation boundary (`cwd`), the read-only tool policy
+ *  (`disallowedTools`), and the two callbacks that are the only path a question takes to a human
+ *  (`canUseTool`, `onElicitation`). Everything else, security-adjacent or not, stays overridable: a
+ *  `sandbox` or a `permissionMode` is the same client's own choice arriving by another route, so there is no
+ *  boundary being crossed there.
+ *
+ *  RE-ASSERTED ONLY WHERE SOMETHING WAS COMPUTED. A key the typed config never set is absent from `options`
+ *  and the hatch still wins it outright — there is no guarantee to defeat in that case, which keeps this from
+ *  quietly becoming a blocklist. */
+const SERVER_OWNED = ["cwd", "disallowedTools", "canUseTool", "onElicitation"] as const;
+
 // Produces a plain object that is structurally the SDK `Options`.
 export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   const settings = resolveSettings(config);
@@ -106,7 +130,9 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.includeHookEvents !== undefined) options.includeHookEvents = config.includeHookEvents;
   if (config.promptSuggestions !== undefined) options.promptSuggestions = config.promptSuggestions;
   if (config.agentProgressSummaries !== undefined) options.agentProgressSummaries = config.agentProgressSummaries;
-  return { ...options, ...(config.extraOptions ?? {}) };
+  const merged = { ...options, ...(config.extraOptions ?? {}) };
+  for (const key of SERVER_OWNED) if (key in options) merged[key] = options[key];
+  return merged;
 }
 
 /** The permission mode the engine will ACTUALLY start in for this config — the host's initial mode

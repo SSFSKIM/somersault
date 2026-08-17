@@ -237,6 +237,17 @@ export interface ThreadRecord {
                                  // the fleet's label for a running session, the other a client's label for
                                  // a persisted conversation, and merging them would let a rename here
                                  // silently disagree with `ccx fleet list`.
+  /** M4 §review: set on a thread `review/start` raised, naming the thread it was raised TO REVIEW. It is
+   *  what makes a review thread recognisable as one — the record is otherwise an ordinary thread with an
+   *  ordinary turn, which is the whole mechanism (review.ts).
+   *
+   *  A CLIENT-FACING MARKER, and only that. The harvester reads none of it: it is installed for one known
+   *  turn on one known record and never consults this field, so nothing server-side would notice its
+   *  absence. What makes it earn its place is being PUBLISHED — `threadView` (server.ts) carries it onto
+   *  `thread/started` and `thread/list`, which is how a client tells a review thread from an ordinary one,
+   *  including one it did not raise itself. Absent on every other thread, the reviewed target included: it
+   *  points one way, from review to subject. */
+  reviewOf?: string;
   epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
                                  // ONLY by M2b's rewind engine swap (spec D-M2-8) — every later task that
                                  // needs "am I still talking to the current engine" reads this, not a

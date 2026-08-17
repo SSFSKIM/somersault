@@ -158,3 +158,48 @@ describe("resolveOptions", () => {
     expect(bare).not.toHaveProperty("forkSession");
   });
 });
+
+// `extraOptions` is spread LAST and is meant to win — it is the escape hatch for SDK options this config has
+// no first-class field for. But the config it merges into is not always written by the same actor: the app
+// server BUILDS a config around a client-supplied one (server.ts's `buildConfig`, review.ts's `reviewConfig`),
+// and for those keys "the escape hatch wins" means a client can reach in and switch off a guarantee the
+// server established on someone else's behalf. So a short list of keys is re-asserted after the merge — and
+// only when the server actually computed one, which is what keeps the hatch open everywhere it defeats
+// nothing.
+describe("resolveOptions — extraOptions cannot defeat a server-established guarantee", () => {
+  const broker = { request: async () => ({ kind: "deny" as const }) };
+  const onElicitation = async () => ({ action: "cancel" as const });
+
+  it("keeps the computed cwd — the isolation boundary a review's re-rooting rests on", () => {
+    const o: any = resolveOptions({ cwd: "/repo/target", extraOptions: { cwd: "/etc" } });
+    expect(o.cwd).toBe("/repo/target");
+  });
+
+  it("keeps the resolved disallowedTools — the read-only policy is not a suggestion", () => {
+    const o: any = resolveOptions({ disallowedTools: ["Edit", "Write"], extraOptions: { disallowedTools: [] } });
+    expect(o.disallowedTools).toEqual(["Edit", "Write"]);
+  });
+
+  it("keeps the permission gate wired, so no client can unhook canUseTool", () => {
+    // The whole park-a-decision keystone hangs off this one option: nulled, every tool call the engine makes
+    // is auto-approved with no decision ever reaching a client.
+    const o: any = resolveOptions({ permissionBroker: broker, extraOptions: { canUseTool: null } });
+    expect(typeof o.canUseTool).toBe("function");
+  });
+
+  it("keeps the elicitation bridge wired, so no client can disable it", () => {
+    const o: any = resolveOptions({ onElicitation, extraOptions: { onElicitation: null } });
+    expect(o.onElicitation).toBe(onElicitation);
+  });
+
+  it("still lets the escape hatch win for an ordinary key, and for a reserved key nobody claimed", () => {
+    // Reversing the spread wholesale would break the hatch's whole purpose, so the reservation is narrow in
+    // both directions: any other key still wins, and even a reserved key wins when the server computed no
+    // value for it — there is no guarantee to defeat in that case.
+    const ordinary: any = resolveOptions({ title: "typed", extraOptions: { title: "escape-hatch", someFutureOption: 1 } });
+    expect(ordinary.title).toBe("escape-hatch");
+    expect(ordinary.someFutureOption).toBe(1);
+    const unclaimed: any = resolveOptions({ extraOptions: { cwd: "/somewhere" } });
+    expect(unclaimed.cwd).toBe("/somewhere");
+  });
+});

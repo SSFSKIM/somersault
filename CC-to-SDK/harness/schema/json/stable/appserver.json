@@ -395,6 +395,70 @@
                 "kind"
               ],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "elicitation_accept"
+                },
+                "content": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "elicitation_decline"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "elicitation_cancel"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
             }
           ]
         },
@@ -1224,6 +1288,106 @@
       },
       "required": [
         "threadId"
+      ],
+      "additionalProperties": false
+    },
+    "review/start": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "uncommittedChanges"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "baseBranch"
+                },
+                "branch": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                }
+              },
+              "required": [
+                "type",
+                "branch"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "commit"
+                },
+                "sha": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 1024
+                }
+              },
+              "required": [
+                "type",
+                "sha"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "custom"
+                },
+                "instructions": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20000
+                }
+              },
+              "required": [
+                "type",
+                "instructions"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "delivery": {
+          "default": "detached",
+          "type": "string",
+          "enum": [
+            "detached",
+            "inline"
+          ]
+        }
+      },
+      "required": [
+        "threadId",
+        "target"
       ],
       "additionalProperties": false
     }

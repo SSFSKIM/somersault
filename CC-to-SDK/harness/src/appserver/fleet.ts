@@ -19,6 +19,7 @@
 import { listRoster, readRoster, TERMINAL } from "../fleet/roster.js";
 import type { RosterRow } from "../fleet/roster.js";
 import { hostSocketPath } from "../fleet/paths.js";
+import { isPidLive } from "../fleet/liveness.js";
 import { collectFleet } from "../fleet/index.js";
 import type { HostStatus } from "../host/ops.js";
 import type { DecisionOutcome } from "../permissions/types.js";
@@ -345,6 +346,17 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
  *  releases the replay after (§1e's activation protocol), which is the whole reason this is not one
  *  function with the handler. */
 async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord> {
+  // IDENTITY, TWICE, because a socket is addressed by PID and a pid is not an identity (peer review PF1). A
+  // host that crashed leaves a NONTERMINAL row behind it, and the OS hands that pid to whatever starts next
+  // — which on this machine is very often another ccx host. Dialled blind, `thread/attach` on the dead
+  // session's short adopts a stranger's live conversation and the client drives it believing it is the one
+  // it named.
+  //
+  // FIRST, `thread/resume`'s own check (server.ts), which this path simply did not have: the roster's copy
+  // of the host's `ps -o lstart=` stamp against the pid's actual one. A row with no stamp reads live (a host
+  // that could not read its own start warns about exactly this, host.ts), so this refuses nothing it is not
+  // sure of.
+  if (!await isPidLive(row.pid, row.procStart)) throw new Error(`roster row ${row.short} is stale — pid ${row.pid} is no longer the process that recorded it`);
   const engine = await connectFleetEngine(hostSocketPath(row.pid));
   try {
     // The settings mirror seeds from the host's own `status` BEFORE the record publishes. The follow
@@ -352,6 +364,14 @@ async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord>
     // barrier until after the reply — so without this read the attach reply would describe a thread whose
     // model and permission mode it has not learned yet.
     const st = await engine.sendOp<{ ok: boolean } & Partial<HostStatus>>({ op: "status" });
+    // SECOND, and the load-bearing one: the socket's OWN testimony, which cannot be raced. The pre-dial
+    // check above is a snapshot — the process may die and its pid be reused between that answer and this
+    // connection — whereas the host answering here is by definition the host we are holding open. `short`
+    // and not `sessionId`: a host that resumed or cleared is running a conversation its roster row has not
+    // caught up with yet (the row is re-stamped on the next turn, host.ts's runTask), and refusing that
+    // would refuse a legitimate attach to the very host the row names. Refused only on a POSITIVE mismatch:
+    // a host predating the field reports no `short` at all, and "cannot say" is not "not you".
+    if (st.short !== undefined && st.short !== row.short) throw new Error(`roster row ${row.short} is stale — the socket at pid ${row.pid} belongs to session ${st.short}`);
     const record: ThreadRecord = {
       id: srv.registry.mint(), origin: "fleet", session: engine, unattended: "park",
       busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],

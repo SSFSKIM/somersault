@@ -1,0 +1,345 @@
+# M4 — the review domain (agent app-server)
+
+**Status:** design, awaiting approval. Grounded by three research passes and one live probe, all committed
+on `m4-review`.
+
+## Why this, and why now
+
+M3 made the app server a fleet surface: a browser console or IDE can list, adopt, drive and stop sessions
+it did not spawn (58 methods / 26 notifications). The remaining Codex-only domains are review, config
+write, thread search/archive, and a reverse-request channel. **Review is first** because it is the one
+with a clear user-facing payoff, no architectural conflict, and — as the grounding showed — a surface so
+small that most of the work is representation rather than machinery.
+
+The purpose is narrow and worth stating plainly: **a client can ask a thread to review a target and
+receive findings it can render** — anchored to file and line, severity-tagged, and stable enough to drive
+a UI. Not "run a review command and print text".
+
+## What Codex actually ships (grounded, not assumed)
+
+From `grounding/2026-08-13-codex-review-domain-ground.md` (~150 cited references):
+
+- **One method.** `review/start {threadId, target, delivery?}` → `{turn, reviewThreadId}`
+  (`app-server-protocol/src/protocol/common.rs:908-912`, params in `protocol/v2/review.rs:17-37`). No
+  cancel, no list, no review-specific notification — it reuses `turn/started`, `item/*`, `turn/completed`.
+- **The unit of work is a target descriptor, not a diff** (`protocol/v2/review.rs:39-64`): four variants —
+  `uncommittedChanges`, `baseBranch{branch}`, `commit{sha,title?}`, `custom{instructions}`. Codex never
+  computes or injects a diff; it writes an English prompt naming the target and lets the reviewing agent
+  run `git` through its own shell tool. The only host-side git is a `merge-base` subprocess for the
+  base-branch case.
+- **Two delivery paths.** *Inline* runs a child Codex session with a replaced system prompt and splices
+  its event stream onto the parent turn by re-stamping every event with the parent turn id
+  (`core/src/tasks/review.rs:95-181`). *Detached* forks a thread and runs an ordinary turn pointed at a
+  bundled review skill.
+- **Findings never reach a client structured.** `ReviewFinding` (title, body, confidence, priority, path,
+  line range) exists only inside `codex-core` and is flattened to one plain-text string before delivery;
+  it appears nowhere in the generated v2 JSON schema. Codex sends the model no schema at all and recovers
+  structure with a three-step JSON-scraping fallback.
+
+## What we ship
+
+### The surface
+
+`review/start {threadId, target, delivery?}` → `{turn, reviewThreadId}` — **Codex's shape verbatim**,
+including the four target variants. Adopting the names costs nothing and keeps the parity scorecard
+legible; inventing our own would make every future comparison a translation exercise.
+
+### The mechanism (this is the part that differs, and it is simpler)
+
+A review is **an ordinary turn** on a review thread, driven by a generated prompt that names the target
+and instructs the model to report via `ReportFindings`. There is no child session, no event re-stamping,
+no second engine loop.
+
+Findings are harvested by **intercepting the `ReportFindings` tool_use on the frame stream the app server
+already maps into items**, reading the findings out of the tool call's `input`. Probe 109 settled every
+premise this rests on against the live SDK (0.3.227): the tool is present and callable in a default
+headless session, the model calls it off a plain instruction with no review-specific system prompt, the
+payload rides `tool_use.input` and matches the declared shape, and the call completes cleanly. The model
+also fetched the subject itself via `Bash` and `Read` — the same "agent gets its own diff" shape Codex
+uses, which is why **no server-owned git/diff seam is needed** for the model to see code.
+
+The consequence is that **we ship structured findings where Codex ships a flattened string.** That is a
+deliberate improvement on the thing we are porting, not a port of it, and it is available precisely
+because our engine already has a native findings contract that Codex's does not.
+
+### Wire representation
+
+- A typed **`review/findings`** notification carrying the harvested array (`file`, `line`, `summary`,
+  `short_summary`, `failure_scenario`, `category`, `verdict`, `outcome`) plus the effort `level`.
+- A **review item** in the existing item stream, so a client that only subscribes to items still renders
+  the review inline with the rest of the turn.
+- Everything else is the existing turn lifecycle: `turn/started` → items → `turn/completed`.
+
+### Prose fallback
+
+Probe 109 proves the channel exists and is well-formed; it does not prove the model *always* calls the
+tool. When a review turn ends with no `ReportFindings` call, the assistant prose is delivered as the
+review result with `findings: []` and an explicit `unstructured: true` marker — honest about what
+happened rather than reporting "no defects found".
+
+### Base-branch resolution
+
+`baseBranch` needs a merge-base, which the model cannot be trusted to compute consistently. The host
+resolves it once and names the resulting range in the prompt. **Prior art to reuse rather than rebuild:**
+`CC-to-SDK/claude-plugin-codex/plugins/claude-companion/` already contains a tested 346-line pure-git diff
+module with a merge-base resolver and a diff-sizing rule, plus review prompts and a findings JSON Schema.
+
+## Acceptance (behavior, not implementation)
+
+1. A client calls `review/start` with `uncommittedChanges` against a thread in a dirty repo and receives
+   `{turn, reviewThreadId}`; a `review/findings` notification then arrives whose findings each carry a
+   `file` that exists in that repo and a `summary`.
+2. A planted defect is found: a file with a known off-by-one produces at least one finding anchored to
+   that file with a `failure_scenario` naming concrete inputs.
+3. `baseBranch` against a branch with two commits reviews the range from the merge-base, not the whole
+   history — a file changed only on the base branch produces no finding.
+4. A review that ends without a `ReportFindings` call yields `findings: []` with `unstructured: true` and
+   the prose retained — never a silent "clean".
+5. `delivery: "inline"` is refused with a specific, actionable error naming detached as the supported
+   path (M4 scope; see D-M4-2).
+6. The scorecard's drift gate stays green with the new method rowed, and the generated JSON-Schema
+   artifacts include the review types.
+7. **An MCP elicitation raised by a real server reaches a client as a parked decision, and the client's
+   answer reaches the server.** Added 2026-08-16 — this section was written before the owner folded
+   elicitation into M4, and every item above it covers only the review half. Drive it through the public
+   surface: register a stdio MCP server on a thread, have the model call a tool that elicits, observe a
+   `decision/requested` of kind `elicitation`, answer it with `decision/respond`, and assert the accepted
+   content comes back out in the tool's own result. The unit tests for this cannot substitute — they
+   invoke `onElicitation` directly and so prove only that we PUT the handler in the config, never that the
+   engine calls it through our path, which is the exact declared-vs-reachable gap this project's
+   live-probe-first discipline exists to catch. Two constraints are already settled and must be honored
+   rather than rediscovered: elicitation works only for **stdio** MCP servers (an in-process SDK-type
+   server answers "Client does not support form elicitation" — probe 43, which is why probe 43b exists),
+   and the fail-closed teardown case stays at the unit level, where a torn-down park can be forced
+   deterministically.
+
+## Decision Log
+
+- **D-M4-1 — Structured findings, not Codex-parity text.** Rejected: flattening to a string for strict
+  parity. The whole reason to have a findings contract is to drive a UI, our engine hands us one for free
+  (probe 109), and the scorecard tracks capability, not byte-identical output. We have deviated
+  deliberately before on the same reasoning (decisions-as-state over reverse-RPC).
+- **D-M4-2 — Detached delivery only in M4.** Rejected: (a) *inline as an ordinary turn on the caller's
+  thread* — cheap, but it contaminates the conversation with review content, which is exactly what
+  Codex's child session exists to prevent; (b) *child-session splice* — closest to Codex, but it depends
+  on re-stamping a child's events onto a parent turn, which the SDK does not let us do. Inline is
+  deferred to a later increment, refused explicitly rather than silently degraded.
+- **D-M4-3 — No server-owned diff seam.** Rejected: the server computing a diff and injecting it. Probe
+  109 shows the agent fetches its own subject, and `thread/shellCommand` is display-only by design, so a
+  server-injected diff would mean a new seam for no gain.
+- **D-M4-4 — Adopt Codex's method and target names verbatim.** Rejected: our own vocabulary. Parity
+  legibility is worth more than naming taste here.
+- **D-M4-5 — Review turns park like any other turn.** Rejected: a "never ask for approval" clamp of the
+  kind Codex has. Our decisions-as-state park is the honest behavior for a detached review, and Codex's
+  own clamp has questionable reliability (their app-server test expects approval prompts during a review
+  — flagged as an open question in the grounding).
+- **D-M4-6 — MCP elicitation becomes a fourth decision kind.** See the open fork below; this is the one
+  genuine adoption to come out of the reverse-request scoping.
+- **D-M4-7 — A subagent's findings are the review's findings; `review/findings` is additive.** Surfaced
+  during execution, not design. The app server already has a route that reads a tool call's input off the
+  frame stream — `routeTodo` for `TodoWrite` (`appserver/router.ts:199-220`) — and it deliberately DROPS
+  frames carrying `parent_tool_use_id`, because a subagent's private todo list is not the main turn's.
+  Harvesting inherits that stream but must not inherit that reflex: a reviewing agent is free to dispatch
+  subagents (`ReportFindings` is written for precisely that fan-out shape), and a finding from a subagent
+  of the review is a finding about the review's subject. Rejected: mirroring the TodoWrite guard — it
+  would make a review that delegated report nothing at all while its prose said otherwise, which is the
+  silent all-clear D-M4-1's fallback exists to prevent, reached by a different route. Two consequences
+  follow and are specified rather than left to the implementer: **one notification per harvested frame,
+  additive** — a client appends, and no notification supersedes an earlier one — and the
+  "did anything report?" latch is set by any harvest, nested included, so the `unstructured: true`
+  fallback fires only when literally nothing reported. *Per frame, not per call*: the harvester merges
+  every `ReportFindings` block within one assistant message (Task 4's review found that reading only the
+  first silently dropped the rest), so a frame is the unit that reaches the wire. The additive contract is
+  what matters to a client; how many tool calls a given frame happened to carry is not something it should
+  have to reason about.
+
+- **D-M4-8 — Elicitation reaches threads the app server starts, NOT fleet-adopted ones.** Surfaced during
+  execution and worth stating rather than leaving to be discovered. The three elicitation outcome kinds
+  ride the app server's own wire, but not the ccx host's (`src/host/ops.ts`'s answer union), so a thread
+  ADOPTED from a running host cannot carry an elicitation park end to end. Rejected: extending the host
+  wire in M4. It is not the one-line change it first appears to be — a fleet thread's session belongs to
+  the host, not to us, so the host would have to install its own `onElicitation` bridge and forward parks
+  across the socket, which is its own increment. Acceptance item 7 is unaffected: it exercises a thread the
+  app server starts, which is where the capability actually lands. The honest summary is that M4 makes
+  elicitation reachable through the control plane for the threads the control plane owns.
+
+- **D-M4-9 — A torn-down elicitation is CANCELLED, not DECLINED.** Raised by Task 7's reviewer, decided by
+  the controller; a one-line change if the owner disagrees. MCP separates `decline` ("the user explicitly
+  declined") from `cancel` ("dismissed without making an explicit choice"), and a server may reasonably
+  treat the first as definitive and the second as retryable. Teardown, a closed thread, and the
+  unattended-deny path all settle a park with the universal `{kind:"deny"}` — nobody declined anything
+  there. Rejected: keeping `decline` (the plan's original mandated test). The complication that makes this
+  a judgment call rather than a bug fix is that `deny` is ALSO a legal client answer for an elicitation
+  park, and the mapper cannot see the `by:"system"` marker that would separate the two sources. Decided on
+  the asymmetry of the two errors: reporting a refusal the user never made FABRICATES a decision, while
+  reporting "dismissed" for a client's generic refusal merely understates one — and a client that means
+  decline already has `elicitation_decline`, which still maps to `decline`. Not asserting a result nobody
+  asserted is the same principle as D-M4-1's honest fallback. Fail-closed is unaffected either way:
+  `cancel` is equally a real `ElicitResult`, so the MCP server is still answered rather than left hanging.
+
+- **D-M4-10 — A schema-violating `elicitation_accept` is REFUSED at `decision/respond`, not settled and
+  then downgraded.** Raised by the final external review (F4) and **client-visible, which is why it is a
+  decision and not an implementation detail**: `decision/respond` gains a new `-32602` refusal, and the park
+  stays listed and answerable afterwards. The original shape validated the answer inside the elicitation
+  callback, one step too late — by then the handler had replied `{ok:true}` and broadcast
+  `decision/resolved {elicitation_accept}`, so every client and every audit log recorded an acceptance the
+  MCP server was then told to `decline`. Rejected: publishing a corrected outcome afterwards, which puts two
+  `decision/resolved` events on the wire for one decision and leaves a reader to guess which is the record.
+  Waiting costs nothing, and that is the whole argument — the MCP server was already blocked on this park
+  and stays exactly as blocked, which is the only honest state until an answer it can actually use arrives.
+  The callback-side check remains as the fail-closed backstop for the settlements that never pass through
+  the handler (a fleet host's forwarded answer, teardown, the abort listener), sharing one predicate with
+  the new pre-settle check so the two cannot drift apart again. NOT applied on the fleet path: the
+  authoritative request lives on the host, we hold a mirrored view, and the host runs this same check.
+
+- **D-M4-11 — Client text bound for the model context is bounded at the schema, and four config keys are
+  the server's to own.** Two halves of one principle from the final review (F1, F2, F5, F6): a client may
+  choose things for itself, but not defeat a guarantee the server established on someone else's behalf.
+  Bounds, refused rather than truncated because a truncated scope reviews something the caller did not ask
+  for and returns it labelled as the review they requested: `branch`/`sha` 255 characters, `title` 1024,
+  `custom.instructions` 20 000 (~5k tokens — room for a couple of pages of real scope, an order of
+  magnitude below anything that threatens a 200k context). `sha` additionally must match a git
+  object-identifier shape, and every command the generated prompt spells shell-quotes the client value it
+  interpolates — `sha: "HEAD -- package.json"` otherwise re-scoped the review to one path, and a `branch`
+  is worse, since `$`, a backtick and `;` are all legal in a real ref while `Bash` is deliberately enabled
+  for a review thread. Ownership: `cwd`, `disallowedTools`, `canUseTool` and `onElicitation` are re-asserted
+  after `resolveOptions` merges the `extraOptions` escape hatch, and only where the server actually computed
+  one. Rejected: reversing the merge order, which would make every typed field beat the hatch and destroy
+  its purpose. The membership test is "a policy the server set for someone else" — the isolation boundary,
+  the read-only tool policy, and the two callbacks that are the only path a question takes to a human — not
+  "security-adjacent"; a `sandbox` or a `permissionMode` arriving by the hatch is the same client's own
+  choice by another route, so it still wins. Without this, a detached read-only review could be handed back
+  `Edit`/`Write`, be pointed at a different tree, or run with the elicitation bridge M4 claims to install
+  quietly set to `null`.
+
+## Open forks — BOTH RESOLVED 2026-08-13 (owner)
+
+1. **MCP elicitation RIDES ALONG in M4.** Our engine already supports elicitation (`onElicitation`,
+   live-verified by probe 43b) but the app server has no decision kind for it, so it is currently
+   unreachable through the control plane. Adding a fourth kind is small and converts the reverse-request
+   research into a shipped deliverable. → folded in as **D-M4-6**.
+2. **Detached-only delivery is ACCEPTED for the first release.** Inline is the delivery a UI most
+   naturally wants ("review this thread's work in place"), and deferring it means the first release is the
+   less obvious one — accepted knowingly, because the honest inline story needs an ephemeral session whose
+   findings are emitted onto the parent turn, which is its own increment and should not gate the domain
+   landing. → **D-M4-2** stands as written; `inline` is refused explicitly, never silently degraded.
+
+## Surprises & Discoveries
+
+- **The reverse-request channel largely dissolved on contact.** Of Codex's 11 reverse requests, four are
+  already covered by our park model, one (MCP elicitation) needs a decision *kind* rather than a channel,
+  five are Codex-internal (two of them dead code), and **exactly one** —
+  `item/tool/call`, where the client is the tool runtime — genuinely requires a server→client request,
+  and it is a feature we have never built. The evidence ran opposite to the assumption: Codex itself has
+  converged toward park-shaped behavior (broadcast approvals, first-answer-wins, byte-identical replay of
+  pending requests on resume) while keeping the failure modes a park avoids — no approval timeout, a
+  vanished client hangs the turn indefinitely, and their request path lacks the zero-connection guard
+  their notification path has.
+- **Codex's review domain is one method.** The expectation going in was a domain; it is a single request
+  reusing the turn lifecycle. Most of the adoption cost is representation, not machinery.
+- **The SDK already had the findings contract we were about to design.** `ReportFindings` has shipped all
+  along, default-on, and this project's standing policy recorded it as "rely-on, not consume".
+- **`disallowedTools` binds subagents, and `bypassPermissions` does not lift it** (probe 110, 2026-08-16).
+  A reviewer flagged the review's read-only claim as resting on an unverified premise: does denying the
+  edit tools also deny them to a subagent the review dispatches? It does. The SDK says so in its own
+  refusal text — "Edit is disabled for this session, in subagents as well as here" — the denied tools never
+  appear in the session's advertised tool list at all, and the permission broker is never consulted, so it
+  is a hard deny at session-build time rather than a permission decision. Nested subagents at depth 2 were
+  bound too. Two consequences: the read-only policy is stronger than the code claimed (it survives
+  `bypassPermissions`, which replaces the approval broker but cannot restore a denied tool), and the
+  remaining holes are exactly two — `Bash`, which a review needs for git, and MCP-namespaced write tools
+  inherited from the target's server topology, which three native tool names cannot reach. The probe
+  deliberately establishes nothing about `Bash`: no subagent ever attempted a shell write it was permitted
+  to make. Incidental: the dispatch tool is named `Agent` on the wire, not `Task`.
+
+## Outcomes & Retrospective
+
+**Shipped, and verified live: all seven acceptance obligations pass** (2026-08-17, keyed run). Leg 1
+uncommitted changes → findings naming real files (25s); leg 2 the planted off-by-one found and anchored
+with a concrete failure scenario; leg 3 the merge-base range honored, with a base-only file yielding no
+finding (46s); leg 4 a review with no `ReportFindings` call yielding `findings: []` **with**
+`unstructured: true` and the prose retained (21s); leg 5 `inline` refused by name; leg 6 the drift gate
+green with the review types in the generated artifacts; leg 7 an MCP elicitation parked, answered over the
+wire, and the answer observed arriving in the MCP tool's own result (7s). **Re-run 7/7 after the final
+review's fix wave** (2026-08-17), which touched four of the seven legs. Surface: **59 registered methods /
+90 scorecard rows / 27 notifications**, 220 unit files / 2854 tests, typecheck clean, drift gate green.
+
+**What the reviews were actually for.** Every one of the eight code tasks passed its own tests and then had
+a real defect found by an independent reviewer — and the pattern in what they found is the lesson. Four
+distinct instances of D-M4-1's rule (never report a silent all-clear) were violated in disguises no author
+recognized as that rule: a `ReportFindings` call with no `findings` key harvested as an authoritative empty
+report; a second `ReportFindings` block in one frame silently dropped; a subagent's findings discarded by a
+reflex copied from the TodoWrite route; and — the best find of the milestone — an **interrupted or failed
+review published as a clean one**, because an interrupt ends a turn through an ordinary terminal frame.
+That last one was proven by a reviewer building a scratch harness and interrupting a real review, not by
+reading. A rule stated once in a spec does not defend itself; it has to be re-derived at every new surface.
+
+**Then the external review found the fifth instance of the same rule — in the function a task review had
+already adjudicated.** The whole-branch review (Codex `gpt-5.6-sol`, 43 commits) returned six findings; the
+priority one was that a **non-empty findings array in which every entry is malformed** published as an
+authoritative clean review, because `reported` was set from the array's shape before any entry was
+validated. The Task 4 review had fixed the *absent-key* case in that same function and left the
+*present-but-unreadable* case standing one door further in. The distinction turned out to be three-way, not
+two: a literal `[]` is a real clean report (the prompt asks for it by name), a non-empty array yielding some
+entries reports those, and a non-empty array yielding none is a payload nothing can be read out of. This is
+the strongest available evidence for the paragraph above: five violations of one explicitly-stated rule, the
+last of them inside code written specifically to enforce it. **Cross-model eyes earned their place again** —
+as in M3, the reviews that found the cross-boundary defects were the ones run by a different model than
+wrote the code. Two of the six findings shared a single root cause (`resolveOptions` spread the client's
+escape hatch last, so a client could overwrite anything the server computed), which no per-finding reading
+would have connected. One finding was **widened during the fix**: `sha` was filed as the shell-injection
+channel, but `branch` is the same channel and strictly worse, since `$`, backticks and `;` are legal in real
+git refs and an existing test pinned them as accepted. And one citation was **not** treated as binding: the
+P0 label rested on `AGENTS.md`, which governs the Rust product rather than this TypeScript sub-project, so
+the finding was fixed on its merits — which were sound and independently corroborated by our own Task 2
+reviewer — without inheriting a severity from a rule that does not reach here.
+
+**Fix waves need their own review — now proven five times.** Five separate fixes closed their finding
+correctly and introduced a new defect doing it: a crash where the contract promised a graceful degrade, a
+fabricated failure reason for a process that never ran, a **quadratic scan reachable from unbounded client
+input** (8.2s of blocked single-threaded server at 200k characters), a flaky test whose reliability argument
+measured an event-loop timer instead of a wall clock, and a comment left stale by a sibling change.
+
+**And verification evidence needs auditing too.** Twice, a reviewer checked a *sabotage claim* — "I broke
+the guard and the test caught it" — and found it proved less than stated: once because the break removed two
+independent guards at once, once because the following `catch` masked the guard under test. Sabotage is only
+as good as the granularity of what was sabotaged. The habit that came out of it (break one guard at a time,
+count the failures) caught two hangs that had no test at all.
+
+**The environment lied last, and a control caught it.** The first keyed run failed 5 of 7 legs. Every
+model-dependent leg died in ~2.5s — too fast for a model behaving badly. Running an ordinary "reply PONG"
+turn on an ordinary thread as a CONTROL alongside the review turn showed both failing identically with
+`Your organization has disabled Claude subscription access for Claude Code`, which exonerated the entire
+domain in one measurement. Reproduced twice before escalating; the owner refreshed the token and the same
+code passed 7/7 unchanged. A red acceptance suite is a claim about the world, not necessarily about the
+code — and the cheapest way to tell them apart is a control that shares everything except the thing under
+test.
+
+**Deviations from Codex, both deliberate:** we ship structured findings where Codex flattens to a string
+(D-M4-1), and detached-only delivery for this release (D-M4-2). Neither is a shortfall in capability.
+
+**Carried forward, deliberately unshipped:** inline delivery; elicitation for fleet-*adopted* threads
+(D-M4-8, needs a host-side bridge); and one pre-existing cross-task bug this milestone only made visible —
+`thread/rewind` swaps engines without settling outstanding parks, so a client answering later resolves a
+promise whose awaiter is gone. It applies equally to permission parks and predates M4.
+
+## Revision Notes
+
+- 2026-08-13 rev 1: initial design, grounded by `2026-08-13-codex-review-domain-ground.md`,
+  `2026-08-13-reverse-request-scoping-ground.md`, `2026-08-13-our-review-substrate-ground.md`, and probe
+  109.
+- 2026-08-16 rev 3: added **acceptance item 7**. The acceptance section predates the owner's decision to
+  fold elicitation into M4, so all six original items covered only the review half and the elicitation
+  half would have shipped on unit tests that invoke `onElicitation` directly — proving we populate the
+  config, not that the engine ever calls it. Probe 43b already established the live path exists for stdio
+  servers; item 7 is what proves it exists *through the app server*.
+- 2026-08-17 rev 4: added **D-M4-10** (a schema-violating `elicitation_accept` is refused before the
+  decision settles) and **D-M4-11** (client strings bound at the schema; four config keys the `extraOptions`
+  escape hatch may not overwrite) after the final whole-branch external review. Both are recorded as
+  decisions rather than fixes because both change what a client observes: `decision/respond` gains a refusal
+  that leaves the park answerable, and `review/start` gains four length bounds plus a shape rule on `sha`.
+- 2026-08-16 rev 2: added **D-M4-7** (nested findings are harvested; `review/findings` is additive) after
+  reading the harvest substrate during execution. The design said "intercept the `ReportFindings`
+  `tool_use` on the frame stream the app server already maps into items" without saying what happens when
+  that call comes from a subagent of the review — and the only existing route of that shape answers the
+  opposite way. Left unstated, the plan's Task 6 would have been implemented either way by reflex.

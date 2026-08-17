@@ -6,7 +6,12 @@ import type { FleetState } from "../fleet/roster.js";
  *  mirroring client must be able to tell "unset" from "set". Without them a foreign client's `set_model`
  *  could never reach another client's mirror: `status`/`state` is the only settings channel there is, and it
  *  carried the mode alone. */
-export interface HostStatus { state: FleetState; status: "busy" | "idle"; waitingFor?: string; sessionId?: string; permissionMode?: string; model?: string; thinkingTokens?: number }
+/** `short` is the host's OWN roster key, and the one field here that never moves for the life of the
+ *  process — which is why the attach path (appserver/fleet.ts) identifies a socket by it and not by
+ *  `sessionId`: a host that resumed or cleared is running a different conversation than the roster row it
+ *  is still described by, and refusing THAT would refuse a legitimate attach to the very same host.
+ *  Optional so a host predating the field reports none, which reads as "cannot say", never as a mismatch. */
+export interface HostStatus { state: FleetState; status: "busy" | "idle"; waitingFor?: string; short?: string; sessionId?: string; permissionMode?: string; model?: string; thinkingTokens?: number }
 const decisionKind = z.enum(["allow_once", "allow_always", "deny"]);
 // One SDK PermissionUpdate, carried verbatim (permissions/types.ts PermissionUpdateLike): an opaque
 // record ON PURPOSE — the engine authors these and we echo them back, so the wire must not reshape or

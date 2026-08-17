@@ -9,7 +9,9 @@ import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
 import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
+import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
+import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 import type { PendingDecision } from "../permissions/pending.js";
 import { turnStart, turnInterrupt, turnSteer, requestInterrupt } from "./turns.js";
 import { flushQueue } from "./queue.js";
@@ -28,6 +30,7 @@ import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionR
 import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
+import { reviewStart } from "./review.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -101,7 +104,12 @@ export interface ConnCtx {
  *  `fs/search` roots itself on this value too, a client passing it back as a search root.
  *  `short`/`name` are the roster's own handles and
  *  exist for fleet threads only; the keys are OMITTED (not undefined) on inProcess rows, which keeps this
- *  view's key set identical to sessionLib.ts's store-only projection for every row that predates M3. */
+ *  view's key set identical to sessionLib.ts's store-only projection for every row that predates M3.
+ *  `reviewOf` (M4 §review) is omitted the same way, and rides HERE rather than on `review/findings`: what a
+ *  thread is a review OF is a property of the thread, so one appearance on the row every client already
+ *  reads — `thread/started`, `thread/list` — is what lets a client identify a review thread at all,
+ *  including one another client raised. On the notification instead it would repeat a constant on every
+ *  message and still leave a thread list unable to tell the two kinds apart. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
   const waitingOn = srv.pendingDecisions(r.id).length > 0;
   return {
@@ -117,6 +125,7 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     status: threadStatus(r, waitingOn),
     queueDepth: r.queue.length,
     origin: r.origin,
+    ...(r.reviewOf ? { reviewOf: r.reviewOf } : {}),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     preview: undefined,
@@ -124,9 +133,11 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
 }
 
 /** The one seam thread/start and thread/resume both build their engine config through — extended in
- *  Task 7 to inject the thread's decision broker as the SDK's canUseTool seam. */
-function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "park" | "deny" }, broker: PermissionBroker): OpenSessionConfig {
-  return { ...(parsed.config as OpenSessionConfig | undefined), permissionBroker: broker };
+ *  Task 7 to inject the thread's decision broker as the SDK's canUseTool seam, and in M4 Task 8 to inject
+ *  the elicitation bridge as the SDK's `onElicitation` seam. The two are siblings: both turn a question the
+ *  engine would otherwise have to ask a connected client into a parked decision any client can answer. */
+function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "park" | "deny" }, broker: PermissionBroker, onElicitation: OnElicitation): OpenSessionConfig {
+  return { ...(parsed.config as OpenSessionConfig | undefined), permissionBroker: broker, onElicitation };
 }
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -207,8 +218,15 @@ export class AppServer {
    *  the resume reserved first (the delete is refused here) or the delete reserved `deletingSessions` first
    *  (the resume is refused at arrival / in `startThread`). The resume handler owns the add/remove and
    *  removes in a `finally`. Empty in the common no-roster-candidate case — that path never probes, so it
-   *  reaches `startThread` in its own dispatch tick with no window to reserve against. */
-  readonly resumingSessions = new Set<string>();
+   *  reaches `startThread` in its own dispatch tick with no window to reserve against.
+   *
+   *  A REFCOUNT, not a set of ids (peer review PF2): two resumes for ONE sessionId can be inside their
+   *  probes at the same time, and a shared entry deleted by whichever settles first reopens this very
+   *  window for the other — a delete then sees no reservation and no live record (the second resume has
+   *  not reached `startThread` yet) and erases the history it is about to admit onto. Held while ANY
+   *  holder is in flight, dropped at zero. Refusing the duplicate resume instead would also close it, but
+   *  a second resume of one session is legal and its refusal would be user-visible; the count is not. */
+  readonly resumingSessions = new Map<string, number>();
   /** M3 §1e: the attaches in flight, keyed by roster `short` — the reservation that makes two simultaneous
    *  `thread/attach` calls for one target collapse onto ONE admission (the second awaits the first's
    *  promise) instead of dialling the host twice and registering two threads for one session. Taken and
@@ -225,16 +243,7 @@ export class AppServer {
       if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadStartParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-      const threadId = srv.registry.mint();
-      const dec = srv.makeDecisions(threadId, parsed.data.unattended);
-      const config = buildConfig(parsed.data, dec.broker(threadId));
-      const factory = srv.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
-      const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
-      srv.decisions.set(threadId, dec);
-      const nowS = nowSec();
-      const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: parsed.data.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: parsed.data.config?.cwd as string | undefined, settings: seedSettings(parsed.data.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
-      srv.registry.add(record);
-      installRouter(srv, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
+      const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
       ctx.peer.reply(id, { thread: threadView(srv, record) });
       srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
     },
@@ -259,14 +268,17 @@ export class AppServer {
       // mutually exclusive even when a concurrent delete completes inside the probe (see resumingSessions
       // and sessionLib.ts's delete). Released in a `finally` — a refused probe must not reserve forever.
       if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
-      srv.resumingSessions.add(sessionId);
+      srv.resumingSessions.set(sessionId, (srv.resumingSessions.get(sessionId) ?? 0) + 1);
       try {
         for (const row of candidates) {
           if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
         }
         srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
       } finally {
-        srv.resumingSessions.delete(sessionId);
+        // MY hold, not the reservation (PF2): a sibling resume may still be inside its own probe, and the
+        // entry is gone only when the last of us leaves.
+        const held = (srv.resumingSessions.get(sessionId) ?? 1) - 1;
+        if (held > 0) srv.resumingSessions.set(sessionId, held); else srv.resumingSessions.delete(sessionId);
       }
     },
     "thread/list": threadList,
@@ -322,6 +334,21 @@ export class AppServer {
       // the view standing. It is the host's own `decision_settled` that removes it and names who won, so
       // there is no local `by` to stamp on this path at all.
       if (record.origin === "fleet") { await fleetDecisionRespond(ctx, id, record, { toolUseId: parsed.data.toolUseId, answer: outcome, abortTurn: parsed.data.abortTurn }); return; }
+      // M4 (final review): an `elicitation_accept` whose content satisfies the generic wire type but violates
+      // THIS request's `requestedSchema` is refused BEFORE anything settles. `elicitation.ts` used to catch it
+      // afterwards and answer the MCP server `decline` — by which point this handler had replied {ok:true} and
+      // broadcast `decision/resolved {elicitation_accept}`, so clients and audit logs recorded an acceptance
+      // that never happened. Refusing here keeps one story on the wire and costs nothing: the park stays
+      // listed and answerable, and the MCP server goes on waiting exactly as it already was, so a client can
+      // simply correct its answer. The predicate is elicitation.ts's own — one implementation, two call sites.
+      // NOT applied on the fleet path above: the authoritative request lives on the HOST, this server holds a
+      // mirrored view of it, and the host runs this same check when it settles its own park.
+      const parked = dec.pending().find((e) => e.toolUseID === parsed.data.toolUseId);
+      if (parked?.kind === "elicitation" && outcome.kind === "elicitation_accept"
+        && !elicitationContentSatisfies(parked.input as unknown as ElicitationRequest, outcome.content)) {
+        ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Answer content does not satisfy the elicitation's requestedSchema");
+        return;
+      }
       const by = `${ctx.clientName}#${ctx.connId}`; // server-stamped only — a client-supplied `by` is never read (spec §6)
       const result = dec.respond(parsed.data.toolUseId, outcome, by);
       if (!result.ok) {
@@ -444,6 +471,12 @@ export class AppServer {
     // was written for — the exemption lets a dead thread reach it, and the origin gate still answers
     // -33006 for a fleet one.
     "thread/reopen": threadReopen,
+    // M4 (§surface): Codex's whole review REQUEST surface is one method, and so is ours. It NAMES A THREAD
+    // but only to read where that thread runs — the review itself is an ordinary turn on a new thread — so
+    // it passes both dispatch gates and answers each honestly: -33005 applies (a dead thread is dead for
+    // everything a client can name on it, thread/shellCommand's precedent), while the origin gate never
+    // fires because a fleet thread's cwd is as reviewable as an inProcess one's.
+    "review/start": reviewStart,
   };
 
   private readonly token: string;
@@ -455,6 +488,31 @@ export class AppServer {
   constructor(opts: { token?: string } = {}, public readonly deps: AppServerDeps = {}) {
     this.authRequired = opts.token !== undefined;
     this.token = opts.token ?? "";
+  }
+
+  /** The FRESH-thread creation spine, extracted verbatim from the `thread/start` handler so M4's
+   *  `review/start` (review.ts) can raise its detached review thread the same way rather than assembling
+   *  its own: mint the id, mint the broker, build the config, build the engine, register the decisions and
+   *  the record, install the router. Everything EXCEPT the reply and the `thread/started` announcement,
+   *  which stay at the call sites because the two callers owe different ones — `thread/start` answers
+   *  `{thread}`, a review answers `{turn, reviewThreadId}` — and because the reply-then-broadcast ordering
+   *  `thread/start` has always had is then still visible where it happens.
+   *
+   *  Throws whatever the session factory throws (an invalid config); dispatch's own catch answers for it.
+   *  The `resume` sibling below is a separate spine on purpose: it admits a thread onto an EXISTING store
+   *  id, which brings the delete/resume reservation race with it — nothing this one can encounter. */
+  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny" }): ThreadRecord {
+    const threadId = this.registry.mint();
+    const dec = this.makeDecisions(threadId, opts.unattended);
+    const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
+    const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
+    const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
+    this.decisions.set(threadId, dec);
+    const nowS = nowSec();
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    this.registry.add(record);
+    installRouter(this, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
+    return record;
   }
 
   /** The one thread-admission spine shared by thread/resume and Task 12's thread/fork (sessionLib.ts) —
@@ -472,7 +530,7 @@ export class AppServer {
     if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
-    const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId)), resume: opts.resume };
+    const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
     const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
     this.decisions.set(threadId, dec);

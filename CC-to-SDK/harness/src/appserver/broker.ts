@@ -13,6 +13,11 @@ export const ANSWER_KINDS: Record<DecisionKind, ReadonlyArray<DecisionOutcome["k
   permission: ["allow_once", "allow_with_updates", "allow_always", "deny"],
   question: ["question_answer", "deny"],
   plan: ["plan_approve", "plan_reject", "deny"],
+  // M4: `deny` stays valid here for the reason it is valid everywhere — teardown settles EVERY kind that
+  // way — and it is load-bearing for elicitation specifically: `elicitationMap.ts` maps it to a real
+  // `{action:"cancel"}`, so a thread that closes on a parked elicitation answers the MCP server instead
+  // of leaving it waiting for its own timeout.
+  elicitation: ["elicitation_accept", "elicitation_decline", "elicitation_cancel", "deny"],
 };
 
 export type DecisionEvent =
