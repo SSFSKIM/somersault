@@ -4,6 +4,7 @@ import { proactiveConfig } from "../proactive/types.js";
 import type { ProactiveStatus } from "../proactive/types.js";
 import type { LimitState } from "../limits/classify.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
+import type { AssertType, ExactType, PermissionDecision } from "../permissions/types.js";
 
 export class DaemonError extends Error {}
 
@@ -81,6 +82,9 @@ const permissionDecision = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("allow_always") }),
   z.object({ kind: z.literal("deny"), feedback: z.string().optional(), reason: z.literal("declined").optional() }),  // BL6 discriminator — same wire, same gate
 ]);
+// SCHEMA-DRIFT GUARD (permissions/types.ts ExactType): this wire mirrors the PermissionDecision family
+// EXACTLY — the daemon broker answers permission consults only, and the whole outcome reaches the same gate.
+type _DaemonPermissionDecisionMatches = AssertType<ExactType<z.infer<typeof permissionDecision>, PermissionDecision>>;
 const pendingPermissionsOp = z.object({ op: z.literal("pending_permissions") });
 const permissionResponseOp = z.object({ op: z.literal("permission_response"), toolUseID: z.string(), decision: permissionDecision });
 // runtime MCP topology (W3.5) — JSON-safe configs only; SDK-type (in-process) servers cannot cross the UDS wire

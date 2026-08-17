@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import type { FleetState } from "../fleet/roster.js";
+import type { AssertType, DecisionOutcome, ExactType } from "../permissions/types.js";
 
 /** M3 §1a-c: `model` and `thinkingTokens` join `permissionMode` as host-published settings truth. All three
  *  are OPTIONAL for the same reason — a host that was never told one has nothing truthful to publish, and a
@@ -45,6 +46,13 @@ const structuredAnswer = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("plan_approve"), mode: planGrantMode, updatedPermissions: z.array(permissionUpdate).optional(), plan: z.string().optional(), feedback: z.string().optional() }),
   z.object({ kind: z.literal("plan_reject"), feedback: z.string().optional() }),
 ]);
+// SCHEMA-DRIFT GUARD (permissions/types.ts ExactType). This wire carries every DecisionOutcome member
+// EXCEPT the elicitation family: an MCP elicitation never reaches `canUseTool` and is answered through the
+// app server, so no host op ever names one. Written as an Exclude rather than a hand-listed set, so a NEW
+// non-elicitation outcome breaks this build instead of being silently stripped here at runtime.
+type HostAnswerKind = Exclude<DecisionOutcome["kind"], `elicitation_${string}`>;
+type _HostAnswerKindsCovered = AssertType<ExactType<z.infer<typeof structuredAnswer>["kind"], HostAnswerKind>>;
+type _HostAnswerFieldsMatch = AssertType<ExactType<z.infer<typeof structuredAnswer>, Extract<DecisionOutcome, { kind: HostAnswerKind }>>>;
 const withId = { id: z.number().int().nonnegative().optional() };
 export const hostOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("status"), ...withId }),

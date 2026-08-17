@@ -129,3 +129,22 @@ export interface PermissionRequest {
 export interface PermissionBroker {
   request(req: PermissionRequest): Promise<DecisionOutcome>;
 }
+
+// --- the schema-drift guard -------------------------------------------------------------------------
+// Three hand-kept zod mirrors of the outcomes above ride three different wires (host/ops.ts,
+// daemon/types.ts, appserver/schema/decisions.ts) and all three terminate at the same gate. Zod schemas
+// are VALUES, so a field added to a type here and missed in one of them is invisible to the compiler —
+// and invisible at runtime too, because zod silently STRIPS the undeclared key. That is not hypothetical:
+// BL6's own `reason` discriminator reached a live model as "No user is available to answer." for exactly
+// this reason, and only a keyed run found it. Each mirror now states its relation to these types as a type
+// alias, so the next omission is a red build instead of a live-only discovery.
+
+/** Type-level EXACT equality. Mutual assignability is not enough: an extra optional property is assignable
+ *  in both directions, so `{kind:"deny"; feedback?:string}` and `{…; reason?:"declined"}` would pass it and
+ *  the missing field would slip through. This is the standard identity probe — two conditional types are
+ *  the same type only when their checked types are identical. */
+export type ExactType<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+/** `type _Guard = AssertType<ExactType<A, B>>` — a type ALIAS, so the check emits nothing and costs nothing
+ *  at runtime. When the two drift it fails the build with `Type 'false' does not satisfy the constraint
+ *  'true'` on the guard's own line. */
+export type AssertType<T extends true> = T;
