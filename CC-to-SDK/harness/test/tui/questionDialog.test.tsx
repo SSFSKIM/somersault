@@ -233,6 +233,16 @@ describe("<QuestionDialog>", () => {
     render(<QuestionDialog req={{ input: {} }} onAnswer={() => {}} onDeny={() => { denies++; }} />);
     await waitFor(() => denies === 1);
   });
+
+  // BL6 review Minor 3: `onDeny` now means "a human refused" — it claims a present user to the model and
+  // ends the turn. A malformed payload nobody saw must not borrow that, so the mount guard has its own exit.
+  it("malformed input takes onMalformed when the caller offers one — never the human-decline callback", async () => {
+    let denies = 0, malformed = 0;
+    render(<QuestionDialog req={{ input: {} }} onAnswer={() => {}} onDeny={() => { denies++; }} onMalformed={() => { malformed++; }} />);
+    await waitFor(() => malformed === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(denies).toBe(0);
+  });
 });
 
 describe("parseQuestions", () => {

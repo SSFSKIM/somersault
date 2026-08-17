@@ -74,6 +74,22 @@ import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRu
 import type { PromptLatch } from "../hooks/promptLatch.js";
 import type { PastedMap } from "./editor.js";
 
+/** What became of ONE `resolveDecision` call (BL6 review Important 1). Three outcomes, and only the first
+ *  means "this client's answer is the one that settled the park":
+ *    · `settled` — the host applied our outcome. A caller may now act on the turn (the question decline
+ *      interrupts here, and only here).
+ *    · `already_answered` — another attached client won the race; `by` is who. Our keystroke changed nothing,
+ *      so anything it would have done to the turn belongs to THEIR answer, not ours.
+ *    · `failed` — the answer never landed: the request rejected (host death, the 10s deadline), the host
+ *      reported no such park, or there was nothing parked locally to answer. The park may still be live
+ *      host-side and the dialog stays up, so the turn must be left alone.
+ *  A discriminated result and not a boolean: the three arms are three different truths about the same
+ *  keystroke, and the callers that ignore it (every dialog but the question one) keep ignoring it. */
+export type DecisionAnswerResult =
+  | { status: "settled" }
+  | { status: "already_answered"; by: string }
+  | { status: "failed" };
+
 // F1 Task 2 role map: every line useChat itself emits is themed — failures `error`, the `! command`
 // echo `bashBorder`, and (W-C T14) the two queue warnings: the context escalation is `error`, the plan-usage
 // one `warning` — running out of context IS a failure of the turn, running low on plan quota is not.
@@ -2663,22 +2679,31 @@ export function useChat(
   }
   // Answer the head entry via the remote feed; the dialog clears/advances on the SETTLED event (dropPending),
   // never optimistically here — a race (someone else answered first) still needs the settle to land.
-  // Returns the ANSWER's own promise (BL6) so a caller that must act after the answer has left can sequence on
-  // it — the question dialog's Esc answers and then interrupts, and the two ops must reach the host in that
-  // order or the interrupt's park sweep settles the visible question before its real outcome arrives. It never
-  // rejects (the catch below is inside the chain), so an ignoring caller stays exactly as it was.
-  function resolveDecision(outcome: DecisionOutcome): Promise<void> {
+  // Returns WHAT BECAME OF THIS CLIENT'S ANSWER (BL6 + its review) so a caller that must act after the answer
+  // can both sequence on it and know whether it landed. The question dialog's Esc answers and then interrupts,
+  // and the two ops must reach the host in that order or the interrupt's park sweep settles the visible
+  // question before its real outcome arrives — but it must interrupt ONLY on `settled`: a lost race means
+  // another attached client legitimately answered and their turn must survive our keystroke, and a failed
+  // answer means the park is still live host-side with the dialog still up. The promise never rejects (the
+  // catch below is inside the chain), so an ignoring caller stays exactly as it was.
+  function resolveDecision(outcome: DecisionOutcome): Promise<DecisionAnswerResult> {
     const entry = pendingRef.current;
-    if (!entry || !hasDecisionFeed(session)) return Promise.resolve();
+    if (!entry || !hasDecisionFeed(session)) return Promise.resolve({ status: "failed" });
     answeredIds.current.add(entry.toolUseID);
-    return session.answerDecision(entry.toolUseID, outcome).then((r) => { if (r.alreadyAnsweredBy) notice(`answered by ${r.alreadyAnsweredBy}`); })
-      .catch((e) => {
+    return session.answerDecision(entry.toolUseID, outcome).then((r): DecisionAnswerResult => {
+      if (r.alreadyAnsweredBy) { notice(`answered by ${r.alreadyAnsweredBy}`); return { status: "already_answered", by: r.alreadyAnsweredBy }; }
+      // `{ok:false}` is the host's "no parked request" (host.ts:860) — the park was gone before we arrived,
+      // so nothing of ours settled it. Silent, as it has always been; only the classification is new.
+      return r.ok === false ? { status: "failed" } : { status: "settled" };
+    })
+      .catch((e): DecisionAnswerResult => {
         // A designed-for rejection path (host death mid-dialog, or the 10s request deadline on a wedged
         // host) — never leave this unhandled (F1: it used to crash the whole REPL). Un-mark it as ours so
         // a LATER settle of the same entry (the park is still live host-side — never cleared here) still
         // renders correctly instead of being mistaken for our own already-applied answer.
         answeredIds.current.delete(entry.toolUseID);
         notice(`✗ answer failed: ${(e as Error).message}`);
+        return { status: "failed" };
       });
   }
   // The "already applied" knowledge lives HERE, not in a ref inside ChatComposer: the composer unmounts

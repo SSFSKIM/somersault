@@ -23,7 +23,9 @@
 //     row is focused (Select.tsx's header), so every key falls through to the row.
 //   · THE "OTHER" ROW IS NO LONGER A MODE. It is a permanent `type:"input"` row of the list. Consequences:
 //     Enter on it with text submits that text (unchanged), Enter on it EMPTY cancels the whole question
-//     (upstream's `RLe` empty-submit rule, L397115-397118 — it used to just close the row), and a multiline
+//     (upstream's `RLe` empty-submit rule, L397115-397118 — it used to just close the row; canon routes that
+//     empty submit into the panel's OWN `onCancel`, the very handler Escape calls at L504083, so since BL6
+//     this gesture is a full decline and ends the turn), and a multiline
 //     paste is inserted rather than split at the first newline (our `InputText` drops the C0 bytes; upstream's
 //     `Vs` is genuinely multiline — recorded divergence).
 //
@@ -55,10 +57,17 @@ const OTHER = "__other__";
 const MULTI_FOOTER = "space toggle · ↓ to Submit · esc decline";
 const SINGLE_FOOTER = "↑↓/j/k · number · enter · esc decline";
 
-export function QuestionDialog({ req, onAnswer, onDeny }: {
+export function QuestionDialog({ req, onAnswer, onDeny, onMalformed }: {
   req: { input: Record<string, unknown>; subagentType?: string };
   onAnswer: (answers: Record<string, string>, response?: string) => void;
+  /** A HUMAN refused: Escape, or Enter on an empty Other row — canon's one handler for both (see the mount
+   *  effect's sibling below and Select's `submitInput`). */
   onDeny: () => void;
+  /** The mount-time guard for a payload with no `questions` array — a refusal NO HUMAN MADE. Separate from
+   *  `onDeny` because BL6 gave a decline consequences (it claims a present human and ends the turn), and
+   *  attributing those to a malformed tool call is a lie. Optional: it only differs from `onDeny` for a
+   *  caller whose deny carries that weight, and the one such caller (ChatApp's question arm) passes it. */
+  onMalformed?: () => void;
 }) {
   const questions = parseQuestions(req.input);
   const [qi, setQi] = useState(0);
@@ -105,8 +114,9 @@ export function QuestionDialog({ req, onAnswer, onDeny }: {
   };
 
   // Malformed/empty questions: auto-deny ON MOUNT (plan-review M7) — rendering null while `pending` is
-  // non-null would be an invisible dialog eating the next keypress.
-  React.useEffect(() => { if (!q) onDeny(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // non-null would be an invisible dialog eating the next keypress. Down `onMalformed`, not `onDeny`: no
+  // human saw this, so it must not claim one (BL6 review Minor 3).
+  React.useEffect(() => { if (!q) (onMalformed ?? onDeny)(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!q) return null;
   return (

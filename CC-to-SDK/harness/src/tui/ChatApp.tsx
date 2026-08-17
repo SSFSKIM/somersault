@@ -1539,7 +1539,22 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               //   SCOPE: questions only. A permission deny answers one tool call with the turn going on
               // around it (upstream's behaviour and ours), and the plan family already ends its own turn
               // from the gate's `interrupt` flag (wave 2 A4) — neither changes here.
-              onDeny={() => { void resolveDecision({ kind: "deny", reason: "declined" }).then(() => interrupt()); }} />
+              //   THE GESTURE IS ESCAPE **OR** ENTER ON AN EMPTY "OTHER" ROW, and canon makes them one
+              // keystroke deliberately: the question panel's Escape calls its `onCancel` prop (:504083), the
+              // panel hands that same prop to both list primitives (:504153/:504161), and the list answers an
+              // empty input-row submit with that prop again (`RLe`, :397115-397118). Both land on `NMn`
+              // (:504425-504431, wired at :504546) — the same telemetry, the same deny. So both must end the
+              // turn, and `Select`'s own default (onEmptySubmit absent → onCancel) already routes it here.
+              //   ONLY IF OUR ANSWER LANDED (review Important 1). `resolveDecision` reports which of three
+              // things became of it, and a lost race (`already_answered` — another attached client answered
+              // first) or a failed one (host death, the 10s deadline; the park is still live and the dialog
+              // stays up) must leave the turn alone. Interrupting either would abort a turn this keystroke
+              // never settled.
+              onDeny={() => { void resolveDecision({ kind: "deny", reason: "declined" }).then((r) => { if (r.status === "settled") interrupt(); }); }}
+              // A payload with no `questions` array is not a human decline: nobody saw a dialog. It answers
+              // the park so the engine is not left waiting, with the SYSTEM's bare deny — no `declined`, no
+              // interrupt (review Minor 3).
+              onMalformed={() => { void resolveDecision({ kind: "deny" }); }} />
           // `cwd` is the SESSION's working directory, not this process's — the kind routing and the Bash
           // body's rule summary both name it (permissionKind.ts). `directories` is the WHOLE working set —
           // the cwd plus every `/add-dir` grant — which is what the file body's in-directory test runs over
