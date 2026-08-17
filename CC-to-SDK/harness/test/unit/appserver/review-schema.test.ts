@@ -90,3 +90,77 @@ describe("review/start params — control characters in the git identifiers", ()
     expect(r.success).toBe(true);
   });
 });
+
+describe("review/start params — `sha` is an OBJECT IDENTIFIER, not a git argument list", () => {
+  // The control-character rule stops client text restructuring the PROMPT. It does not stop it restructuring
+  // a COMMAND the prompt tells the model to run in a shell, which is a different channel with a different
+  // grammar: `sha: "HEAD -- package.json"` carries no control character, passes every rule above, and turns
+  // `git show <sha>` into a review of one path instead of the commit — with `Bash` deliberately enabled, so a
+  // metacharacter appends a second command outright. Unlike `branch`, this field names an OBJECT, and no
+  // object name legitimately contains a space or a shell metacharacter, so the shape can simply be required.
+  const okSha = (sha: string) => reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha } }).success;
+
+  it("accepts the revision spellings a client legitimately sends", () => {
+    for (const sha of [
+      "abc123", "a".repeat(40), "a".repeat(64),         // abbreviated, sha-1, sha-256
+      "HEAD", "HEAD~3", "HEAD^2", "HEAD@{2}", "v1.2.3", "release/2026-08", "refs/tags/v1.2.3",
+      "abc123^{commit}", "HEAD:src/main.ts", "feature.branch-1_2",
+    ]) expect(okSha(sha), sha).toBe(true);
+  });
+
+  it("refuses a sha that carries a second argument or a shell metacharacter", () => {
+    for (const sha of [
+      "HEAD -- package.json", "HEAD --all", "abc123 abc456",   // a second git argument
+      "abc123;id", "abc123|sh", "abc123&&id", "abc123$(id)", "abc123`id`", "abc123>out", "abc123'x'",
+      "-abc123", "--upload-pack=x", "~abc",                    // leading dash/tilde: an option, or a shell expansion
+      "abc,123", "abc*", "abc[1]", "abc\\123", "abc#1", "abc!1",
+    ]) expect(okSha(sha), sha).toBe(false);
+  });
+
+  it("leaves branch and title as they were — neither can be narrowed the same way", () => {
+    // A `$` and a backtick are both legal in a git ref name, so a branch allowlist would refuse real branches;
+    // a commit subject is free text by definition. Those two are handled where they are actually interpolated
+    // — reviewPrompt.ts shell-quotes them inside the command text — and this file's earlier cases still stand.
+    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "baseBranch", branch: "user/fix$thing" } }).success).toBe(true);
+    expect(reviewStartParams.safeParse({ threadId: "th_1", target: { type: "commit", sha: "abc123", title: "fix: don't crash (#12)" } }).success).toBe(true);
+  });
+});
+
+describe("review/start params — the four client strings are BOUNDED", () => {
+  // Every one of them is copied into a single user message by `buildReviewPrompt`, i.e. straight into the
+  // model's context, and none had a maximum: the RPC frame cap (~256 KiB) was the only limit, so one
+  // `review/start` could ship a quarter-megabyte of client text to the model. The bound belongs HERE, at the
+  // boundary where client input stops being a string.
+  //
+  // REFUSED, NOT TRUNCATED, and that is the substantive half: a truncated scope is a review of something the
+  // caller did not ask for, reported as if it were the review they requested. Over-cap input takes the
+  // schema's ordinary invalid-params path instead.
+  const ok = (target: unknown) => reviewStartParams.safeParse({ threadId: "th_1", target }).success;
+  const x = (n: number) => "x".repeat(n);
+
+  it("bounds branch and sha at 255 — a git ref component's own conventional limit", () => {
+    expect(ok({ type: "baseBranch", branch: x(255) })).toBe(true);
+    expect(ok({ type: "baseBranch", branch: x(256) })).toBe(false);
+    expect(ok({ type: "commit", sha: x(255) })).toBe(true);
+    expect(ok({ type: "commit", sha: x(256) })).toBe(false);
+  });
+
+  it("bounds the commit title at 1024, far above any real subject line", () => {
+    expect(ok({ type: "commit", sha: "abc123", title: x(1024) })).toBe(true);
+    expect(ok({ type: "commit", sha: "abc123", title: x(1025) })).toBe(false);
+    expect(ok({ type: "commit", sha: "abc123", title: "" })).toBe(true);   // the empty-label rule is unchanged
+  });
+
+  it("bounds custom instructions at 20k characters — room to be useful, nowhere near context-threatening", () => {
+    expect(ok({ type: "custom", instructions: x(20_000) })).toBe(true);
+    expect(ok({ type: "custom", instructions: x(20_001) })).toBe(false);
+    expect(ok({ type: "custom", instructions: "review the auth flow" })).toBe(true);
+  });
+
+  it("counts CHARACTERS, so a multi-byte scope is not silently allowed several times the cap", () => {
+    // A 20k-character cap on a 4-byte-per-character payload is ~80 KiB, which is the intended reading: the
+    // cost that matters is tokens, and tokens track characters far better than they track bytes.
+    expect(ok({ type: "custom", instructions: "☃".repeat(20_000) })).toBe(true);
+    expect(ok({ type: "custom", instructions: "☃".repeat(20_001) })).toBe(false);
+  });
+});

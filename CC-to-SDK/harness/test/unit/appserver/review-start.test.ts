@@ -321,6 +321,34 @@ describe("review/start — gates", () => {
     expect(f.built.length).toBe(0);
   });
 
+  it("refuses over-cap scope text instead of truncating it into a different review", async () => {
+    // The client strings all land in one user message (reviewPrompt.ts), so the schema bounds them — and the
+    // handler's ordinary invalid-params path is where that bound has to surface. Truncating instead would
+    // review a prefix of what was asked for and report it as the review requested; refusing is a bad request
+    // the client can see. No thread and no engine are created for it.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "custom", instructions: "x".repeat(20_001) } });
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
+    expect(f.built.length).toBe(0);
+    expect(srv.registry.list().map((r) => r.id)).toEqual([t.id]);
+  });
+
+  it("refuses a `sha` carrying a second git argument", async () => {
+    // `sha: "HEAD -- package.json"` used to pass and made the prompt say `git show HEAD -- package.json`, so
+    // the review silently covered one path instead of the commit — and Bash is deliberately enabled, so the
+    // same channel carries shell metacharacters into a command the model was told to run.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo");
+    const id = send("review/start", { threadId: t.id, target: { type: "commit", sha: "HEAD -- package.json" } });
+    await settle();
+    expect(replyTo(id)?.error?.code).toBe(ERR.INVALID_PARAMS);
+    expect(f.built.length).toBe(0);
+  });
+
   it("refuses a target thread whose cwd is unknown instead of reviewing this server's own tree", async () => {
     // Runtime-reachable only for a malformed fleet roster row (registry.ts's `threadCwd`), and "I don't
     // know where that thread runs" is the honest answer — a fallback would silently review a different repo.

