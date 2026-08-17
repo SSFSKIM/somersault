@@ -177,6 +177,41 @@ module with a merge-base resolver and a diff-sizing rule, plus review prompts an
   asserted is the same principle as D-M4-1's honest fallback. Fail-closed is unaffected either way:
   `cancel` is equally a real `ElicitResult`, so the MCP server is still answered rather than left hanging.
 
+- **D-M4-10 — A schema-violating `elicitation_accept` is REFUSED at `decision/respond`, not settled and
+  then downgraded.** Raised by the final external review (F4) and **client-visible, which is why it is a
+  decision and not an implementation detail**: `decision/respond` gains a new `-32602` refusal, and the park
+  stays listed and answerable afterwards. The original shape validated the answer inside the elicitation
+  callback, one step too late — by then the handler had replied `{ok:true}` and broadcast
+  `decision/resolved {elicitation_accept}`, so every client and every audit log recorded an acceptance the
+  MCP server was then told to `decline`. Rejected: publishing a corrected outcome afterwards, which puts two
+  `decision/resolved` events on the wire for one decision and leaves a reader to guess which is the record.
+  Waiting costs nothing, and that is the whole argument — the MCP server was already blocked on this park
+  and stays exactly as blocked, which is the only honest state until an answer it can actually use arrives.
+  The callback-side check remains as the fail-closed backstop for the settlements that never pass through
+  the handler (a fleet host's forwarded answer, teardown, the abort listener), sharing one predicate with
+  the new pre-settle check so the two cannot drift apart again. NOT applied on the fleet path: the
+  authoritative request lives on the host, we hold a mirrored view, and the host runs this same check.
+
+- **D-M4-11 — Client text bound for the model context is bounded at the schema, and four config keys are
+  the server's to own.** Two halves of one principle from the final review (F1, F2, F5, F6): a client may
+  choose things for itself, but not defeat a guarantee the server established on someone else's behalf.
+  Bounds, refused rather than truncated because a truncated scope reviews something the caller did not ask
+  for and returns it labelled as the review they requested: `branch`/`sha` 255 characters, `title` 1024,
+  `custom.instructions` 20 000 (~5k tokens — room for a couple of pages of real scope, an order of
+  magnitude below anything that threatens a 200k context). `sha` additionally must match a git
+  object-identifier shape, and every command the generated prompt spells shell-quotes the client value it
+  interpolates — `sha: "HEAD -- package.json"` otherwise re-scoped the review to one path, and a `branch`
+  is worse, since `$`, a backtick and `;` are all legal in a real ref while `Bash` is deliberately enabled
+  for a review thread. Ownership: `cwd`, `disallowedTools`, `canUseTool` and `onElicitation` are re-asserted
+  after `resolveOptions` merges the `extraOptions` escape hatch, and only where the server actually computed
+  one. Rejected: reversing the merge order, which would make every typed field beat the hatch and destroy
+  its purpose. The membership test is "a policy the server set for someone else" — the isolation boundary,
+  the read-only tool policy, and the two callbacks that are the only path a question takes to a human — not
+  "security-adjacent"; a `sandbox` or a `permissionMode` arriving by the hatch is the same client's own
+  choice by another route, so it still wins. Without this, a detached read-only review could be handed back
+  `Edit`/`Write`, be pointed at a different tree, or run with the elicitation bridge M4 claims to install
+  quietly set to `null`.
+
 ## Open forks — BOTH RESOLVED 2026-08-13 (owner)
 
 1. **MCP elicitation RIDES ALONG in M4.** Our engine already supports elicitation (`onElicitation`,
@@ -225,8 +260,9 @@ with a concrete failure scenario; leg 3 the merge-base range honored, with a bas
 finding (46s); leg 4 a review with no `ReportFindings` call yielding `findings: []` **with**
 `unstructured: true` and the prose retained (21s); leg 5 `inline` refused by name; leg 6 the drift gate
 green with the review types in the generated artifacts; leg 7 an MCP elicitation parked, answered over the
-wire, and the answer observed arriving in the MCP tool's own result (7s). Surface: **59 registered methods
-/ 90 scorecard rows / 27 notifications**, 220 unit files / 2822 tests, typecheck clean.
+wire, and the answer observed arriving in the MCP tool's own result (7s). **Re-run 7/7 after the final
+review's fix wave** (2026-08-17), which touched four of the seven legs. Surface: **59 registered methods /
+90 scorecard rows / 27 notifications**, 220 unit files / 2854 tests, typecheck clean, drift gate green.
 
 **What the reviews were actually for.** Every one of the eight code tasks passed its own tests and then had
 a real defect found by an independent reviewer — and the pattern in what they found is the lesson. Four
@@ -237,6 +273,26 @@ reflex copied from the TodoWrite route; and — the best find of the milestone �
 review published as a clean one**, because an interrupt ends a turn through an ordinary terminal frame.
 That last one was proven by a reviewer building a scratch harness and interrupting a real review, not by
 reading. A rule stated once in a spec does not defend itself; it has to be re-derived at every new surface.
+
+**Then the external review found the fifth instance of the same rule — in the function a task review had
+already adjudicated.** The whole-branch review (Codex `gpt-5.6-sol`, 43 commits) returned six findings; the
+priority one was that a **non-empty findings array in which every entry is malformed** published as an
+authoritative clean review, because `reported` was set from the array's shape before any entry was
+validated. The Task 4 review had fixed the *absent-key* case in that same function and left the
+*present-but-unreadable* case standing one door further in. The distinction turned out to be three-way, not
+two: a literal `[]` is a real clean report (the prompt asks for it by name), a non-empty array yielding some
+entries reports those, and a non-empty array yielding none is a payload nothing can be read out of. This is
+the strongest available evidence for the paragraph above: five violations of one explicitly-stated rule, the
+last of them inside code written specifically to enforce it. **Cross-model eyes earned their place again** —
+as in M3, the reviews that found the cross-boundary defects were the ones run by a different model than
+wrote the code. Two of the six findings shared a single root cause (`resolveOptions` spread the client's
+escape hatch last, so a client could overwrite anything the server computed), which no per-finding reading
+would have connected. One finding was **widened during the fix**: `sha` was filed as the shell-injection
+channel, but `branch` is the same channel and strictly worse, since `$`, backticks and `;` are legal in real
+git refs and an existing test pinned them as accepted. And one citation was **not** treated as binding: the
+P0 label rested on `AGENTS.md`, which governs the Rust product rather than this TypeScript sub-project, so
+the finding was fixed on its merits — which were sound and independently corroborated by our own Task 2
+reviewer — without inheriting a severity from a rule that does not reach here.
 
 **Fix waves need their own review — now proven five times.** Five separate fixes closed their finding
 correctly and introduced a new defect doing it: a crash where the contract promised a graceful degrade, a
@@ -277,6 +333,11 @@ promise whose awaiter is gone. It applies equally to permission parks and predat
   half would have shipped on unit tests that invoke `onElicitation` directly — proving we populate the
   config, not that the engine ever calls it. Probe 43b already established the live path exists for stdio
   servers; item 7 is what proves it exists *through the app server*.
+- 2026-08-17 rev 4: added **D-M4-10** (a schema-violating `elicitation_accept` is refused before the
+  decision settles) and **D-M4-11** (client strings bound at the schema; four config keys the `extraOptions`
+  escape hatch may not overwrite) after the final whole-branch external review. Both are recorded as
+  decisions rather than fixes because both change what a client observes: `decision/respond` gains a refusal
+  that leaves the park answerable, and `review/start` gains four length bounds plus a shape rule on `sha`.
 - 2026-08-16 rev 2: added **D-M4-7** (nested findings are harvested; `review/findings` is additive) after
   reading the harvest substrate during execution. The design said "intercept the `ReportFindings`
   `tool_use` on the frame stream the app server already maps into items" without saying what happens when
