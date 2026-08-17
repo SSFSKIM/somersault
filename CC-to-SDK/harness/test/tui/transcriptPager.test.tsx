@@ -15,6 +15,7 @@ import { pagerChromeRows } from "../../src/tui/RegionPager.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
 import { remapRowOffset, sourceId, wrapItemsToWidth } from "../../src/tui/wrapItems.js";
 import { TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { FullscreenViewport } from "../../src/tui/FullscreenViewport.js";
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
 const mkLines = (n: number): RenderItem[] => Array.from({ length: n }, (_, i) => ({ kind: "line", id: `i${i}`, line: { text: `line ${i + 1}` } }));
@@ -64,6 +65,39 @@ describe("TranscriptPager", () => {
     r.stdin.write(" "); await tick();
     expect(r.lastFrame()).toContain("41–50 of 50");       // clamped at bottom
   });
+  // FSW BACKLOG 5 — THE WHEEL READS THE PAGER TOO. Once the alt-screen guard arms `?1000h ?1006h`, a wheel
+  // tick arrives as the key `wheelup`/`wheeldown` (canon `RUu`, L169140) and the `Transcript` context binds
+  // both to its own line pair — the same operation j/k perform, one row per tick (canon L181212's ±1 delta).
+  it("the wheel scrolls a line at a time, exactly as j/k do", async () => {
+    const r = render(<TranscriptPager makeItems={always(mkLines(50))} onClose={() => {}} height={10} />);
+    await tick();
+    r.stdin.write("\x1b[<64;10;5M"); await tick();        // wheel up
+    expect(r.lastFrame()).toContain("40–49 of 50");
+    r.stdin.write("\x1b[<64;10;5M"); await tick();
+    expect(r.lastFrame()).toContain("39–48 of 50");
+    r.stdin.write("\x1b[<65;10;5M"); await tick();        // wheel down
+    expect(r.lastFrame()).toContain("40–49 of 50");
+  });
+
+  // …AND THE PAGER IS THE ONE THAT READS IT. In fullscreen the ctrl+O pager mounts innermost over a viewport
+  // that binds the same two keys in its own `Scroll` context, and mount order is what arbitrates: without the
+  // `Transcript` entries the tick would fall through and scroll the transcript UNDERNEATH the box the reader
+  // is looking at. The real fullscreen tree swaps the two rather than stacking them (`RegionPager` replaces
+  // the region), so this pins the TABLE's precedence directly, where a surface change cannot hide it.
+  it("wins the wheel over a viewport mounted beneath it", async () => {
+    const doc: RenderItem[] = Array.from({ length: 200 }, (_, i) => ({ kind: "line", id: `V${i}`, line: { text: `V${i}` } }));
+    const r = render(<>
+      <FullscreenViewport finalizedItems={doc} pendingItems={[]} streaming={[]} columns={80} rows={10} />
+      <TranscriptPager makeItems={always(mkLines(50))} onClose={() => {}} height={10} />
+    </>);
+    await tick();
+    const before = (r.lastFrame() ?? "").includes("V190");   // the viewport is stuck to its own tail
+    r.stdin.write("\x1b[<64;10;5M"); await tick();
+    expect(before).toBe(true);
+    expect(r.lastFrame()).toContain("40–49 of 50");           // the pager moved…
+    expect(r.lastFrame()).toContain("V190");                  // …and the viewport did not
+  });
+
   // Ctrl-O is new to the pager itself: ChatApp used to special-case it as "the pager's close arm" behind the
   // owner gate; the Transcript context binds it to transcript:exit now, so the pager owns all four.
   it("q, Esc, Ctrl-C and Ctrl-O all close", async () => {

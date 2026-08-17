@@ -54,7 +54,7 @@ const STRING_INTRODUCER: Record<string, "osc" | "st-only"> = { "]": "osc", P: "s
 const ST = "\x1b\\";
 const PASTE_END = "\x1b[201~";
 const CSI_RE = /^\x1b\[([\d;]*)([A-Za-z~])/;
-const SGR_MOUSE_RE = /^\x1b\[<[\d;]*[Mm]/;
+const SGR_MOUSE_RE = /^\x1b\[<([\d;]*)([Mm])/;
 
 /** Parse one raw stdin chunk. Never throws; anything unrecognised is consumed as `ignored`, never inserted. */
 export function parseBytes(chunk: string): InputEvent[] {
@@ -104,7 +104,7 @@ function parseCsi(s: string, i: number, out: InputEvent[]): number {
   if (rest[2] === "<") {                                    // SGR mouse (?1006h) — the only mouse encoding we ask for
     const m = SGR_MOUSE_RE.exec(rest);
     if (!m) return skipCsi(rest, out);
-    out.push(ignored("mouse", m[0])); return m[0].length;
+    out.push(sgrWheel(m[1], m[2], m[0]) ?? ignored("mouse", m[0])); return m[0].length;
   }
   if (rest[2] === "M") { const raw = rest.slice(0, 6); out.push(ignored("mouse", raw)); return raw.length; }  // X10: 3 payload bytes
   const m = CSI_RE.exec(rest);
@@ -134,6 +134,27 @@ function parseCsi(s: string, i: number, out: InputEvent[]): number {
   if (!name) { out.push(ignored("unknown-sequence", raw)); return raw.length; }
   out.push(key(name, raw, decodeMods(parts[1])));
   return raw.length;
+}
+
+/** THE TWO MOUSE REPORTS THAT ARE KEYS — canon `RUu`, L169140. A wheel tick is the one pointer gesture with no
+ *  pointer in it: there is nothing to hit, nothing to drag, and the user means "move the page". So it becomes a
+ *  real `KeyEvent` and travels the ordinary binding table (`Scroll`/`Transcript` bind it to their line pair),
+ *  while every other mouse report stays `ignored("mouse")` exactly as before.
+ *    Canon's mask is `button & 67` — bit 6 plus the two low bits — compared against 64/65. That is what strips
+ *  the modifier bits (ctrl 16, meta 8, shift 4) and the motion flag (32) while keeping the horizontal pair
+ *  (66/67) OUT: those are wheel-left/right, which no surface here scrolls. `m` is a button RELEASE and a wheel
+ *  tick has none, so only `M` can be one.
+ *    COL/ROW ARE DROPPED, and that is the divergence worth naming: canon dispatches a wheel to the scrollable
+ *  UNDER THE CURSOR and only then to the focused element (L181210). We have one scrollable per surface and no
+ *  hit-testing to do, so the position is information nothing downstream could use. */
+function sgrWheel(params: string, final: string, raw: string): KeyEvent | null {
+  if (final !== "M") return null;
+  const button = Number(params.split(";")[0]);
+  if (!Number.isInteger(button)) return null;
+  const wheel = button & 67;
+  if (wheel !== 64 && wheel !== 65) return null;
+  return key(wheel === 64 ? "wheelup" : "wheeldown", raw,
+    { ctrl: !!(button & 16), alt: !!(button & 8), shift: !!(button & 4) });
 }
 
 /** A CSI we don't recognise, consumed to its ECMA-48 boundary and no further: parameter bytes 0x30–0x3f, then

@@ -107,7 +107,8 @@ describe("dumpTranscript", () => {
     const child = writes.indexOf("<spawnSync vi>");
     expect(child).toBeGreaterThan(0);
     expect(writes.slice(0, child)).toContain("\x1b[<u\x1b[?1049l\x1b[>4m");        // EXIT_ALT, before the child
-    expect(writes.slice(child + 1)).toEqual(["\x1b[?1049h\x1b[2J\x1b[H"]);          // …and ENTER_ALT after it
+    // …and ENTER_ALT after it, with the wheel enable canon writes beside it (FSW backlog 5; `AUe("scroll")`).
+    expect(writes.slice(child + 1)).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h"]);
     expect(guard.active()).toBe(true);
   });
 

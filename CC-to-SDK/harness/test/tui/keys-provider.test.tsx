@@ -412,6 +412,81 @@ describe("KeymapProvider — byte-stream hygiene", () => {
   });
 });
 
+// ── FSW BACKLOG 5 — THE ALTERNATE-SCROLL FALLBACK, SUPPRESSED (canon L168579-168585, `Hay = 75`) ───────────
+//
+// With the alternate screen up, a terminal whose mouse reporting is OFF translates wheel ticks into ARROW KEYS
+// — which is the whole of the reported bug: the wheel walked prompt history. Arming 1000/1006 with the screen
+// fixes the steady state, but not the seam: a terminal can still be mid-enable, and tmux/screen keep sending
+// the fallback for their own reasons. Canon's answer is a clock, not a mode flag — a bare, unmodified, non-
+// pasted up/down within 75 ms of the last wheel event is DROPPED — and it lives here rather than in parse.ts
+// because it is STREAM state (the tick and the arrow arrive in different reads) and this file owns the stream.
+describe("KeymapProvider — wheel/arrow suppression", () => {
+  const WHEEL_UP = "\x1b[<64;10;5M";
+  /** A probe whose fallback records every key it is handed, driven by an injectable clock. */
+  const mount = (clock: { t: number }) => {
+    const seen: string[] = [];
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={(e) => { seen.push(e.kind === "text" ? `text:${e.text}` : `key:${e.name}`); }} />,
+      { now: () => clock.t });
+    return { h, seen };
+  };
+
+  it("drops a bare up that follows a wheel tick inside the window, and delivers it outside", async () => {
+    const clock = { t: 1000 };
+    const { h, seen } = mount(clock);
+    await tick();
+    h.stdin.write(WHEEL_UP);
+    clock.t = 1074;
+    h.stdin.write("\x1b[A");                    // the fallback arrow, 74 ms later: dropped
+    clock.t = 1075;
+    h.stdin.write("\x1b[B");                    // …and 75 ms later it is a real key again
+    expect(seen).toEqual(["key:wheelup", "key:down"]);
+    h.unmount();
+  });
+
+  it("only the BARE pair is suppressed — a modified arrow is the user's own keystroke", async () => {
+    const clock = { t: 1000 };
+    const { h, seen } = mount(clock);
+    await tick();
+    h.stdin.write(WHEEL_UP);
+    clock.t = 1010;
+    h.stdin.write("\x1b[1;2A");                 // shift+up
+    h.stdin.write("\x1b[1;5B");                 // ctrl+down
+    h.stdin.write("\x1b[C");                    // …and a bare left/right was never part of the fallback
+    expect(seen).toEqual(["key:wheelup", "key:up", "key:down", "key:right"]);
+    h.unmount();
+  });
+
+  it("a PASTED arrow is never dropped — canon's `!isPasted`, which for us is the text path", async () => {
+    const clock = { t: 1000 };
+    const { h, seen } = mount(clock);
+    await tick();
+    h.stdin.write(WHEEL_UP);
+    clock.t = 1010;
+    h.stdin.write("\x1b[200~\x1b[A\x1b[201~");  // arrow bytes inside a bracketed paste
+    expect(seen).toEqual(["key:wheelup", "text:\x1b[A"]);
+    h.unmount();
+  });
+
+  it("the window is measured from the LAST tick, so a continuous scroll never leaks an arrow", async () => {
+    const clock = { t: 1000 };
+    const { h, seen } = mount(clock);
+    await tick();
+    for (let i = 0; i < 4; i++) { h.stdin.write(WHEEL_UP); clock.t += 60; }
+    h.stdin.write("\x1b[A");                    // 60 ms after the fourth tick, 240 ms after the first
+    expect(seen).toEqual(["key:wheelup", "key:wheelup", "key:wheelup", "key:wheelup"]);
+    h.unmount();
+  });
+
+  it("an arrow with no wheel behind it is untouched", async () => {
+    const clock = { t: 1000 };
+    const { h, seen } = mount(clock);
+    await tick();
+    h.stdin.write("\x1b[A");
+    expect(seen).toEqual(["key:up"]);
+    h.unmount();
+  });
+});
+
 // F5 task 3. PROVENANCE is what the editor's chip path keys off first (size is only the untagged fallback, see
 // paste-chips.test.ts): a marked paste collapses into `[Pasted text #N]` at any size. parse.ts sees one chunk
 // and cannot answer the provenance question — the markers can be torn across reads and the overflow latch emits

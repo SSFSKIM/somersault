@@ -109,6 +109,10 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "home": "scroll:top", "end": "scroll:bottom",   // NEW — deliverable now (P86: parser-level identity)
     "ctrl+e": "transcript:toggleShowAll",           // F1-shipped (TranscriptPager.tsx) — MUST stay bound
     "ctrl+o": "transcript:exit",                    // preserves ctrl+o-closes-the-pager (Global's toggleTranscript only opens)
+    // FSW BACKLOG 5 — the wheel, on the pager's own line pair. It has to be bound HERE as well as in `Scroll`
+    // and not only there: in fullscreen the pager mounts innermost over the viewport, so an unbound tick would
+    // resolve one scope out and scroll the transcript UNDERNEATH the box the reader is looking at.
+    "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",
     // The pager was an owner-gated surface: ChatApp killed every root global inside it except its own ctrl+o
     // close arm. Four of the six are rebound above as pager operations; these two were simply dead, and must
     // say so — otherwise moving the pager onto the scope stack (task 7) would NEWLY fire history-search and
@@ -130,6 +134,15 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // The block there also carries `wheelup`/`wheeldown` and seven selection-extension/copy chords; mouse and
   // in-frame selection are not in this wave, and an action name that resolves but reaches no handler is the
   // dishonest rebind F2 exists to remove (the same reasoning that held ModelPicker's effort pair back at F6).
+  //
+  // FSW BACKLOG 5 TAKES THE WHEEL PAIR BACK, ON THE OWNER'S BUG REPORT, AND THE EXCLUSION ABOVE WAS RIGHT WHEN
+  // IT WAS WRITTEN. `wheelup`/`wheeldown` were unproducible: ccx never armed mouse reporting, so no tick could
+  // ever reach the table. What made that a BUG rather than a missing feature is what the terminal does instead
+  // — with the alternate screen up and reporting off it translates wheel ticks into bare ARROW KEYS, which
+  // reached the composer and walked prompt history. So the pair is not "mouse support"; it is the correction
+  // that stops the wheel meaning something else. `altScreen.ts` arms canon's `scroll` set, `parse.ts` names the
+  // two ticks (canon `RUu`, L169140), and one tick is one LINE — canon's own delta (L181212 dispatches ±1).
+  // Click, motion, hover and selection remain unbound and unarmed.
   //
   // PGUP/PGDN ARE HALF PAGES, AND THAT IS NOT A TYPO OF UPSTREAM'S OR OURS. Canon binds them to
   // `scroll:pageUp`/`pageDown` and then its handler moves `floor(getViewportHeight() / 2)` (446159-446174) —
@@ -161,6 +174,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   { context: "Scroll", bindings: {
     "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
     "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+    "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",
     "v": "scroll:dumpTranscript",
   }},
   { context: "HistorySearch", bindings: {

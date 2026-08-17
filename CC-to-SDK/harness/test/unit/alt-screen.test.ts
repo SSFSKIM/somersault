@@ -6,7 +6,7 @@
 // ~/claude-code-bundle/2.1.220/cli.pretty.js while writing them.
 import { describe, it, expect, vi } from "vitest";
 import {
-  ENTER_ALT, EXIT_ALT, MOUSE_OFF, CURSOR_SHOW, PASTE_OFF, SGR_RESET, KITTY_TERMINALS,
+  ENTER_ALT, EXIT_ALT, MOUSE_OFF, MOUSE_ON_SCROLL, CURSOR_SHOW, PASTE_OFF, SGR_RESET, KITTY_TERMINALS,
   kittyUpgrade, resolveTerminalName, createAltScreenGuard, resumePointer, exitAltScreen,
   createChatTeardown,
 } from "../../src/tui/altScreen.js";
@@ -36,6 +36,14 @@ describe("alt-screen bytes (canon 2.1.220)", () => {
   // modes 1006 / 1003 / 1002 / 1000 (`ev`, L177069). The ORDER is canon's, SGR first.
   it("MOUSE_OFF disables all four tracking modes, SGR first", () => {
     expect(MOUSE_OFF).toBe("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l");
+  });
+
+  // canon `ncy` L177070 → `mY(MOUSE_NORMAL) + mY(MOUSE_SGR)`, modes 1000 and 1006, which is exactly what
+  // `AUe("scroll")` (L177057-177061) returns. The name is canon's own for this subset. NOT `rcy`/`"full"`,
+  // which adds 1002 and 1003 (button-drag and any-motion tracking) for hover and click — a recorded
+  // divergence, and the one the composer's live text selection depends on us NOT taking.
+  it("MOUSE_ON_SCROLL is canon's `scroll` set — wheel reporting plus SGR encoding, and nothing else", () => {
+    expect(MOUSE_ON_SCROLL).toBe("\x1b[?1000h\x1b[?1006h");
   });
 
   // canon `nV = mY(ev.CURSOR_VISIBLE)` L177070 (mode 25), written by the terminal-mode restore `Uho`
@@ -109,19 +117,50 @@ describe("alt-screen bytes (canon 2.1.220)", () => {
 });
 
 describe("AltScreenGuard lifecycle", () => {
-  it("enter writes smcup+clear+home with the terminal's upgrade appended, as ONE write", () => {
+  // FSW BACKLOG 5 — AND THE MOUSE COMES ON WITH THE SCREEN. Canon's alt-screen mount is `pVe() + AUe(mode)`
+  // (L535814): the enter bytes, then the tracking enable, in one write. Ours appends `AUe("scroll")` to the
+  // same string for the same reason, and that placement is the whole of the change: `enterSeq` is ALSO the
+  // handoff's return leg, and every leave/teardown leg already writes MOUSE_OFF, so the editor/suspend round
+  // trips and the `/tui` flips stay symmetric with no new call site to keep in step.
+  it("enter writes smcup+clear+home, the terminal's upgrade and mouse-on, as ONE write", () => {
     const s = sink();
     const g = createAltScreenGuard({ writeSync: s.writeSync, termProgram: "ghostty" });
     expect(g.active()).toBe(false);
     g.enter();
-    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m"]);
+    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1006h"]);
     expect(g.active()).toBe(true);
   });
 
-  it("enter on an unlisted terminal writes the bare enter sequence", () => {
+  it("enter on an unlisted terminal writes the bare enter sequence, mouse-on still appended", () => {
     const s = sink();
     createAltScreenGuard({ writeSync: s.writeSync, termProgram: "Apple_Terminal" }).enter();
-    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H"]);
+    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h"]);
+  });
+
+  // THE PAIR THAT MUST NOT DRIFT. The enable is armed in exactly one place and disarmed in three (exit,
+  // leave, handoff), and a terminal left reporting is the one damage this module exists to prevent — so the
+  // symmetry is pinned as a property rather than re-asserted byte by byte at each site.
+  it.each([["exit", (g: ReturnType<typeof createAltScreenGuard>) => g.exit()],
+           ["leave", (g: ReturnType<typeof createAltScreenGuard>) => g.leave()],
+           ["handoff", (g: ReturnType<typeof createAltScreenGuard>) => { g.handoff(); }]] as const)(
+    "every %s leg turns the mouse back off, first", (_name, act) => {
+      const s = sink();
+      const g = createAltScreenGuard({ writeSync: s.writeSync });
+      g.enter();
+      expect(s.writes.join("")).toContain(MOUSE_ON_SCROLL);
+      s.writes.length = 0;
+      act(g);
+      expect(s.writes[0]).toBe(MOUSE_OFF);
+      expect(s.writes.join("")).not.toContain(MOUSE_ON_SCROLL);
+    });
+
+  // A guard that never took the screen never armed the mouse either — a classic launch must not emit a
+  // tracking enable it would then owe a disable for.
+  it("an unarmed guard writes no mouse-on at all", () => {
+    const s = sink();
+    const g = createAltScreenGuard({ writeSync: s.writeSync });
+    g.leave(); g.handoff()();
+    expect(s.writes).toEqual([]);
   });
 
   it("a second enter is a no-op — the flag guards a re-entry that would clear the frame", () => {
@@ -218,7 +257,7 @@ describe("AltScreenGuard.aroundSubprocess", () => {
       "\x1b[0m",
       "\x1b[?25h",
       "<spawnSync>",
-      "\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m",
+      "\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1006h",
     ]);
     expect(g.active()).toBe(true);      // the guard still owns the screen across the handoff
   });
@@ -229,7 +268,7 @@ describe("AltScreenGuard.aroundSubprocess", () => {
     g.enter();
     s.writes.length = 0;
     expect(() => g.aroundSubprocess(() => { throw new Error("editor died"); })).toThrow("editor died");
-    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H");
+    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h");
   });
 
   it("is a bare passthrough when the guard was never armed", () => {
@@ -259,7 +298,7 @@ describe("AltScreenGuard.handoff", () => {
     ]);
     expect(g.active()).toBe(true);      // still ours across the stop: a kill while suspended must find a guard
     back();
-    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m");
+    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1006h");
   });
 
   it("hands back a no-op on an unarmed guard, so a classic ctrl+z writes nothing", () => {

@@ -30,6 +30,18 @@ export const EXIT_ALT = "\x1b[<u\x1b[?1049l\x1b[>4m";
 /** canon `Gpe` L177070. Unconditional and FIRST on every teardown: it is the byte sequence whose absence
  *  is still visible to the user ten minutes later, in a shell that is not ours. */
 export const MOUSE_OFF = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
+/** canon `ncy` L177070, i.e. `AUe("scroll")` (L177057-177061): mode 1000 (button reporting, which is what
+ *  carries the wheel) plus 1006 (SGR encoding, so a column past 95 is still readable). Written WITH the screen,
+ *  as canon's alt-screen mount does (`pVe() + AUe(mode)`, L535814).
+ *    WITHOUT IT THE WHEEL IS NOT SILENT — IT IS SOMEBODY ELSE'S KEY. A terminal on the alternate screen with
+ *  reporting off answers a wheel tick with the ALTERNATE-SCROLL fallback: bare arrow keys. Those reach the
+ *  composer, and the composer walks prompt history. The absent enable was the bug, not a missing feature.
+ *    RECORDED DIVERGENCE: canon mounts `"full"` (`rcy`, +1002 +1003 — button-drag and any-motion, for hover and
+ *  click hit-testing). We arm the WHEEL ONLY, which is the exact subset canon itself names `"scroll"`, because
+ *  ccx has no hover, no click targets and no in-frame selection — and 1003 would also take the terminal's own
+ *  drag-to-select away from the user. MOUSE_OFF stays canon's full four: turning off a mode we never set costs
+ *  nothing, and it is the byte string whose absence is still visible ten minutes later. */
+export const MOUSE_ON_SCROLL = "\x1b[?1000h\x1b[?1006h";
 /** canon `nV` L177070 (DECTCEM). The last thing out, as in `Uho` L180343. */
 export const CURSOR_SHOW = "\x1b[?25h";
 /** canon `Usr` L177070 (DECRST 2004), written by `Uho` (L180343) one byte ahead of `nV`. UNCONDITIONAL, for
@@ -129,7 +141,12 @@ export interface AltScreenDeps {
 const SIGNAL_EXIT: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
 
 export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
-  const enterSeq = ENTER_ALT + kittyUpgrade(deps.termProgram);
+  // …AND THE MOUSE ENABLE RIDES THE SCREEN, WITH NO CALL SITE OF ITS OWN. `enterSeq` is written by exactly two
+  // things — `enter()` and the handoff's RETURN leg — and every leg that gives the screen back (`handBack`,
+  // `leaveScreen`) already writes MOUSE_OFF first, unconditionally. So appending the enable here makes the
+  // editor/suspend round trips and T15's `/tui` flips symmetric by construction: there is no third place that
+  // could forget it, and a classic launch (which never calls `enter()`) never arms tracking at all.
+  const enterSeq = ENTER_ALT + kittyUpgrade(deps.termProgram) + MOUSE_ON_SCROLL;
   let armed = false;
   const write = (s: string) => { try { deps.writeSync(s); } catch { /* the fd is gone; nothing left to save */ } };
   const takeScreen = () => { write(enterSeq); armed = true; };

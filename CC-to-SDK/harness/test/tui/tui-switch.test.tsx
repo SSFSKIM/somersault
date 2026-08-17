@@ -30,7 +30,7 @@ import { fakeRemote } from "./helpers/fakeRemote.js";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { ChatRoot, createRendererSwitch, createResumeSafeStdout, type ResumeSafeStdout } from "../../src/tui/chatMain.js";
-import { createAltScreenGuard, ENTER_ALT, EXIT_ALT, PASTE_OFF } from "../../src/tui/altScreen.js";
+import { createAltScreenGuard, ENTER_ALT, EXIT_ALT, MOUSE_ON_SCROLL, PASTE_OFF } from "../../src/tui/altScreen.js";
 import { TUI_BUSY_REFUSAL, tuiUsageLine } from "../../src/tui/commands.js";
 import type { RendererChoice } from "../../src/tui/renderer.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
@@ -175,7 +175,7 @@ describe("/tui — the live flip", () => {
     expect(sink.join("")).toContain(EXIT_ALT);
     // …and on BOTH edges the screen's outstanding erase moved before the escape that changes the screen did
     // (fix round C1). Behind rmcup it would be too late: the debt is spent on the terminal, not on the guard.
-    expect(sink.indexOf("<screen:alt>")).toBeLessThan(sink.indexOf(ENTER_ALT));
+    expect(sink.indexOf("<screen:alt>")).toBeLessThan(sink.indexOf(ENTER_ALT + MOUSE_ON_SCROLL));
     expect(sink.indexOf("<screen:main>")).toBeLessThan(sink.indexOf(EXIT_ALT));
     // …and LEAVING IS NOT EXITING, which is the whole difference between `guard.leave()` and `guard.exit()`
     // and is invisible in the rmcup they share. `exit()` runs canon `zuy`'s unmount limb — it would end the
@@ -355,7 +355,7 @@ describe("/tui — the guard brackets the paints", () => {
     // ── classic → fullscreen ──
     const markIn = writes.length;
     await typeSlash(tty, "/tui fullscreen");
-    const enter = writes.indexOf(ENTER_ALT, markIn);
+    const enter = writes.indexOf(ENTER_ALT + MOUSE_ON_SCROLL, markIn);
     const firstFrame = writes.findIndex((w, i) => i > markIn && paintedRows(w) >= 20);
     expect(enter).toBeGreaterThanOrEqual(0);
     expect(firstFrame).toBeGreaterThan(enter);

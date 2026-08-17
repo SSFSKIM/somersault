@@ -108,8 +108,35 @@ describe("CSI-u (kitty/iTerm2)", () => {
     expect(one("\x1b[66;5u")).toMatchObject({ name: "b", ctrl: true, shift: true }));
 });
 
+// FSW BACKLOG 5 — THE TWO MOUSE REPORTS THAT ARE KEYS. Canon's `RUu` (bundle L169140) masks the SGR button
+// byte with 67 and turns 64/65 into named key events `wheelup`/`wheeldown`; everything else stays a mouse
+// report. Ours does the same, minus canon's col/row (L181210 hit-tests the node under the pointer; we have one
+// scrollable per surface and nothing to hit-test against — recorded divergence).
+describe("SGR wheel ticks are KEYS, not mouse reports", () => {
+  it.each([["\x1b[<64;10;5M","wheelup"],["\x1b[<65;10;5M","wheeldown"]])("%s → %s", (b, n) =>
+    expect(one(b)).toMatchObject({ kind: "key", name: n, ctrl: false, alt: false, shift: false, super: false }));
+  it("decodes canon's modifier bits — shift 4, meta 8 (our alt), ctrl 16", () => {
+    expect(one("\x1b[<68;10;5M")).toMatchObject({ name: "wheelup", shift: true, alt: false, ctrl: false });
+    expect(one("\x1b[<72;10;5M")).toMatchObject({ name: "wheelup", alt: true, shift: false, ctrl: false });
+    expect(one("\x1b[<80;10;5M")).toMatchObject({ name: "wheelup", ctrl: true, shift: false, alt: false });
+    expect(one("\x1b[<93;10;5M")).toMatchObject({ name: "wheeldown", ctrl: true, alt: true, shift: true });
+  });
+  it("carries the whole report as `raw`, and consumes exactly it", () => {
+    const ev = parseBytes("\x1b[<64;10;5MA");
+    expect(ev).toHaveLength(2);
+    expect(ev[0]).toMatchObject({ kind: "key", name: "wheelup", raw: "\x1b[<64;10;5M" });
+    expect(ev[1]).toMatchObject({ kind: "key", name: "a", shift: true });
+  });
+  it("the HORIZONTAL wheel (66/67) is not a key — canon's mask keeps only the vertical pair", () => {
+    expect(one("\x1b[<66;10;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<67;10;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+  });
+  it("a release (`m` final) is never a wheel tick", () =>
+    expect(one("\x1b[<64;10;5m")).toMatchObject({ kind: "ignored", reason: "mouse" }));
+});
+
 describe("non-key sequences never leak as text", () => {
-  it.each([["\x1b[<64;10;10M","mouse"],["\x1b[<65;10;10M","mouse"],["\x1b[<0;10;10M","mouse"],["\x1b[<0;10;10m","mouse"],
+  it.each([["\x1b[<0;10;10M","mouse"],["\x1b[<0;10;10m","mouse"],["\x1b[<32;10;10M","mouse"],
            ["\x1b[I","focus"],["\x1b[O","focus"]])("%s → ignored:%s", (b, r) =>
     expect(one(b)).toMatchObject({ kind: "ignored", reason: r }));
   it("X10 mouse consumes its 3 payload bytes", () =>

@@ -267,13 +267,33 @@ describe("overlay gating, expressed as null bindings", () => {
   // screen as `v to open in ${editor}`, L547303). It is the escape hatch for a renderer that leaves no
   // scrollback behind, and it is the one PRINTABLE key in this block — see `FullscreenViewport` for the
   // reachability gate that keeps it off a composer the user is typing into.
-  it("Scroll binds the four keyboard scroll keys plus the v dump, and nothing else", () => {
+  // FSW BACKLOG 5 adds the sixth and seventh, and they are canon's own two out of the same block — the half
+  // T11 deliberately left out because "mouse … is not in this wave" and an action nothing could produce would
+  // have been a dishonest rebind. The owner's bug report ends that: with the alt-screen guard arming
+  // `?1000h ?1006h` a wheel tick IS produced, as the key `wheelup`/`wheeldown` (canon `RUu`, L169140), and
+  // one tick is one LINE (canon L181212 dispatches a ±1 delta). Selection-extension and copy stay unbound.
+  it("Scroll binds the four keyboard scroll keys, the two wheel ticks and the v dump, and nothing else", () => {
     expect(block("Scroll").bindings).toEqual({
       "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
       "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
+      "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",
       "v": "scroll:dumpTranscript",
     });
   });
+  // The wheel is bound in BOTH reading surfaces, and it has to be: the ctrl+O pager mounts innermost over the
+  // fullscreen viewport, and a `Transcript` block with no wheel would let the tick fall through and scroll the
+  // transcript underneath the box the reader is looking at. Same action names in both — one operation.
+  it("both reading surfaces bind the wheel to their own line pair", () => {
+    for (const context of ["Scroll", "Transcript"] as const) {
+      expect(block(context).bindings["wheelup"], `${context} wheelup`).toBe("scroll:lineUp");
+      expect(block(context).bindings["wheeldown"], `${context} wheeldown`).toBe("scroll:lineDown");
+    }
+  });
+  // …and NOWHERE ELSE. A wheel tick is a pointer event: it must not acquire a meaning in a dialog, a picker
+  // or the composer, where the only honest answer to a scroll gesture is the surface behind it.
+  it("no other context claims a wheel tick", () =>
+    expect([...new Set(all.filter((x) => x.key.endsWith("wheelup") || x.key.endsWith("wheeldown")).map((x) => x.context))].sort())
+      .toEqual(["Scroll", "Transcript"]));
   // The dump is bound HERE and not in `Transcript` (plan review I5): the ctrl+O pager is a second reading
   // surface, but the scrollback that vanishes is the FULLSCREEN region's, and that is the surface `Scroll`
   // names. A stray copy in the pager's block would be a second home for one key.
@@ -304,6 +324,7 @@ describe("overlay gating, expressed as null bindings", () => {
       "up": "scroll:lineUp", "down": "scroll:lineDown", "pageup": "scroll:pageUp", "pagedown": "scroll:pageDown",
       "home": "scroll:top", "end": "scroll:bottom",
       "ctrl+e": "transcript:toggleShowAll", "ctrl+o": "transcript:exit",
+      "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",   // FSW backlog 5
       "ctrl+r": null, "ctrl+t": null, "alt+p": null, "alt+t": null, "ctrl+x ctrl+b": null,
     });
   });

@@ -28,7 +28,7 @@ import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { RegionPager, pagerChromeRows } from "../../src/tui/RegionPager.js";
 import { jumpPillText } from "../../src/tui/JumpPill.js";
 import { dumpDir } from "../../src/tui/transcriptDump.js";
-import { createAltScreenGuard, ENTER_ALT, EXIT_ALT } from "../../src/tui/altScreen.js";
+import { createAltScreenGuard, ENTER_ALT, EXIT_ALT, MOUSE_ON_SCROLL } from "../../src/tui/altScreen.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { YANK_HINT_TEXT } from "../../src/tui/ChatComposer.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
@@ -63,6 +63,9 @@ async function waitFor(cond: () => boolean, timeout = 3000) {
 // `1;5` modifier param — Ink's `useInput` cannot tell either of them from insert or F1 (P86 §1.1), which is
 // why the byte parser exists and why these two are bindable at all.
 const PAGE_UP = "\x1b[5~", PAGE_DOWN = "\x1b[6~", CTRL_HOME = "\x1b[1;5H", CTRL_END = "\x1b[1;5F";
+// FSW BACKLOG 5 — and the two the POINTER sends, once the guard arms `?1000h ?1006h` with the screen. The
+// report is `CSI < button ; col ; row M`; 64/65 are the vertical wheel ticks (canon `RUu`, L169140).
+const WHEEL_UP = "\x1b[<64;40;12M", WHEEL_DOWN = "\x1b[<65;40;12M";
 
 describe("the Scroll context drives the fullscreen viewport", () => {
   /** Mount the viewport alone under the root keymap and hand back a key writer. */
@@ -114,12 +117,41 @@ describe("the Scroll context drives the fullscreen viewport", () => {
     r.unmount();
   });
 
+  // ── FSW BACKLOG 5 — THE WHEEL, WHICH IS THE ONLY GESTURE MOST USERS WILL TRY FIRST ──────────────────────
+  // Owner-reported: in fullscreen the wheel walked prompt HISTORY. Nothing armed mouse reporting, so the
+  // terminal's alternate-scroll fallback turned every tick into a bare arrow key and the composer read it as
+  // a history step. With `?1000h ?1006h` armed by the guard the terminal sends SGR reports instead, and this
+  // context is where they land: ONE LINE per tick, canon's own delta (L181212 dispatches ±1).
+  it("a wheel tick moves the window exactly one row, in both directions", async () => {
+    const r = await mount({ rows: 37 });
+    expect(r.top()).toBe("L163");
+    await r.press(WHEEL_UP);
+    expect(r.top()).toBe("L162");
+    await r.press(WHEEL_UP);
+    expect(r.top()).toBe("L161");
+    await r.press(WHEEL_DOWN);
+    expect(r.top()).toBe("L162");
+    r.unmount();
+  });
+
+  // The modifier bits ride the report (canon masks them off the button byte before naming the key), and a
+  // ctrl-wheel is a DIFFERENT key spec — `ctrl+wheelup` — which this context does not bind. Nothing moves,
+  // and nothing is invented: zoom is the terminal's gesture, not ours.
+  it("a modified wheel tick is not this context's key", async () => {
+    const r = await mount({ rows: 37 });
+    await r.press("\x1b[<80;40;12M");                // ctrl+wheelup
+    expect(r.top()).toBe("L163");
+    r.unmount();
+  });
+
   // Canon binds the whole context with `isActive: t && !cbr()` (446211). While a history search owns the dock
   // its own PgUp/PgDn are the ones that must fire, and the transcript behind it must hold still.
   it("is disabled while a history search is open", async () => {
     const r = await mount({ rows: 37, historySearchOpen: true });
     expect(r.top()).toBe("L163");
     await r.press(PAGE_UP);
+    expect(r.top()).toBe("L163");
+    await r.press(WHEEL_UP);                          // …and the wheel goes with it, for the same reason
     expect(r.top()).toBe("L163");
     r.unmount();
   });
@@ -531,7 +563,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       const child = writes.indexOf(SPAWN);
       expect(child).toBeGreaterThan(0);
       expect(writes.slice(0, child)).toContain(EXIT_ALT);                // rmcup BEFORE the child
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT]);              // …and smcup after it, nothing between
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL]);   // …and smcup after it, nothing between
       expect(guard.active()).toBe(true);                                 // the guard owns the screen across the handoff
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); }
@@ -565,7 +597,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       fake.parkPermission(planEntry());
       await waitFor(() => (r.lastFrame() ?? "").includes("Ready to code?"));
       r.stdin.write("\x07");
-      await waitFor(() => writes.includes(ENTER_ALT));
+      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_SCROLL));
       // …AND THE ROUND TRIP LANDED (t12 re-review). Without this the escape order alone would pass on a child
       // that never ran: a `spawnSync` failure comes back as `r.error`, `editExternal` answers null, and the
       // dialog keeps its original plan while the brackets look perfect. The dialog adopts a changed edit
@@ -574,7 +606,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       const child = writes.indexOf(SPAWN);
       expect(child).toBeGreaterThan(0);
       expect(writes.slice(0, child)).toContain(EXIT_ALT);
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT]);
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL]);
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); }
   });
@@ -598,12 +630,12 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       await tick();
       r.stdin.write("/keybindings"); await waitFor(() => (r.lastFrame() ?? "").includes("/keybindings"));
       r.stdin.write("\r");
-      await waitFor(() => writes.includes(ENTER_ALT));
+      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_SCROLL));
       expect(readFileSync(kbFile(home), "utf8")).toBe("EDITED");         // the child really opened the real file
       const child = writes.indexOf(SPAWN);
       expect(child).toBeGreaterThan(0);
       expect(writes.slice(0, child)).toContain(EXIT_ALT);                // rmcup BEFORE the child
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT]);              // …and smcup after it, nothing between
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL]);   // …and smcup after it, nothing between
       expect(guard.active()).toBe(true);
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); rmSync(home, { recursive: true, force: true }); }
@@ -627,8 +659,8 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
   });
 
   // ── FSW BACKLOG 4 — AND THE SCREEN COMES BACK EVEN WHEN NOTHING CHANGED ─────────────────────────────────
-  // The handoff's return leg ends in `ENTER_ALT`, which ends in `2J`+`H`: the alternate screen the user is
-  // handed back is BLANK. Ink repaints it only if React state moved while the child had the terminal — its
+  // The handoff's return leg carries `ENTER_ALT`, which contains `2J`+`H`: the alternate screen the user is
+  // handed back is BLANK (the mouse enable that now trails it paints nothing). Ink repaints it only if React state moved while the child had the terminal — its
   // `onRender` writes on `output !== lastOutput` (ink.js:132) and log-update returns early on
   // `output === previousOutput` (log-update.js:13). Quit the editor without saving, close `/keybindings`
   // unchanged, and both dedupes fire: zero bytes, and the user sits looking at an empty screen until they
@@ -660,11 +692,11 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
       await tick();
       r.stdin.write("\x07");                                            // ctrl+g — and the editor saves nothing
-      await waitFor(() => writes.includes(ENTER_ALT));
+      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_SCROLL));
       await settle();
       expect(ed.ran()).toBe(true);                                      // the child really ran…
       const child = writes.indexOf(SPAWN);
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT, REPAINT]);    // …and smcup's blank screen was painted over
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL, REPAINT]);   // …and smcup's blank screen was painted over
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); }
   });
@@ -703,7 +735,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     await settle();
     const child = writes.indexOf(SPAWN);                                // the file's own idiom: the handoff's
     expect(writes.slice(0, child)).toContain(EXIT_ALT);                 // leading leg carries mouse/cursor bytes
-    expect(writes.slice(child + 1)).toEqual([ENTER_ALT, REPAINT]);      // …and the return leg is exactly these two
+    expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL, REPAINT]);     // …and the return leg is exactly these two
     r.unmount();
   });
 

@@ -59,6 +59,17 @@ describe("the entry-set merge (DG63)", () => {
     expect(cells).not.toContain("fast mode");           // no fast mode
   });
 
+  // FSW BACKLOG 5 — THE WHEEL IS BOUND AND DELIBERATELY UNADVERTISED. `wheelup`/`wheeldown` are real entries
+  // in the binding table (the `Scroll` and `Transcript` blocks), so `defaultLookup` would happily resolve
+  // them into a sentence — but a grid of CHORDS is a list of keys the reader can press, and a pointer gesture
+  // printed as "wheelup to scroll" is a key nobody has. Nothing here is exempt from the honesty contract by
+  // being unprintable; it is exempt from the GRID by not being a chord.
+  it("never prints a pointer gesture as a chord", () => {
+    const cells = [...flat(), ...SHORTCUT_ROWS.map((r) => r.phrase ?? r.label)].join("\n");
+    expect(cells.toLowerCase()).not.toContain("wheel");
+    expect(cells.toLowerCase()).not.toContain("scroll wheel");
+  });
+
   it("is one-to-one with the audited key-column corpus — every advertised cell has a ROWS entry", () => {
     // The honesty audit runs over ROWS (the title-case key/label rendering); the grid prints the same rows as
     // sentences. If the two could drift, an unproven chord could reach the screen through the grid alone.

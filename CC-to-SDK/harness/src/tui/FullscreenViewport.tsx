@@ -167,9 +167,10 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no
   // other path — and deactivated under a history search, which is canon's other half of the same gate.
-  //   ONLY the four actions the context binds are handled. `TranscriptPager` registers the whole
-  // `PAGER_ACTIONS` map because the Transcript context binds the whole map; registering names nothing in
-  // fullscreen can produce would be ten dead entries. Note the one crossing this does create deliberately: a
+  //   ONLY the actions the context binds are handled — the four keyboard moves, the wheel's line pair (FSW
+  // backlog 5) and the conditional dump. `TranscriptPager` registers the whole `PAGER_ACTIONS` map because the
+  // Transcript context binds the whole map; registering names nothing in fullscreen can produce would be dead
+  // entries. Note the one crossing this does create deliberately: a
   // decision dialog's `SelectDecision` block binds ctrl+u/ctrl+d to the half-page pair for its own reading
   // path, and `handlerFor` looks handlers up by ACTION across the whole stack — so in fullscreen those two
   // keys now scroll the transcript BEHIND the dialog instead of falling through to nobody. That is the right
@@ -191,6 +192,10 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   useKeyActions(useMemo(() => ({
     "scroll:halfPageUp": () => scroll(PAGER_ACTIONS["scroll:halfPageUp"]!),
     "scroll:halfPageDown": () => scroll(PAGER_ACTIONS["scroll:halfPageDown"]!),
+    // FSW BACKLOG 5 — the wheel's pair, and the only two the `Scroll` context now names that no KEY reaches.
+    // Same map, same operation j/k perform in the ctrl+O pager: one physical row per tick (canon L181212).
+    "scroll:lineUp": () => scroll(PAGER_ACTIONS["scroll:lineUp"]!),
+    "scroll:lineDown": () => scroll(PAGER_ACTIONS["scroll:lineDown"]!),
     "scroll:top": () => scroll(PAGER_ACTIONS["scroll:top"]!),
     "scroll:bottom": () => stickBottom(),
     ...(showPill && onDumpTranscript ? { "scroll:dumpTranscript": () => onDumpTranscript() } : {}),

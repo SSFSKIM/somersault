@@ -18,6 +18,7 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStdin, useStdout } from "ink";
 import { parseBytes } from "./parse.js";
+import { createWheelGuard } from "./wheelGuard.js";
 import type { InputEvent, KeyContextName, KeyEvent, TextEvent } from "./types.js";
 import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
 import { bindingFor, bindingsFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
@@ -27,6 +28,8 @@ import { activeContexts, createRegistry, fallbackHandler, handlerFor, nextSeq, s
   type ActionEntry, type ActionHandler, type FallbackEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
 
 export interface KeymapDeps {
+  /** The wheel guard's clock (`wheelGuard.ts`) — injected so its 75 ms window is drivable rather than slept
+   *  through. `setTimeout`/`clearTimeout` are the chord machine's. */
   now?: () => number; setTimeout?: typeof setTimeout; clearTimeout?: typeof clearTimeout;
   userLayers?: readonly ContextBindings[];            // task 9 feeds live ~/.claude/keybindings.json here
   suspend?: () => void;                               // ctrl+z pre-table hook; `useKeySuspend` outranks it
@@ -124,6 +127,11 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   const table = useMemo(() => compileBindings([...DEFAULT_BINDINGS, ...(userLayers ?? [])]), [userLayers]);
   const tableRef = useRef(table); tableRef.current = table;
 
+  // One per stream, for the life of the provider; `deps.now` is read late so a test can move the clock between
+  // writes without re-mounting.
+  const wheelGuardRef = useRef<ReturnType<typeof createWheelGuard>>();
+  if (!wheelGuardRef.current) wheelGuardRef.current = createWheelGuard(() => (depsRef.current?.now ?? Date.now)());
+
   const pendingRef = useRef<KeySpec[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pasteRef = useRef("");
@@ -154,6 +162,12 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   };
 
   const dispatch = (ev: InputEvent) => {
+    // FSW BACKLOG 5, ABOVE EVERYTHING — including the ctrl+z hook, which no arrow can reach anyway. The
+    // alternate-scroll fallback turns a wheel tick into a bare arrow key, and an arrow that reaches the table
+    // is already a history step: the drop has to happen before resolution, not inside a binding. It lives
+    // HERE rather than in parse.ts because it is STREAM state — the tick and the arrow it produces arrive in
+    // different reads — and parse.ts is handed one chunk and may reason about one chunk only.
+    if (!wheelGuardRef.current!(ev)) return;
     // mouse/focus/garbage: consumed, never inserted. An unknown SEQUENCE is also how a terminal REPLY arrives
     // (the oracle's DSR cursor report), so it is forwarded raw on the way out — see `onUnknownSequence`.
     if (ev.kind === "ignored") { if (ev.reason === "unknown-sequence") depsRef.current?.onUnknownSequence?.(ev.raw); return; }
