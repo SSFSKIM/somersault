@@ -131,6 +131,28 @@ describe("BL6 review: the decline only ends the turn when OUR answer settled the
     cleanupRoots();
   });
 
+  // The THIRD non-settling receipt, and the quiet one. `{ok:false}` is what the host answers when the park
+  // is already gone (host.ts:860) — no exception, no `alreadyAnsweredBy`, no notice. A classification
+  // written as "alreadyAnsweredBy ? already_answered : settled" would call this a settle and start killing
+  // turns against stale toolUseIDs again, with every other cell in this file still green.
+  it("the host reports no such park ({ok:false}) — nothing of ours settled it, so the turn is left alone", async () => {
+    const calls = { interrupts: 0 };
+    const fake = fakeRemote({ interrupt: () => { calls.interrupts++; }, answerDecision: async () => ({ ok: false, error: "no parked request q" }) });
+    const { stdin, lastFrame } = app(fake, "classic");
+    await waitFor(() => frame(lastFrame).includes(GLYPH));
+    fake.parkPermission(questionEntry());
+    await waitFor(() => frame(lastFrame).includes("Red or blue?"));
+    stdin.write("\x1b");
+    await waitFor(() => fake.answeredCalls.length === 1);
+    await sleep(30);
+    expect(calls.interrupts).toBe(0);
+    // Silent by design — this arm has never emitted a notice and this fix did not add one; only the
+    // classification is new. The dialog stays up because no settle event ever arrives.
+    expect(frame(lastFrame)).not.toContain("answer failed");
+    expect(frame(lastFrame)).toContain("Red or blue?");
+    cleanupRoots();
+  });
+
   it("the answer never lands (host death / the 10s deadline) — no interrupt, and the dialog stays up", async () => {
     const calls = { interrupts: 0 };
     const fake = fakeRemote({ interrupt: () => { calls.interrupts++; }, answerDecision: async () => { throw new Error("host connection closed"); } });
