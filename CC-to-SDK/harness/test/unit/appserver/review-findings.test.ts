@@ -34,6 +34,35 @@ describe("harvestFindings", () => {
     expect(harvestFindings(frame([call({ findings: { file: "a.ts" } })]))).toBeUndefined();
     expect(harvestFindings(frame([call(undefined)]))).toBeUndefined();
   });
+  it("does NOT report a PRESENT but all-malformed findings array — it is not a clean review", () => {
+    // The absent-key case above and this one are the SAME non-conforming payload wearing two disguises, and
+    // the second is the worse of the two: `reported` used to be set before any entry was validated, so a
+    // reviewer that called ReportFindings with three entries and got every required field wrong published
+    // `{findings: [], unstructured: false}` — an authoritative "reviewed, nothing found" asserted while the
+    // model was actively trying to report defects. Nothing was read here, so nothing is what it reports.
+    expect(harvestFindings(frame([call({ findings: [{ line: 4 }] })]))).toBeUndefined();
+    expect(harvestFindings(frame([call({ findings: [{ line: 4 }, { file: "a.ts" }, "nope", null] })]))).toBeUndefined();
+    expect(harvestFindings(frame([call({ level: "high", findings: [{ summary: "s" }] })]))).toBeUndefined();
+  });
+  it("keeps an EMPTY array a real report — the one shape that legitimately carries no entries", () => {
+    // The three-way distinction's first leg, restated next to the case above because they differ by one
+    // element: `[]` is the reviewer saying it looked and found nothing, which the prompt asks for by name.
+    expect(harvestFindings(frame([call({ findings: [] })]))?.findings).toEqual([]);
+    expect(harvestFindings(frame([call({ level: "none", findings: [] })]))?.level).toBe("none");
+  });
+  it("does not let an unreadable block cancel a SIBLING's real findings", () => {
+    // The third leg, and the reason the suppression is scoped to "nothing was read at all": a block that
+    // yielded findings is a report, whatever a neighbouring block got wrong.
+    const got = harvestFindings(frame([call({ findings: [{ line: 4 }] }), call({ findings: [one("a.ts")] })]));
+    expect(got?.findings.map((x) => x.file)).toEqual(["a.ts"]);
+  });
+  it("suppresses a bare empty report standing next to an unreadable one", () => {
+    // Two blocks, one saying "nothing to report" and one that tried to report something we could not read:
+    // publishing the first as the verdict would be the same all-clear by a longer route, so the whole frame
+    // falls through to the unstructured fallback, where the prose survives.
+    expect(harvestFindings(frame([call({ findings: [] }), call({ findings: [{ line: 4 }] })]))).toBeUndefined();
+    expect(harvestFindings(frame([call({ findings: [{ line: 4 }] }), call({ findings: [] })]))).toBeUndefined();
+  });
   it("harvests EVERY ReportFindings block in the frame, not just the first", () => {
     // Models do emit several tool_use blocks in one assistant message; `routeTodo` loops for this reason.
     const got = harvestFindings(frame([

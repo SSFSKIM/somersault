@@ -142,6 +142,36 @@ describe("review findings on the wire", () => {
     expect(silent[0]).toMatchObject({ findings: [], unstructured: true, prose: "Looks fine to me." });
   });
 
+  // The same rule, one door further in than the case above — and the FIFTH disguise this milestone has found
+  // it in. An empty array is a real clean report; a NON-EMPTY array whose every entry is malformed is a
+  // payload nothing could be read out of, and publishing it as `unstructured:false` with no findings tells a
+  // client "reviewed, nothing found" while the reviewer was in the middle of reporting defects. It must land
+  // on the loud fallback instead, with the prose the reviewer wrote about the defects still attached.
+  it("an ALL-MALFORMED report is NOT a clean review — it falls through to the unstructured fallback", async () => {
+    const f = factory(); const srv = boot(f);
+    const got = await runReview(srv, f, [
+      assistant([text("Two real problems here.")]),
+      assistant([report({ level: "high", findings: [{ line: 4 }, { summary: "missing the other two fields" }] })]),
+    ]);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ findings: [], unstructured: true, prose: "Two real problems here." });
+    // BOTH channels, for the reason every other case here says so: an items-only client would otherwise still
+    // read the all-clear the notification no longer sends.
+    const items = notifs("item/completed").map((p) => p.item).filter((i) => i?.type === "review");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ findings: [], unstructured: true });
+  });
+
+  it("a PARTIALLY valid report still publishes its valid entries", async () => {
+    // The third leg of the distinction: dropping one bad entry must not cost the report, which is the
+    // behaviour that was already right and that the fix above must not trade away.
+    const f = factory(); const srv = boot(f);
+    const got = await runReview(srv, f, [assistant([report({ findings: [{ line: 4 }, one("a.ts")] })])]);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ unstructured: false });
+    expect(got[0].findings.map((x: { file: string }) => x.file)).toEqual(["a.ts"]);
+  });
+
   it("carries the assistant prose on the unstructured fallback", async () => {
     const f = factory(); const srv = boot(f);
     const r = await startReview(srv, f);
