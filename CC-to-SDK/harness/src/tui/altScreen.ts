@@ -38,9 +38,16 @@ export const MOUSE_OFF = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
  *  composer, and the composer walks prompt history. The absent enable was the bug, not a missing feature.
  *    RECORDED DIVERGENCE: canon mounts `"full"` (`rcy`, +1002 +1003 — button-drag and any-motion, for hover and
  *  click hit-testing). We arm the WHEEL ONLY, which is the exact subset canon itself names `"scroll"`, because
- *  ccx has no hover, no click targets and no in-frame selection — and 1003 would also take the terminal's own
- *  drag-to-select away from the user. MOUSE_OFF stays canon's full four: turning off a mode we never set costs
- *  nothing, and it is the byte string whose absence is still visible ten minutes later. */
+ *  ccx has no hover and no click targets, so those two modes would buy nothing and cost a report per pixel of
+ *  mouse movement.
+ *    AND THE WHEEL IS PAID FOR IN SELECTION, EVEN AT THIS WIDTH — the narrower set does not dodge that. Mode
+ *  1000 ALONE already routes press and release to the application, so on xterm-family terminals, iTerm2,
+ *  Terminal.app, Ghostty and Alacritty a plain click-drag inside fullscreen stops sweeping text: the user gets
+ *  native selection back only by holding the terminal's own override modifier (Shift on xterm-family, Option on
+ *  iTerm2/Terminal.app). That is the real trade this constant makes, canon pays exactly the same one through
+ *  `"full"`, and what our subset actually spares the terminal is 1002/1003's motion flood, not the cost above.
+ *    MOUSE_OFF stays canon's full four: turning off a mode we never set costs nothing, and it is the byte
+ *  string whose absence is still visible ten minutes later. */
 export const MOUSE_ON_SCROLL = "\x1b[?1000h\x1b[?1006h";
 /** canon `nV` L177070 (DECTCEM). The last thing out, as in `Uho` L180343. */
 export const CURSOR_SHOW = "\x1b[?25h";

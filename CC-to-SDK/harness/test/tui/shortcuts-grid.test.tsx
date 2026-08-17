@@ -64,8 +64,18 @@ describe("the entry-set merge (DG63)", () => {
   // them into a sentence — but a grid of CHORDS is a list of keys the reader can press, and a pointer gesture
   // printed as "wheelup to scroll" is a key nobody has. Nothing here is exempt from the honesty contract by
   // being unprintable; it is exempt from the GRID by not being a chord.
+  //   THE CORPUS IS BOTH RENDERERS. `flat()` renders with `fullscreen: false`, which DROPS every `fullscreen`
+  // row — and the fullscreen renderer is precisely where a wheel row would be tempting to add, so a pin that
+  // only saw the classic grid could not see the row it is guarding against. The chord is the half that carries
+  // the gesture (the label of such a row need never say "wheel"), so the fullscreen GRID and the fullscreen
+  // key column both have to be in here, not just the labels.
   it("never prints a pointer gesture as a chord", () => {
-    const cells = [...flat(), ...SHORTCUT_ROWS.map((r) => r.phrase ?? r.label)].join("\n");
+    const cells = [
+      ...flat(),                                                                              // the classic grid
+      ...shortcutGrid(defaultLookup, { platform: "darwin", newline: NEWLINE, fullscreen: true }).flat(),
+      ...fullscreenOnlyRows(defaultLookup, "darwin").flat(),                       // …and their key/label pair
+      ...SHORTCUT_ROWS.map((r) => r.phrase ?? r.label),
+    ].join("\n");
     expect(cells.toLowerCase()).not.toContain("wheel");
     expect(cells.toLowerCase()).not.toContain("scroll wheel");
   });

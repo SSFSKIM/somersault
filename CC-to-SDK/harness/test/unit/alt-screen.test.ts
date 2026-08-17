@@ -40,8 +40,11 @@ describe("alt-screen bytes (canon 2.1.220)", () => {
 
   // canon `ncy` L177070 → `mY(MOUSE_NORMAL) + mY(MOUSE_SGR)`, modes 1000 and 1006, which is exactly what
   // `AUe("scroll")` (L177057-177061) returns. The name is canon's own for this subset. NOT `rcy`/`"full"`,
-  // which adds 1002 and 1003 (button-drag and any-motion tracking) for hover and click — a recorded
-  // divergence, and the one the composer's live text selection depends on us NOT taking.
+  // which adds 1002 and 1003 (button-drag and any-motion tracking) for hover and click — a recorded divergence,
+  // because ccx has no hover and no click targets and would only be paying for a motion flood.
+  //   IT DOES NOT BUY BACK NATIVE SELECTION, and the comment must not claim it does: mode 1000 alone routes
+  // press and release to the application, so drag-to-select inside fullscreen needs the terminal's override
+  // modifier (Shift on xterm-family, Option on iTerm2/Terminal.app) at this width just as it does at canon's.
   it("MOUSE_ON_SCROLL is canon's `scroll` set — wheel reporting plus SGR encoding, and nothing else", () => {
     expect(MOUSE_ON_SCROLL).toBe("\x1b[?1000h\x1b[?1006h");
   });

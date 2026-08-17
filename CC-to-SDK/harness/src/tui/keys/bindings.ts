@@ -110,8 +110,10 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+e": "transcript:toggleShowAll",           // F1-shipped (TranscriptPager.tsx) — MUST stay bound
     "ctrl+o": "transcript:exit",                    // preserves ctrl+o-closes-the-pager (Global's toggleTranscript only opens)
     // FSW BACKLOG 5 — the wheel, on the pager's own line pair. It has to be bound HERE as well as in `Scroll`
-    // and not only there: in fullscreen the pager mounts innermost over the viewport, so an unbound tick would
-    // resolve one scope out and scroll the transcript UNDERNEATH the box the reader is looking at.
+    // because the fullscreen tree SWAPS the two rather than stacking them: `RegionPager` renders INSTEAD OF
+    // `FullscreenViewport` (ChatApp.tsx:1181-1189), so for as long as the pager is open no `Scroll` block is
+    // mounted at all. Unbound here, a tick would resolve to nothing — the wheel would be DEAD on the one
+    // surface that exists to be read, not misdirected onto something underneath it.
     "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",
     // The pager was an owner-gated surface: ChatApp killed every root global inside it except its own ctrl+o
     // close arm. Four of the six are rebound above as pager operations; these two were simply dead, and must

@@ -280,9 +280,10 @@ describe("overlay gating, expressed as null bindings", () => {
       "v": "scroll:dumpTranscript",
     });
   });
-  // The wheel is bound in BOTH reading surfaces, and it has to be: the ctrl+O pager mounts innermost over the
-  // fullscreen viewport, and a `Transcript` block with no wheel would let the tick fall through and scroll the
-  // transcript underneath the box the reader is looking at. Same action names in both — one operation.
+  // The wheel is bound in BOTH reading surfaces, and it has to be: the fullscreen tree SWAPS them rather than
+  // stacking them — `RegionPager` renders INSTEAD OF `FullscreenViewport` (ChatApp.tsx:1181-1189) — so with the
+  // pager open there is no `Scroll` block left underneath, and a `Transcript` block with no wheel would leave
+  // the tick INERT on the reading surface itself. Same action names in both — one operation.
   it("both reading surfaces bind the wheel to their own line pair", () => {
     for (const context of ["Scroll", "Transcript"] as const) {
       expect(block(context).bindings["wheelup"], `${context} wheelup`).toBe("scroll:lineUp");
