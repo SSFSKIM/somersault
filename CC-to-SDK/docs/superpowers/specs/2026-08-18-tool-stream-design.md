@@ -210,7 +210,9 @@ to the empty string by the fullscreen render path (the three-state contract in
 hint, the agent done-hint, and the batch header (`toolRenderer.tsx:224/284/339`), which
 matches canon's Ett context wrapping the whole virtual list; fullscreen snapshot deltas
 in those rows are expected, and A9's byte-identity claim binds the classic renderer
-only. Classic renderer and pager keep their chips.
+only. The suppression also reaches the ctrl+o pager while in fullscreen — canon-faithful
+too (canon's overlay is the same virtualized component under the same Ett provider,
+grounding §7). The classic renderer keeps its chips everywhere.
 
 ## 4. Acceptance (observable behavior; keyed live cells run under the tmux driver with an isolated HOME under /tmp + CCX_FLEET_ROOT)
 
@@ -328,3 +330,9 @@ Pending — written at finish.
   members-in-expansion; A10 added (mid-turn expansion persistence); expansion-set
   lifecycle mirrors FoldPendingState.reset(); chip suppression documented as blanket;
   tint-drop rationale re-justified on cost.
+- 2026-08-18: plan review round 1 corrections flowing back: §3.4's "pager keeps its
+  chips" was wrong — in fullscreen the suppression reaches the pager too, and that
+  matches canon (its overlay sits under the same Ett provider); recorded one known
+  limitation for the plan's T8 — items committed to the classic replay while a cluster
+  was expanded stay expanded-form after a later `/tui default` (same trade family as the
+  fullscreen wave's "answers commit whole").

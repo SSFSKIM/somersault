@@ -40,14 +40,14 @@
 ### Task 2: Probe — per-tool progress stream reachability (research spike)
 
 **Files:**
-- Create: `probes/probes/110-tool-progress-stream.ts` (run from `probes/` with `tsx`, keyed via `../.env`)
+- Create: `probes/probes/100-tool-progress-stream.ts` (next free number — highest existing is 99; run from `probes/` with `tsx`, keyed via `../.env`)
 
 **Question:** does the installed `@anthropic-ai/claude-agent-sdk` deliver any per-tool progress feed headlessly (canon's `bash_progress`/`mcp_progress` equivalents) — the premise behind the bash `(Ns · N lines)` suffix and mid-flight hint updates (spec §3.1 probe gate)?
 
 - [ ] **Step 1: Write the probe.** Run one query that executes a slow Bash command (`sleep 3 && seq 200`) and an MCP-style long call if cheap; log every SDK message type/subtype received while the tool is in flight (stream events, partial messages, hook payloads). Model: whatever the probe workspace default is; keep it one turn.
-- [ ] **Step 2: Run it live** (`set -a; . ../.env; set +a; npx tsx probes/110-tool-progress-stream.ts`). Record verbatim message shapes in a trailing comment block, per probe house style.
+- [ ] **Step 2: Run it live** (`set -a; . ../.env; set +a; npx tsx probes/100-tool-progress-stream.ts`). Record verbatim message shapes in a trailing comment block, per probe house style.
 - [ ] **Step 3: Report the verdict** — reachable (which field carries elapsed/lines) or not. If NOT reachable: Task 11 shrinks per its own gate and the spec pre-records the divergence (controller does the spec edit).
-- [ ] **Step 4: Commit** — `f5(ts): T2 — probe 110: per-tool progress reachability`.
+- [ ] **Step 4: Commit** — `f5(ts): T2 — probe 100: per-tool progress reachability`.
 
 ---
 
@@ -55,7 +55,8 @@
 
 **Files:**
 - Modify: `src/tui/toolFold.ts` (`FoldClass`, `classifyToolEvent`, `segmentRuns`, `GroupCounts`, absorb/newRun/emit helpers)
-- Test: `test/unit/tool-fold.test.ts` (extend the existing suite; find it via `grep -rl classifyToolEvent test/`)
+- Modify: `src/tui/toolRenderer.tsx` (`foldAtoms` at :1015 ONLY — see the suppression gate below)
+- Test: `test/tui/toolFold.test.ts` (the existing fold suite — the only home of `classifyToolEvent`/`segmentRuns`/`foldClauses` tests; there is no `test/unit` fold file)
 
 **Interfaces (produces):**
 ```ts
@@ -64,18 +65,32 @@ export type FoldClass =
   | { collapsible: true; kind: "read" | "search" | "list" | "mcp" | "bash" }
   | { collapsible: true; kind: "silent"; popsOutOnError: boolean };
 export function classifyToolEvent(event: Pick<ToolEvent, "name" | "input">, opts?: { fullscreen?: boolean }): FoldClass;
-// GroupCounts gains: bashCount: number; and (Task 4) the git-op fields.
+// GroupCounts gains: bashCount?: number  (optional — absent ⇒ classic; keeps the three existing
+// GroupCounts literals in test/tui/{toolFold,foldPendingState,sgr-foldrow}.test.ts compiling).
 // FoldGroup gains: bashCommands?: ReadonlyMap<string, string>  (tool-use id → command, fullscreen only)
 ```
 Existing call sites (`toolRenderer.tsx:23` import; the `foldAtoms`/`segmentRuns` pipeline around `toolRenderer.tsx:1010–1046`) compile unchanged when `opts` is omitted — omitted means classic, byte-identical policy.
 
+**The suppression gate (load-bearing — without it `silent` is dead code for three of five tools):**
+`foldAtoms` (`toolRenderer.tsx:1015`) diverts `isSuppressedTool` names (`SUPPRESSED =
+["TaskCreate","TaskUpdate","ToolSearch"]`, `src/tui/toolResult.ts:17`) to `neutral` atoms BEFORE
+`segmentRuns` ever sees them — so they could never reach `classifyToolEvent` or enter `memberIds`,
+while TodoWrite/TaskGet/TaskList (not suppressed) would. Under `fullscreen`, `foldAtoms` must let
+suppressed tools through as `tool` atoms so the silent classification governs them uniformly.
+Classic keeps the diversion — byte-identical.
+
+Structural note for the implementer: `classifyToolEvent` returns for mcp/Glob/Grep/Read BEFORE any
+Bash logic, and the Bash read-ish classification must still win over the new `"bash"` kind (canon
+236816 sets `isBash: !l && c` — bash-kind only when NOT read-ish), so the fullscreen arm is reached
+after the existing checks, not before.
+
 - [ ] **Step 1: Write failing tests.** Table-driven over `classifyToolEvent`:
   - fullscreen: `Bash("npm run build")` → `{collapsible:true, kind:"bash"}`; `Bash("cat a.ts")` keeps `kind:"read"` (read-ish classification still wins so counters stay canon — 236816 `isBash: !l && c`); `ToolSearch` → `{kind:"silent", popsOutOnError:false}` (canon 236808 absorbs it silently, no pop-out); `TodoWrite`/`TaskCreate`/`TaskGet`/`TaskUpdate`/`TaskList` → `{kind:"silent", popsOutOnError:true}` (canon `Joi`, 236807/236809); `WebFetch`/`WebSearch`/`Write`/`Edit`/`NotebookEdit`/`Agent`/`Task` → `{collapsible:false}`.
   - classic (no opts): every input above returns exactly what it returns today (pin with the current values — this is A9's model-level guard).
-  - `segmentRuns` (fullscreen): a run of Read+Bash("git status")+TodoWrite stays ONE group, `bashCount:1`, TodoWrite in `memberIds` but contributing no count; a TodoWrite whose event carries an error status pops out per Task 1's addendum semantics (write the test to the addendum's answer; if the addendum says split-run, assert two groups).
-- [ ] **Step 2: Run** `npx vitest run test/unit/tool-fold.test.ts` — expect FAIL (unknown kinds).
-- [ ] **Step 3: Implement.** `classifyToolEvent` fullscreen arms per the table; `segmentRuns` threads `opts.fullscreen` (extend its `options` param), absorbs `silent` members into `memberIds` without counters, records `bashCommands` for `kind:"bash"` AND for read-ish Bash (canon records every bash command for the scraper, 237152), and implements pop-out per the addendum under the spec's invariant: **a pop-out never changes `memberIds[0]` of an already-formed run**.
-- [ ] **Step 4: Run the suite; typecheck.** `npm run typecheck && npx vitest run test/unit/tool-fold.test.ts` — PASS.
+  - `segmentRuns` (fullscreen): a run of Read+Bash("git status")+TodoWrite stays ONE group, `bashCount:1`, TodoWrite in `memberIds` but contributing no count; a **ToolSearch** likewise lands in `memberIds` (this fails until the suppression gate lands); a TodoWrite whose event carries an error status pops out per Task 1's addendum semantics (write the test to the addendum's answer; if the addendum says split-run, assert two groups).
+- [ ] **Step 2: Run** `npx vitest run test/tui/toolFold.test.ts` — expect FAIL (unknown kinds).
+- [ ] **Step 3: Implement.** `classifyToolEvent` fullscreen arms per the table; the `foldAtoms` suppression gate; `segmentRuns` threads `opts.fullscreen` (extend its `options` param), absorbs `silent` members into `memberIds` without counters, records `bashCommands` for `kind:"bash"` AND for read-ish Bash (canon records every bash command for the scraper, 237152), and implements pop-out per the addendum under the spec's invariant: **a pop-out never changes `memberIds[0]` of an already-formed run**.
+- [ ] **Step 4: Run the suite; typecheck.** `npm run typecheck && npm run test:tui` — PASS.
 - [ ] **Step 5: Commit** — `f5(ts): T3 — fullscreen fold policy: bash/silent/pop-out classification`.
 
 ---
@@ -85,12 +100,11 @@ Existing call sites (`toolRenderer.tsx:23` import; the `foldAtoms`/`segmentRuns`
 **Files:**
 - Modify: `src/tui/toolFold.ts` (`GroupCounts` git fields, per-result scrape hook in `segmentRuns`'s absorb path, `foldClauses` new clauses)
 - Modify: `src/tui/foldPendingState.ts` (ratchet `bashCount`; git arrays are append-only, no ratchet — mirror canon's non-ratcheted Set treatment)
-- Test: `test/unit/tool-fold.test.ts`, `test/unit/fold-pending.test.ts` (find via `grep -rl FoldPendingState test/unit/`)
+- Test: `test/tui/toolFold.test.ts`, `test/tui/foldPendingState.test.ts` (the existing suites — there are no `test/unit` fold files)
 
-**Interfaces (produces):**
+**Interfaces (produces — `bashCount` is Task 3's; this task adds only the git fields, all optional/fullscreen-only):**
 ```ts
-// GroupCounts gains (all fullscreen-only, absent ⇒ classic):
-bashCount: number; gitOpBashCount?: number;
+gitOpBashCount?: number;
 commits?: readonly string[]; pushes?: readonly string[]; branches?: readonly string[]; prs?: readonly string[];
 ```
 
@@ -102,7 +116,7 @@ commits?: readonly string[]; pushes?: readonly string[]; branches?: readonly str
   - Watermark: `latch` ratchets `bashCount` like the four existing counters.
 - [ ] **Step 2: Run — FAIL.**
 - [ ] **Step 3: Implement.** Port `odS`'s rules from the addendum verbatim; extend `foldClauses(counts, active, opts?: { fullscreen?: boolean })` — classic callers unchanged.
-- [ ] **Step 4: `npm run typecheck && npm run test:unit` — PASS.**
+- [ ] **Step 4: `npm run typecheck && npm run test:tui` — PASS.**
 - [ ] **Step 5: Commit** — `f5(ts): T4 — git-op scraping + fullscreen clauses`.
 
 ---
@@ -110,50 +124,54 @@ commits?: readonly string[]; pushes?: readonly string[]; branches?: readonly str
 ### Task 5: Fullscreen projection switch + chip suppression
 
 **Files:**
-- Modify: `src/tui/toolRenderer.tsx` (`ProjectionOptions` gains `fullscreen?: boolean`; thread into `classifyToolEvent`/`segmentRuns`/`foldClauses` call sites — the pipeline at :1010–1046 and `groupRowLine`/`groupItems` at :697–760)
+- Modify: `src/tui/toolRenderer.tsx` (`ProjectionOptions` gains `fullscreen?: boolean`; thread into `classifyToolEvent`/`segmentRuns`/`foldClauses` call sites — the pipeline at :1010–1046, `groupRowLine`/`groupItems` at :695/:731, **and `trailingRunCut` at :1034–1038**, whose bare `classifyToolEvent(atom.event)` call must take the flag: unthreaded, a fullscreen run ending in a non-read Bash is not recognized as growable, and the group is emitted into `finalizedItems` while `projectPending` also draws it — two cluster rows on screen)
 - Modify: `src/tui/useChat.ts` (`ProjectionContext` gains `fullscreen`; `projectionContext()` at :249 sets it and sets `expandHint: fullscreen ? "" : expandHintRef.current`)
-- Modify: `src/tui/ChatApp.tsx` (pass the renderer identity into useChat's opts — a `isFullscreen: () => boolean` dep sourced from `renderer?.mode === "fullscreen"`, the :299 derivation; useChat holds it in a ref like `fullscreenRef`)
-- Test: `test/tui/` — extend the fold-row suite (find via `grep -rl groupRowLine test/tui/ || grep -rl 'Read 2 files' test/tui/`) + one classic-snapshot guard
+- Modify: `src/tui/ChatApp.tsx` (pass the renderer identity into useChat's opts — a `isFullscreen: () => boolean` dep sourced from `renderer?.mode === "fullscreen"`, the :299 derivation; useChat holds it in a ref. Deliberate: useChat already receives `opts.rendererChoice`, but that prop can be absent while ChatApp's own derivation is the fullscreen truth the mount at :1189 uses — thread ChatApp's boolean, and say so in a comment so the two channels don't look like an oversight)
+- Test: `test/tui/` — extend the fold-row suite (find via `grep -rl groupRowLine test/tui/`) + one classic-snapshot guard
 
 **Interfaces (consumes):** Task 3/4's opts. **Produces:** every projection call in fullscreen runs the widened policy with no chips; classic path passes no flag.
 
-- [ ] **Step 1: Write failing tests.** (a) Projection with `fullscreen: true` folds a Bash-only run into one group row whose text ends without any `(… to expand)` chip; (b) same items with `fullscreen: false` render today's bytes (snapshot pin — A9's render-level guard); (c) the blanket reach: `hiddenToolUsesLine` and the agent-batch header render hint-free when `expandHint === ""` (they already honor `""` — pin it, since fullscreen now depends on it; spec §3.4).
+- [ ] **Step 1: Write failing tests.** (a) Projection with `fullscreen: true` folds a Bash-only run into one group row whose text ends without any `(… to expand)` chip; (b) same items with `fullscreen: false` render today's bytes (snapshot pin — A9's render-level guard); (c) the blanket reach: `hiddenToolUsesLine` and the agent-batch header render hint-free when `expandHint === ""` (they already honor `""` — pin it, since fullscreen now depends on it; spec §3.4); (d) **single-cluster invariant**: a fullscreen run whose LAST member is an open `Bash("npm run build")` appears exactly once across `finalizedItems ⧺ pendingItems` (the `trailingRunCut` cell); (e) **membership integration**: a ToolSearch inside a fullscreen run lands in the group's `memberIds` end-to-end through the real `foldAtoms` pipeline (guards Task 3's suppression gate at the integration layer).
 - [ ] **Step 2: Run — FAIL.** (a) fails: Bash currently stands alone.
-- [ ] **Step 3: Implement.** Thread the flag; suppression is the one-line `expandHint` ternary in `projectionContext()` — the three-state `""` contract in `keys/hints.ts` does the rest.
+- [ ] **Step 3: Implement.** Thread the flag; suppression is the one-line `expandHint` ternary in `projectionContext()` — the three-state `""` contract in `keys/hints.ts` does the rest. Note: the `""` also reaches `detailItems` (`useChat.ts:1176`), so the ctrl+o pager loses its `backgroundedHint`/`hiddenToolUsesLine` chips in fullscreen too — that is canon-faithful (canon's Ett suppression covers its overlay as well, grounding §7) and the spec's §3.4 has been corrected to say so; pin one pager row in the tests rather than treating it as a leak.
 - [ ] **Step 4: `npm run typecheck && npm run test:tui` (scoped file first, then the suite) — PASS.**
 - [ ] **Step 5: Commit** — `f5(ts): T5 — fullscreen projection flag + blanket chip suppression`.
 
 ---
 
-### Task 6: MouseEvent decode (input layer, pure)
+### Task 6: MouseInputEvent decode (input layer, pure)
 
 **Files:**
-- Modify: `src/tui/keys/types.ts` (add `MouseEvent`, extend `InputEvent`)
+- Modify: `src/tui/keys/types.ts` (add `MouseInputEvent`, extend `InputEvent`)
 - Modify: `src/tui/keys/parse.ts` (the SGR branch at :104–108 — after `sgrWheel` declines, try `sgrClick`)
-- Test: `test/unit/` keys-parse suite (find via `grep -rl sgrWheel test/ || grep -rl SGR test/unit/`)
+- Test: `test/tui/keys-parse.test.ts` (the existing parse suite)
 
 **Interfaces (produces):**
 ```ts
-export interface MouseEvent { kind: "mouse"; action: "press" | "release"; button: 0 | 1 | 2; col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string }
-export type InputEvent = KeyEvent | TextEvent | MouseEvent | IgnoredEvent;
+export interface MouseInputEvent { kind: "mouse"; action: "press" | "release"; button: 0 | 1 | 2; col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string }
+export type InputEvent = KeyEvent | TextEvent | MouseInputEvent | IgnoredEvent;
 ```
+The name is `MouseInputEvent`, NOT `MouseEvent`: the tsconfig has no `lib` override, so DOM's global
+`MouseEvent` is in scope — a file that forgets the import would silently bind the DOM type and
+typecheck clean. Every later task uses `MouseInputEvent`.
 
 - [ ] **Step 1: Write failing tests.** `\x1b[<0;12;5M` → press button 0 col 12 row 5; `\x1b[<0;12;5m` → release; `\x1b[<2;1;1M` → press button 2; `\x1b[<16;3;3M` → ctrl+press; `\x1b[<64;9;9M` stays `wheelup` (order-independence: the `& 64` guard, spec §3.2); `\x1b[<32;5;5M` (motion) stays `ignored("mouse")`; `\x1b[<3;5;5M` (no-button) stays ignored; garbage params stay ignored; wheelGuard is untouched by mouse events (it only inspects `kind === "key"` — pin with one case).
 - [ ] **Step 2: Run — FAIL.**
 - [ ] **Step 3: Implement** `sgrClick` per the spec's decode rule — `(button & 64) === 0`, `(button & 32) === 0`, `(button & 3) !== 3`; modifiers from bits 16/8/4; 1-based col/row passed through raw.
-- [ ] **Step 4: `npm run typecheck && npm run test:unit` — PASS** (the union change may surface exhaustive-switch sites; fix each by handling or explicitly ignoring `"mouse"`).
-- [ ] **Step 5: Commit** — `f5(ts): T6 — SGR click decode as first-class MouseEvent`.
+- [ ] **Step 4: `npm run typecheck && npm run test:tui` — PASS** (the union change may surface consumers; `wheelGuard` tests `kind !== "key"` and is safe, `dispatch` is Task 7's).
+- [ ] **Step 5: Live premise check (spec §5 — before anything is built on it).** In a tmux pane running a trivial raw-mode reader (or `ccx` itself) with `MOUSE_ON_SCROLL` armed (`src/tui/altScreen.ts:51` — `?1000h ?1006h`), physically click and capture the bytes: confirm press `\x1b[<0;C;RM` and release `\x1b[<0;C;Rm` arrive under mode 1000 in the tracked terminal. Record the captured bytes in the task report. If they do NOT arrive, STOP and report BLOCKED — the wave's click premise fails and the controller must re-plan.
+- [ ] **Step 6: Commit** — `f5(ts): T6 — SGR click decode as first-class MouseInputEvent`.
 
 ---
 
 ### Task 7: useMouseSink registry slot + provider routing
 
 **Files:**
-- Modify: `src/tui/keys/registry.ts` (add `MouseEntry { seq: number; handler: (e: MouseEvent) => void; active: boolean }` to `Registry`; `mouseHandler(reg)` returns the innermost (max-seq) active entry, mirroring `fallbackHandler` at :84)
+- Modify: `src/tui/keys/registry.ts` (add `MouseEntry { seq: number; handler: (e: MouseInputEvent) => void; active: boolean }` to `Registry`; `mouseHandler(reg)` returns the innermost (max-seq) active entry, mirroring `fallbackHandler` at :84)
 - Modify: `src/tui/keys/KeymapProvider.tsx` (in `dispatch`, BEFORE the `ignored` branch at :173: `if (ev.kind === "mouse") { mouseHandler(reg)?.(ev); return; }`; export `useMouseSink(handler, opts?: { active?: boolean })` mirroring `useKeyFallback` at :413)
 - Test: the provider suite (find via `grep -rl useKeyFallback test/`)
 
-**Interfaces (produces):** `useMouseSink(handler: (e: MouseEvent) => void, opts?: { active?: boolean }): void` — innermost-wins, render-time registration, F2 registry discipline (spec §3.2: NOT a KeymapDeps callback).
+**Interfaces (produces):** `useMouseSink(handler: (e: MouseInputEvent) => void, opts?: { active?: boolean }): void` — innermost-wins, render-time registration, F2 registry discipline (spec §3.2: NOT a KeymapDeps callback).
 
 - [ ] **Step 1: Write failing tests.** A registered sink receives press/release events end-to-end from raw bytes through the provider; mouse events never reach `useKeyFallback` handlers, never insert text, never enter the binding table; with no sink registered the event is silently consumed; two sinks → innermost (later seq, active) wins; an inactive sink defers to the outer one; wheel bytes still travel the key path (Scroll binding fires).
 - [ ] **Step 2: Run — FAIL.**
@@ -166,15 +184,21 @@ export type InputEvent = KeyEvent | TextEvent | MouseEvent | IgnoredEvent;
 ### Task 8: Expansion state + re-projection (model→document seam)
 
 **Files:**
-- Modify: `src/tui/transcriptModel.ts` (or wherever `RenderItem` is declared — `grep -n "interface RenderItem\|type RenderItem" src/tui/transcriptModel.ts src/tui/render.ts`): add optional `foldAnchor?: string`
-- Modify: `src/tui/wrapItems.ts` (`wrapOne`/`wrapItem` propagate `foldAnchor` onto every wrapped row)
-- Modify: `src/tui/toolRenderer.tsx` (`ProjectionOptions` gains `expandedFolds?: ReadonlySet<string>`; `groupItems` — when `expandedFolds.has(anchorId)`: emit, instead of the fold row + hint block, each member event's existing per-call verbose items (`renderToolEvent` with the projection's verbose form — the same items the ctrl+o pager renders), every emitted item tagged `foldAnchor: anchorId`; the collapsed fold row and its active hint block are tagged `foldAnchor: anchorId` too)
-- Modify: `src/tui/useChat.ts` (own `expandedFoldsRef: Set<string>` + a state tick; expose `toggleFold(anchor: string): void` on the hook's return — flips membership and re-runs the same finalized-items re-projection the reconcile path uses (:961 area); thread `expandedFolds` through `projectionContext()`; clear the set at every `pendingStateRef.current.reset()` call site — `grep -n "\.reset()" src/tui/useChat.ts`)
-- Test: `test/unit/wrap-items.test.ts` (or the existing wrapItems suite) + a new `test/tui/fold-expand.test.tsx`
+- Modify: `src/tui/toolRenderer.tsx` — `RenderItem` is the two-arm union at **:48**; BOTH arms gain optional `foldAnchor?: string`
+- Modify: `src/tui/wrapItems.ts` — propagation is load-bearing in exactly one arm: `wrapOne`'s wrapped-LINE arm (**:161**) mints `{ kind: "line", id, line }` fresh and drops the tag; the gutter-block spread at :154 and both identity returns keep it. Fix the :161 arm; pin all four.
+- Modify: `src/tui/toolRenderer.tsx` (`ProjectionOptions` gains `expandedFolds?: ReadonlySet<string>`; `groupItems` — when `expandedFolds.has(anchorId)`: emit, instead of the fold row + hint block, each member's per-call items, every emitted item tagged `foldAnchor: anchorId`; the collapsed fold row and its active hint block are tagged too. **Member rendering is a fresh render, not a reuse**: `groupItems` has only `memberIds` — look each event up via `options.toolEvents` (set by both `projectAll` :980 and `projectPending` :1103) and call `renderToolEvent(event, normalizeToolResult(event, …), …)` itself, **in the DETAIL form** (`projection: "detail-all"`-equivalent options — canon's expanded branch renders the full listing, grounding §4, and it is what the ctrl+o pager shows; the compact form would clip an expanded Read to three rows). A member whose normalized status is `suppressed` (ToolSearch/TaskCreate/TaskUpdate — `toolEventItems` returns `[]` at :377) renders its generic header row instead of nothing: canon's expanded cluster shows every absorbed `tool_use`, and A6 pins it.)
+- Modify: `src/tui/useChat.ts` (own `expandedFoldsRef: Set<string>` + a state tick; expose `toggleFold(anchor: string): void` on the hook's return — flips membership and calls **`reconcile()`** (:954–981), which re-projects BOTH `finalizedItems` AND `pendingItems` — the trailing growable run lives in the pending projection (`projectPending`, :1029–1031 consumer), so a finalized-only reproject leaves a live cluster collapsed until the next blink, and there is NO blink once all members settled with no breaker. Thread `expandedFolds` through `projectionContext()`. Clear the set in exactly one place: `replaceDocument` (**:1104**) — the one relevant `.reset()` site (the other `.reset()` greps hit task/bg refs); also clear it when the fullscreen flag flips off (renderer switch), bounding the mixed-record replay below.)
+- Test: `test/tui/` — the existing wrapItems suite (`grep -rl wrapItem test/tui/`) + a new `test/tui/fold-expand.test.tsx`
+
+**Known limitation (recorded, not fixed here):** `reconcile()` keeps publishing into
+`publishedIds`/`staticItems` even in fullscreen (`ChatApp.tsx:1165` note), so items committed while
+a cluster was expanded stay in the classic replay after a later `/tui default`. Clearing the set on
+renderer switch bounds it going forward; the already-committed rows are a recorded divergence —
+same family as the fullscreen wave's "answers commit whole" trade. Task 13 records it in the spec.
 
 **Interfaces (produces):** `toggleFold(anchor)` on useChat's return; `foldAnchor` on RenderItem, survives wrapping. **Consumes:** Task 3's `memberIds` (anchor = `memberIds[0]`).
 
-- [ ] **Step 1: Write failing tests.** (a) `wrapItem` on a tagged over-wide item: every wrapped row carries the tag; (b) projection with anchor in `expandedFolds`: fold row gone, member per-call items present, ALL tagged with the anchor — including a silently-absorbed TodoWrite member (spec A6: members appear when expanded); (c) toggle round-trip through useChat: `toggleFold(a)` re-projects finalizedItems (fold row → members), second call restores; (d) reset discipline: after the `/clear`-path reset, the set is empty; (e) **the A10 pin**: with a run still OPEN (trailing growable), toggle the anchor, then absorb another member — the projection still renders expanded and now includes the new member (this is the cell that fails an item-id-keyed implementation).
+- [ ] **Step 1: Write failing tests.** (a) `wrapItem` on a tagged over-wide item: every wrapped row carries the tag (both arms; the :161 line-arm is the one that fails first); (b) projection with anchor in `expandedFolds`: fold row gone, member per-call items present in DETAIL form, ALL tagged with the anchor — including a silently-absorbed TodoWrite member AND a suppressed-status ToolSearch member rendering its generic row (spec A6); (c) toggle round-trip through useChat: `toggleFold(a)` re-projects (fold row → members), second call restores; (d) reset discipline: after `replaceDocument`, the set is empty; (e) **the A10 pin, against `pendingItems`**: with a run still OPEN (trailing growable — it lives in the PENDING projection, not finalized), toggle the anchor, assert `pendingItems` now carries the members, then absorb another member — still expanded, new member present (this is the cell that fails both an item-id-keyed implementation and a finalized-only reproject).
 - [ ] **Step 2: Run — FAIL.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: `npm run typecheck && npm run test:unit && npm run test:tui` — PASS.**
@@ -185,7 +209,15 @@ export type InputEvent = KeyEvent | TextEvent | MouseEvent | IgnoredEvent;
 ### Task 9: Hitmap — viewport row-map + frame origin
 
 **Files:**
-- Modify: `src/tui/FullscreenFrame.tsx` (publish the region's absolute top row through the same context that grants rows — `grep -n useRegionRows src/tui/*.tsx` finds the channel; the frame owns the answer, spec §3.3: no implicit "row 1" invariant)
+- Modify: `src/tui/FullscreenFrame.tsx` — publish the region's absolute top row as a SIBLING context
+  (`RegionTopContext` + `useRegionTop()`), NOT by reshaping the existing channel:
+  `RegionRowsContext = createContext(0)` (:98–99) is a bare number with three consumers plus a test
+  (`FullscreenViewport.tsx:127`, `RegionPager.tsx:48`, `test/tui/fullscreen-overlays.test.tsx:116`)
+  that would all break on a shape change. Be honest about what is published: Ink exposes no absolute
+  terminal coordinates, so the frame cannot MEASURE its top — it publishes the computed constant `1`
+  (the region is the frame's first band; the frame header records the dock's last row as `rows − 1`).
+  Explicit-computed still beats implicit (spec §3.3): the day a banner lands above the region, the
+  constant's owner is one named line.
 - Modify: `src/tui/FullscreenViewport.tsx` (`FullscreenViewportProps` gains `hitmapRef?: React.Ref<ViewportHitmap>`; each render rebuilds the map from the exact slice it paints)
 - Test: `test/tui/fold-hitmap.test.tsx`
 
@@ -195,7 +227,7 @@ export interface ViewportHitmap { anchorAt(col: number, row: number): string | u
 ```
 Resolution: terminal row → slice row via the frame-published top + the viewport's own layout (jump-pill row excluded); slice row → its RenderItem; return `item.foldAnchor`, but only when `col ≤` that row's plain-text width (`RenderLine.text` length — the column bound, spec §3.3; canon drops blank-cell clicks, 549361). Everything else — pill, dock rows, blank tail, untagged items — `undefined`.
 
-- [ ] **Step 1: Write failing tests.** Render a viewport (fakeTty + ink-testing per house pattern) whose document holds a tagged fold row among plain rows: `anchorAt` hits the fold row's terminal row within text width → anchor; same row past text width → undefined; a plain row → undefined; scroll one line (`scroll` handle) → the mapping shifts with the offset; the pill row (force a scrolled-up state) → undefined; wrapped tagged item: BOTH its painted rows resolve.
+- [ ] **Step 1: Write failing tests.** Render a real `FullscreenFrame` + `FullscreenViewport` (the pattern `test/tui/fullscreen-viewport.test.tsx` already uses) whose document holds a tagged fold row among plain rows: `anchorAt` hits the fold row's terminal row within text width → anchor; same row past text width → undefined; a plain row → undefined; a row BELOW the region (dock band) → undefined; scroll one line (`scroll` handle) → the mapping shifts with the offset; the pill row (force a scrolled-up state) → undefined; wrapped tagged item: BOTH its painted rows resolve. Mount the viewport behind its real sibling (`ChatApp` renders an empty `<Transcript>` above it inside the region, :1179–1189) so the test catches any assumption that the viewport owns the region's first painted row.
 - [ ] **Step 2: Run — FAIL.**
 - [ ] **Step 3: Implement.** The map is derived in the same pass that slices (`pageItemSlices` output) — no second layout walk; published via `useImperativeHandle` beside the scroll handle (:165).
 - [ ] **Step 4: `npm run typecheck && npm run test:tui` — PASS.**
@@ -211,9 +243,9 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 
 **Interfaces (consumes):** T6 events, T7 sink, T8 `toggleFold`, T9 `anchorAt`.
 
-**The tap rule (spec §3.2, verbatim):** `press(button 0)` records `(col,row)`; `release` at the SAME cell → click; release elsewhere, a second press, or **any wheel key event in between** discards the anchor (the wheel discard hooks the same place the sink lives — a small `onWheel` note from the existing wheel path, or simply: the sink handler also observes `wheelup/wheeldown` via a ref the scroll handler already touches; pick the least invasive and say which in the report). Modified clicks (ctrl/alt/shift) ignored. **The gate (spec §3.3):** clicks act only when the viewport is the live region tenant and no dialog owns the screen — `fullscreen && !transcriptOpen && !paneOwned && !state.historyOpen && !footerState.searching` plus the seam-modal state the T13 seam slot renders (read the :1190–1210 region for the exact booleans; the scroll-key gate is deliberately looser and is NOT this gate).
+**The tap rule (spec §3.2, verbatim):** `press(button 0)` records `(col,row)`; `release` at the SAME cell → click; release elsewhere, a second press, or **any wheel key event in between** discards the anchor (the wheel discard hooks the same place the sink lives — a small `onWheel` note from the existing wheel path, or simply: the sink handler also observes `wheelup/wheeldown` via a ref the scroll handler already touches; pick the least invasive and say which in the report). Modified clicks (ctrl/alt/shift) ignored. **The gate (spec §3.3): reuse the existing input router, do not rebuild the disjunction** — `fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching`. `inputOwnerRef` (`ChatApp.tsx:503–515`) already folds shortcuts, transcript, every overlay, `historyOpen`, and BOTH decision flavors into one answer; a hand-built `!paneOwned && !seamActive` version misses inline permission/question dialogs (`paneOwned` at :930–933 deliberately excludes non-plan decisions, `seamActive` at :1224 covers only overlay + plan), and the file's own :1215 comment names a second enumeration as the thing to avoid. Test cell (e) below exists to fail that hand-built version.
 
-- [ ] **Step 1: Write failing tests.** Feed raw SGR bytes through the real provider into a mounted ChatApp-level harness (house pattern from existing `test/tui/` keyboard tests): (a) press+release on a fold row toggles expansion (items change); (b) press+release again collapses; (c) press at (5,7) release at (9,7) → nothing; (d) press, wheel tick, release same cell → nothing; (e) with a decision dialog open, the same tap → nothing; (f) with the pager open (ctrl+o), tap → nothing; (g) ctrl+click → nothing.
+- [ ] **Step 1: Write failing tests.** Feed raw SGR bytes through the real provider into a mounted ChatApp-level harness (house pattern from existing `test/tui/` keyboard tests): (a) press+release on a fold row toggles expansion (items change); (b) press+release again collapses; (c) press at (5,7) release at (9,7) → nothing; (d) press, wheel tick, release same cell → nothing; (e) with an **inline (non-plan) permission consult** open — the decision flavor `paneOwned` deliberately excludes — the same tap → nothing (this cell fails any gate rebuilt from `paneOwned`/`seamActive` instead of `composerOwns`); (f) with the pager open (ctrl+o), tap → nothing; (g) ctrl+click → nothing.
 - [ ] **Step 2: Run — FAIL.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: `npm run typecheck && npm run test:tui` — PASS. Also `npm run test:unit` (the union may reach shared helpers).**
@@ -239,7 +271,11 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 ### Task 12: Keyed live acceptance — spec §4 as written
 
 **Files:**
-- Create: `test/live/tool-stream-acceptance.md` run log or the wave's acceptance script under the existing live-test pattern (`ls test/live/` and follow the house form; tmux driver, isolated HOME under /tmp, CCX_FLEET_ROOT)
+- Evidence-only, NOT `test/live/` (that directory is vitest SDK e2e suites). The house form for TUI
+  acceptance is the tmux driver — `harness/scripts/drive-repl.py` + `capture-frames.py`, evidence to
+  a scratch dir, exactly as the fullscreen wave's Task 17 ran it
+  (`docs/superpowers/plans/2026-08-12-fullscreen-live-window.md` is the template). The run matrix is
+  the task report's deliverable.
 
 - [ ] **Step 1: Build** (`npm run build`).
 - [ ] **Step 2: Run every spec §4 cell as written** — A1 through A10, quoting the spec's exact expected strings. A4/A10's click bytes are printf'd into the pty: `printf '\x1b[<0;COL;ROWM\x1b[<0;COL;ROWm'` (target a column inside the cluster text). A8 re-runs the BL5 pokes (wheel scroll, Shift/Option select, 75 ms arrow suppression) and the three scoped suites: `npm run test:unit && npm run test:tui && npm run test:resize-matrix`.
@@ -263,5 +299,5 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 ## Self-review notes (author)
 
 - Spec coverage: §3.1 → T1/T3/T4/T5/T11; §3.2 → T6/T7/T10; §3.3 → T8/T9/T10; §3.4 → T5; §4 → per-task tests + T12; §5 probe gate → T2/T11. A1–A10 all land in T12 verbatim.
-- Type consistency: `FoldClass.kind:"bash"|"silent"` (T3) is what T4's counting and T8's member emission consume; `foldAnchor` (T8) is what T9 resolves and T10 toggles via `toggleFold(anchor)`; `MouseEvent` (T6) is what T7's sink and T10's handler receive.
+- Type consistency: `FoldClass.kind:"bash"|"silent"` (T3) is what T4's counting and T8's member emission consume; `foldAnchor` (T8) is what T9 resolves and T10 toggles via `toggleFold(anchor)`; `MouseInputEvent` (T6) is what T7's sink and T10's handler receive.
 - Deliberate non-verbatim points, each with its source named: the odS rule table and pop-out semantics come from T1's addendum (spec-mandated re-read — inlining guesses here would be worse than the reference); suite/file discovery uses greps because the harness names its test files by feature and the implementer must land in the real one, not one this plan guessed.
