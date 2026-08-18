@@ -448,7 +448,10 @@ and register (import `configRead` from `./configDomain.js`; add `"config/read": 
   The wire has a THIRD token, `"unreadable"` (Task 2 review I1), for a settings file that exists but could
   not be read. It is minted by `configDomain.ts`'s versions walk from layer state, never by this function.
 - `withFileLock<T>(filePath: string, fn: () => Promise<T>, opts?: { staleMs?: number }): Promise<T>` — in-process per-path chain + nonce-owned `<file>.lock`
-- `readTargetDoc(filePath): Promise<{ doc: Record<string, unknown>; version: string }>` — missing → `{doc: {}, version: "absent"}`; malformed → `ConfigValidationError`
+- `readTargetDoc(filePath): Promise<{ doc: Record<string, unknown>; version: string }>` — missing (ENOENT) → `{doc: {}, version: "absent"}`; malformed → `ConfigValidationError`; **any other read
+  failure (EACCES, EISDIR) → `ConfigValidationError` too**, so the write path refuses a file it could not
+  read instead of leaking a raw fs error as an internal error. This is the write-side half of Task 2
+  review I1: never write bytes over bytes you were never able to see.
 - `writeTargetDoc(filePath, doc): Promise<{ version: string }>` — creates the parent dir, 2-space JSON + trailing newline, tmp+rename
 - `resolveRealTarget(filePath): Promise<string>` — parent created; `realpath` when the file exists (symlinked settings → the real file), else the literal path
 
@@ -788,6 +791,14 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       : join(cwdReal as string, ".claude", data.target === "project" ? "settings.json" : "settings.local.json");
     const filePath = await resolveRealTarget(nominal);
     const written = await withFileLock(filePath, async () => {
+      // `"unreadable"` (Task 2 review I1) is refused as an ASSERTION, ahead of the compare: it is a
+      // sentinel for the server's inability to read the file, not a state of its content, so a client
+      // holding it never saw the bytes it would be asserting continuity of. Mechanically it can never
+      // legitimately match — still unreadable and `readTargetDoc` refuses; readable again and the token
+      // is a hash — so this is only about failing closed BY DESIGN with a diagnosable message rather
+      // than by accident with an opaque one.
+      if (data.expectedVersion === "unreadable")
+        throw new ConfigError("ConfigValidationError", 'expectedVersion "unreadable" cannot be asserted — re-read config first');
       const { doc, version } = await readTargetDoc(filePath);
       if (data.expectedVersion !== undefined && data.expectedVersion !== version)
         throw new ConfigError("ConfigVersionConflict", `expectedVersion ${data.expectedVersion} does not match current ${version}`);

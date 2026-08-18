@@ -391,6 +391,27 @@ flips the `full-potential.md` rows and ships nothing.
 - **D-M5-18 (rev 3) — `config/read` serves the CAS tokens** (`versions` map, always present for the
   writable targets in view). Rejected: version-only-on-write (a client's FIRST write against an
   existing file could never be conditional — plan review F3).
+- **D-M5-18a (Task 2 review I1) — the version map has THREE tokens, and only two of them are
+  assertable.** D-M5-18 defined `"absent"` as the token for a settings file that does not exist yet.
+  Implementation contact found `config/read` minting it for a second, materially different case: a file
+  that exists but could not be read (EACCES on a mode-000 file, EISDIR on a directory). The distinction
+  exists at exactly one point in the system — `readLayers` returns a layer object for an unreadable file
+  and nothing at all for an absent one — and the `?.raw` optional chain destroyed it there, leaving the
+  write path nothing to recover it from except a re-read that races a `chmod`. The concrete loss: a
+  write-only `settings.local.json` (mode 0200 is unusual but entirely legal, since write permission is
+  independent of read permission) reads as `"absent"`, a client sends `expectedVersion: "absent"`, and a
+  CAS built on the same token function overwrites a file whose bytes were never read. So: a third
+  sentinel, `"unreadable"`, minted when a layer is in view but carries no `raw`. `"absent"` narrows back
+  to exactly "no such file". On the write side `"unreadable"` is **refused as an assertion** with
+  `ConfigValidationError` ahead of the CAS compare — it describes the server's inability, not the file's
+  content, so a client holding it never saw the bytes whose continuity it would be asserting — and
+  `readTargetDoc` refuses any non-ENOENT read failure for the same reason: never write bytes over bytes
+  you were never able to see. Mechanically the refusal is belt-and-braces (still unreadable → the read
+  refuses; readable again → the token is a hash and the compare conflicts), which is the point: it fails
+  closed by design with a diagnosable message rather than by accident with an opaque one. Rejected:
+  leaving the overload for the write path to sort out — the information is already gone by then;
+  and widening `versionToken` to three cases — the third case is layer state, not bytes, so it belongs
+  to the caller and the function stays pure.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
