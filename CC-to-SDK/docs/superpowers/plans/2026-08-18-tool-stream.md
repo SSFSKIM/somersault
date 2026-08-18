@@ -99,7 +99,7 @@ after the existing checks, not before.
 
 **Files:**
 - Modify: `src/tui/toolFold.ts` (`GroupCounts` git fields, per-result scrape hook in `segmentRuns`'s absorb path, `foldClauses` new clauses)
-- Modify: `src/tui/foldPendingState.ts` (ratchet `bashCount`; git arrays are append-only, no ratchet — mirror canon's non-ratcheted Set treatment)
+- Modify: `src/tui/foldPendingState.ts` (ratchet the GROSS `bashCount`, exactly like the four existing counters — the subtraction happens later, at clause time; git arrays are append-only, no ratchet — mirror canon's non-ratcheted Set treatment)
 - Test: `test/tui/toolFold.test.ts`, `test/tui/foldPendingState.test.ts` (the existing suites — there are no `test/unit` fold files)
 
 **Interfaces (produces — `bashCount` is Task 3's; this task adds only the git fields, all optional/fullscreen-only):**
@@ -110,12 +110,12 @@ commits?: readonly string[]; pushes?: readonly string[]; branches?: readonly str
 
 - [ ] **Step 1: Write failing tests.**
   - Scrape timing (spec §3.1 + Decision Log): absorbing `Bash("git commit -m x")` with a success result carrying `[main abc123f]`-style output adds the short sha to `commits` **at absorption**, not at flush — assert the OPEN accumulator's group (the trailing growable run) already carries it.
-  - No-double-count: that call moves to `gitOpBashCount`; header math (Task 5's clause test) shows "committed abc123f" and NOT "ran 1 shell command".
+  - No-double-count — **a subtraction, NOT a transfer** (spec §3.1 as corrected in Revision Notes round 3; canon 518466–518467 verbatim `le = Ns() ? Math.max(0, P.current - Z) : 0`): `bashCount` stays GROSS, `gitOpBashCount` is a parallel tally bumped once per result that yielded any op, and the shell clause prints `max(0, ratchet(bashCount) - gitOpBashCount)`. Decrementing `bashCount` at absorption instead latches the clause at its pre-git value forever, because the watermark ratchet never falls — a silent lie, not a crash. Cells must assert the shell clause DISAPPEARING as a git op is recognized (one bash call, recognized as a commit ⇒ "committed abc123f" and NO "ran 1 shell command"), and must include a two-call case (one git, one plain ⇒ both clauses, "ran 1 shell command").
   - Recognition table: one test per rule Task 1's addendum documents (commit/amend/cherry-pick, push, merge/rebase, `gh pr` verbs), inputs quoted from the addendum.
   - `foldClauses` fullscreen order (grounding §3, 518545–518635): thought → edited → git parts → pushed → merged/rebased → PR → searched for → read → listed → called (MCP) → called N tools → **ran N shell commands** → memory parts; present/past verb pairs exactly per the grounding table; bold ranges on counts; first clause capitalized.
   - Watermark: `latch` ratchets `bashCount` like the four existing counters.
 - [ ] **Step 2: Run — FAIL.**
-- [ ] **Step 3: Implement.** Port `odS`'s rules from the addendum verbatim; extend `foldClauses(counts, active, opts?: { fullscreen?: boolean })` — classic callers unchanged.
+- [ ] **Step 3: Implement.** Port `odS`'s rules from the addendum verbatim, with the two deliberate departures the spec records (the `--amend` test runs against the same quote-stripped command string the other flag tests use, and each tool_use_id is scraped at most once per result batch); canon consults NO exit code and neither do we — recognition is output-shape only; extend `foldClauses(counts, active, opts?: { fullscreen?: boolean })` — classic callers unchanged.
 - [ ] **Step 4: `npm run typecheck && npm run test:tui` — PASS.**
 - [ ] **Step 5: Commit** — `f5(ts): T4 — git-op scraping + fullscreen clauses`.
 
