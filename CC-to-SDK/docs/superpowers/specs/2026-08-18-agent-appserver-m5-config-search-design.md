@@ -1,8 +1,9 @@
 # M5 — config domain + thread search/archive (agent app-server)
 
 **Status:** design approved 2026-08-18 (owner, four forks resolved in one grill round); **rev 2 after
-the external adversarial review** (Codex `gpt-5.6-sol`, 11 findings — see Revision Notes; eight highs
-accepted and folded in, the review's no-ship concerns addressed at design level). Grounded by in-repo
+the external adversarial review of the spec** (11 findings), **rev 3 after the adversarial review of
+the implementation plan** (20 findings — the plan review re-read this spec's contracts against the real
+code and found six of them under-specified; see Revision Notes). Grounded by in-repo
 Codex source reads (`codex-rs/app-server-protocol/src/protocol/v2/{config,thread}.rs`), the upstream
 settings loader (`Claude Code Src/src/utils/settings/settings.ts`), the 0.3.234 SDK bump landed on
 this branch (`ccb090a006`), and probe 110.
@@ -81,13 +82,24 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   array-valued leaf names **every contributing layer** in precedence order. `layers` (opt-in)
   returns each file's raw parse; a malformed file becomes a layer entry with `disabledReason` while
   healthy layers still serve. `incomplete: true` flags that non-file policy sources may exist beyond
-  this view. `cwd` resolves the project/local pair; omitted, only user + managed are in view.
+  this view. **`versions`** (rev 3) is an always-present map of each writable target in view to its
+  current CAS token (`user` always; `project`/`local` with `cwd`) — without it a client facing an
+  existing file could never make anything but a last-wins first write. File reading strips a UTF-8
+  BOM and treats a blank/whitespace-only file as an empty layer (upstream's loader does both);
+  **full upstream `SettingsSchema` validation is deliberately NOT mirrored** — it is a moving target
+  that ships inside the CLI, our warnings are advisory (D-M5-5), and the engine's own load remains
+  the authority on what it accepts. On **win32 the managed layer is omitted entirely** (the spec
+  already declares Windows managed paths out of this view; a Linux path default there would invent a
+  drive-root layer). `cwd` resolves the project/local pair; omitted, only user + managed are in view.
 - **`config/value/write {keyPath, value, mergeStrategy, target?, cwd?, expectedVersion?}` →
   `{status, version, filePath, overriddenMetadata?, warnings?}`.** `target ∈ user|project|local`,
   default **user** (D-M5-1); managed is not in the enum — unwritable by construction, not by
   refusal. **`keyPath` is an array of string segments** (D-M5-12) — `["permissions","allow"]` —
   which dissolves Codex's quoted-segment grammar problem outright; a segment may contain any
-  character including dots. Merge table (D-M5-13): `replace` sets the leaf to `value` exactly;
+  character including dots — with ONE refusal (rev 3): the segments `__proto__`, `constructor` and
+  `prototype` are refused `ConfigValidationError`, and the merge/edit machinery uses own-property
+  access on null-prototype dictionaries throughout, because an opaque-segment contract must not be a
+  prototype-pollution channel. Merge table (D-M5-13): `replace` sets the leaf to `value` exactly;
   `upsert` deep-merges `value` into the existing leaf with the same customizer as the read side
   (objects deep, arrays concat+dedupe); missing parents are created as objects; a non-object in the
   parent path → `ConfigValidationError`, file untouched; `replace` with `value: null` **deletes**
@@ -95,7 +107,9 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   `warnings` entry, never a refusal (D-M5-5). `okOverridden` + `overriddenMetadata` when a
   higher-precedence layer defines the same **leaf** (scalar/object leaves only; array leaves merge
   by contribution, so a write into one reports `ok` — the read side's contributor origins tell the
-  whole story).
+  whole story). In a batch, **every** edited leaf is evaluated (rev 3 — checking only the last edit
+  hides a masked earlier one): `status` is `okOverridden` when ANY edit is masked,
+  `overriddenMetadata` reports the first masked edit, and `maskedEditIndexes` lists them all.
 - **`config/batchWrite {edits[], target?, cwd?, expectedVersion?}`** — edits apply **in order** to
   one in-memory document; **any failing edit refuses the whole batch** with the file untouched
   (there is only ever the single final tmp+rename write, so rollback is structural, not
@@ -104,11 +118,19 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
 - **Concurrency (D-M5-14, rev 2):** the version token is `sha256` of the file's raw bytes
   (`"absent"` for a missing file), and the check is made **atomic with the write**, not advisory:
   per-target-file writes serialize on an in-process queue, and the queue holds an advisory lockfile
-  (`<file>.lock`, `O_EXCL` create, pid-stamped, stale-broken after 10s) across
-  read → validate `expectedVersion` → write tmp → rename. Two writers with the same
+  (`<file>.lock`, `O_EXCL` create, **nonce-owned** — rev 3: the file carries a pid+random nonce, a
+  release unlinks only after re-reading its OWN nonce, and a stale break (30s) never removes a lock
+  it cannot read as stale, so owner A overrunning the window can no longer have its lock stolen and
+  then unlink B's) across read → validate `expectedVersion` → write tmp → rename. The canonical
+  parent directory (`.claude/`) is created before locking, and a target that is itself a symlink is
+  resolved first so tmp+rename replaces the real file, never the link. Two writers with the same
   `expectedVersion` therefore serialize, and exactly one commits; the loser refuses
-  `ConfigVersionConflict` against the winner's bytes. Omitted `expectedVersion` = last-wins by
-  explicit choice, documented.
+  `ConfigVersionConflict` against the winner's bytes. **The contract is scoped to this protocol's
+  writers** (rev 3): an external editor that changes the file inside another writer's critical
+  section is last-wins — the lockfile serializes `ccx` servers, not the world, and the narrowing is
+  stated rather than implied. Omitted `expectedVersion` = last-wins by explicit choice, documented.
+  Every supplied `cwd` is canonicalized ONCE, before the lock is taken — a refusal must leave the
+  target byte-identical, so no validation may run after the write.
 - **Write fencing, honestly framed (D-M5-4, rev 2):** the bearer token **is** full user authority on
   this server — `thread/start` accepts any cwd and `thread/shellCommand` exists, so a "workspace
   root" check adds no security (the review is right, and the previously-cited `fs/read` jail does
@@ -135,20 +157,30 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   is sorted **in memory** (it is metadata, not transcripts — cheap) by
   `sortKey ∈ created_at|updated_at|recency_at` (Codex's exact tokens; `recency_at` ≡
   `lastModified`, missing `createdAt` sorts last) with `sessionId` as the tie-breaker. The cursor is
-  a **keyset**: `(sortValue, sessionId, rowIndex)` — the last examined session and the row within it
-  — so no unscanned session can sort ahead of a returned page in `created_at` order (the stable
-  default). For `updated_at`/`recency_at` the sort value can move between pages; the contract is
-  keyset semantics (a moved session may be re-encountered or skipped), stated in the schema docs
-  with `created_at` recommended for exhaustive walks.
+  a **keyset** with ONE convention (rev 3 — the plan review found a mint/resume
+  mismatch): `(sortValue, sessionId, rowIndex)` always names the NEXT position to examine. Resume
+  locates the first session whose `(sortValue, sessionId)` tuple is ≥ the cursor's in the requested
+  direction — never a bare `sessionId` lookup that restarts at the top when the session vanished —
+  and `rowIndex` applies only when the located session IS the cursor's; a deleted or moved session
+  resumes at the successor tuple, row 0. No unscanned session can sort ahead of a returned page in
+  `created_at` order (the stable default). For `updated_at`/`recency_at` the sort value can move
+  between pages; the contract is keyset semantics (a moved session may be re-encountered or
+  skipped), stated in the schema docs with `created_at` recommended for exhaustive walks.
 - **No permanent false negatives (D-M5-16, rev 2).** The per-page caps (files per page, rows per
   page) bound **work per request, never coverage**: the cursor carries the intra-file row position,
   a page that exhausted its budget mid-file resumes exactly there, and **a page may legitimately
-  return zero matches with a non-null `nextCursor`** — bounded progress, honestly reported. Rows
-  larger than the row-byte cap are skipped **and counted** in `skipped`, never silently.
-- **Hard bounds (D-M5-17):** `searchTerm` 2–256 UTF-16 units; `limit` ≤ 50; snippet ≤ 200 units
-  centered on the match; ≤ 40 files and ≤ 4000 rows examined per page; row-byte cap 1 MiB; one
-  content scan runs at a time per server (a second search request queues behind it on a chain, same
-  device as `record.chain`).
+  return zero matches with a non-null `nextCursor`** — bounded progress, honestly reported.
+  Transcripts are read in **row windows at the storage boundary** (rev 3: `getSessionMessages`
+  already takes `{offset, limit}`; loading a whole giant transcript and then counting rows would
+  spend the memory the caps exist to bound). Rows larger than the row cap are skipped **and
+  counted** in `skipped`, never silently.
+- **Hard bounds (D-M5-17):** `searchTerm` 2–256 UTF-16 units; `limit` ≤ 50 (over-cap CLAMPS with a
+  `warning`, the `thread/read` precedent, deviating from the plan review's refuse-recommendation);
+  snippet ≤ **max(200, term length)** units centered on the match (rev 3 — a 256-unit term must
+  still fit its own snippet); ≤ 40 files and ≤ 4000 rows examined per page; row cap **1,048,576
+  UTF-16 units** of corpus text (rev 3 — the unit is what `String.length` measures, named honestly);
+  one content scan runs at a time per server (a second search request queues behind it on a chain,
+  same device as `record.chain`).
 - **`thread/searchOccurrences {threadId, searchTerm, cursor?, limit?}` → `{data, nextCursor}`** —
   per-thread hits over exactly the corpus `sessions/rows.ts` classifies (visible user prompts +
   assistant text — Codex's corpus definition, and we own the classifier, so search and replay cannot
@@ -162,7 +194,14 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   accepts unchanged and whose returned window ends at the hit row. On a **cold** session
   `readCursor` is `null` and the occurrence is self-contained (snippet + range + uuid); a client
   that wants to page a cold transcript resumes it first — `thread/resume` exists precisely to open
-  store sessions, and acceptance proves the live-thread jump end-to-end.
+  store sessions, and acceptance proves the live-thread jump end-to-end **for every returned
+  occurrence, asserted against the pager's real item shape** (rev 3 — the rev-2 test checked one
+  hit against a field items do not carry). The occurrence **continuation cursor is epoch-qualified
+  on a live thread** and refused on mismatch, exactly as `thread/read`'s is (rev 3 — a rewind must
+  not make an old cursor silently search different content); on a cold session it carries no epoch
+  and the store's immutability-between-requests is the documented assumption. A `threadId` naming a
+  session the store does not know refuses `THREAD_NOT_FOUND` (rev 3) — an honest-looking empty
+  result over a typo is the D-M5-8 lie in miniature.
 - **Search honesty (D-M5-8, the D-M4-1 family rule):** a store read failure is an **error**, never
   zero hits — a directory that cannot be listed or a file that cannot be opened refuses the request;
   "no matches" is a claim about content actually scanned, and `skipped` discloses what was not.
@@ -180,11 +219,18 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   `thread/unarchive` mirrors with `thread/unarchived`. Response and notification shapes follow
   `thread/delete`'s precedent (`{ok:true}`, `sessionId` payload — a documented deviation from
   Codex's `threadId`, same as the delete row already records).
-- **The live-guard converges under race (D-M5-10, rev 2):** archive resolves the id and refuses a
-  live thread ("close it first", delete's message) — and after creating the marker it **re-checks**
-  liveness: if a resume won the race in between, the marker is unlinked and the request refuses
-  BUSY. Both interleavings end in a consistent state (live ∧ unarchived, or cold ∧ archived);
-  nothing hides a running session from the default list.
+- **The live-guard converges under race (D-M5-10, rev 2; widened rev 3):** archive resolves the id
+  and refuses a live thread ("close it first", delete's message) — where "live" includes a resume
+  **reservation** (`resumingSessions`), not just a registry record, since an admission mid-probe has
+  no record yet — and after creating the marker it **re-checks** both: if a resume won the race, the
+  marker is unlinked and the request refuses BUSY. The other direction is defined rather than left
+  to luck (rev 3): **admission of an archived session auto-unarchives it** — `thread/resume`,
+  resume-carrying `thread/start`, and `thread/attach` remove the marker and broadcast
+  `thread/unarchived` — because opening a conversation takes it off the shelf, and it is the rule
+  that makes "a live thread is never hidden from the default list" hold across servers too.
+  Archiving a session the store does not know refuses `THREAD_NOT_FOUND` (rev 3 — a typo must not
+  mint permanent phantom archive state); unarchive stays idempotent for any session with a marker
+  or a store row.
 - Markers are read per `thread/list`/`thread/search` request, so cross-process **state** is always
   current; **push freshness** is per-server (a broadcast reaches the emitting server's own
   subscribers), documented as the multi-server limitation.
@@ -205,16 +251,22 @@ flips the `full-potential.md` rows and ships nothing.
 - Scorecard: seven new rows in the server-origin table plus two notification rows; registered
   methods 59 → 66; the notification recipe 27 → 29. The drift gate's three passes enforce
   registration, staleness and bijection; schema artifacts regenerate in the same change. **Every one
-  of the seven methods ships its exact request/response/error zod schema in
-  `appserver/schema/config.ts` / additions to `threads.ts`, wire-fixture-pinned** — the review's
-  naming nits (sortKey tokens, `snippetMatchRange`, `{ok:true}`) are resolved above and the fixtures
-  keep them resolved.
+  of the seven methods ships its exact request AND response zod schema** (rev 3: `MethodSchema`
+  gains an optional `result` slot, emitted into the generated artifacts for methods that declare it
+  — the seven M5 methods are its first users; error `data.code` values and both notification
+  payloads are pinned by wire fixtures) — the review's naming nits (sortKey tokens,
+  `snippetMatchRange`, `{ok:true}`) are resolved above and the schemas keep them resolved.
+  `thread/searchOccurrences`, `thread/archive` and `thread/unarchive` join `ENGINE_GONE_EXEMPT`
+  (rev 3): they are disk/sidecar reads that must answer for a thread whose engine died, or the same
+  session becomes reachable by bare store id but not by its own registry id.
 - Origin scope: `thread/archive`/`unarchive` and `thread/searchOccurrences` are `both` (disk +
   sidecar only, the `thread/delete` / `thread/read` precedents); `thread/search` and the config trio
   name no thread — `N/A`, like `fs/read`.
-- **Plan staging (review F11, adopted):** the plan lands in reviewable stages — config/read (merge +
-  origins + fixtures first), config writes (grammar + CAS), search, archive + list filter, absorb —
-  each stage's tests green before the next begins. One milestone, one spec, staged execution.
+- **Plan staging (review F11, adopted; hardened rev 3):** the plan lands in reviewable stages —
+  config read, config writes, search + archive, absorb — and **every stage boundary leaves the
+  drift gate GREEN**: each stage lands its own scorecard rows and regenerated artifacts with its
+  methods, rather than accumulating eight red commits for a final docs task to reconcile. One
+  milestone, one spec, staged execution.
 - Testing: DI-based unit suites (temp-dir layer files, planted JSONL fixtures, temp marker dir),
   plus one keyed live acceptance script per domain half.
 
@@ -331,9 +383,23 @@ flips the `full-potential.md` rows and ships nothing.
 - **D-M5-16 (rev 2) — caps bound work, never coverage:** intra-file cursor resume, zero-hit pages
   with continuation, skipped-rows disclosure. Rejected: rev 1's per-file byte cap (permanent false
   negatives — review F6).
-- **D-M5-17 (rev 2) — hard bounds on every client-driven scan** (term 2–256, limit ≤ 50, snippet ≤
-  200, ≤ 40 files / ≤ 4000 rows per page, 1 MiB row cap, one scan at a time). Rejected: unbounded
-  scanning (review F9 — memory/event-loop exhaustion from parallel authenticated requests).
+- **D-M5-17 (rev 2, units fixed rev 3) — hard bounds on every client-driven scan** (term 2–256,
+  limit ≤ 50 clamp-with-warning, snippet ≤ max(200, term), ≤ 40 files / ≤ 4000 rows per page,
+  1,048,576 UTF-16-unit row cap, row-windowed storage reads, one scan at a time). Rejected:
+  unbounded scanning (review F9); refusing over-cap limits (the `thread/read` clamp precedent
+  governs).
+- **D-M5-18 (rev 3) — `config/read` serves the CAS tokens** (`versions` map, always present for the
+  writable targets in view). Rejected: version-only-on-write (a client's FIRST write against an
+  existing file could never be conditional — plan review F3).
+- **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
+  `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
+  methods in this milestone (real work, separate value; the slot makes it incremental).
+- **D-M5-20 (rev 3) — cold targets must exist**: occurrences/archive refuse `THREAD_NOT_FOUND` for
+  sessions the store does not know. Rejected: honest-looking empty results and phantom markers
+  (plan review F16).
+- **D-M5-21 (rev 3) — admission auto-unarchives**: resume/attach of an archived session removes the
+  marker and broadcasts. Rejected: leaving the archived-and-live state reachable by racing a second
+  server (plan review F12); refusing resume of archived (archive is a shelf, not a lock).
 
 ## Surprises & Discoveries
 
@@ -384,5 +450,20 @@ Pending — written at finish.
   resolved (F10 — Codex sort tokens, `snippetMatchRange`, `{ok:true}`, `ConfigLayerReadonly`
   dropped as unreachable, `warnings` field added); the milestone-split recommendation adopted as
   **plan staging** rather than spec division (F11 — the SDD flow reviews per-stage; scope stays as
-  the owner approved). Acceptance rewritten to carry the race, continuation, sibling-preservation,
+  the owner approved).   Acceptance rewritten to carry the race, continuation, sibling-preservation,
   and jump-consumability tests the review demanded.
+- 2026-08-18 rev 3: the PLAN adversarial review (13 high / 7 medium) re-read these contracts against
+  the real code and six were under-specified; all folded in after verification: `config/read` gains
+  the `versions` CAS-token map (D-M5-18) plus BOM/blank parse fidelity, win32 managed-layer omission,
+  and the recorded SettingsSchema non-mirroring deviation; array dedupe is SameValueZero (objects
+  never dedupe — lodash `uniq`, not structural), with origins tracked through the merge and reset on
+  replacement; keyPath refuses the three prototype segments; batch masking evaluates every edit; the
+  lockfile is nonce-owned with the external-editor narrowing stated, parent-dir creation and symlink
+  resolution defined, and cwd canonicalized before the lock; the search cursor gets ONE tuple-resume
+  convention and storage-windowed reads, the row cap is renamed to UTF-16 units, snippet ≤ max(200,
+  term); occurrence cursors are epoch-qualified live with cold semantics stated, and cold targets
+  must exist (D-M5-20); archive checks resume reservations, admission auto-unarchives (D-M5-21);
+  result schemas ship for the seven methods (D-M5-19); the three disk-backed methods join
+  ENGINE_GONE_EXEMPT; every plan stage leaves the drift gate green. Also fixed at plan level: the
+  unit-test harness must use the real conn.feed + initialize pattern (dispatch is private,
+  four-arg), and the absorb task must name its producer seam before wiring anything.
