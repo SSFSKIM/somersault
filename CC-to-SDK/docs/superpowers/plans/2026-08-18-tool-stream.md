@@ -306,6 +306,13 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 
 ### Task 13: Close-out — scorecard + spec tail
 
+**Divergences this wave accumulated that the close-out MUST record** (each already in the spec;
+the scorecard is where a reader looks for them): the cut bash `(Ns · N lines)` suffix (probe 100,
+round 4); all-silent clusters emitting no row (round 3); the errored-sibling scope difference
+(round 7); PR numbers rendered as text with no link affordance, `GitPrOp.url` carried but
+unscheduled (round 8); a live `/tui` flip leaving painted history under its original policy
+(round 9); and Task 8's published-expanded-items limitation.
+
 **Files:**
 - Modify: `docs/parity/coverage.md` (the fullscreen/transcript rows this wave moves)
 - Modify: `docs/superpowers/specs/2026-08-18-tool-stream-design.md` (Outcomes & Retrospective; Surprises & Discoveries with anything Tasks 1–12 overturned)

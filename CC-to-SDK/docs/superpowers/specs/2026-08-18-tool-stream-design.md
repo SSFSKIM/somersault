@@ -175,6 +175,15 @@ module stays clock- and environment-free). Under `fullscreen`:
   exit code — we mirror that (output-shape recognition only).
 - **WebFetch and WebSearch stay non-collapsible** — canon's policy, verified, even though
   intuition says "reads collapse".
+- **A live `/tui` renderer flip leaves already-painted history under the renderer that
+  painted it** (recorded divergence, round 9). Before this wave the projection was
+  renderer-independent, so a flip changed only what came next; now that the fold policy
+  differs per renderer, rows finalized under one policy keep it. The obvious repair is
+  wrong: Ink's `<Static>` is append-only, so re-projecting appends a SECOND set of rows
+  beside the committed ones rather than replacing them. The only true repair is clearing
+  the static transcript on flip — which destroys the user's visible history, a worse
+  trade than a seam. We accept the seam: history stays as painted, everything after the
+  flip uses the new policy. Same family as the expansion-state limitation Task 8 records.
 - **PR numbers are text, not links** (recorded divergence, round 8). Canon renders the visible
   characters `#12` and registers the hyperlink as a side effect of its own row component
   (`Ktt`, 518049–518070); our `FoldClause` is text-plus-bold-ranges with nowhere to hang an
@@ -406,6 +415,12 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 9 — 2026-08-19, T5 switch-over (execution).** Making the fold policy
+renderer-dependent created an interaction that did not exist before: a live `/tui` flip now
+leaves already-finalized rows folded under the old policy. Decided and recorded above — accept
+the seam rather than clear the user's visible transcript, since append-only `<Static>` makes
+re-projection additive rather than corrective. Task 13 records it in the scorecard.
 
 **Round 8 — 2026-08-19, T4 review (execution).** Three corrections. (1) The scrape gate was
 inherited too wide from Task 3's plan text, whose parenthetical ("canon records every bash
