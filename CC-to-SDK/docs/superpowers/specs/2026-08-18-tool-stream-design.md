@@ -112,6 +112,21 @@ module stays clock- and environment-free). Under `fullscreen`:
     zero-height clickable row (518513, 549764); **we emit no row** — an invisible
     clickable region has no meaning in an item-based projection, and this preserves
     today's behavior for suppressed tools. Recorded divergence.
+  - **an errored silent call is never swallowed** (added round 5). Canon pushes the error
+    `tool_result` standalone on *all three* branches of 237198–237210, so the failure is
+    always on screen. "Emit no row for an all-silent run" governs the GROUP only: when the
+    group is suppressed and a member errored, that member still renders standalone. Without
+    this the two rules compose into a hole — a failed board write disappearing entirely,
+    which is worse than either rule alone and worse than today's classic behavior.
+  - **the relocate/stay test is a window test on sequences**, not a lookahead. Canon asks
+    whether anything else was pushed into `o.messages` between the silent call's own
+    message and the arrival of its error result. Our atoms carry `callSequence` and
+    `result.resultSequence`, so the same question translates exactly: relocate only if no
+    other atom's call or result sequence falls strictly inside the open window
+    `(call.callSequence, call.result.resultSequence)`. A "does the next atom join the run"
+    approximation answers a different question and diverges on three orderings (a
+    sequentially-issued follow-on, a concurrent sibling whose result lands first, and a
+    thought arriving after the error).
   One invariant this spec owns regardless of canon: a pop-out must not shift the anchor
   identity of an already-formed run — expansion state and the watermark latch key on it.
   (Canon can retract a run wholesale because `iNp` re-derives from the full message list
@@ -359,6 +374,15 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 5 — 2026-08-19, T3 review (execution).** Two §3.1 additions forced by the first
+code task's review. (1) The pop-out relocate/stay test is pinned as a *sequence-window*
+test, after the implementer's one-atom-lookahead translation was shown to diverge from
+canon on three orderings — the failure being a failed board write folded invisibly into a
+summary. (2) A composition hole between two existing pins is closed: "no group for an
+all-silent run" plus "an error closes the run" could between them make an errored
+bookkeeping call vanish with no row anywhere; an errored silent call is now explicitly
+never swallowed. Both are behavior the spec owns, not implementation detail.
 
 **Round 4 — 2026-08-19, T2 probe gate (execution).** Probe 100 settled §3.1's live-dressing
 gate NOT REACHABLE: the bash `(Ns · N lines)` suffix is cut and recorded as a divergence,
