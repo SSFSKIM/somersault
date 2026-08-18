@@ -13,7 +13,8 @@
 // stays clock- and environment-free. Absent (or false) is the frozen classic policy, byte for byte. Under
 // `fullscreen` canon 2.1.234 widens the fold three ways — every non-read shell call (canon's bash-tool list is
 // BOTH `Bash` and `PowerShell`, 169942) joins the run under its own `bashCount`, the task-board tools plus
-// ToolSearch are absorbed with no counter at all, and each absorbed shell command is recorded for the git scraper. WebFetch/WebSearch stay standalone in BOTH: that is canon's real policy.
+// ToolSearch are absorbed with no counter at all, and each absorbed shell command is recorded for the git
+// scraper. WebFetch/WebSearch stay standalone in BOTH: that is canon's real policy.
 // The clause chain has not caught up yet — `foldClauses` still builds only the classic sentence, so the new counts
 // are carried and not yet spoken (the shell/git clauses, the REPL/agent/edit/memory clauses and their fixed order
 // are a later task in this wave).
@@ -169,7 +170,12 @@ const PS_IGNORED = new Set(["write-output", "write-host"]);
  *  in one of the three sets above can change an outcome, so those are what we carry — every other alias resolves
  *  to a cmdlet none of the sets holds, which is what an unknown bare word does anyway. `where.exe` in `PS_SEARCH`
  *  is dead in canon too: `xw` strips the `.exe` before the lookup, so that entry can never match. */
-const PS_ALIASES = new Map([["ls", "get-childitem"], ["dir", "get-childitem"], ["gci", "get-childitem"], ["cat", "get-content"], ["type", "get-content"], ["gc", "get-content"], ["pwd", "get-location"], ["gl", "get-location"], ["gi", "get-item"], ["ps", "get-process"], ["gps", "get-process"], ["echo", "write-output"], ["write", "write-output"], ["gsv", "get-service"], ["sls", "select-string"]]);
+const PS_ALIASES = new Map([
+  ["ls", "get-childitem"], ["dir", "get-childitem"], ["gci", "get-childitem"], ["cat", "get-content"],
+  ["type", "get-content"], ["gc", "get-content"], ["pwd", "get-location"], ["gl", "get-location"],
+  ["gi", "get-item"], ["ps", "get-process"], ["gps", "get-process"], ["echo", "write-output"],
+  ["write", "write-output"], ["gsv", "get-service"], ["sls", "select-string"],
+]);
 const psHeadWord = (word: string): string => {
   const lower = word.toLowerCase(), stripped = lower.includes("\\") || lower.includes("/") ? lower : lower.replace(/\.(exe|cmd|bat|com)$/, "");
   return PS_ALIASES.get(stripped) ?? stripped;
@@ -381,15 +387,21 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   // `[]` for a user message, 236929) and a thought all land in `o.messages` first and all refuse the relocation;
   // anything issued or thought AFTER the error result does not, and canon relocates. Asking instead whether the
   // NEXT atom would join the run answers a different question and diverges on three of the four orderings —
-  // spec §3.1, Revision Notes round 5.
+  // spec §3.1, Revision Notes round 5. Strictly-inside has ONE exception, the lower endpoint (round 6, below).
   const windowIsClear = (event: ToolEvent, self: number): boolean => {
-    const from = event.callSequence, to = event.result?.resultSequence;
-    if (to === undefined) return true;
+    const from = event.callSequence, to = event.result!.resultSequence;   // only ever called for an errored call
     const inside = (sequence: number) => sequence > from && sequence < to;
     for (let other = 0; other < atoms.length; other++) {
       if (other === self) continue;
       const candidate = atoms[other]!;
       if (candidate.kind === "tool") {
+        // The one endpoint that is NOT exclusive. Every `tool_use` block of one assistant entry carries the same
+        // `callSequence` (`transcriptModel.ts` :186), so a same-message sibling sits exactly ON the lower edge and
+        // a strictly-inside scan is blind to it — while canon sees the whole batch through `f.every((g) =>
+        // m.has(g))` (237200) and relocates only when EVERY tool_use of that message errored. Same predicate: a
+        // sibling of this batch blocks the relocation unless it errored too (unsettled counts as not errored —
+        // its id is absent from canon's `m` as well). Strict-inside stays for every other atom, deliberately.
+        if (candidate.event.callSequence === from && candidate.event.result?.isError !== true) return false;
         if (inside(candidate.event.callSequence)) return false;
         if (candidate.event.result !== undefined && inside(candidate.event.result.resultSequence)) return false;
         continue;
@@ -411,16 +423,20 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
         // row — is preserved by construction: we only ever pop the LAST member, and that can be `memberIds[0]`
         // only in a one-member run, which is silent-only and therefore emitted no group to shift.
         if (fold.kind === "silent" && fold.popsOutOnError && (atom.event.result?.isError ?? false)) {
-          const relocates = windowIsClear(atom.event, index);
-          if (relocates) run.memberIds.pop();
-          // AND an errored silent call is never swallowed (spec §3.1, round 5). "Emit no group for an all-silent
-          // run" governs the GROUP; canon pushes the error result standalone on all three branches of
-          // 237198–237210, so a member that failed keeps a row of its own whether it relocated out or the group
-          // it stayed in was suppressed. Without this the two rules compose into a hole and a failed board write
-          // appears nowhere at all — worse than either rule alone and worse than the classic renderer.
-          const orphaned = run.visibleMembers === 0;
+          // AND an errored silent call is never swallowed — UNCONDITIONALLY (spec §3.1, round 6). Canon's
+          // `n.push(c)` (237210) sits OUTSIDE the if/else, so the error row is emitted on all three branches:
+          // relocated, stayed inside a cluster that renders, or stayed in a run that emits no group at all.
+          // Relocation therefore decides only MEMBERSHIP — a call that stayed keeps its place in `memberIds`
+          // (`memberIds[0]` included), a call that relocated leaves it. Scoping the row to the relocated/
+          // suppressed cases (round 5) left the commonest ordering holed: a failed board write inside a cluster
+          // with other members, where the summary says "Read 1 file" and the failure appears nowhere.
+          // Obligation this hands Task 8: expanded rendering iterates `memberIds`, so a member already emitted
+          // standalone must be SKIPPED there or the failure renders twice. Canon has no such problem — it keeps
+          // the `tool_use` in the cluster and pushes the `tool_result` standalone, two halves of one call; our
+          // atoms carry both halves together and cannot be split that way.
+          if (windowIsClear(atom.event, index)) run.memberIds.pop();
           flush();
-          if (relocates || orphaned) out.push({ kind: "tool", event: atom.event });
+          out.push({ kind: "tool", event: atom.event });
         }
         continue;
       }

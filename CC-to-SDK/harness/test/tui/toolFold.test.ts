@@ -389,12 +389,14 @@ describe("TS fullscreen fold policy — segmentation (canon 2.1.234 iNp 237140�
   });
   it("(b) KEEPS an errored silent call inside when a same-batch sibling was issued before its error result", () => {
     // The sibling's CALL (4) lands inside the window (3, 6) — canon's `o.messages.at(-1)` is that sibling's
-    // assistant message, not ours, so the relocation branch is never taken and the run merely closes.
-    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
-      atom(tool("TodoWrite", { todos: [] }, { sequence: 3, result: 6, settled: "error" })),
+    // assistant message, not ours, so the relocation branch is never taken and the run merely closes. The call
+    // KEEPS its membership, and still earns the standalone row every branch of 237198–237210 pushes (round 6).
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 3, result: 6, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(todo),
       atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 4, result: 7 }))], FULL);
-    expect(items.map((i) => i.kind)).toEqual(["group", "group"]);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool", "group"]);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-3"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
     expect(groups(items)[1]!.memberIds).toEqual(["tool-4"]);
   });
   it("(c) RELOCATES when the follow-on call was issued only AFTER the error result arrived", () => {
@@ -412,16 +414,49 @@ describe("TS fullscreen fold policy — segmentation (canon 2.1.234 iNp 237140�
     // Atom order is result order, so the sibling precedes the errored call and no lookahead can see it — but its
     // call (2) AND its result (3) both sit inside the window (1, 5). Canon's last message is then that absorbed
     // `tool_result`, for which `Pka` returns `[]` (236929) and the relocation is refused.
-    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2, result: 3 })),
-      atom(tool("TodoWrite", { todos: [] }, { sequence: 1, result: 5, settled: "error" }))], FULL);
-    expect(items.map((i) => i.kind)).toEqual(["group"]);
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 1, result: 5, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2, result: 3 })), atom(todo)], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-2", "tool-1"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
   });
   it("(e) RELOCATES when the only thing after the error is a thought", () => {
     const todo = tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4, settled: "error" });
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(todo),
       { kind: "neutral", sequence: 2, messageSequence: 5, thoughtForMs: 4000 }], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool", "passthrough"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
+  });
+  it("(f) REFUSES the relocation for a same-message sibling that did NOT error (round 6, canon 237200)", () => {
+    // Every `tool_use` block of one assistant entry carries the SAME `callSequence` (transcriptModel :186), so a
+    // sibling sits exactly ON the window's lower edge and a strictly-inside scan cannot see it. Canon does, via
+    // `f.every((g) => m.has(g))`: the batch relocates only if EVERY tool_use of that message errored. Here the
+    // sibling read succeeded, so the errored board write keeps its membership.
+    const todo = tool("TodoWrite", { todos: [] }, { id: "todo", sequence: 2, result: 5, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "read", sequence: 2, result: 6 })), atom(todo)], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["read", "todo"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
+  });
+  it("(g) ALLOWS it when that same-message sibling errored too — and pins the window's exclusive endpoints", () => {
+    // The mirror of (f): every tool_use of the message errored, so canon pops the whole message and we relocate.
+    // This is also the ONLY cell that defends strict-inside: widen `inside` to `>= from && <= to` and the sibling's
+    // own `callSequence` (2 === from) starts blocking, which puts `todo` back in `memberIds` and fails here.
+    const todo = tool("TodoWrite", { todos: [] }, { id: "todo", sequence: 2, result: 5, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "read", sequence: 2, result: 6, settled: "error" })), atom(todo)], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["read"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
+  });
+  it("gives an errored silent call its own row even when it STAYS in a cluster that IS emitted (round 6)", () => {
+    // The commonest ordering, and the one the round-5 wording left open: the read's result (4) lands inside the
+    // window (2, 6) so the relocation is refused, the run has a visible member so the group renders — and canon's
+    // `n.push(c)` (237210, outside the if/else) still puts the failed board write on screen.
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 2, result: 6, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 4 })), atom(todo)], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
+    expect(groups(items)[0]!.counts.readCount).toBe(1);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
     expect(items[1]).toEqual({ kind: "tool", event: todo });
   });
   it("never swallows an errored silent call whose group is suppressed (spec §3.1, round 5)", () => {
