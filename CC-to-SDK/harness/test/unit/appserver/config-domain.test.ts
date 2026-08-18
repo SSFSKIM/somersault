@@ -1198,6 +1198,10 @@ describe("config/value/write + config/batchWrite", () => {
       const w = reply(id).result;
       expect(w.uncheckedEditIndexes, `${label}: no generated key carries a "." — every case must get a real verdict`).toBeUndefined();
       expect(validate(w), `${label}: ${JSON.stringify(validate.errors)}`).toBe(true);
+      // Every case here is ONE edit, so the target can never be the layer standing on its own write: an
+      // `overridingLayer` of the target means the naming step ran out of answers and fell back to it, which
+      // is the shape a lost fallback takes. The verdict cannot catch that — naming never feeds it.
+      if (w.overriddenMetadata) expect(w.overriddenMetadata.overridingLayer, `${label}: a single-edit request can only be masked from ABOVE`).not.toBe(target);
       id = await send("config/read", { cwd: proj });
       const r = reply(id).result;
       try { undecided += expectAgreesWithRead(w, r, target, edits); }
@@ -1232,9 +1236,11 @@ describe("config/value/write + config/batchWrite", () => {
               setLayers({ user: plant(keyPath, "SEED"), project: { hooks: mid }, [top]: { hooks: topVal } });
               await run(`[2] user writes ${e.label} at ${keyPath.join(".")} · project flattens with ${midLabel} · ${top} rebuilds ${topLabel}`, "user", [{ keyPath, value: e.value, mergeStrategy: e.mergeStrategy }]);
             }
-    expect(cases).toBeGreaterThan(400);
-    // Reported, never silent: the delete cases the read reply genuinely cannot judge (an object with no
-    // leaves at the deleted path). They are asserted by hand in the row above this one.
-    expect(undecided, `${undecided} of ${cases} cases were undecidable from config/read alone`).toBeLessThan(cases / 8);
+    // Both numbers pinned, not bounded. `cases` catches a generator that quietly stops generating. And
+    // `undecided` is the size of the read side's blind spot measured from the outside — deletes whose path
+    // still resolves as an object with no leaves, which is the residual this wave deliberately did not
+    // close. If it moves in either direction something real changed: more of the sweep went unjudged, or
+    // `mergeTracked` learned to attribute object nodes and the whole fallback deserves a second look.
+    expect({ cases, undecided }).toEqual({ cases: 558, undecided: 24 });
   }, 120_000);
 });

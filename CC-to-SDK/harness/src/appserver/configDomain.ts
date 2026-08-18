@@ -223,7 +223,13 @@ const valueAt = (cfg: Record<string, unknown>, keyPath: string[]): unknown => {
   return node;
 };
 
-type MaskVerdict = { maskedEditIndexes: number[]; uncheckedEditIndexes: number[]; overriddenMetadata?: { message: string; overridingLayer: LayerName; effectiveValue?: unknown }; unverifiable: string[] };
+type MaskVerdict = { maskedEditIndexes: number[]; uncheckedEditIndexes: number[]; overriddenMetadata?: { message: string; overridingLayer: LayerName; effectiveValue?: unknown } };
+
+/** The prose half of `uncheckedEditIndexes`, DERIVED from the index list rather than accumulated beside it:
+ *  the two used to be pushed to in the same breath and kept in step by hand, which is one structure wearing
+ *  two coats. The indexes are the fact; this is a rendering of them. */
+const uncheckedWarning = (i: number, keyPath: string[]): string =>
+  `could not check whether edit ${i} ("${keyPath.join(" / ")}") is overridden — a key containing "." collides with this path, and the effective view addresses leaves by dotted path`;
 
 /** THE MASKING RULE (spec D-M5-13b), and the split that keeps it honest:
  *
@@ -263,7 +269,7 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
     return near.length ? highest(near) : blockingLayerAbove(layers, leaf, targetRank);
   };
   const hazards = dottedKeyPaths(effective);
-  const out: MaskVerdict = { maskedEditIndexes: [], uncheckedEditIndexes: [], unverifiable: [] };
+  const out: MaskVerdict = { maskedEditIndexes: [], uncheckedEditIndexes: [] };
   edits.forEach((e, i) => {
     const leaves = introducedLeaves(e.keyPath, e.value, e.mergeStrategy);
     // `origins` addresses leaves by DOTTED path while a keyPath is an opaque segment array (D-M5-12), so a
@@ -277,11 +283,7 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
     const paths = [e.keyPath, ...leaves];
     const unchecked = paths.some((p) => p.some((seg) => seg.includes(".")))
       || paths.map((p) => p.join(".")).some((p) => hazards.some((h) => h === p || h.startsWith(`${p}.`) || p.startsWith(`${h}.`)));
-    if (unchecked) {
-      out.uncheckedEditIndexes.push(i);
-      out.unverifiable.push(`could not check whether edit ${i} ("${e.keyPath.join(" / ")}") is overridden — a key containing "." collides with this path, and the effective view addresses leaves by dotted path`);
-      return;
-    }
+    if (unchecked) { out.uncheckedEditIndexes.push(i); return; }
     let maskedBy: LayerName | undefined;
     if (e.mergeStrategy === "replace" && e.value === null) {
       // A DELETE introduces nothing, so no attribution can prove it landed — ABSENCE has to, stated
@@ -382,12 +384,12 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
     const layers = await readLayers(layerPaths(home, managed, cwdReal));
     const { config: effective, origins } = effectiveView(layers);
-    const { maskedEditIndexes, uncheckedEditIndexes, overriddenMetadata, unverifiable } = maskingVerdict(data.edits, data.target, effective, origins, layers);
+    const { maskedEditIndexes, uncheckedEditIndexes, overriddenMetadata } = maskingVerdict(data.edits, data.target, effective, origins, layers);
     // DEDUPED (review M5): the warning names the top-level key, so three edits under one unknown key are
     // three copies of one sentence — noise a client has to collapse itself before showing it.
     const warnings = [...new Set([
       ...data.edits.filter((e) => !KNOWN_TOP_LEVEL.has(e.keyPath[0])).map((e) => `unknown top-level settings key "${e.keyPath[0]}" (written anyway)`),
-      ...unverifiable,
+      ...uncheckedEditIndexes.map((i) => uncheckedWarning(i, data.edits[i].keyPath)),
     ])];
     ctx.peer.reply(id, {
       status: maskedEditIndexes.length ? "okOverridden" : "ok", version: written.version, filePath,

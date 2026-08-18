@@ -33,7 +33,9 @@ export const configBatchWriteParams = z.object({
  *  with an index listed here means "not reported as overridden", never "verified in force". */
 export const configWriteResult = z.object({
   status: z.enum(["ok", "okOverridden"]), version: z.string(), filePath: z.string(),
-  overriddenMetadata: z.object({ message: z.string(), overridingLayer: layerName, effectiveValue: z.unknown().optional() }).optional(),
+  overriddenMetadata: z.object({ message: z.string(), overridingLayer: layerName, effectiveValue: z.unknown().optional() })
+    .describe("describes ONE masked edit — the first, i.e. maskedEditIndexes[0]. A batch whose edits are masked by different layers reports only that one here; the full set is maskedEditIndexes")
+    .optional(),
   maskedEditIndexes: z.array(z.number().int()).optional(),
   uncheckedEditIndexes: z.array(z.number().int()).optional(),
   warnings: z.array(z.string()).optional(),

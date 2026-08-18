@@ -1652,7 +1652,8 @@
             "message",
             "overridingLayer"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "describes ONE masked edit — the first, i.e. maskedEditIndexes[0]. A batch whose edits are masked by different layers reports only that one here; the full set is maskedEditIndexes"
         },
         "maskedEditIndexes": {
           "type": "array",
@@ -1721,7 +1722,8 @@
             "message",
             "overridingLayer"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "describes ONE masked edit — the first, i.e. maskedEditIndexes[0]. A batch whose edits are masked by different layers reports only that one here; the full set is maskedEditIndexes"
         },
         "maskedEditIndexes": {
           "type": "array",
