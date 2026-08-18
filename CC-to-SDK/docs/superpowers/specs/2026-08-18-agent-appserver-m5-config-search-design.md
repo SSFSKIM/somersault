@@ -541,9 +541,9 @@ flips the `full-potential.md` rows and ships nothing.
   **Residual, deliberately not closed here:** `config/read` cannot say which layer contributed an *empty
   object*, because `mergeTracked` records no `origins` entry for an object node — the root of class 1.
   This was raised as a Minor against Task 1 ("an empty object value gets no origin") and deferred; it
-  resurfaced two tasks later as the root of a wire-visible High. The verdict is correct without closing
-  it (an unattributed leaf is masked, which is the right answer), so only the *name* needs the fallback.
-  Closing it in `configLayers.ts` remains the deeper fix and is carried to final-review triage. **The
+  resurfaced two tasks later as the root of a wire-visible High. **This entry claimed the verdict was correct
+  without closing it, so that only the *name* needed a fallback. That held for value edits and was FALSE
+  for deletes, where it cost the verdict — see D-M5-13d, which removes the dependency instead.** **The
   lesson recorded with it: a deferred Minor in an attribution layer is a latent defect in every consumer
   that reasons from it.**
   **Two states the lookup leaves for the naming step to settle, decided at implementation.** (a) A DELETE
@@ -558,6 +558,34 @@ flips the `full-potential.md` rows and ships nothing.
   shadowing by a later delete, which previously replied `ok` for an edit whose value reached no file;
   shadowing by a later *value* stays unreported, since `origins` addresses leaves and the leaf really is
   attributed to the target.
+- **D-M5-13d (Task 4, final gate, rev 4) — a delete's verdict is a counterfactual over merges, not a
+  lookup.** D-M5-13c restructured the *value* verdict into a single attribution lookup, and an
+  independent 18 746-state generator later found zero disagreements there. It did not touch the **delete**
+  branch, which still decided from a search over `origins` — the same conflation, surviving in the one
+  place the rewrite did not reach. Worse, the safeguard built for exactly this blind spot was gated
+  behind an empty neighbourhood, so a single leaf from any *lower* layer under the path disabled it.
+  Measured: user holds `hooks.a`, project (the target) holds `hooks.b`, local holds `hooks.z: {}`; a
+  delete of `hooks` at project replies `ok` while the read side still serves `hooks.z` from the layer
+  **above** the target. Remove the user layer — the only difference — and the same delete correctly
+  replies `okOverridden`.
+  **Resolution: ask the question directly instead of inferring it from attribution.** A delete is masked
+  exactly when the merged view without the target's contribution differs, at the written path, from the
+  merged view of the layers *below* the target — i.e. when something above actually surfaces there. In
+  force otherwise: the key is either gone, or present solely because a lower layer shows through, which
+  was already the decided `ok` case. Naming is the highest above-layer whose removal moves that value.
+  Rejected: widening the safeguard's gate — measured to fix these states *and leave all 48 rows green*,
+  but wrong in the opposite direction, marking a delete masked when an above layer's `{}` merges into a
+  lower object and contributes nothing.
+  **This corrects D-M5-13c's residual claim.** The `mergeTracked` empty-object gap was not costing only
+  the *name*; for deletes it was costing the *verdict*. The counterfactual consults no `origins` at all,
+  so the blind spot cannot reach it — `configLayers.ts` still stays closed, now for a sound reason rather
+  than an accidental one. **The lesson: when a rule is restructured, every branch that implements it must
+  be restructured — a survivor keeps the original defect and inherits none of the fix.** And the
+  corollary that made this findable at all: the wave's own 558-state sweep passed on the defective code,
+  because it never planted a lower-layer leaf under a deleted path beside a higher-layer object, and its
+  test-side oracle read the same `origins` and inherited the same blindness. **A sweep and an oracle
+  written by the author of the code share its blind spots; only an independently authored generator
+  found this.**
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
