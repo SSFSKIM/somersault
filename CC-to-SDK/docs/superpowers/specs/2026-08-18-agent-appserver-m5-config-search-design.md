@@ -394,6 +394,18 @@ flips the `full-potential.md` rows and ships nothing.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
+- **D-M5-19a (Task 2, implementation contact) — emitted result schemas live in a top-level `results`
+  map, not inside each method entry.** D-M5-19 chose the `MethodSchema.result` slot to keep result
+  schemas incremental; the TS-side slot landed as designed. The *emitted artifact* placement had to
+  move. Each entry under `methods` is handed straight to `new Ajv({ strict: true }).compile(...)` by a
+  pre-existing test — the method entry IS a JSON Schema, not a container — so strict mode throws on a
+  sibling `result` keyword, and a `{params, result}` wrapper stops being a schema at all. Both readings
+  were measured, both fail. The published artifact therefore gains `results` beside `methods`, carrying
+  an entry only for methods that declare one; every pre-M5 entry keeps its exact bytes and the change is
+  purely additive. Rejected: re-nesting all 59 existing entries OpenRPC-style — it is the standard shape
+  and a defensible future migration, but it breaks the published contract for every existing client and
+  is exactly the retrofit D-M5-19 already declined this milestone. The six remaining result schemas
+  follow this placement; changing it later is its own task.
 - **D-M5-20 (rev 3) — cold targets must exist**: occurrences/archive refuse `THREAD_NOT_FOUND` for
   sessions the store does not know. Rejected: honest-looking empty results and phantom markers
   (plan review F16).
