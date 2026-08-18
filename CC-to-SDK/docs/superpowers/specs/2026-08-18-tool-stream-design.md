@@ -145,7 +145,13 @@ module stays clock- and environment-free). Under `fullscreen`:
     errored. Ours is the same predicate: an atom sharing the errored call's `callSequence`
     blocks relocation **unless it also errored**. Strict-inside is deliberate for every other
     atom and must be pinned by a cell, since flipping it to inclusive otherwise changes
-    nothing any test can see.
+    nothing any test can see. **Recorded divergence (round 7):** canon builds its errored-id
+    set from the *arriving result message alone* (237199), so "every sibling errored" means
+    "every sibling errored in this same message"; ours means "errored at any time". They part
+    only when same-entry siblings error in *different* entries — canon keeps the call inside
+    the cluster, we relocate it out — and only for disk-sourced multi-block entries, since the
+    live engine splits parallel calls into separate frames with distinct sequences. The effect
+    is membership-only now that the failure row is unconditional.
   One invariant this spec owns regardless of canon: a pop-out must not shift the anchor
   identity of an already-formed run — expansion state and the watermark latch key on it.
   (Canon can retract a run wholesale because `iNp` re-derives from the full message list
@@ -393,6 +399,11 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 7 — 2026-08-19, T3 gate review (execution).** Task 3 approved. One canon divergence
+recorded above (the errored-sibling set is per-message in canon, per-lifetime in ours —
+reachable only on disk-sourced multi-block entries, membership-only in effect), and Task 8's
+plan gained the de-duplication obligation the round-6 rule created.
 
 **Round 6 — 2026-08-19, T3 fix re-review (execution).** The round-5 "never swallowed" rule
 was itself too narrow, and the re-review caught it: canon's error row is pushed

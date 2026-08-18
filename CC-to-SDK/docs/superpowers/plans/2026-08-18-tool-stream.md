@@ -198,7 +198,16 @@ same family as the fullscreen wave's "answers commit whole" trade. Task 13 recor
 
 **Interfaces (produces):** `toggleFold(anchor)` on useChat's return; `foldAnchor` on RenderItem, survives wrapping. **Consumes:** Task 3's `memberIds` (anchor = `memberIds[0]`).
 
-- [ ] **Step 1: Write failing tests.** (a) `wrapItem` on a tagged over-wide item: every wrapped row carries the tag (both arms; the :161 line-arm is the one that fails first); (b) projection with anchor in `expandedFolds`: fold row gone, member per-call items present in DETAIL form, ALL tagged with the anchor — including a silently-absorbed TodoWrite member AND a suppressed-status ToolSearch member rendering its generic row (spec A6); (c) toggle round-trip through useChat: `toggleFold(a)` re-projects (fold row → members), second call restores; (d) reset discipline: after `replaceDocument`, the set is empty; (e) **the A10 pin, against `pendingItems`**: with a run still OPEN (trailing growable — it lives in the PENDING projection, not finalized), toggle the anchor, assert `pendingItems` now carries the members, then absorb another member — still expanded, new member present (this is the cell that fails both an item-id-keyed implementation and a finalized-only reproject).
+**Inherited obligation from Task 3 (spec §3.1 round 6) — the de-dup:** an errored
+`popsOutOnError` call that STAYED in its run is now emitted standalone *and* left in
+`memberIds` (canon splits the call row from the error row; our atoms carry both together, so
+the same call would render twice). When expanding, `groupItems` must SKIP any member the
+projection already emitted as its own item. Nothing in the fold model can enforce this — the
+code comment at `toolFold.ts` (the pop-out branch) points here. Pin it: a cell with an errored
+TodoWrite staying inside a run with a visible member, expanded, asserting the errored call
+appears EXACTLY once in the projected items.
+
+- [ ] **Step 1: Write failing tests.** (a) `wrapItem` on a tagged over-wide item: every wrapped row carries the tag (both arms; the :161 line-arm is the one that fails first); (b) projection with anchor in `expandedFolds`: fold row gone, member per-call items present in DETAIL form, ALL tagged with the anchor — including a silently-absorbed TodoWrite member AND a suppressed-status ToolSearch member rendering its generic row (spec A6); (b2) the de-dup cell named in the inherited obligation above — an errored TodoWrite that stayed in a run with a visible member appears exactly once when that run is expanded; (c) toggle round-trip through useChat: `toggleFold(a)` re-projects (fold row → members), second call restores; (d) reset discipline: after `replaceDocument`, the set is empty; (e) **the A10 pin, against `pendingItems`**: with a run still OPEN (trailing growable — it lives in the PENDING projection, not finalized), toggle the anchor, assert `pendingItems` now carries the members, then absorb another member — still expanded, new member present (this is the cell that fails both an item-id-keyed implementation and a finalized-only reproject).
 - [ ] **Step 2: Run — FAIL.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: `npm run typecheck && npm run test:unit && npm run test:tui` — PASS.**
