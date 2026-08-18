@@ -147,11 +147,22 @@ apply unchanged to the new counts.
 **Live dressing** (canon §6, droppable to a follow-up ticket if it crowds the wave): the
 per-tool elapsed `· N.Ns` ticker and the bash `(Ns · N lines)` suffix, both appearing only
 after 2 s in flight. The existing active hint gutter (`latestDisplayHint`) already covers
-canon's "current tool" line; it gains bash commands as hint sources. **Probe gate**: the
-bash suffix needs canon's `bash_progress`-equivalent feed; whether the installed SDK
-delivers any per-tool progress stream headlessly is an unverified declared-vs-reachable
-premise — a probe in `probes/probes/` settles it BEFORE any task is cut against it, and
-an unreachable answer pre-records the suffix as a divergence instead.
+canon's "current tool" line; it gains bash commands as hint sources. **Probe gate —
+SETTLED, and it cut half the dressing.** Probe 100 (`probes/probes/100-tool-progress-stream.ts`,
+live on SDK 0.3.220) found no per-tool progress feed reachable headlessly: between a
+tool's `tool_use` and its `tool_result` the default environment delivers zero
+`tool_progress` frames, and no frame of any kind carries an output-line count (eleven
+spellings scanned). The single elapsed carrier, `tool_progress.elapsed_time_seconds`,
+appears only under `CLAUDE_CODE_REMOTE`/`CLAUDE_CODE_CONTAINER_ID` and only once per 30 s
+per call — not a stream, and not a flag we adopt. Consequences, both binding:
+- **The bash `(Ns · N lines)` suffix is CUT — recorded divergence.** Its line half has no
+  source and must not be faked; its second half would duplicate the ticker.
+- **The elapsed ticker ships**, driven by our own clock off the member's local start time
+  (the transcript already stamps it), not by any SDK progress field. `system/task_started`
+  and `system/task_notification` do arrive ungated and carry the real `tool_use_id`, but
+  they are edges we already have — no new dependency is taken on them.
+One trap recorded for any future progress work: `tool_progress.tool_use_id` is a synthetic
+producer id (`"bash-progress-0"`); the real id lives in `parent_tool_use_id`.
 
 ### 3.2 Mouse click pipeline (input: `keys/parse.ts` → `keys/KeymapProvider.tsx`)
 
@@ -334,6 +345,11 @@ grounding §7). The classic renderer keeps its chips everywhere.
 - (T1) A run made only of silent calls is, in canon, a zero-height row that still reports
   itself clickable — canon's own edge, arguably a bug, and the one place we deliberately
   render nothing instead.
+- (T2) The declared-vs-reachable line held again: an in-flight progress channel exists in
+  the wire vocabulary and is unreachable in practice — gated behind a remote/container
+  flag and throttled to one sample per 30 s. The half of canon's bash suffix that looked
+  hardest (elapsed) turned out to be the half we can build ourselves; the half that looked
+  trivial (a line count) is the one with no source at all.
 - (T1) Canon's git recognition never consults an exit code; success is inferred from
   output shape alone (`vFr`, 194436–194473), while the neighbouring telemetry path does
   check it. Fidelity here means copying the looser rule.
@@ -343,6 +359,11 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 4 — 2026-08-19, T2 probe gate (execution).** Probe 100 settled §3.1's live-dressing
+gate NOT REACHABLE: the bash `(Ns · N lines)` suffix is cut and recorded as a divergence,
+the elapsed ticker ships on our own clock. Plan Task 11 shrinks to the ticker half; §4's
+acceptance is unaffected (no cell named the suffix).
 
 **Round 3 — 2026-08-19, T1 canon addendum (execution).** The spec-mandated canon re-read
 landed (`grounding/2026-08-18-tool-stream-ground-addendum.md`, commit `ab08873656`) and

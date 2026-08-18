@@ -253,18 +253,18 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 
 ---
 
-### Task 11: Live dressing — elapsed ticker + bash suffix (gated by Task 2)
+### Task 11: Live dressing — elapsed ticker (Task 2's gate CUT the bash suffix)
 
 **Files:**
-- Modify: `src/tui/toolFold.ts` / `src/tui/toolRenderer.tsx` (the active group row gains: per-tool elapsed `· N.Ns` once the newest in-flight member has run ≥ 2 s, canon 518661/518664; bash `(Ns · N lines)` suffix once ≥ 2 s, canon 518516–518530 — ONLY if probe 110 found a feed; hint sources gain bash commands via the existing `commandHint`)
+- Modify: `src/tui/toolFold.ts` / `src/tui/toolRenderer.tsx` (the active group row gains: per-tool elapsed `· N.Ns` once the newest in-flight member has run ≥ 2 s, canon 518661/518664; hint sources gain bash commands via the existing `commandHint`. The bash `(Ns · N lines)` suffix is NOT built — see the gate below)
 - Modify: `src/tui/foldPendingState.ts` if the ticker needs per-anchor in-flight timestamps (injected clock)
 - Test: extend the fold-row suite (fake clock)
 
-**Gate:** if probe 110 found NO per-tool progress feed, the bash suffix is CUT (controller records the divergence in the spec; do not fake it from wall-clock) and this task ships the elapsed ticker only — the ticker needs only the member's local start time, which the transcript already clocks.
+**Gate — RESOLVED by Task 2 (probe 100, live on SDK 0.3.220): NO per-tool progress feed is reachable headlessly.** The bash `(Ns · N lines)` suffix is **CUT**; the divergence is recorded in the spec (§3.1 live dressing, Revision Notes round 4). Do not build it, and do not fake the line count from anything. This task ships the elapsed ticker ONLY, driven by the member's local start time (already stamped in the transcript) through an injected clock — not by any SDK progress field.
 
-- [ ] **Step 1: Write failing tests** for whichever halves survive the gate: no ticker under 2 s; `· 2.0s`-form at ≥ 2 s anchored to the newest in-flight member; ticker absent on settled rows; (if feed exists) suffix rendering + its 2 s gate.
+- [ ] **Step 1: Write failing tests** (ticker only): no ticker under 2 s; `· 2.0s`-form at ≥ 2 s anchored to the newest in-flight member; ticker absent on settled rows. Add one guard cell asserting NO bash suffix is emitted for a long-running bash member — the cut is a decision, not an omission, and a later hand must not "restore" it.
 - [ ] **Step 2: Run — FAIL. Step 3: Implement. Step 4: suites + typecheck PASS.**
-- [ ] **Step 5: Commit** — `f5(ts): T11 — live cluster dressing (per probe-110 gate)`.
+- [ ] **Step 5: Commit** — `f5(ts): T11 — live cluster dressing: elapsed ticker (bash suffix cut per probe 100)`.
 
 ---
 
