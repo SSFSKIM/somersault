@@ -444,7 +444,9 @@ and register (import `configRead` from `./configDomain.js`; add `"config/read": 
 **Interfaces:**
 - `ConfigError` (now lives HERE; `configDomain.ts` re-imports)
 - `applyEdit(doc: Record<string, unknown>, keyPath: string[], value: unknown, strategy: "replace" | "upsert"): Record<string, unknown>` — pure, returns a new doc; refuses `__proto__`/`constructor`/`prototype`; own-property access throughout
-- `versionToken(bytes: string | null): string`
+- `versionToken(bytes: string | null): string` — two cases only: `null` → `"absent"`, otherwise sha256 hex.
+  The wire has a THIRD token, `"unreadable"` (Task 2 review I1), for a settings file that exists but could
+  not be read. It is minted by `configDomain.ts`'s versions walk from layer state, never by this function.
 - `withFileLock<T>(filePath: string, fn: () => Promise<T>, opts?: { staleMs?: number }): Promise<T>` — in-process per-path chain + nonce-owned `<file>.lock`
 - `readTargetDoc(filePath): Promise<{ doc: Record<string, unknown>; version: string }>` — missing → `{doc: {}, version: "absent"}`; malformed → `ConfigValidationError`
 - `writeTargetDoc(filePath, doc): Promise<{ version: string }>` — creates the parent dir, 2-space JSON + trailing newline, tmp+rename
@@ -670,7 +672,7 @@ export async function withFileLock<T>(filePath: string, fn: () => Promise<T>, op
 }
 ```
 
-`configDomain.ts`: delete its local `ConfigError` and inline `token`; `import { ConfigError, versionToken } from "./configWrite.js";` and use `versionToken(raw ?? null)` in the versions walk.
+`configDomain.ts`: delete its local `ConfigError` and inline `token`; `import { ConfigError, versionToken } from "./configWrite.js";`. **The versions walk keeps its THREE cases — do NOT collapse it to `versionToken(raw ?? null)`.** That collapse was this plan's original text and it silently reverts Task 2's review fix I1: `raw` is `undefined` both for a layer that is absent and for one that exists but could not be read, and `?? null` maps both to `"absent"`. Keep: layer not in view → `"absent"`; layer in view with no `raw` (EACCES, EISDIR) → `"unreadable"`; otherwise → `versionToken(raw)`. `versionToken` stays a pure two-case bytes→token function; the third case is layer state, not bytes, and belongs to the caller.
 
 - [ ] **Step 4: Run** — config-write + config-domain + config-layers suites PASS; typecheck clean.
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(as5): merge table + nonce-owned lock CAS primitives (Task 3)"`
