@@ -112,12 +112,24 @@ module stays clock- and environment-free). Under `fullscreen`:
     zero-height clickable row (518513, 549764); **we emit no row** — an invisible
     clickable region has no meaning in an item-based projection, and this preserves
     today's behavior for suppressed tools. Recorded divergence.
-  - **an errored silent call is never swallowed** (added round 5). Canon pushes the error
-    `tool_result` standalone on *all three* branches of 237198–237210, so the failure is
-    always on screen. "Emit no row for an all-silent run" governs the GROUP only: when the
-    group is suppressed and a member errored, that member still renders standalone. Without
-    this the two rules compose into a hole — a failed board write disappearing entirely,
-    which is worse than either rule alone and worse than today's classic behavior.
+  - **an errored silent call is never swallowed** (round 5, corrected round 6). Canon's
+    `n.push(c)` (237210) sits OUTSIDE the branch — the error row is emitted on *all three*
+    paths, including the one where the call stays inside an emitted cluster. So the rule is
+    unconditional: **an errored `popsOutOnError` call always renders standalone once its run
+    closes**, whether it relocated, stayed, or belonged to a run that emits no group at all.
+    Relocation then decides only MEMBERSHIP — whether the call is also in `memberIds` (it is
+    when it stayed; it is not when it relocated). Two consequences that travel:
+    - anchor stability is unaffected: a call that stays keeps its place in `memberIds`,
+      including `memberIds[0]`;
+    - **Task 8 obligation**: expanded rendering iterates `memberIds`, so a member that has
+      already been emitted standalone must be skipped there or the failure renders twice.
+      (Canon has no such problem: it renders the `tool_use` inside the cluster and the
+      `tool_result` standalone — two halves of one call, not one call twice. Our atoms carry
+      call and result together, so the halves cannot be split the way canon splits them.)
+    The narrower round-5 wording — standalone only when the group was suppressed — left the
+    original hole open in the commonest ordering: an errored board write inside a cluster
+    that has other, visible members, where the summary reads "Read 1 file" and the failure
+    appears nowhere.
   - **the relocate/stay test is a window test on sequences**, not a lookahead. Canon asks
     whether anything else was pushed into `o.messages` between the silent call's own
     message and the arrival of its error result. Our atoms carry `callSequence` and
@@ -126,7 +138,14 @@ module stays clock- and environment-free). Under `fullscreen`:
     `(call.callSequence, call.result.resultSequence)`. A "does the next atom join the run"
     approximation answers a different question and diverges on three orderings (a
     sequentially-issued follow-on, a concurrent sibling whose result lands first, and a
-    thought arriving after the error).
+    thought arriving after the error). One endpoint rule completes it (round 6): siblings
+    issued in the SAME message share the errored call's `callSequence` and so sit exactly on
+    the window's edge, invisible to a strict scan. Canon handles them through
+    `f.every(id => id errored)` (237200) — a batch relocates only if every sibling in it
+    errored. Ours is the same predicate: an atom sharing the errored call's `callSequence`
+    blocks relocation **unless it also errored**. Strict-inside is deliberate for every other
+    atom and must be pinned by a cell, since flipping it to inclusive otherwise changes
+    nothing any test can see.
   One invariant this spec owns regardless of canon: a pop-out must not shift the anchor
   identity of an already-formed run — expansion state and the watermark latch key on it.
   (Canon can retract a run wholesale because `iNp` re-derives from the full message list
@@ -374,6 +393,16 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 6 — 2026-08-19, T3 fix re-review (execution).** The round-5 "never swallowed" rule
+was itself too narrow, and the re-review caught it: canon's error row is pushed
+unconditionally (237210, verified in the binary by the controller — the push sits outside
+the if/else), so the rule is now unconditional and relocation decides membership only. The
+original failure mode — a failed board write invisible inside a cluster with other members —
+was still open under the round-5 wording. This adds one Task 8 obligation (skip an
+already-standalone member when rendering an expanded cluster). Also pinned: the same-message
+sibling endpoint case, which a strictly-inside window misses, resolved with canon's own
+all-siblings-errored predicate.
 
 **Round 5 — 2026-08-19, T3 review (execution).** Two §3.1 additions forced by the first
 code task's review. (1) The pop-out relocate/stay test is pinned as a *sequence-window*
