@@ -4,11 +4,15 @@
 // Push freshness stays per-server (broadcasts reach the emitting server's own clients) — documented.
 // The handlers land in Task 9; this task is the store the search stage consumes.
 import { mkdir, readdir, writeFile, unlink } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { fleetRoot } from "../fleet/paths.js";
 
 export interface ArchiveDeps { ccxDir?: string }
-const dirOf = (deps: ArchiveDeps): string => join(deps.ccxDir ?? join(homedir(), ".claude", "ccx"), "archived");
+/** The default root is `fleetRoot()` — the repo's ONE definition of `~/.claude/ccx` — not a second
+ *  spelling of it. It honours the `CCX_FLEET_ROOT` override that ops use to relocate ccx state and that
+ *  the suite's per-file backstop uses to stay off a developer's live home; a private copy would fail
+ *  silently, since a readdir of the wrong directory just answers "nothing is archived". */
+const dirOf = (deps: ArchiveDeps): string => join(deps.ccxDir ?? fleetRoot(), "archived");
 
 /** Markers are filenames; a sessionId that could walk the path refuses loudly. Store ids are UUIDs,
  *  so this rejects nothing real. */
@@ -23,7 +27,25 @@ export async function listArchived(deps: ArchiveDeps): Promise<Set<string>> {
 }
 export async function createArchiveMarker(sessionId: string, deps: ArchiveDeps): Promise<void> {
   checkId(sessionId);
-  await mkdir(dirOf(deps), { recursive: true });
+  // 0700 like the root's two other creators (cli/serveMain.ts's runDir, fleet/roster.ts): `mkdir` applies a
+  // mode only to directories it actually CREATES, so whichever writer arrives first sets it permanently —
+  // and an embedder using the published `./appserver` export arrives here first, where `ccx serve` would
+  // not. Without it a co-tenant on a shared host can enumerate the operator's archived session ids.
+  await mkdir(dirOf(deps), { recursive: true, mode: 0o700 });
+  // `wx` is O_CREAT|O_EXCL: EEXIST is the idempotent re-archive, and no state this store itself produces
+  // can tell it from a plain `w` (the marker is empty, so a truncating create leaves identical bytes). The
+  // exclusivity is still load-bearing for states it does NOT produce: O_EXCL refuses to FOLLOW a symlink at
+  // the marker path, so a hand-placed or crash-left `archived/<id>` pointing at a real file is left intact
+  // where `w` would truncate it.
+  //   ASSUMED, not enforced: that this EEXIST means "your marker is already there". On a case-insensitive
+  // filesystem (APFS, NTFS) it can instead mean "some other name folds onto this one" — create "abcdef"
+  // over an existing "ABCdef" returns ok while `listArchived` keeps showing only "ABCdef", and the matching
+  // remove unlinks the OTHER session's marker. Unreachable with today's lowercase-UUID ids; the character
+  // screen admits A-Z, so an id scheme that ever mixes case must fold before it gets here.
+  //   DURABILITY is deliberately not addressed: nothing fsyncs the marker or its parent directory, so a
+  // power loss just after a successful return can lose the archive. Torn writes are impossible regardless
+  // (O_CREAT|O_EXCL plus a zero-byte write leaves either no dirent or the intended marker; `unlink` is
+  // atomic), and nothing else in this repo fsyncs either — `writeTargetDoc` does not. Considered, accepted.
   try { await writeFile(join(dirOf(deps), sessionId), "", { flag: "wx" }); }
   catch (e) { if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e; }
 }

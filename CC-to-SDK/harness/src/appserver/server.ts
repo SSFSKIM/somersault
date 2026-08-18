@@ -79,8 +79,9 @@ export interface AppServerDeps {
   // M5: the config-files domain + archive markers. `configHome` is the base of the user layer
   // (`<configHome>/.claude/settings.json`), defaulted to os.homedir() at each call site so tests point
   // the whole domain at a temp dir; `managedSettingsPath` overrides the platform managed file (null =
-  // no managed layer, the win32 default); `ccxDir` is the server-state dir (`~/.claude/ccx`) the
-  // archive markers live under; `getSessionInfo` backs the D-M5-20 existence checks.
+  // no managed layer, the win32 default); `ccxDir` is the server-state dir the archive markers live
+  // under, defaulting to `fleetRoot()` (src/fleet/paths.ts) so a `CCX_FLEET_ROOT` override moves them
+  // with the rest of the fleet state; `getSessionInfo` backs the D-M5-20 existence checks.
   configHome?: string;
   managedSettingsPath?: string | null;
   ccxDir?: string;
