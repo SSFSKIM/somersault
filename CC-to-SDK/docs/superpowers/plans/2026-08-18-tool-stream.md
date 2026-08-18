@@ -150,6 +150,25 @@ quiet one; write a cell for it, not just for the first.
 
 ---
 
+### Task 5b: Renderer-flip replay integrity (created by Task 5's review)
+
+**Files:**
+- Modify: `src/tui/ChatApp.tsx` (the flip path — `switchRenderer` in `chatMain`, and the `staticEpoch`-keyed `Transcript` mount at :1183–1189)
+- Modify: `src/tui/useChat.ts` (a re-projection entry point for already-committed items; `reconcile()` at :954–981 is the existing re-projection, `replaceDocument` at :1104 the existing wholesale reset)
+- Test: `test/tui/tui-switch.test.tsx` (the suite that already pins the replay invariant — its transcripts currently have no fold divergence, which is why it stays green through the defect)
+
+**The defect, measured by Task 5's reviewer:** fullscreen commits rows into `state.staticItems` while its `<Static>` holds `EMPTY_ITEMS` (`ChatApp.tsx:1185`), so they are never painted. Flipping back re-emits them all (the documented `N → 0 → N` re-emit), and the next document mutation re-projects classically, finds the per-call ids unspent, and APPENDS them below. Measured after one flip and one prompt: `Ran 2 shell commands` (5 writes) and `Bash(npm run build)` (4 writes) both on screen for the same two calls. `ChatApp.tsx:1154–1156` pins that this must not happen ("The replay must REPLACE"), and Ink's static buffer only grows, so it compounds per flip.
+
+**The approach (verify before building — if the mechanism does not hold, report BLOCKED with what you found rather than improvising):** on flip, re-project the committed items under the NEW renderer's policy and remount through the existing `staticEpoch` key. A keyed remount deletes and re-creates in one commit — the same machinery `/clear` and rewind already use, and the same commit-ordering argument that keeps `rootNode.staticNode` safe (the T17 crash-fix paragraph at :1157–1167, which must NOT be regressed: nothing may leave the `<Static>` unmounted with nothing taking its place). Clearing the transcript instead is REJECTED — it costs the user their history.
+
+- [ ] **Step 1: Write the failing test.** Extend `tui-switch.test.tsx` with a transcript whose two policies genuinely diverge (a run of two non-read `Bash` calls: one cluster row in fullscreen, two per-call rows in classic). Flip fullscreen → classic, mutate the document once, assert each call's bytes appear EXACTLY once. This is the cell the current suite lacks.
+- [ ] **Step 2: Run — FAIL** (both shapes present).
+- [ ] **Step 3: Implement.** Re-project + keyed remount on flip, both directions.
+- [ ] **Step 4: `npm run typecheck && npm run test:tui` — PASS**, including `fullscreen-frame.test.tsx`'s assertion that no committed row reaches the alternate screen.
+- [ ] **Step 5: Commit** — `f5(ts): T5b — flip replay re-projects and replaces`.
+
+---
+
 ### Task 6: MouseInputEvent decode (input layer, pure)
 
 **Files:**
@@ -310,8 +329,8 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 the scorecard is where a reader looks for them): the cut bash `(Ns · N lines)` suffix (probe 100,
 round 4); all-silent clusters emitting no row (round 3); the errored-sibling scope difference
 (round 7); PR numbers rendered as text with no link affordance, `GitPrOp.url` carried but
-unscheduled (round 8); a live `/tui` flip leaving painted history under its original policy
-(round 9); and Task 8's published-expanded-items limitation.
+unscheduled (round 8); (the round-9 flip divergence is NOT in this list — it was withdrawn in round 10 and became
+Task 5b); and Task 8's published-expanded-items limitation.
 
 **Files:**
 - Modify: `docs/parity/coverage.md` (the fullscreen/transcript rows this wave moves)

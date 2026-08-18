@@ -175,15 +175,20 @@ module stays clock- and environment-free). Under `fullscreen`:
   exit code — we mirror that (output-shape recognition only).
 - **WebFetch and WebSearch stay non-collapsible** — canon's policy, verified, even though
   intuition says "reads collapse".
-- **A live `/tui` renderer flip leaves already-painted history under the renderer that
-  painted it** (recorded divergence, round 9). Before this wave the projection was
-  renderer-independent, so a flip changed only what came next; now that the fold policy
-  differs per renderer, rows finalized under one policy keep it. The obvious repair is
-  wrong: Ink's `<Static>` is append-only, so re-projecting appends a SECOND set of rows
-  beside the committed ones rather than replacing them. The only true repair is clearing
-  the static transcript on flip — which destroys the user's visible history, a worse
-  trade than a seam. We accept the seam: history stays as painted, everything after the
-  flip uses the new policy. Same family as the expansion-state limitation Task 8 records.
+- **A live `/tui` renderer flip must still replay each committed row exactly once**
+  (round 9, corrected round 10 — a REQUIREMENT, not a divergence). The wave made the fold
+  policy renderer-dependent, and the review measured the consequence: flipping out of
+  fullscreen and then prompting once puts BOTH the cluster row and the individual per-call
+  rows for the same calls on the main screen. That violates an invariant the code states
+  outright (`ChatApp.tsx:1154–1156`: "WHAT IS NOT ACCEPTABLE, and is pinned: a SECOND copy.
+  The replay must REPLACE"), and it compounds per flip because Ink's static buffer only
+  grows. Cause: fullscreen commits rows into `staticItems` while its `<Static>` holds
+  `EMPTY_ITEMS`, so they are never painted; on the way back `<Static>` re-emits them as
+  fullscreen-shaped rows, and the next mutation re-projects classically and finds the
+  per-call ids unspent. The repair re-projects the committed items under the new policy and
+  remounts through the existing `staticEpoch` key (a keyed remount deletes and re-creates in
+  ONE commit — the machinery `/clear` and rewind already use), so the replay REPLACES.
+  Clearing the transcript outright stays rejected: it costs the user their history.
 - **PR numbers are text, not links** (recorded divergence, round 8). Canon renders the visible
   characters `#12` and registers the hyperlink as a side effect of its own row component
   (`Ktt`, 518049–518070); our `FoldClause` is text-plus-bold-ranges with nowhere to hang an
@@ -415,6 +420,14 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 10 — 2026-08-19, T5 review (execution).** Round 9's decision is withdrawn. It rested
+on the flip damage being *staleness* (history folded under the old policy); the reviewer
+measured it and it is *duplication* — both the cluster row and its per-call rows on screen for
+the same calls, violating a pinned invariant and compounding per flip. Accepting a seam was
+defensible; accepting a duplicating replay is not. Re-scoped as its own task (plan Task 5b).
+The lesson is narrow and worth keeping: a characterization handed up from a task report ("it
+goes stale") is a claim, and a decision built on it is only as good as that claim.
 
 **Round 9 — 2026-08-19, T5 switch-over (execution).** Making the fold policy
 renderer-dependent created an interaction that did not exist before: a live `/tui` flip now
