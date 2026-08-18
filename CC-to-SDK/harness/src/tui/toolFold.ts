@@ -288,7 +288,12 @@ export type GroupCounts = {
  *  fullscreen-only, and omitted entirely when the run absorbed no BASH-KIND call (a read-ish shell call is not
  *  one — canon 237152 records inside its `isBash` branch alone). */
 export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
-export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent } | { kind: "passthrough"; sequence: number };
+/** `poppedOnError` marks the one standalone tool this module emits for a reason of its own rather than because
+ *  the policy called it non-collapsible: an errored `popsOutOnError` call, pushed out so the failure is never
+ *  swallowed (see `segmentRuns`). The renderer needs the distinction because two of those names are also
+ *  SUPPRESSED, and a suppressed call's ordinary projection is nothing at all — which would make "emitted
+ *  standalone so it is seen" mean "emitted standalone and invisible". */
+export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent; poppedOnError?: true } | { kind: "passthrough"; sequence: number };
 
 /** Upstream `rRo` (L302645): the per-contribution ceiling on a thought. Upstream measures a message GAP,
  *  so a conversation resumed hours later would otherwise book the whole wait as thinking; we measure one
@@ -506,7 +511,10 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           // atoms carry both halves together and cannot be split that way.
           if (windowIsClear(atom.event, index)) run.memberIds.pop();
           flush();
-          out.push({ kind: "tool", event: atom.event });
+          // TAGGED, because "standalone" is not self-evidently visible: TaskCreate/TaskUpdate are also on the
+          // renderer's suppressed list and project to no items, so the tag is what lets `toolRenderer` give this
+          // one its generic header row instead of the nothing every other call by those names gets.
+          out.push({ kind: "tool", event: atom.event, poppedOnError: true });
         }
         continue;
       }

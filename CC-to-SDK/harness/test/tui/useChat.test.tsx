@@ -3388,4 +3388,27 @@ describe("Tool-stream T5: useChat pairs the fullscreen flag with the blank expan
     expect(f).toContain("Bash(npm run build)");
     expect(f).not.toContain("shell command");
   });
+
+  // T5 FIX 1 — THE BLANKET HAS A HOLE THE PROJECTION CANNOT SEE. `projectionContext()`'s ternary covers every
+  // chip a PROJECTION derives, but the compact-summary row is baked at INGEST: the `compact_boundary` handler
+  // calls `compactSummaryLines(...)` and stores the finished lines on the entry, and `projectLocalEvent` replays
+  // those stored lines VERBATIM in compact (the hintless re-derivation off `COMPACT_SUMMARY_SPECIES` fires only
+  // for the detail projections). So a `/compact` in a fullscreen session left exactly ONE chip standing after
+  // the blanket had taken every other one on screen. Canon cannot produce that: `Ett` (2.1.234:506706, consumer
+  // `Wv` at 511132) kills the chip for EVERYTHING inside its virtual list, so a survivor is a divergence.
+  it("bakes the compact-summary row without a chip in fullscreen, and with one in classic", async () => {
+    const boundary = async (fullscreen: boolean) => {
+      const fake = fakeRemote();
+      function H() { const c = useChat(() => fake, {}, { isFullscreen: () => fullscreen }); return <Text>{allText(c)}</Text>; }
+      const { lastFrame } = render(<H />);
+      await new Promise((r) => setTimeout(r, 20));
+      fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+      fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", uuid: `cb-${fullscreen}` } });
+      await waitFor(() => frame(lastFrame).includes("Compact summary"));
+      fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+      return frame(lastFrame);
+    };
+    expect(await boundary(true)).not.toContain("to expand");          // ← the ternary at the ingest site
+    expect(await boundary(false)).toContain("Compact summary (ctrl+o to expand)");   // …and the classic control
+  });
 });

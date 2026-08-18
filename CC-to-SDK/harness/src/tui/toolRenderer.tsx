@@ -389,6 +389,17 @@ export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResu
   const lifecycle = agentLifecycleItem(event, normalized, options);
   return lifecycle === undefined ? items : [...items, lifecycle];
 }
+/** TOOL-STREAM T5 — the ONE exception to the line above, and the only one. `segmentRuns` pops an errored
+ *  `popsOutOnError` tool out of its run and emits it standalone precisely so the failure is never swallowed
+ *  (spec §3.1, rounds 5–6), and the pop ALSO ends the run. Two of those five names — TaskCreate, TaskUpdate —
+ *  are on the suppressed list, so "standalone" resolved to `[]` and the cluster split around a row that did not
+ *  exist: two adjacent, identical, unexplained group rows with the failure appearing nowhere. A call that
+ *  earned a standalone slot renders its generic header there; `statusToken` maps `suppressed` to the error
+ *  token, so the row carries the failure's colour. Same shape Task 8 owes a suppressed MEMBER of an expanded
+ *  cluster. Non-errored suppression is untouched — that is canon (`Joi` 2.1.234:236734) and load-bearing. */
+function poppedOnErrorItems(event: ToolEvent, options: ProjectionOptions): readonly RenderItem[] {
+  return [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, "suppressed", options), wrap: "truncate-end" }];
+}
 function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
   const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
@@ -1094,7 +1105,14 @@ function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions)
   for (const item of folded.slice(0, trailingRunCut(atoms, folded, policy))) {
     if (item.kind === "group") { out.push(...groupItems(item.group, "published", options)); continue; }
     if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
-    out.push(...(standalone.get(item.event) ?? []));
+    // A popped-out failure whose own projection is empty gets the substitute row (see `poppedOnErrorItems`),
+    // re-keyed exactly as `projectAll` keys a standalone unit so Static's append-once bookkeeping is unchanged.
+    // The other three `popsOutOnError` names render normally and keep their real items.
+    const items = standalone.get(item.event) ?? [];
+    if (item.poppedOnError === true && items.length === 0 && item.event.result !== undefined) {
+      out.push(...reid(poppedOnErrorItems(item.event, options), item.event.id, item.event.result.resultSequence)); continue;
+    }
+    out.push(...items);
   }
   return out;
 }

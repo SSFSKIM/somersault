@@ -1350,7 +1350,13 @@ export function useChat(
           // The `species` tag is what lets the DETAIL projection drop the hint clause (`NAr = !iRe && …`,
           // L422289): the row is baked here, so projection needs to know which baked notice this is.
           const divider: LocalTranscriptEvent = {
-            kind: "notice", lines: compactSummaryLines(expandHintRef.current, platform),
+            // TOOL-STREAM T5, THE INGEST HALF OF THE BLANKET. `projectionContext()`'s ternary covers every chip a
+            // PROJECTION derives; this row is BAKED here and `projectLocalEvent` replays the stored lines verbatim
+            // in compact (its hintless re-derivation off `COMPACT_SUMMARY_SPECIES` fires for the detail projections
+            // only), so the ternary has to be asked again at the oven. Canon's `Ett` kills the chip for everything
+            // inside its virtual list (2.1.234:506706, consumer `Wv` at 511132) — a lone survivor after `/compact`
+            // is a divergence, not a rounding error.
+            kind: "notice", lines: compactSummaryLines(isFullscreenRef.current() ? "" : expandHintRef.current, platform),
             data: { species: COMPACT_SUMMARY_SPECIES },
           };
           if (nonEmptyString(data.uuid)) appendLocalIdentified(divider, `compact-divider:${data.uuid}`); else appendNewLocal(divider);
@@ -1369,7 +1375,11 @@ export function useChat(
           // gate OPEN and tagging it transcript-only is what lets compact hide it and ctrl+O show it; baking it
           // shut (the pre-fix shape) dropped the frame before it reached the document, so no projection —
           // detail included — could ever get it back.
-          const lines = systemNoticeLines(data, { width: columnsFn(), platform, expandHint: expandHintRef.current, verbose: true });
+          // Same ingest-time ternary as the compact boundary above, and recorded as INERT TODAY rather than
+          // guarded: `systemNoticeLines` forwards `expandHint` nowhere — none of its branches reach `foldBody`,
+          // the only consumer on `SpeciesOptions` — so no cell can tell the two answers apart. It is threaded
+          // because the value it hands over is a baked row's hint and the rule for those is one rule.
+          const lines = systemNoticeLines(data, { width: columnsFn(), platform, expandHint: isFullscreenRef.current() ? "" : expandHintRef.current, verbose: true });
           if (lines && lines.length) {
             const notice: LocalTranscriptEvent = { kind: "notice", lines, ...(isTranscriptOnlyNotice(data) && { data: { species: SYSTEM_INFO_SPECIES } }) };
             if (nonEmptyString(data.uuid)) appendLocalIdentified(notice, `system-notice:${data.uuid}`); else appendNewLocal(notice);

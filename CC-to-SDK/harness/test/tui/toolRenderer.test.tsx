@@ -1194,6 +1194,64 @@ describe("Tool-stream T5: the fullscreen projection switch", () => {
     expect(pager(FS).at(-1)).not.toContain("to expand");
   });
 
+  // ── T5 FIX 2: AN ERRORED SUPPRESSED TOOL MUST NOT SPLIT A CLUSTER INTO SILENCE ────────────────────────
+  // Two mechanisms that are each correct alone and wrong together, and only fullscreen puts them in the same
+  // room. `segmentRuns` pops an errored `popsOutOnError` tool OUT of its run and emits it standalone precisely
+  // so the failure is never swallowed (spec §3.1, rounds 5–6) — and the pop also ENDS the run. But TaskCreate
+  // and TaskUpdate are also `isSuppressedTool`, and a suppressed call renders no items at all, so "standalone"
+  // used to mean nothing at all: one cluster became two identical-looking rows with an invisible seam between
+  // them and the failure appeared NOWHERE — the exact outcome the classic neutral-atom diversion exists to
+  // prevent. So a popped-out call that would render nothing renders its generic header instead (`statusToken`
+  // maps `suppressed` to the error token, so the row is error-coloured). The ordinary, non-errored suppression
+  // is canon (`Joi` 2.1.234:236734) and stays untouched — the classic control below is unchanged either way.
+  it("renders the failure when an errored suppressed tool pops out of a fullscreen run", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("tc-1", "TaskCreate", { description: "ship the wave" }), result("tc-1", "board is locked", true),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"), prose("done"));
+    const rows = lineTexts(projectCompact(doc, FS));
+    expect(rows[1]).toContain("TaskCreate");                          // ← the failure has a row of its own…
+    expect(rows).toEqual(["  Read 1 file", rows[1]!, "  Read 1 file", "done"]);
+    // …and that row is what stands between the two cluster rows the pop-out created. Without it the seam is
+    // invisible: two adjacent, identical, unexplained "Read 1 file" rows.
+    expect(rows[0]).toBe(rows[2]);
+    expect(rows.indexOf(rows[1]!)).toBe(1);
+    // The classic control: there the call never reaches the policy at all (`foldAtoms` diverts it to a neutral
+    // atom), so ONE cluster spans it and nothing about this changed.
+    expect(lineTexts(projectCompact(doc, context))).toEqual(["  Read 2 files (ctrl+o to expand)", "done"]);
+  });
+
+  // ── T5 FIX 3: THE TWO `projectPending` FOLD-ATOM SITES, EACH ON ITS OWN ───────────────────────────────
+  // `projectPending` runs the pipeline twice — once to model what Static already holds, once to draw what the
+  // dynamic region owes — and the flag on `foldAtoms` decides only whether a SILENT tool becomes a member.
+  // Silent members touch no counter and an all-silent run emits no group, so the consequence is never the
+  // SENTENCE; it is the run's ANCHOR IDENTITY, and through that, which rows each stream believes it owns.
+  //
+  // The SETTLED fold (what Static holds). Its answer feeds `trailingRunCut`, and a trailing silent tool is the
+  // case where that matters: threaded, the run is still growable and NOTHING is published, so the dynamic
+  // region draws the row; unthreaded, the silent call is a neutral atom, `trailingRunCut` skips it, the
+  // preceding non-collapsible Write reads as a settled end — and `projectPending` marks the group published
+  // that `projectAll` (which folds under the real policy) never published. The row is then owned by neither
+  // stream and vanishes off the screen entirely.
+  it("keeps the settled fold's view of Static in step with projectCompact's, so no row is owned by neither", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("write-1", "Write", { file_path: "/work/c.ts", content: "x" }), result("write-1"),
+      call("ts-1", "ToolSearch", { query: "select:Read" }), result("ts-1", "{}"));
+    expect(groupLines(projectCompact(doc, FS))).toEqual([]);          // Static withholds it: the run is growable
+    expect(lineTexts(groupLines(projectPending(doc, FS)))).toEqual(["  Read 1 file"]);   // ← so this must draw it
+  });
+
+  // The DYNAMIC fold (what the region draws). Same flag, and here it decides `memberIds` outright — a run whose
+  // FIRST member is silent takes its anchor id from that call, and the anchor is what the ratchet latches on
+  // and what Static's append-once key is built from. The sentence is identical either way, so the id is the
+  // only thing that can be asserted, and it is the thing that matters.
+  it("anchors a pending fullscreen run on its silent FIRST member, through the dynamic fold", () => {
+    const doc = built(call("ts-1", "ToolSearch", { query: "select:Read" }), result("ts-1", "{}"),
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
+    const rows = groupLines(projectPending(doc, FS));
+    expect(lineTexts(rows)).toEqual(["  Read 1 file"]);               // one counter: the ToolSearch is silent
+    expect(rows.map((i) => i.id)).toEqual(["group:ts-1,read-1:unclosed-row"]);   // ← unthreaded: `group:read-1:…`
+  });
+
   // ── (b) THE CLASSIC FREEZE ────────────────────────────────────────────────────────────────────────────
   // The whole wave rests on this: a projection that passes no flag renders the bytes it rendered before the
   // flag existed. Both docs above, on the classic path, down to the SGR run of the group row.

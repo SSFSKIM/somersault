@@ -384,12 +384,15 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
   // inside `(callSequence, resultSequence)`". Every cell below therefore states BOTH endpoints of every call â€”
   // a fixture that lets the default `callSequence + 1000` stand makes the whole turn concurrent and cannot tell
   // the four orderings apart.
+  // `poppedOnError: true` on every standalone item below is the T5 fix's marker, and it is asserted rather than
+  // ignored: the renderer draws a substitute header off it, because two of the five popsOutOnError names are
+  // ALSO suppressed and project to nothing â€” so an untagged pop is an invisible one.
   it("(a) RELOCATES an errored silent call out when nothing landed inside its result window", () => {
     const todo = tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4, settled: "error" });
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(todo)], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-1"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
   });
   it("(b) KEEPS an errored silent call inside when a same-batch sibling was issued before its error result", () => {
     // The sibling's CALL (4) lands inside the window (3, 6) â€” canon's `o.messages.at(-1)` is that sibling's
@@ -400,7 +403,7 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
       atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 4, result: 7 }))], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool", "group"]);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-3"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
     expect(groups(items)[1]!.memberIds).toEqual(["tool-4"]);
   });
   it("(c) RELOCATES when the follow-on call was issued only AFTER the error result arrived", () => {
@@ -411,7 +414,7 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
       atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 5, result: 6 }))], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool", "group"]);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-1"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
     expect(groups(items)[1]!.memberIds).toEqual(["tool-5"]);
   });
   it("(d) KEEPS an errored silent call inside when a concurrent sibling's result landed FIRST", () => {
@@ -422,14 +425,14 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2, result: 3 })), atom(todo)], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-2", "tool-1"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
   });
   it("(e) RELOCATES when the only thing after the error is a thought", () => {
     const todo = tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4, settled: "error" });
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(todo),
       { kind: "neutral", sequence: 2, messageSequence: 5, thoughtForMs: 4000 }], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool", "passthrough"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
   });
   it("(f) REFUSES the relocation for a same-message sibling that did NOT error (round 6, canon 237200)", () => {
     // Every `tool_use` block of one assistant entry carries the SAME `callSequence` (transcriptModel :186), so a
@@ -440,7 +443,7 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "read", sequence: 2, result: 6 })), atom(todo)], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
     expect(groups(items)[0]!.memberIds).toEqual(["read", "todo"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
   });
   it("(g) ALLOWS it when that same-message sibling errored too â€” and pins the window's exclusive endpoints", () => {
     // The mirror of (f): every tool_use of the message errored, so canon pops the whole message and we relocate.
@@ -450,7 +453,7 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "read", sequence: 2, result: 6, settled: "error" })), atom(todo)], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
     expect(groups(items)[0]!.memberIds).toEqual(["read"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
   });
   it("gives an errored silent call its own row even when it STAYS in a cluster that IS emitted (round 6)", () => {
     // The commonest ordering, and the one the round-5 wording left open: the read's result (4) lands inside the
@@ -461,7 +464,7 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
     expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
     expect(groups(items)[0]!.counts.readCount).toBe(1);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
-    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(items[1]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
   });
   it("never swallows an errored silent call whose group is suppressed (spec Â§3.1, round 5)", () => {
     // The exact hole: relocation refused (the sibling read was issued inside the window), and the run has no
@@ -469,7 +472,7 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
     const todo = tool("TodoWrite", { todos: [] }, { sequence: 1, result: 4, settled: "error" });
     const items = segmentRuns([atom(todo), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2, result: 5 }))], FULL);
     expect(items.map((i) => i.kind)).toEqual(["tool", "group"]);
-    expect(items[0]).toEqual({ kind: "tool", event: todo });
+    expect(items[0]).toEqual({ kind: "tool", event: todo, poppedOnError: true });
     expect(groups(items)[0]!.memberIds).toEqual(["tool-2"]);
   });
   it("never leaks a thought held for a popped-out call into the NEXT run", () => {
@@ -490,7 +493,7 @@ describe("TS fullscreen fold policy â€” segmentation (canon 2.1.234 iNp 237140â€
   });
   it("renders a lone errored silent call standalone with no cluster at all (canon 237204â€“237206)", () => {
     const todo = tool("TodoWrite", { todos: [] }, { sequence: 1, result: 2, settled: "error" });
-    expect(segmentRuns([atom(todo)], FULL)).toEqual([{ kind: "tool", event: todo }]);
+    expect(segmentRuns([atom(todo)], FULL)).toEqual([{ kind: "tool", event: todo, poppedOnError: true }]);
   });
   it("never pops out ToolSearch, whose popsOutOnError is false", () => {
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(tool("ToolSearch", {}, { sequence: 3, result: 4, settled: "error" }))], FULL);
