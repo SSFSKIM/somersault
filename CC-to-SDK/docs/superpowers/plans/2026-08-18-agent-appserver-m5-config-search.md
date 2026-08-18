@@ -1185,6 +1185,27 @@ runScanExclusive(srv, async () => {
 - **Live-guard** = `findLiveBySessionId(srv, sid) !== undefined || srv.resumingSessions.has(sid)` — checked BEFORE marker creation and AGAIN after; a failed re-check unlinks the marker and refuses `ERR.BUSY` `"Thread is live in this server — close it first"` (plan review F12: a resume mid-admission holds only the reservation).
 - **Existence (D-M5-20):** archive of a cold session requires `getSessionInfo(sid)` to return a row, else `THREAD_NOT_FOUND`. Unarchive proceeds when a marker exists OR the store knows the session; both absent → `THREAD_NOT_FOUND`.
 - **`ENGINE_GONE_EXEMPT`** (`server.ts:185`): add `"thread/searchOccurrences"`, `"thread/archive"`, `"thread/unarchive"` with the comment `// M5: disk/sidecar reads that must answer for a thread whose engine died (spec rev 3)`.
+- **Error mapping (Task 5 review, item 2) — the store throws protocol-free, this handler maps.** Task 5's
+  store throws a bare `Error` from `checkId` and lets raw errnos escape; both now cross the wire from a
+  public method. Follow the repo's existing hybrid, which is what `configWrite.ts` and `configDomain.ts`
+  already do: the store stays protocol-free, the handler assigns the code.
+  - Give `checkId` a **typed** error and map it to `-32602` here. This is belt-and-braces, not the primary
+    defense: both handlers run the D-M5-20 existence check first, and a path-hostile `threadId` is by
+    construction not a session `getSessionInfo` knows, so it refuses `THREAD_NOT_FOUND` before the store
+    is touched. Worth having anyway because `threadIdParams` is only `z.string().min(1)`
+    (`schema/core.ts:4`), so **the ordering is the whole defense** — D-M5-18a's own words for this shape:
+    fail closed by design with a diagnosable message rather than by accident with an opaque one.
+  - **Leave errnos on `-32603`.** `ENOTDIR` from a corrupted state directory and `EACCES` describe the
+    *server's* inability, not the client's parameter, so internal is the correct code — D-M5-18a rules
+    against reporting a server failure as though it described the client's data, not against errnos as
+    such (`readTargetDoc` puts an errno message straight into its `ConfigError`). **Strip the absolute
+    path from the message**: as written it carries the operator's home directory onto the wire.
+  - **Case-collision note (Task 5 review, Minor 3):** the store's marker names are case-sensitive while
+    APFS and NTFS are not, so `archive("ABCdef")` then `archive("abcdef")` both report success while
+    `listArchived()` returns one name — and `unarchive("abcdef")` would unlink `ABCdef`'s marker. Not
+    reachable with today's lowercase-UUID session ids, but this handler is where it would become
+    client-visible (`{ok:true}` plus a broadcast, with `thread/list {archived:true}` omitting the row).
+    Do not add normalization; assert the current behavior in a row so the assumption is pinned.
 - **Admission auto-unarchive (D-M5-21):** in `server.ts`'s `startThread`, on the resume path at the point where admission has SUCCEEDED (record registered, reservation released — read the function first and place it where no later step can fail), and at the equivalent point in `fleet.ts`'s attach:
 
 ```ts
