@@ -4,8 +4,8 @@
 // NONCE-OWNED <file>.lock (two servers on this machine). The nonce is the ownership proof: release
 // unlinks only its own, and a stale break only removes a lock read as stale-and-stable — rev 1's
 // pid-stamp-never-read lock could be stolen mid-hold and then unlink its thief's lock.
-import { readFile, writeFile, rename, unlink, stat, mkdir, realpath } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { settingsMerge } from "./configLayers.js";
 
@@ -18,13 +18,29 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 const FORBIDDEN = new Set(["__proto__", "constructor", "prototype"]);
 const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 
+/** The same three keys refused as keyPath SEGMENTS are refused anywhere inside a written VALUE (review
+ *  M4). Without this the rule disagreed with itself: a literal `__proto__` key inside an upsert value
+ *  reaches `settingsMerge`'s `out[k] = …`, which invokes `Object.prototype`'s `__proto__` SETTER — the
+ *  merged node's prototype is reassigned and the key vanishes from the written JSON, while the same key
+ *  under `replace` round-trips intact. A silent vanish is a worse answer than a refusal. */
+function assertWritableValue(value: unknown, path: string[]): void {
+  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) assertWritableValue(value[i], [...path, String(i)]); return; }
+  if (!isPlainObject(value)) return;
+  for (const k of Object.keys(value)) {
+    if (FORBIDDEN.has(k)) throw new ConfigError("ConfigValidationError", `key "${k}" is not writable (at value path "${[...path, k].join(".")}")`);
+    assertWritableValue(value[k], [...path, k]);
+  }
+}
+
 /** D-M5-13 exactly: replace sets (null deletes); upsert deep-merges with the READ side's customizer
  *  (null refuses); parents created as objects; a non-object parent refuses with the doc untouched.
- *  The three prototype segments refuse outright (D-M5-12 rev 3) and every lookup is own-property —
- *  an opaque-segment contract must not be a pollution channel. Pure — returns a new doc. */
+ *  The three prototype segments refuse outright (D-M5-12 rev 3) — as a keyPath segment AND anywhere
+ *  inside the value — and every lookup is own-property: an opaque-segment contract must not be a
+ *  pollution channel. Pure — returns a new doc. */
 export function applyEdit(doc: Record<string, unknown>, keyPath: string[], value: unknown, strategy: "replace" | "upsert"): Record<string, unknown> {
   if (keyPath.length === 0) throw new ConfigError("ConfigValidationError", "keyPath must not be empty");
   for (const seg of keyPath) if (FORBIDDEN.has(seg)) throw new ConfigError("ConfigValidationError", `keyPath segment "${seg}" is not writable`);
+  assertWritableValue(value, keyPath);
   const out = { ...doc };
   let node = out;
   for (let i = 0; i < keyPath.length - 1; i++) {
@@ -61,25 +77,54 @@ export async function readTargetDoc(filePath: string): Promise<{ doc: Record<str
     // not leaked as an internal error — never write bytes over bytes we were never able to see.
     throw new ConfigError("ConfigValidationError", `target settings file could not be read: ${(e as Error).message ?? String(e)}`);
   }
+  const body = raw.replace(/^﻿/, "");
+  // A blank (or BOM-only) file is an EMPTY doc, exactly as `readLayers` already treats it — upstream's
+  // loader does too (review I2). Sending it to JSON.parse instead made `config/read` report the file
+  // healthy while every write against it refused forever, with no way out through the API. The token is
+  // the hash of the real bytes, NOT "absent": the file exists, and a CAS check must be able to see it.
+  if (body.trim() === "") return { doc: {}, version: versionToken(raw) };
   let parsed: unknown;
-  try { parsed = JSON.parse(raw.replace(/^﻿/, "")); }
+  try { parsed = JSON.parse(body); }
   catch { throw new ConfigError("ConfigValidationError", "target settings file is not valid JSON; fix it before writing through this API"); }
   if (!isPlainObject(parsed)) throw new ConfigError("ConfigValidationError", "target settings file is not a JSON object");
   return { doc: parsed, version: versionToken(raw) };
 }
 
 /** Parent created; a symlinked settings file resolves so tmp+rename replaces the REAL file, never the
- *  link (plan review F14 — silently detaching managed symlinks). */
+ *  link (plan review F14 — silently detaching managed symlinks). `realpath` answers only for a link
+ *  whose target EXISTS; a link that dotfile managers and provisioning scripts laid down ahead of the
+ *  first write dangles, and returning the literal path for it was the one case that still destroyed the
+ *  link — the rename replaced it with a regular file and the intended target was never created (review
+ *  I3). So a dangling link is walked by hand, relative targets against the link's own directory, and
+ *  the walk is BOUNDED: a symlink loop must refuse, never become a second hang. */
+const SYMLINK_HOPS = 8;
 export async function resolveRealTarget(filePath: string): Promise<string> {
   await mkdir(dirname(filePath), { recursive: true });
-  try { return await realpath(filePath); } catch { return filePath; }
+  try { return await realpath(filePath); } catch { /* target missing, dangling link, or a loop — walk it */ }
+  let cur = filePath;
+  for (let hop = 0; hop < SYMLINK_HOPS; hop++) {
+    let link: string;
+    try {
+      const st = await lstat(cur);
+      if (!st.isSymbolicLink()) return cur; // nothing to follow: the literal path (it just does not exist yet)
+      link = await readlink(cur);
+    } catch { return cur; } // no entry at all — the plain "file does not exist" case
+    cur = resolve(dirname(cur), link);
+  }
+  throw new ConfigError("ConfigValidationError", `settings path resolves through more than ${SYMLINK_HOPS} symlinks (or a symlink loop): ${filePath}`);
 }
 
+/** 2-space JSON + trailing newline, installed by tmp+rename. The rename installs the TMP file's mode, so
+ *  an existing target's mode is carried over first — settings files legitimately hold `env` values and
+ *  `apiKeyHelper` paths, and without this the first write through this API turned a deliberate 0600 into
+ *  the umask default 0644 (review I1). A target that does not exist yet keeps the process default. */
 export async function writeTargetDoc(filePath: string, doc: Record<string, unknown>): Promise<{ version: string }> {
   await mkdir(dirname(filePath), { recursive: true });
   const bytes = JSON.stringify(doc, null, 2) + "\n";
   const tmp = `${filePath}.tmp-${process.pid}-${Math.floor(Math.random() * 1e9)}`;
+  const mode = await stat(filePath).then((s) => s.mode & 0o7777, () => null);
   await writeFile(tmp, bytes, "utf8");
+  if (mode !== null) await chmod(tmp, mode);
   await rename(tmp, filePath);
   return { version: versionToken(bytes) };
 }
@@ -98,16 +143,23 @@ export async function withFileLock<T>(filePath: string, fn: () => Promise<T>, op
       try { await writeFile(lockPath, nonce, { flag: "wx" }); break; }
       catch (e) {
         if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
+        // ONLY a successful break may skip the retry budget (review C1). Every other outcome — the
+        // unlink failed (an immutable lock, or a read-only directory: EPERM/EACCES), the lock's bytes
+        // moved between the two reads, the lock vanished mid-inspection — falls through to the deadline
+        // and the sleep. `continue`ing on those instead was an unbounded HOT spin: no refusal ever
+        // fired, and because the spinning call sits inside the in-process chain, every later write to
+        // that path queued behind it forever with no cancellation path.
+        let broke = false;
         try {
           const s = await stat(lockPath);
           if (Date.now() - s.mtimeMs > staleMs) {
             // stale AND stable: only unlink when two reads agree — never a lock whose content moved.
             const seen = await readFile(lockPath, "utf8").catch(() => null);
             const again = await readFile(lockPath, "utf8").catch(() => null);
-            if (seen !== null && seen === again) await unlink(lockPath).catch(() => {});
-            continue;
+            if (seen !== null && seen === again) broke = await unlink(lockPath).then(() => true, () => false);
           }
-        } catch { continue; }
+        } catch { /* the lock vanished mid-inspection — the retried `wx` below is the answer */ }
+        if (broke) continue;
         if (Date.now() > deadline) throw new ConfigError("ConfigValidationError", "config target is locked by another writer");
         await new Promise((r) => setTimeout(r, 25));
       }

@@ -1,16 +1,21 @@
 // test/unit/appserver/config-write.test.ts — M5 Task 3: the write primitives the Task 4 handlers run
 // inside. Everything here touches only its own `mkdtemp` directory.
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 
-/** The one interleave the filesystem will not schedule for us: a foreign lock whose bytes CHANGE
- *  between the implementation's two consecutive reads. A real second writer cannot be timed into that
- *  gap — both reads are already queued on the libuv threadpool by the time this thread runs again — so
- *  it is forced at the fs boundary. Null by default: every other read in this file is the real one. */
-const fsHook = vi.hoisted(() => ({ readFile: null as ((path: string) => string | null) | null }));
+/** Two interleaves the filesystem will not schedule for us. (1) A foreign lock whose bytes CHANGE
+ *  between the implementation's two consecutive reads: a real second writer cannot be timed into that
+ *  gap — both reads are already queued on the libuv threadpool by the time this thread runs again.
+ *  (2) A stale lock whose `unlink` FAILS: real on disk (an immutable file, a mode-0555 directory) but
+ *  both reproductions are platform-specific and neither works as root. Both are forced at the fs
+ *  boundary instead. Null by default: every other read and unlink in this file is the real one. */
+const fsHook = vi.hoisted(() => ({
+  readFile: null as ((path: string) => string | null) | null,
+  denyUnlink: null as ((path: string) => boolean) | null,
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -19,6 +24,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const forced = fsHook.readFile?.(String(path));
       if (typeof forced === "string") return forced;
       return (real.readFile as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
+    },
+    unlink: async (path: unknown, ...rest: unknown[]) => {
+      if (fsHook.denyUnlink?.(String(path))) throw Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" });
+      return (real.unlink as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
     },
   };
 });
@@ -70,6 +79,30 @@ describe("applyEdit (D-M5-13 merge table)", () => {
     }
     expect(({} as any).polluted).toBeUndefined();
   });
+  it("refuses the same three keys INSIDE a value, at any depth, under both strategies (review M4)", () => {
+    // Only `JSON.parse` mints an own `__proto__` KEY — a `{__proto__: …}` literal sets the prototype
+    // instead, so the wire's shape has to be built through the parser to be the shape a client sends.
+    for (const k of ["__proto__", "constructor", "prototype"]) {
+      const top = JSON.parse(`{"${k}": {"x": 1}}`);
+      expect(() => applyEdit({}, ["a"], top, "replace")).toThrow(ConfigError);
+      expect(() => applyEdit({}, ["a"], top, "upsert")).toThrow(ConfigError);
+      const nested = JSON.parse(`{"deep": [{"env": {"${k}": "v"}}]}`);
+      expect(() => applyEdit({}, ["a"], nested, "replace")).toThrow(ConfigError);
+      expect(() => applyEdit({ a: { deep: [] } }, ["a"], nested, "upsert")).toThrow(ConfigError);
+    }
+    // The consequence this closes: under `upsert` the key used to reach `settingsMerge`'s `out[k] = …`,
+    // which invoked Object.prototype's `__proto__` SETTER — the key silently vanished from the written
+    // JSON while `replace` kept it. Disagreeing halves of one rule, and the quiet half was the lossy one.
+    expect(() => applyEdit({ a: { z: 1 } }, ["a"], JSON.parse('{"__proto__": {"p": 1}}'), "upsert")).toThrow(/is not writable/);
+    expect(({} as any).p).toBeUndefined();
+  });
+  it("segment lookup is OWN-property: an inherited name is an absent parent, not a refusal (review M2)", () => {
+    // A raw `node[seg]` here would find `Object.prototype.toString` — a function, so "not an object" —
+    // and refuse a keyPath the opaque-segment contract says is perfectly ordinary. Own-property access
+    // is what keeps the prototype chain out of the traversal in BOTH directions.
+    expect(applyEdit({}, ["toString", "x"], 1, "replace")).toEqual({ toString: { x: 1 } });
+    expect(applyEdit({}, ["hasOwnProperty"], 1, "replace")).toEqual({ hasOwnProperty: 1 });
+  });
 });
 
 describe("token + doc IO", () => {
@@ -94,6 +127,19 @@ describe("token + doc IO", () => {
     await expect(readTargetDoc(p)).rejects.toThrow(ConfigError);
     await expect(readTargetDoc(p)).rejects.toMatchObject({ code: "ConfigValidationError" });
   });
+  it("a BLANK target is an EMPTY doc with a REAL token — not a permanent refusal (review I2)", async () => {
+    // `readLayers` already calls a blank or BOM-only file an empty layer, because upstream's loader
+    // does. The write side sending the same bytes to JSON.parse made `config/read` report the file
+    // healthy while every write against it refused forever — `touch ~/.claude/settings.json`, or a
+    // crash-truncated file, and the API had no way back out. The token is the hash of the real bytes:
+    // "absent" is reserved for NO SUCH FILE, and this file exists.
+    const dir = mkTemp("m5w-");
+    const zero = join(dir, "zero.json"); writeFileSync(zero, "");
+    expect(await readTargetDoc(zero)).toEqual({ doc: {}, version: versionToken("") });
+    expect((await readTargetDoc(zero)).version).not.toBe("absent");
+    const ws = join(dir, "ws.json"); const wsBytes = "﻿ \n\t\n"; writeFileSync(ws, wsBytes);
+    expect(await readTargetDoc(ws)).toEqual({ doc: {}, version: versionToken(wsBytes) });
+  });
   it("writeTargetDoc round-trips with a matching token AND creates the missing .claude parent", async () => {
     const dir = mkTemp("m5w-");
     const p = join(dir, ".claude", "settings.json"); // parent does NOT exist (fresh project)
@@ -101,14 +147,57 @@ describe("token + doc IO", () => {
     const back = await readTargetDoc(p);
     expect(back.doc).toEqual({ model: "opus" });
     expect(back.version).toBe(version);
-    expect(readFileSync(p, "utf8").endsWith("\n")).toBe(true);
+    // The exact bytes, not just the trailing newline: 2-space indent is the shape a human edits this
+    // file in, and a settings file rewritten as one long line is a diff nobody can read (review M3).
+    expect(readFileSync(p, "utf8")).toBe('{\n  "model": "opus"\n}\n');
+  });
+  it("writeTargetDoc preserves an existing target's MODE; a new file keeps the process default (review I1)", async () => {
+    // tmp+rename installs the TMP file's mode, so a settings file deliberately kept at 0600 — they hold
+    // `env` values and `apiKeyHelper` paths — came back 0644 after one write through this API.
+    const dir = mkTemp("m5w-");
+    const p = join(dir, "settings.json");
+    writeFileSync(p, "{}\n"); chmodSync(p, 0o600); // chmod separately: writeFileSync's mode is umask-masked
+    await writeTargetDoc(p, { model: "opus" });
+    expect((statSync(p).mode & 0o777).toString(8)).toBe("600");
+    const fresh = join(dir, "fresh.json"); const ref = join(dir, "ref.json");
+    await writeTargetDoc(fresh, { a: 1 }); writeFileSync(ref, "x"); // same umask, so the same mode
+    expect(statSync(fresh).mode & 0o777).toBe(statSync(ref).mode & 0o777);
   });
   it("a symlinked target resolves: the write lands in the real file, the link survives", async () => {
     const dir = mkTemp("m5w-");
-    writeFileSync(join(dir, "real.json"), "{}\n");
-    symlinkSync(join(dir, "real.json"), join(dir, "link.json"));
-    expect(await resolveRealTarget(join(dir, "link.json"))).toBe(join(dir, "real.json"));
-    expect(lstatSync(join(dir, "link.json")).isSymbolicLink()).toBe(true);
+    const real = join(dir, "real.json"), link = join(dir, "link.json");
+    writeFileSync(real, "{}\n");
+    symlinkSync(real, link);
+    expect(await resolveRealTarget(link)).toBe(real);
+    // The row used to stop at the resolution and claim the write in its title (review M5). Perform it:
+    // the claim worth measuring is that the LINK is still a link afterwards, which is what tmp+rename
+    // over the nominal path would have destroyed.
+    await writeTargetDoc(await resolveRealTarget(link), { model: "opus" });
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(JSON.parse(readFileSync(real, "utf8"))).toEqual({ model: "opus" });
+    expect((await readTargetDoc(link)).doc).toEqual({ model: "opus" }); // reachable through the link too
+  });
+  it("a DANGLING symlink resolves to its target: the link survives its own first write (review I3)", async () => {
+    // A dotfile manager or provisioning script links ahead of the first write, so the target does not
+    // exist yet and `realpath` cannot answer. Returning the literal path for that case sent tmp+rename
+    // at the LINK — it replaced the link with a regular file and the intended target was never created,
+    // the exact detachment the resolution exists to prevent.
+    const dir = mkTemp("m5w-");
+    const real = join(dir, "nested", "real.json"), link = join(dir, "link.json");
+    symlinkSync(join("nested", "real.json"), link); // RELATIVE target, resolved against the link's dir
+    expect(existsSync(real)).toBe(false);
+    expect(await resolveRealTarget(link)).toBe(real);
+    await writeTargetDoc(await resolveRealTarget(link), { model: "opus" });
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(JSON.parse(readFileSync(real, "utf8"))).toEqual({ model: "opus" });
+    // A path that is simply not there is still the literal path — resolution must not invent a target.
+    expect(await resolveRealTarget(join(dir, "nope.json"))).toBe(join(dir, "nope.json"));
+  });
+  it("a symlink LOOP refuses instead of walking forever", async () => {
+    const dir = mkTemp("m5w-");
+    symlinkSync(join(dir, "b.json"), join(dir, "a.json"));
+    symlinkSync(join(dir, "a.json"), join(dir, "b.json"));
+    await expect(resolveRealTarget(join(dir, "a.json"))).rejects.toMatchObject({ code: "ConfigValidationError" });
   });
 });
 
@@ -175,6 +264,34 @@ describe("withFileLock (D-M5-14 rev 3)", () => {
     expect(await pending).toBe("ran");
     expect(existsSync(lock)).toBe(false); // our own release, by nonce, cleaned up after us
   });
+  it("REFUSES at the deadline when a stale lock cannot be broken — it never spins forever", async () => {
+    // The reachable hot spin (review C1): the lock is stale AND stable, so the break is attempted, but
+    // the unlink FAILS — an immutable lock file, or a lock inside a directory that went read-only. The
+    // failure is swallowed, and a `continue` that skipped both the deadline check and the 25ms sleep
+    // turned that into an unbounded busy loop: measured still spinning at 7s against a 5.05s deadline,
+    // ~7.9s of CPU, ~6.5k iterations/s. The refusal never fired — and because the spin sits inside the
+    // in-process chain, every later write to that path queued behind it permanently.
+    // ONLY a successful break may skip the retry budget. This row is the assertion whose absence is why
+    // C1 shipped: nothing anywhere pinned the refusal, so nothing noticed it was unreachable.
+    const dir = mkTemp("m5l-");
+    const p = join(dir, "s.json");
+    const lock = p + ".lock";
+    writeFileSync(lock, "dead-owner");
+    fsHook.denyUnlink = (path) => path === lock; // the break is attempted every pass and every pass fails
+    const t0 = Date.now();
+    const cpu0 = process.cpuUsage();
+    const outcome = await Promise.race([
+      withFileLock(p, async () => "ran", { staleMs: 0 }).then((v) => `RESOLVED:${v}`, (e: { code?: string; message: string }) => `${e.code}:${e.message}`),
+      sleep(9_000, "STILL-SPINNING"),
+    ]);
+    const elapsed = Date.now() - t0, cpu = process.cpuUsage(cpu0);
+    fsHook.denyUnlink = null; // let a sabotaged (deadline-less) build finish instead of spinning past the run
+    expect(outcome).toBe("ConfigValidationError:config target is locked by another writer");
+    expect(elapsed).toBeGreaterThanOrEqual(5_000); // the deadline is staleMs + 5s — it waited the budget out
+    expect(elapsed).toBeLessThan(7_000);           // ...and refused promptly once the budget was spent
+    expect((cpu.user + cpu.system) / 1000).toBeLessThan(1_500); // it SLEPT through the wait, it did not burn it
+    expect(readFileSync(lock, "utf8")).toBe("dead-owner"); // the unbreakable lock is still exactly as found
+  }, 20_000);
   it("release never unlinks a FOREIGN lock (nonce ownership)", async () => {
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
