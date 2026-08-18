@@ -470,6 +470,29 @@ flips the `full-potential.md` rows and ships nothing.
   makes the first programmatic write of a secret world-readable at rest, and the version-control
   argument for group-readable project settings does not hold, since git records only the executable
   bit. Note this is a narrowing, not a widening: no existing file's mode is ever changed by a write.
+- **D-M5-14c (Task 4 review I-3, rev 4) — lock contention answers `BUSY`, not "invalid params".** The
+  write path surfaced `"config target is locked by another writer"` as `-32602` with
+  `data.code: "ConfigValidationError"` — the one reading guaranteed to stop a client retrying, on two
+  public methods. Chosen: `ERR.BUSY` (-33001) with `data: { code: "ConfigLocked" }`. The reasoning is the
+  taxonomy's own, stated in `rpc.ts`'s header on `ATTACH_FAILED` — *"One code for both because a client's
+  move is the same"*: these codes are grouped by what the caller should do next, and the caller's move
+  here is "retry shortly", which is precisely what `BUSY` means elsewhere in this server. Rejected:
+  spending `-33009` on it (the family is fully allocated `-33001..-33008` and nothing here needs a new
+  number); and leaving it inside `-32602` with only a new `data.code` string (a config-aware client would
+  discriminate correctly, but every generic client would still read the outer code as "your request was
+  malformed"). Recorded alongside it: the **more reachable symptom is not the error at all** — with a
+  foreign lockfile present a write usually blocks ~30 s, breaks the stale lock, and succeeds; the error
+  fires only when the lock cannot be unlinked or a live writer holds it past the deadline. Documented
+  rather than re-architected. The seam a later milestone will want is separating "how long do I wait" from
+  "when is a lock stale" — today `withFileLock` takes only `staleMs` and derives the deadline from it.
+- **D-M5-13a (Task 4 review I-1, rev 4) — the masking report names the EFFECTIVE layer.** The scan took
+  the *first* hit walking upward from the lowest layer; precedence is user < project < local < managed, so
+  the effective value is the *last* match. With `project` and `local` both defining a key, a user-target
+  write replied `overridingLayer: "project"` while the same server's `config/read` reported `local` — a
+  client told which file to edit would edit the wrong one and still be masked. The field is named
+  `effectiveValue`; it now holds one. Also narrowed here: the array carve-out (higher-layer arrays are
+  exempt because arrays merge by contribution) applies only when **both** sides are arrays — a scalar
+  written under a higher-layer array was reported `ok` while having no effect at all.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
@@ -533,6 +556,35 @@ flips the `full-potential.md` rows and ships nothing.
   correct implementation with an incorrect explanation outlives a bug**, because the next
   simplification pass reads the explanation, deletes the line, and stays green. A guard is only
   defended when disabling it turns something red.
+
+- **Two agents contradicted each other about a concurrency hole; the lockfile's own location settled
+  it.** Task 4's implementer reported that `resolveRealTarget` returns the literal path for a file that
+  does not exist and the canonicalized path once it does, and concluded that mutual exclusion is lost at
+  first creation — two spellings of one not-yet-existing file taking two different locks and both
+  creating it. Task 3's reviewer had measured the opposite. Rather than reason it out, the tiebreak was
+  constructed: four spelling-divergence variants plus controls, driven through the real primitives and
+  again end-to-end through the wire. **Task 3's reviewer was right, and the missing piece was where the
+  lock lives.** `<file>.lock` is a *sibling of the target*, so when two spellings differ through a
+  symlinked ancestor, both lock paths inherit that same symlink and land on one inode — the in-process
+  `chains` map does take two entries, but the on-disk lock still serializes, observed concurrency 1, no
+  lost update. When the settings file itself is the symlink, `resolveRealTarget` already collapses the
+  spellings, dangling links included. The worst case of the divergence is that a loser polls every 25 ms
+  instead of queueing in-process. The control run shows what the resolve-before-lock ordering genuinely
+  buys: lock the *unresolved* path with a symlinked settings file and concurrency goes to 2 with a real
+  lost update. The residual is hardlinks, which no resolution can collapse — but tmp+rename breaks a
+  hardlink on first write anyway, so they were never inside this primitive's contract. **The general
+  lesson: when two careful agents disagree about a concurrency property, the disagreement is a
+  measurement request, not a debate — and the resolving fact was a detail of the design neither had
+  stated (that the lock is a sibling, so it inherits every ancestor symlink the target does).**
+- **Six mutations survived an entire test file, and one of them was the fix for a live wire bug.** Task
+  4's reviewer wrote its own mutation set rather than re-running the implementer's, and found that
+  reversing the batch apply order, correcting the masking scan direction, replacing `effectiveValue`
+  with a constant, emptying the masking message, emptying the known-keys list, and dropping `managed`
+  from the precedence tuple all left the suite green. The sharpest: a row *titled* "batch is ordered and
+  atomic" asserts only atomicity — its batch refuses, so ordering never reaches disk, and the batches
+  that succeed have non-interacting edits. Ordering does work; nothing measured it, and the spec's own
+  acceptance criterion for it had no test. **A title is not a test, and a mutation set written by the
+  same mind that wrote the code inherits its blind spots.**
 
 ## Outcomes & Retrospective
 
