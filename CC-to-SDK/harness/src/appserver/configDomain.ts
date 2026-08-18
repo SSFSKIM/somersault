@@ -1,18 +1,25 @@
 // src/appserver/configDomain.ts — config/read here; the writes land in Task 4.
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { homedir, platform } from "node:os";
 import { ERR } from "./rpc.js";
 import type { Handler } from "./server.js";
 import { layerPaths, readLayers, effectiveView } from "./configLayers.js";
+import type { ConfigLayer } from "./configLayers.js";
 import { configReadParams } from "./schema/config.js";
 
 /** win32: null — the spec declares Windows managed paths out of this file-backed view, and a Linux
- *  default there would invent a drive-root layer (plan review F19). */
-export const DEFAULT_MANAGED_PATH: string | null = platform() === "darwin"
-  ? "/Library/Application Support/ClaudeCode/managed-settings.json"
-  : platform() === "win32" ? null : "/etc/claude-code/managed-settings.json";
+ *  default there would invent a drive-root layer (plan review F19). The mapping takes the platform as a
+ *  PARAMETER so all three arms run on any one machine: computed inline off `platform()` at module load,
+ *  the two arms this host is not could only ever be read, never executed (flagged by two reviews).
+ *  `DEFAULT_MANAGED_PATH` below is unchanged in name, type and value — later tasks consume it. */
+export function defaultManagedPath(platformName: string): string | null {
+  if (platformName === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
+  if (platformName === "win32") return null;
+  return "/etc/claude-code/managed-settings.json";
+}
+export const DEFAULT_MANAGED_PATH: string | null = defaultManagedPath(platform());
 
 // Task 3 moves this class to configWrite.ts and re-imports it here — the write primitives throw it too.
 export class ConfigError extends Error {
@@ -21,12 +28,30 @@ export class ConfigError extends Error {
 
 export async function resolveConfigCwd(cwd: string, deps: { realpath: (p: string) => Promise<string> } = { realpath }): Promise<string> {
   if (!isAbsolute(cwd)) throw new ConfigError("ConfigValidationError", "cwd must be an absolute path");
-  try { return await deps.realpath(cwd); }
+  let resolved: string;
+  try { resolved = await deps.realpath(cwd); }
   catch { throw new ConfigError("ConfigValidationError", `cwd does not exist: ${cwd}`); }
+  // `realpath` succeeds on a REGULAR FILE too, and the read would then go looking for
+  // `<file>/.claude/settings.json` — a reply carrying three CAS tokens for paths that can never exist.
+  // A non-directory is refused exactly as a missing directory is: same code, same error data.
+  let isDir = false;
+  try { isDir = (await stat(resolved)).isDirectory(); } catch { /* raced away between realpath and stat */ }
+  if (!isDir) throw new ConfigError("ConfigValidationError", `cwd is not a directory: ${cwd}`);
+  return resolved;
 }
 
-// Task 3 replaces this inline token with configWrite.ts's versionToken (same contract).
-const token = (raw: string | undefined): string => raw === undefined ? "absent" : createHash("sha256").update(raw).digest("hex");
+// THREE cases, not two — and this handler is the only place the difference is knowable (review I1).
+// D-M5-18 defines "absent" as "no such file yet", the state a client's first conditional write creates.
+// A file that IS there but whose bytes never reached us (EACCES, EISDIR — `readLayers` keeps the layer,
+// with a `disabledReason` and no `raw`) is a DIFFERENT state, and collapsing the two destroys it at the
+// one point it exists: a write-only settings file (mode 0200 is legal — write permission is independent
+// of read permission) would read as "absent", and a CAS built on this same token would then take
+// `expectedVersion: "absent"` as "create it" and overwrite bytes nobody ever read. Task 3 moves this to
+// configWrite.ts's `versionToken`, which inherits all THREE cases — "absent" still means no such file.
+const token = (layer: ConfigLayer | undefined): string =>
+  layer === undefined ? "absent"
+    : layer.raw === undefined ? "unreadable"
+      : createHash("sha256").update(layer.raw).digest("hex");
 
 export const configRead: Handler = async (srv, ctx, id, params) => {
   const parsed = configReadParams.safeParse(params);
@@ -39,11 +64,12 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
     const layers = await readLayers(paths);
     const { config, origins } = effectiveView(layers);
     // D-M5-18: CAS tokens for every WRITABLE target in view — walked off `paths` (absent layers are
-    // not in `layers`, and an absent writable file's token is the string "absent").
+    // not in `layers`, and an absent writable file's token is the string "absent"). The LAYER is passed
+    // whole, not its `raw`: `?.raw` would collapse "not in `layers`" and "in `layers` with no bytes".
     const versions: Record<string, string> = {};
     for (const { name, filePath } of paths) {
       if (name === "managed") continue;
-      versions[name] = token(layers.find((l) => l.filePath === filePath)?.raw);
+      versions[name] = token(layers.find((l) => l.filePath === filePath));
     }
     ctx.peer.reply(id, { config, origins, versions, incomplete: true, ...(parsed.data.includeLayers ? { layers } : {}) });
   } catch (e) {

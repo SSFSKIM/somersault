@@ -25,6 +25,17 @@ const vendoredPath = (tier: string) => join(harness, "schema", "json", tier, "ap
 const vendoredText = (tier: string) => readFileSync(vendoredPath(tier), "utf8");
 type VendoredDoc = { $schema: string; methods: Record<string, unknown>; results: Record<string, unknown> };
 const vendored = (tier: string) => JSON.parse(vendoredText(tier)) as VendoredDoc;
+/** EVERY subschema the artifact publishes — params AND results. The generic sweeps below are invariants
+ *  of the document, not of the `methods` map: a result schema a strict validator cannot compile is
+ *  exactly as broken as a method one, and it reaches clients by the same file. Labelled rather than
+ *  spread into one object, because `config/read` is a key in BOTH maps: `{...doc.methods, ...doc.results}`
+ *  would drop the method entry for precisely the methods this coverage is being widened to reach. */
+const subschemas = (doc: VendoredDoc): Array<[string, unknown]> => [
+  ...Object.entries(doc.methods).map(([name, schema]): [string, unknown] => [`${name} params`, schema]),
+  ...Object.entries(doc.results).map(([name, schema]): [string, unknown] => [`${name} result`, schema]),
+];
+/** What `subschemas` must add up to, derived from the registry so no later task has to hand-edit it. */
+const registeredSubschemaCount = Object.keys(methodSchemas).length + Object.values(methodSchemas).filter((e) => e.result).length;
 
 describe("emit-appserver-schema", () => {
   it("vendored schema artifacts match a fresh generation", () => {
@@ -83,25 +94,26 @@ describe("emit-appserver-schema", () => {
     expect(() => ajv.compile(stable.methods["config/read"] as object)).not.toThrow();
   });
 
-  it("every artifact is draft-7, and no method subschema redeclares the dialect", () => {
+  it("every artifact is draft-7, and no subschema — params or result — redeclares the dialect", () => {
     // zod's default output is 2020-12, which the CLI's ajv rejects (Wave 4's ajv gotcha) — this is the
     // assertion that would have caught it. The dialect is declared once, at the document root.
     for (const tier of TIERS) {
       const doc = vendored(tier);
       expect(doc.$schema, tier).toBe("http://json-schema.org/draft-07/schema#");
-      for (const [name, schema] of Object.entries(doc.methods)) expect(schema, `${tier} ${name}`).not.toHaveProperty("$schema");
+      for (const [label, schema] of subschemas(doc)) expect(schema, `${tier} ${label}`).not.toHaveProperty("$schema");
     }
   });
 
-  it("never requires a param that carries a default", () => {
+  it("never requires a field that carries a default — params or result", () => {
     // A defaulted param is optional to the CLIENT and required only after the server has parsed it. zod's
     // `io:"output"` view says otherwise, so the artifact is post-processed; this is the invariant, checked
     // over every registered method rather than over the three `unattended` fields that happen to have one
-    // today (a count written here would be one more thing to update per landing wave).
+    // today (a count written here would be one more thing to update per landing wave). Results go through
+    // the same `methodJsonSchema` pipeline, so they inherit both the bug and its repair.
     for (const tier of TIERS) {
-      for (const [name, schema] of Object.entries(vendored(tier).methods)) {
+      for (const [label, schema] of subschemas(vendored(tier))) {
         const { properties = {}, required = [] } = schema as { properties?: Record<string, object>; required?: string[] };
-        for (const key of required) expect(properties[key], `${tier} ${name}.${key}`).not.toHaveProperty("default");
+        for (const key of required) expect(properties[key], `${tier} ${label}.${key}`).not.toHaveProperty("default");
       }
     }
   });
@@ -109,18 +121,22 @@ describe("emit-appserver-schema", () => {
   it("compiles under the CLI's own ajv in draft-7 mode, with zero errors", () => {
     // The Wave 4 ajv gotcha, as an executable check rather than a comment: `new Ajv()` IS draft-7 (ajv 8
     // exposes 2019/2020 as separate entry points), and `strict: true` is its own default, so anything zod
-    // emitted that draft-7 does not understand fails here.
+    // emitted that draft-7 does not understand fails here. RESULTS are swept too: measured, a result field
+    // as ordinary as `z.iso.datetime()` emits `format: "date-time"`, which this ajv throws on — and with
+    // the sweep reading `methods` alone the whole file stayed green while that shipped.
     const ajv = new Ajv({ strict: true });
     const failures: string[] = [];
     let compiled = 0;
     for (const tier of TIERS) {
-      for (const [name, schema] of Object.entries(vendored(tier).methods)) {
+      for (const [label, schema] of subschemas(vendored(tier))) {
         compiled++;
-        try { ajv.compile(schema as object); } catch (e) { failures.push(`${name}: ${(e as Error).message}`); }
+        try { ajv.compile(schema as object); } catch (e) { failures.push(`${label}: ${(e as Error).message}`); }
       }
     }
     expect(failures).toEqual([]);
-    expect(compiled).toBe(Object.keys(methodSchemas).length);
+    // Counted off the registry (params + declared results), so a later task registering a result moves
+    // this expectation by itself — the count stays a real claim instead of a number kept alive by hand.
+    expect(compiled).toBe(registeredSubschemaCount);
   });
 
   it("validates a thread/start request that omits its defaulted param — without useDefaults, and still closed", () => {

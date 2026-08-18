@@ -13,6 +13,11 @@
 // Node-version and import-attributes question this package does not answer; the fs route works everywhere.
 // The generator behind them is not exported: `ccx serve --emit-schema DIR` regenerates them pinned to the
 // installed build, and `methodSchemas` below is the same source of truth in zod form.
+// Each document carries TWO top-level maps keyed by method name: `methods` (request params, one entry per
+// registered method) and `results` (the RESPONSE shape, present only for the methods that publish one —
+// `MethodSchema.result` below, M5 onward). A client joins them by name. Responses sit beside `methods`
+// rather than inside each entry so every value under `methods` stays a standalone draft-7 schema a strict
+// validator compiles as-is; absence from `results` means "not published yet", never "no response".
 import { methodSchemas as registry } from "./schema/index.js";
 import type { MethodSchema } from "./schema/index.js";
 
