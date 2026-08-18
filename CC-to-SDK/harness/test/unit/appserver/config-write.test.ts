@@ -361,7 +361,10 @@ describe("withFileLock (D-M5-14 rev 3)", () => {
     ]);
     const elapsed = Date.now() - t0, cpu = process.cpuUsage(cpu0);
     fsHook.denyUnlink = null; // let a sabotaged (deadline-less) build finish instead of spinning past the run
-    expect(outcome).toBe("ConfigValidationError:config target is locked by another writer");
+    // `ConfigLocked`, NOT `ConfigValidationError` (M5 Task 4 review I3): the request was well-formed and
+    // the target real — another writer holds it. The two codes take different wire codes downstream
+    // (BUSY -33001 vs INVALID_PARAMS -32602) precisely because only one of them means "stop retrying".
+    expect(outcome).toBe("ConfigLocked:config target is locked by another writer");
     expect(elapsed).toBeGreaterThanOrEqual(5_000); // the deadline is staleMs + 5s — it waited the budget out
     expect(elapsed).toBeLessThan(7_000);           // ...and refused promptly once the budget was spent
     expect((cpu.user + cpu.system) / 1000).toBeLessThan(1_500); // it SLEPT through the wait, it did not burn it

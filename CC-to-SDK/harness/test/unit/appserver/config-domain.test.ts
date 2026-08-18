@@ -6,12 +6,12 @@
 //
 // The whole domain is pointed at temp directories by the `configHome`/`managedSettingsPath` deps, so every
 // case here reads files it wrote itself and never this machine's real ~/.claude.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
 import { DEFAULT_MANAGED_PATH, defaultManagedPath } from "../../../src/appserver/configDomain.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 import { Ajv } from "ajv";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync, existsSync, symlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, chmodSync, existsSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -225,7 +225,10 @@ describe("config/value/write + config/batchWrite", () => {
     let id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: ["WebFetch"], mergeStrategy: "upsert" });
     const w1 = reply(id).result;
     expect(w1.status).toBe("ok");
-    expect(w1.filePath).toBe(join(home, ".claude", "settings.json"));
+    // `realpathSync`, not the literal join: `mkdtemp` hands back `/var/folders/…` on macOS and `/var` is
+    // itself a symlink, so the file's one true name is the `/private/var/…` form. The reply names the file
+    // the write landed in — see the identity row below for why that name must not drift.
+    expect(w1.filePath).toBe(realpathSync(join(home, ".claude", "settings.json")));
     const bytes = readFileSync(w1.filePath, "utf8");
     expect(JSON.parse(bytes)).toEqual({ permissions: { allow: ["WebFetch"] } });
     id = await send("config/value/write", { keyPath: ["model"], value: "opus", mergeStrategy: "replace", expectedVersion: "absent" });
@@ -368,5 +371,152 @@ describe("config/value/write + config/batchWrite", () => {
     id = await send("config/batchWrite", { target: "user", cwd: proj, edits: [{ keyPath: ["a"], value: "user-val", mergeStrategy: "replace" }] });
     expect(reply(id).result.status).toBe("okOverridden"); // fills overriddenMetadata + maskedEditIndexes + warnings
     expect(validateBatch(reply(id).result), JSON.stringify(validateBatch.errors)).toBe(true);
+  });
+  it("a write reply's filePath is ONE stable identity — same across writes, same as config/read's", async () => {
+    // `realpath` answers only for a path that EXISTS, so the first write to a fresh file used to reply with
+    // the literal `/var/…` spelling and the second with the canonical `/private/var/…` one, while
+    // `config/read` said `/var/…` forever. One file, more than one name, and no client able to correlate a
+    // write reply with a read reply — or with its own earlier write — by string (review I2).
+    boot(deps());
+    let id = await send("config/value/write", { keyPath: ["a"], value: 1, mergeStrategy: "replace" });
+    const first = reply(id).result.filePath;
+    expect(first).toBe(realpathSync(join(home, ".claude", "settings.json")));
+    id = await send("config/value/write", { keyPath: ["b"], value: 2, mergeStrategy: "replace" });
+    expect(reply(id).result.filePath).toBe(first); // second write, same file, same string
+    id = await send("config/read", { cwd: proj, includeLayers: true });
+    expect(reply(id).result.layers.find((l: any) => l.name === "user").filePath).toBe(first); // and the read agrees
+    // The same has to hold when the target's PARENT does not exist yet either. Resolution no longer
+    // creates it (review M3), so canonicalizing only the immediate parent would fall back to the literal
+    // spelling on the first write and switch to the canonical one on the second — the identical bug, one
+    // directory further up. The deepest EXISTING ancestor is canonicalized instead, so the answer does not
+    // depend on which directories happen to be there yet.
+    rmSync(join(home, ".claude"), { recursive: true, force: true });
+    boot(deps());
+    id = await send("config/value/write", { keyPath: ["a"], value: 1, mergeStrategy: "replace" });
+    const fromNothing = reply(id).result.filePath;
+    expect(fromNothing).toBe(realpathSync(join(home, ".claude", "settings.json")));
+    id = await send("config/value/write", { keyPath: ["b"], value: 2, mergeStrategy: "replace" });
+    expect(reply(id).result.filePath).toBe(fromNothing);
+  });
+  it("masking names the EFFECTIVE layer, agrees with config/read, and carves out only array-over-array", async () => {
+    // Precedence runs user < project < local < managed, so the layer a client actually sees is the LAST
+    // one above the target that defines the key, not the first. Naming the first told a client "project is
+    // masking you"; it edited the project file and stayed masked, while `effectiveValue` — a field named
+    // for the value in force — reported one the same server's `config/read` contradicted (review I1).
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ a: "PROJECT" }));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ a: "LOCAL", k: ["L"] }));
+    boot(deps());
+    let id = await send("config/value/write", { keyPath: ["a"], value: "USER", mergeStrategy: "replace", target: "user", cwd: proj });
+    let r = reply(id).result;
+    expect(r.status).toBe("okOverridden");
+    expect(r.overriddenMetadata.overridingLayer).toBe("local");
+    expect(r.overriddenMetadata.effectiveValue).toBe("LOCAL"); // the value served, not the first one found
+    expect(r.overriddenMetadata.message).toMatch(/local/);     // the sentence names that layer too
+    id = await send("config/read", { cwd: proj });
+    expect(reply(id).result.origins["a"]).toBe("local");       // the cross-check that would have caught I1
+    expect(reply(id).result.config.a).toBe("LOCAL");
+    // Array over array is a CONTRIBUTION: both survive the merge, so nothing is masked...
+    id = await send("config/value/write", { keyPath: ["k"], value: ["U"], mergeStrategy: "replace", target: "user", cwd: proj });
+    expect(reply(id).result.status).toBe("ok");
+    expect(reply(id).result.maskedEditIndexes).toBeUndefined();
+    // ...but a higher array over a written SCALAR is a plain replacement — the scalar never reaches the
+    // effective view, and exempting it reported `ok` for a write that had no effect at all (review M2).
+    id = await send("config/value/write", { keyPath: ["k"], value: "scalar", mergeStrategy: "replace", target: "user", cwd: proj });
+    r = reply(id).result;
+    expect(r.status).toBe("okOverridden");
+    expect(r.overriddenMetadata.overridingLayer).toBe("local");
+    expect(r.overriddenMetadata.effectiveValue).toEqual(["L"]);
+    id = await send("config/read", { cwd: proj });
+    expect(reply(id).result.config.k).toEqual(["L"]); // the scalar really did not take effect
+  });
+  it("the managed layer masks too — it is the TOP of the precedence tuple", async () => {
+    // `above` is a slice of the literal order tuple, and dropping its last element is a one-token edit no
+    // other row notices: managed is the layer no user file can outrank, so a write it masks is exactly the
+    // one a client most needs to be told about. It is also the highest, so it doubles as the I1 check.
+    writeFileSync(join(home, "managed.json"), JSON.stringify({ model: "managed-model" }));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ model: "local-model" }));
+    boot(deps());
+    const id = await send("config/value/write", { keyPath: ["model"], value: "user-model", mergeStrategy: "replace", target: "user", cwd: proj });
+    const r = reply(id).result;
+    expect(r.status).toBe("okOverridden");
+    expect(r.overriddenMetadata.overridingLayer).toBe("managed");
+    expect(r.overriddenMetadata.effectiveValue).toBe("managed-model");
+  });
+  it("a successful batch applies its edits IN ORDER (spec acceptance 3)", async () => {
+    // The ordered/atomic row above asserts atomicity only: its batch REFUSES, so ordering never reaches
+    // disk, and every batch that succeeds elsewhere has non-interacting edits. Reversing the apply loop
+    // changed the bytes and no row noticed — "ordered" lived in a test's title. Both keys here are
+    // order-sensitive in opposite directions: reversed, `permissions.allow` comes out `["A"]` (the upsert
+    // lands on nothing and the replace then wins) and `model` comes out "first".
+    boot(deps());
+    const id = await send("config/batchWrite", { edits: [
+      { keyPath: ["permissions", "allow"], value: ["A"], mergeStrategy: "replace" },
+      { keyPath: ["permissions", "allow"], value: ["B"], mergeStrategy: "upsert" },
+      { keyPath: ["model"], value: "first", mergeStrategy: "replace" },
+      { keyPath: ["model"], value: "last", mergeStrategy: "replace" },
+    ] });
+    expect(reply(id).result.status).toBe("ok");
+    expect(JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")))
+      .toEqual({ permissions: { allow: ["A", "B"] }, model: "last" });
+  });
+  it("real top-level keys warn about NOTHING; a nested key written at the top level does; one key warns once", async () => {
+    // The advisory is never a refusal, which is exactly why it has to be TRUE — an untrue advisory is
+    // worse than none, and the hand-written list was wrong in both directions (review M1). `attribution`
+    // (upstream spells it singular), `language` and `disableAllHooks` are real top-level keys that warned;
+    // `defaultMode`, `additionalDirectories` and `disableBypassPermissionsMode` live inside `permissions`,
+    // so writing them at the top level is genuinely wrong and warned about nothing.
+    boot(deps());
+    for (const key of ["model", "attribution", "language", "disableAllHooks", "$schema"]) {
+      const id = await send("config/value/write", { keyPath: [key], value: "x", mergeStrategy: "replace" });
+      expect(reply(id).result.warnings, `a real top-level key must not warn: ${key}`).toBeUndefined();
+    }
+    for (const key of ["defaultMode", "additionalDirectories", "disableBypassPermissionsMode", "attributions"]) {
+      const id = await send("config/value/write", { keyPath: [key], value: "x", mergeStrategy: "replace" });
+      expect(reply(id).result.warnings?.[0], `this key is not top-level upstream and must warn: ${key}`).toMatch(key);
+    }
+    // One unknown key across three edits is one sentence, not three copies of it (review M5).
+    const id = await send("config/batchWrite", { edits: [
+      { keyPath: ["nope", "a"], value: 1, mergeStrategy: "replace" },
+      { keyPath: ["nope", "b"], value: 2, mergeStrategy: "replace" },
+      { keyPath: ["nope", "c"], value: 3, mergeStrategy: "replace" },
+    ] });
+    expect(reply(id).result.warnings).toEqual(['unknown top-level settings key "nope" (written anyway)']);
+  });
+  it("a lock that cannot be broken refuses BUSY (-33001)/ConfigLocked, not \"your params are wrong\"", async () => {
+    // Contention is not a validation failure: the request was well-formed and its target real, another
+    // writer simply holds it — and -32602 is the one reading guaranteed to stop a client retrying (review
+    // I3). BUSY is where every other "retry shortly" in this server already lives, so no new -330xx code
+    // is spent on it. The lock is planted as a DIRECTORY: `wx` still fails EEXIST, but the stale-and-stable
+    // pair of reads both come back null, so the break can never succeed and the deadline is the only exit.
+    // Only `Date` is faked — the 35s budget is otherwise real elapsed time, which a unit suite cannot
+    // spend, and that budget IS the point: the stall is the reachable symptom, the refusal is the rare one.
+    boot(deps());
+    mkdirSync(join(home, ".claude", "settings.json.lock"));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const id = sendNoAwait("config/value/write", { keyPath: ["model"], value: "opus", mergeStrategy: "replace" });
+      await new Promise((r) => setTimeout(r, 50));  // let the handler compute its deadline off the live clock
+      vi.setSystemTime(Date.now() + 60_000);        // ...then let that whole budget elapse
+      await waitFor(() => reply(id) !== undefined);
+      expect(reply(id).error.code).toBe(-33001);
+      expect(reply(id).error.data).toEqual({ code: "ConfigLocked" });
+      expect(reply(id).error.message).toMatch(/locked by another writer/);
+      expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false); // and it wrote nothing
+    } finally { vi.useRealTimers(); }
+  });
+  it("a refused write leaves no settings file and no leftovers", async () => {
+    // Resolution used to `mkdir` the target's parent ahead of the lock and ahead of the CAS compare, so a
+    // refused write had already created `<cwd>/.claude/` in a client-named directory (review M3). That
+    // mkdir is gone: `withFileLock` and `writeTargetDoc` each create the parent they actually need. The
+    // lock does have to live in that directory, so a refusal reached from INSIDE the critical section
+    // still creates it — what must never survive is a settings file, a lock, or a tmp file.
+    const fresh = mkdtempSync(join(tmpdir(), "m5cwd-"));
+    boot(deps());
+    try {
+      const id = await send("config/value/write", { keyPath: ["model"], value: "x", mergeStrategy: "replace", target: "local", cwd: fresh, expectedVersion: sha256("bytes this file never held") });
+      expect(reply(id).error.data).toEqual({ code: "ConfigVersionConflict" });
+      expect(existsSync(join(fresh, ".claude", "settings.local.json"))).toBe(false);
+      expect(existsSync(join(fresh, ".claude")) ? readdirSync(join(fresh, ".claude")) : []).toEqual([]);
+    } finally { rmSync(fresh, { recursive: true, force: true }); }
   });
 });

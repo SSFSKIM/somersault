@@ -5,12 +5,14 @@
 // unlinks only its own, and a stale break only removes a lock read as stale-and-stable — rev 1's
 // pid-stamp-never-read lock could be stolen mid-hold and then unlink its thief's lock.
 import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { settingsMerge } from "./configLayers.js";
 
+// `ConfigLocked` is NOT a validation failure: the request was well-formed and the target real, another
+// writer simply holds it. configDomain maps it to a different wire code for exactly that reason.
 export class ConfigError extends Error {
-  constructor(public code: "ConfigVersionConflict" | "ConfigValidationError", message: string) { super(message); }
+  constructor(public code: "ConfigVersionConflict" | "ConfigValidationError" | "ConfigLocked", message: string) { super(message); }
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
@@ -99,23 +101,51 @@ export async function readTargetDoc(filePath: string): Promise<{ doc: Record<str
   return { doc: parsed, version: versionToken(raw) };
 }
 
-/** Parent created; a symlinked settings file resolves so tmp+rename replaces the REAL file, never the
- *  link (plan review F14 — silently detaching managed symlinks). `realpath` answers only for a link
- *  whose target EXISTS; a link that dotfile managers and provisioning scripts laid down ahead of the
- *  first write dangles, and returning the literal path for it was the one case that still destroyed the
- *  link — the rename replaced it with a regular file and the intended target was never created (review
- *  I3). So a dangling link is walked by hand, relative targets against the link's own directory, and
- *  the walk is BOUNDED: a symlink loop must refuse, never become a second hang. */
+/** ONE spelling per settings file, wherever this domain names one — `resolveRealTarget`'s answer and
+ *  `config/read`'s `layers[].filePath` alike (review I2). `realpath` answers only for a path that EXISTS,
+ *  so a file resolved before and after its own creation came back under two different names — the literal
+ *  one first, the canonical one after — and on macOS, where `/var` and `/tmp` are themselves symlinks,
+ *  those two strings genuinely differ. A client could then correlate neither its own two write replies
+ *  nor a write reply with a read reply, and the pre-creation spelling took a DIFFERENT `<file>.lock`.
+ *
+ *  So the deepest ANCESTOR that exists is canonicalized and the missing tail is rejoined onto it: the
+ *  answer no longer depends on whether the leaf — or its parent directory — has been created yet. When
+ *  not even the root resolves there is nothing to canonicalize and the literal path stands, which is also
+ *  the answer for a dangling link pointing into a directory nobody has made (Task 3's own row). */
+export async function canonicalPath(filePath: string): Promise<string> {
+  const tail: string[] = [];
+  for (let cur = filePath; ;) {
+    const parent = dirname(cur);
+    tail.unshift(basename(cur));
+    try { return join(await realpath(parent), ...tail); } catch { /* the parent is missing too — climb */ }
+    if (parent === cur) return filePath;
+    cur = parent;
+  }
+}
+
+/** A symlinked settings file resolves so tmp+rename replaces the REAL file, never the link (plan review
+ *  F14 — silently detaching managed symlinks). `realpath` answers only for a link whose target EXISTS;
+ *  a link that dotfile managers and provisioning scripts laid down ahead of the first write dangles, and
+ *  returning the literal path for it was the one case that still destroyed the link — the rename replaced
+ *  it with a regular file and the intended target was never created (review I3). So a dangling link is
+ *  walked by hand, relative targets against the link's own directory, and the walk is BOUNDED: a symlink
+ *  loop must refuse, never become a second hang.
+ *
+ *  EVERY exit is canonicalized, not just the entry: the walk's exits are the ones that answer for a file
+ *  that does not exist yet, which is exactly where the two-spellings-per-file bug lived (review I2).
+ *
+ *  No `mkdir` here (review M3): `withFileLock` and `writeTargetDoc` each create the parent they need, and
+ *  creating it during RESOLUTION meant a request refused between here and the write had already made a
+ *  directory in a client-named location. */
 const SYMLINK_HOPS = 8;
 export async function resolveRealTarget(filePath: string): Promise<string> {
-  await mkdir(dirname(filePath), { recursive: true });
   try { return await realpath(filePath); } catch { /* target missing, dangling link, or a loop — walk it */ }
   let cur = filePath;
   for (let hop = 0; hop < SYMLINK_HOPS; hop++) {
     try {
       const st = await lstat(cur);
-      if (!st.isSymbolicLink()) return cur; // nothing to follow: the literal path (it just does not exist yet)
-    } catch { return cur; } // no entry at all — the plain "file does not exist" case
+      if (!st.isSymbolicLink()) return canonicalPath(cur); // nothing to follow: the path (it just does not exist yet)
+    } catch { return canonicalPath(cur); } // no entry at all — the plain "file does not exist" case
     // A `readlink` failure used to fall into the same catch and answer with the LINK's own path, which
     // sent tmp+rename at the link and destroyed it — I3's detachment, re-entered through the error path.
     // Only ENOENT is benign: the link went away between the two calls, so there is nothing left to
@@ -124,7 +154,7 @@ export async function resolveRealTarget(filePath: string): Promise<string> {
     let link: string;
     try { link = await readlink(cur); }
     catch (e) {
-      if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return cur;
+      if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return canonicalPath(cur);
       throw new ConfigError("ConfigValidationError", `settings path is a symlink that could not be resolved (${cur}): ${(e as Error).message ?? String(e)}`);
     }
     cur = resolve(dirname(cur), link);
@@ -158,6 +188,13 @@ export async function writeTargetDoc(filePath: string, doc: Record<string, unkno
 
 const chains = new Map<string, Promise<unknown>>();
 
+/** BLOCKS while a foreign lock is held, and the wait is the common outcome — not the refusal. A lock left
+ *  behind by a dead writer is only breakable once it reads STALE (older than `staleMs`, 30s by default),
+ *  so a contended call typically sits for the remainder of that window, breaks the leftover, and returns
+ *  `ok`; `ConfigLocked` fires only when the lock cannot be unlinked or a live writer holds it past the
+ *  deadline (`staleMs` + 5s). One number therefore sets both "when is a lock stale" and "how long do I
+ *  wait" — a real seam, deliberately not split here (M5 review I3), so callers that surface this on a wire
+ *  must say so: see configDomain.ts's `runConfigWrite`. */
 export async function withFileLock<T>(filePath: string, fn: () => Promise<T>, opts: { staleMs?: number } = {}): Promise<T> {
   const staleMs = opts.staleMs ?? 30_000;
   const lockPath = `${filePath}.lock`;
@@ -187,7 +224,7 @@ export async function withFileLock<T>(filePath: string, fn: () => Promise<T>, op
           }
         } catch { /* the lock vanished mid-inspection — the retried `wx` below is the answer */ }
         if (broke) continue;
-        if (Date.now() > deadline) throw new ConfigError("ConfigValidationError", "config target is locked by another writer");
+        if (Date.now() > deadline) throw new ConfigError("ConfigLocked", "config target is locked by another writer");
         await new Promise((r) => setTimeout(r, 25));
       }
     }

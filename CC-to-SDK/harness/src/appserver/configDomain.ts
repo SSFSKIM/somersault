@@ -5,9 +5,17 @@ import { homedir, platform } from "node:os";
 import { ERR } from "./rpc.js";
 import type { Handler } from "./server.js";
 import { layerPaths, readLayers, effectiveView } from "./configLayers.js";
-import type { ConfigLayer } from "./configLayers.js";
-import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, withFileLock } from "./configWrite.js";
+import type { ConfigLayer, LayerName } from "./configLayers.js";
+import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, withFileLock, canonicalPath } from "./configWrite.js";
 import { configReadParams, configValueWriteParams, configBatchWriteParams } from "./schema/config.js";
+
+/** ConfigError → the wire. Codes are grouped by WHAT THE CLIENT SHOULD DO NEXT — the rule rpc.ts's own
+ *  header states for `ATTACH_FAILED`: "One code for both because a client's move is the same." Lock
+ *  contention's move is "retry shortly", which is what `BUSY` already means everywhere else in this
+ *  server, so it rides -33001 rather than spending a new -330xx number. It must NOT ride
+ *  `INVALID_PARAMS`: "your params are wrong" is the one reading guaranteed to stop a client retrying,
+ *  and the params were fine. Everything else here really is a bad request. */
+const configErrorWireCode = (code: ConfigError["code"]): number => (code === "ConfigLocked" ? ERR.BUSY : ERR.INVALID_PARAMS);
 
 /** win32: null — the spec declares Windows managed paths out of this file-backed view, and a Linux
  *  default there would invent a drive-root layer (plan review F19). The mapping takes the platform as a
@@ -56,7 +64,11 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
   const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
   try {
     const cwd = parsed.data.cwd !== undefined ? await resolveConfigCwd(parsed.data.cwd) : undefined;
-    const paths = layerPaths(home, managed, cwd);
+    // Canonicalized HERE, before `readLayers`, so `paths` and `layers` still agree by string (the
+    // `versions` walk below matches on `filePath`) and so a layer's `filePath` is the same string a write
+    // reply gives for the same file — `resolveRealTarget` canonicalizes too, and one file answering to two
+    // names across the two methods left a client with no way to correlate them (review I2).
+    const paths = await Promise.all(layerPaths(home, managed, cwd).map(async (p) => ({ ...p, filePath: await canonicalPath(p.filePath) })));
     const layers = await readLayers(paths);
     const { config, origins } = effectiveView(layers);
     // D-M5-18: CAS tokens for every WRITABLE target in view — walked off `paths` (absent layers are
@@ -69,19 +81,61 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
     }
     ctx.peer.reply(id, { config, origins, versions, incomplete: true, ...(parsed.data.includeLayers ? { layers } : {}) });
   } catch (e) {
-    if (e instanceof ConfigError) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, e.message, { code: e.code }); return; }
+    if (e instanceof ConfigError) { ctx.peer.replyError(id, configErrorWireCode(e.code), e.message, { code: e.code }); return; }
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   }
 };
 
-/** Advisory only (D-M5-5): a key outside this list WARNS — upstream tolerates unknown keys, so must we. */
-const KNOWN_TOP_LEVEL = new Set(["permissions", "env", "model", "hooks", "statusLine", "apiKeyHelper",
-  "includeCoAuthoredBy", "cleanupPeriodDays", "additionalDirectories", "defaultMode", "outputStyle",
-  "enableAllProjectMcpServers", "enabledMcpjsonServers", "disabledMcpjsonServers", "forceLoginMethod",
-  "disableBypassPermissionsMode", "sandbox", "alwaysThinkingEnabled", "spinnerTipsEnabled", "attributions"]);
+/** Advisory only (D-M5-5): a key outside this list WARNS — upstream tolerates unknown keys, so must we.
+ *  Never a refusal, which is exactly why it has to be TRUE: an untrue advisory is worse than none, and
+ *  rev 1's hand-written list was wrong in both directions (review M1). It named `attributions` — upstream's
+ *  key is `attribution`, singular — so writing the real key warned; it omitted real top-level keys such as
+ *  `language` and `disableAllHooks`, which warned too; and it listed `defaultMode`,
+ *  `disableBypassPermissionsMode` and `additionalDirectories`, which live inside `permissions` and are
+ *  genuinely wrong at the top level, so the one case a warning would have helped was silent.
+ *
+ *  Transcribed from `Claude Code Src/src/utils/settings/types.ts` → `SettingsSchema`: every key of the
+ *  outer `z.object`, including the ones behind an env/feature gate there (`.passthrough()` keeps those
+ *  alive in a settings file regardless of the flag, so warning about them would be the same false
+ *  positive). It will drift as upstream moves — a stale entry costs a missing warning, never a refusal. */
+const KNOWN_TOP_LEVEL = new Set([
+  "$schema", "apiKeyHelper", "awsCredentialExport", "awsAuthRefresh", "gcpAuthRefresh", "xaaIdp",
+  "fileSuggestion", "respectGitignore", "cleanupPeriodDays", "env", "attribution", "includeCoAuthoredBy",
+  "includeGitInstructions", "permissions", "model", "availableModels", "modelOverrides",
+  "enableAllProjectMcpServers", "enabledMcpjsonServers", "disabledMcpjsonServers", "allowedMcpServers",
+  "deniedMcpServers", "hooks", "worktree", "disableAllHooks", "defaultShell", "allowManagedHooksOnly",
+  "allowedHttpHookUrls", "httpHookAllowedEnvVars", "allowManagedPermissionRulesOnly",
+  "allowManagedMcpServersOnly", "strictPluginOnlyCustomization", "statusLine", "enabledPlugins",
+  "extraKnownMarketplaces", "strictKnownMarketplaces", "blockedMarketplaces", "forceLoginMethod",
+  "forceLoginOrgUUID", "otelHeadersHelper", "outputStyle", "language", "skipWebFetchPreflight", "sandbox",
+  "feedbackSurveyRate", "spinnerTipsEnabled", "spinnerVerbs", "spinnerTipsOverride",
+  "syntaxHighlightingDisabled", "terminalTitleFromRename", "alwaysThinkingEnabled", "effortLevel",
+  "advisorModel", "fastMode", "fastModePerSessionOptIn", "promptSuggestionEnabled",
+  "showClearContextOnPlanAccept", "agent", "companyAnnouncements", "pluginConfigs", "remote",
+  "disableDeepLinkRegistration", "classifierPermissionsEnabled", "autoUpdatesChannel", "minimumVersion",
+  "plansDirectory", "minSleepDurationMs", "maxSleepDurationMs", "voiceEnabled", "assistant",
+  "assistantName", "channelsEnabled", "allowedChannelPlugins", "defaultView", "prefersReducedMotion",
+  "autoMemoryEnabled", "autoMemoryDirectory", "autoDreamEnabled", "showThinkingSummaries",
+  "skipDangerousModePermissionPrompt", "skipAutoPermissionPrompt", "useAutoModeDuringPlan", "autoMode",
+  "disableAutoMode", "sshConfigs", "claudeMdExcludes", "pluginTrustMessage"]);
 
 type WriteData = { edits: Array<{ keyPath: string[]; value: unknown; mergeStrategy: "replace" | "upsert" }>; target: "user" | "project" | "local"; cwd?: string; expectedVersion?: string };
 
+/** The shared spine of `config/value/write` and `config/batchWrite`. Two behaviours a client has to know
+ *  about, both of them properties of the design rather than gaps in it:
+ *
+ *  1. **Acquiring a contended target can BLOCK for tens of seconds.** The cross-process `<file>.lock` is
+ *     breakable only once it reads stale, so a request that meets another writer's leftover lock waits out
+ *     the remainder of that window (30s by default) before proceeding — and usually then succeeds. The
+ *     `ConfigLocked` refusal (`BUSY`, -33001) is the *rarer* outcome: the lock could not be unlinked, or a
+ *     live writer held it past the deadline. A client must budget for the wait, not just for the error.
+ *
+ *  2. **`okOverridden` / `overriddenMetadata` are ADVISORY, and cannot be made otherwise here.** The layer
+ *     chain is read after the write and outside the lock, so a concurrent edit to a higher layer in that
+ *     window makes the answer stale. Moving this read inside `withFileLock` would fix nothing: the lock is
+ *     keyed on the TARGET file, and a writer touching the local/project/managed file takes a different lock
+ *     entirely. No arrangement of this lock makes masking atomic with the write, so do not try — the write
+ *     itself is unaffected, and this metadata is a hint about the effective view, never a guarantee. */
 async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handler>[1], id: Parameters<Handler>[2], data: WriteData): Promise<void> {
   try {
     // cwd canonicalized ONCE, FIRST — before target resolution, the lock, or any write. A refusal must
@@ -113,9 +167,10 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       for (const e of data.edits) next = applyEdit(next, e.keyPath, e.value, e.mergeStrategy);
       return writeTargetDoc(filePath, next);
     });
-    const warnings = data.edits.filter((e) => !KNOWN_TOP_LEVEL.has(e.keyPath[0])).map((e) => `unknown top-level settings key "${e.keyPath[0]}" (written anyway)`);
-    // Masking: EVERY edit evaluated (plan review F15); scalar/object leaves only — array leaves merge
-    // by contribution and the read side's contributor origins tell that story.
+    // DEDUPED (review M5): the warning names the top-level key, so three edits under one unknown key are
+    // three copies of one sentence — noise a client has to collapse itself before showing it.
+    const warnings = [...new Set(data.edits.filter((e) => !KNOWN_TOP_LEVEL.has(e.keyPath[0])).map((e) => `unknown top-level settings key "${e.keyPath[0]}" (written anyway)`))];
+    // Masking: EVERY edit evaluated (plan review F15).
     const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
     const layers = await readLayers(layerPaths(home, managed, cwdReal));
     const order = ["user", "project", "local", "managed"] as const;
@@ -131,14 +186,24 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     const maskedEditIndexes: number[] = [];
     let overriddenMetadata: { message: string; overridingLayer: string; effectiveValue: unknown } | undefined;
     data.edits.forEach((e, i) => {
+      // `above` runs LOWEST precedence first, so the whole slice is walked and the LAST hit wins — the
+      // first would name a layer the client can edit and still be masked, while `effectiveValue` reported
+      // a value `config/read` disagreed with (review I1: project "PROJECT" named, local "LOCAL" served).
+      let masked = false;
+      let top: { name: LayerName; value: unknown } | undefined;
       for (const name of above) {
         const hit = leafOf(layers.find((l) => l.name === name)?.config, e.keyPath);
-        if (hit.present && !Array.isArray(hit.value)) {
-          maskedEditIndexes.push(i);
-          overriddenMetadata ??= { message: `the ${name} layer defines this key with higher precedence`, overridingLayer: name, effectiveValue: hit.value };
-          break;
-        }
+        if (!hit.present) continue;
+        top = { name, value: hit.value }; // whatever the client will actually see at this leaf
+        // The array carve-out needs BOTH sides to be arrays (review M2): arrays merge by contribution, so
+        // a higher array does not mask a lower one and the read side's contributor origins tell that
+        // story. A higher array over a written SCALAR is a plain replacement — the scalar never reaches
+        // the effective view — and exempting that reported `ok` for a write that had no effect at all.
+        if (!(Array.isArray(hit.value) && Array.isArray(e.value))) masked = true;
       }
+      if (!masked || top === undefined) return;
+      maskedEditIndexes.push(i);
+      overriddenMetadata ??= { message: `the ${top.name} layer defines this key with higher precedence`, overridingLayer: top.name, effectiveValue: top.value };
     });
     ctx.peer.reply(id, {
       status: maskedEditIndexes.length ? "okOverridden" : "ok", version: written.version, filePath,
@@ -147,7 +212,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       ...(warnings.length ? { warnings } : {}),
     });
   } catch (e) {
-    if (e instanceof ConfigError) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, e.message, { code: e.code }); return; }
+    if (e instanceof ConfigError) { ctx.peer.replyError(id, configErrorWireCode(e.code), e.message, { code: e.code }); return; }
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   }
 }
