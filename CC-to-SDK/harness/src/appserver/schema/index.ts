@@ -13,7 +13,7 @@ import { settingsReadParams, directoryListParams, directoryPathParams, permissio
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
 import { reviewStartParams } from "./review.js";
-import { configReadParams, configReadResult } from "./config.js";
+import { configReadParams, configReadResult, configValueWriteParams, configBatchWriteParams, configWriteResult } from "./config.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -117,4 +117,11 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // carry) from a params schema alone. SERVER-scoped like `fs/read`: the subject is this machine's
   // settings files, not a thread. STABLE — the mechanism is node's own fs plus upstream's merge.
   "config/read": { params: configReadParams, result: configReadResult },
+  // M5 (§config) Task 4: the write half, the pair that closes the domain's round trip — a client reads
+  // `versions`, edits, and writes the token back. Both share `configWriteResult` because they share their
+  // spine (`runConfigWrite`): one edit is the degenerate batch, and publishing two shapes for one reply
+  // would let them drift. STABLE for the same reason `config/read` is — node's own fs plus upstream's
+  // merge — and SERVER-scoped: the subject is a settings FILE, and no thread owns one.
+  "config/value/write": { params: configValueWriteParams, result: configWriteResult },
+  "config/batchWrite": { params: configBatchWriteParams, result: configWriteResult },
 };

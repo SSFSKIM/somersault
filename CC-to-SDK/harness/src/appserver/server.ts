@@ -31,7 +31,7 @@ import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
 import { reviewStart } from "./review.js";
-import { configRead } from "./configDomain.js";
+import { configRead, configValueWrite, configBatchWrite } from "./configDomain.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -491,6 +491,12 @@ export class AppServer {
     // thread, so neither dispatch gate can fire — and it reads the files a client is about to write
     // through, which is why the reply carries the CAS `versions` its first conditional write needs.
     "config/read": configRead,
+    // ...and its write half. SERVER-scoped exactly like the read — no thread is named, so neither dispatch
+    // gate can fire — and mutual exclusion is the handler's own (`withFileLock` around read→CAS→write),
+    // not the dispatch table's: the contended resource is a FILE on this machine, which a second server
+    // process can hold too, and no per-connection or per-thread serialization could ever see that.
+    "config/value/write": configValueWrite,
+    "config/batchWrite": configBatchWrite,
   };
 
   private readonly token: string;

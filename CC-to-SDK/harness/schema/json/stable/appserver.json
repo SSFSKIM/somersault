@@ -1407,6 +1407,110 @@
         }
       },
       "additionalProperties": false
+    },
+    "config/value/write": {
+      "type": "object",
+      "properties": {
+        "keyPath": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "value": {},
+        "mergeStrategy": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "upsert"
+          ]
+        },
+        "target": {
+          "default": "user",
+          "type": "string",
+          "enum": [
+            "user",
+            "project",
+            "local"
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "keyPath",
+        "value",
+        "mergeStrategy"
+      ],
+      "additionalProperties": false
+    },
+    "config/batchWrite": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "keyPath": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "value": {},
+              "mergeStrategy": {
+                "type": "string",
+                "enum": [
+                  "replace",
+                  "upsert"
+                ]
+              }
+            },
+            "required": [
+              "keyPath",
+              "value",
+              "mergeStrategy"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "target": {
+          "default": "user",
+          "type": "string",
+          "enum": [
+            "user",
+            "project",
+            "local"
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {
@@ -1508,6 +1612,130 @@
         "origins",
         "versions",
         "incomplete"
+      ],
+      "additionalProperties": false
+    },
+    "config/value/write": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "okOverridden"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "filePath": {
+          "type": "string"
+        },
+        "overriddenMetadata": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "overridingLayer": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project",
+                "local",
+                "managed"
+              ]
+            },
+            "effectiveValue": {}
+          },
+          "required": [
+            "message",
+            "overridingLayer",
+            "effectiveValue"
+          ],
+          "additionalProperties": false
+        },
+        "maskedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "version",
+        "filePath"
+      ],
+      "additionalProperties": false
+    },
+    "config/batchWrite": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "okOverridden"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "filePath": {
+          "type": "string"
+        },
+        "overriddenMetadata": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "overridingLayer": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project",
+                "local",
+                "managed"
+              ]
+            },
+            "effectiveValue": {}
+          },
+          "required": [
+            "message",
+            "overridingLayer",
+            "effectiveValue"
+          ],
+          "additionalProperties": false
+        },
+        "maskedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "version",
+        "filePath"
       ],
       "additionalProperties": false
     }
