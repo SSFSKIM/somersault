@@ -3,7 +3,7 @@
 // `OAH` clamp, the latched row) is pinned in toolRenderer.test.tsx; this file owns the state machine.
 import { describe, expect, it } from "vitest";
 import { FoldPendingState, HINT_DEBOUNCE_MS, THINKING_LINGER_MS } from "../../src/tui/foldPendingState.js";
-import { foldClauses, type GroupCounts } from "../../src/tui/toolFold.js";
+import { foldClauses, segmentRuns, type FoldAtom, type GroupCounts } from "../../src/tui/toolFold.js";
 
 const counts = (patch: Partial<GroupCounts> = {}): GroupCounts =>
   ({ readCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], ...patch });
@@ -68,6 +68,23 @@ describe("FoldPendingState: R3.2 ratcheting counters", () => {
     expect(foldClauses(running, true, { fullscreen: true }).map((c) => c.text)).toEqual(["Running 1 shell command"]);
     const settled = state.latch("anchor", counts({ bashCount: 1, gitOpBashCount: 1, commits: [{ sha: "abc123f", kind: "committed" }] }));
     expect(foldClauses(settled, false, { fullscreen: true }).map((c) => c.text)).toEqual(["Committed abc123f"]);
+  });
+
+  it("ratchets the GROSS count, so a MIXED run keeps both clauses across the watermark", () => {
+    // The whole chain on real atoms — `segmentRuns` → `latch` → `foldClauses` — with gross ≠ git-op, which is the
+    // only shape that can tell a gross watermark from a net one. Watermarking `max(0, gross - gitOp)` instead
+    // (the subtraction placed BEFORE the ratchet rather than after it) still reads "Committed abc123f" here but
+    // silently loses the `npm test` clause, and every single-call cell above agrees with it.
+    const bash = (sequence: number, command: string, output: string): FoldAtom => ({
+      kind: "tool",
+      event: { id: `tool-${sequence}`, name: "Bash", input: { command }, callSequence: sequence, route: "top-level", result: { content: output, isError: false, resultSequence: sequence + 1 } },
+    });
+    const items = segmentRuns([bash(1, "git commit -m x", "[main abc123f] wire the fold"), bash(3, "npm test", "ok")], { cwd: "/repo", home: "/home/u", fullscreen: true });
+    const group = items.flatMap((i) => (i.kind === "group" ? [i.group] : []))[0]!;
+    expect(group.counts).toMatchObject({ bashCount: 2, gitOpBashCount: 1 });
+    const state = new FoldPendingState({ now: () => 0 });
+    expect(foldClauses(state.latch(group.memberIds[0]!, group.counts), false, { fullscreen: true }).map((c) => c.text))
+      .toEqual(["Committed abc123f", "ran 1 shell command"]);
   });
 });
 

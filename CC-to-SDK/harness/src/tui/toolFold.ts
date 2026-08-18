@@ -161,7 +161,8 @@ function classifyBashCommand(command: string): { isSearch: boolean; isRead: bool
 
 /** Canon's bash-tool list `ipe = [_i, js]` (2.1.234:169942), resolved at 82177 (`_i = "Bash"`) and 82198
  *  (`js = "PowerShell"`). It is the `c` of `isBash: !l && c` (236816), so BOTH names take the bash kind when
- *  their command is not read-ish, and both have their command recorded for the git scraper. */
+ *  their command is not read-ish — and it is that KIND, not this name set, that decides whether the command is
+ *  recorded for the git scraper (`absorb`'s bash branch). */
 const BASH_TOOL_NAMES = new Set(["Bash", "PowerShell"]);
 /** Canon does NOT reuse the bash word sets for PowerShell: `js`'s own `isSearchOrReadCommand` (346743–346746)
  *  runs `oJS` over cmdlet sets `tJS`/`rJS`/`nJS` (346735) and returns no `isList` at all. */
@@ -284,7 +285,8 @@ export type GroupCounts = {
   commits?: readonly GitCommitOp[]; pushes?: readonly GitPushOp[]; branches?: readonly GitBranchOp[]; prs?: readonly GitPrOp[];
 };
 /** `bashCommands` (tool-use id → command string) is the git scraper's INPUT, recorded here and consumed by T4;
- *  fullscreen-only, and omitted entirely when the run absorbed no Bash call. */
+ *  fullscreen-only, and omitted entirely when the run absorbed no BASH-KIND call (a read-ish shell call is not
+ *  one — canon 237152 records inside its `isBash` branch alone). */
 export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
 export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent } | { kind: "passthrough"; sequence: number };
 
@@ -328,10 +330,10 @@ function resultOutput(result: NonNullable<ToolEvent["result"]>): string {
  *  recognised ops is here: append to four un-deduplicated arrays, and bump `gitOpBashCount` ONCE for the whole
  *  result however many of the four it yielded (237016–237017). No exit code is consulted, so an errored shell
  *  result whose output still shows a commit line reports the commit — canon's rule, verbatim.
- *  Note the tally can in principle outrun `bashCount`: we record read-ish shell commands in `bashCommands` too
- *  (T3's deliberate superset), and a contrived read-ish command that merely MENTIONS a git op could be
- *  recognised without ever having bumped `bashCount`. Canon has the same shape of hole for its own bash-kind
- *  commands (`echo "git push" && ls`, addendum §B.3) and answers it the same way: the clause floors at zero. */
+ *  Only a bash-kind result ever reaches here (see `absorb`), so every scrape is preceded by its own `bashCount`
+ *  bump and the tally can never outrun the gross count. What survives is canon's own hole and only that: a
+ *  bash-kind command that merely MENTIONS a git op over an output that happens to carry the matching shape
+ *  (addendum §B.3). Canon answers it by flooring the clause at zero and so do we. */
 function scrapeGitOps(run: RunState, command: string, result: NonNullable<ToolEvent["result"]>): void {
   const output = resultOutput(result);
   if (output === "") return;
@@ -351,18 +353,6 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   run.memberIds.push(event.id);
   if (event.result === undefined) run.open = true;
   const command = stringField(event.input, "command");
-  // Canon 237152 records `bashCommands` only in its `isBash` branch; we record every Bash command, read-ish ones
-  // included, so T4's scraper sees the whole shell history of the run. The superset is inert in practice — any
-  // `git`/`gh` head word poisons the read classification outright, so a read-ish command can never BE a git op —
-  // and it costs one map entry per absorbed `cat`/`ls`. Fullscreen-gated because canon allocates the map in
-  // `Rka()` only under `Ns()` (237023): a classic run must carry no `bashCommands` field at all.
-  if (options.fullscreen === true && BASH_TOOL_NAMES.has(event.name) && command) {
-    run.bashCommands.set(event.id, command);
-    // Canon runs `odS` at the moment the RESULT is absorbed (237212), not at cluster close — which is what puts
-    // "committed abc123f" in the live header mid-turn. Our atoms carry call and result together, so absorbing a
-    // settled call IS that moment; a call still in flight is simply scraped on the pass after its result lands.
-    if (event.result !== undefined) scrapeGitOps(run, command, event.result);
-  }
   // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
   // so it is a member and can be the anchor, but it touches no counter and no display hint.
   if (kind === "silent") return;
@@ -372,6 +362,20 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
     // Canon's hint here goes through the unread `gQo`/`Ika`/`Aka` formatters (addendum §D); the collapsed `$ …`
     // line the list/read branches already use is our stand-in until those are ported.
     if (command !== undefined) run.hint = commandHint(command);
+    // `bashCommands` — and therefore the whole scrape — lives INSIDE this branch, exactly where canon puts it
+    // (237152–237160, gated `Ns() && u.isBash`; the map itself is allocated fullscreen-only by `Rka()`, 237023).
+    // The gate is the CLASSIFICATION, never the tool name: a read-ish shell call keeps its read/search/list
+    // counter and is never handed to the recognizer. That distinction is load-bearing rather than tidy, because
+    // the recognizer matches `git <sub>` ANYWHERE in the command and not just at its head — so scraping a
+    // `grep -A2 "git push" ci.log` over a log holding a `… -> ref` line would report a push nobody ran AND burn a
+    // `gitOpBashCount` that then subtracts a real "ran 1 shell command" clause out of the sentence.
+    if (command) {
+      run.bashCommands.set(event.id, command);
+      // Canon runs `odS` at the moment the RESULT is absorbed (237212), not at cluster close — which is what puts
+      // "committed abc123f" in the live header mid-turn. Our atoms carry call and result together, so absorbing a
+      // settled call IS that moment; a call still in flight is simply scraped on the pass after its result lands.
+      if (event.result !== undefined) scrapeGitOps(run, command, event.result);
+    }
     return;
   }
   if (kind === "mcp") {

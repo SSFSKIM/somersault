@@ -350,10 +350,13 @@ describe("TS fullscreen fold policy — segmentation (canon 2.1.234 iNp 237140�
     const items = segmentRuns([atom(tool("Bash", { command: "cat a" }, { sequence: 1 })), atom(tool("Bash", { command: "npm test" }, { sequence: 2 }))], FULL);
     expect(groups(items)[0]!.counts).toMatchObject({ readCount: 1, bashCount: 1 });
   });
-  it("records EVERY bash command by tool-use id for the T4 scraper (237152)", () => {
+  // Canon records `bashCommands` inside its `isBash` branch alone (237152, gated `Ns() && u.isBash`), so the
+  // recording follows the CLASSIFICATION, not the tool name: a read-ish shell call keeps its read counter and is
+  // never handed to T4's scraper. (T3 originally recorded the superset; corrected in spec Revision Notes round 8.)
+  it("records only BASH-KIND commands by tool-use id for the T4 scraper (237152)", () => {
     const items = segmentRuns([atom(tool("Bash", { command: "git commit -m x" }, { sequence: 1 })), atom(tool("Bash", { command: "cat a" }, { sequence: 2 })),
       atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))], FULL);
-    expect([...groups(items)[0]!.bashCommands!]).toEqual([["tool-1", "git commit -m x"], ["tool-2", "cat a"]]);
+    expect([...groups(items)[0]!.bashCommands!]).toEqual([["tool-1", "git commit -m x"]]);
   });
   it("records a PowerShell command too — canon's bash-tool list is two names (169942)", () => {
     const items = segmentRuns([atom(tool("PowerShell", { command: "git commit -m x" }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 }))], FULL);
@@ -639,7 +642,14 @@ describe("TS git-op scraping in segmentRuns (canon odS 236993–237019, call sit
   const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
   const commit = (sequence: number, command = "git commit -m x", output = COMMIT_OUT) => tool("Bash", { command }, { sequence, result: sequence + 1, output });
 
-  it("scrapes AT ABSORPTION, so the still-open trailing run already carries the sha", () => {
+  // What this pins is the OBSERVABLE half of the brief's "scrape at absorption, not at cluster close": a run that
+  // is still open — a call in flight after the git call — already speaks the sha, so it reaches the live header
+  // mid-turn. It does NOT pin the scrape's placement in the code, and cannot: `segmentRuns` is a pure
+  // re-derivation that always flushes the trailing run before returning, so scraping in `absorb` and draining at
+  // `flush` are observationally identical here. The distinction is real in canon, whose accumulator is incremental
+  // and lives across renders (237212 runs per absorbed result); ours is rebuilt each repaint. Deleting the scrape
+  // outright still fails ten cells across the two suites, so the behavior itself is covered.
+  it("gives a STILL-OPEN run the sha of the settled git call inside it", () => {
     const items = segmentRuns([atom(commit(1)), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3, settled: false }))], FULL);
     const group = groups(items)[0]!;
     expect(group.open).toBe(true);
@@ -681,10 +691,31 @@ describe("TS git-op scraping in segmentRuns (canon odS 236993–237019, call sit
     expect(group.counts.commits).toHaveLength(2);
     expect(group.counts).toMatchObject({ bashCount: 2, gitOpBashCount: 2 });
   });
-  it("never scrapes a read-ish bash command into an op (the recorded superset is inert)", () => {
+  it("never scrapes a read-ish bash call — it is neither recorded nor scraped (237152 gates on isBash)", () => {
     const group = groups(segmentRuns([atom(tool("Bash", { command: "cat log" }, { sequence: 1, result: 2, output: COMMIT_OUT }))], FULL))[0]!;
     expect(group.counts.readCount).toBe(1);
     expect(group.counts.commits).toBeUndefined();
+    expect(group.bashCommands).toBeUndefined();
+  });
+  // The gate is the CLASSIFICATION, never the tool name. The recognizer matches `git <sub>` ANYWHERE in the
+  // command (gitOps.ts's header note), so a search whose PATTERN mentions a git op over a log that happens to
+  // hold a push line would otherwise report an operation nobody ran.
+  it("invents no op from a read-ish call whose OUTPUT looks like a push", () => {
+    const grep = tool("Bash", { command: 'grep -A2 "git push" ci.log' }, { sequence: 1, result: 2, output: PUSH_OUT });
+    const group = groups(segmentRuns([atom(grep)], FULL))[0]!;
+    expect(group.counts.searchCount).toBe(1);
+    expect(group.counts.pushes).toBeUndefined();
+    expect(group.counts.gitOpBashCount).toBeUndefined();
+    expect(foldClauses(group.counts, false, { fullscreen: true }).map((c) => c.text)).toEqual(["Searched for 1 pattern"]);
+  });
+  it("lets no phantom op eat a real shell clause in a MIXED run", () => {
+    // The costlier half of the same bug: the phantom tally is subtracted from a gross count it never contributed
+    // to, so the genuine `npm test` stops being spoken.
+    const grep = tool("Bash", { command: 'grep -A2 "git push" ci.log' }, { sequence: 1, result: 2, output: PUSH_OUT });
+    const items = segmentRuns([atom(grep), atom(tool("Bash", { command: "npm test" }, { sequence: 3, result: 4 }))], FULL);
+    const group = groups(items)[0]!;
+    expect(group.counts).toMatchObject({ searchCount: 1, bashCount: 1, gitOpBashCount: 0 });
+    expect(foldClauses(group.counts, false, { fullscreen: true }).map((c) => c.text)).toEqual(["Searched for 1 pattern", "ran 1 shell command"]);
   });
   it("scrapes a PowerShell git call too — both bash-tool names record commands (169942)", () => {
     const ps = tool("PowerShell", { command: "git commit -m x" }, { sequence: 1, result: 2, output: COMMIT_OUT });
