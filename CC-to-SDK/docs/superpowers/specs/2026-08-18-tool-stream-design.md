@@ -175,6 +175,13 @@ module stays clock- and environment-free). Under `fullscreen`:
   exit code — we mirror that (output-shape recognition only).
 - **WebFetch and WebSearch stay non-collapsible** — canon's policy, verified, even though
   intuition says "reads collapse".
+- **PR numbers are text, not links** (recorded divergence, round 8). Canon renders the visible
+  characters `#12` and registers the hyperlink as a side effect of its own row component
+  (`Ktt`, 518049–518070); our `FoldClause` is text-plus-bold-ranges with nowhere to hang an
+  href. The scraped `GitPrOp.url` is carried through the counts so a future render layer can
+  use it, and the clause text is byte-correct in both canon forms (`#12` linked, `PR #12`
+  unlinked). Nothing schedules the affordance; Task 13 records it as backlog rather than
+  leaving the field unowned.
 
 `foldClauses` grows the fullscreen clauses in canon's fixed order (518545–518635):
 git parts ("committed"/"amended commit"/"cherry-picked" + short shas, "pushed to" +
@@ -399,6 +406,16 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 8 — 2026-08-19, T4 review (execution).** Three corrections. (1) The scrape gate was
+inherited too wide from Task 3's plan text, whose parenthetical ("canon records every bash
+command for the scraper, 237152") contradicted the very quote it cited — canon records only in
+its `isBash` branch. Live repro: `grep -A2 "git push" ci.log` over a CI log produced a phantom
+"Pushed to main" clause and swallowed a real shell-command clause. Recording and scraping are
+now both gated on the bash classification, matching 237152. (2) The PR hyperlink gap is recorded
+above rather than left unowned. (3) The plan's Task 4 interface block still declared the op
+arrays as `string[]`; the shipped record shapes are now in the plan, since Tasks 5 and 8 read it
+for their input types.
 
 **Round 7 — 2026-08-19, T3 gate review (execution).** Task 3 approved. One canon divergence
 recorded above (the errored-sibling set is per-message in canon, per-lifetime in ours —

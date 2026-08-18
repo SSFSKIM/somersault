@@ -105,7 +105,12 @@ after the existing checks, not before.
 **Interfaces (produces — `bashCount` is Task 3's; this task adds only the git fields, all optional/fullscreen-only):**
 ```ts
 gitOpBashCount?: number;
-commits?: readonly string[]; pushes?: readonly string[]; branches?: readonly string[]; prs?: readonly string[];
+// SHIPPED SHAPES (corrected after Task 4 — bare strings cannot carry canon's commit `kind`
+// buckets or its ten PR action verbs, so the arrays hold records, exported from `src/tui/gitOps.ts`):
+commits?: readonly GitCommitOp[];   // { sha, kind: "committed"|"amended"|"cherry-picked", branch? }
+pushes?: readonly GitPushOp[];      // { branch }
+branches?: readonly GitBranchOp[];  // { ref, action: "merged"|"rebased" }
+prs?: readonly GitPrOp[];           // { number, url?, action }  — `url` is carried but NOT rendered; see below
 ```
 
 - [ ] **Step 1: Write failing tests.**
@@ -128,6 +133,12 @@ commits?: readonly string[]; pushes?: readonly string[]; branches?: readonly str
 - Modify: `src/tui/useChat.ts` (`ProjectionContext` gains `fullscreen`; `projectionContext()` at :249 sets it and sets `expandHint: fullscreen ? "" : expandHintRef.current`)
 - Modify: `src/tui/ChatApp.tsx` (pass the renderer identity into useChat's opts — a `isFullscreen: () => boolean` dep sourced from `renderer?.mode === "fullscreen"`, the :299 derivation; useChat holds it in a ref. Deliberate: useChat already receives `opts.rendererChoice`, but that prop can be absent while ChatApp's own derivation is the fullscreen truth the mount at :1189 uses — thread ChatApp's boolean, and say so in a comment so the two channels don't look like an oversight)
 - Test: `test/tui/` — extend the fold-row suite (find via `grep -rl groupRowLine test/tui/`) + one classic-snapshot guard
+
+**Both `foldClauses` call sites must take the flag (Task 4 review, finding 6).** `:700` builds the
+sentence — miss it and the header is merely wrong. `:743` is the group SUPPRESSION gate
+(`if (foldClauses(counts, active).length === 0) return []`) — miss it and a fullscreen run of only
+non-read Bash calls has no clause to speak, so the entire row VANISHES. The second failure is the
+quiet one; write a cell for it, not just for the first.
 
 **Interfaces (consumes):** Task 3/4's opts. **Produces:** every projection call in fullscreen runs the widened policy with no chips; classic path passes no flag.
 
