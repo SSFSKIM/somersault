@@ -21,7 +21,8 @@ const harnessRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 /** Does `chmod 000` actually deny THIS process a read? Measured, never assumed: root reads regardless of
  *  mode, and a filesystem that ignores mode bits denies nothing either. Where permission is not permission
- *  the unreadable-layer case below has no premise, so it skips rather than reporting a failure it caused. */
+ *  the denied-read case below has no premise, so it skips rather than reporting a failure it caused —
+ *  which is exactly why the "unreadable" sentinel is pinned by an EISDIR row that never consults this. */
 const modeDenies = (() => {
   const dir = mkdtempSync(join(tmpdir(), "m5perm-"));
   try {
@@ -108,12 +109,32 @@ describe("config/read", () => {
     // the exact inverse of what this row promises, and reads as "no such file" to a conditional write.
     expect(r.versions.project).toBe(sha256("{broken"));
   });
-  it.skipIf(!modeDenies)("a present-but-unreadable layer mints \"unreadable\", never \"absent\"", async () => {
+  it("a present-but-unreadable layer mints \"unreadable\", never \"absent\"", async () => {
     // D-M5-18's "absent" means NO SUCH FILE. A file that exists but whose bytes never reached us is a
     // third state, and this handler is the only place the difference is knowable — downstream sees the
-    // token string alone. Mode 000 is the reproduction; EISDIR (a settings path that is a directory)
-    // takes the same branch, since `readLayers` keeps every non-ENOENT failure as a layer without `raw`.
+    // token string alone. A DIRECTORY at the settings path is the reproduction used here because it is
+    // the one no host can wave away: `readLayers` keeps every non-ENOENT failure as a layer without
+    // `raw`, and EISDIR reaches that branch without depending on a permission bit that root — or a
+    // filesystem ignoring mode — would not enforce. UNGUARDED on purpose: this is the only row pinning
+    // the sentinel, and a row that can skip is a row a later collapse back to two tokens ships past.
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "opus" }));
+    mkdirSync(join(proj, ".claude", "settings.json"));
+    boot(deps());
+    const id = await send("config/read", { cwd: proj, includeLayers: true });
+    const r = reply(id).result;
+    expect(r.layers.find((l: any) => l.name === "project").disabledReason).toMatch(/EISDIR|directory/i);
+    expect(r.layers.find((l: any) => l.name === "project").raw).toBeUndefined();
+    expect(r.versions.project).toBe("unreadable");
+    expect(r.versions.user).toBe(sha256(readFileSync(join(home, ".claude", "settings.json"), "utf8"))); // healthy neighbour unaffected
+    expect(r.versions.local).toBe("absent"); // and "absent" still means exactly what it meant
+    expect(r.config).toEqual({ model: "opus" }); // the unreadable layer contributes nothing
+  });
+  it.skipIf(!modeDenies)("a denied read reaches the same \"unreadable\" token", async () => {
+    // The motivating real case, and the reason the third state exists at all: mode 0200 is legal — write
+    // permission is independent of read — so a settings file can be present, writable, and never
+    // readable, and a CAS built on "absent" would take it as "create it" and overwrite bytes nobody read.
+    // Guarded, because where mode bits are not enforced there is no denial to observe; the row above is
+    // what keeps the sentinel pinned on those hosts, so this one may skip without costing coverage.
     const projSettings = join(proj, ".claude", "settings.json");
     writeFileSync(projSettings, JSON.stringify({ model: "sonnet" }));
     chmodSync(projSettings, 0o000);
@@ -124,9 +145,6 @@ describe("config/read", () => {
       expect(r.layers.find((l: any) => l.name === "project").disabledReason).toMatch(/EACCES|permission/i);
       expect(r.layers.find((l: any) => l.name === "project").raw).toBeUndefined();
       expect(r.versions.project).toBe("unreadable");
-      expect(r.versions.user).toBe(sha256(readFileSync(join(home, ".claude", "settings.json"), "utf8"))); // healthy neighbour unaffected
-      expect(r.versions.local).toBe("absent"); // and "absent" still means exactly what it meant
-      expect(r.config).toEqual({ model: "opus" }); // the unreadable layer contributes nothing
     } finally { chmodSync(projSettings, 0o600); }
   });
   it("the reply on the wire validates against the published result schema — both arms", async () => {

@@ -36,6 +36,11 @@ const subschemas = (doc: VendoredDoc): Array<[string, unknown]> => [
 ];
 /** What `subschemas` must add up to, derived from the registry so no later task has to hand-edit it. */
 const registeredSubschemaCount = Object.keys(methodSchemas).length + Object.values(methodSchemas).filter((e) => e.result).length;
+/** The names the artifact's `results` map must carry, for one tier — read off the registry for the same
+ *  reason as the count above. An equality over this (never a `toContain`) is what still catches a result
+ *  the emitter dropped or invented; deriving it only stops the list from needing a hand-edit per landing. */
+const registeredResults = (tier: (typeof TIERS)[number]) =>
+  Object.entries(methodSchemas).filter(([, e]) => !!e.result && (e.experimental ? "experimental" : "stable") === tier).map(([name]) => name).sort();
 
 describe("emit-appserver-schema", () => {
   it("vendored schema artifacts match a fresh generation", () => {
@@ -82,7 +87,7 @@ describe("emit-appserver-schema", () => {
     // fired). The two are pinned equal by those cases, so nothing is lost by generating here.
     const stable = (JSON.parse(execFileSync("node", [script, "--stdout"], { cwd: harness, encoding: "utf8" })) as Record<string, VendoredDoc>).stable;
     expect(stable).toEqual(vendored("stable"));
-    expect(Object.keys(stable.results)).toEqual(["config/read"]);
+    expect(Object.keys(stable.results).sort()).toEqual(registeredResults("stable"));
     expect(stable.methods).toHaveProperty(["config/read"]);
     expect(stable.results).not.toHaveProperty(["thread/start"]);
     const result = stable.results["config/read"] as { type: string; required: string[]; properties: Record<string, unknown>; additionalProperties: boolean };
