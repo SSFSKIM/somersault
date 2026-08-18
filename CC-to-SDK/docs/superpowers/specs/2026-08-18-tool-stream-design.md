@@ -95,27 +95,44 @@ module stays clock- and environment-free). Under `fullscreen`:
   read/search/list counts exactly as today; non-read commands feed a new
   `bashCount` + `bashCommands` (id → command string) on `GroupCounts` (canon 237020,
   237152). Standalone-Bash rendering remains the classic renderer's behavior.
-- **ToolSearch**: absorbed silently — counted nowhere, breaks nothing (canon 236808).
+- **ToolSearch**: absorbed silently — counted nowhere, and it never pops out (canon
+  236808). It does **not** break a run, but it is a member like any other and can *open*
+  one, owning the anchor (addendum §A.1) — memberIds and anchor identity see it.
 - **TodoWrite, TaskCreate, TaskGet, TaskUpdate, TaskList**: absorbed silently, but an
-  errored result **pops the call out** (canon `popsOutOnError`, 236809). Pinned now:
-  silently-absorbed calls ARE members — canon's expanded view renders every absorbed
-  `tool_use` (grounding §4), so they appear when the cluster is expanded, contributing
-  no header copy. NOT yet grounded: how canon *consumes* `popsOutOnError` — whether a
-  silent call can open a run (and so become its anchor), and whether pop-out splits the
-  run or relocates the call. **The implementing task re-reads canon's consumption sites
-  before building** (same discipline as the git scraper below), under one invariant this
-  spec owns regardless of what canon says: a pop-out must not shift the anchor identity
-  of an already-formed run — expansion state and the watermark latch key on it.
+  errored result **pops the call out** (canon `popsOutOnError`, 236809). Grounded by T1's
+  addendum (`grounding/2026-08-18-tool-stream-ground-addendum.md`), which governs the
+  mechanism; the load-bearing results:
+  - silently-absorbed calls ARE members and contribute no header copy; they can be
+    `messages[0]` and own the run's anchor (canon 237195–237197, 237027);
+  - an error result for such a tool **always closes the run**; the call is *relocated*
+    after the cluster only in canon's narrow case (it is the last message, all its
+    tool_uses errored, and no hooks/relevant-memories were absorbed) — otherwise it stays
+    inside the cluster and only the run closes (canon 237198–237210);
+  - a run whose every member is silent has all counters zero. Canon still emits a
+    zero-height clickable row (518513, 549764); **we emit no row** — an invisible
+    clickable region has no meaning in an item-based projection, and this preserves
+    today's behavior for suppressed tools. Recorded divergence.
+  One invariant this spec owns regardless of canon: a pop-out must not shift the anchor
+  identity of an already-formed run — expansion state and the watermark latch key on it.
+  (Canon can retract a run wholesale because `iNp` re-derives from the full message list
+  every pass, 237093; a streaming renderer cannot unpublish a row.)
 - **Git-operation scraping** (canon `odS`, 237212): scraped **as each bash result is
   absorbed** — canon runs `odS` inside the accumulation loop, so "committed abc123f"
   appears in the live header mid-turn, not only at close. Successful git
   commits/pushes/merges/rebases and `gh` PR actions are scraped from the recorded
   commands + results into `commits[] / pushes[] / branches[] /
-  prs[]` on the counts, and those bash calls move out of `bashCount` into
-  `gitOpBashCount` (so "committed abc123f" and "ran 2 shell commands" never double-count
-  one call). The implementing task re-reads canon's scraper (from 237212 into `odS`) and
-  ports its recognition rules verbatim; this spec pins only the output shape and the
-  no-double-count invariant.
+  prs[]` on the counts. The no-double-count is a **render-time subtraction, not a
+  transfer**: `bashCount` stays gross, `gitOpBashCount` is a parallel tally bumped once
+  per result that yielded any op, and the shell clause prints
+  `max(0, ratchet(bashCount) - gitOpBashCount)` — the watermark ratchets the *gross*
+  count and the subtraction happens after it (canon 518466–518467, verbatim
+  `le = Ns() ? Math.max(0, P.current - Z) : 0`). Decrementing `bashCount` at accumulation
+  instead would latch the clause at its pre-git value forever, since the ratchet never
+  falls. The recognition rules are T1's addendum §B (canon `vFr`, 194436–194473), ported
+  as documented there, with two deliberate departures from canon's own bugs: the
+  `--amend` test runs against the same quote-stripped command string the other flag tests
+  use, and each tool_use_id is scraped at most once per result batch. Canon consults no
+  exit code — we mirror that (output-shape recognition only).
 - **WebFetch and WebSearch stay non-collapsible** — canon's policy, verified, even though
   intuition says "reads collapse".
 
@@ -308,12 +325,39 @@ grounding §7). The classic renderer keeps its chips everywhere.
   release), not modifier keys — the opposite of the BL5 assumption that DECSET 1000
   forces modifier-gated selection everywhere.
 - No telemetry fires on inline expand in canon — there is no event name to imitate.
+- (T1) The no-double-count is a subtraction after the watermark, not a transfer at
+  accumulation — the "obvious" reading of the invariant builds a counter that can never
+  fall. A latch, not a crash: tests must assert the shell clause *disappearing*.
+- (T1) `popsOutOnError` is not a flag consulted at render; canon plants a zero-valued
+  entry in the workshop-edit ledger so the existing un-count helper returns true without
+  changing any counter (237142–237145). The mechanism is a reuse, not a dedicated path.
+- (T1) A run made only of silent calls is, in canon, a zero-height row that still reports
+  itself clickable — canon's own edge, arguably a bug, and the one place we deliberately
+  render nothing instead.
+- (T1) Canon's git recognition never consults an exit code; success is inferred from
+  output shape alone (`vFr`, 194436–194473), while the neighbouring telemetry path does
+  check it. Fidelity here means copying the looser rule.
 
 ## 8. Outcomes & Retrospective
 
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 3 — 2026-08-19, T1 canon addendum (execution).** The spec-mandated canon re-read
+landed (`grounding/2026-08-18-tool-stream-ground-addendum.md`, commit `ab08873656`) and
+corrected §3.1 in three places. (1) The git no-double-count **mechanism** was wrong: the
+spec said the bash calls "move out of `bashCount` into `gitOpBashCount`"; canon keeps
+`bashCount` gross and subtracts at render *after* the watermark ratchet. Implemented as
+written, the shell clause would latch at its pre-git value permanently — verified in
+canon at 518466–518467 by the controller before adopting. The invariant was right; the
+mechanism is now canon's. (2) Pop-out was under-specified: an error always closes the run,
+but relocation happens only in canon's narrow last-message/all-errored/no-hooks case;
+otherwise the errored call stays inside the cluster. (3) "ToolSearch breaks nothing" was
+right on counting, wrong on identity — every silent call can *open* a run and own its
+anchor. Two new decisions recorded above: all-silent clusters emit no row (canon's
+zero-height clickable row is not portable to an item-based projection), and two canon
+scraper bugs (raw-string `--amend` matching, per-block re-scrape) are not ported.
 
 - 2026-08-18: v1 authored from the canon grounding doc + module reads (toolFold,
   foldPendingState, toolRenderer, parse/KeymapProvider/types, wrapItems,
