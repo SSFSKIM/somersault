@@ -34,7 +34,7 @@ export const configBatchWriteParams = z.object({
 export const configWriteResult = z.object({
   status: z.enum(["ok", "okOverridden"]), version: z.string(), filePath: z.string(),
   overriddenMetadata: z.object({ message: z.string(), overridingLayer: layerName, effectiveValue: z.unknown().optional() })
-    .describe("describes ONE masked edit — the first, i.e. maskedEditIndexes[0]. A batch whose edits are masked by different layers reports only that one here; the full set is maskedEditIndexes")
+    .describe("describes ONE masked edit: the first whose overridingLayer is a real layer ABOVE the request's target. A batch whose edits are masked by different layers reports only that one here; the full set is maskedEditIndexes. overridingLayer EQUAL TO the request's own target is the self-shadow case and means something else — the edit was undone from inside this same request by a later edit, so no other layer is involved and there is no other file to go and edit; it is reported only when every masked edit in the request is of that kind. Compare overridingLayer with the target you sent to tell the two apart without reading the message")
     .optional(),
   maskedEditIndexes: z.array(z.number().int()).optional(),
   uncheckedEditIndexes: z.array(z.number().int()).optional(),
