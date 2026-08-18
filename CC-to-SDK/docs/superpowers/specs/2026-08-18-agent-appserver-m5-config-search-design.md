@@ -97,9 +97,11 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   refusal. **`keyPath` is an array of string segments** (D-M5-12) — `["permissions","allow"]` —
   which dissolves Codex's quoted-segment grammar problem outright; a segment may contain any
   character including dots — with ONE refusal (rev 3): the segments `__proto__`, `constructor` and
-  `prototype` are refused `ConfigValidationError`, and the merge/edit machinery uses own-property
-  access on null-prototype dictionaries throughout, because an opaque-segment contract must not be a
-  prototype-pollution channel. Merge table (D-M5-13): `replace` sets the leaf to `value` exactly;
+  `prototype` are refused `ConfigValidationError` — **and so are those same names appearing as keys
+  anywhere inside a written value** (D-M5-12a, rev 4), because an opaque-segment contract must not be
+  a prototype-pollution channel and half a rule is worse than none. The merge/edit machinery uses
+  own-property access throughout; it does not use null-prototype dictionaries (D-M5-12a records why
+  the narrower rule was chosen). Merge table (D-M5-13): `replace` sets the leaf to `value` exactly;
   `upsert` deep-merges `value` into the existing leaf with the same customizer as the read side
   (objects deep, arrays concat+dedupe); missing parents are created as objects; a non-object in the
   parent path → `ConfigValidationError`, file untouched; `replace` with `value: null` **deletes**
@@ -412,6 +414,46 @@ flips the `full-potential.md` rows and ships nothing.
   leaving the overload for the write path to sort out — the information is already gone by then;
   and widening `versionToken` to three cases — the third case is layer state, not bytes, so it belongs
   to the caller and the function stays pure.
+- **D-M5-12a (Task 3 review M4, rev 4) — the dangerous-key refusal covers values, not just
+  keyPaths; null-prototype dictionaries are NOT adopted.** Rev 3 wrote two things into one sentence: a
+  refusal of `__proto__`/`constructor`/`prototype` as keyPath segments, and "own-property access on
+  null-prototype dictionaries throughout". Only the first shipped. Review measured what the gap costs:
+  a literal `__proto__` key inside an *upsert value* reaches the merge's `out[k] = …`, which invokes
+  the `Object.prototype.__proto__` setter — the merged node's prototype is set to the client's object
+  and the key silently vanishes from the written JSON, while the same key under `replace` round-trips
+  intact. Confirmed: **no global prototype pollution** (`Object.prototype` and a fresh `{}` both stay
+  clean). Chosen: extend the existing refusal to those three names appearing anywhere inside a written
+  value, recursively. A silent vanish becomes a clear refusal, and the two halves of one rule stop
+  disagreeing. Rejected: converting the merge machinery to null-prototype dictionaries — it reaches
+  back into Task 1's reviewed-and-closed `settingsMerge` for a case with no demonstrated pollution, and
+  buys nothing the refusal does not. The spec prose above is narrowed to match what ships rather than
+  left describing an intent the code never had.
+- **D-M5-14a (Task 3 review, rev 4) — three write-path failures that the CAS design did not cover.**
+  All three surfaced only at implementation contact, and none is a deviation by the implementer:
+  1. **Only a *successful* stale-break may skip the retry budget.** The lock loop's `continue` sat
+     inside the staleness branch, past both the deadline check and the sleep, and the `unlink`'s
+     failure was swallowed. So a stale, stable lock that *cannot be unlinked* — an ordinary leftover
+     `.lock` in a directory the process may read but not write — spun at roughly 6,600 iterations a
+     second forever: no deadline, no error, one core pegged, and, because the spinning call sits inside
+     the in-process chain, every later write to that path wedged behind it permanently. A denial of
+     service on the whole config-write domain reachable from ordinary filesystem permissions. Measured
+     twice without mocking (mode-0555 directory → `EACCES`; `chflags uchg` → `EPERM`). Note the
+     hypothesis this *disproved*: a stale-but-UNSTABLE lock does not spin at production settings,
+     because each rewrite bumps the mtime and the next iteration takes the sleeping path.
+  2. **`writeTargetDoc` preserves the target's mode.** tmp+rename installed the tmp file's mode, so a
+     settings file at 0600 came back 0644 — and settings legitimately carry `env` values and
+     `apiKeyHelper` paths, making the first write through this API an information disclosure.
+  3. **A blank settings file is writable, and a dangling symlink is resolved rather than replaced.**
+     The read side deliberately treats blank-or-BOM-only as an empty layer with a real hash token
+     (upstream's loader does), but the write side sent the same bytes to `JSON.parse` and refused them
+     forever — `touch settings.json` was a permanent dead end through the API. And when a settings path
+     was a symlink whose target did not yet exist, `realpath` failed, the literal link path came back,
+     and tmp+rename replaced the link with a regular file — the exact detachment the "never the link"
+     clause exists to prevent, in the one case the wording permitted by accident. Both are fixed toward
+     *working*, not toward refusing: blank reads as `{}` with the real byte hash, and a dangling link is
+     resolved by a bounded `readlink` walk so the write creates the real file and the link survives.
+     Rejected for both: refusing instead — it would leave `touch`-then-write and link-based
+     provisioning permanently unusable, which is the same dead end wearing a better error message.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
@@ -515,3 +557,19 @@ Pending — written at finish.
   ENGINE_GONE_EXEMPT; every plan stage leaves the drift gate green. Also fixed at plan level: the
   unit-test harness must use the real conn.feed + initialize pattern (dispatch is private,
   four-arg), and the absorb task must name its producer seam before wiring anything.
+
+- **rev 4 (2026-08-18) — amended DURING execution, from what implementation and review measured.**
+  Everything here was generated by contact with running code, not by re-reading the spec. D-M5-19a: the
+  emitted result schema moved out of each method entry into a top-level `results` map, because a method
+  entry is compiled directly by ajv in strict mode and is therefore a schema, not a container. D-M5-18a:
+  the version map grew a third token, `"unreadable"`, because `"absent"` was being minted for a file
+  that exists but cannot be read — a distinction that lives at exactly one point in the system and was
+  being destroyed there; the write side refuses it as an assertion and refuses any non-ENOENT read.
+  D-M5-12a: the `__proto__`/`constructor`/`prototype` refusal extends to keys inside written values,
+  and the never-implemented null-prototype-dictionary clause is narrowed away rather than left
+  describing an intent the code never had. D-M5-14a: three write-path failures the CAS design did not
+  cover — an unbreakable stale lock spinning forever with no deadline, tmp+rename widening a 0600
+  settings file to 0644, and blank files plus dangling symlinks being permanent dead ends. Two plan
+  defects were also caught and fixed before they could land: Task 3's instruction to collapse the
+  versions walk (it would have silently reverted D-M5-18a one task after it shipped, with every test
+  still green), and a `readTargetDoc` code block that contradicted its own amended interface text.
