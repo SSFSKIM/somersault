@@ -308,7 +308,24 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
    *  verdict is masked — the value moved across that chain, so some single step of it moved the value.
    *
    *  A path that resolves to nothing once the target is out is `ok` whatever sits below: nothing surfaces
-   *  there at all, so nothing above can be surfacing. That is the flattened-ancestor case, unchanged. */
+   *  there at all, so nothing above can be surfacing. That is the flattened-ancestor case, unchanged.
+   *
+   *  ONE STATE, settled deliberately, where this and `config/read`'s attribution describe the same tree in
+   *  different words: a layer ABOVE the target holds exactly what a layer BELOW already serves at the path.
+   *  The counterfactual calls the delete IN FORCE, and that is the right answer — take the higher layer
+   *  away and nothing at the path moves, so nothing above the target is making a difference, which is the
+   *  same situation as falling through to a lower layer and has never been anything but `ok`. `origins`
+   *  will nonetheless name the HIGHER layer for that key, because a scalar replacement is attributed to
+   *  whoever wrote last even when the bytes are identical. Both statements are true of that tree, and the
+   *  contract the two methods owe each other is that they never disagree about whether an edit is in
+   *  FORCE — not that last-writer attribution and the verdict reach for the same word. Do not "fix" this
+   *  back into a mask; the test file pins it, and pins what `config/read` says beside it.
+   *
+   *  The mirror shape for a VALUE write — a layer above holding exactly what the target is writing — is
+   *  masked, and stays masked. A value write introduces a leaf, so the read side has a first-class verdict
+   *  about it (`origins` names the higher layer, so the target's write is not what is in force) and
+   *  reporting `ok` would be the two methods disagreeing about force, not merely about naming. A delete
+   *  introduces no leaf, which is exactly why its verdict has to be built here instead of looked up. */
   const deleteMask = (keyPath: string[]): { masked: boolean; by?: LayerName } => {
     const chain = layers.filter((l) => rank(l.name) < targetRank);
     const below = valueAt(effectiveView(chain).config, keyPath);
