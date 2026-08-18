@@ -3,7 +3,7 @@
 // `OAH` clamp, the latched row) is pinned in toolRenderer.test.tsx; this file owns the state machine.
 import { describe, expect, it } from "vitest";
 import { FoldPendingState, HINT_DEBOUNCE_MS, THINKING_LINGER_MS } from "../../src/tui/foldPendingState.js";
-import type { GroupCounts } from "../../src/tui/toolFold.js";
+import { foldClauses, type GroupCounts } from "../../src/tui/toolFold.js";
 
 const counts = (patch: Partial<GroupCounts> = {}): GroupCounts =>
   ({ readCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], ...patch });
@@ -37,6 +37,37 @@ describe("FoldPendingState: R3.2 ratcheting counters", () => {
     expect(state.latch("a", counts({ readCount: 1 }))).toMatchObject({ readCount: 5 });
     state.reset();                                                                        // document swap: rewind / resume / clear
     expect(state.latch("a", counts({ readCount: 1 }))).toMatchObject({ readCount: 1 });
+  });
+
+  // TS Task 4: `bashCount` is the FIFTH ratcheted counter (canon 518466 ends with
+  // `P.current = Math.max(P.current, e.bashCount ?? 0)`), and it is ratcheted GROSS.
+  it("ratchets bashCount like the four classic counters, and only ever reports it when it exists", () => {
+    const state = new FoldPendingState({ now: () => 0 });
+    expect(state.latch("a", counts({ bashCount: 2 }))).toMatchObject({ bashCount: 2 });
+    expect(state.latch("a", counts({ bashCount: 1 }))).toMatchObject({ bashCount: 2 });
+    expect(state.latch("a", counts({ bashCount: 4 }))).toMatchObject({ bashCount: 4 });
+    expect(state.peek("a", counts({ bashCount: 1 }))).toMatchObject({ bashCount: 4 });
+    // A classic run reports no `bashCount` at all, and latching one must not invent the key.
+    expect(state.latch("classic", counts({ readCount: 1 }))).toEqual({ readCount: 1, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [] });
+    expect(state.peek("classic", counts({ readCount: 1 }))).toEqual({ readCount: 1, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [] });
+  });
+
+  it("does NOT ratchet gitOpBashCount — the subtraction must be able to catch up with the watermark", () => {
+    // Canon watermarks the gross count and reads `gitOpBashCount` raw (518466–518467). Ratcheting the git tally
+    // too would be harmless here but would pin a stale maximum once a run's ops are re-derived downward.
+    const state = new FoldPendingState({ now: () => 0 });
+    state.latch("a", counts({ bashCount: 1, gitOpBashCount: 1 }));
+    expect(state.latch("a", counts({ bashCount: 1, gitOpBashCount: 0 }))).toMatchObject({ bashCount: 1, gitOpBashCount: 0 });
+  });
+
+  it("lets the shell clause fall to nothing mid-run even though the watermark never falls", () => {
+    // The live sequence the mechanism exists for: `git commit` starts (gross 1, no op yet) ⇒ "Running 1 shell
+    // command"; its result is scraped (gross 1, op 1) ⇒ the clause vanishes and the commit takes its place.
+    const state = new FoldPendingState({ now: () => 0 });
+    const running = state.latch("anchor", counts({ bashCount: 1 }));
+    expect(foldClauses(running, true, { fullscreen: true }).map((c) => c.text)).toEqual(["Running 1 shell command"]);
+    const settled = state.latch("anchor", counts({ bashCount: 1, gitOpBashCount: 1, commits: [{ sha: "abc123f", kind: "committed" }] }));
+    expect(foldClauses(settled, false, { fullscreen: true }).map((c) => c.text)).toEqual(["Committed abc123f"]);
   });
 });
 

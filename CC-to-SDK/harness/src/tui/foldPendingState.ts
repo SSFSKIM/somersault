@@ -36,13 +36,26 @@ export interface FoldPendingHooks {
   hint(anchorId: string, candidate: string | undefined, thinking: string | undefined): HintView | undefined;
 }
 
-/** The four counters upstream holds in refs. `mcpServerNames` is a growing Set upstream and `thoughtForMs`
- *  is monotonic on its own clock, so neither needs (or gets) a ratchet here. */
-type Latched = { readCount: number; searchCount: number; listCount: number; mcpCallCount: number };
+/** The counters upstream holds in refs. `mcpServerNames` is a growing Set upstream and `thoughtForMs`
+ *  is monotonic on its own clock, so neither needs (or gets) a ratchet here.
+ *  TS Task 4 adds the fifth, `bashCount`, which canon ratchets on the same line (2.1.234:518466 ends
+ *  `P.current = Math.max(P.current, e.bashCount ?? 0)`). It is ratcheted GROSS and its companion
+ *  `gitOpBashCount` is deliberately NOT here: canon subtracts the git tally from the ratcheted gross count at
+ *  clause time (518467), and ratcheting the tally too would stop the shell clause ever falling back. */
+type Latched = { readCount: number; searchCount: number; listCount: number; mcpCallCount: number; bashCount: number };
 type HintState = {
   shown: string | undefined; acceptedAt: number; accepted: boolean;   // `e8p`'s state + its `i` ref (initially 0, so the FIRST value lands immediately)
   thinking: string | undefined; thinkingAt: number;                   // `QWp`'s state + its `i` ref (stamped only when the value CHANGES — its effect deps are `[e, t]`)
 };
+
+/** The maxima written back onto the counts to render. `bashCount` is written back only when there IS one: a
+ *  classic run carries no such field, and inventing a `bashCount: 0` on it would hand the fullscreen clause chain
+ *  a counter the classic renderer never had. Everything else — `gitOpBashCount`, the four op arrays, the server
+ *  names, the thought clock — rides through unratcheted on the incoming spread. */
+const applyLatched = (counts: GroupCounts, latched: Latched): GroupCounts => ({
+  ...counts, readCount: latched.readCount, searchCount: latched.searchCount, listCount: latched.listCount, mcpCallCount: latched.mcpCallCount,
+  ...(latched.bashCount > 0 ? { bashCount: latched.bashCount } : {}),
+});
 
 export class FoldPendingState implements FoldPendingHooks {
   private readonly now: () => number;
@@ -57,9 +70,10 @@ export class FoldPendingState implements FoldPendingHooks {
     const next: Latched = {
       readCount: Math.max(prev?.readCount ?? 0, counts.readCount), searchCount: Math.max(prev?.searchCount ?? 0, counts.searchCount),
       listCount: Math.max(prev?.listCount ?? 0, counts.listCount), mcpCallCount: Math.max(prev?.mcpCallCount ?? 0, counts.mcpCallCount),
+      bashCount: Math.max(prev?.bashCount ?? 0, counts.bashCount ?? 0),
     };
     this.counts.set(anchorId, next);
-    return { ...counts, ...next };
+    return applyLatched(counts, next);
   }
 
   /** R4.7 steps 4–5. The debounce runs FIRST and unconditionally — upstream's `e8p` is a hook, so it keeps
@@ -85,7 +99,11 @@ export class FoldPendingState implements FoldPendingHooks {
   peek(anchorId: string, counts: GroupCounts): GroupCounts {
     const prev = this.counts.get(anchorId);
     if (prev === undefined) return counts;
-    return { ...counts, readCount: Math.max(prev.readCount, counts.readCount), searchCount: Math.max(prev.searchCount, counts.searchCount), listCount: Math.max(prev.listCount, counts.listCount), mcpCallCount: Math.max(prev.mcpCallCount, counts.mcpCallCount) };
+    return applyLatched(counts, {
+      readCount: Math.max(prev.readCount, counts.readCount), searchCount: Math.max(prev.searchCount, counts.searchCount),
+      listCount: Math.max(prev.listCount, counts.listCount), mcpCallCount: Math.max(prev.mcpCallCount, counts.mcpCallCount),
+      bashCount: Math.max(prev.bashCount, counts.bashCount ?? 0),
+    });
   }
 
   /** Every document swap (rewind, `/resume`, `/clear`): the anchors of the rebuilt transcript are the same

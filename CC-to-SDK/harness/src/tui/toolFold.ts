@@ -15,13 +15,16 @@
 // BOTH `Bash` and `PowerShell`, 169942) joins the run under its own `bashCount`, the task-board tools plus
 // ToolSearch are absorbed with no counter at all, and each absorbed shell command is recorded for the git
 // scraper. WebFetch/WebSearch stay standalone in BOTH: that is canon's real policy.
-// The clause chain has not caught up yet — `foldClauses` still builds only the classic sentence, so the new counts
-// are carried and not yet spoken (the shell/git clauses, the REPL/agent/edit/memory clauses and their fixed order
-// are a later task in this wave).
+// TS Task 4 closes the loop: each absorbed shell RESULT is scraped for git operations (`gitOps.ts`, canon `odS`
+// 236993–237019) and `foldClauses` takes the same `fullscreen` input, growing the git clauses and the
+// "ran N shell commands" clause at canon's own positions in the chain. The remaining unspoken clauses —
+// REPL, agent, edit, scratchpad, frame, other-tool, memory — are still unreachable counters in this model.
 import { displayPath } from "./paths.js";
 // `ra` moved to `format.ts` in F3 Task 5 so the fold row and the typed result rows share ONE port (R4.9 still
 // calls it with no options here; only the Bash timeout suffix passes `hideTrailingZeros`).
 import { formatDuration } from "./format.js";
+// TS Task 4: the `vFr` recognition table lives in its own module — this one already carries two command parsers.
+import { recognizeGitOps, type GitBranchOp, type GitCommitKind, type GitCommitOp, type GitPrAction, type GitPrOp, type GitPushOp } from "./gitOps.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
 /** Upstream `jr_`/`Wr_`/`qr_`/`Vr_` verbatim (L306395). `Vr_` decides nothing: a command of only ignored words is
@@ -268,9 +271,18 @@ export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; s
 /** `bashCount` is OPTIONAL and present only on a fullscreen run that absorbed a non-read Bash call (canon emits the
  *  pair the same way — `if ((e.bashCount ?? 0) > 0)`, 2.1.234:237035). Absent therefore means "classic", which is
  *  what keeps every existing counts literal valid and the classic clause chain unable to see the new counter.
- *  It stays GROSS: T4's `gitOpBashCount` is a parallel tally the RENDERER subtracts after the watermark ratchet
- *  (518466–518467), never a transfer out of this number — see spec §3.1's mechanism correction. */
-export type GroupCounts = { readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[]; thoughtForMs?: number; bashCount?: number };
+ *  It stays GROSS.
+ *  `gitOpBashCount` is the OTHER half of that pair (canon emits both together, 237035–237036): a parallel tally of
+ *  how many absorbed shell RESULTS yielded a recognised git operation. It is never ratcheted and never subtracted
+ *  from `bashCount` here — `foldClauses` does `max(0, ratchet(bashCount) - gitOpBashCount)` at clause time, which
+ *  is the only ordering that lets the shell clause legitimately fall to zero mid-turn (518466–518467).
+ *  The four op arrays are append-only with no dedup, exactly as canon's are (addendum §B.5); the push clause
+ *  dedups at render. */
+export type GroupCounts = {
+  readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[];
+  thoughtForMs?: number; bashCount?: number; gitOpBashCount?: number;
+  commits?: readonly GitCommitOp[]; pushes?: readonly GitPushOp[]; branches?: readonly GitBranchOp[]; prs?: readonly GitPrOp[];
+};
 /** `bashCommands` (tool-use id → command string) is the git scraper's INPUT, recorded here and consumed by T4;
  *  fullscreen-only, and omitted entirely when the run absorbed no Bash call. */
 export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
@@ -287,11 +299,49 @@ interface RunState {
   mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorSequence: number; open: boolean; hint?: string;
   thoughtForMs: number; latestThinkingSummary?: string;
   bashCount: number; bashCommands: Map<string, string>;
+  gitOpBashCount: number; commits: GitCommitOp[]; pushes: GitPushOp[]; branches: GitBranchOp[]; prs: GitPrOp[];
   /** Members that earned a counter. A run of nothing but silently-absorbed calls has every counter at zero and
    *  emits NO group (see `flush`), so this is the one thing that decides whether the run is sayable at all. */
   visibleMembers: number;
 }
-const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorSequence: 0, open: false, thoughtForMs: 0, bashCount: 0, bashCommands: new Map(), visibleMembers: 0 });
+const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorSequence: 0, open: false, thoughtForMs: 0, bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
+
+/** Canon reads its scrape text off `message.toolUseResult` — a single per-MESSAGE `{ stdout, stderr }` object,
+ *  joined as `(stdout ?? "") + "\n" + (stderr ?? "")` (236996–236998). Our equivalent is the P94 structured
+ *  sidecar, which `transcriptModel` attaches at CALL scope only when the association is unambiguous; anything
+ *  else falls back to the flat `tool_result` content, which for a shell call is that same combined text. That
+ *  fallback is also what makes canon's latent double-scrape (addendum §B.2 — two `tool_result` blocks in one
+ *  message matched against ONE combined output) structurally unreachable here: a batched message never yields a
+ *  call-scoped sidecar, so every call is scraped against its own output exactly once (spec §3.1 departure two). */
+function resultOutput(result: NonNullable<ToolEvent["result"]>): string {
+  const value = result.sidecar?.scope === "call" ? result.sidecar.value : undefined;
+  if (isRecord(value)) {
+    const stdout = typeof value.stdout === "string" ? value.stdout : "", stderr = typeof value.stderr === "string" ? value.stderr : "";
+    if (stdout !== "" || stderr !== "") return stdout + "\n" + stderr;
+  }
+  const content = result.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((block) => (isRecord(block) && typeof block.text === "string" ? block.text : "")).join("\n");
+  return "";
+}
+/** Canon `odS` (236993–237019) minus the per-message loop our atoms make unnecessary. Everything it does with the
+ *  recognised ops is here: append to four un-deduplicated arrays, and bump `gitOpBashCount` ONCE for the whole
+ *  result however many of the four it yielded (237016–237017). No exit code is consulted, so an errored shell
+ *  result whose output still shows a commit line reports the commit — canon's rule, verbatim.
+ *  Note the tally can in principle outrun `bashCount`: we record read-ish shell commands in `bashCommands` too
+ *  (T3's deliberate superset), and a contrived read-ish command that merely MENTIONS a git op could be
+ *  recognised without ever having bumped `bashCount`. Canon has the same shape of hole for its own bash-kind
+ *  commands (`echo "git push" && ls`, addendum §B.3) and answers it the same way: the clause floors at zero. */
+function scrapeGitOps(run: RunState, command: string, result: NonNullable<ToolEvent["result"]>): void {
+  const output = resultOutput(result);
+  if (output === "") return;
+  const ops = recognizeGitOps(command, output);
+  if (ops.commit) run.commits.push(ops.commit);
+  if (ops.push) run.pushes.push(ops.push);
+  if (ops.branch) run.branches.push(ops.branch);
+  if (ops.pr) run.prs.push(ops.pr);
+  if (ops.commit || ops.push || ops.branch || ops.pr) run.gitOpBashCount++;
+}
 
 /** Upstream `PMd`'s accumulator branch chain (L302194–302256) for the reachable kinds, plus canon 2.1.234's
  *  fullscreen branches (`iNp` 237140–237160). The `readCount` quirk lives in `emit`, not here: paths and operations
@@ -306,7 +356,13 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   // `git`/`gh` head word poisons the read classification outright, so a read-ish command can never BE a git op —
   // and it costs one map entry per absorbed `cat`/`ls`. Fullscreen-gated because canon allocates the map in
   // `Rka()` only under `Ns()` (237023): a classic run must carry no `bashCommands` field at all.
-  if (options.fullscreen === true && BASH_TOOL_NAMES.has(event.name) && command) run.bashCommands.set(event.id, command);
+  if (options.fullscreen === true && BASH_TOOL_NAMES.has(event.name) && command) {
+    run.bashCommands.set(event.id, command);
+    // Canon runs `odS` at the moment the RESULT is absorbed (237212), not at cluster close — which is what puts
+    // "committed abc123f" in the live header mid-turn. Our atoms carry call and result together, so absorbing a
+    // settled call IS that moment; a call still in flight is simply scraped on the pass after its result lands.
+    if (event.result !== undefined) scrapeGitOps(run, command, event.result);
+  }
   // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
   // so it is a member and can be the anchor, but it touches no counter and no display hint.
   if (kind === "silent") return;
@@ -344,7 +400,11 @@ const emit = (run: RunState): FoldGroup => ({
   counts: {
     readCount: run.readFilePaths.size > 0 ? run.readFilePaths.size : run.readOperationCount, searchCount: run.searchCount, listCount: run.listCount,
     mcpCallCount: run.mcpCallCount, mcpServerNames: run.mcpServerNames, ...(run.thoughtForMs > 0 ? { thoughtForMs: run.thoughtForMs } : {}),
-    ...(run.bashCount > 0 ? { bashCount: run.bashCount } : {}),
+    // `idS`'s fullscreen block (237034–237045) verbatim: the pair rides on `bashCount > 0` (so a run that ran no
+    // shell command carries neither), and each op array is emitted only when it has something in it.
+    ...(run.bashCount > 0 ? { bashCount: run.bashCount, gitOpBashCount: run.gitOpBashCount } : {}),
+    ...(run.commits.length > 0 ? { commits: run.commits } : {}), ...(run.pushes.length > 0 ? { pushes: run.pushes } : {}),
+    ...(run.branches.length > 0 ? { branches: run.branches } : {}), ...(run.prs.length > 0 ? { prs: run.prs } : {}),
   },
   ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorSequence: run.anchorSequence, open: run.open,
   ...(run.latestThinkingSummary === undefined ? {} : { latestThinkingSummary: run.latestThinkingSummary }),
@@ -478,15 +538,44 @@ function clause(verb: string, first: boolean, parts: readonly ClausePart[]): Fol
 }
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** Upstream `Ima`'s clause chain (L427982–428039), restricted to the clauses a default (`ds()` false) transcript can
- *  actually produce: the thought clause, then search, read, list, mcp. The edited / scratchpad / git / frame / agent /
- *  other / shell-command / REPL / memory clauses are all either fullscreen-only or unreachable (R1.6, R1.7, R2.2) and
- *  are deliberately not built here. The thought clause is pushed DIRECTLY upstream, so it is always first and always
- *  capitalized. */
-export function foldClauses(counts: GroupCounts, active: boolean): readonly FoldClause[] {
-  const out: FoldClause[] = [];
+/** Canon buckets `commits` by kind in this FIXED order with these labels (518575–518581) — note none of the git
+ *  verbs has a present-participle form, so an active run says "Committed abc123f", not "Committing". */
+const COMMIT_KINDS: readonly GitCommitKind[] = ["committed", "amended", "cherry-picked"];
+const COMMIT_VERB: Record<GitCommitKind, string> = { committed: "committed", amended: "amended commit", "cherry-picked": "cherry-picked" };
+/** 518593 — ten actions, ten verbs. */
+const PR_VERB: Record<GitPrAction, string> = {
+  created: "created", edited: "edited", merged: "merged", commented: "commented on", closed: "closed",
+  reopened: "reopened", ready: "marked ready", draft: "marked draft", "auto-merge-enabled": "enabled auto-merge on",
+  "auto-merge-disabled": "disabled auto-merge on",
+};
+
+/** Upstream `Ima`'s clause chain (L427982–428039) — canon 2.1.234's `ZIl` (518545–518635) — restricted to the
+ *  clauses either renderer can actually produce. Classic (no `opts`, or `fullscreen: false`) builds exactly what it
+ *  shipped: the thought clause, then search, read, list, mcp; the edited / scratchpad / frame / agent / other-tool /
+ *  REPL / memory clauses stay unreachable (R1.6, R1.7, R2.2). Under `fullscreen` two blocks open, at canon's own
+ *  positions in the chain: the four git parts sit where the edit parts would end (after "thought", before
+ *  "searched for"), and the shell-command clause sits after the MCP clause, immediately before the memory parts.
+ *  The thought clause is pushed DIRECTLY upstream, so it is always first and always capitalized. */
+export function foldClauses(counts: GroupCounts, active: boolean, opts?: FoldPolicy): readonly FoldClause[] {
+  const out: FoldClause[] = [], fullscreen = opts?.fullscreen ?? false;
   if (counts.thoughtForMs !== undefined && counts.thoughtForMs > 0)
     out.push(clause(active ? "thinking" : "thought", true, [" for ", { bold: formatDuration(Math.max(1000, counts.thoughtForMs)) }]));
+  if (fullscreen) {
+    // One clause per non-empty kind bucket, shas joined by ", " inside a single bold span (518578–518580).
+    for (const kind of COMMIT_KINDS) {
+      const shas = (counts.commits ?? []).filter((commit) => commit.kind === kind).map((commit) => commit.sha);
+      if (shas.length > 0) out.push(clause(COMMIT_VERB[kind], out.length === 0, [" ", { bold: shas.join(", ") }]));
+    }
+    // ONE clause for every push, with the branch names deduplicated — canon's `fo()` at 518584 is the only dedup
+    // anywhere in this pipeline (addendum §B.5).
+    const branches = [...new Set((counts.pushes ?? []).map((push) => push.branch))];
+    if (branches.length > 0) out.push(clause("pushed to", out.length === 0, [" ", { bold: branches.join(", ") }]));
+    for (const op of counts.branches ?? [])
+      out.push(clause(op.action === "merged" ? "merged" : "rebased onto", out.length === 0, [" ", { bold: op.ref }]));
+    // 518595: a PR with a url renders as the bare `#N` link, one without it as the literal `PR #N`.
+    for (const pr of counts.prs ?? [])
+      out.push(clause(PR_VERB[pr.action], out.length === 0, [" ", { bold: pr.url === undefined ? `PR #${pr.number}` : `#${pr.number}` }]));
+  }
   if (counts.searchCount > 0)
     out.push(clause(active ? "searching for" : "searched for", out.length === 0, [" ", { bold: String(counts.searchCount) }, " ", plural(counts.searchCount, "pattern", "patterns")]));
   if (counts.readCount > 0)
@@ -497,6 +586,14 @@ export function foldClauses(counts: GroupCounts, active: boolean): readonly Fold
     const label = counts.mcpServerNames.map((name) => name.replace(/^claude\.ai /, "")).join(", ") || "MCP";
     const times: ClausePart[] = counts.mcpCallCount > 1 ? [" ", { bold: String(counts.mcpCallCount) }, " times"] : [];
     out.push(clause(active ? "calling" : "called", out.length === 0, [" ", label, ...times]));
+  }
+  if (fullscreen) {
+    // THE no-double-count rule, and the one line of this task that is easy to get wrong. `bashCount` arrives GROSS
+    // and already watermark-ratcheted by `foldPendingState.latch`; `gitOpBashCount` arrives raw and is subtracted
+    // HERE, after that ratchet — canon 518467 verbatim, `le = Ns() ? Math.max(0, P.current - Z) : 0`. Subtracting
+    // at accumulation instead would latch the clause at its pre-git value forever, because the ratchet never falls.
+    const shell = Math.max(0, (counts.bashCount ?? 0) - (counts.gitOpBashCount ?? 0));
+    if (shell > 0) out.push(clause(active ? "running" : "ran", out.length === 0, [" ", { bold: String(shell) }, " shell ", plural(shell, "command", "commands")]));
   }
   return out;
 }
