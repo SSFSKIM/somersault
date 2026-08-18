@@ -2124,7 +2124,13 @@ describe("<ChatApp>", () => {
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
-    stdin.write("\x1b[B"); await waitFor(() => stripAnsiAll(frame(lastFrame)).replace(/\n/g, " ").includes(`❯ ${process.cwd()}`));
+    // Match the pointer + a path PREFIX, not the full cwd: the row truncates with an ellipsis (its
+    // product behavior), and the test renderer is 100 columns wide, so a checkout whose absolute path
+    // approaches that (a .claude/worktrees/* clone is ~97 chars) renders `❯ /Users/…/CC-to-SDK/har…` —
+    // a frame no full-path needle can ever match, which fails as a bare waitFor timeout. 40 chars sits
+    // safely under any plausible truncation width while still discriminating this row from its
+    // neighbors; short cwds render untruncated and match the same prefix.
+    stdin.write("\x1b[B"); await waitFor(() => stripAnsiAll(frame(lastFrame)).includes(`❯ ${process.cwd().slice(0, 40)}`));
     expect(frame(lastFrame)).not.toContain("Enter to select");
     stdin.write("\r");
     await new Promise((r) => setTimeout(r, 30));
