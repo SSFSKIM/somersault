@@ -171,6 +171,10 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // mouse/focus/garbage: consumed, never inserted. An unknown SEQUENCE is also how a terminal REPLY arrives
     // (the oracle's DSR cursor report), so it is forwarded raw on the way out — see `onUnknownSequence`.
     if (ev.kind === "ignored") { if (ev.reason === "unknown-sequence") depsRef.current?.onUnknownSequence?.(ev.raw); return; }
+    // A button report is not a keybinding and never will be (canon's clicks aren't bindings either), so it
+    // leaves the table's path here. Task 7 hands it to the mouse-sink registry from this same line; until then
+    // it is consumed exactly as it was when parse.ts still called it `ignored("mouse")`.
+    if (ev.kind === "mouse") return;
     // ctrl+z is handled ABOVE the table, like upstream's raw input loop: it must suspend even while Help
     // swallows everything and even mid-chord (F0 contract).
     if (ev.kind === "key" && ev.ctrl && ev.name === "z") { (suspendHandler(reg) ?? depsRef.current?.suspend)?.(); return; }

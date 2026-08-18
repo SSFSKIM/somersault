@@ -5,6 +5,7 @@
 // ctrl+backtick), \x08→ctrl+h (not "backspace"), \x7f→backspace (not "delete"), \x1b\r→shift+enter.
 import { describe, it, expect } from "vitest";
 import { parseBytes } from "../../src/tui/keys/parse.js";
+import { createWheelGuard } from "../../src/tui/keys/wheelGuard.js";
 
 const one = (b: string) => { const ev = parseBytes(b); expect(ev).toHaveLength(1); return ev[0]; };
 
@@ -135,8 +136,69 @@ describe("SGR wheel ticks are KEYS, not mouse reports", () => {
     expect(one("\x1b[<64;10;5m")).toMatchObject({ kind: "ignored", reason: "mouse" }));
 });
 
+// TS TASK 6 — THE BUTTON REPORTS THAT ARE THEIR OWN EVENT (spec §3.2). A wheel tick is a key because it has no
+// pointer in it; a click is the opposite — the whole content of the gesture is WHERE it landed, so it cannot be
+// projected onto the binding table and comes out as a third `InputEvent` variant carrying col/row. The two
+// button-0 rows that used to sit in "non-key sequences never leak as text" below moved up here: they are still
+// never text, they are now not `ignored` either.
+describe("SGR button reports decode into MouseInputEvent", () => {
+  it("a plain press and its release, 1-based col/row passed straight through", () => {
+    expect(one("\x1b[<0;12;5M")).toEqual({ kind: "mouse", action: "press", button: 0, col: 12, row: 5,
+      ctrl: false, alt: false, shift: false, raw: "\x1b[<0;12;5M" });
+    expect(one("\x1b[<0;12;5m")).toEqual({ kind: "mouse", action: "release", button: 0, col: 12, row: 5,
+      ctrl: false, alt: false, shift: false, raw: "\x1b[<0;12;5m" });
+  });
+  it.each([["\x1b[<0;1;1M",0],["\x1b[<1;1;1M",1],["\x1b[<2;1;1M",2]])("%s → button %i", (b, n) =>
+    expect(one(b)).toMatchObject({ kind: "mouse", action: "press", button: n, col: 1, row: 1 }));
+  it("decodes the same modifier bits the wheel does — shift 4, meta 8 (our alt), ctrl 16", () => {
+    expect(one("\x1b[<16;3;3M")).toMatchObject({ button: 0, ctrl: true, alt: false, shift: false });
+    expect(one("\x1b[<8;3;3M")).toMatchObject({ button: 0, alt: true, ctrl: false, shift: false });
+    expect(one("\x1b[<4;3;3M")).toMatchObject({ button: 0, shift: true, ctrl: false, alt: false });
+    expect(one("\x1b[<30;3;3M")).toMatchObject({ button: 2, ctrl: true, alt: true, shift: true });
+  });
+  it("carries the whole report as `raw`, and consumes exactly it", () => {
+    const ev = parseBytes("\x1b[<0;12;5MA");
+    expect(ev).toHaveLength(2);
+    expect(ev[0]).toMatchObject({ kind: "mouse", raw: "\x1b[<0;12;5M" });
+    expect(ev[1]).toMatchObject({ kind: "key", name: "a", shift: true });
+  });
+  // The `& 64` term is what makes the two decoders order-independent: without it 64/65/66 alias onto 0/1/2 and
+  // every wheel tick would ALSO look like a left/middle/right press.
+  it("the wheel pair is still a KEY, whichever decoder is asked first", () => {
+    expect(one("\x1b[<64;9;9M")).toMatchObject({ kind: "key", name: "wheelup" });
+    expect(one("\x1b[<65;9;9M")).toMatchObject({ kind: "key", name: "wheeldown" });
+  });
+  it("motion (bit 32) and the no-button code (low bits 3) stay ignored", () => {
+    expect(one("\x1b[<32;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });   // drag with 1 held
+    expect(one("\x1b[<35;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });   // bare motion (1003)
+    expect(one("\x1b[<3;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<3;5;5m")).toMatchObject({ kind: "ignored", reason: "mouse" });    // legacy anonymous release
+  });
+  it("a report missing a coordinate, or with none at all, is ignored rather than decoded at NaN", () => {
+    expect(one("\x1b[<0;12M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<0;;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<0;12;5;9M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+  });
+});
+
+// The guard swallows bare arrows for 75 ms after a wheel tick by inspecting `kind === "key"` only. Pinned here
+// because the union grew under it: a mouse event must pass through untouched and must not stand in for a wheel.
+describe("the wheel guard is blind to mouse events", () => {
+  it("passes them through and lets them neither arm nor satisfy the window", () => {
+    let t = 0;
+    const keep = createWheelGuard(() => t);
+    const press = parseBytes("\x1b[<0;12;5M")[0];
+    expect(keep(press)).toBe(true);
+    expect(keep(parseBytes("\x1b[A")[0])).toBe(true);                 // no wheel yet: the arrow is the user's
+    keep(parseBytes("\x1b[<64;9;9M")[0]); t += 10;                    // now a real tick arms the window
+    expect(keep(press)).toBe(true);                                   // a mouse event inside it is not an arrow
+    expect(keep(parseBytes("\x1b[A")[0])).toBe(false);                // and it did not reset the clock either
+  });
+});
+
 describe("non-key sequences never leak as text", () => {
-  it.each([["\x1b[<0;10;10M","mouse"],["\x1b[<0;10;10m","mouse"],["\x1b[<32;10;10M","mouse"],
+  it.each([["\x1b[<32;10;10M","mouse"],["\x1b[<3;10;10M","mouse"],
            ["\x1b[I","focus"],["\x1b[O","focus"]])("%s → ignored:%s", (b, r) =>
     expect(one(b)).toMatchObject({ kind: "ignored", reason: r }));
   it("X10 mouse consumes its 3 payload bytes", () =>

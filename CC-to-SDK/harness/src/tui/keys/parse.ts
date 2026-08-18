@@ -9,7 +9,7 @@
 //
 // One chunk = one call. Ink has no escape timeout and neither do we (§1.10): a trailing lone ESC is `escape`,
 // and a sequence torn across a read boundary parses as whatever each half looks like on its own.
-import type { IgnoredEvent, InputEvent, KeyEvent } from "./types.js";
+import type { IgnoredEvent, InputEvent, KeyEvent, MouseInputEvent } from "./types.js";
 
 interface Mods { ctrl?: boolean; alt?: boolean; shift?: boolean; super?: boolean }
 
@@ -104,7 +104,7 @@ function parseCsi(s: string, i: number, out: InputEvent[]): number {
   if (rest[2] === "<") {                                    // SGR mouse (?1006h) — the only mouse encoding we ask for
     const m = SGR_MOUSE_RE.exec(rest);
     if (!m) return skipCsi(rest, out);
-    out.push(sgrWheel(m[1], m[2], m[0]) ?? ignored("mouse", m[0])); return m[0].length;
+    out.push(sgrWheel(m[1], m[2], m[0]) ?? sgrClick(m[1], m[2], m[0]) ?? ignored("mouse", m[0])); return m[0].length;
   }
   if (rest[2] === "M") { const raw = rest.slice(0, 6); out.push(ignored("mouse", raw)); return raw.length; }  // X10: 3 payload bytes
   const m = CSI_RE.exec(rest);
@@ -155,6 +155,30 @@ function sgrWheel(params: string, final: string, raw: string): KeyEvent | null {
   if (wheel !== 64 && wheel !== 65) return null;
   return key(wheel === 64 ? "wheelup" : "wheeldown", raw,
     { ctrl: !!(button & 16), alt: !!(button & 8), shift: !!(button & 4) });
+}
+
+/** THE MOUSE REPORTS THAT ARE NEITHER KEYS NOR NOISE (spec §3.2). A button press/release keeps its position and
+ *  becomes its own `InputEvent` variant, because unlike a wheel tick the position is the whole gesture: there is
+ *  nothing to bind, only somewhere to hit. Three tests, in this order:
+ *    `& 64` — NOT a wheel. This term is what makes the two decoders order-independent; drop it and 64/65/66
+ *  alias onto low bits 0/1/2, so every wheel tick would also read as a left/middle/right press.
+ *    `& 32` — NOT motion. We arm ?1000 only, which reports no motion at all, so this is defence against a
+ *  terminal (or a multiplexer, or a user's own `?1002h`) that sends drags anyway: a drag is not a click, and
+ *  v1 has no hover or selection engine to give it to.
+ *    `& 3 !== 3` — a real button. 3 is the anonymous "button released / none" code of the pre-SGR encodings,
+ *  which some terminals still send for a release even under 1006; without a button there is nothing to pair
+ *  against a press, so it is dropped rather than guessed at.
+ *  Modifier bits are canon's, shared with the wheel above (shift 4, meta 8 → our alt, ctrl 16). Both coordinates
+ *  must be present and integral — `Number("")` is 0, not NaN, so an empty param would otherwise decode as a
+ *  confident click at column 0 (a cell the terminal cannot address; it counts from 1). */
+function sgrClick(params: string, final: string, raw: string): MouseInputEvent | null {
+  const parts = params.split(";");
+  if (parts.length !== 3 || parts.some(p => p === "")) return null;
+  const [button, col, row] = parts.map(Number);
+  if (!Number.isInteger(button) || !Number.isInteger(col) || !Number.isInteger(row)) return null;
+  if ((button & 64) !== 0 || (button & 32) !== 0 || (button & 3) === 3) return null;
+  return { kind: "mouse", action: final === "M" ? "press" : "release", button: (button & 3) as 0 | 1 | 2,
+    col, row, ctrl: !!(button & 16), alt: !!(button & 8), shift: !!(button & 4), raw };
 }
 
 /** A CSI we don't recognise, consumed to its ECMA-48 boundary and no further: parameter bytes 0x30–0x3f, then

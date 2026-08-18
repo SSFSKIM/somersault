@@ -15,6 +15,18 @@ export interface KeyEvent { kind: "key"; name: string; ctrl: boolean; alt: boole
  *  know), and the composer's chip path keys off this PROVENANCE, never off size: a 900-character run someone
  *  typed stays literal where the same bytes pasted collapse to `[Pasted text #N]` (F5 task 3). */
 export interface TextEvent { kind: "text"; text: string; raw: string; paste?: true }
+/** A button press or release from an SGR (?1006) mouse report, under the ?1000 tracking altScreen.ts arms.
+ *  `col`/`row` are the terminal's own 1-based cell coordinates, passed through undisturbed — they are the
+ *  entire content of the gesture, which is why a click cannot be a `KeyEvent` the way a wheel tick is (a tick
+ *  means "move the page" and has no target; a click IS its target). `button` is the low two bits: 0 left,
+ *  1 middle, 2 right. Motion reports and the no-button code never reach here — parse.ts drops them.
+ *    THE NAME IS `MouseInputEvent`, NOT `MouseEvent`, ON PURPOSE: tsconfig sets no `lib` override, so the DOM's
+ *  global `MouseEvent` is in scope and a consumer that forgot the import would silently bind THAT and typecheck
+ *  clean, all the way to a runtime shape mismatch. */
+export interface MouseInputEvent {
+  kind: "mouse"; action: "press" | "release"; button: 0 | 1 | 2;
+  col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string;
+}
 /** Consumed and deliberately dropped — must never reach the composer as text (P86 §1.8). */
 export interface IgnoredEvent { kind: "ignored"; reason: "mouse" | "focus" | "unknown-sequence"; raw: string }
-export type InputEvent = KeyEvent | TextEvent | IgnoredEvent;
+export type InputEvent = KeyEvent | TextEvent | MouseInputEvent | IgnoredEvent;
