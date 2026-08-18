@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type GroupCounts } from "../../src/tui/toolFold.js";
+import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClass, type GroupCounts } from "../../src/tui/toolFold.js";
 import type { ToolEvent } from "../../src/tui/transcriptModel.js";
 
 const OPTIONS = { cwd: "/repo", home: "/home/u" };
@@ -264,6 +264,133 @@ describe("F3 thought attachment (upstream Ae_/PMd, cap rRo = 600000)", () => {
     const group = firstGroup([thought(1, 1000, "checking the config"), thought(2, 1000, "now reading it"), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))]);
     expect(group?.latestThinkingSummary).toBe("now reading it");
     expect(firstGroup([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 }))])?.latestThinkingSummary).toBeUndefined();
+  });
+});
+
+// TS Task 3: the fullscreen fold-policy widening (canon 2.1.234). Two axes are pinned in every cell — what the
+// CLASSIC renderer returns (frozen, A9's model-level guard) and what the FULLSCREEN renderer returns — because the
+// whole widening is an `opts.fullscreen` gate and a regression that leaks into classic is the one failure this
+// wave cannot ship.
+describe("TS fullscreen fold policy — classification (canon 2.1.234 Krr 236807–236816)", () => {
+  const FULL = { fullscreen: true } as const;
+  /** [tool name, input, classic result, fullscreen result] */
+  const TABLE: readonly [string, unknown, FoldClass, FoldClass][] = [
+    // Bash: `isBash: !l && c` (236816) — bash-kind ONLY when the command is not read-ish, so every read-ish
+    // classification still wins and its counter stays exactly where canon puts it.
+    ["Bash", { command: "npm run build" }, { collapsible: false }, { collapsible: true, kind: "bash" }],
+    ["Bash", { command: "git status" }, { collapsible: false }, { collapsible: true, kind: "bash" }],
+    ["Bash", { command: "cat a.ts" }, { collapsible: true, kind: "read" }, { collapsible: true, kind: "read" }],
+    ["Bash", { command: "grep -r x src" }, { collapsible: true, kind: "search" }, { collapsible: true, kind: "search" }],
+    ["Bash", { command: "ls -la" }, { collapsible: true, kind: "list" }, { collapsible: true, kind: "list" }],
+    // An ignored-word-only command decides nothing (`l` false), so `!l && c` still makes it bash under fullscreen.
+    ["Bash", { command: "echo hi" }, { collapsible: false }, { collapsible: true, kind: "bash" }],
+    // 237153 bumps `bashCount` BEFORE destructuring `input.command`, so a command-less Bash is still a bash member.
+    ["Bash", {}, { collapsible: false }, { collapsible: true, kind: "bash" }],
+    // `iE = "ToolSearch"` is fullscreen-only and takes `popsOutOnError: o`, which is false for it (236807–236809).
+    ["ToolSearch", {}, { collapsible: false }, { collapsible: true, kind: "silent", popsOutOnError: false }],
+    // `Joi` (236734) — the five board tools, all `popsOutOnError: true`.
+    ["TodoWrite", { todos: [] }, { collapsible: false }, { collapsible: true, kind: "silent", popsOutOnError: true }],
+    ["TaskCreate", {}, { collapsible: false }, { collapsible: true, kind: "silent", popsOutOnError: true }],
+    ["TaskGet", {}, { collapsible: false }, { collapsible: true, kind: "silent", popsOutOnError: true }],
+    ["TaskUpdate", {}, { collapsible: false }, { collapsible: true, kind: "silent", popsOutOnError: true }],
+    ["TaskList", {}, { collapsible: false }, { collapsible: true, kind: "silent", popsOutOnError: true }],
+    // Deliberate NON-widening: canon never collapses the web tools, and intuition ("a fetch is a read") is wrong.
+    ["WebFetch", { url: "https://x" }, { collapsible: false }, { collapsible: false }],
+    ["WebSearch", { query: "x" }, { collapsible: false }, { collapsible: false }],
+    ["Write", { file_path: "/repo/a.ts" }, { collapsible: false }, { collapsible: false }],
+    ["Edit", { file_path: "/repo/a.ts" }, { collapsible: false }, { collapsible: false }],
+    ["NotebookEdit", { notebook_path: "/repo/a.ipynb" }, { collapsible: false }, { collapsible: false }],
+    ["Agent", {}, { collapsible: false }, { collapsible: false }],
+    ["Task", {}, { collapsible: false }, { collapsible: false }],
+    ["SomeUnknownTool", {}, { collapsible: false }, { collapsible: false }],
+    // Unchanged by the widening — the three always-collapsible natives and MCP return before any new arm.
+    ["Read", { file_path: "/repo/a.ts" }, { collapsible: true, kind: "read" }, { collapsible: true, kind: "read" }],
+    ["Glob", { pattern: "**/*.ts" }, { collapsible: true, kind: "search" }, { collapsible: true, kind: "search" }],
+    ["Grep", { pattern: "todo" }, { collapsible: true, kind: "search" }, { collapsible: true, kind: "search" }],
+    ["mcp__github__list_issues", {}, { collapsible: true, kind: "mcp" }, { collapsible: true, kind: "mcp" }],
+  ];
+  it.each(TABLE)("classifies %s under both renderers", (name, input, classic, fullscreen) => {
+    expect(classifyToolEvent({ name, input })).toEqual(classic);
+    expect(classifyToolEvent({ name, input }, {})).toEqual(classic);
+    expect(classifyToolEvent({ name, input }, { fullscreen: false })).toEqual(classic);
+    expect(classifyToolEvent({ name, input }, FULL)).toEqual(fullscreen);
+  });
+});
+
+describe("TS fullscreen fold policy — segmentation (canon 2.1.234 iNp 237140–237210)", () => {
+  const FULL = { ...OPTIONS, fullscreen: true };
+  const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) =>
+    items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+
+  it("absorbs a bash call and a silent call into ONE run with the reads", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })),
+      atom(tool("Bash", { command: "git status" }, { sequence: 2 })), atom(tool("TodoWrite", { todos: [] }, { sequence: 3 }))], FULL);
+    expect(items).toHaveLength(1);
+    const group = groups(items)[0]!;
+    expect(group.memberIds).toEqual(["tool-1", "tool-2", "tool-3"]);
+    expect(group.counts).toMatchObject({ readCount: 1, bashCount: 1, searchCount: 0, listCount: 0, mcpCallCount: 0 });
+  });
+  it("keeps a read-ish bash out of bashCount (canon 236816 `!l && c`)", () => {
+    const items = segmentRuns([atom(tool("Bash", { command: "cat a" }, { sequence: 1 })), atom(tool("Bash", { command: "npm test" }, { sequence: 2 }))], FULL);
+    expect(groups(items)[0]!.counts).toMatchObject({ readCount: 1, bashCount: 1 });
+  });
+  it("records EVERY bash command by tool-use id for the T4 scraper (237152)", () => {
+    const items = segmentRuns([atom(tool("Bash", { command: "git commit -m x" }, { sequence: 1 })), atom(tool("Bash", { command: "cat a" }, { sequence: 2 })),
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))], FULL);
+    expect([...groups(items)[0]!.bashCommands!]).toEqual([["tool-1", "git commit -m x"], ["tool-2", "cat a"]]);
+  });
+  it("lets a silently-absorbed call OPEN a run and own its anchor (addendum §A.1)", () => {
+    const items = segmentRuns([atom(tool("ToolSearch", { query: "x" }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 }))], FULL);
+    const group = groups(items)[0]!;
+    expect(group.memberIds).toEqual(["tool-1", "tool-2"]);
+    expect(group.anchorSequence).toBe(1);
+    expect(group.counts.readCount).toBe(1);
+  });
+  it("emits NO group for a run whose every member is silent (deliberate divergence from 518513)", () => {
+    expect(segmentRuns([atom(tool("TodoWrite", { todos: [] }, { sequence: 1 })), atom(tool("ToolSearch", {}, { sequence: 2 }))], FULL)).toEqual([]);
+  });
+  it("(a) RELOCATES an errored silent call out when nothing follows it in the run", () => {
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 2, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(todo)], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
+  });
+  it("(b) KEEPS an errored silent call inside the run when another absorbed call follows, and closes the run", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(tool("TodoWrite", { todos: [] }, { sequence: 2, settled: "error" })),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 }))], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "group"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
+    expect(groups(items)[1]!.memberIds).toEqual(["tool-3"]);
+  });
+  it("never lets a pop-out shift an already-formed run's anchor (spec invariant over canon)", () => {
+    const items = segmentRuns([atom(tool("TodoWrite", { todos: [] }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 })),
+      atom(tool("TaskUpdate", {}, { sequence: 3, settled: "error" }))], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
+    expect(groups(items)[0]!.anchorSequence).toBe(1);
+  });
+  it("renders a lone errored silent call standalone with no cluster at all (canon 237204–237206)", () => {
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 1, settled: "error" });
+    expect(segmentRuns([atom(todo)], FULL)).toEqual([{ kind: "tool", event: todo }]);
+  });
+  it("never pops out ToolSearch, whose popsOutOnError is false", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(tool("ToolSearch", {}, { sequence: 2, settled: "error" }))], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
+  });
+  it("leaves CLASSIC segmentation of the same atoms exactly as it ships today", () => {
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 3 }), bash = tool("Bash", { command: "git status" }, { sequence: 2 });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(bash), atom(todo)], OPTIONS);
+    expect(items).toEqual([{ kind: "group", group: expect.objectContaining({ memberIds: ["tool-1"] }) }, { kind: "tool", event: bash }, { kind: "tool", event: todo }]);
+    const group = groups(items)[0]!;
+    expect(group.counts.bashCount).toBeUndefined();
+    expect(group.bashCommands).toBeUndefined();
+  });
+  it("records NO bash commands on a classic run, even for the read-ish Bash it does absorb", () => {
+    const items = segmentRuns([atom(tool("Bash", { command: "cat a" }, { sequence: 1 }))], OPTIONS);
+    expect(groups(items)[0]!.bashCommands).toBeUndefined();
+    expect(groups(items)[0]!.counts).toEqual({ readCount: 1, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [] });
   });
 });
 

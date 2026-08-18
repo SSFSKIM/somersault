@@ -8,8 +8,15 @@
 //      errors, thinking or system chatter; neutral items are buffered and replayed AFTER the group they interrupted.
 //   3. `foldClauses` — upstream `Ima`'s clause chain (L427976): the sentence, with the bold count spans kept as
 //      RANGES rather than markup so Task 5c owns every styling decision.
-// `ds()` is fixed false (R2.1), so the fullscreen-only clauses — shell commands, git ops, agents, edits, REPL — are
-// unreachable here and deliberately absent (R1.6, R1.7, R2.2).
+// The fullscreen predicate (`ds()` in 2.1.220, `Ns()` in 2.1.234) is no longer fixed false: it arrives as an
+// explicit `fullscreen` INPUT on `classifyToolEvent`/`segmentRuns`, so this module ports both policies at once and
+// stays clock- and environment-free. Absent (or false) is the frozen classic policy, byte for byte. Under
+// `fullscreen` canon 2.1.234 widens the fold three ways — every non-read Bash call joins the run under its own
+// `bashCount`, the task-board tools plus ToolSearch are absorbed with no counter at all, and each absorbed Bash
+// command is recorded for the git scraper. WebFetch/WebSearch stay standalone in BOTH: that is canon's real policy.
+// The clause chain has not caught up yet — `foldClauses` still builds only the classic sentence, so the new counts
+// are carried and not yet spoken (the shell/git clauses, the REPL/agent/edit/memory clauses and their fixed order
+// are a later task in this wave).
 import { displayPath } from "./paths.js";
 // `ra` moved to `format.ts` in F3 Task 5 so the fold row and the typed result rows share ONE port (R4.9 still
 // calls it with no options here; only the Bash timeout suffix passes `hideTrailingZeros`).
@@ -148,22 +155,45 @@ function classifyBashCommand(command: string): { isSearch: boolean; isRead: bool
   return sawDeciding ? { isSearch, isRead, isList } : none;
 }
 
-export type FoldClass = { collapsible: false } | { collapsible: true; kind: "read" | "search" | "list" | "mcp" };
+export type FoldClass =
+  | { collapsible: false }
+  | { collapsible: true; kind: "read" | "search" | "list" | "mcp" | "bash" }
+  | { collapsible: true; kind: "silent"; popsOutOnError: boolean };
+/** How the caller's renderer identity reaches the pure policy. Canon threads its own `Ns()` fullscreen predicate
+ *  INTO `Krr` (2.1.234:236816); we take it as an argument instead so this module stays environment-free and the
+ *  classic renderer's policy is frozen by construction — omitted (or false) is byte-identically what shipped. */
+export interface FoldPolicy { fullscreen?: boolean }
 
-/** Upstream `VFt` (L301895–301913) restricted to what the default view can reach. First match wins; the `kind`
- *  collapses `VFt`'s independent flags in `PMd`'s branch order (list, then search, then read — L302223–302238), which
- *  is what decides the counter a multi-kind Bash command lands in. Everything without an `isSearchOrReadCommand`
- *  implementation — Edit, Write, NotebookEdit, Agent, Task, anything unknown — falls out at case 6 and stands alone
- *  (R1.1). Non-read Bash needs `ds()`, which is false (R1.3/R2.1), so it stands alone too. */
-export function classifyToolEvent(event: Pick<ToolEvent, "name" | "input">): FoldClass {
+/** Canon `Joi` (2.1.234:236734) — the five task-board tools, absorbed with no counter and `popsOutOnError: true`.
+ *  `iE` ("ToolSearch", 2.1.234:236807) joins them under fullscreen with `popsOutOnError: false`. Canon absorbs
+ *  `Joi` UNCONDITIONALLY; we gate both on fullscreen because the classic renderer is frozen at its 2.1.220
+ *  behavior for this wave (a recorded divergence, spec §2). */
+const SILENT_POPS_OUT = new Set(["TodoWrite", "TaskCreate", "TaskGet", "TaskUpdate", "TaskList"]);
+
+/** Upstream `VFt` (L301895–301913) restricted to what the default view can reach, plus canon 2.1.234's
+ *  fullscreen-only widenings (`Krr`, 236807–236816). First match wins; the `kind` collapses `VFt`'s independent
+ *  flags in `PMd`'s branch order (list, then search, then read — L302223–302238), which is what decides the counter
+ *  a multi-kind Bash command lands in. Everything without an `isSearchOrReadCommand` implementation — Edit, Write,
+ *  NotebookEdit, Agent, Task, WebFetch, WebSearch, anything unknown — falls out at case 6 and stands alone (R1.1);
+ *  the web tools are canon's real policy there, not an oversight.
+ *  Under `fullscreen`, two arms open. The silent arm sits AFTER the always-collapsible natives (none of its names
+ *  collide, so the order is documentation, not a fix) and BEFORE Bash. The bash arm is last, and deliberately so:
+ *  canon computes `isBash: !l && c` (236816) with `l = isSearch||isRead||isList`, so a read-ish command keeps its
+ *  read/search/list counter and only a genuinely-not-read Bash becomes `"bash"`. A command with no `command` field
+ *  at all is still bash-kind — 237153 bumps `bashCount` before it destructures the input. */
+export function classifyToolEvent(event: Pick<ToolEvent, "name" | "input">, opts?: FoldPolicy): FoldClass {
   if (event.name.startsWith("mcp__")) return { collapsible: true, kind: "mcp" };
   if (event.name === "Glob" || event.name === "Grep") return { collapsible: true, kind: "search" };
   if (event.name === "Read") return { collapsible: true, kind: "read" };
+  const fullscreen = opts?.fullscreen ?? false;
+  if (fullscreen && (SILENT_POPS_OUT.has(event.name) || event.name === "ToolSearch"))
+    return { collapsible: true, kind: "silent", popsOutOnError: SILENT_POPS_OUT.has(event.name) };
   if (event.name !== "Bash") return { collapsible: false };
   const { isSearch, isRead, isList } = classifyBashCommand(stringField(event.input, "command") ?? "");
   if (isList) return { collapsible: true, kind: "list" };
   if (isSearch) return { collapsible: true, kind: "search" };
-  return isRead ? { collapsible: true, kind: "read" } : { collapsible: false };
+  if (isRead) return { collapsible: true, kind: "read" };
+  return fullscreen ? { collapsible: true, kind: "bash" } : { collapsible: false };
 }
 
 /** Upstream `KFs` (L301889–301894): `"$ "` + each line whitespace-collapsed, blank lines dropped, truncated so the
@@ -178,8 +208,15 @@ const commandHint = (command: string): string => {
  *  replayed message therefore carries none), `thinkingSummary` its whole text whitespace-collapsed
  *  (upstream `PMd` L302267), which rides to Task 4's italic hint variant and is clamped at render. */
 export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number } | { kind: "neutral"; sequence: number; thoughtForMs?: number; thinkingSummary?: string };
-export type GroupCounts = { readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[]; thoughtForMs?: number };
-export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string }
+/** `bashCount` is OPTIONAL and present only on a fullscreen run that absorbed a non-read Bash call (canon emits the
+ *  pair the same way — `if ((e.bashCount ?? 0) > 0)`, 2.1.234:237035). Absent therefore means "classic", which is
+ *  what keeps every existing counts literal valid and the classic clause chain unable to see the new counter.
+ *  It stays GROSS: T4's `gitOpBashCount` is a parallel tally the RENDERER subtracts after the watermark ratchet
+ *  (518466–518467), never a transfer out of this number — see spec §3.1's mechanism correction. */
+export type GroupCounts = { readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[]; thoughtForMs?: number; bashCount?: number };
+/** `bashCommands` (tool-use id → command string) is the git scraper's INPUT, recorded here and consumed by T4;
+ *  fullscreen-only, and omitted entirely when the run absorbed no Bash call. */
+export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
 export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent } | { kind: "passthrough"; sequence: number };
 
 /** Upstream `rRo` (L302645): the per-contribution ceiling on a thought. Upstream measures a message GAP,
@@ -192,16 +229,38 @@ interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
   mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorSequence: number; open: boolean; hint?: string;
   thoughtForMs: number; latestThinkingSummary?: string;
+  bashCount: number; bashCommands: Map<string, string>;
+  /** Members that earned a counter. A run of nothing but silently-absorbed calls has every counter at zero and
+   *  emits NO group (see `flush`), so this is the one thing that decides whether the run is sayable at all. */
+  visibleMembers: number;
 }
-const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorSequence: 0, open: false, thoughtForMs: 0 });
+const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorSequence: 0, open: false, thoughtForMs: 0, bashCount: 0, bashCommands: new Map(), visibleMembers: 0 });
 
-/** Upstream `PMd`'s accumulator branch chain (L302194–302256) for the reachable kinds. The `readCount` quirk lives in
- *  `emit`, not here: paths and operations are counted separately and only ONE of them survives (R1.5). */
-function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list" | "mcp", options: { cwd: string; home: string }): void {
+/** Upstream `PMd`'s accumulator branch chain (L302194–302256) for the reachable kinds, plus canon 2.1.234's
+ *  fullscreen branches (`iNp` 237140–237160). The `readCount` quirk lives in `emit`, not here: paths and operations
+ *  are counted separately and only ONE of them survives (R1.5). */
+function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list" | "mcp" | "bash" | "silent", options: { cwd: string; home: string; fullscreen?: boolean }): void {
   if (run.memberIds.length === 0) run.anchorSequence = event.callSequence;
   run.memberIds.push(event.id);
   if (event.result === undefined) run.open = true;
   const command = stringField(event.input, "command");
+  // Canon 237152 records `bashCommands` only in its `isBash` branch; we record every Bash command, read-ish ones
+  // included, so T4's scraper sees the whole shell history of the run. The superset is inert in practice — any
+  // `git`/`gh` head word poisons the read classification outright, so a read-ish command can never BE a git op —
+  // and it costs one map entry per absorbed `cat`/`ls`. Fullscreen-gated because canon allocates the map in
+  // `Rka()` only under `Ns()` (237023): a classic run must carry no `bashCommands` field at all.
+  if (options.fullscreen === true && event.name === "Bash" && command) run.bashCommands.set(event.id, command);
+  // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
+  // so it is a member and can be the anchor, but it touches no counter and no display hint.
+  if (kind === "silent") return;
+  run.visibleMembers++;
+  if (kind === "bash") {
+    run.bashCount++;
+    // Canon's hint here goes through the unread `gQo`/`Ika`/`Aka` formatters (addendum §D); the collapsed `$ …`
+    // line the list/read branches already use is our stand-in until those are ported.
+    if (command !== undefined) run.hint = commandHint(command);
+    return;
+  }
   if (kind === "mcp") {
     run.mcpCallCount++;
     const server = event.name.split("__")[1];
@@ -228,15 +287,18 @@ const emit = (run: RunState): FoldGroup => ({
   counts: {
     readCount: run.readFilePaths.size > 0 ? run.readFilePaths.size : run.readOperationCount, searchCount: run.searchCount, listCount: run.listCount,
     mcpCallCount: run.mcpCallCount, mcpServerNames: run.mcpServerNames, ...(run.thoughtForMs > 0 ? { thoughtForMs: run.thoughtForMs } : {}),
+    ...(run.bashCount > 0 ? { bashCount: run.bashCount } : {}),
   },
   ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorSequence: run.anchorSequence, open: run.open,
   ...(run.latestThinkingSummary === undefined ? {} : { latestThinkingSummary: run.latestThinkingSummary }),
+  ...(run.bashCommands.size === 0 ? {} : { bashCommands: run.bashCommands }),
 });
 
 /** Upstream `PMd` (L302172–302284). `atoms` must already be in transcript order. A group is emitted at the position
  *  of its FIRST member; anything neutral that interrupted the run is replayed straight after it, exactly like
- *  upstream's deferred buffer `i` (L302273–302277). Errors are not a boundary and not a counter adjustment (R5.2). */
-export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string }): readonly FoldItem[] {
+ *  upstream's deferred buffer `i` (L302273–302277). An error is not a boundary and not a counter adjustment (R5.2)
+ *  — with ONE fullscreen exception, canon's `popsOutOnError` path (2.1.234:237198–237210), handled below. */
+export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string; fullscreen?: boolean }): readonly FoldItem[] {
   const out: FoldItem[] = []; let run = newRun(), deferred: FoldItem[] = [];
   // The PENDING-THOUGHT buffer (F3 Task 3). Upstream pushes the thinking message straight into the open
   // accumulator, so the thought belongs to the run being accumulated and is lost at its next flush. Our
@@ -250,14 +312,39 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   const flush = () => {
     pending = undefined;
     if (run.memberIds.length === 0) return;
-    out.push({ kind: "group", group: emit(run) }); out.push(...deferred); deferred = []; run = newRun();
+    // A run whose every member was absorbed silently has every counter at zero, and canon renders it as a
+    // zero-height row it still reports clickable (518513, 549764). We emit NO item for it — a DELIBERATE
+    // divergence (spec §3.1): an invisible clickable region means nothing in an item-based projection, and
+    // dropping it is exactly what today's suppressed-tool handling already does. Any buffered thought goes
+    // with it, the same way a thought held for a run that never opens is dropped today.
+    if (run.visibleMembers > 0) out.push({ kind: "group", group: emit(run) });
+    out.push(...deferred); deferred = []; run = newRun();
   };
-  for (const atom of atoms) {
+  // Canon decides between "relocate the errored call out of the cluster" and "leave it inside, just close the
+  // run" on `o.messages.at(-1)` — whether any other message was absorbed between the call and the arrival of its
+  // error result (237199–237210). Our atoms are calls carrying their own results, so the equivalent question is
+  // whether the NEXT atom would have joined this run: a batched sibling call (canon's real case — parallel
+  // tool_use puts the sibling's message after ours) or a thinking/neutral message both land in `o.messages`
+  // ahead of the result and both block the relocation.
+  const joinsRun = (next: FoldAtom | undefined): boolean =>
+    next !== undefined && (next.kind === "neutral" || (next.kind === "tool" && classifyToolEvent(next.event, options).collapsible));
+  for (let index = 0; index < atoms.length; index++) {
+    const atom = atoms[index]!;
     if (atom.kind === "tool") {
-      const fold = classifyToolEvent(atom.event);
+      const fold = classifyToolEvent(atom.event, options);
       if (fold.collapsible) {
         if (pending !== undefined) { applyThought(pending.ms, pending.summary); pending = undefined; }
-        absorb(run, atom.event, fold.kind, options); continue;
+        absorb(run, atom.event, fold.kind, options);
+        // An error result for a `popsOutOnError` tool ALWAYS ends the run (every branch of 237198–237210 flushes
+        // and pushes the message); only the relocation is conditional. The spec's own invariant — a pop-out must
+        // never shift `memberIds[0]` of an already-formed run, because we stream and cannot unpublish a published
+        // row — is preserved by construction: we only ever pop the LAST member, and that can be `memberIds[0]`
+        // only in a one-member run, which is silent-only and therefore emitted no group to shift.
+        if (fold.kind === "silent" && fold.popsOutOnError && (atom.event.result?.isError ?? false)) {
+          if (!joinsRun(atoms[index + 1])) { run.memberIds.pop(); flush(); out.push({ kind: "tool", event: atom.event }); }
+          else flush();
+        }
+        continue;
       }
       flush(); out.push({ kind: "tool", event: atom.event }); continue;
     }

@@ -997,28 +997,35 @@ function projectAll(document: TranscriptDocument, options: ProjectionOptions): r
   return full.projection === "compact" && !full.verbose ? foldAnchored(anchored, full) : anchored.flatMap((a) => a.items);
 }
 
-/** The one atom builder both folded projections share. A tool anchor is a `tool` atom — EXCEPT for the tools
- *  we project to nothing (`isSuppressedTool`: ToolSearch/TaskCreate/TaskUpdate), which become `neutral` and so
- *  JOIN the run they interrupt without earning a counter, exactly like upstream's absorbed-silently branch
- *  (contract §1.2 accumulator row 4: "no counter at all — message still joins the group").
- *  DELIBERATE DEVIATION from default-mode upstream: that branch is `ds()`-gated (§1.1 case 4), so a
- *  default-mode 2.1.220 falls through to case 6 and renders `⏺ ToolSearch(…)` STANDALONE, which legitimately
- *  breaks the run. We render no row for those calls at all, so treating them as a break would split one
- *  summary into two adjacent rows with an invisible seam between them — a bug on screen, not fidelity.
- *  `inert` is the second reason an anchor stops being a tool: a call the compact projection has already
- *  PUBLISHED must not re-enter the dynamic region's fold (see `projectPending`). */
-function foldAtoms(anchored: readonly Anchored[], thoughtMs?: ReadonlyMap<string, number>, inert?: (event: ToolEvent) => boolean): FoldAtom[] {
+/** The one atom builder both folded projections share, and the gate that decides which tools the fold policy is
+ *  even allowed to see. A tool anchor is a `tool` atom, with two reasons it stops being one:
+ *  1. CLASSIC only — the tools we project to nothing (`isSuppressedTool`: ToolSearch/TaskCreate/TaskUpdate)
+ *     become `neutral` and so JOIN the run they interrupt without earning a counter, approximating upstream's
+ *     absorbed-silently branch (contract §1.2 accumulator row 4). That was a DELIBERATE DEVIATION from
+ *     default-mode 2.1.220, whose `ds()`-gated policy (§1.1 case 4) falls through to case 6 and renders
+ *     `⏺ ToolSearch(…)` STANDALONE, legitimately breaking the run: we render no row for those calls, so treating
+ *     them as a break would split one summary into two adjacent rows with an invisible seam between them.
+ *     Under `fullscreen` the deviation is RETIRED and the diversion lifts — canon 2.1.234 absorbs those names
+ *     itself (`Krr` 236807–236809), `classifyToolEvent` classifies them `"silent"`, and routing them here would
+ *     keep them out of `memberIds` and out of the anchor, which is precisely what the silent policy is for.
+ *     TodoWrite/TaskGet/TaskList were never suppressed and always reached the policy; the gate is what makes
+ *     the five-plus-one silent set behave uniformly instead of splitting three ways.
+ *  2. Either renderer — `inert`: a call the compact projection has already PUBLISHED must not re-enter the
+ *     dynamic region's fold (see `projectPending`).
+ *  `fullscreen` is accepted here and defaults false; the fold projections do not set it yet (the projection
+ *  switch-over is a later task in this wave), so today every caller gets the frozen classic behavior. */
+function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMap<string, number>; inert?: (event: ToolEvent) => boolean; fullscreen?: boolean } = {}): FoldAtom[] {
   // One duration per MESSAGE, spent once. The engine emits one assistant frame per content block and all
   // of them share a single `message.id` (P82), while `LiveTurn` already sums every thinking block of that
   // id — so a message that arrived as two thinking frames would otherwise stamp its whole total twice.
   const spent = new Set<string>();
   return anchored.map((a, index): FoldAtom => {
-    if (a.event !== undefined && !isSuppressedTool(a.event.name) && !(inert?.(a.event) ?? false)) return { kind: "tool", event: a.event };
+    if (a.event !== undefined && (opts.fullscreen === true || !isSuppressedTool(a.event.name)) && !(opts.inert?.(a.event) ?? false)) return { kind: "tool", event: a.event };
     if (a.atom === "breaker") return { kind: "breaker", sequence: index };
     // The thinking clock's one gate: a thought-bearing message (`a.thinking`) the caller's LIVE map has a
     // duration for. A disk-bootstrapped, replayed or attached entry is never in that map, so it earns no
     // clause without a single replay-side branch.
-    const ms = a.identity === undefined || a.thinking === undefined || spent.has(a.identity) ? undefined : thoughtMs?.get(a.identity);
+    const ms = a.identity === undefined || a.thinking === undefined || spent.has(a.identity) ? undefined : opts.thoughtMs?.get(a.identity);
     if (ms !== undefined) spent.add(a.identity!);
     return { kind: "neutral", sequence: index, ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }) };
   });
@@ -1046,7 +1053,7 @@ function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: stri
  *  `passthrough` maps straight back to the entry's already-projected items — and `segmentRuns` decides which
  *  contiguous runs collapse. */
 function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions): readonly RenderItem[] {
-  const atoms = foldAtoms(anchored, options.thoughtMs);
+  const atoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs });
   const standalone = new Map<ToolEvent, readonly RenderItem[]>(anchored.flatMap((a) => (a.event ? [[a.event, a.items] as const] : [])));
   const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home });
   const out: RenderItem[] = [];
@@ -1113,13 +1120,13 @@ export function projectPending(document: TranscriptDocument, options: Projection
   const fold = { cwd: options.cwd, home: options.home };
   // What Static already holds: the same fold the compact projection runs (open calls and withheld batches
   // inert there, exactly as `projectAll` omits them), minus the trailing run it withholds.
-  const settledAtoms = foldAtoms(anchored, options.thoughtMs, (event) => !event.result || withheld.has(event));
+  const settledAtoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, inert: (event) => !event.result || withheld.has(event) });
   const settled = segmentRuns(settledAtoms, fold);
   const published = new Set<string>();
   for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled)))
     if (item.kind === "group") for (const id of item.group.memberIds) published.add(id);
   const items: RenderItem[] = [];
-  for (const item of segmentRuns(foldAtoms(anchored, options.thoughtMs, (event) => published.has(event.id)), fold)) {
+  for (const item of segmentRuns(foldAtoms(anchored, { thoughtMs: options.thoughtMs, inert: (event) => published.has(event.id) }), fold)) {
     if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full)); continue; }
     if (item.kind !== "tool") continue;
     // A withheld agent batch draws whole — its first member stands in for the unit, and one member having a
