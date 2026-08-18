@@ -22,13 +22,22 @@ const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.c
  *  M4). Without this the rule disagreed with itself: a literal `__proto__` key inside an upsert value
  *  reaches `settingsMerge`'s `out[k] = …`, which invokes `Object.prototype`'s `__proto__` SETTER — the
  *  merged node's prototype is reassigned and the key vanishes from the written JSON, while the same key
- *  under `replace` round-trips intact. A silent vanish is a worse answer than a refusal. */
-function assertWritableValue(value: unknown, path: string[]): void {
-  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) assertWritableValue(value[i], [...path, String(i)]); return; }
+ *  under `replace` round-trips intact. A silent vanish is a worse answer than a refusal.
+ *
+ *  The walk is DEPTH-BOUNDED, and it is the first thing a written value meets, so the bound covers the
+ *  two recursions behind it (`settingsMerge`, `JSON.stringify`) too. A value nested past the engine's
+ *  stack survives `JSON.parse` but threw `RangeError` here, which configDomain maps to INTERNAL — a
+ *  client-supplied shape has to come back as a validation refusal. 64 is two orders of magnitude under
+ *  the depth that still walked fine (4000) and an order of magnitude over the deepest real settings
+ *  shape (a hook matcher nests about eight). */
+const MAX_VALUE_DEPTH = 64;
+function assertWritableValue(value: unknown, path: string[], depth = 0): void {
+  if (depth > MAX_VALUE_DEPTH) throw new ConfigError("ConfigValidationError", `value nests deeper than ${MAX_VALUE_DEPTH} levels (at value path "${path.join(".")}")`);
+  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) assertWritableValue(value[i], [...path, String(i)], depth + 1); return; }
   if (!isPlainObject(value)) return;
   for (const k of Object.keys(value)) {
     if (FORBIDDEN.has(k)) throw new ConfigError("ConfigValidationError", `key "${k}" is not writable (at value path "${[...path, k].join(".")}")`);
-    assertWritableValue(value[k], [...path, k]);
+    assertWritableValue(value[k], [...path, k], depth + 1);
   }
 }
 
@@ -103,12 +112,21 @@ export async function resolveRealTarget(filePath: string): Promise<string> {
   try { return await realpath(filePath); } catch { /* target missing, dangling link, or a loop — walk it */ }
   let cur = filePath;
   for (let hop = 0; hop < SYMLINK_HOPS; hop++) {
-    let link: string;
     try {
       const st = await lstat(cur);
       if (!st.isSymbolicLink()) return cur; // nothing to follow: the literal path (it just does not exist yet)
-      link = await readlink(cur);
     } catch { return cur; } // no entry at all — the plain "file does not exist" case
+    // A `readlink` failure used to fall into the same catch and answer with the LINK's own path, which
+    // sent tmp+rename at the link and destroyed it — I3's detachment, re-entered through the error path.
+    // Only ENOENT is benign: the link went away between the two calls, so there is nothing left to
+    // detach and the literal path is still the answer. Any other failure means a link IS there and we
+    // cannot resolve it, and writing would replace it — refuse.
+    let link: string;
+    try { link = await readlink(cur); }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return cur;
+      throw new ConfigError("ConfigValidationError", `settings path is a symlink that could not be resolved (${cur}): ${(e as Error).message ?? String(e)}`);
+    }
     cur = resolve(dirname(cur), link);
   }
   throw new ConfigError("ConfigValidationError", `settings path resolves through more than ${SYMLINK_HOPS} symlinks (or a symlink loop): ${filePath}`);
@@ -117,15 +135,24 @@ export async function resolveRealTarget(filePath: string): Promise<string> {
 /** 2-space JSON + trailing newline, installed by tmp+rename. The rename installs the TMP file's mode, so
  *  an existing target's mode is carried over first — settings files legitimately hold `env` values and
  *  `apiKeyHelper` paths, and without this the first write through this API turned a deliberate 0600 into
- *  the umask default 0644 (review I1). A target that does not exist yet keeps the process default. */
+ *  the umask default 0644 (review I1). The tmp is CREATED at that mode instead of being repaired into it
+ *  afterwards: the repair left the SAME private bytes sitting in the same directory at the umask default
+ *  for the length of the write (measured — a 0600 settings file's tmp observed at 644 mid-write). The
+ *  chmod stays, because `writeFile`'s `mode` is umask-masked and can only land NARROWER than asked, so
+ *  it is the chmod that actually installs the destination's mode. A target that does not exist yet has
+ *  no mode to carry and is created 0600 — its bytes are the same class of secret, and there is no later
+ *  step that would narrow it. Anything that fails before the rename takes the tmp with it: nothing used
+ *  to, so a failed rename (EISDIR against a directory at the path) parked those bytes on disk for good. */
 export async function writeTargetDoc(filePath: string, doc: Record<string, unknown>): Promise<{ version: string }> {
   await mkdir(dirname(filePath), { recursive: true });
   const bytes = JSON.stringify(doc, null, 2) + "\n";
   const tmp = `${filePath}.tmp-${process.pid}-${Math.floor(Math.random() * 1e9)}`;
   const mode = await stat(filePath).then((s) => s.mode & 0o7777, () => null);
-  await writeFile(tmp, bytes, "utf8");
-  if (mode !== null) await chmod(tmp, mode);
-  await rename(tmp, filePath);
+  try {
+    await writeFile(tmp, bytes, { encoding: "utf8", mode: mode ?? 0o600 });
+    if (mode !== null) await chmod(tmp, mode);
+    await rename(tmp, filePath);
+  } catch (e) { await unlink(tmp).catch(() => {}); throw e; }
   return { version: versionToken(bytes) };
 }
 

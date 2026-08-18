@@ -1,20 +1,26 @@
 // test/unit/appserver/config-write.test.ts — M5 Task 3: the write primitives the Task 4 handlers run
 // inside. Everything here touches only its own `mkdtemp` directory.
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 
-/** Two interleaves the filesystem will not schedule for us. (1) A foreign lock whose bytes CHANGE
- *  between the implementation's two consecutive reads: a real second writer cannot be timed into that
- *  gap — both reads are already queued on the libuv threadpool by the time this thread runs again.
+/** Interleaves and failures the filesystem will not schedule for us. (1) A foreign lock whose bytes
+ *  CHANGE between the implementation's two consecutive reads: a real second writer cannot be timed into
+ *  that gap — both reads are already queued on the libuv threadpool by the time this thread runs again.
  *  (2) A stale lock whose `unlink` FAILS: real on disk (an immutable file, a mode-0555 directory) but
- *  both reproductions are platform-specific and neither works as root. Both are forced at the fs
- *  boundary instead. Null by default: every other read and unlink in this file is the real one. */
+ *  both reproductions are platform-specific and neither works as root. (3) The instant the tmp file
+ *  exists and nothing has narrowed it yet — real, and a poller does catch it, but only on a machine
+ *  whose scheduler leaves the window open long enough to be sampled. (4) A `readlink` that fails for
+ *  anything but a vanished link: the only real cause is an unreadable directory, and that stops `lstat`
+ *  one call earlier, so the case never reaches the code under test. All four are forced at the fs
+ *  boundary. Null by default: every other call in this file is the real one. */
 const fsHook = vi.hoisted(() => ({
   readFile: null as ((path: string) => string | null) | null,
   denyUnlink: null as ((path: string) => boolean) | null,
+  afterWriteFile: null as ((path: string) => void) | null,
+  readlink: null as ((path: string) => Error | null) | null,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs/promises")>();
@@ -28,6 +34,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     unlink: async (path: unknown, ...rest: unknown[]) => {
       if (fsHook.denyUnlink?.(String(path))) throw Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" });
       return (real.unlink as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
+    },
+    writeFile: async (path: unknown, ...rest: unknown[]) => {
+      const out = await (real.writeFile as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
+      fsHook.afterWriteFile?.(String(path)); // the gap between the file existing and the next call
+      return out;
+    },
+    readlink: async (path: unknown, ...rest: unknown[]) => {
+      const forced = fsHook.readlink?.(String(path));
+      if (forced) throw forced;
+      return (real.readlink as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
     },
   };
 });
@@ -96,6 +112,20 @@ describe("applyEdit (D-M5-13 merge table)", () => {
     expect(() => applyEdit({ a: { z: 1 } }, ["a"], JSON.parse('{"__proto__": {"p": 1}}'), "upsert")).toThrow(/is not writable/);
     expect(({} as any).p).toBeUndefined();
   });
+  it("a value nested past the depth bound REFUSES instead of blowing the stack (F3)", () => {
+    // The value walk recursed unbounded, and so do the two recursions behind it (`settingsMerge`,
+    // `JSON.stringify`). A value deep enough to survive `JSON.parse` threw RangeError, which
+    // configDomain maps to INTERNAL — so a client-supplied shape came back as an internal error instead
+    // of a validation refusal. Depth is the client's to choose, so the refusal has to be ours.
+    let deepArr: unknown = 1; for (let i = 0; i < 10_000; i++) deepArr = [deepArr];
+    expect(() => applyEdit({}, ["a"], deepArr, "replace")).toThrow(ConfigError);
+    expect(() => applyEdit({}, ["a"], deepArr, "replace")).toThrow(/nests deeper/);
+    let deepObj: unknown = 1; for (let i = 0; i < 10_000; i++) deepObj = { n: deepObj };
+    expect(() => applyEdit({ a: {} }, ["a"], deepObj, "upsert")).toThrow(ConfigError);
+    // ...and the bound sits far above any shape a settings file actually has.
+    let ordinary: unknown = 1; for (let i = 0; i < 60; i++) ordinary = { n: ordinary };
+    expect(() => applyEdit({}, ["a"], ordinary, "replace")).not.toThrow();
+  });
   it("segment lookup is OWN-property: an inherited name is an absent parent, not a refusal (review M2)", () => {
     // A raw `node[seg]` here would find `Object.prototype.toString` — a function, so "not an object" —
     // and refuse a keyPath the opaque-segment contract says is perfectly ordinary. Own-property access
@@ -151,7 +181,7 @@ describe("token + doc IO", () => {
     // file in, and a settings file rewritten as one long line is a diff nobody can read (review M3).
     expect(readFileSync(p, "utf8")).toBe('{\n  "model": "opus"\n}\n');
   });
-  it("writeTargetDoc preserves an existing target's MODE; a new file keeps the process default (review I1)", async () => {
+  it("writeTargetDoc preserves an existing target's MODE; a new file is created 0600 (review I1 + F1)", async () => {
     // tmp+rename installs the TMP file's mode, so a settings file deliberately kept at 0600 — they hold
     // `env` values and `apiKeyHelper` paths — came back 0644 after one write through this API.
     const dir = mkTemp("m5w-");
@@ -159,9 +189,37 @@ describe("token + doc IO", () => {
     writeFileSync(p, "{}\n"); chmodSync(p, 0o600); // chmod separately: writeFileSync's mode is umask-masked
     await writeTargetDoc(p, { model: "opus" });
     expect((statSync(p).mode & 0o777).toString(8)).toBe("600");
-    const fresh = join(dir, "fresh.json"); const ref = join(dir, "ref.json");
-    await writeTargetDoc(fresh, { a: 1 }); writeFileSync(ref, "x"); // same umask, so the same mode
-    expect(statSync(fresh).mode & 0o777).toBe(statSync(ref).mode & 0o777);
+    // A target that does not exist has no mode to carry over, so what the rename installs is the tmp's
+    // own restrictive mode (F1) — narrower than the umask default it used to inherit, deliberately: the
+    // first bytes ever written to a settings file are the same class of secret as every later write.
+    const fresh = join(dir, "fresh.json");
+    await writeTargetDoc(fresh, { a: 1 });
+    expect((statSync(fresh).mode & 0o777).toString(8)).toBe("600");
+  });
+  it("the TMP file is never observable at a wider mode than the destination (F1)", async () => {
+    // The exposure is real and a directory poller does catch it — a 0600 settings file's tmp seen at 644
+    // holding the same bytes — but whether the poll lands inside the window is the scheduler's call. The
+    // fs boundary gives the same instant deterministically: the hook runs after the tmp's own `writeFile`
+    // resolves and before the `chmod` that used to be the only thing narrowing it. A row that checked
+    // only the FINAL file's mode is what let this through, so this one never looks at the final file.
+    const dir = mkTemp("m5w-");
+    const p = join(dir, "settings.json");
+    writeFileSync(p, '{"env":{"SECRET":"shhh"}}\n'); chmodSync(p, 0o600);
+    const seen: number[] = [];
+    fsHook.afterWriteFile = (path) => { if (path.includes(".tmp-")) seen.push(statSync(path).mode & 0o777); };
+    try { await writeTargetDoc(p, { env: { SECRET: "shhh-rotated" } }); } finally { fsHook.afterWriteFile = null; }
+    expect(seen).toHaveLength(1); // the tmp really was written and really was sampled
+    expect((seen[0] & ~0o600 & 0o777).toString(8)).toBe("0"); // not one bit the destination does not grant
+  });
+  it("a failure between the write and the rename leaves NO tmp file behind (F1)", async () => {
+    // A DIRECTORY at the settings path: `stat` answers, the tmp is written, and the rename fails EISDIR.
+    // Nothing removed it, so a failed rename — or a crash in the same gap — parked a copy of the private
+    // bytes next to the file indefinitely, at whatever mode the tmp happened to have.
+    const dir = mkTemp("m5w-");
+    const p = join(dir, "settings.json");
+    mkdirSync(p);
+    await expect(writeTargetDoc(p, { env: { SECRET: "shhh" } })).rejects.toThrow();
+    expect(readdirSync(dir).filter((n) => n.includes(".tmp-"))).toEqual([]);
   });
   it("a symlinked target resolves: the write lands in the real file, the link survives", async () => {
     const dir = mkTemp("m5w-");
@@ -192,6 +250,23 @@ describe("token + doc IO", () => {
     expect(JSON.parse(readFileSync(real, "utf8"))).toEqual({ model: "opus" });
     // A path that is simply not there is still the literal path — resolution must not invent a target.
     expect(await resolveRealTarget(join(dir, "nope.json"))).toBe(join(dir, "nope.json"));
+  });
+  it("a readlink failure that is NOT a vanished link refuses — it never answers with the link (F2)", async () => {
+    // `lstat` says symlink and `readlink` then fails. Swallowing that returned the LINK's own path, and
+    // writeTargetDoc's rename replaced the link with a regular file — I3's detachment exactly, re-entered
+    // through the error path. We know a link is there and cannot resolve it, so writing would destroy it.
+    const dir = mkTemp("m5w-");
+    const link = join(dir, "link.json");
+    symlinkSync(join(dir, "nested", "real.json"), link); // dangling, so the walk (not realpath) answers
+    fsHook.readlink = (path) => (path === link ? Object.assign(new Error("EACCES: permission denied, readlink"), { code: "EACCES" }) : null);
+    try {
+      await expect(resolveRealTarget(link)).rejects.toMatchObject({ code: "ConfigValidationError" });
+    } finally { fsHook.readlink = null; }
+    expect(lstatSync(link).isSymbolicLink()).toBe(true); // refused before anything could write over it
+    // The benign half stays benign: the link VANISHED between the lstat and the readlink, so there is
+    // nothing left to detach and the literal path is still the right answer.
+    fsHook.readlink = (path) => (path === link ? Object.assign(new Error("ENOENT: no such file or directory, readlink"), { code: "ENOENT" }) : null);
+    try { expect(await resolveRealTarget(link)).toBe(link); } finally { fsHook.readlink = null; }
   });
   it("a symlink LOOP refuses instead of walking forever", async () => {
     const dir = mkTemp("m5w-");
