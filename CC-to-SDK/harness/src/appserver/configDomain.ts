@@ -1,12 +1,12 @@
 // src/appserver/configDomain.ts — config/read here; the writes land in Task 4.
 import { realpath, stat } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { homedir, platform } from "node:os";
 import { ERR } from "./rpc.js";
 import type { Handler } from "./server.js";
 import { layerPaths, readLayers, effectiveView } from "./configLayers.js";
 import type { ConfigLayer } from "./configLayers.js";
+import { ConfigError, versionToken } from "./configWrite.js";
 import { configReadParams } from "./schema/config.js";
 
 /** win32: null — the spec declares Windows managed paths out of this file-backed view, and a Linux
@@ -20,11 +20,6 @@ export function defaultManagedPath(platformName: string): string | null {
   return "/etc/claude-code/managed-settings.json";
 }
 export const DEFAULT_MANAGED_PATH: string | null = defaultManagedPath(platform());
-
-// Task 3 moves this class to configWrite.ts and re-imports it here — the write primitives throw it too.
-export class ConfigError extends Error {
-  constructor(public code: "ConfigVersionConflict" | "ConfigValidationError", message: string) { super(message); }
-}
 
 export async function resolveConfigCwd(cwd: string, deps: { realpath: (p: string) => Promise<string> } = { realpath }): Promise<string> {
   if (!isAbsolute(cwd)) throw new ConfigError("ConfigValidationError", "cwd must be an absolute path");
@@ -46,12 +41,13 @@ export async function resolveConfigCwd(cwd: string, deps: { realpath: (p: string
 // with a `disabledReason` and no `raw`) is a DIFFERENT state, and collapsing the two destroys it at the
 // one point it exists: a write-only settings file (mode 0200 is legal — write permission is independent
 // of read permission) would read as "absent", and a CAS built on this same token would then take
-// `expectedVersion: "absent"` as "create it" and overwrite bytes nobody ever read. Task 3 moves this to
-// configWrite.ts's `versionToken`, which inherits all THREE cases — "absent" still means no such file.
+// `expectedVersion: "absent"` as "create it" and overwrite bytes nobody ever read. The hash half is
+// configWrite.ts's `versionToken` — a pure bytes→token function with TWO cases. The third token is not a
+// property of any bytes but of a LAYER, so it is minted here, where layer state is what we hold.
 const token = (layer: ConfigLayer | undefined): string =>
   layer === undefined ? "absent"
     : layer.raw === undefined ? "unreadable"
-      : createHash("sha256").update(layer.raw).digest("hex");
+      : versionToken(layer.raw);
 
 export const configRead: Handler = async (srv, ctx, id, params) => {
   const parsed = configReadParams.safeParse(params);
