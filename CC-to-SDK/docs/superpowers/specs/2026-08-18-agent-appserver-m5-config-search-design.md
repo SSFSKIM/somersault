@@ -490,9 +490,32 @@ flips the `full-potential.md` rows and ships nothing.
   the effective value is the *last* match. With `project` and `local` both defining a key, a user-target
   write replied `overridingLayer: "project"` while the same server's `config/read` reported `local` — a
   client told which file to edit would edit the wrong one and still be masked. The field is named
-  `effectiveValue`; it now holds one. Also narrowed here: the array carve-out (higher-layer arrays are
+  `effectiveValue`; **this entry claimed it now held one, and a second review showed that was still
+  false for object-valued leaves — see D-M5-13b, which supersedes the claim.** Also narrowed here: the array carve-out (higher-layer arrays are
   exempt because arrays merge by contribution) applies only when **both** sides are arrays — a scalar
   written under a higher-layer array was reported `ok` while having no effect at all.
+- **D-M5-13b (Task 4, second re-review, rev 4) — masking is decided leaf-wise, from the read side's own
+  attribution.** D-M5-13a fixed the masking scan to name the *effective* layer and asserted the problem
+  closed. It was not. The verdict was still computed at the written `keyPath` while the merge operates
+  leaf-wise beneath it, so an object write — the ordinary shape of `env`, `hooks`, `permissions` — was
+  reported as fully masked when it had actually landed. Measured: project holds `{"env":{"B":"2"}}`, a
+  client writes `env:{"A":"1"}` at the user layer, and the reply says `okOverridden` /
+  `effectiveValue: {"B":"2"}` while the same server's `config/read` returns `{"A":"1","B":"2"}` and
+  attributes `env.A` to `user`. The client was told its write did nothing, and shown a value its own
+  server contradicted. Two waves had already touched this code without the divergence surfacing, because
+  every masking assertion hard-coded an expected string instead of comparing the two methods.
+  **The rule, chosen so the two methods cannot disagree by construction:** an edit is masked at a leaf
+  exactly when the read side does not attribute that leaf to the layer written; the edit is
+  `okOverridden` only when *no* leaf it introduces is attributed to that layer. `effectiveValue` is read
+  out of `effectiveView(layers).config` — the very function `config/read` uses — never out of a single
+  layer's own value. `overridingLayer` is the highest-precedence layer among the masked leaves' origins.
+  This subsumes the both-sides-arrays carve-out of D-M5-13a: an array the target contributed to is in
+  force by the rule itself, so the special case is deleted rather than kept alongside.
+  Rejected: patching `top.value` to the merged value while keeping a path-level verdict — it would fix
+  the number and keep the lie, since a partially-landed write is not overridden; and declaring
+  object-over-object simply "never masked", which is wrong in the case where every written sub-key is
+  also defined above. The lesson recorded with it: **when two methods must agree, assert the agreement,
+  not a transcript of one side.**
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
