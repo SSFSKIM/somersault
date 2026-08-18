@@ -516,6 +516,36 @@ flips the `full-potential.md` rows and ships nothing.
   object-over-object simply "never masked", which is wrong in the case where every written sub-key is
   also defined above. The lesson recorded with it: **when two methods must agree, assert the agreement,
   not a transcript of one side.**
+- **D-M5-13c (Task 4, fourth re-review, rev 4) — the verdict is ONE lookup; the search survives only as
+  naming.** D-M5-13b's rule was right and stayed right through four fix waves. What kept breaking was
+  that the implementation computed a *proxy* for it: `originAt` asked "is there an `origins` key at,
+  above, or strictly below this leaf?" and the caller read *not found* as **nobody outranks me**, while
+  the rule says an unattributed leaf is **masked**. The two coincide in most states and diverge in two
+  reachable classes, quantified by sweep — 666 disagreements in 10 800 two-layer states and 298 in 1 728
+  three-layer states, every one a dead write or dead delete reported `ok`. Class 1: a higher layer holds
+  an object that contributes no leaves (built only from empty objects), so nothing exists at, above, or
+  below to find. Class 2: an ancestor is flattened at one layer and rebuilt at a higher one, whose leaves
+  are *siblings* of the written leaf rather than descendants — in ordinary vocabulary, project settings
+  hold `{"statusLine": null}`, local settings hold `{"statusLine":{"type":"command"}}`, and a user write
+  of `["statusLine","command"]` is reported in force while the read side shows it nowhere.
+  **Resolution: state the rule as a single lookup and let nothing else decide.** A non-delete leaf is in
+  force exactly when `origins[leaf.join(".")]` is the target (or, for an array leaf, includes it);
+  anything else, including no entry at all, is masked. A delete is in force when the path does not
+  resolve in the merged config, or resolves below the target — the "in force by absence" principle kept,
+  but stated as absence rather than as "no origins entry", which is the conflation that swallowed both
+  classes. `originAt`'s climb and descendant scan are demoted to **naming** the overriding layer, with a
+  fallback to the highest layer above the target that defines the path. Naming cannot cause a
+  disagreement; only the verdict can, and the verdict now reads exactly one thing.
+  Rejected: a fifth patch for the two new classes — four waves had already shown that patching states
+  leaves the next state unpatched, because the defect was never the states, it was the proxy.
+  **Residual, deliberately not closed here:** `config/read` cannot say which layer contributed an *empty
+  object*, because `mergeTracked` records no `origins` entry for an object node — the root of class 1.
+  This was raised as a Minor against Task 1 ("an empty object value gets no origin") and deferred; it
+  resurfaced two tasks later as the root of a wire-visible High. The verdict is correct without closing
+  it (an unattributed leaf is masked, which is the right answer), so only the *name* needs the fallback.
+  Closing it in `configLayers.ts` remains the deeper fix and is carried to final-review triage. **The
+  lesson recorded with it: a deferred Minor in an attribution layer is a latent defect in every consumer
+  that reasons from it.**
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
