@@ -48,8 +48,10 @@ export async function readLayers(
   return out;
 }
 
-/** lodash `uniq` semantics: SameValueZero on primitives; object/array entries are identity-compared,
- *  and two entries fresh from JSON.parse are never identical, so they all survive. */
+/** lodash `uniq` semantics for the values that reach us: primitives dedupe by SameValueZero; object and
+ *  array entries are pushed unconditionally and never dedupe — not even against their own reference.
+ *  That is a deliberate simplification of lodash (which WOULD collapse a repeated reference): entries
+ *  here come fresh from JSON.parse, so no two are ever identical and the identity check can't fire. */
 const uniqSVZ = (a: unknown[]): unknown[] => {
   const prim = new Set<unknown>(); const out: unknown[] = [];
   for (const x of a) {

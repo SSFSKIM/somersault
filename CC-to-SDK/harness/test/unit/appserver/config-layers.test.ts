@@ -41,6 +41,19 @@ describe("configLayers", () => {
     expect(origins["thing"]).toBe("local");
     expect(origins["thing.deep"]).toBeUndefined(); // user's discarded leaf is NOT falsely attributed
   });
+  it("effectiveView: an object-over-scalar replacement leaves NO stale origin AT the replaced path", () => {
+    const { config, origins } = effectiveView([
+      L("user", { a: { b: ["X"] } }),     // object subtree from user…
+      L("local", { a: "flat" }),          // …flattened to a scalar by local…
+      L("managed", { a: { b: ["Y"] } }),  // …and replaced by an object again in managed
+    ]);
+    expect(config).toEqual({ a: { b: ["Y"] } });
+    expect(origins["a.b"]).toEqual(["managed"]);
+    // local's scalar is discarded, so `a` must name no contributor. effectiveView's re-walk cannot drop
+    // this entry — its only guard is `v === undefined` and `a` now resolves to a defined OBJECT — so the
+    // origins reset inside mergeTracked is the sole thing keeping it out.
+    expect(origins["a"]).toBeUndefined();
+  });
   it("readLayers: absent omitted; BOM stripped; blank file = empty layer; unparseable = disabledReason with raw retained", async () => {
     const files: Record<string, string> = {
       "/x/user.json": "﻿" + `{"model":"opus"}`, "/x/project.json": "   \n", "/x/local.json": `{not json`,
