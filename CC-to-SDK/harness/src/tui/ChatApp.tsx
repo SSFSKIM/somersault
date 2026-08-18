@@ -341,11 +341,23 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // next frame paints over the user's shell scrollback. Same defect and same seam as the composer's ctrl+g
   // below (`EditorIO.around`) — wired HERE because this is where `aroundSubprocess` arrives and where useChat's
   // `deps` are assembled; `chatMain` builds no deps object of its own.
-  //   AN INJECTED `openEditor` STILL WINS, so every test that fakes the opener is untouched — and without a
-  // guard the deps object is handed on exactly as it came, so an embedder sees no new field.
-  const chatDeps = useMemo(() => (aroundChild && !deps?.openEditor
-    ? { ...deps, openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) }
-    : deps), [deps, aroundChild]);
+  //   AN INJECTED `openEditor` STILL WINS, so every test that fakes the opener is untouched.
+  // TOOL-STREAM T5 — AND THE RENDERER IDENTITY RIDES THE SAME SEAM. The fold policy needs to know which screen
+  // it is drawing for (a fullscreen transcript collapses non-read shell calls and drops the `(ctrl+o to expand)`
+  // chip), and this is where useChat's `deps` are assembled, so the answer is handed over here.
+  //   IT IS *THIS FILE'S* `fullscreen`, NOT `hookOpts.rendererChoice`, and that is deliberate rather than an
+  // oversight of the channel useChat already has: `rendererChoice` is assembled once at boot and can be absent
+  // on a mount that is painting fullscreen all the same, while the `renderer` prop this derives from is the one
+  // live value `/tui` moves and the one the fullscreen tree at the bottom of this file is mounted on. So
+  // `rendererChoice` answers "what did we boot as" (it is `/status`'s source) and this answers "what is on
+  // screen now", which is the only one a row may fold against. Reads through `fullscreenRef` so the function
+  // stays stable across a flip while the answer does not.
+  const isFullscreen = useCallback(() => fullscreenRef.current, []);
+  const chatDeps = useMemo(() => ({
+    ...deps,
+    ...(deps?.isFullscreen ? {} : { isFullscreen }),
+    ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
+  }), [deps, aroundChild, isFullscreen]);
   const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread

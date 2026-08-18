@@ -1078,3 +1078,131 @@ describe("F3 final review: blank lines survive a Write preview", () => {
     expect(painted.slice(start, start + 3).map((line) => line.replace(TOOL_RESULT_GUTTER, "").trim())).toEqual(["a", "", "b"]);
   });
 });
+
+// ── Tool-stream Task 5: the fullscreen projection switch, and the blanket chip suppression ──────────────
+// Tasks 3 and 4 built the widened fold policy behind a `fullscreen` flag that NOTHING set: classification,
+// run segmentation, git-op scraping and the new header clauses were all written and all unit-tested, and
+// none of them could be reached from a projection. This is the switch, so the cells below are the first
+// that see the widened policy on a row a reader would actually get.
+//   THE FLAG AND THE CHIP ARE TWO SEPARATE CHANNELS, and the PAIR is what `useChat`'s `projectionContext()`
+// hands every projection: `fullscreen: true` widens the POLICY, and `expandHint: ""` blanks the
+// `(ctrl+o to expand)` chip. They are separate because canon's are: the fold policy takes `Ns()`
+// (2.1.234:236816) while the chip is suppressed by the `Ett` context the virtual list provides
+// (506706 / 549824), whose consumer `Wv` returns null outright (511132). A projection handed only the flag
+// still prints the chip — so every fullscreen case here passes both, exactly as the hook does.
+describe("Tool-stream T5: the fullscreen projection switch", () => {
+  const FS = { ...context, fullscreen: true, expandHint: "" };
+  const bash = (id: string, command: string) => call(id, "Bash", { command });
+  const raw = (items: readonly RenderItem[]) => render(<>{items.map((item) => <RenderItemView key={item.id} item={item} />)}</>).lastFrame()!;
+  const groupLines = (items: readonly RenderItem[]) => groupRows(items).filter((i) => i.kind === "line");
+
+  // THE QUIET FAILURE, and the reason this cell leads. `groupItems`' early exit asks `foldClauses` whether the
+  // run has anything to say (R3.1) — and a run of nothing but non-read shell calls has exactly ONE clause that
+  // can speak for it, the fullscreen-only shell clause. Ask that question without the flag and the answer is
+  // `[]`: not a wrong sentence, no row at all. The header being merely wrong is the loud half; this is the half
+  // that removes the run from the screen with nothing to see it by.
+  it("gives a Bash-only fullscreen run a row that SPEAKS (the suppression gate, second foldClauses call site)", () => {
+    const doc = built(bash("bash-1", "npm run build"), result("bash-1", "ok"), bash("bash-2", "npm test"), result("bash-2", "ok"), prose("done"));
+    const rows = groupLines(projectCompact(doc, FS));
+    expect(rows).toHaveLength(1);                                   // ← unthreaded `:743` returns [] and the run VANISHES
+    expect(lineTexts(rows)).toEqual(["  Ran 2 shell commands"]);    // …and no chip, under the blanket
+  });
+
+  // The loud half: the sentence itself. A mixed run keeps its read clause either way, so only the missing
+  // "ran 1 shell command" tail separates a threaded `:700` from an unthreaded one.
+  it("speaks the widened sentence on a mixed run (the first foldClauses call site)", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), bash("bash-1", "npm run build"), result("bash-1", "ok"), prose("done"));
+    expect(lineTexts(groupLines(projectCompact(doc, FS)))).toEqual(["  Read 1 file, ran 1 shell command"]);
+  });
+
+  // ── (d) THE SINGLE-CLUSTER INVARIANT ──────────────────────────────────────────────────────────────────
+  // `trailingRunCut` asks the same policy question a third time, and about the LAST atom only: is this run still
+  // growable? Under fullscreen a settled non-read Bash is — the next shell call joins it and changes its counts,
+  // its sentence and its membership-derived id. Asked classically the answer is "settled", and Static, which is
+  // APPEND-ONLY, takes the row. The damage is one frame later: the run grows, the id changes with `memberIds`,
+  // and the new row is appended BESIDE the one already committed. Two rows on screen for one cluster, and the
+  // reason this is measured across two documents rather than one is that within a single frame the compact and
+  // pending streams agree with each other — they disagree with the FUTURE.
+  it("withholds a still-growable fullscreen run from Static, so one cluster can never be published twice", () => {
+    const base = [call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), bash("bash-1", "npm run build"), result("bash-1", "ok")];
+    const grown = [...base, bash("bash-2", "npm test"), result("bash-2", "ok")];
+    expect(groupLines(projectCompact(built(...base), FS))).toEqual([]);      // ← frame N: Static may not have it yet
+    expect(groupLines(projectCompact(built(...grown), FS))).toEqual([]);     // ← frame N+1: nor now, under a NEW id
+    // …and "withheld from Static" never means invisible: the dynamic region carries it, once, at both frames.
+    expect(lineTexts(groupLines(projectPending(built(...base), FS)))).toEqual(["  Read 1 file, ran 1 shell command"]);
+    expect(lineTexts(groupLines(projectPending(built(...grown), FS)))).toEqual(["  Read 1 file, ran 2 shell commands"]);
+    // The breaker is what hands it over — once, under the id its final membership earns.
+    const closed = built(...grown, prose("done"));
+    expect(groupLines(projectCompact(closed, FS)).map((i) => i.id)).toEqual(["group:read-1,bash-1,bash-2:row"]);
+    expect(projectPending(closed, FS)).toEqual([]);
+    // The other half of the same invariant, at ONE frame: a run whose last member is still OPEN is drawn by
+    // exactly one of the two streams.
+    const running = built(...base, bash("bash-2", "npm test"));
+    expect([...groupLines(projectCompact(running, FS)), ...groupLines(projectPending(running, FS))]).toHaveLength(1);
+    expect(lineTexts(groupLines(projectPending(running, FS)))).toEqual(["⏺ Reading 1 file, running 2 shell commands…"]);
+  });
+
+  // ── (e) MEMBERSHIP, END TO END ────────────────────────────────────────────────────────────────────────
+  // `foldAtoms`' gate is the only thing standing between a suppressed name and the neutral-atom diversion the
+  // classic renderer needs. Task 3's unit cell for it never ran `foldAtoms`, so it could not fail; this one
+  // goes through the real pipeline and reads the answer off the group id, which IS `memberIds`.
+  it("keeps a ToolSearch inside the fullscreen run's memberIds, through the real foldAtoms pipeline", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("ts-1", "ToolSearch", { query: "select:Read" }), result("ts-1", "{}"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"), prose("done"));
+    expect(groupLines(projectCompact(doc, FS)).map((i) => i.id)).toEqual(["group:read-1,ts-1,read-2:row"]);
+    expect(lineTexts(groupLines(projectCompact(doc, FS)))).toEqual(["  Read 2 files"]);   // absorbed silently: no counter
+    // …and the classic control, which proves the gate is a GATE and not a rename: there the call is diverted to
+    // a neutral atom and never becomes a member at all.
+    expect(groupLines(projectCompact(doc, context)).map((i) => i.id)).toEqual(["group:read-1,read-2:row"]);
+  });
+
+  // ── (c) THE BLANKET'S OTHER TWO CONSUMERS ─────────────────────────────────────────────────────────────
+  // Grounding §7 names three consumers of canon's `Ett` context, and ours are the same three reached through
+  // one `expandHint: ""`: the group row above, the agent-progress `… +N tool uses` marker, and the batch
+  // header. Both already honored `""` before this task; they are pinned HERE because fullscreen now depends
+  // on that behavior, and a regression in either would show up as a chip advertising a chord in a renderer
+  // whose whole point is that the chord's affordance has been replaced.
+  it("blanks the chip on the agent-progress marker and the agent-batch header, not just the group row", () => {
+    const agent = { type: "assistant", parent_tool_use_id: null, message: { id: "m-ag", content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
+    const kid = (i: number) => [
+      { type: "assistant", parent_tool_use_id: "agent-1", message: { id: `mc-${i}`, content: [{ type: "tool_use", id: `c-${i}`, name: "Read", input: { file_path: `/work/f${i}.ts` } }] } } as Record<string, unknown>,
+      { type: "user", uuid: `uc-${i}`, parent_tool_use_id: "agent-1", message: { content: [{ type: "tool_result", tool_use_id: `c-${i}`, content: "one", is_error: false }] } } as Record<string, unknown>,
+    ];
+    const progress = built(agent, ...[0, 1, 2, 3, 4].flatMap(kid));
+    expect(lineTexts(projectPending(progress, FS)).at(-1)).toBe("  … +2 tool uses");
+    expect(lineTexts(projectPending(progress, context)).at(-1)).toBe("  … +2 tool uses (ctrl+o to expand)");   // control
+    const batch = built({ type: "assistant", parent_tool_use_id: null, message: { id: "m-pair", content: [
+      { type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } },
+      { type: "tool_use", id: "ag-2", name: "Agent", input: { description: "write the tests", prompt: "p" } }] } } as Record<string, unknown>);
+    expect(lineTexts(projectPending(batch, FS))[0]).toBe("⏺ Running 2 agents…");
+    expect(lineTexts(projectPending(batch, context))[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");        // control
+  });
+
+  // The pager takes the blanket with it, and that is CANON-FAITHFUL rather than a leak: canon provides `Ett`
+  // around the virtual list and renders its ctrl+o overlay inside it (grounding §7), so the fullscreen expanded
+  // view has no chips either. MEASURED, because the reach is much narrower than a static read suggests: of the
+  // rows that consume `expandHint`, the agent `Backgrounded agent (…)` hint and the agent `Done` hint are
+  // compact-only (`agentTerminalItems`' own `compact` gate), the `… +N tool uses` marker and the batch header
+  // belong to a RUNNING unit and so live in the pending region alone, and the pager's own `… +N lines` marker
+  // carries `(ctrl+e to show all)` — a different chord, untouched by this. What is left, and what is pinned
+  // here, is the truncated-API-error expand offer (`species.ts`'s `JG` branch), which does reach the pager.
+  it("carries the blank chip into the ctrl+o pager as well — on the one row that reaches it", () => {
+    const doc = built({ type: "assistant", parent_tool_use_id: null, message: { id: "m-err", content: [{ type: "text", text: `API Error: ${"x".repeat(1200)}` }] } } as Record<string, unknown>);
+    const pager = (o: Record<string, unknown>) => lineTexts(projectDetail(doc, { ...o, projection: "detail-collapsed" } as Parameters<typeof projectDetail>[1]));
+    expect(pager(context).at(-1)).toBe("  (ctrl+o to expand)");
+    expect(pager(FS).at(-1)).not.toContain("to expand");
+  });
+
+  // ── (b) THE CLASSIC FREEZE ────────────────────────────────────────────────────────────────────────────
+  // The whole wave rests on this: a projection that passes no flag renders the bytes it rendered before the
+  // flag existed. Both docs above, on the classic path, down to the SGR run of the group row.
+  it("leaves the classic renderer byte-identical: no flag, no widening, chip intact", () => {
+    const mixed = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), bash("bash-1", "npm run build"), result("bash-1", "ok"), prose("done"));
+    expect(lineTexts(projectCompact(mixed, context))).toEqual(["  Read 1 file (ctrl+o to expand)", "⏺ Bash(npm run build)", "done"]);
+    expect(raw(groupLines(projectCompact(mixed, context)))).toContain("\x1b[38;2;153;153;153m\x1b[2mRead \x1b[1m1\x1b[22m file");
+    const bashOnly = built(bash("bash-1", "npm run build"), result("bash-1", "ok"), bash("bash-2", "npm test"), result("bash-2", "ok"), prose("done"));
+    expect(groupLines(projectCompact(bashOnly, context))).toEqual([]);            // classic never folds a non-read Bash
+    expect(lineTexts(projectCompact(bashOnly, context))).toEqual(["⏺ Bash(npm run build)", "⏺ Bash(npm test)", "done"]);
+  });
+});

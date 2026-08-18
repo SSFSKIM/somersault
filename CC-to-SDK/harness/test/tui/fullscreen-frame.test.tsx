@@ -207,6 +207,41 @@ describe("ChatApp's fullscreen branch", () => {
     expect(classicResync).toHaveBeenCalledTimes(1);
     c.unmount();
   });
+
+  // ── TOOL-STREAM T5 — THE RENDERER IDENTITY REACHES THE PROJECTION ─────────────────────────────────────
+  // The fold policy's `fullscreen` input is sourced from THIS component's own `renderer?.mode` derivation and
+  // handed to `useChat` as a dep, so this is the only cell that exercises the whole channel: prop → derivation
+  // → dep → `projectionContext()` → the widened fold. What lands on the screen is a run of non-read Bash calls
+  // that the classic renderer leaves as two separate `Bash(...)` rows, and no `(ctrl+o to expand)` chip.
+  const shellRun = [
+    { kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", parent_tool_use_id: null, message: { id: "m-b1", content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "npm run build" } }] } } },
+    { kind: "sdk" as const, source: "disk" as const, message: { type: "user", uuid: "u-b1", message: { content: [{ type: "tool_result", tool_use_id: "b1", content: "ok", is_error: false }] } } },
+    { kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", parent_tool_use_id: null, message: { id: "m-b2", content: [{ type: "tool_use", id: "b2", name: "Bash", input: { command: "npm test" } }] } } },
+    { kind: "sdk" as const, source: "disk" as const, message: { type: "user", uuid: "u-b2", message: { content: [{ type: "tool_result", tool_use_id: "b2", content: "ok", is_error: false }] } } },
+    { kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", parent_tool_use_id: null, message: { id: "m-done", content: [{ type: "text", text: "done" }] } } },
+  ];
+
+  // The fold row is the one row in this frame whose count is BOLD inside an otherwise dim run, so its bytes
+  // interleave `\x1b[1m…\x1b[22m` in the middle of the sentence — every assertion here reads the plain text.
+  const plainFrame = (f: () => string | undefined) => (f() ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+
+  it("runs the widened fold policy, and prints no expand chip, because the tree is painting fullscreen", async () => {
+    const r = mount({ renderer: FULLSCREEN, initialEntries: shellRun });
+    await waitFor(() => frame(r.lastFrame).includes(PROMPT));
+    await tick();
+    expect(plainFrame(r.lastFrame)).toContain("Ran 2 shell commands");
+    expect(plainFrame(r.lastFrame)).not.toContain("to expand");
+    expect(plainFrame(r.lastFrame)).not.toContain("Bash(npm run build)");
+    r.unmount();
+
+    // …and the classic mount of the same transcript, which is what makes the case above about the RENDERER.
+    const c = mount({ initialEntries: shellRun });
+    await waitFor(() => frame(c.lastFrame).includes(PROMPT));
+    await tick();
+    expect(plainFrame(c.lastFrame)).toContain("Bash(npm run build)");
+    expect(plainFrame(c.lastFrame)).not.toContain("shell command");
+    c.unmount();
+  });
 });
 
 // `is-in-ci` is read by `ink.js` at import time and takes a different `onRender` branch there, so the tall

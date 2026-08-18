@@ -3356,3 +3356,36 @@ describe("/status takes its own context measurement (W2 T6 fix, D-W11)", () => {
     await waitFor(() => flat(lastFrame).includes("context 25% used"));  // was: no context row at all pre-turn
   });
 });
+
+// ── Tool-stream T5: the renderer identity reaches the projection ────────────────────────────────────────
+// `projectionContext()` is the ONE place the two halves of the fullscreen switch are set, and it sets them
+// TOGETHER: the widened fold policy (`fullscreen`) and the blanked `(ctrl+o to expand)` chip (`expandHint: ""`).
+// Nothing else in the tree pairs them, so nothing else can catch them drifting apart — the projection-level
+// cells in `toolRenderer.test.tsx` are handed the pair already assembled and would not notice its absence.
+describe("Tool-stream T5: useChat pairs the fullscreen flag with the blank expand hint", () => {
+  const toolCall = (id: string, name: string, input: unknown) =>
+    ({ kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", parent_tool_use_id: null, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] } } });
+  const toolResult = (id: string) =>
+    ({ kind: "sdk" as const, source: "disk" as const, message: { type: "user", uuid: `u-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok", is_error: false }] } } });
+  const assistantText = (t: string) =>
+    ({ kind: "sdk" as const, source: "disk" as const, message: { type: "assistant", parent_tool_use_id: null, message: { id: `m-${t}`, content: [{ type: "text", text: t }] } } });
+  const entries = [toolCall("bash-1", "Bash", { command: "npm run build" }), toolResult("bash-1"),
+    toolCall("bash-2", "Bash", { command: "npm test" }), toolResult("bash-2"), assistantText("done")];
+  function FoldHost({ fullscreen }: { fullscreen: boolean }) {
+    const c = useChat(() => fakeRemote(), { initialEntries: entries }, { isFullscreen: () => fullscreen });
+    return <Text>{c.state.finalizedItems.flatMap(itemLines).join("|")}</Text>;
+  }
+
+  it("folds a non-read shell run into one clause-bearing row and prints no chip when the renderer is fullscreen", () => {
+    const f = frame(render(<FoldHost fullscreen />).lastFrame);
+    expect(f).toContain("Ran 2 shell commands");
+    expect(f).not.toContain("to expand");
+    expect(f).not.toContain("Bash(npm run build)");     // the per-call rows are what the fold replaces
+  });
+
+  it("leaves the classic renderer on its frozen path: per-call Bash rows, chip intact, no shell clause", () => {
+    const f = frame(render(<FoldHost fullscreen={false} />).lastFrame);
+    expect(f).toContain("Bash(npm run build)");
+    expect(f).not.toContain("shell command");
+  });
+});

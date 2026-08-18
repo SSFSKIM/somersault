@@ -213,6 +213,16 @@ export function useChat(
      *  turn-end trigger, the eligibility chain and the retire/respawn lifecycle without ever spawning an
      *  engine — the real factory (default) opens a warm Haiku-class session on first use. */
     createSuggester?: (o: { cwd: string }) => Suggester;
+    /** TOOL-STREAM TASK 5: which renderer this hook's projections are painting into — a FUNCTION, sampled at
+     *  projection time, because `/tui` moves the answer under a live conversation. Supplied by `ChatApp` from
+     *  its own `renderer?.mode === "fullscreen"` derivation and absent everywhere else (embedders, the hook's
+     *  own tests), where absent means classic and the whole fold policy stays frozen at what it shipped.
+     *    DELIBERATELY NOT `opts.rendererChoice`, which this hook also receives. That field is assembled once
+     *  in `runChatClient` and can be absent on a mount that is nonetheless painting fullscreen, while the
+     *  ChatApp prop it comes from is the live value the fullscreen tree itself is mounted on. Two channels for
+     *  one fact reads like an oversight, so: `rendererChoice` answers "/status, what did we boot as", this
+     *  answers "what is on screen right now", and only the second may decide how a row folds. */
+    isFullscreen?: () => boolean;
     /** WAVE C TASK 10: the statusLine driver's own seams — a fake runner (so a test never forks a shell) and
      *  the two timers its 300 ms debounce and its `refreshInterval` poll run on. Supplying `runStatusLine`
      *  REPLACES the wrapper below that carries cwd/env/COLUMNS/LINES, which is the point: the wrapper is the
@@ -246,7 +256,25 @@ export function useChat(
   // the projection at projection time, not at the time some effect was last re-subscribed.
   const bashHintRef = useRef(bashHint); bashHintRef.current = bashHint;
   const expandHintRef = useRef(expandHint); expandHintRef.current = expandHint;
-  const projectionContext = (): ProjectionContext => ({ cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: expandHintRef.current });
+  // Same ref discipline, same reason (the projection is driven by callbacks that outlive the render that made
+  // them) — and one more: a `/tui` flip moves this answer on a LIVE session without unmounting anything, so a
+  // reader captured at mount would keep folding for the renderer the session started on.
+  const isFullscreenFn = deps.isFullscreen ?? (() => false);
+  const isFullscreenRef = useRef(isFullscreenFn); isFullscreenRef.current = isFullscreenFn;
+  /** TOOL-STREAM TASK 5 — WHERE THE TWO HALVES OF THE FULLSCREEN SWITCH ARE SET, and the only place they are
+   *  set together. `fullscreen` widens the FOLD POLICY (Task 3/4's classification, segmentation and clauses);
+   *  `expandHint: ""` is the BLANKET CHIP SUPPRESSION, and it is one ternary because the three-state `""`
+   *  contract in `keys/hints.ts` already does the rest — every consumer of the hint (the group row, the
+   *  agent-progress `… +N tool uses` marker, the agent-batch header, the `Backgrounded agent` hint, the
+   *  truncated-API-error offer) drops its clause on `""` rather than printing a dead chord. That is canon's
+   *  own shape: the chip is killed once, in the `Ett` context the virtual list provides (2.1.234:506706,
+   *  549824), and its consumer `Wv` returns null (511132) — not switched off at each site.
+   *    IT REACHES `detailItems` TOO, so the ctrl+o pager loses the same clauses in fullscreen. Canon-faithful,
+   *  not a leak: `Ett` wraps the overlay as well (grounding §7). */
+  const projectionContext = (): ProjectionContext => {
+    const fullscreen = isFullscreenRef.current();
+    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen };
+  };
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.

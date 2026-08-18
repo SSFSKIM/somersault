@@ -20,7 +20,7 @@ import { displayPath } from "./paths.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type GroupCounts } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
 import { foldHint, foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
@@ -85,7 +85,23 @@ export type { ResultProjection };
  *  `ctrl+o` fallback stands (which is what every caller and test that predates this task keeps getting,
  *  unchanged); a STRING = the user's resolved chord; EMPTY = `app:toggleTranscript` is unbound, and then every
  *  site drops its clause rather than advertising a dead chord. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; }
+/** `fullscreen` (tool-stream Task 5) is WHICH RENDERER IS PAINTING, and it is the fold policy's only input from
+ *  outside the document — canon's own `Ns()` predicate, consulted inside rendering policy rather than at boot
+ *  (2.1.234:107162). Absent/false is the classic renderer, frozen byte-identically at what it shipped; true opens
+ *  Task 3/4's widenings (non-read shell calls collapse, TaskCreate/TaskUpdate/ToolSearch are absorbed silently,
+ *  and the git + shell clauses join the sentence). Threaded as data rather than read from an environment for the
+ *  same reason `bashHint`/`expandHint` are: a row must not depend on where it was rendered.
+ *    IT DOES NOT BLANK THE `(ctrl+o to expand)` CHIP. That is `expandHint: ""`, a SEPARATE channel — canon's is
+ *  separate too (the chip dies in the `Ett` context the virtual list provides, 506706/549824, whose consumer `Wv`
+ *  returns null outright at 511132, while the policy takes `Ns()`). `useChat.projectionContext()` is where the
+ *  two are set together; a projection handed only this flag still prints the chip, and that is correct. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; }
+/** THE ONE WAY the renderer identity reaches the pure fold policy, and the reason it is a named helper rather
+ *  than an inline object literal at each of the seven call sites: "did that site get the flag?" becomes a grep
+ *  instead of a reading of seven argument lists. Task 4's review found `foldClauses` called twice with only one
+ *  site threaded, and the untouched one was the SUPPRESSION gate — a run of nothing but non-read shell calls has
+ *  no clause at all without the flag, and `groupItems`' R3.1 early exit then drops the whole row off the screen. */
+const foldPolicy = (options: Pick<ProjectionOptions, "fullscreen">): FoldPolicy => ({ fullscreen: options.fullscreen === true });
 
 /** Upstream's exact interruption surface — the row is a prompt, not a copy of whatever partial output arrived. */
 const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
@@ -697,7 +713,7 @@ function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionO
   const leader: Segment[] = active
     ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
     : [{ text: "  " }];
-  const run = composeFoldRun(foldClauses(counts, active), active ? "active" : "settled", { ellipsis: active });
+  const run = composeFoldRun(foldClauses(counts, active, foldPolicy(options)), active ? "active" : "settled", { ellipsis: active });
   const hint = resolveExpandHint(options.expandHint);
   const segments: Segment[] = [...leader, { text: run, preStyled: true }, ...(hint === "" ? [] : [dimmed(" "), { text: hint, dim: true, color: grey } as Segment])];
   // `run` is the ONE segment whose `text` carries SGR bytes, so the line's plain text is stripped rather
@@ -740,7 +756,11 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   const pending = anchorId === undefined ? undefined : options.pending;
   const counts = pending === undefined || anchorId === undefined ? group.counts
     : form === "published" ? pending.peek(anchorId, group.counts) : pending.latch(anchorId, group.counts);
-  if (foldClauses(counts, active).length === 0) return [];
+  // R3.1's early exit — and the SECOND `foldClauses` call site, which asks the same question the row above
+  // answers on screen: has this run anything to say? It must be asked under the same policy, because the
+  // fullscreen-only shell clause is the only thing a run of nothing but non-read Bash calls can say. Asked
+  // classically, the answer is `[]` and the run does not render wrong — it does not render at all.
+  if (foldClauses(counts, active, foldPolicy(options)).length === 0) return [];
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
   const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options) }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
@@ -941,6 +961,10 @@ const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme:
 // for the life of a `useChat` (`opts.cwd ?? process.cwd()`, never re-set — /add-dir adds ADDITIONAL dirs and
 // leaves cwd alone, and an attach builds a fresh REPL rather than re-pointing a live one), so no cached row
 // can outlive the value it was rendered against. Widening the key would only cost.
+// `fullscreen` (Task 5) is NOT a key input either, by the same rule and not by omission: what it changes is the
+// FOLD, and the fold runs strictly downstream of this cache (`foldAnchored`/`projectPending`, neither cached).
+// `buildAnchoredEntries` never reads it, so two renderers legitimately share one anchored stream — and the one
+// sentence the flag does move on a cached row, the expand chip, rides in on `expandHint`, which IS keyed.
 const knobKey = (options: ProjectionOptions): string =>
   `${options.columns}|${options.projection}|${options.verbose}|${options.platform}|${options.expandHint === undefined ? "" : `=${options.expandHint}`}`;
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
@@ -1012,8 +1036,8 @@ function projectAll(document: TranscriptDocument, options: ProjectionOptions): r
  *     the five-plus-one silent set behave uniformly instead of splitting three ways.
  *  2. Either renderer — `inert`: a call the compact projection has already PUBLISHED must not re-enter the
  *     dynamic region's fold (see `projectPending`).
- *  `fullscreen` is accepted here and defaults false; the fold projections do not set it yet (the projection
- *  switch-over is a later task in this wave), so today every caller gets the frozen classic behavior. */
+ *  `fullscreen` defaults false, which is the classic gate above; Task 5 threads `ProjectionOptions.fullscreen`
+ *  into every caller, so the flag now decides the diversion on live rows rather than only in unit tests. */
 function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMap<string, number>; inert?: (event: ToolEvent) => boolean; fullscreen?: boolean } = {}): FoldAtom[] {
   // One duration per MESSAGE, spent once. The engine emits one assistant frame per content block and all
   // of them share a single `message.id` (P82), while `LiveTurn` already sums every thinking block of that
@@ -1040,12 +1064,18 @@ function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMa
  *  on screen — it (and the neutral items it deferred, which `segmentRuns` replays straight after it) must
  *  wait for the prose or standalone tool that closes the run. Until then `projectPending` carries the row in
  *  the DYNAMIC region — active while a member is still running, settled once they all are — so "withheld from
- *  Static" never means "invisible". */
-function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: string }[]): number {
+ *  Static" never means "invisible".
+ *
+ *  IT TAKES THE POLICY, and the failure if it does not is a DOUBLE ROW rather than a wrong one. "Still growable"
+ *  is a classification question, so a fullscreen run ending in a non-read Bash is growable only when the flag is
+ *  present; asked classically that run reads as settled, Static publishes the group, and `projectPending` — which
+ *  folds the same stream under the same widened policy — draws the very same cluster again. Two rows on screen
+ *  for one run, and the second is the one that keeps moving. */
+function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: string }[], policy: FoldPolicy): number {
   let growing = false;
   for (const atom of atoms) {
     if (atom.kind === "neutral") continue;
-    growing = atom.kind === "tool" && classifyToolEvent(atom.event).collapsible;
+    growing = atom.kind === "tool" && classifyToolEvent(atom.event, policy).collapsible;
   }
   if (!growing) return items.length;
   for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === "group") return i;
@@ -1056,11 +1086,12 @@ function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: stri
  *  `passthrough` maps straight back to the entry's already-projected items — and `segmentRuns` decides which
  *  contiguous runs collapse. */
 function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions): readonly RenderItem[] {
-  const atoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs });
+  const policy = foldPolicy(options);
+  const atoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy });
   const standalone = new Map<ToolEvent, readonly RenderItem[]>(anchored.flatMap((a) => (a.event ? [[a.event, a.items] as const] : [])));
-  const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home });
+  const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home, ...policy });
   const out: RenderItem[] = [];
-  for (const item of folded.slice(0, trailingRunCut(atoms, folded))) {
+  for (const item of folded.slice(0, trailingRunCut(atoms, folded, policy))) {
     if (item.kind === "group") { out.push(...groupItems(item.group, "published", options)); continue; }
     if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
     out.push(...(standalone.get(item.event) ?? []));
@@ -1120,16 +1151,20 @@ export function projectPending(document: TranscriptDocument, options: Projection
     batchItems.set(anchor, agentBatchItems(batch, "pending", full));
   }
   anchored.sort(bySequence);
-  const fold = { cwd: options.cwd, home: options.home };
+  // The policy travels with BOTH folds below. They model the same screen from two sides — what Static already
+  // holds, and what the dynamic region owes — so a flag on one and not the other is exactly the disagreement
+  // that puts one cluster on screen twice.
+  const policy = foldPolicy(options);
+  const fold = { cwd: options.cwd, home: options.home, ...policy };
   // What Static already holds: the same fold the compact projection runs (open calls and withheld batches
   // inert there, exactly as `projectAll` omits them), minus the trailing run it withholds.
-  const settledAtoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, inert: (event) => !event.result || withheld.has(event) });
+  const settledAtoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy, inert: (event) => !event.result || withheld.has(event) });
   const settled = segmentRuns(settledAtoms, fold);
   const published = new Set<string>();
-  for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled)))
+  for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled, policy)))
     if (item.kind === "group") for (const id of item.group.memberIds) published.add(id);
   const items: RenderItem[] = [];
-  for (const item of segmentRuns(foldAtoms(anchored, { thoughtMs: options.thoughtMs, inert: (event) => published.has(event.id) }), fold)) {
+  for (const item of segmentRuns(foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy, inert: (event) => published.has(event.id) }), fold)) {
     if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full)); continue; }
     if (item.kind !== "tool") continue;
     // A withheld agent batch draws whole — its first member stands in for the unit, and one member having a
