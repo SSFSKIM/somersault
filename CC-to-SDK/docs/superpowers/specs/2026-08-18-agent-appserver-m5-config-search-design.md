@@ -428,6 +428,21 @@ flips the `full-potential.md` rows and ships nothing.
   `claude-opus-4-8` while cc-harness's `DEFAULTS.model` moved on; a package outside the routine
   gates only gets re-measured when something forces it (`441c692b36`).
 
+- **Task 1: the origins reset loop is load-bearing, and analytic reasoning said otherwise.** The
+  implementer ran an honest sabotage check — commented the `origins.delete` loop out of
+  `mergeTracked`, suite stayed 5/5 green — and concluded from it that the loop was redundant with
+  `effectiveView`'s final re-walk, because "a replacement always re-descends from an empty target."
+  That reasoning quantifies over paths *under* a replacement and misses the one *at* it. Review's
+  counterexample, run rather than argued: layers user `{a:{b:["X"]}}`, local `{a:"flat"}`, managed
+  `{a:{b:["Y"]}}` yield `origins {"a.b":["managed"]}` with the loop and
+  `{"a.b":["managed"], "a":"local"}` without it — the re-walk's only guard is `v === undefined`, and
+  after the third layer `a` resolves to a defined *object*, so it cannot drop the stale scalar-era
+  entry. The code was right; the record and the test suite were not. A sixth test now pins it, and
+  it is sabotage-proven (guard disabled → that test alone fails, 1 of 6). **The general lesson: a
+  correct implementation with an incorrect explanation outlives a bug**, because the next
+  simplification pass reads the explanation, deletes the line, and stays green. A guard is only
+  defended when disabling it turns something red.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
