@@ -140,6 +140,10 @@ Grouped by the docs' own capability themes. ~150 rows. "Evidence" cites probes
 | `getContextUsage()` 17-field breakdown | ✅ | + agent-facing `cc-context` tool |
 | `accountInfo()` / `initializationResult()` / `applyFlagSettings()` | ✅ | closeout |
 | `supportedModels/Commands/Agents` + `mcpServerStatus` | ✅ | capability methods (probes 27/29/30) |
+| `context_usage` structured `/context` twin (0.3.234: `SDKContextUsage` sibling on the synthetic assistant message) | 🔬 | probe whether the headless `/context` result carries it; if so the TUI's `/context` card and `thread/contextUsage/read` can serve it without markdown parsing |
+| init `terminal_slash_commands` (0.3.234) | 🔬 | terminal-bound command subset — exactly what a web client of the agent app-server should hide; probe presence headless, then filter `thread/capabilities/read` |
+| init `effort` (0.3.234: post-resolution effective effort) | 🔬 | would let `thread/init/read` report the applied effort without a `get_settings` round trip |
+| `queued_notifications` capability + user-msg `fromMode` (0.3.234) | 🔬 | CCR-flavored; suspect bridge-coupled — probe before filing as reachable |
 | **OpenTelemetry** (metrics/logs, per-user attribution) | ✅ | **W3.1 SHIPPED** (probe 51: ALIVE headless): typed `telemetry` config → env gates in resolveOptions + daemon-wide `DaemonOptions.telemetry`; guide + docker-compose OTLP demo. Live catalog: metrics `claude_code.{session.count,cost.usage,token.usage,active_time.total}`; events `user_prompt/api_request/assistant_response/tool_decision/tool_result/hook_registered`; attrs `session.id`+`prompt.id`(joins hooks)+user.*. **NO traces** (metrics+events only); `logUserPrompts` privacy-defaulted off |
 | Billing/limit classification (`USAGE_*`/`ORG_POLICY_LIMIT_PREFIXES`, 0.3.211) | ✅ | **Wave 1**: `limits/classify` (SDK prefixes + observed org-policy/credit families + rejected `rate_limit_event`); `Session.limitState` + daemon registry `limit` field |
 | New lifecycle msgs (0.3.211): `control_request_progress`, `model_refusal_no_fallback`, `conversation_reset` | ⚪ | absorb into daemon event stream |
