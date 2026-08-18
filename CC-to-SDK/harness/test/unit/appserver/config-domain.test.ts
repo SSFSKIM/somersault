@@ -98,25 +98,67 @@ const leafKeys = (keyPath: string[], value: unknown): string[] => {
     return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => leafKeys([...keyPath, k], v));
   return [keyPath.join(".")];
 };
+const LAYER_RANK = ["user", "project", "local", "managed"];
+/** The merged view walked by SEGMENTS, exactly as `effectiveView` builds it: arrays are leaves, so an array
+ *  on the way down is a miss. This is `config/read`'s own answer to "does this path still resolve?". */
+const valueAtRead = (cfg: any, keyPath: string[]): unknown =>
+  keyPath.reduce((n: any, s) => (n !== null && typeof n === "object" && !Array.isArray(n) && Object.prototype.hasOwnProperty.call(n, s) ? n[s] : undefined), cfg);
+/** What `config/read` says about a DELETE, which introduces no leaf and so can only be judged by absence:
+ *  in force when the path resolves to nothing, or resolves to something no layer ABOVE the target
+ *  contributes to (the client's own value is gone and something lower shows through).
+ *
+ *  `"unknown"` is the read side's declared blind spot, not a verdict: a path that still resolves while
+ *  NOTHING is attributed at or under it is an object with no leaves, and `mergeTracked` records no `origins`
+ *  entry for an object node — so the read reply cannot say who holds it, in either direction. Rows that
+ *  construct that state assert the reply themselves and say why. */
+const readVerdictForDelete = (r: any, target: string, keyPath: string[]): "inForce" | "masked" | "unknown" => {
+  if (valueAtRead(r.config, keyPath) === undefined) return "inForce";
+  const key = keyPath.join("."), under = `${key}.`, contributors: string[] = [];
+  for (const [p, o] of Object.entries(r.origins)) {
+    if (p !== key && !p.startsWith(under)) continue;
+    for (const l of (Array.isArray(o) ? o : [o]) as string[]) if (!contributors.includes(l)) contributors.push(l);
+  }
+  if (!contributors.length) return "unknown";
+  return contributors.some((l) => LAYER_RANK.indexOf(l) > LAYER_RANK.indexOf(target)) ? "masked" : "inForce";
+};
 /** The F1 contract in one assertion, and the reason it is written as a COMPARISON rather than as expected
- *  strings: the masking verdict is only meaningful as agreement with `config/read`. An edit is `ok` exactly
- *  when the read side attributes at least one of its leaves to the layer that was written, and masked
- *  exactly when it attributes none — and a masked edit's `effectiveValue` is the read side's own merged
- *  value at that keyPath, never one layer's private copy of it. Three waves of hard-coded expectations
- *  shipped the opposite verdict green, because nothing ever asked the other method what it thought. */
-const expectAgreesWithRead = (w: any, r: any, target: string, edits: Array<{ keyPath: string[]; value: unknown }>) => {
+ *  strings: the masking verdict is only meaningful as agreement with `config/read`. A value-writing edit is
+ *  `ok` exactly when the read side attributes at least one of its leaves to the layer that was written, and
+ *  masked exactly when it attributes none — an ABSENT entry is not "nobody is above me", it is "not mine".
+ *  A delete inverts to absence (above), and an edit that introduces no leaf at all — an empty object,
+ *  however nested — has nothing to mask. A masked edit's `effectiveValue` is the read side's own merged
+ *  value at that keyPath, never one layer's private copy of it, and its `overridingLayer` may never name a
+ *  layer BELOW the target: that would send a client to edit a file that overrides nothing.
+ *
+ *  Returns the number of edits the read reply could not judge (see `readVerdictForDelete`), so a generated
+ *  sweep can report how much of itself the oracle actually decided instead of quietly skipping. */
+const expectAgreesWithRead = (w: any, r: any, target: string, edits: Array<{ keyPath: string[]; value: unknown }>): number => {
+  let undecided = 0;
   edits.forEach((e, i) => {
-    const attributed = leafKeys(e.keyPath, e.value).some((k) => {
+    const masked = w.maskedEditIndexes?.includes(i) ?? false;
+    const where = `edit ${i} "${e.keyPath.join(".")}"`;
+    if (e.value === null) { // a delete — `upsert` with null is refused before any of this runs
+      const verdict = readVerdictForDelete(r, target, e.keyPath);
+      if (verdict === "unknown") { undecided++; return; }
+      expect(masked, `${where}: config/read's by-absence verdict is "${verdict}"`).toBe(verdict === "masked");
+      return;
+    }
+    const leaves = leafKeys(e.keyPath, e.value);
+    if (leaves.length === 0) { expect(masked, `${where}: introduces no leaf, so nothing of it can be masked`).toBe(false); return; }
+    const attributed = leaves.some((k) => {
       const o = r.origins[k];
       return o === target || (Array.isArray(o) && o.includes(target));
     });
-    expect(w.maskedEditIndexes?.includes(i) ?? false, `edit ${i} "${e.keyPath.join(".")}": config/read attributes a leaf to "${target}"? ${attributed}`).toBe(!attributed);
+    expect(masked, `${where}: config/read attributes a leaf to "${target}"? ${attributed}`).toBe(!attributed);
   });
   expect(w.status).toBe(w.maskedEditIndexes ? "okOverridden" : "ok");
+  if (w.maskedEditIndexes) expect(w.overriddenMetadata, "a masked edit owes the client an overridingLayer").toBeDefined();
   if (w.overriddenMetadata) {
     const kp = edits[w.maskedEditIndexes[0]].keyPath;
-    expect(w.overriddenMetadata.effectiveValue).toEqual(kp.reduce((n: any, s) => (n === undefined || n === null ? undefined : n[s]), r.config));
+    expect(w.overriddenMetadata.effectiveValue).toEqual(valueAtRead(r.config, kp));
+    expect(LAYER_RANK.indexOf(w.overriddenMetadata.overridingLayer), `overridingLayer "${w.overriddenMetadata.overridingLayer}" must not rank below the target "${target}"`).toBeGreaterThanOrEqual(LAYER_RANK.indexOf(target));
   }
+  return undecided;
 };
 
 describe("config/read", () => {
@@ -930,4 +972,269 @@ describe("config/value/write + config/batchWrite", () => {
     expect(lookedUp).toBe(join(realpathSync(join(proj, ".claude")), "settings.json"));
     expect(lookedUp).not.toBe(written); // the one shape where the two methods name one file two ways
   });
+  it("an object above the written path that attributes NOTHING anywhere still masks it", async () => {
+    // Divergence class 1, and the reason the verdict is now a LOOKUP rather than a search: an object built
+    // only out of empty objects has no `origins` entry at the written leaf, none above it and none below it,
+    // so every search for "who outranks me" comes back empty and the old `masking.length === 0` clause read
+    // that as "nobody does". The rule says the opposite — an unattributed leaf is masked — and it is right:
+    // the merged view below contains no trace of any of these writes.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ hooks: {}, env: { a: {} } }));
+    writeFileSync(join(home, "managed.json"), JSON.stringify({ outputStyle: {} }));
+    boot(deps());
+    const edits = [
+      { keyPath: ["hooks"], value: "USER", mergeStrategy: "replace" },        // top-level empty object above
+      { keyPath: ["env", "a"], value: ["W"], mergeStrategy: "replace" },      // ...and one level deeper
+    ];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config).toEqual({ hooks: {}, env: { a: {} }, outputStyle: {} }); // nothing written is in view
+    expect(r.origins).toEqual({});                                           // ...and NOTHING is attributed
+    expect(w.status).toBe("okOverridden");
+    expect(w.maskedEditIndexes).toEqual([0, 1]);
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");            // named from the layer files
+    expect(w.overriddenMetadata.effectiveValue).toEqual({});
+    expectAgreesWithRead(w, r, "user", edits);
+    // The same shape with `managed` masking a `project` target: the name comes off a rank scan, not off
+    // "any layer that is not me", so the layer BELOW the target must not be the one reported.
+    const projEdits = [{ keyPath: ["outputStyle"], value: "PROJ", mergeStrategy: "replace" }];
+    id = await send("config/batchWrite", { target: "project", cwd: proj, edits: projEdits });
+    const w2 = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r2 = reply(id).result;
+    expect(r2.config.outputStyle).toEqual({});
+    expect(w2.status).toBe("okOverridden");
+    expect(w2.overriddenMetadata.overridingLayer).toBe("managed");
+    expectAgreesWithRead(w2, r2, "project", projEdits);
+  });
+  it("an ancestor FLATTENED at one layer and rebuilt at a higher one masks the leaf it never restored", async () => {
+    // Divergence class 2 — no empty object anywhere. The middle layer's non-object wipes every `origins`
+    // entry under the ancestor; the higher layer rebuilds it out of SIBLINGS of the written leaf. The leaf
+    // itself therefore has no entry, no ancestor entry (the rebuild replaced it) and no descendants, so the
+    // search comes back empty exactly as in class 1 — while the read side plainly serves someone else's
+    // object at the ancestor. The name is the layer that FLATTENED it (`project`), not the one that rebuilt
+    // it: without project's scalar the user's leaf and local's would deep-merge and both survive, so local
+    // is not the file a client would have to edit.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ hooks: "P" }));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ hooks: { c: "L" } }));
+    boot(deps());
+    const edits = [{ keyPath: ["hooks", "a"], value: "USER", mergeStrategy: "replace" }];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config.hooks).toEqual({ c: "L" });
+    expect(r.origins).toEqual({ "hooks.c": "local" });   // a SIBLING is attributed; the written leaf is not
+    expect(w.status).toBe("okOverridden");
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");
+    expect("effectiveValue" in w.overriddenMetadata).toBe(false); // `hooks.a` resolves to nothing at all
+    expectAgreesWithRead(w, r, "user", edits);
+  });
+  it("the same shape in ordinary settings vocabulary: a project `statusLine: null` under a local object", async () => {
+    // Class 2 with nothing contrived about it. `<proj>/.claude/settings.json` disables the status line with
+    // a null; `settings.local.json` re-enables a command status line; the user adds the command. The reply
+    // used to say `ok` for a write `config/read` serves nowhere and attributes to nobody.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ statusLine: null }));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ statusLine: { type: "command" } }));
+    boot(deps());
+    const edits = [{ keyPath: ["statusLine", "command"], value: "~/bin/statusline.sh", mergeStrategy: "replace" }];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config.statusLine).toEqual({ type: "command" });
+    expect(r.origins).toEqual({ "statusLine.type": "local" });
+    expect(w.status).toBe("okOverridden");
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");
+    expectAgreesWithRead(w, r, "user", edits);
+  });
+  it("four layers deep: flattened at project, rebuilt at local AND managed, written at user", async () => {
+    // The rebuild spread across two layers above the flattener, so the surviving entries name two different
+    // layers and neither of them is on the written path. The verdict is still one lookup, and the name is
+    // still the flattener.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ env: "off" }));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ env: { L: "1" } }));
+    writeFileSync(join(home, "managed.json"), JSON.stringify({ env: { M: "2" } }));
+    boot(deps());
+    const edits = [{ keyPath: ["env", "A"], value: "1", mergeStrategy: "replace" }];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config.env).toEqual({ L: "1", M: "2" });
+    expect(r.origins).toEqual({ "env.L": "local", "env.M": "managed" });
+    expect(w.status).toBe("okOverridden");
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");
+    expectAgreesWithRead(w, r, "user", edits);
+  });
+  it("a delete under an object that attributes NOTHING: masked when it is above, in force when below", async () => {
+    // The delete half of class 1, and the ONE state neither method can settle from `origins` alone: the key
+    // still resolves while nothing at or under it is attributed, because `mergeTracked` records no entry for
+    // an object node. `readVerdictForDelete` reports that honestly as "unknown", so this row asserts the
+    // reply by hand — and the tie is broken in the only safe direction: masked only when a layer that really
+    // does hold the path outranks the target. Below the target it stays in force, or a client would be sent
+    // to edit a file that overrides nothing.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ hooks: "U" }));
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ hooks: {} }));
+    boot(deps());
+    let id = await send("config/value/write", { keyPath: ["hooks"], value: null, mergeStrategy: "replace", target: "user", cwd: proj });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"))).toEqual({}); // it landed
+    expect(r.config.hooks).toEqual({});                        // ...and the key is still served, from above
+    expect(r.origins).toEqual({});
+    expect(readVerdictForDelete(r, "user", ["hooks"])).toBe("unknown"); // pins WHY this row asserts by hand
+    expect(w.status).toBe("okOverridden");
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");
+    // Same object, one rank down: `user` holds it and `local` deletes, so nothing above the target claims
+    // the path and the delete is in force — the lower layer's value showing through is not a mask.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: {} }));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ model: "L" }));
+    id = await send("config/value/write", { keyPath: ["model"], value: null, mergeStrategy: "replace", target: "local", cwd: proj });
+    const w2 = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r2 = reply(id).result;
+    expect(r2.config.model).toEqual({});
+    expect(readVerdictForDelete(r2, "local", ["model"])).toBe("unknown");
+    expect(w2.status).toBe("ok");
+    expect(w2.maskedEditIndexes).toBeUndefined();
+  });
+  it("a delete under a flattened-then-rebuilt ancestor: gone from the view is in force, still served is masked", async () => {
+    // The delete half of class 2, both directions, and both decidable from the read reply alone.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ hooks: { a: "U" } }));
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ hooks: "P" }));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ hooks: { c: "L" } }));
+    boot(deps());
+    const leafDelete = [{ keyPath: ["hooks", "a"], value: null, mergeStrategy: "replace" }];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits: leafDelete });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(valueAtRead(r.config, ["hooks", "a"])).toBeUndefined(); // the path resolves to nothing: in force
+    expect(w.status).toBe("ok");
+    expectAgreesWithRead(w, r, "user", leafDelete);
+    const ancestorDelete = [{ keyPath: ["hooks"], value: null, mergeStrategy: "replace" }];
+    id = await send("config/batchWrite", { target: "user", cwd: proj, edits: ancestorDelete });
+    const w2 = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r2 = reply(id).result;
+    expect(r2.config.hooks).toEqual({ c: "L" });                  // still served, and by a layer above
+    expect(w2.status).toBe("okOverridden");
+    expect(w2.overriddenMetadata.overridingLayer).toBe("local");
+    expectAgreesWithRead(w2, r2, "user", ancestorDelete);
+  });
+  it("an edit undone by a LATER edit in the SAME request is reported, and names a layer the schema accepts", async () => {
+    // A consequence of the rule rather than a feature added beside it: edit 0's leaf is not attributed to
+    // the target either, so the same lookup reports it. Nothing above the target claims the key, so the
+    // naming step has only the target to name — which is the truth (the target's own file no longer holds
+    // what edit 0 wrote) and keeps the reply inside its published schema, where `overridingLayer` is
+    // required. The client used to be told `ok` for an edit whose value reached no file at all.
+    boot(deps());
+    const edits = [
+      { keyPath: ["model"], value: "first", mergeStrategy: "replace" },
+      { keyPath: ["model"], value: null, mergeStrategy: "replace" },
+    ];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config.model).toBeUndefined();
+    expect(w.status).toBe("okOverridden");
+    expect(w.maskedEditIndexes).toEqual([0]);          // ...and the delete at index 1 IS in force
+    expect(w.overriddenMetadata.overridingLayer).toBe("user");
+    expect(w.overriddenMetadata.message).toMatch(/no layer above user holds this key/);
+    const results = (JSON.parse(readFileSync(join(harnessRoot, "schema", "json", "stable", "appserver.json"), "utf8")) as { results: Record<string, object> }).results;
+    const validate = new Ajv({ strict: true }).compile(results["config/batchWrite"]);
+    expect(validate(w), JSON.stringify(validate.errors)).toBe(true);
+    expectAgreesWithRead(w, r, "user", edits);
+    // The value-over-value half is NOT reported, and cannot be by this rule: `origins` addresses LEAVES, not
+    // values, so `model` is attributed to `user` and both edits are in force by the lookup. A client can see
+    // which value won by reading it back; it could not see that edit 0 had been discarded entirely.
+    const shadowed = [
+      { keyPath: ["outputStyle"], value: "first", mergeStrategy: "replace" },
+      { keyPath: ["outputStyle"], value: "second", mergeStrategy: "replace" },
+    ];
+    id = await send("config/batchWrite", { target: "user", cwd: proj, edits: shadowed });
+    const w2 = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r2 = reply(id).result;
+    expect(w2.status).toBe("ok");
+    expect(r2.config.outputStyle).toBe("second");
+    expect(r2.origins["outputStyle"]).toBe("user");
+    expectAgreesWithRead(w2, r2, "user", shadowed);
+  });
+  it("SWEEP: generated layer states, driven through both methods, agree on every edit", async () => {
+    // Examples find the state you thought of. Every divergence this method has shipped was found by a SWEEP
+    // and missed by the examples written beside the fix — including the two this wave closes — so the rule
+    // gets a generator, not another row. Each case plants one or two other layers, writes through
+    // `config/batchWrite`, reads through `config/read`, and holds the write's verdict against the read's own
+    // attribution. Bounded to stay in the unit suite: the layer chain is walked in PAIRS (plus a three-layer
+    // pass for the flatten-then-rebuild shape) rather than over all sixteen subsets, and written values are
+    // one representative of each shape the read side distinguishes — scalar, array, object, delete — rather
+    // than a value space. Depth runs to three segments, which is where the ancestor/descendant asymmetries
+    // live; the fourth segment adds no new relationship.
+    boot(deps());
+    const results = (JSON.parse(readFileSync(join(harnessRoot, "schema", "json", "stable", "appserver.json"), "utf8")) as { results: Record<string, object> }).results;
+    const validate = new Ajv({ strict: true }).compile(results["config/batchWrite"]);
+    const layerFile: Record<string, string> = {
+      user: join(home, ".claude", "settings.json"), project: join(proj, ".claude", "settings.json"),
+      local: join(proj, ".claude", "settings.local.json"), managed: join(home, "managed.json"),
+    };
+    const plant = (path: string[], v: unknown): unknown => path.reduceRight((acc: unknown, seg) => ({ [seg]: acc }), v);
+    const setLayers = (contents: Record<string, unknown>) => {
+      for (const [name, file] of Object.entries(layerFile)) {
+        if (contents[name] === undefined) rmSync(file, { force: true });
+        else writeFileSync(file, JSON.stringify(contents[name]));
+      }
+    };
+    let cases = 0, undecided = 0;
+    const run = async (label: string, target: string, edits: any[]) => {
+      cases++;
+      lines.length = 0; // the reply lookup is a linear scan — keep it O(1) per case, not O(cases)
+      let id = await send("config/batchWrite", { target, cwd: proj, edits });
+      expect(reply(id).error, `${label}: the write itself must succeed`).toBeUndefined();
+      const w = reply(id).result;
+      expect(w.uncheckedEditIndexes, `${label}: no generated key carries a "." — every case must get a real verdict`).toBeUndefined();
+      expect(validate(w), `${label}: ${JSON.stringify(validate.errors)}`).toBe(true);
+      id = await send("config/read", { cwd: proj });
+      const r = reply(id).result;
+      try { undecided += expectAgreesWithRead(w, r, target, edits); }
+      catch (err) { throw new Error(`${label}\n  write: ${JSON.stringify(w)}\n  read:  ${JSON.stringify({ config: r.config, origins: r.origins })}\n  ${(err as Error).message}`); }
+    };
+    const writes: Array<{ label: string; value: unknown; mergeStrategy: string }> = [
+      { label: "scalar", value: "W", mergeStrategy: "replace" },
+      { label: "array", value: ["W"], mergeStrategy: "replace" },
+      { label: "object", value: { x: "W" }, mergeStrategy: "replace" },
+      { label: "object/upsert", value: { x: "W" }, mergeStrategy: "upsert" },
+      { label: "delete", value: null, mergeStrategy: "replace" },
+    ];
+    // PASS 1 — one other layer, planted at every prefix of the written path, in every shape the merge
+    // treats differently. `{}` and `{x:{}}` are the shapes that attribute NOTHING (class 1); `{z:"O"}` is a
+    // sibling-only object; the scalar and array are the shapes that DO get an entry of their own.
+    const shapes: Array<[string, unknown]> = [["scalar", "O"], ["empty", {}], ["nested-empty", { x: {} }], ["leaf", { x: "O" }], ["sibling", { z: "O" }]];
+    for (const [target, other] of [["user", "project"], ["user", "managed"], ["project", "local"]] as const)
+      for (const keyPath of [["hooks"], ["hooks", "a"], ["hooks", "a", "b"]])
+        for (let depth = 1; depth <= keyPath.length; depth++)
+          for (const [shapeLabel, shape] of shapes)
+            for (const e of writes) {
+              setLayers({ [target]: plant(keyPath, "SEED"), [other]: plant(keyPath.slice(0, depth), shape) });
+              await run(`[1] ${target} writes ${e.label} at ${keyPath.join(".")} · ${other} holds ${shapeLabel} at depth ${depth}`, target, [{ keyPath, value: e.value, mergeStrategy: e.mergeStrategy }]);
+            }
+    // PASS 2 — three layers: a middle layer FLATTENS the ancestor and a higher one rebuilds it. This is the
+    // shape where the leaf's whole neighbourhood in `origins` belongs to layers that are not on its path.
+    for (const top of ["local", "managed"])
+      for (const keyPath of [["hooks", "a"], ["hooks", "a", "b"]])
+        for (const [midLabel, mid] of [["scalar", "FLAT"], ["null", null], ["array", ["F"]]] as Array<[string, unknown]>)
+          for (const [topLabel, topVal] of [["sibling leaf", { c: "T" }], ["sibling empty", { a: {} }], ["empty", {}]] as Array<[string, unknown]>)
+            for (const e of writes.filter((x) => x.label !== "object/upsert" && x.label !== "array")) {
+              setLayers({ user: plant(keyPath, "SEED"), project: { hooks: mid }, [top]: { hooks: topVal } });
+              await run(`[2] user writes ${e.label} at ${keyPath.join(".")} · project flattens with ${midLabel} · ${top} rebuilds ${topLabel}`, "user", [{ keyPath, value: e.value, mergeStrategy: e.mergeStrategy }]);
+            }
+    expect(cases).toBeGreaterThan(400);
+    // Reported, never silent: the delete cases the read reply genuinely cannot judge (an object with no
+    // leaves at the deleted path). They are asserted by hand in the row above this one.
+    expect(undecided, `${undecided} of ${cases} cases were undecidable from config/read alone`).toBeLessThan(cases / 8);
+  }, 120_000);
 });

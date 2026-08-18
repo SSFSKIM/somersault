@@ -144,34 +144,55 @@ function introducedLeaves(keyPath: string[], value: unknown, strategy: "replace"
   return out;
 }
 
-/** `origins` keys the LEAVES of the effective view, so a written leaf can go unattributed in two OPPOSITE
- *  directions, and reading either absence as "nobody is above me" reports `ok` for a write that never
- *  reaches the effective view at all.
+/** NAMING ONLY — the verdict never comes from here (`maskingVerdict` states why the two are split).
  *
- *  ABOVE the leaf: a higher layer replaced an object ANCESTOR with a scalar, so the leaf has no entry of
- *  its own and the layer that swallowed it is named at the nearest ancestor that does — hence the climb.
+ *  `origins` keys the LEAVES of the effective view, so a masked leaf usually has no entry of its own and
+ *  the layer worth naming sits beside it. ABOVE it: a higher layer replaced an object ANCESTOR with a
+ *  scalar, and the layer that swallowed the leaf is named at the nearest ancestor that does carry an entry.
+ *  BELOW it: a higher layer holds an OBJECT where this write put a leaf, and the only survivors are that
+ *  layer's own leaves keyed strictly beneath it. The nearest ancestor wins over the descendants — it is the
+ *  closer answer to "who is standing on this path".
  *
- *  BELOW the leaf: a higher layer holds an OBJECT where this write put a leaf. The leaf is gone from the
- *  effective view, but so is any entry at its own path — the survivors are the higher layer's own leaves
- *  INSIDE that object, keyed strictly beneath it. Hence the descendant scan (review H1): `env` written as
- *  a scalar under a project `env: {B}` had no entry at `env`, no ancestor, and therefore no contributors
- *  at all, which the `masking.length === 0` clause — meant to make a DELETE in force by absence — then
- *  read as "in force". `config/read`'s whole output was byte-identical before and after that write.
- *
- *  The scan returns a contributor LIST because an object can be assembled from several layers at once; the
- *  caller filters it by rank exactly as it filters an array's contributor list. A delete keeps its
- *  by-absence verdict: nothing is attributed at or under a key nobody else defines, and a delete falling
- *  back to a LOWER layer collects only that lower layer, which no rank filter can turn into a mask. */
-const originAt = (origins: Record<string, LayerName | LayerName[]>, leaf: string[]): LayerName | LayerName[] | undefined => {
-  for (let n = leaf.length; n > 0; n--) { const hit = origins[leaf.slice(0, n).join(".")]; if (hit !== undefined) return hit; }
-  const under = `${leaf.join(".")}.`;
-  const below: LayerName[] = [];
-  for (const [path, origin] of Object.entries(origins)) {
-    if (!path.startsWith(under)) continue;
-    for (const l of Array.isArray(origin) ? origin : [origin]) if (!below.includes(l)) below.push(l);
-  }
-  return below.length ? below : undefined;
+ *  A LIST, because an object can be assembled from several layers at once and an array's entry is already a
+ *  contributor list; the caller filters it by rank. */
+const addLayers = (out: LayerName[], origin: LayerName | LayerName[]): void => {
+  for (const l of Array.isArray(origin) ? origin : [origin]) if (!out.includes(l)) out.push(l);
 };
+function contributorsNear(origins: Record<string, LayerName | LayerName[]>, leaf: string[]): LayerName[] {
+  const out: LayerName[] = [];
+  for (let n = leaf.length; n > 0; n--) { const hit = origins[leaf.slice(0, n).join(".")]; if (hit !== undefined) { addLayers(out, hit); return out; } }
+  const under = `${leaf.join(".")}.`;
+  for (const [path, origin] of Object.entries(origins)) if (path.startsWith(under)) addLayers(out, origin);
+  return out;
+}
+
+/** Does this layer's OWN file put something on `keyPath` — an object included, and a non-object at any
+ *  PREFIX included too, since that replaces the whole subtree beneath it?
+ *
+ *  The naming step's last resort, and it exists because `config/read` cannot answer this: `mergeTracked`
+ *  records no `origins` entry for an OBJECT node, so an object assembled only out of empty objects is
+ *  attributed to nobody, anywhere. A masked edit still owes the client an `overridingLayer`, and the layer
+ *  chain already in memory can supply one. Reading the layers is safe HERE in a way it would not be for the
+ *  verdict: a wrong name is a wrong signpost, while a verdict drawn from anything but the read side's own
+ *  attribution is the two methods disagreeing again. */
+function definesPath(cfg: Record<string, unknown> | undefined, keyPath: string[]): boolean {
+  let node: unknown = cfg;
+  for (const seg of keyPath) {
+    if (!isPlainObject(node)) return node !== undefined; // a non-object above the path replaces all of it
+    if (!Object.prototype.hasOwnProperty.call(node, seg)) return false;
+    node = node[seg];
+  }
+  return true;
+}
+
+/** The highest-precedence layer ABOVE the target that puts anything on this path. */
+function blockingLayerAbove(layers: ConfigLayer[], keyPath: string[], targetRank: number): LayerName | undefined {
+  for (let r = LAYER_ORDER.length - 1; r > targetRank; r--) {
+    const name = LAYER_ORDER[r];
+    if (layers.some((l) => l.name === name && definesPath(l.config, keyPath))) return name;
+  }
+  return undefined;
+}
 
 /** Every place the merged view's DOTTED leaf addressing is ambiguous: the path of each key carrying a
  *  literal ".". `mergeTracked` keys `origins` by dotted path, so `{"a.b": …}` and `{a:{b:…}}` are one key
@@ -204,30 +225,43 @@ const valueAt = (cfg: Record<string, unknown>, keyPath: string[]): unknown => {
 
 type MaskVerdict = { maskedEditIndexes: number[]; uncheckedEditIndexes: number[]; overriddenMetadata?: { message: string; overridingLayer: LayerName; effectiveValue?: unknown }; unverifiable: string[] };
 
-/** THE MASKING RULE, derived from the read side's own output so the two methods cannot disagree by
- *  construction (review F1). Settings deep-merge, so an object write PARTIALLY lands and "masked at the
- *  written keyPath" was simply the wrong question: writing `env: {A}` over a project `env: {B}` reported
- *  `okOverridden` with `effectiveValue {B}` while the same server's `config/read` served `{A, B}` and
- *  attributed `env.A` to the layer just written. One rule instead:
+/** THE MASKING RULE (spec D-M5-13b), and the split that keeps it honest:
  *
- *    An edit is masked at a leaf iff the effective view does not attribute that leaf to the layer that was
- *    written; the edit as a whole is masked only when NO leaf it introduces is in force there.
+ *    An edit is masked at a leaf exactly when the read side does not attribute that leaf to the layer that
+ *    was written; the edit is `okOverridden` only when NO leaf it introduces is attributed to that layer.
  *
- *  `effectiveValue` is read out of the MERGED config, never out of one layer's own value — that is what
- *  makes the agreement structural rather than coincidental. The both-sides-arrays carve-out is gone rather
- *  than kept beside this: an array the target contributed to has the target in its contributor list and is
- *  in force by the rule itself, while a higher array over a written SCALAR has an array origin the target
- *  is absent from and is masked by the same rule — one mechanism, not two.
+ *  **The VERDICT is one lookup in `origins`, and nothing else.** A leaf is in force when `origins[leaf]` IS
+ *  the target (a scalar's single contributor) or CONTAINS it (an array's contributor list). Anything else —
+ *  INCLUDING NO ENTRY AT ALL — is masked. No climb, no descendant scan, no "nobody outranks me" clause: each
+ *  of those answers the PROXY question "is some layer visible at, above or below this leaf?", and every wave
+ *  of fixes this method has had was one more state where the proxy and the rule diverged, each of them a
+ *  dead write or a dead delete reported `ok`. The last two the proxy still got wrong were an object above
+ *  the written path assembled only from EMPTY objects (which has no `origins` entry anywhere — not at the
+ *  leaf, not above it, not below it) and an ancestor flattened by one layer and rebuilt by a higher one out
+ *  of the written leaf's SIBLINGS. Under the rule both are simply "not attributed to me", which is the truth.
  *
- *  A DELETE is in force by ABSENCE (nothing survives at its leaf, so nothing is attributed to it), and a
- *  delete whose leaf falls back to a LOWER layer is in force too: the target's own value really is gone,
- *  and calling a lower layer an "overriding" one would send a client to edit a file that outranks nothing.
+ *  **The NAME is best-effort, and cannot reach the verdict.** `overridingLayer` is required by the published
+ *  schema, so a masked edit must always produce one; naming may therefore use whatever is available — the
+ *  ancestor/descendant neighbourhood in `origins` first, then the layer files themselves — because a wrong
+ *  signpost is a far smaller failure than a wrong verdict, and nothing it computes can turn a dead write
+ *  into `ok`. KEEP THEM APART: re-merging them is exactly how the proxy came to stand in for the rule.
  *
- *  "Not attributed to the target" is asked of `originAt`, not of `origins` directly, because a leaf can be
- *  unattributed from EITHER side — an ancestor above it or an object below it — and only one of those is
- *  a lookup at the leaf's own key. */
-function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], effective: Record<string, unknown>, origins: Record<string, LayerName | LayerName[]>): MaskVerdict {
+ *  Two consequences worth stating. `effectiveValue` is read out of the MERGED config, never out of one
+ *  layer's own value — that is what makes the agreement structural rather than coincidental. And the
+ *  both-sides-arrays carve-out is gone rather than kept beside this: an array the target contributed to has
+ *  the target in its contributor list and is in force by the rule itself, while a higher array over a
+ *  written SCALAR has an array origin the target is absent from and is masked by the same rule. */
+function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], effective: Record<string, unknown>, origins: Record<string, LayerName | LayerName[]>, layers: ConfigLayer[]): MaskVerdict {
   const targetRank = LAYER_ORDER.indexOf(target);
+  const rank = (l: LayerName): number => LAYER_ORDER.indexOf(l);
+  const highest = (ls: LayerName[]): LayerName => ls.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+  /** THE VERDICT, in full. */
+  const attributedToTarget = (leaf: string[]): boolean => { const o = origins[leaf.join(".")]; return o === target || (Array.isArray(o) && o.includes(target)); };
+  /** THE NAME, in full — the read side's neighbourhood first, the layer files only where it holds nothing. */
+  const nameFor = (leaf: string[]): LayerName | undefined => {
+    const near = contributorsNear(origins, leaf).filter((l) => rank(l) > targetRank);
+    return near.length ? highest(near) : blockingLayerAbove(layers, leaf, targetRank);
+  };
   const hazards = dottedKeyPaths(effective);
   const out: MaskVerdict = { maskedEditIndexes: [], uncheckedEditIndexes: [], unverifiable: [] };
   edits.forEach((e, i) => {
@@ -248,33 +282,45 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
       out.unverifiable.push(`could not check whether edit ${i} ("${e.keyPath.join(" / ")}") is overridden — a key containing "." collides with this path, and the effective view addresses leaves by dotted path`);
       return;
     }
-    let inForce = false;
     let maskedBy: LayerName | undefined;
-    for (const leaf of leaves) {
-      const origin = originAt(origins, leaf);
-      const contributors = origin === undefined ? [] : Array.isArray(origin) ? origin : [origin];
-      const masking = contributors.filter((l) => LAYER_ORDER.indexOf(l) > targetRank);
-      // In force when the effective view attributes this leaf to the layer we wrote — or, for a DELETE,
-      // when it attributes it to nobody ABOVE us, absence being all a delete can offer as proof. There is
-      // no separate delete branch on purpose: after a delete the target can never appear in its own
-      // leaf's contributors, so the two tests never disagree, and a branch that never disagrees is one
-      // nobody can exercise. The `masking.length === 0` half also covers a delete that falls back to a
-      // LOWER layer — the target's own value really is gone, and naming a layer it outranks as the
-      // "overriding" one would send a client to edit a file that cannot override anything.
-      if (contributors.includes(target) || masking.length === 0) { inForce = true; continue; }
-      for (const l of masking) if (maskedBy === undefined || LAYER_ORDER.indexOf(l) > LAYER_ORDER.indexOf(maskedBy)) maskedBy = l;
+    if (e.mergeStrategy === "replace" && e.value === null) {
+      // A DELETE introduces nothing, so no attribution can prove it landed — ABSENCE has to, stated
+      // precisely so it stops swallowing the states above. In force when the merged view resolves NOTHING
+      // at the path; in force too when what still resolves there belongs to the target or to a layer BELOW
+      // it, because then the client's own value really is gone and something lower merely shows through
+      // (naming a layer the target outranks would send it to edit a file that overrides nothing). Masked
+      // when the path still resolves and the layers standing on it outrank the target.
+      if (valueAt(effective, e.keyPath) === undefined) return;
+      const contributors = contributorsNear(origins, e.keyPath);
+      const masking = contributors.filter((l) => rank(l) > targetRank);
+      if (contributors.length && masking.length === 0) return;
+      // NO contributor anywhere under a path that still RESOLVES is the read side's blind spot rather than
+      // an answer: what survives is an object with no leaves, which `mergeTracked` attributes to nobody. The
+      // naming scan is the only thing that can break that tie, and it breaks it in the one safe direction —
+      // masked only if some layer above the target genuinely holds this path.
+      maskedBy = masking.length ? highest(masking) : blockingLayerAbove(layers, e.keyPath, targetRank);
+      if (maskedBy === undefined) return;
+    } else {
+      // An empty object — however deeply nested — introduces no leaf at all, so there is nothing of it to
+      // mask and nothing for the rule to look up. `ok`: the effective view gained nothing from this edit.
+      if (leaves.length === 0) return;
+      if (leaves.some(attributedToTarget)) return; // THE RULE — the whole verdict, one lookup per leaf
+      for (const leaf of leaves) { const n = nameFor(leaf); if (n !== undefined && (maskedBy === undefined || rank(n) > rank(maskedBy))) maskedBy = n; }
     }
-    // `maskedBy === undefined` with nothing in force is the EMPTY-OBJECT edit: it introduces no leaves, so
-    // the loop never runs, and nothing introduced is nothing that can be masked — `ok` is the honest answer.
-    if (inForce || maskedBy === undefined) return;
     out.maskedEditIndexes.push(i);
     // `effectiveValue` is OMITTED, never null, when the merged view has no value at this keyPath — an
     // ancestor is a scalar, say, so the path does not resolve at all. A settings file may legitimately hold
     // a null leaf, so `null` would be indistinguishable from a real value; absence is unambiguous, and the
     // published schema marks the key optional for exactly this case.
     const effectiveValue = valueAt(effective, e.keyPath);
+    // Masked with nothing above the target to name it: the edit was undone from INSIDE this same request —
+    // a later edit in the batch overwrote or deleted what this one wrote. `overridingLayer` is required, so
+    // the target names itself and the message says which kind of loss this is, rather than reporting `ok`
+    // for an edit the client can no longer see anywhere.
     out.overriddenMetadata ??= {
-      message: `the ${maskedBy} layer defines this key with higher precedence`, overridingLayer: maskedBy,
+      message: maskedBy !== undefined ? `the ${maskedBy} layer defines this key with higher precedence`
+        : `nothing this edit introduced is in the effective view, and no layer above ${target} holds this key — what the ${target} layer itself now holds here is not what this edit wrote`,
+      overridingLayer: maskedBy ?? target,
       ...(effectiveValue !== undefined ? { effectiveValue } : {}),
     };
   });
@@ -336,7 +382,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
     const layers = await readLayers(layerPaths(home, managed, cwdReal));
     const { config: effective, origins } = effectiveView(layers);
-    const { maskedEditIndexes, uncheckedEditIndexes, overriddenMetadata, unverifiable } = maskingVerdict(data.edits, data.target, effective, origins);
+    const { maskedEditIndexes, uncheckedEditIndexes, overriddenMetadata, unverifiable } = maskingVerdict(data.edits, data.target, effective, origins, layers);
     // DEDUPED (review M5): the warning names the top-level key, so three edits under one unknown key are
     // three copies of one sentence — noise a client has to collapse itself before showing it.
     const warnings = [...new Set([

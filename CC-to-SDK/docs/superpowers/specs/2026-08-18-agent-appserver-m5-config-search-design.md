@@ -546,6 +546,18 @@ flips the `full-potential.md` rows and ships nothing.
   Closing it in `configLayers.ts` remains the deeper fix and is carried to final-review triage. **The
   lesson recorded with it: a deferred Minor in an attribution layer is a latent defect in every consumer
   that reasons from it.**
+  **Two states the lookup leaves for the naming step to settle, decided at implementation.** (a) A DELETE
+  whose path still *resolves* while nothing at or under it is attributed — the residual above, seen from
+  the delete side: absence cannot say whether the surviving object is held above the target or below it.
+  The naming scan breaks the tie in the one safe direction — masked only when a layer that outranks the
+  target genuinely holds the path, in force otherwise — so the failure mode is a missed report, never a
+  client sent to edit a file that overrides nothing. (b) A masked edit with *no* layer above the target on
+  its path, which is only reachable when a LATER edit in the same request overwrote or deleted what this
+  one wrote. `overridingLayer` is required by the published schema, so the target names itself and the
+  message says the loss is the target layer's own content, not a higher layer's. This surfaces intra-batch
+  shadowing by a later delete, which previously replied `ok` for an edit whose value reached no file;
+  shadowing by a later *value* stays unreported, since `origins` addresses leaves and the leaf really is
+  attributed to the target.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
