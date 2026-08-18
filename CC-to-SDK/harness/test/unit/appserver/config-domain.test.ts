@@ -89,6 +89,36 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); rmSync(proj, {
 const deps = () => ({ configHome: home, managedSettingsPath: join(home, "managed.json"), ccxDir: join(home, "ccx") });
 const reply = (id: number) => parsed(lines).find((l) => l.id === id) as any;
 
+/** The leaves a written value introduces, spelled as `config/read`'s own dotted `origins` keys — arrays
+ *  are leaves, an object contributes one leaf per scalar/array under it. Deliberately RE-DERIVED here
+ *  rather than imported from the handler: these rows exist to hold the write reply against the read
+ *  reply, and sharing the production walk would let one bug satisfy both sides of that comparison. */
+const leafKeys = (keyPath: string[], value: unknown): string[] => {
+  if (typeof value === "object" && value !== null && !Array.isArray(value))
+    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => leafKeys([...keyPath, k], v));
+  return [keyPath.join(".")];
+};
+/** The F1 contract in one assertion, and the reason it is written as a COMPARISON rather than as expected
+ *  strings: the masking verdict is only meaningful as agreement with `config/read`. An edit is `ok` exactly
+ *  when the read side attributes at least one of its leaves to the layer that was written, and masked
+ *  exactly when it attributes none — and a masked edit's `effectiveValue` is the read side's own merged
+ *  value at that keyPath, never one layer's private copy of it. Three waves of hard-coded expectations
+ *  shipped the opposite verdict green, because nothing ever asked the other method what it thought. */
+const expectAgreesWithRead = (w: any, r: any, target: string, edits: Array<{ keyPath: string[]; value: unknown }>) => {
+  edits.forEach((e, i) => {
+    const attributed = leafKeys(e.keyPath, e.value).some((k) => {
+      const o = r.origins[k];
+      return o === target || (Array.isArray(o) && o.includes(target));
+    });
+    expect(w.maskedEditIndexes?.includes(i) ?? false, `edit ${i} "${e.keyPath.join(".")}": config/read attributes a leaf to "${target}"? ${attributed}`).toBe(!attributed);
+  });
+  expect(w.status).toBe(w.maskedEditIndexes ? "okOverridden" : "ok");
+  if (w.overriddenMetadata) {
+    const kp = edits[w.maskedEditIndexes[0]].keyPath;
+    expect(w.overriddenMetadata.effectiveValue).toEqual(kp.reduce((n: any, s) => (n === undefined || n === null ? undefined : n[s]), r.config));
+  }
+};
+
 describe("config/read", () => {
   it("merges the chain, attributes leaf origins, serves CAS tokens, flags incompleteness", async () => {
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "opus", permissions: { allow: ["WebFetch"] } }));
@@ -518,5 +548,212 @@ describe("config/value/write + config/batchWrite", () => {
       expect(existsSync(join(fresh, ".claude", "settings.local.json"))).toBe(false);
       expect(existsSync(join(fresh, ".claude")) ? readdirSync(join(fresh, ".claude")) : []).toEqual([]);
     } finally { rmSync(fresh, { recursive: true, force: true }); }
+  });
+  it("an object write that PARTIALLY lands is `ok` — the verdict is the read side's, leaf by leaf", async () => {
+    // The F1 defect, measured: masking was judged at the written keyPath while the merge operates leaf-wise
+    // beneath it. Writing `env: {A}` under a project `env: {B}` reported `okOverridden` with
+    // `effectiveValue {B:"2"}` — and the same server's `config/read` served `{A:"1",B:"2"}` and attributed
+    // `env.A` to the layer just written. The client was told its write did nothing while the write was in
+    // force. Same shape for `permissions.allow`, where BOTH layers' entries survive the merge.
+    // The `env` edit is deliberately MIXED — `A` lands, `B` is masked — because that is the case the rule's
+    // "only when NO leaf is in force" clause exists for: a per-leaf verdict alone would report the edit
+    // masked on the strength of `B`, and the client would be told a write it can see took no effect.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ env: { B: "2" }, permissions: { allow: ["P"] } }));
+    boot(deps());
+    const edits = [
+      { keyPath: ["env"], value: { A: "1", B: "9" }, mergeStrategy: "replace" },
+      { keyPath: ["permissions"], value: { allow: ["U"] }, mergeStrategy: "replace" },
+    ];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config.env).toEqual({ A: "1", B: "2" });               // deep merge: the write landed at env.A
+    expect(r.origins["env.A"]).toBe("user");
+    expect(r.origins["env.B"]).toBe("project");                     // ...and did not, at env.B
+    expect(r.config.permissions.allow).toEqual(["U", "P"]);         // arrays merge by contribution
+    expect(r.origins["permissions.allow"]).toEqual(["user", "project"]);
+    expect(w.status).toBe("ok");
+    expect(w.maskedEditIndexes).toBeUndefined();
+    expect(w.overriddenMetadata).toBeUndefined();
+    expectAgreesWithRead(w, r, "user", edits);
+  });
+  it("an object write whose every written sub-key is defined above IS masked, at the MERGED value", async () => {
+    // The other half of the same rule: nothing the edit introduces survives, so the edit is masked — and
+    // `effectiveValue` is read out of the merged config, never out of the masking layer's own value. Those
+    // two differ here on purpose: the user file's own `env.Z` is untouched by the project layer and stays
+    // in the effective view, so a reply built from `top.value` would report `{A:"PROJ"}` for a key the read
+    // side serves as `{Z:"z",A:"PROJ"}` — the same disagreement F1 exists to make impossible.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ env: { Z: "z" } }));
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ env: { A: "PROJ" } }));
+    boot(deps());
+    const edits = [{ keyPath: ["env"], value: { A: "1" }, mergeStrategy: "upsert" }];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(w.status).toBe("okOverridden");
+    expect(w.maskedEditIndexes).toEqual([0]);
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");
+    expect(r.config.env).toEqual({ Z: "z", A: "PROJ" });
+    expect(w.overriddenMetadata.effectiveValue).toEqual(r.config.env); // the merged value, not the layer's
+    expect(w.overriddenMetadata.effectiveValue).not.toEqual({ A: "PROJ" });
+    expectAgreesWithRead(w, r, "user", edits);
+  });
+  it("a higher layer that replaced the written object's PARENT masks every leaf under it", async () => {
+    // `origins` keys the LEAVES of the effective view, so a written leaf whose object parent a higher layer
+    // overwrote with a scalar has no entry of its own — the layer that swallowed it is named at the parent.
+    // Looking only at the exact leaf reads that absence as "nobody is above me" and reports `ok` for a write
+    // that never reaches the effective view at all: the F1 disagreement, running the other way.
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ env: "not-an-object" }));
+    boot(deps());
+    const edits = [{ keyPath: ["env"], value: { A: "1" }, mergeStrategy: "replace" }];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config.env).toBe("not-an-object");   // the written object never reaches the effective view
+    expect(r.origins["env"]).toBe("local");
+    expect(r.origins["env.A"]).toBeUndefined();   // the leaf itself is unattributed — that is the trap
+    expect(w.status).toBe("okOverridden");
+    expect(w.maskedEditIndexes).toEqual([0]);
+    expect(w.overriddenMetadata.overridingLayer).toBe("local");
+    expect(w.overriddenMetadata.effectiveValue).toBe(r.config.env);
+    expectAgreesWithRead(w, r, "user", edits);
+  });
+  it("a delete is in force by ABSENCE; masked only while the key is still defined ABOVE", async () => {
+    // A delete introduces no value, so "is the leaf attributed to me?" has to invert: the delete took
+    // effect exactly when nothing is served at that leaf any more. A key a HIGHER layer still defines is
+    // the masked case; a key nothing else defines is plainly `ok`; and a key only a LOWER layer defines
+    // is `ok` too — the target's own value really is gone, and calling `user` an "overriding" layer for a
+    // `local` delete would send a client to edit a file that outranks nothing.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "U", outputStyle: "S" }));
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ model: "PROJ" }));
+    boot(deps());
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits: [
+      { keyPath: ["model"], value: null, mergeStrategy: "replace" },       // still defined by project
+      { keyPath: ["outputStyle"], value: null, mergeStrategy: "replace" }, // nobody else defines it
+    ] });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(w.maskedEditIndexes).toEqual([0]);
+    expect(w.status).toBe("okOverridden");
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");
+    expect(r.origins["model"]).toBe("project");            // the read side says the same thing
+    expect(w.overriddenMetadata.effectiveValue).toBe(r.config.model);
+    expect(r.config.outputStyle).toBeUndefined();          // ...and the second delete really is in force
+    expect(r.origins["outputStyle"]).toBeUndefined();
+    // A `local` delete that falls back to the lower `user` layer: gone from local, so the delete worked.
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ language: "local-lang" }));
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ language: "user-lang" }));
+    id = await send("config/value/write", { keyPath: ["language"], value: null, mergeStrategy: "replace", target: "local", cwd: proj });
+    expect(reply(id).result.status).toBe("ok");
+    expect(reply(id).result.maskedEditIndexes).toBeUndefined();
+    id = await send("config/read", { cwd: proj });
+    expect(reply(id).result.config.language).toBe("user-lang");
+  });
+  it("a batch reports its OWN masked indexes and describes the FIRST masked edit", async () => {
+    // Two mutations lived here undetected because no row had a masked edit anywhere but index 0, and none
+    // had two of them: `push(i)` → `push(0)` survived the whole suite, and so did `??=` → `=`, which
+    // silently reports the LAST masked edit instead of the first the spec promises. Masked at 2 and 3, by
+    // two different layers, kills both at once — and the surviving indexes are checked against the read
+    // side's attribution rather than against a literal, so the row cannot drift from the rule.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ model: "P" }));
+    writeFileSync(join(home, "managed.json"), JSON.stringify({ outputStyle: "M" }));
+    boot(deps());
+    const edits = [
+      { keyPath: ["language"], value: "en", mergeStrategy: "replace" },
+      { keyPath: ["fastMode"], value: true, mergeStrategy: "replace" },
+      { keyPath: ["model"], value: "u", mergeStrategy: "replace" },       // masked by project
+      { keyPath: ["outputStyle"], value: "u", mergeStrategy: "replace" }, // masked by managed
+    ];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(w.maskedEditIndexes).toEqual([2, 3]);
+    expect(w.status).toBe("okOverridden");
+    expect(w.overriddenMetadata.overridingLayer).toBe("project"); // the FIRST masked edit, not the last
+    expect(w.overriddenMetadata.effectiveValue).toBe("P");
+    expect(r.origins["model"]).toBe("project");
+    expect(r.origins["outputStyle"]).toBe("managed");
+    expect(r.origins["language"]).toBe("user");
+    expectAgreesWithRead(w, r, "user", edits);
+  });
+  it("the warning names the TOP-LEVEL key, and distinct unknown keys each get their own", async () => {
+    // Two more surviving mutations. Keying the filter on the LEAF segment instead of `keyPath[0]` warns
+    // about nothing for `["nopeParent","model"]`, because the leaf name is a real settings key — the one
+    // shape where being wrong is silent. And `[...new Set(...)]` → `.slice(0,1)` survived because the
+    // dedupe row uses ONE unknown key three times, so accumulation of DISTINCT keys was never pinned.
+    boot(deps());
+    const id = await send("config/batchWrite", { edits: [
+      { keyPath: ["nopeParent", "model"], value: "x", mergeStrategy: "replace" },
+      { keyPath: ["alsoNope"], value: 1, mergeStrategy: "replace" },
+    ] });
+    expect(reply(id).result.warnings).toEqual([
+      'unknown top-level settings key "nopeParent" (written anyway)',
+      'unknown top-level settings key "alsoNope" (written anyway)',
+    ]);
+  });
+  it("a keyPath segment carrying a literal dot: the override check is SKIPPED and says so", async () => {
+    // `origins` addresses leaves by DOTTED path while a keyPath is an opaque segment array (D-M5-12), so a
+    // segment containing a dot mis-splits and no verdict drawn from it can be trusted. This edit really IS
+    // masked — and the read side cannot say so either, dropping the entry from `origins` entirely. Silence
+    // would be a wrong verdict shipped as a right one, so the gap is reported in `warnings` and the edit is
+    // left out of the masking answer: `ok` here means "not reported as overridden", and the sentence says
+    // which key that applies to.
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ env: { "A.B": "LOCAL" } }));
+    boot(deps());
+    let id = await send("config/value/write", { keyPath: ["env", "A.B"], value: "USER", mergeStrategy: "replace", target: "user", cwd: proj });
+    const w = reply(id).result;
+    expect(w.status).toBe("ok");
+    expect(w.maskedEditIndexes).toBeUndefined();
+    expect(w.overriddenMetadata).toBeUndefined();
+    expect(w.warnings).toEqual(['could not check whether "env / A.B" is overridden — a key contains "." and the effective view addresses leaves by dotted path']);
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(r.config.env["A.B"]).toBe("LOCAL");        // masked in fact...
+    expect(r.origins["env.A.B"]).toBeUndefined();     // ...and unattributable by either method
+  });
+  it("a parent that is there but is not a usable directory refuses ConfigValidationError, never -32603", async () => {
+    // `mkdir(…, {recursive:true})` creates a missing parent — the ordinary first-write path — but cannot
+    // fix a parent that is already SOMETHING ELSE, and node's raw message came back as -32603: an internal
+    // error for a filesystem shape the client owns and can repair. The three shapes below are the ones
+    // that reach it, and each names its own problem. Nothing may be created on the way out.
+    for (const [label, plant] of [
+      ["a dangling symlink", (h: string) => symlinkSync(join(h, "no-such-dir"), join(h, ".claude"))],
+      ["a symlink loop", (h: string) => { symlinkSync(join(h, ".claude"), join(h, "loop")); symlinkSync(join(h, "loop"), join(h, ".claude")); }],
+      ["a regular file", (h: string) => writeFileSync(join(h, ".claude"), "not a directory")],
+    ] as const) {
+      const h = mkdtempSync(join(tmpdir(), "m5parent-"));
+      try {
+        plant(h);
+        boot({ configHome: h, managedSettingsPath: join(h, "managed.json"), ccxDir: join(h, "ccx") });
+        const id = await send("config/value/write", { keyPath: ["model"], value: "opus", mergeStrategy: "replace" });
+        expect(reply(id).error?.code, `${label}: must not be an internal error`).toBe(-32602);
+        expect(reply(id).error.data, label).toEqual({ code: "ConfigValidationError" });
+        expect(reply(id).error.message, label).toMatch(/settings directory/);
+        expect(reply(id).error.message, `${label}: node's raw mkdir message must not be the answer`).not.toMatch(/mkdir/);
+        expect(existsSync(join(h, ".claude", "settings.json")), label).toBe(false);
+      } finally { rmSync(h, { recursive: true, force: true }); }
+    }
+  });
+  it("a symlinked settings FILE: the read names where the layer is looked up, the write names the real file", async () => {
+    // `canonicalPath` canonicalizes the PARENT and keeps the leaf, so `config/read` reports the link's own
+    // path; `resolveRealTarget` follows the link, so the write reply reports the file the bytes landed in —
+    // which is also the lock identity. Both are correct and each is the right one for its caller, so the
+    // I2 claim of ONE spelling per file is narrowed rather than the behaviour changed. This row pins the
+    // divergence so a later "fix" that collapses them has to argue with a test instead of a comment.
+    writeFileSync(join(home, ".claude", "settings.json"), "{}");
+    symlinkSync(join(home, ".claude", "settings.json"), join(proj, ".claude", "settings.json"));
+    boot(deps());
+    let id = await send("config/value/write", { keyPath: ["model"], value: "x", mergeStrategy: "replace", target: "project", cwd: proj });
+    const written = reply(id).result.filePath;
+    expect(written).toBe(realpathSync(join(home, ".claude", "settings.json")));
+    id = await send("config/read", { cwd: proj, includeLayers: true });
+    const lookedUp = reply(id).result.layers.find((l: any) => l.name === "project").filePath;
+    expect(lookedUp).toBe(join(realpathSync(join(proj, ".claude")), "settings.json"));
+    expect(lookedUp).not.toBe(written); // the one shape where the two methods name one file two ways
   });
 });

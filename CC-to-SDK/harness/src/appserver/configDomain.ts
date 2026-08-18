@@ -6,7 +6,7 @@ import { ERR } from "./rpc.js";
 import type { Handler } from "./server.js";
 import { layerPaths, readLayers, effectiveView } from "./configLayers.js";
 import type { ConfigLayer, LayerName } from "./configLayers.js";
-import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, withFileLock, canonicalPath } from "./configWrite.js";
+import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, withFileLock, canonicalPath, assertWritableParent } from "./configWrite.js";
 import { configReadParams, configValueWriteParams, configBatchWriteParams } from "./schema/config.js";
 
 /** ConfigError → the wire. Codes are grouped by WHAT THE CLIENT SHOULD DO NEXT — the rule rpc.ts's own
@@ -121,6 +121,100 @@ const KNOWN_TOP_LEVEL = new Set([
 
 type WriteData = { edits: Array<{ keyPath: string[]; value: unknown; mergeStrategy: "replace" | "upsert" }>; target: "user" | "project" | "local"; cwd?: string; expectedVersion?: string };
 
+const LAYER_ORDER = ["user", "project", "local", "managed"] as const;
+const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The leaf paths an edit INTRODUCES under its keyPath, at the read side's own granularity: a scalar or an
+ *  ARRAY is itself one leaf (`effectiveView` tracks an array as a contributor list, never as a subtree), an
+ *  object contributes one leaf per scalar/array nested inside it, and a `replace` with `null` — a delete —
+ *  has the keyPath itself as its single leaf. An empty object introduces nothing and yields no leaves,
+ *  which is the honest answer: nothing was added to the effective view, so nothing of it can be masked. */
+function introducedLeaves(keyPath: string[], value: unknown, strategy: "replace" | "upsert"): string[][] {
+  if (strategy === "replace" && value === null) return [keyPath];
+  const out: string[][] = [];
+  const walk = (v: unknown, path: string[]): void => {
+    if (isPlainObject(v)) { for (const [k, child] of Object.entries(v)) walk(child, [...path, k]); return; }
+    out.push(path);
+  };
+  walk(value, keyPath);
+  return out;
+}
+
+/** `origins` keys the LEAVES of the effective view, so a leaf whose object PARENT a higher layer replaced
+ *  with a scalar has no entry of its own — the layer that swallowed it is named at the nearest ancestor
+ *  that does. Hence the climb: an unattributed leaf must not read as "nobody is above me". */
+const originAt = (origins: Record<string, LayerName | LayerName[]>, leaf: string[]): LayerName | LayerName[] | undefined => {
+  for (let n = leaf.length; n > 0; n--) { const hit = origins[leaf.slice(0, n).join(".")]; if (hit !== undefined) return hit; }
+  return undefined;
+};
+
+/** Walk the merged config by SEGMENTS (never by dotted path — that is the whole point of D-M5-12's opaque
+ *  keyPath). Arrays are leaves, so an array on the way down is a miss, exactly as `effectiveView` sees it. */
+const valueAt = (cfg: Record<string, unknown>, keyPath: string[]): unknown => {
+  let node: unknown = cfg;
+  for (const seg of keyPath) {
+    if (!isPlainObject(node) || !Object.prototype.hasOwnProperty.call(node, seg)) return undefined;
+    node = node[seg];
+  }
+  return node;
+};
+
+type MaskVerdict = { maskedEditIndexes: number[]; overriddenMetadata?: { message: string; overridingLayer: LayerName; effectiveValue: unknown }; unverifiable: string[] };
+
+/** THE MASKING RULE, derived from the read side's own output so the two methods cannot disagree by
+ *  construction (review F1). Settings deep-merge, so an object write PARTIALLY lands and "masked at the
+ *  written keyPath" was simply the wrong question: writing `env: {A}` over a project `env: {B}` reported
+ *  `okOverridden` with `effectiveValue {B}` while the same server's `config/read` served `{A, B}` and
+ *  attributed `env.A` to the layer just written. One rule instead:
+ *
+ *    An edit is masked at a leaf iff the effective view does not attribute that leaf to the layer that was
+ *    written; the edit as a whole is masked only when NO leaf it introduces is in force there.
+ *
+ *  `effectiveValue` is read out of the MERGED config, never out of one layer's own value — that is what
+ *  makes the agreement structural rather than coincidental. The both-sides-arrays carve-out is gone rather
+ *  than kept beside this: an array the target contributed to has the target in its contributor list and is
+ *  in force by the rule itself, while a higher array over a written SCALAR has an array origin the target
+ *  is absent from and is masked by the same rule — one mechanism, not two.
+ *
+ *  A DELETE is in force by ABSENCE (nothing survives at its leaf, so nothing is attributed to it), and a
+ *  delete whose leaf falls back to a LOWER layer is in force too: the target's own value really is gone,
+ *  and calling a lower layer an "overriding" one would send a client to edit a file that outranks nothing. */
+function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], effective: Record<string, unknown>, origins: Record<string, LayerName | LayerName[]>): MaskVerdict {
+  const targetRank = LAYER_ORDER.indexOf(target);
+  const out: MaskVerdict = { maskedEditIndexes: [], unverifiable: [] };
+  edits.forEach((e, i) => {
+    const leaves = introducedLeaves(e.keyPath, e.value, e.mergeStrategy);
+    // `origins` addresses leaves by DOTTED path while a keyPath is an opaque segment array (D-M5-12), so a
+    // segment carrying a literal dot mis-splits and any verdict drawn from it would be a guess. The same
+    // hazard rides the written value's own keys, so both are checked. Reporting the gap beats reporting a
+    // wrong verdict: the edit is left out of the masking answer entirely and says so in `warnings`.
+    if ([e.keyPath, ...leaves].some((p) => p.some((seg) => seg.includes(".")))) {
+      out.unverifiable.push(`could not check whether "${e.keyPath.join(" / ")}" is overridden — a key contains "." and the effective view addresses leaves by dotted path`);
+      return;
+    }
+    let inForce = false;
+    let maskedBy: LayerName | undefined;
+    for (const leaf of leaves) {
+      const origin = originAt(origins, leaf);
+      const contributors = origin === undefined ? [] : Array.isArray(origin) ? origin : [origin];
+      const masking = contributors.filter((l) => LAYER_ORDER.indexOf(l) > targetRank);
+      // In force when the effective view attributes this leaf to the layer we wrote — or, for a DELETE,
+      // when it attributes it to nobody ABOVE us, absence being all a delete can offer as proof. There is
+      // no separate delete branch on purpose: after a delete the target can never appear in its own
+      // leaf's contributors, so the two tests never disagree, and a branch that never disagrees is one
+      // nobody can exercise. The `masking.length === 0` half also covers a delete that falls back to a
+      // LOWER layer — the target's own value really is gone, and naming a layer it outranks as the
+      // "overriding" one would send a client to edit a file that cannot override anything.
+      if (contributors.includes(target) || masking.length === 0) { inForce = true; continue; }
+      for (const l of masking) if (maskedBy === undefined || LAYER_ORDER.indexOf(l) > LAYER_ORDER.indexOf(maskedBy)) maskedBy = l;
+    }
+    if (inForce || maskedBy === undefined) return;
+    out.maskedEditIndexes.push(i);
+    out.overriddenMetadata ??= { message: `the ${maskedBy} layer defines this key with higher precedence`, overridingLayer: maskedBy, effectiveValue: valueAt(effective, e.keyPath) };
+  });
+  return out;
+}
+
 /** The shared spine of `config/value/write` and `config/batchWrite`. Two behaviours a client has to know
  *  about, both of them properties of the design rather than gaps in it:
  *
@@ -151,6 +245,10 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     // in-process queue is keyed by the path string, so two spellings of one file would otherwise take two
     // different locks and lose mutual exclusion between them.
     const filePath = await resolveRealTarget(nominal);
+    // Asserted BEFORE the lock, because the lock file lives in that same directory: a parent that exists
+    // but is not a usable directory (a dangling link, a symlink loop, a regular file where `.claude` should
+    // be) used to surface as node's raw `mkdir` message under -32603, which a client can do nothing with.
+    await assertWritableParent(filePath);
     const written = await withFileLock(filePath, async () => {
       // `"unreadable"` (Task 2 review I1) is refused as an ASSERTION, ahead of the compare: it is a
       // sentinel for the server's inability to read the file, not a state of its content, so a client
@@ -167,44 +265,18 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       for (const e of data.edits) next = applyEdit(next, e.keyPath, e.value, e.mergeStrategy);
       return writeTargetDoc(filePath, next);
     });
-    // DEDUPED (review M5): the warning names the top-level key, so three edits under one unknown key are
-    // three copies of one sentence — noise a client has to collapse itself before showing it.
-    const warnings = [...new Set(data.edits.filter((e) => !KNOWN_TOP_LEVEL.has(e.keyPath[0])).map((e) => `unknown top-level settings key "${e.keyPath[0]}" (written anyway)`))];
-    // Masking: EVERY edit evaluated (plan review F15).
+    // Masking: EVERY edit evaluated (plan review F15), against the SAME `effectiveView` `config/read`
+    // serves — see `maskingVerdict` for why that shared derivation is the contract.
     const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
     const layers = await readLayers(layerPaths(home, managed, cwdReal));
-    const order = ["user", "project", "local", "managed"] as const;
-    const above = order.slice(order.indexOf(data.target) + 1);
-    const leafOf = (cfg: Record<string, unknown> | undefined, keyPath: string[]): { present: boolean; value?: unknown } => {
-      let node: unknown = cfg;
-      for (const seg of keyPath) {
-        if (typeof node !== "object" || node === null || Array.isArray(node) || !Object.prototype.hasOwnProperty.call(node, seg)) return { present: false };
-        node = (node as Record<string, unknown>)[seg];
-      }
-      return { present: true, value: node };
-    };
-    const maskedEditIndexes: number[] = [];
-    let overriddenMetadata: { message: string; overridingLayer: string; effectiveValue: unknown } | undefined;
-    data.edits.forEach((e, i) => {
-      // `above` runs LOWEST precedence first, so the whole slice is walked and the LAST hit wins — the
-      // first would name a layer the client can edit and still be masked, while `effectiveValue` reported
-      // a value `config/read` disagreed with (review I1: project "PROJECT" named, local "LOCAL" served).
-      let masked = false;
-      let top: { name: LayerName; value: unknown } | undefined;
-      for (const name of above) {
-        const hit = leafOf(layers.find((l) => l.name === name)?.config, e.keyPath);
-        if (!hit.present) continue;
-        top = { name, value: hit.value }; // whatever the client will actually see at this leaf
-        // The array carve-out needs BOTH sides to be arrays (review M2): arrays merge by contribution, so
-        // a higher array does not mask a lower one and the read side's contributor origins tell that
-        // story. A higher array over a written SCALAR is a plain replacement — the scalar never reaches
-        // the effective view — and exempting that reported `ok` for a write that had no effect at all.
-        if (!(Array.isArray(hit.value) && Array.isArray(e.value))) masked = true;
-      }
-      if (!masked || top === undefined) return;
-      maskedEditIndexes.push(i);
-      overriddenMetadata ??= { message: `the ${top.name} layer defines this key with higher precedence`, overridingLayer: top.name, effectiveValue: top.value };
-    });
+    const { config: effective, origins } = effectiveView(layers);
+    const { maskedEditIndexes, overriddenMetadata, unverifiable } = maskingVerdict(data.edits, data.target, effective, origins);
+    // DEDUPED (review M5): the warning names the top-level key, so three edits under one unknown key are
+    // three copies of one sentence — noise a client has to collapse itself before showing it.
+    const warnings = [...new Set([
+      ...data.edits.filter((e) => !KNOWN_TOP_LEVEL.has(e.keyPath[0])).map((e) => `unknown top-level settings key "${e.keyPath[0]}" (written anyway)`),
+      ...unverifiable,
+    ])];
     ctx.peer.reply(id, {
       status: maskedEditIndexes.length ? "okOverridden" : "ok", version: written.version, filePath,
       ...(overriddenMetadata ? { overriddenMetadata } : {}),

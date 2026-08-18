@@ -101,23 +101,35 @@ export async function readTargetDoc(filePath: string): Promise<{ doc: Record<str
   return { doc: parsed, version: versionToken(raw) };
 }
 
-/** ONE spelling per settings file, wherever this domain names one — `resolveRealTarget`'s answer and
- *  `config/read`'s `layers[].filePath` alike (review I2). `realpath` answers only for a path that EXISTS,
- *  so a file resolved before and after its own creation came back under two different names — the literal
- *  one first, the canonical one after — and on macOS, where `/var` and `/tmp` are themselves symlinks,
- *  those two strings genuinely differ. A client could then correlate neither its own two write replies
- *  nor a write reply with a read reply, and the pre-creation spelling took a DIFFERENT `<file>.lock`.
+/** ONE spelling per LOOKUP path (review I2): whatever a caller names, this answers with the same string
+ *  before and after that file's own creation. `realpath` answers only for a path that EXISTS, so a file
+ *  resolved before and after creation came back under two different names — the literal one first, the
+ *  canonical one after — and on macOS, where `/var` and `/tmp` are themselves symlinks, those two strings
+ *  genuinely differ. A client could then correlate neither its own two write replies nor a write reply
+ *  with a read reply, and the pre-creation spelling took a DIFFERENT `<file>.lock`.
  *
  *  So the deepest ANCESTOR that exists is canonicalized and the missing tail is rejoined onto it: the
- *  answer no longer depends on whether the leaf — or its parent directory — has been created yet. When
- *  not even the root resolves there is nothing to canonicalize and the literal path stands, which is also
- *  the answer for a dangling link pointing into a directory nobody has made (Task 3's own row). */
+ *  answer no longer depends on whether the leaf — or its parent directory — has been created yet.
+ *
+ *  It canonicalizes the PARENT and keeps the leaf, which is what makes it the right answer for
+ *  `config/read`'s `layers[].filePath` — the read side reports WHERE A LAYER IS LOOKED UP. It is therefore
+ *  NOT always the same string as `resolveRealTarget`'s, which follows the leaf link to report the real file
+ *  a write landed in (and that file is the lock identity). The two diverge in exactly one shape — the
+ *  settings file itself is a symlink — and there each answer is the correct one for its own caller: a
+ *  project `settings.json` symlinked at the user file makes `config/read` name `<proj>/.claude/settings.json`
+ *  (the project layer really is looked up there) while the write reply names `<home>/.claude/settings.json`
+ *  (the bytes really landed there). Everywhere else — including every path whose leaf is a plain file or
+ *  does not exist yet — the two agree, which is the correlation the I2 fix was for. */
 export async function canonicalPath(filePath: string): Promise<string> {
   const tail: string[] = [];
   for (let cur = filePath; ;) {
     const parent = dirname(cur);
     tail.unshift(basename(cur));
     try { return join(await realpath(parent), ...tail); } catch { /* the parent is missing too — climb */ }
+    // Belt and braces, and UNREACHABLE by measurement: `dirname` is its own fixed point only at the root,
+    // and `realpath("/")` has already answered by then, so the climb itself is what guarantees this
+    // function always answers. Kept anyway, because the alternative to a redundant exit here is a `for(;;)`
+    // with no exit at all if some host ever fails to resolve its own root.
     if (parent === cur) return filePath;
     cur = parent;
   }
@@ -134,9 +146,10 @@ export async function canonicalPath(filePath: string): Promise<string> {
  *  EVERY exit is canonicalized, not just the entry: the walk's exits are the ones that answer for a file
  *  that does not exist yet, which is exactly where the two-spellings-per-file bug lived (review I2).
  *
- *  No `mkdir` here (review M3): `withFileLock` and `writeTargetDoc` each create the parent they need, and
- *  creating it during RESOLUTION meant a request refused between here and the write had already made a
- *  directory in a client-named location. */
+ *  No `mkdir` here (review M3): `withFileLock` and `writeTargetDoc` each create the parent they need WHEN
+ *  IT CAN BE CREATED, and creating it during RESOLUTION meant a request refused between here and the write
+ *  had already made a directory in a client-named location. The shapes `mkdir` cannot fix — a parent that
+ *  is there but is not a usable directory — are the subject of `assertWritableParent` below. */
 const SYMLINK_HOPS = 8;
 export async function resolveRealTarget(filePath: string): Promise<string> {
   try { return await realpath(filePath); } catch { /* target missing, dangling link, or a loop — walk it */ }
@@ -160,6 +173,27 @@ export async function resolveRealTarget(filePath: string): Promise<string> {
     cur = resolve(dirname(cur), link);
   }
   throw new ConfigError("ConfigValidationError", `settings path resolves through more than ${SYMLINK_HOPS} symlinks (or a symlink loop): ${filePath}`);
+}
+
+/** TARGETED, never a blanket catch — wrapping the whole write in one would swallow genuine internal
+ *  failures under a validation code. `mkdir(…, {recursive:true})` creates a missing parent and is the
+ *  ordinary first-write path, but it cannot fix a parent that is ALREADY something: a `.claude` that is a
+ *  dangling symlink (ENOENT), a symlink loop (ELOOP), or a regular file (EEXIST) came back to the client as
+ *  -32603 carrying node's raw `mkdir` message — an internal error for a filesystem shape the client owns
+ *  and can repair. `stat` follows links, so the three shapes separate cleanly from "nothing there yet":
+ *  that one is the ONLY ENOENT with no `lstat` entry behind it, and it is the one case that must proceed. */
+export async function assertWritableParent(filePath: string): Promise<void> {
+  const parent = dirname(filePath);
+  let st;
+  try { st = await stat(parent); }
+  catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT" && !(await lstat(parent).then(() => true, () => false)))
+      return; // nothing there at all — `mkdir` creates it, which is the whole first-write path
+    if (code === "ENOENT") throw new ConfigError("ConfigValidationError", `settings directory is a symlink that does not resolve: ${parent}`);
+    throw new ConfigError("ConfigValidationError", `settings directory cannot be used (${code ?? "unknown error"}): ${parent}`);
+  }
+  if (!st.isDirectory()) throw new ConfigError("ConfigValidationError", `settings directory is not a directory: ${parent}`);
 }
 
 /** 2-space JSON + trailing newline, installed by tmp+rename. The rename installs the TMP file's mode, so
