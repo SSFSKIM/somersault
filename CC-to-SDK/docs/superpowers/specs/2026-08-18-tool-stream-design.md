@@ -227,12 +227,29 @@ producer id (`"bash-progress-0"`); the real id lives in `parent_tool_use_id`.
 
 ### 3.2 Mouse click pipeline (input: `keys/parse.ts` → `keys/KeymapProvider.tsx`)
 
-- `parse.ts`: SGR reports with `(button & 64) === 0`, `(button & 3) !== 3`, and no motion
-  bit decode into a new `MouseEvent` variant — `{ kind: "mouse"; action: "press" |
+- `parse.ts`: SGR reports with `(button & 64) === 0`, **`(button & 128) === 0`**,
+  `(button & 32) === 0` (no motion), `(button & 3) !== 3`, and `col >= 1 && row >= 1`
+  decode into a new `MouseInputEvent` variant — `{ kind: "mouse"; action: "press" |
   "release"; button: 0 | 1 | 2; col: number; row: number; ctrl; alt; shift }` (1-based
   col/row as the terminal sends them; wheel stays a `KeyEvent` exactly as today;
   everything else stays `ignored("mouse")`). The `& 64` term makes the rule
   order-independent of the wheel check — without it, buttons 64/65/66 alias to 0/1/2.
+  **The `& 128` term is the same hazard one octave up** (added round 11): buttons 8–11 add
+  128 exactly as 4–7 add 64, so without it a five-button mouse's "back" press decodes as a
+  left click and fires a tap the user never made. The coordinate floor exists because the
+  type promises 1-based cells and a downstream `row - 1` index would otherwise reach -1.
+  The type is named `MouseInputEvent`, never `MouseEvent`: DOM's global is in scope (no
+  `lib` override) and a missing import would bind it silently and typecheck clean.
+- **Anonymous releases stay ignored, deliberately.** `\x1b[<3;C;Rm` decodes to nothing.
+  Under SGR (mode 1006) a release carries its true button number — structural, not
+  incidental: xterm.js ORs the anonymous `3` only for the legacy X10 encoding. On a
+  hypothetical terminal that did emit anonymous SGR releases the tap would never complete
+  (press seen, release dropped) — a dead gesture rather than a misfire, which is the safe
+  side. If insurance is ever wanted, the cheap form is to accept `(button & 3) === 3` only
+  when the final byte is `m` AND a press is outstanding.
+- **Mouse reports reach ccx only in the fullscreen renderer.** Tracking rides the
+  alt-screen enter sequence (`altScreen.ts`), so a classic launch never arms it and inline
+  users get no mouse reports at all. Acceptance for the click cells must run fullscreen.
 - `KeymapProvider` routes `kind: "mouse"` to a **`useMouseSink` registry hook** (the F2
   registry pattern — innermost-wins, render-time registration — not a `KeymapDeps`
   callback: the deps are supplied at the `chatMain` mount, but the sink's owner is
@@ -420,6 +437,16 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 11 — 2026-08-19, T6 review (execution).** The live premise is CONFIRMED — a real
+mouse press/release into a terminal emulator armed with exactly our two modes emits the
+expected SGR pair, and those bytes survive tmux transport into an app arming only those
+modes. The reviewer corroborated the load-bearing half structurally (the true button number
+on release is what mode 1006 is FOR), which is stronger than the observation alone. The
+review also found that §3.2's own decode rule was one term short: extended buttons 8–11 add
+128 the way 4–7 add 64, so the rule as written turned a five-button mouse's "back" press
+into a left click. Rule corrected above, along with a 1-based coordinate floor, the
+anonymous-release decision, and the fullscreen-only reach of mouse reporting.
 
 **Round 10 — 2026-08-19, T5 review (execution).** Round 9's decision is withdrawn. It rested
 on the flip damage being *staleness* (history folded under the old policy); the reviewer

@@ -196,6 +196,17 @@ typecheck clean. Every later task uses `MouseInputEvent`.
 
 ### Task 7: useMouseSink registry slot + provider routing
 
+**Two decisions Task 6's review hands you — make them deliberately, do not inherit them.**
+(1) Task 6's `kind: "mouse"` early return sits ABOVE `const swallowed = swallowContexts(reg)`
+(`KeymapProvider.tsx:172`). Replacing that `return` with a hand-off to the sink, as written,
+delivers clicks to sinks while Help or a dialog is swallowing the keyboard. Decide whether a
+swallowing context should swallow clicks too (it almost certainly should — a click behind a
+modal is the mouse equivalent of a keystroke behind one) and pin the choice with a cell.
+(2) A mouse press does not clear a pending chord, though a text run does. Same treatment:
+decide, comment, pin. Also recorded, not yours to fix: an SGR report torn across two reads
+leaks its tail into the composer as text (pre-existing per-chunk behavior; if it ever
+surfaces, the repair belongs where paste re-joining already lives, in `KeymapProvider`).
+
 **Files:**
 - Modify: `src/tui/keys/registry.ts` (add `MouseEntry { seq: number; handler: (e: MouseInputEvent) => void; active: boolean }` to `Registry`; `mouseHandler(reg)` returns the innermost (max-seq) active entry, mirroring `fallbackHandler` at :84)
 - Modify: `src/tui/keys/KeymapProvider.tsx` (in `dispatch`, BEFORE the `ignored` branch at :173: `if (ev.kind === "mouse") { mouseHandler(reg)?.(ev); return; }`; export `useMouseSink(handler, opts?: { active?: boolean })` mirroring `useKeyFallback` at :413)
