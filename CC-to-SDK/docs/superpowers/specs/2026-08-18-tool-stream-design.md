@@ -262,6 +262,16 @@ producer id (`"bash-progress-0"`); the real id lives in `parent_tool_use_id`.
   (ctrl/alt/shift) are ignored (Shift never arrives anyway — terminals bypass reporting
   for shifted mouse).
 
+**Architectural fact that governs every click question in this wave (recorded round 12):
+ccx has no occlusion, because occlusion is omission.** `FullscreenFrame` is flow layout —
+the region is clamped and the bottom band is its SIBLING; when a seam is up the dock is not
+rendered rather than covered, and nothing is absolutely positioned anywhere on the path. So
+a row map published by the viewport is always CURRENT, never shadowed by something painted
+over it, and there is no "is something on top of this cell" question to answer. Canon can be
+looser here because it re-walks its live frame on every click; we do not need to, for the
+opposite reason. Do not reach for an occlusion signal — reach for ownership (who currently
+owns input) instead.
+
 ### 3.3 Hit-testing and expansion state (fullscreen renderer)
 
 - The fullscreen viewport already knows, for the frame it just sliced, which wrapped row
@@ -437,6 +447,17 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 12 — 2026-08-19, T7 review (execution).** Both handed-down decisions were made
+deliberately and both were judged correct — a swallowing surface swallows clicks, and a
+button gesture clears a pending chord. But the review found the implementation's *recorded
+reason* for the first one factually false of this codebase: it argued from stale row maps and
+surfaces drawn over the viewport, and neither exists here. That prompted the architectural
+note above, which is the durable output — the next task that reaches for an occlusion signal
+would otherwise have found a comment promising one. The right grounds are symmetry with the
+text branch, §3.3's dialog mandate, and (the one swallower-specific reason) that toggling
+expansion state during a rewind hold mutates state across the very document swap the hold
+protects.
 
 **Round 11 — 2026-08-19, T6 review (execution).** The live premise is CONFIRMED — a real
 mouse press/release into a terminal emulator armed with exactly our two modes emits the
