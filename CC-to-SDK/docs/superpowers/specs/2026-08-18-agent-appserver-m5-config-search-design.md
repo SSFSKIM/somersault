@@ -454,6 +454,22 @@ flips the `full-potential.md` rows and ships nothing.
      resolved by a bounded `readlink` walk so the write creates the real file and the link survives.
      Rejected for both: refusing instead — it would leave `touch`-then-write and link-based
      provisioning permanently unusable, which is the same dead end wearing a better error message.
+- **D-M5-14b (Task 3 completion wave, rev 4) — a settings file this API *creates* is private (0600);
+  a file that already exists keeps exactly the mode it had.** Two rounds of review walked this one in.
+  D-M5-14a made `writeTargetDoc` preserve the destination's mode, which stopped a 0600 file coming back
+  0644 — but the *temp* file beside it was still created at the umask default, holding identical bytes.
+  Measured live: rewriting a 0600 file containing `{"env":{"SECRET":"..."}}`, a poller caught
+  `settings.json.tmp-…` at mode 644 in the same directory, and nothing removed it if the write failed
+  partway, so a crash left a world-readable copy indefinitely. Creating the temp at the destination's
+  mode closes that — and for a file that does not exist yet there is no destination mode to copy, so
+  the fallback decides what a newly created settings file looks like. Chosen: **0600**. This is the path
+  that writes credential-adjacent content programmatically — `env` values, `apiKeyHelper` paths — and
+  the very first write may carry a secret, so private-by-default is right in the one direction we
+  control; thereafter the user's own mode is preserved, so widening it is one `chmod` and it sticks.
+  Rejected: inheriting the umask default (0644) for new files, which was the earlier instruction — it
+  makes the first programmatic write of a secret world-readable at rest, and the version-control
+  argument for group-readable project settings does not hold, since git records only the executable
+  bit. Note this is a narrowing, not a widening: no existing file's mode is ever changed by a write.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
