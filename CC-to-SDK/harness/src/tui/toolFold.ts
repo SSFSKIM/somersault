@@ -395,12 +395,18 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
       if (other === self) continue;
       const candidate = atoms[other]!;
       if (candidate.kind === "tool") {
-        // The one endpoint that is NOT exclusive. Every `tool_use` block of one assistant entry carries the same
-        // `callSequence` (`transcriptModel.ts` :186), so a same-message sibling sits exactly ON the lower edge and
-        // a strictly-inside scan is blind to it — while canon sees the whole batch through `f.every((g) =>
-        // m.has(g))` (237200) and relocates only when EVERY tool_use of that message errored. Same predicate: a
-        // sibling of this batch blocks the relocation unless it errored too (unsettled counts as not errored —
-        // its id is absent from canon's `m` as well). Strict-inside stays for every other atom, deliberately.
+        // The one endpoint that is NOT exclusive. Same-entry tool_use blocks share one `callSequence` only for
+        // disk-sourced entries — `transcriptModel.ts` :186 stamps a single sequence across an entry's blocks —
+        // so such a sibling sits exactly ON the lower edge and a strictly-inside scan is blind to it. (The live
+        // engine emits one frame per content block with DISTINCT `callSequence`s; `apiMessageId` is that
+        // source's real "same assistant message" key — see the `ToolEvent` doc comment, `transcriptModel.ts`
+        // :32-35.) Canon sees the whole batch through `f.every((g) => m.has(g))` (237200), but `m` is built from
+        // the ARRIVING result message alone (237199) — canon's "every sibling errored" means "in THIS message".
+        // Ours means "errored at any point": a sibling sharing `callSequence` blocks relocation unless it too
+        // errored, no matter which entry carried that error. They part only when same-entry siblings error
+        // across DIFFERENT entries — canon keeps the call inside the cluster, we relocate it out — reachable
+        // only for disk-sourced multi-block entries, and the effect is membership-only. Recorded divergence:
+        // spec §3.1, Revision Notes round 7. Strict-inside stays for every other atom, deliberately.
         if (candidate.event.callSequence === from && candidate.event.result?.isError !== true) return false;
         if (inside(candidate.event.callSequence)) return false;
         if (candidate.event.result !== undefined && inside(candidate.event.result.resultSequence)) return false;
