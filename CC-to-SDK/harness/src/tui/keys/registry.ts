@@ -6,7 +6,7 @@
 // that appears later therefore outranks the composer beneath it without anyone having to declare a priority.
 // Sets (not arrays) hold the entries because a hook registers during RENDER and deletes on unmount: add is
 // idempotent, so a re-render never duplicates and never has to diff.
-import type { KeyContextName, KeyEvent, TextEvent } from "./types.js";
+import type { KeyContextName, KeyEvent, MouseInputEvent, TextEvent } from "./types.js";
 
 export interface ScopeEntry { seq: number; name: KeyContextName; active: boolean; preemptive: boolean }
 /** Handlers take the matched ACTION as a second argument, which only a family handler (below) reads. */
@@ -18,14 +18,20 @@ export interface ActionEntry { seq: number; handlers: Record<string, ActionHandl
 export interface FallbackEntry { seq: number; handler: (e: KeyEvent | TextEvent) => void; active: boolean }
 export interface SwallowEntry { seq: number; active: boolean }
 export interface SuspendEntry { seq: number; handler: () => void }
+/** The mouse slot (task 7). A button report has no action to match and no fallback to fall through to, so this
+ *  ONE entry is the whole delivery path — hence a sink rather than a handler table. `active` is the fallback's
+ *  option and means the same thing here (registered, invisible to resolution), for the same owner-stays-mounted
+ *  reason. */
+export interface MouseEntry { seq: number; handler: (e: MouseInputEvent) => void; active: boolean }
 
 export interface Registry {
   scopes: Set<ScopeEntry>; actions: Set<ActionEntry>; fallbacks: Set<FallbackEntry>; swallows: Set<SwallowEntry>;
-  suspends: Set<SuspendEntry>;
+  suspends: Set<SuspendEntry>; mouseSinks: Set<MouseEntry>;
 }
 
 export const createRegistry = (): Registry =>
-  ({ scopes: new Set(), actions: new Set(), fallbacks: new Set(), swallows: new Set(), suspends: new Set() });
+  ({ scopes: new Set(), actions: new Set(), fallbacks: new Set(), swallows: new Set(), suspends: new Set(),
+    mouseSinks: new Set() });
 
 let seqCounter = 0;
 /** Stamped once per hook instance (in a ref initializer), never re-stamped on re-render. */
@@ -83,6 +89,14 @@ export function handlerFor(reg: Registry, action: string): ((e: KeyEvent) => voi
  *  yield the keyboard to a dialog drawn above it. */
 export function fallbackHandler(reg: Registry): ((e: KeyEvent | TextEvent) => void) | undefined {
   return newestFirst(reg.fallbacks).find((f) => f.active)?.handler;
+}
+
+/** The innermost LIVE mouse sink, or undefined — which is the ordinary case, not an error: for as long as
+ *  nothing in the tree wants clicks, a button report is consumed and dropped exactly as it was before the slot
+ *  existed. Same shape as `fallbackHandler` above, and for the same reason: inactive entries are skipped rather
+ *  than shadowing, so a still-mounted owner can yield the mouse to whatever is drawn over it. */
+export function mouseHandler(reg: Registry): ((e: MouseInputEvent) => void) | undefined {
+  return newestFirst(reg.mouseSinks).find((m) => m.active)?.handler;
 }
 
 /** The innermost registered ctrl+z handler (task 6: ChatApp, which is where Ink's `useStdin`/`useStdout` and

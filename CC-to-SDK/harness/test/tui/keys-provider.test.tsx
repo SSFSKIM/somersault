@@ -11,8 +11,8 @@ import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
-import { useKeyScope, useKeyActions, useKeyFallback, useSwallowKeys, useBinding, useBindingLookup, usePasting, useSuspendInput, type SuspendInput } from "../../src/tui/keys/KeymapProvider.js";
-import type { KeyContextName, KeyEvent, TextEvent } from "../../src/tui/keys/types.js";
+import { useKeyScope, useKeyActions, useKeyFallback, useMouseSink, useSwallowKeys, useBinding, useBindingLookup, usePasting, useSuspendInput, type SuspendInput } from "../../src/tui/keys/KeymapProvider.js";
+import type { KeyContextName, KeyEvent, MouseInputEvent, TextEvent } from "../../src/tui/keys/types.js";
 import { createCursorReports, probeReflow } from "../../src/tui/reflowOracle.js";
 
 // The matched ACTION is the second argument (only a `family:*` handler reads it — see the family block below).
@@ -483,6 +483,154 @@ describe("KeymapProvider — wheel/arrow suppression", () => {
     await tick();
     h.stdin.write("\x1b[A");
     expect(seen).toEqual(["key:up"]);
+    h.unmount();
+  });
+});
+
+// ── THE MOUSE SLOT (task 7) ───────────────────────────────────────────────────────────────────────────────
+//
+// A decoded button report (task 6) has no binding to match and no fallback to fall through to, so the sink IS
+// its whole delivery path. It is the same F2 registry slot every other listener here uses — innermost-wins,
+// registered during render — and NOT a `KeymapDeps` callback: the deps are supplied at the `chatMain` mount,
+// while the sink's owner is `ChatApp`, a descendant that holds the tap state, the expansion set and the row
+// map (spec §3.2). Mouse events never enter the binding table; canon's clicks are not keybindings either.
+//
+// Two decisions task 6's review handed forward are pinned here, each by a cell that fails if it is reversed:
+// a swallowing surface swallows clicks, and a gesture ends a pending chord.
+describe("KeymapProvider — useMouseSink", () => {
+  const PRESS = "\x1b[<0;12;5M", RELEASE = "\x1b[<0;12;5m", MOUSE_WHEEL_UP = "\x1b[<64;10;5M";
+  /** A sink owner and nothing else — no scope, no fallback — so a test can put the sink and the keyboard
+   *  consumers at different depths of the same tree. */
+  function MouseProbe(props: { sink: (e: MouseInputEvent) => void; active?: boolean }) {
+    useMouseSink(props.sink, { active: props.active ?? true });
+    return <Text>sink</Text>;
+  }
+
+  it("delivers press and release to the registered sink, decoded, from raw bytes", async () => {
+    const sink = vi.fn();
+    const h = renderWithKeymap(<><Probe scope="Chat" /><MouseProbe sink={sink} /></>);
+    await tick();
+    h.stdin.write(PRESS);
+    h.stdin.write(RELEASE);
+    expect(sink.mock.calls.map((c) => c[0])).toEqual([
+      { kind: "mouse", action: "press", button: 0, col: 12, row: 5, ctrl: false, alt: false, shift: false, raw: PRESS },
+      { kind: "mouse", action: "release", button: 0, col: 12, row: 5, ctrl: false, alt: false, shift: false, raw: RELEASE },
+    ]);
+    h.unmount();
+  });
+
+  it("a report reaches the sink ONLY — no action, no fallback, no inserted text, no reply forward", async () => {
+    const sink = vi.fn(), fallback = vi.fn(), cancel = vi.fn(), onUnknownSequence = vi.fn();
+    const h = renderWithKeymap(
+      <><Probe scope="Chat" actions={{ "chat:cancel": cancel }} fallback={fallback} /><MouseProbe sink={sink} /></>,
+      { onUnknownSequence });
+    await tick();
+    h.stdin.write(PRESS);
+    h.stdin.write(RELEASE);
+    expect(sink).toHaveBeenCalledTimes(2);
+    expect(cancel).not.toHaveBeenCalled(); expect(fallback).not.toHaveBeenCalled(); expect(onUnknownSequence).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  it("with no sink registered the report is consumed silently, and the keystroke beside it is not", async () => {
+    const fallback = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} />);
+    await tick();
+    h.stdin.write(PRESS);
+    h.stdin.write("ab");
+    expect(fallback.mock.calls.map((c) => c[0].text)).toEqual(["ab"]);
+    h.unmount();
+  });
+
+  it("the innermost sink wins, and unmounting it hands the mouse back", async () => {
+    const outer = vi.fn(), inner = vi.fn();
+    const outerProbe = <MouseProbe sink={outer} />;
+    const h = renderWithKeymap(outerProbe);
+    await tick();
+    h.stdin.write(PRESS);
+    expect(outer).toHaveBeenCalledTimes(1);
+    h.rerender(<>{outerProbe}<MouseProbe sink={inner} /></>);
+    await tick();
+    h.stdin.write(PRESS);
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(outer).toHaveBeenCalledTimes(1);                    // stolen, not doubled
+    h.rerender(outerProbe);
+    await tick();
+    h.stdin.write(PRESS);
+    expect(outer).toHaveBeenCalledTimes(2);                    // restored on unmount
+    expect(inner).toHaveBeenCalledTimes(1);
+    h.unmount();
+  });
+
+  it("an inactive sink defers to the one outside it, and takes the mouse back when it reactivates", async () => {
+    const outer = vi.fn(), inner = vi.fn();
+    const tree = (active: boolean) => <><MouseProbe sink={outer} /><MouseProbe sink={inner} active={active} /></>;
+    const h = renderWithKeymap(tree(false));
+    await tick();
+    h.stdin.write(PRESS);
+    expect(outer).toHaveBeenCalledTimes(1); expect(inner).not.toHaveBeenCalled();
+    h.rerender(tree(true));                                    // the same entry, toggled — not a re-registration
+    await tick();
+    h.stdin.write(PRESS);
+    expect(inner).toHaveBeenCalledTimes(1); expect(outer).toHaveBeenCalledTimes(1);
+    h.unmount();
+  });
+
+  it("a wheel tick is still a KEY — it resolves in the table and never reaches the sink", async () => {
+    const sink = vi.fn(), lineUp = vi.fn();
+    const h = renderWithKeymap(<><Probe scope="Scroll" actions={{ "scroll:lineUp": lineUp }} /><MouseProbe sink={sink} /></>);
+    await tick();
+    h.stdin.write(MOUSE_WHEEL_UP);
+    expect(lineUp).toHaveBeenCalledTimes(1);
+    expect(sink).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  // DECISION 1 (task 7, handed over by task 6's review). Task 6's placeholder return sat ABOVE the swallow
+  // gate, so the naive hand-off would deliver clicks while Help or the rewind hold owned the keyboard. The
+  // hand-off sits BELOW the gate instead — a click behind a modal is the mouse equivalent of a keystroke
+  // behind one, and our sinks cannot tell that anything is drawn over the cell their row map still names.
+  // Nobody gets the click, the swallower's own sink included, exactly as nobody gets swallowed text. Move the
+  // hand-off back above `swallowContexts` and this cell fails.
+  it("a swallowing surface swallows clicks too, and hands them back when it unmounts", async () => {
+    const outer = vi.fn(), own = vi.fn();
+    const beneath = <><Probe scope="Chat" /><MouseProbe sink={outer} /></>;
+    const h = renderWithKeymap(<>{beneath}<Probe scope="Help" swallow /><MouseProbe sink={own} /></>);
+    await tick();
+    h.stdin.write(PRESS);
+    h.stdin.write(RELEASE);
+    expect(outer).not.toHaveBeenCalled();
+    expect(own).not.toHaveBeenCalled();                        // the swallower is not an exception to its own rule
+    h.rerender(beneath);
+    await tick();
+    h.stdin.write(PRESS);
+    expect(outer).toHaveBeenCalledTimes(1);                    // …so the gate was the swallow, not a dead sink
+    h.unmount();
+  });
+
+  // DECISION 2 (task 7, handed over by task 6's review). ctrl+x, a click that expands a tool block, then
+  // ctrl+k must not fire chat:killAgents — the same false completion the typed-run clear above exists to
+  // prevent. A report only exists because a button was physically pressed, so there is no incidental input to
+  // weigh against it. Drop the `clearChord()` from the mouse branch and this cell fails with a phantom kill.
+  it("a mouse press clears a pending chord", async () => {
+    const kill = vi.fn(), fallback = vi.fn(), sink = vi.fn();
+    const h = renderWithKeymap(
+      <><Probe scope="Chat" actions={{ "chat:killAgents": kill }} fallback={fallback} /><MouseProbe sink={sink} /></>);
+    await tick();
+    h.stdin.write(CTRL_X);
+    h.stdin.write(PRESS);
+    expect(sink).toHaveBeenCalledTimes(1);                     // the click is still delivered, chord or no chord
+    h.stdin.write(CTRL_K);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fallback).toHaveBeenCalledTimes(1);                 // ctrl+k alone is bound nowhere → fallback, as after a timeout
+    h.unmount();
+  });
+
+  it("is a no-op with no provider above (a tree with no input path has no mouse either)", () => {
+    const sink = vi.fn();
+    const h = render(<MouseProbe sink={sink} />);
+    expect(h.lastFrame()).toBe("sink");
+    expect(sink).not.toHaveBeenCalled();
     h.unmount();
   });
 });

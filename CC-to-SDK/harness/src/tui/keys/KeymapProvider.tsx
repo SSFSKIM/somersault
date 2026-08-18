@@ -19,13 +19,13 @@ import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, 
 import { useStdin, useStdout } from "ink";
 import { parseBytes } from "./parse.js";
 import { createWheelGuard } from "./wheelGuard.js";
-import type { InputEvent, KeyContextName, KeyEvent, TextEvent } from "./types.js";
+import type { InputEvent, KeyContextName, KeyEvent, MouseInputEvent, TextEvent } from "./types.js";
 import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
 import { bindingFor, bindingsFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
 import { defaultLookup, type BindingLookupOpts } from "./hints.js";
 import type { KeySpec } from "./normalize.js";
-import { activeContexts, createRegistry, fallbackHandler, handlerFor, nextSeq, suspendHandler, swallowContexts,
-  type ActionEntry, type ActionHandler, type FallbackEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
+import { activeContexts, createRegistry, fallbackHandler, handlerFor, mouseHandler, nextSeq, suspendHandler, swallowContexts,
+  type ActionEntry, type ActionHandler, type FallbackEntry, type MouseEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
 
 export interface KeymapDeps {
   /** The wheel guard's clock (`wheelGuard.ts`) — injected so its 75 ms window is drivable rather than slept
@@ -171,14 +171,34 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // mouse/focus/garbage: consumed, never inserted. An unknown SEQUENCE is also how a terminal REPLY arrives
     // (the oracle's DSR cursor report), so it is forwarded raw on the way out — see `onUnknownSequence`.
     if (ev.kind === "ignored") { if (ev.reason === "unknown-sequence") depsRef.current?.onUnknownSequence?.(ev.raw); return; }
-    // A button report is not a keybinding and never will be (canon's clicks aren't bindings either), so it
-    // leaves the table's path here. Task 7 hands it to the mouse-sink registry from this same line; until then
-    // it is consumed exactly as it was when parse.ts still called it `ignored("mouse")`.
-    if (ev.kind === "mouse") return;
     // ctrl+z is handled ABOVE the table, like upstream's raw input loop: it must suspend even while Help
     // swallows everything and even mid-chord (F0 contract).
     if (ev.kind === "key" && ev.ctrl && ev.name === "z") { (suspendHandler(reg) ?? depsRef.current?.suspend)?.(); return; }
     const swallowed = swallowContexts(reg);
+    // A button report is not a keybinding and never will be (canon's clicks aren't bindings either), so it
+    // leaves the table's path here for the mouse slot (task 7). Two deliberate choices live on these lines:
+    //
+    //  (1) A SWALLOWING SURFACE SWALLOWS CLICKS, which is why this sits BELOW `swallowContexts` and not above
+    //  it, where task 6's placeholder return sat. A click behind a modal is the mouse equivalent of a
+    //  keystroke behind one — and it is worse than the symmetry suggests: a sink resolves a click by looking
+    //  (col,row) up in a row map published by the last transcript paint, where canon re-hit-tests the LIVE
+    //  frame on every click (grounding §5, `dispatchClick`/`b2r`). Nothing here can see that something is now
+    //  drawn over that cell, so the swallow flag is the only occlusion signal we have — and both swallowers
+    //  are surfaces where acting behind them is the harm they exist to prevent (Help covers the viewport; the
+    //  rewind hold is a multi-second file restore). Nobody gets the click, the swallower's own sink included,
+    //  exactly as nobody gets swallowed text.
+    //
+    //  (2) A GESTURE ENDS A PENDING CHORD, for the reason the text run below ends one: ctrl+x, a click that
+    //  expands a tool block, then ctrl+k must not fire chat:killAgents. A report exists only because a button
+    //  was physically pressed, so there is no incidental input to weigh against it, and every other outcome
+    //  on this path already clears. The clear is ABOVE the swallow gate like text's: the chord dies on the
+    //  gesture, not on whether anyone was there to receive it.
+    if (ev.kind === "mouse") {
+      clearChord();
+      if (swallowed) return;
+      mouseHandler(reg)?.(ev);
+      return;
+    }
     if (ev.kind === "text") {
       // Text is keypresses: it breaks a pending chord like any non-extension key would. Without this,
       // `ctrl+x`, a fast-typed word, then `ctrl+k` within the window would fire chat:killAgents.
@@ -417,6 +437,22 @@ export function useKeyActions(handlers: Record<string, ActionHandler>): void {
 export function useKeyFallback(handler: (e: KeyEvent | TextEvent) => void, opts?: { active?: boolean }): void {
   const ctx = useContext(KeymapCtx);
   useRegistration<FallbackEntry>(ctx?.reg.fallbacks, () => ({ seq: nextSeq(), handler, active: true }),
+    (e) => { e.handler = handler; e.active = opts?.active ?? true; });
+}
+
+/** Decoded button presses and releases (task 7). The registry slot rather than a `KeymapDeps` callback because
+ *  of OWNERSHIP: the deps are supplied at the `chatMain` mount, while the sink's owner is `ChatApp` — a
+ *  descendant holding the tap state, the expansion set and the row-map ref (spec §3.2). Innermost LIVE sink
+ *  only, `active` exactly as `useKeyFallback`'s; with no sink the report is consumed and dropped, which is what
+ *  every surface that has no clickable content wants. The gesture is NOT reassembled here: the provider
+ *  delivers the two halves it decoded, and press+release become a tap in the owner (task 10), where the wheel
+ *  ticks that must discard a pending anchor are also visible — they travel the KEY path, not this one.
+ *
+ *  The parameter type is `MouseInputEvent`, never `MouseEvent`: DOM's global is in scope (no `lib` override)
+ *  and an implementer who forgot the import would bind that and still typecheck (types.ts). */
+export function useMouseSink(handler: (e: MouseInputEvent) => void, opts?: { active?: boolean }): void {
+  const ctx = useContext(KeymapCtx);
+  useRegistration<MouseEntry>(ctx?.reg.mouseSinks, () => ({ seq: nextSeq(), handler, active: true }),
     (e) => { e.handler = handler; e.active = opts?.active ?? true; });
 }
 
