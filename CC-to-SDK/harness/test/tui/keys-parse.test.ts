@@ -134,6 +134,10 @@ describe("SGR wheel ticks are KEYS, not mouse reports", () => {
   });
   it("a release (`m` final) is never a wheel tick", () =>
     expect(one("\x1b[<64;10;5m")).toMatchObject({ kind: "ignored", reason: "mouse" }));
+  // TS TASK 6 fix review: 192 = 128 (extended-button flag) + 64 (wheel flag) both set is not a real report
+  // under any encoding a terminal actually sends, but the bare `& 67` mask used to alias it onto wheelup.
+  it("128+64 together (an impossible combination, not a real wheel tick) stays a mouse report", () =>
+    expect(one("\x1b[<192;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" }));
 });
 
 // TS TASK 6 — THE BUTTON REPORTS THAT ARE THEIR OWN EVENT (spec §3.2). A wheel tick is a key because it has no
@@ -180,6 +184,25 @@ describe("SGR button reports decode into MouseInputEvent", () => {
     expect(one("\x1b[<M")).toMatchObject({ kind: "ignored", reason: "mouse" });
     expect(one("\x1b[<0;12;5;9M")).toMatchObject({ kind: "ignored", reason: "mouse" });
   });
+  // TS TASK 6 FIX 1 — bit 128 is xterm's OTHER high-button flag (buttons 8-11 on a 5+-button mouse, e.g. the
+  // side "back"/"forward" buttons), additive exactly like the wheel's bit 64 (xterm.js's own SGR encoder:
+  // `4&e.button&&(i|=64), 8&e.button&&(i|=128)`). Without excluding it, 128/129/130 alias onto the SAME low two
+  // bits as left/middle/right and a back-button click reads as a left click at the cursor.
+  it("extended buttons (bit 128 — buttons 8-11) are never left/middle/right", () => {
+    expect(one("\x1b[<128;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<129;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<130;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+  });
+  // TS TASK 6 FIX 2 — column/row 0 is a cell no conforming terminal addresses (SGR coordinates are 1-based,
+  // matching MouseInputEvent's doc promise); Number("") being 0 rather than NaN is what let it through before.
+  it("column or row 0 is ignored rather than decoded as a real cell", () => {
+    expect(one("\x1b[<0;0;0M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<0;0;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+    expect(one("\x1b[<0;5;0M")).toMatchObject({ kind: "ignored", reason: "mouse" });
+  });
+  // TS TASK 6 FIX 3 — a release carries modifiers the same way a press does; nothing above pinned that.
+  it("a release carries its modifiers same as a press", () =>
+    expect(one("\x1b[<16;7;7m")).toMatchObject({ kind: "mouse", action: "release", button: 0, ctrl: true, alt: false, shift: false }));
 });
 
 // The guard swallows bare arrows for 75 ms after a wheel tick by inspecting `kind === "key"` only. Pinned here
