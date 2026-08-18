@@ -1018,9 +1018,18 @@ export function useChat(
    *  two derived facts are re-derived, from the same document, under the new policy: the whole compact
    *  projection, and the commit ratchet re-run over it from zero. Re-running the ratchet is what makes the
    *  two agree again — `selectLiveWindow` cuts a PREFIX by height, so "committed" is a pure function of the
-   *  document, the width and the row budget, and recomputing it reproduces the accumulated set item for item
-   *  on the policy that did not change. ChatApp's render-time window subtracts `staticItems` from
-   *  `finalizedItems` by id, so the two tiers stay disjoint by construction and every row is on screen once.
+   *  document, the width and the row budget. Where the accumulated set was ratcheted by SETTLE ALONE at the
+   *  geometry in force now, recomputing therefore reproduces it item for item on a policy that did not
+   *  change; two things break that equality, and neither is a reason not to re-fold:
+   *    · `publishLiveWindow` (below) publishes the WHOLE live window on a dialog opening, geometry ignored;
+   *    · `commitCap()` is read live, so a terminal that has GROWN since a commit budgets a longer tail.
+   *  Both make the recomputed prefix the shorter one, i.e. the re-fold UN-publishes rows that were already
+   *  written into `<Static>`. That is survivable rather than free: the un-published rows fall back into the
+   *  live subtree, so the screen shows them in both tiers until the flip's own once-per-flip replay lands
+   *  each of them exactly once. What must not be built on the stronger claim is a caller that re-folds when
+   *  nothing changed — see `/tui`'s no-op arm, which is pinned precisely because this equality is not one.
+   *  ChatApp's render-time window subtracts `staticItems` from `finalizedItems` by id, so the two tiers stay
+   *  disjoint by construction and every row the ratchet did publish is on screen once.
    *
    *  THE ORDERING IS THE OTHER HALF, and it is why the caller (`/tui`) reads oddly rather than symmetrically:
    *  this must run on the FULLSCREEN side of the flip, both ways. In fullscreen `Transcript` is handed
@@ -2040,11 +2049,19 @@ export function useChat(
           // `<Static>` is holding nothing and a replacement of its list therefore writes no bytes — so
           // entering flips first, leaving flips last, and neither ever exposes a classic frame to a list
           // projected for the other screen. A `/tui` that changes no screen re-folds nothing: replacing the
-          // list under a LIVE `<Static>` would move `items.length` and replay the whole conversation for a
-          // command that did nothing.
+          // list under a LIVE `<Static>` costs bytes the moment the recomputed prefix is not the accumulated
+          // one (`refoldFor`'s header names the two ways that happens), i.e. it can replay a stretch of the
+          // conversation for a command that did nothing.
+          //   WHICH IS WHY THE ENTERING ARM ASKS THE FLIP WHAT HAPPENED RATHER THAN TRUSTING `after`.
+          // `after` is a PREDICTION — the ladder's answer where `selectRenderer` was supplied, a guess at the
+          // setting's own shape where it was not — while `choice` is the screen's. They agree everywhere in
+          // the product today, and a disagreement is exactly the case that must not re-fold: a REFUSED entry
+          // leaves a live classic `<Static>` holding the list, which is the one arrangement in which a
+          // pointless re-fold writes. Leaving keeps its pre-flip ordering (it has no post-answer to gate on)
+          // and needs none: its re-fold runs while the alternate screen is still up, where nothing paints.
           let choice: RendererChoice;
           if (after === before) choice = opts.switchRenderer(want);
-          else if (after === "fullscreen") { choice = opts.switchRenderer(want); refoldFor(choice.mode === "fullscreen"); }
+          else if (after === "fullscreen") { choice = opts.switchRenderer(want); if (choice.mode !== before) refoldFor(choice.mode === "fullscreen"); }
           else { refoldFor(false); choice = opts.switchRenderer(want); }
           append(formatTuiResult(want, choice, before));
           break;

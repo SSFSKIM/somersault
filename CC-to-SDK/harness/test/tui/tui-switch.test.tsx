@@ -16,7 +16,7 @@
 //      enter-then-frame going in, exit-then-classic-paint coming out. The I8/I9 hazard rides here too —
 //      `fullStaticOutput` is never reset (ink.js:57), so the only thing standing between a fullscreen session
 //      and a replay of its classic scrollback is that the fixed frame never takes Ink's tall branch.
-import React, { useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -29,10 +29,12 @@ import { KeymapProvider } from "../../src/tui/keys/KeymapProvider.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { useChat } from "../../src/tui/useChat.js";
 import { ChatRoot, createRendererSwitch, createResumeSafeStdout, type ResumeSafeStdout } from "../../src/tui/chatMain.js";
 import { createAltScreenGuard, ENTER_ALT, EXIT_ALT, MOUSE_ON_SCROLL, PASTE_OFF } from "../../src/tui/altScreen.js";
 import { TUI_BUSY_REFUSAL, tuiUsageLine } from "../../src/tui/commands.js";
 import type { RendererChoice } from "../../src/tui/renderer.js";
+import type { RenderItem } from "../../src/tui/toolRenderer.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
 
 /** T17 FIX ROUND — THE LIFETIME OF INK'S `<Static>`, WHICH IS NOT OBSERVABLE FROM THE PAINT.
@@ -528,6 +530,16 @@ const shellRunEntries: TranscriptBootstrapEntry[] = [
 const foldCorpus: TranscriptBootstrapEntry[] = [...shellRunEntries, ...alphaEntries(24)];
 const PER_CALL = "Bash(npm run build)";        // the classic shape of the FIRST of the two calls
 const CLUSTER = "Ran 2 shell commands";        // the fullscreen shape of BOTH of them
+/** The same divergence, near enough to the END of the document to be INSIDE the fullscreen viewport: that
+ *  viewport takes the whole document but shows only its last `rows − 1` rows, so a corpus with twenty-four
+ *  prose entries under the calls (`foldCorpus`) can pin that the cluster never reaches the classic screen
+ *  while never once observing fullscreen paint it. Ten entries still push the calls clear of the eight-row
+ *  commit budget, which is what makes them committed rows rather than live ones. */
+const nearFoldCorpus: TranscriptBootstrapEntry[] = [...shellRunEntries, ...alphaEntries(10)];
+/** A committed item's text. `state.staticItems` is the one derived fact no frame can show — fullscreen hands
+ *  `<Static>` `EMPTY_ITEMS` — so the cell that reads it drives the hook directly and reads the items out. */
+const itemText = (items: readonly RenderItem[]): string =>
+  items.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text))).join("\n");
 
 /** Submit a prompt through the composer — the DOCUMENT MUTATION half of the defect: a flip alone changes no
  *  document, and it is the next projection after it that appends the second shape. */
@@ -564,6 +576,87 @@ describe("/tui — the replay carries the NEW renderer's fold", () => {
     // …and none of it came at the price of the T17 crash fix: the component owning the `<Static>` is the same
     // instance it was at mount, so Ink's cached `rootNode.staticNode` still points at a live yoga node.
     expect(staticProbe.born.slice(born)).toHaveLength(1);
+    unmount();
+  }, 20000);
+
+  // …AND THE ENTERING ARM IS A SEPARATE CLAIM, which nothing above pins: delete its `refoldFor` and every
+  // cell in this file and in `fullscreen-frame.test.tsx` stays green, because the LEAVING re-fold recomputes
+  // from the document rather than from whatever policy fullscreen accumulated and launders the mistake on
+  // the way out. What it cannot launder is the fullscreen session itself, and this is the window in which
+  // that is visible: after the flip, before the next document mutation re-projects under a ref that by then
+  // answers the new screen. Sabotage measured here — the alternate screen paints the classic pair a second
+  // time and no cluster row at all.
+  it("paints the fold of the renderer it flipped INTO, on the alternate screen's own frame", async () => {
+    const { stdin, lastFrame, unmount } = mountRepl({ entries: nearFoldCorpus });
+    await tick();
+    const before = text(lastFrame);
+    expect(occurrences(before, PER_CALL)).toBe(1);                                 // classic: one row per call…
+    expect(occurrences(before, CLUSTER)).toBe(0);
+
+    await runSlash(stdin, lastFrame, "/tui fullscreen");
+    const after = text(lastFrame);
+    expect(occurrences(after, CLUSTER) - occurrences(before, CLUSTER)).toBe(1);    // …fullscreen: the run, folded once
+    expect(occurrences(after, PER_CALL) - occurrences(before, PER_CALL)).toBe(0);  // …and never the classic pair again
+    unmount();
+  }, 20000);
+
+  // The OTHER derived fact the same arm re-mints, and the reason this one cell is driven at the hook rather
+  // than through a frame: `staticItems`/`publishedIds` are the record of what has been painted, and in
+  // fullscreen nothing paints them (ChatApp hands `<Static>` `EMPTY_ITEMS`), so no instrument in this file
+  // can see their shape. Driven the way `ChatApp` drives it — `isFullscreen` reads a ref that only moves on
+  // the re-render `switchRenderer` schedules, so the flip's own handler still asks the OLD screen. That is
+  // precisely why `refoldFor` takes an override instead of reading the ref, and a sabotage of the entering
+  // arm leaves the committed set holding the classic pair for the life of the fullscreen session.
+  it("re-mints the COMMITTED set in the new policy's shape when it enters fullscreen", async () => {
+    const fake = fakeRemote();
+    let api: { submit: (prompt: string) => void } | undefined;
+    let committed: readonly RenderItem[] = [];
+    function Probe() {
+      const [mode, setMode] = useState<"classic" | "fullscreen">("classic");
+      const live = useRef(mode); live.current = mode;
+      const chat = useChat(() => fake, {
+        initialEntries: foldCorpus, rendererChoice: CLASSIC,
+        selectRenderer: (tui) => (tui === "fullscreen" ? FULLSCREEN : CLASSIC),
+        switchRenderer: (tui) => { const choice = tui === "fullscreen" ? FULLSCREEN : CLASSIC; setMode(choice.mode); return choice; },
+      }, { rows: () => 24, columns: () => 80, isFullscreen: () => live.current === "fullscreen", savePrefs: () => {}, env: {} });
+      api = chat; committed = chat.state.staticItems;
+      return <Text>x</Text>;
+    }
+    const r = render(<Probe />);
+    await tick(60);
+    expect(itemText(committed)).toContain(PER_CALL);
+    expect(itemText(committed)).not.toContain(CLUSTER);
+
+    api!.submit("/tui fullscreen");
+    await tick(120);
+    expect(itemText(committed)).toContain(CLUSTER);          // every committed row is a fullscreen-shaped row…
+    expect(itemText(committed)).not.toContain(PER_CALL);     // …in a list that holds only fullscreen-shaped rows
+    r.unmount();
+  }, 20000);
+
+  // …AND THE THIRD ARM IS "DO NOTHING", which is a claim about BYTES rather than about tidiness. Adding a
+  // `refoldFor` to it left every cell in this file green too, because at an unchanged geometry the recomputed
+  // prefix IS the accumulated one — same items, same length — and `<Static>` re-emits only when
+  // `items.length` moves (Static.js:20-22). So the cell has to stand up the reachable state in which the two
+  // genuinely differ, which is the first of the two exceptions `refoldFor`'s header now names: a dialog
+  // opening publishes the WHOLE live window, geometry ignored, so once it closes the committed set is longer
+  // than the row budget would recompute. A re-fold there un-publishes that tail back into the live subtree
+  // while it is still standing in the committed scrollback above — measured under the sabotage, both of the
+  // last prose rows twice on one screen.
+  it("a /tui that changes no screen writes nothing, even after a dialog published the live window", async () => {
+    const { stdin, lastFrame, unmount } = mountRepl({ entries: foldCorpus });
+    await tick();
+    stdin.write("/help"); await waitFor(() => text(lastFrame).includes("/help")); stdin.write("\r");
+    await waitFor(() => text(lastFrame).includes("For more help"));
+    stdin.write("\x1b");                                     // …and straight back out, over-published set and all
+    await waitFor(() => text(lastFrame).includes("Help dialog dismissed"));
+    await tick(60);
+    const rows = ["ALPHA-23", "ALPHA-20", PER_CALL];
+    const before = rows.map((row) => occurrences(text(lastFrame), row));
+
+    await runSlash(stdin, lastFrame, "/tui default");        // classic, while classic: the command changes no screen
+    const after = text(lastFrame);
+    expect(rows.map((row, i) => occurrences(after, row) - before[i]!)).toEqual([0, 0, 0]);
     unmount();
   }, 20000);
 });
