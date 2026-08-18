@@ -1131,7 +1131,7 @@ runScanExclusive(srv, async () => {
 
 - [ ] **Step 2: Run to verify failure.**
 - [ ] **Step 3: Implement** `schema/search.ts` + `search.ts` per the normative flow. Register with `result: threadSearchResult`.
-- [ ] **Step 4: Run** — search + full unit suite green.
+- [ ] **Step 4: Run** — `npm run emit-schema` (schemaGen.test.ts compares the VENDORED artifacts to a fresh generation, so every method-registering task must regenerate and commit them — pre-flight finding), then search + full unit suite green.
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(as5): thread/search — tuple resume, windowed honest scans (Task 7)"`
 
 ### Task 8: `thread/searchOccurrences`
@@ -1154,7 +1154,7 @@ runScanExclusive(srv, async () => {
   - Epoch invalidation: take a live continuation cursor, `record.epoch += 1` (simulated rewind), resend → `-32602` with the invalidation message.
   - Limit cap: 60 single-hit rows, `limit: 50` → 50 + non-null cursor; continuation yields 10.
 
-- [ ] **Steps 2–4:** red → implement → search + full unit suite green.
+- [ ] **Steps 2–4:** red → implement → `npm run emit-schema` (vendored-artifact discipline, as Task 7) → search + full unit suite green.
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(as5): thread/searchOccurrences — epoch-qualified cursors, proven jumps (Task 8)"`
 
 ### Task 9: Archive handlers + admission coordination + exemptions
@@ -1187,7 +1187,7 @@ runScanExclusive(srv, async () => {
   - Resume-auto-unarchive: archive a cold session, then feed `thread/resume` for it → marker gone + `thread/unarchived` broadcast observed.
   - Exemption: `addRecord` a thread whose fake engine has `isEnded: () => true`; call occurrences/archive/unarchive by its registry id → none replies `-33005`.
 
-- [ ] **Steps 2–4:** red → implement → archive + full unit suite green.
+- [ ] **Steps 2–4:** red → implement → `npm run emit-schema` (vendored-artifact discipline, as Task 7) → archive + full unit suite green.
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(as5): archive handlers — admission-coordinated, exempt, existence-checked (Task 9)"`
 
 ### Task 10: `thread/list` archived filter + stage-C gate
