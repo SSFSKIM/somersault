@@ -5,10 +5,13 @@ import type { ToolEvent } from "../../src/tui/transcriptModel.js";
 const OPTIONS = { cwd: "/repo", home: "/home/u" };
 let nextSequence = 0;
 /** `settled` false leaves the call in flight (no `result`), `"error"` settles it as an error — R5.2 says neither
- *  changes a count. */
-function tool(name: string, input: unknown, options: { id?: string; sequence?: number; settled?: boolean | "error" } = {}): ToolEvent {
+ *  changes a count. `resultSequence` defaults to `callSequence + 1000`, which puts EVERY call's result after every
+ *  other call — i.e. models a fully concurrent turn. Any cell that cares which of two calls settled first (the
+ *  pop-out window test) must state both endpoints itself; the default cannot tell concurrent from sequential. */
+function tool(name: string, input: unknown, options: { id?: string; sequence?: number; result?: number; settled?: boolean | "error" } = {}): ToolEvent {
   const callSequence = options.sequence ?? ++nextSequence, id = options.id ?? `tool-${callSequence}`, settled = options.settled ?? true;
-  return { id, name, input, callSequence, route: "top-level", ...(settled === false ? {} : { result: { content: "ok", isError: settled === "error", resultSequence: callSequence + 1000 } }) };
+  const resultSequence = options.result ?? callSequence + 1000;
+  return { id, name, input, callSequence, route: "top-level", ...(settled === false ? {} : { result: { content: "ok", isError: settled === "error", resultSequence } }) };
 }
 const atom = (event: ToolEvent): FoldAtom => ({ kind: "tool", event });
 const counts = (over: Partial<GroupCounts> = {}): GroupCounts => ({ readCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], ...over });
@@ -286,6 +289,18 @@ describe("TS fullscreen fold policy — classification (canon 2.1.234 Krr 236807
     ["Bash", { command: "echo hi" }, { collapsible: false }, { collapsible: true, kind: "bash" }],
     // 237153 bumps `bashCount` BEFORE destructuring `input.command`, so a command-less Bash is still a bash member.
     ["Bash", {}, { collapsible: false }, { collapsible: true, kind: "bash" }],
+    // PowerShell is the SECOND name in canon's bash-tool list `ipe = [_i, js]` (169942 → 82177 / 82198), so it
+    // takes the same `isBash` and the same command recording. Its read-ish half is canon's own `oJS`
+    // (346523–346550) over cmdlet sets (346735) with `xw`'s alias resolution (344447 / 230900) — `cat` and `ls`
+    // are aliases of Get-Content / Get-ChildItem, a bare `npm` is nothing, and there is no list kind at all.
+    ["PowerShell", { command: "npm run build" }, { collapsible: false }, { collapsible: true, kind: "bash" }],
+    ["PowerShell", { command: "get-content a.ts" }, { collapsible: false }, { collapsible: true, kind: "read" }],
+    ["PowerShell", { command: "cat a.ts" }, { collapsible: false }, { collapsible: true, kind: "read" }],
+    ["PowerShell", { command: "Select-String todo" }, { collapsible: false }, { collapsible: true, kind: "search" }],
+    // `Get-ChildItem` is in BOTH cmdlet sets and in neither list set: canon reports search+read and no list, so
+    // `PMd`'s branch order lands it on search — never on the `list` kind Bash's `ls` takes.
+    ["PowerShell", { command: "ls" }, { collapsible: false }, { collapsible: true, kind: "search" }],
+    ["PowerShell", { command: "write-host hi" }, { collapsible: false }, { collapsible: true, kind: "bash" }],
     // `iE = "ToolSearch"` is fullscreen-only and takes `popsOutOnError: o`, which is false for it (236807–236809).
     ["ToolSearch", {}, { collapsible: false }, { collapsible: true, kind: "silent", popsOutOnError: false }],
     // `Joi` (236734) — the five board tools, all `popsOutOnError: true`.
@@ -339,6 +354,16 @@ describe("TS fullscreen fold policy — segmentation (canon 2.1.234 iNp 237140�
       atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))], FULL);
     expect([...groups(items)[0]!.bashCommands!]).toEqual([["tool-1", "git commit -m x"], ["tool-2", "cat a"]]);
   });
+  it("records a PowerShell command too — canon's bash-tool list is two names (169942)", () => {
+    const items = segmentRuns([atom(tool("PowerShell", { command: "git commit -m x" }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 }))], FULL);
+    expect(groups(items)[0]!.counts).toMatchObject({ readCount: 1, bashCount: 1 });
+    expect([...groups(items)[0]!.bashCommands!]).toEqual([["tool-1", "git commit -m x"]]);
+  });
+  // NB this cell pins SEGMENTATION only. It builds fold atoms directly, so it does NOT exercise the `foldAtoms`
+  // suppression gate that decides whether a ToolSearch ever becomes a `tool` atom in the first place — the
+  // projection still diverts the three `isSuppressedTool` names to `neutral` unless `fullscreen` is set. That gate
+  // is owed a test at the projection level (Task 5, which switches the projection over); nothing here can fail if
+  // it regresses.
   it("lets a silently-absorbed call OPEN a run and own its anchor (addendum §A.1)", () => {
     const items = segmentRuns([atom(tool("ToolSearch", { query: "x" }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 }))], FULL);
     const group = groups(items)[0]!;
@@ -349,35 +374,89 @@ describe("TS fullscreen fold policy — segmentation (canon 2.1.234 iNp 237140�
   it("emits NO group for a run whose every member is silent (deliberate divergence from 518513)", () => {
     expect(segmentRuns([atom(tool("TodoWrite", { todos: [] }, { sequence: 1 })), atom(tool("ToolSearch", {}, { sequence: 2 }))], FULL)).toEqual([]);
   });
-  it("(a) RELOCATES an errored silent call out when nothing follows it in the run", () => {
-    const todo = tool("TodoWrite", { todos: [] }, { sequence: 2, settled: "error" });
-    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(todo)], FULL);
+  // The relocate/stay discriminator is a WINDOW test on sequences (spec §3.1, round 5): canon asks whether
+  // anything else was pushed into the accumulator between the silent call's own message and the arrival of its
+  // error result, and the exact translation is "does any other atom's call or result sequence fall strictly
+  // inside `(callSequence, resultSequence)`". Every cell below therefore states BOTH endpoints of every call —
+  // a fixture that lets the default `callSequence + 1000` stand makes the whole turn concurrent and cannot tell
+  // the four orderings apart.
+  it("(a) RELOCATES an errored silent call out when nothing landed inside its result window", () => {
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(todo)], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
     expect(groups(items)[0]!.memberIds).toEqual(["tool-1"]);
     expect(items[1]).toEqual({ kind: "tool", event: todo });
   });
-  it("(b) KEEPS an errored silent call inside the run when another absorbed call follows, and closes the run", () => {
-    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(tool("TodoWrite", { todos: [] }, { sequence: 2, settled: "error" })),
-      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 }))], FULL);
+  it("(b) KEEPS an errored silent call inside when a same-batch sibling was issued before its error result", () => {
+    // The sibling's CALL (4) lands inside the window (3, 6) — canon's `o.messages.at(-1)` is that sibling's
+    // assistant message, not ours, so the relocation branch is never taken and the run merely closes.
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      atom(tool("TodoWrite", { todos: [] }, { sequence: 3, result: 6, settled: "error" })),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 4, result: 7 }))], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "group"]);
-    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
-    expect(groups(items)[1]!.memberIds).toEqual(["tool-3"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-3"]);
+    expect(groups(items)[1]!.memberIds).toEqual(["tool-4"]);
+  });
+  it("(c) RELOCATES when the follow-on call was issued only AFTER the error result arrived", () => {
+    // A one-atom lookahead sees a collapsible next atom and keeps the failure folded away; the window (3, 4) is
+    // empty, so canon relocates and the failed board write earns its own row.
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(todo),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 5, result: 6 }))], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool", "group"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
+    expect(groups(items)[1]!.memberIds).toEqual(["tool-5"]);
+  });
+  it("(d) KEEPS an errored silent call inside when a concurrent sibling's result landed FIRST", () => {
+    // Atom order is result order, so the sibling precedes the errored call and no lookahead can see it — but its
+    // call (2) AND its result (3) both sit inside the window (1, 5). Canon's last message is then that absorbed
+    // `tool_result`, for which `Pka` returns `[]` (236929) and the relocation is refused.
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2, result: 3 })),
+      atom(tool("TodoWrite", { todos: [] }, { sequence: 1, result: 5, settled: "error" }))], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-2", "tool-1"]);
+  });
+  it("(e) RELOCATES when the only thing after the error is a thought", () => {
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4, settled: "error" });
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(todo),
+      { kind: "neutral", sequence: 2, messageSequence: 5, thoughtForMs: 4000 }], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["group", "tool", "passthrough"]);
+    expect(items[1]).toEqual({ kind: "tool", event: todo });
+  });
+  it("never swallows an errored silent call whose group is suppressed (spec §3.1, round 5)", () => {
+    // The exact hole: relocation refused (the sibling read was issued inside the window), and the run has no
+    // visible member to carry a group. Both rules together must still leave the failure on screen.
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 1, result: 4, settled: "error" });
+    const items = segmentRuns([atom(todo), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2, result: 5 }))], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["tool", "group"]);
+    expect(items[0]).toEqual({ kind: "tool", event: todo });
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-2"]);
+  });
+  it("never leaks a thought held for a popped-out call into the NEXT run", () => {
+    // The pop can empty `memberIds` before the flush, and a flush that returns early without resetting the
+    // accumulator carries its `thoughtForMs` forward — a later group would speak a clause it never earned.
+    const items = segmentRuns([{ kind: "neutral", sequence: 0, messageSequence: 1, thoughtForMs: 5000 },
+      atom(tool("TodoWrite", { todos: [] }, { sequence: 2, result: 3, settled: "error" })),
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 4, result: 5 }))], FULL);
+    expect(items.map((i) => i.kind)).toEqual(["passthrough", "tool", "group"]);
+    expect(groups(items)[0]!.counts.thoughtForMs).toBeUndefined();
   });
   it("never lets a pop-out shift an already-formed run's anchor (spec invariant over canon)", () => {
-    const items = segmentRuns([atom(tool("TodoWrite", { todos: [] }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 })),
-      atom(tool("TaskUpdate", {}, { sequence: 3, settled: "error" }))], FULL);
+    const items = segmentRuns([atom(tool("TodoWrite", { todos: [] }, { sequence: 1, result: 2 })), atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3, result: 4 })),
+      atom(tool("TaskUpdate", {}, { sequence: 5, result: 6, settled: "error" }))], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group", "tool"]);
-    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-3"]);
     expect(groups(items)[0]!.anchorSequence).toBe(1);
   });
   it("renders a lone errored silent call standalone with no cluster at all (canon 237204–237206)", () => {
-    const todo = tool("TodoWrite", { todos: [] }, { sequence: 1, settled: "error" });
+    const todo = tool("TodoWrite", { todos: [] }, { sequence: 1, result: 2, settled: "error" });
     expect(segmentRuns([atom(todo)], FULL)).toEqual([{ kind: "tool", event: todo }]);
   });
   it("never pops out ToolSearch, whose popsOutOnError is false", () => {
-    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(tool("ToolSearch", {}, { sequence: 2, settled: "error" }))], FULL);
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })), atom(tool("ToolSearch", {}, { sequence: 3, result: 4, settled: "error" }))], FULL);
     expect(items.map((i) => i.kind)).toEqual(["group"]);
-    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-2"]);
+    expect(groups(items)[0]!.memberIds).toEqual(["tool-1", "tool-3"]);
   });
   it("leaves CLASSIC segmentation of the same atoms exactly as it ships today", () => {
     const todo = tool("TodoWrite", { todos: [] }, { sequence: 3 }), bash = tool("Bash", { command: "git status" }, { sequence: 2 });

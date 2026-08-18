@@ -11,9 +11,9 @@
 // The fullscreen predicate (`ds()` in 2.1.220, `Ns()` in 2.1.234) is no longer fixed false: it arrives as an
 // explicit `fullscreen` INPUT on `classifyToolEvent`/`segmentRuns`, so this module ports both policies at once and
 // stays clock- and environment-free. Absent (or false) is the frozen classic policy, byte for byte. Under
-// `fullscreen` canon 2.1.234 widens the fold three ways — every non-read Bash call joins the run under its own
-// `bashCount`, the task-board tools plus ToolSearch are absorbed with no counter at all, and each absorbed Bash
-// command is recorded for the git scraper. WebFetch/WebSearch stay standalone in BOTH: that is canon's real policy.
+// `fullscreen` canon 2.1.234 widens the fold three ways — every non-read shell call (canon's bash-tool list is
+// BOTH `Bash` and `PowerShell`, 169942) joins the run under its own `bashCount`, the task-board tools plus
+// ToolSearch are absorbed with no counter at all, and each absorbed shell command is recorded for the git scraper. WebFetch/WebSearch stay standalone in BOTH: that is canon's real policy.
 // The clause chain has not caught up yet — `foldClauses` still builds only the classic sentence, so the new counts
 // are carried and not yet spoken (the shell/git clauses, the REPL/agent/edit/memory clauses and their fixed order
 // are a later task in this wave).
@@ -155,6 +155,47 @@ function classifyBashCommand(command: string): { isSearch: boolean; isRead: bool
   return sawDeciding ? { isSearch, isRead, isList } : none;
 }
 
+/** Canon's bash-tool list `ipe = [_i, js]` (2.1.234:169942), resolved at 82177 (`_i = "Bash"`) and 82198
+ *  (`js = "PowerShell"`). It is the `c` of `isBash: !l && c` (236816), so BOTH names take the bash kind when
+ *  their command is not read-ish, and both have their command recorded for the git scraper. */
+const BASH_TOOL_NAMES = new Set(["Bash", "PowerShell"]);
+/** Canon does NOT reuse the bash word sets for PowerShell: `js`'s own `isSearchOrReadCommand` (346743–346746)
+ *  runs `oJS` over cmdlet sets `tJS`/`rJS`/`nJS` (346735) and returns no `isList` at all. */
+const PS_SEARCH = new Set(["select-string", "get-childitem", "findstr", "where.exe"]);
+const PS_READ = new Set(["get-content", "get-item", "test-path", "resolve-path", "get-process", "get-service", "get-childitem", "get-location", "get-filehash", "get-acl", "format-hex"]);
+const PS_IGNORED = new Set(["write-output", "write-host"]);
+/** `xw` (344447): lowercase, strip a `.exe/.cmd/.bat/.com` suffix when the word carries no path separator
+ *  (`W7S`, 344917), then resolve the 87-entry alias table `zMe` (230900). Only the 15 aliases whose target lands
+ *  in one of the three sets above can change an outcome, so those are what we carry — every other alias resolves
+ *  to a cmdlet none of the sets holds, which is what an unknown bare word does anyway. `where.exe` in `PS_SEARCH`
+ *  is dead in canon too: `xw` strips the `.exe` before the lookup, so that entry can never match. */
+const PS_ALIASES = new Map([["ls", "get-childitem"], ["dir", "get-childitem"], ["gci", "get-childitem"], ["cat", "get-content"], ["type", "get-content"], ["gc", "get-content"], ["pwd", "get-location"], ["gl", "get-location"], ["gi", "get-item"], ["ps", "get-process"], ["gps", "get-process"], ["echo", "write-output"], ["write", "write-output"], ["gsv", "get-service"], ["sls", "select-string"]]);
+const psHeadWord = (word: string): string => {
+  const lower = word.toLowerCase(), stripped = lower.includes("\\") || lower.includes("/") ? lower : lower.replace(/\.(exe|cmd|bat|com)$/, "");
+  return PS_ALIASES.get(stripped) ?? stripped;
+};
+/** Port of `oJS` (346523–346550). Deliberately NOT the Bash path: canon splits on bare `;`/`|` with no quote,
+ *  subshell or heredoc awareness (no tree-sitter here), then applies `Kr_`'s own shape — head word of every
+ *  statement, ignored words skipped, ANY word outside the two sets poisons the WHOLE command, and a command of
+ *  only ignored words decides nothing. `isList` is structurally absent (`a = s.isList ?? !1` at 236815), so
+ *  `Get-ChildItem` — which sits in both cmdlet sets — reports search+read and never the list kind `ls` takes
+ *  under Bash. */
+function classifyPowerShellCommand(command: string): { isSearch: boolean; isRead: boolean; isList: boolean } {
+  const none = { isSearch: false, isRead: false, isList: false };
+  let isSearch = false, isRead = false, sawDeciding = false;
+  for (const statement of command.trim().split(/\s*[;|]\s*/)) {
+    const head = statement.trim().split(/\s+/)[0];
+    if (head === undefined || head === "") continue;
+    const word = psHeadWord(head);
+    if (PS_IGNORED.has(word)) continue;
+    sawDeciding = true;
+    const search = PS_SEARCH.has(word), read = PS_READ.has(word);
+    if (!search && !read) return none;
+    if (search) isSearch = true; if (read) isRead = true;
+  }
+  return sawDeciding ? { isSearch, isRead, isList: false } : none;
+}
+
 export type FoldClass =
   | { collapsible: false }
   | { collapsible: true; kind: "read" | "search" | "list" | "mcp" | "bash" }
@@ -188,8 +229,14 @@ export function classifyToolEvent(event: Pick<ToolEvent, "name" | "input">, opts
   const fullscreen = opts?.fullscreen ?? false;
   if (fullscreen && (SILENT_POPS_OUT.has(event.name) || event.name === "ToolSearch"))
     return { collapsible: true, kind: "silent", popsOutOnError: SILENT_POPS_OUT.has(event.name) };
-  if (event.name !== "Bash") return { collapsible: false };
-  const { isSearch, isRead, isList } = classifyBashCommand(stringField(event.input, "command") ?? "");
+  if (!BASH_TOOL_NAMES.has(event.name)) return { collapsible: false };
+  // Classic freeze: only Bash ever reached the read-ish arm in the 2.1.220 port this renderer is frozen at, so
+  // PowerShell stays standalone there. Canon's classic collapses a read-ish PowerShell too (`isCollapsible: s`,
+  // 2.1.220:301912) — widening it is this wave's fullscreen business alone, the same recorded divergence shape
+  // as `SILENT_POPS_OUT` above.
+  if (!fullscreen && event.name !== "Bash") return { collapsible: false };
+  const commandText = stringField(event.input, "command") ?? "";
+  const { isSearch, isRead, isList } = event.name === "PowerShell" ? classifyPowerShellCommand(commandText) : classifyBashCommand(commandText);
   if (isList) return { collapsible: true, kind: "list" };
   if (isSearch) return { collapsible: true, kind: "search" };
   if (isRead) return { collapsible: true, kind: "read" };
@@ -207,7 +254,11 @@ const commandHint = (command: string): string => {
  *  thinking blocks of the assistant message this atom stands for (P82 — the wire has no timestamps, and a
  *  replayed message therefore carries none), `thinkingSummary` its whole text whitespace-collapsed
  *  (upstream `PMd` L302267), which rides to Task 4's italic hint variant and is clamped at render. */
-export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number } | { kind: "neutral"; sequence: number; thoughtForMs?: number; thinkingSummary?: string };
+/** `sequence` on a non-tool atom is the caller's OWN back-pointer (the projection keys it to the array index it
+ *  replays from) and means nothing on the transcript's sequence line. `messageSequence` is the real one, carried
+ *  separately and optionally so the pop-out window test can see a thought or a breaker land between a silent
+ *  call and its error result; an atom that omits it simply cannot close that window. */
+export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number; messageSequence?: number } | { kind: "neutral"; sequence: number; messageSequence?: number; thoughtForMs?: number; thinkingSummary?: string };
 /** `bashCount` is OPTIONAL and present only on a fullscreen run that absorbed a non-read Bash call (canon emits the
  *  pair the same way — `if ((e.bashCount ?? 0) > 0)`, 2.1.234:237035). Absent therefore means "classic", which is
  *  what keeps every existing counts literal valid and the classic clause chain unable to see the new counter.
@@ -249,7 +300,7 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   // `git`/`gh` head word poisons the read classification outright, so a read-ish command can never BE a git op —
   // and it costs one map entry per absorbed `cat`/`ls`. Fullscreen-gated because canon allocates the map in
   // `Rka()` only under `Ns()` (237023): a classic run must carry no `bashCommands` field at all.
-  if (options.fullscreen === true && event.name === "Bash" && command) run.bashCommands.set(event.id, command);
+  if (options.fullscreen === true && BASH_TOOL_NAMES.has(event.name) && command) run.bashCommands.set(event.id, command);
   // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
   // so it is a member and can be the anchor, but it touches no counter and no display hint.
   if (kind === "silent") return;
@@ -311,23 +362,42 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   };
   const flush = () => {
     pending = undefined;
-    if (run.memberIds.length === 0) return;
     // A run whose every member was absorbed silently has every counter at zero, and canon renders it as a
     // zero-height row it still reports clickable (518513, 549764). We emit NO item for it — a DELIBERATE
     // divergence (spec §3.1): an invisible clickable region means nothing in an item-based projection, and
     // dropping it is exactly what today's suppressed-tool handling already does. Any buffered thought goes
     // with it, the same way a thought held for a run that never opens is dropped today.
-    if (run.visibleMembers > 0) out.push({ kind: "group", group: emit(run) });
+    // The GROUP is conditional; the RESET never is. A pop-out can empty `memberIds` before the flush, and the
+    // early return this used to take left the accumulator's thought behind to be spoken by the NEXT run.
+    if (run.memberIds.length > 0 && run.visibleMembers > 0) out.push({ kind: "group", group: emit(run) });
     out.push(...deferred); deferred = []; run = newRun();
   };
   // Canon decides between "relocate the errored call out of the cluster" and "leave it inside, just close the
-  // run" on `o.messages.at(-1)` — whether any other message was absorbed between the call and the arrival of its
-  // error result (237199–237210). Our atoms are calls carrying their own results, so the equivalent question is
-  // whether the NEXT atom would have joined this run: a batched sibling call (canon's real case — parallel
-  // tool_use puts the sibling's message after ours) or a thinking/neutral message both land in `o.messages`
-  // ahead of the result and both block the relocation.
-  const joinsRun = (next: FoldAtom | undefined): boolean =>
-    next !== undefined && (next.kind === "neutral" || (next.kind === "tool" && classifyToolEvent(next.event, options).collapsible));
+  // run" on `o.messages.at(-1)` — whether any other message was absorbed between the call's own message and the
+  // arrival of its error result (237199–237210). Our atoms carry BOTH endpoints, so that is a WINDOW test and
+  // translates exactly: relocate only when no other atom's call sequence or result sequence falls strictly
+  // inside the open window `(callSequence, resultSequence)`. A sibling call issued before the error (canon's
+  // `Pka` returns that sibling's ids, none of which errored), a sibling RESULT absorbed before it (`Pka` returns
+  // `[]` for a user message, 236929) and a thought all land in `o.messages` first and all refuse the relocation;
+  // anything issued or thought AFTER the error result does not, and canon relocates. Asking instead whether the
+  // NEXT atom would join the run answers a different question and diverges on three of the four orderings —
+  // spec §3.1, Revision Notes round 5.
+  const windowIsClear = (event: ToolEvent, self: number): boolean => {
+    const from = event.callSequence, to = event.result?.resultSequence;
+    if (to === undefined) return true;
+    const inside = (sequence: number) => sequence > from && sequence < to;
+    for (let other = 0; other < atoms.length; other++) {
+      if (other === self) continue;
+      const candidate = atoms[other]!;
+      if (candidate.kind === "tool") {
+        if (inside(candidate.event.callSequence)) return false;
+        if (candidate.event.result !== undefined && inside(candidate.event.result.resultSequence)) return false;
+        continue;
+      }
+      if (candidate.messageSequence !== undefined && inside(candidate.messageSequence)) return false;
+    }
+    return true;
+  };
   for (let index = 0; index < atoms.length; index++) {
     const atom = atoms[index]!;
     if (atom.kind === "tool") {
@@ -341,8 +411,16 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
         // row — is preserved by construction: we only ever pop the LAST member, and that can be `memberIds[0]`
         // only in a one-member run, which is silent-only and therefore emitted no group to shift.
         if (fold.kind === "silent" && fold.popsOutOnError && (atom.event.result?.isError ?? false)) {
-          if (!joinsRun(atoms[index + 1])) { run.memberIds.pop(); flush(); out.push({ kind: "tool", event: atom.event }); }
-          else flush();
+          const relocates = windowIsClear(atom.event, index);
+          if (relocates) run.memberIds.pop();
+          // AND an errored silent call is never swallowed (spec §3.1, round 5). "Emit no group for an all-silent
+          // run" governs the GROUP; canon pushes the error result standalone on all three branches of
+          // 237198–237210, so a member that failed keeps a row of its own whether it relocated out or the group
+          // it stayed in was suppressed. Without this the two rules compose into a hole and a failed board write
+          // appears nowhere at all — worse than either rule alone and worse than the classic renderer.
+          const orphaned = run.visibleMembers === 0;
+          flush();
+          if (relocates || orphaned) out.push({ kind: "tool", event: atom.event });
         }
         continue;
       }

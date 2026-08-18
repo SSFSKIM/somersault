@@ -1021,13 +1021,16 @@ function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMa
   const spent = new Set<string>();
   return anchored.map((a, index): FoldAtom => {
     if (a.event !== undefined && (opts.fullscreen === true || !isSuppressedTool(a.event.name)) && !(opts.inert?.(a.event) ?? false)) return { kind: "tool", event: a.event };
-    if (a.atom === "breaker") return { kind: "breaker", sequence: index };
+    // `sequence` is the ARRAY back-pointer a `passthrough` replays through (see `foldAnchored`), so it must stay
+    // the index; `messageSequence` carries the entry's real transcript sequence alongside it, which is what the
+    // pop-out window test compares against a call's `callSequence`/`resultSequence`.
+    if (a.atom === "breaker") return { kind: "breaker", sequence: index, messageSequence: a.sequence };
     // The thinking clock's one gate: a thought-bearing message (`a.thinking`) the caller's LIVE map has a
     // duration for. A disk-bootstrapped, replayed or attached entry is never in that map, so it earns no
     // clause without a single replay-side branch.
     const ms = a.identity === undefined || a.thinking === undefined || spent.has(a.identity) ? undefined : opts.thoughtMs?.get(a.identity);
     if (ms !== undefined) spent.add(a.identity!);
-    return { kind: "neutral", sequence: index, ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }) };
+    return { kind: "neutral", sequence: index, messageSequence: a.sequence, ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }) };
   });
 }
 
