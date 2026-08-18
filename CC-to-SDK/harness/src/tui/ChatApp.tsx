@@ -1154,6 +1154,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   WHAT IS NOT ACCEPTABLE, and is pinned: a SECOND copy. The replay must REPLACE — every committed row
   // appears exactly once in the bytes after the flip — because Ink's `fullStaticOutput` only ever grows
   // (ink.js:57 resets it in the constructor and nowhere else) and a duplicating flip would compound per use.
+  //   …AND SINCE TOOL-STREAM T5 "EVERY COMMITTED ROW" HAS TO NAME A SHAPE (T5b). The fold policy became
+  // renderer-dependent, so the rows in `state.staticItems` were minted for whichever screen was up when they
+  // settled — and replaying a fullscreen-shaped run onto the classic screen satisfies "exactly once" while
+  // still putting the same two calls on it twice, because the next projection appends the per-call shape
+  // whose ids nothing has spent. `useChat`'s `refoldFor` (see its header) re-projects and REPLACES both
+  // derived facts on the flip itself, on the fullscreen side of it where this `<Static>` is holding nothing;
+  // by the time the classic arm below is handed a list, it is already the list this renderer would have made.
   // ── AND THE `<Static>` IS MOUNTED ON BOTH ARMS, WHICH IS A CRASH FIX (T17 fix round, Finding 2) ──────────
   // The paragraph above stands as the reasoning for what the two arms SHOW; what it got wrong is that the
   // classic tier may therefore be UNMOUNTED. Ink caches the `<Static>` box on its root node

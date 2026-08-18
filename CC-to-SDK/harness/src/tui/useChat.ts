@@ -270,9 +270,14 @@ export function useChat(
    *  own shape: the chip is killed once, in the `Ett` context the virtual list provides (2.1.234:506706,
    *  549824), and its consumer `Wv` returns null (511132) — not switched off at each site.
    *    IT REACHES `detailItems` TOO, so the ctrl+o pager loses the same clauses in fullscreen. Canon-faithful,
-   *  not a leak: `Ett` wraps the overlay as well (grounding §7). */
-  const projectionContext = (): ProjectionContext => {
-    const fullscreen = isFullscreenRef.current();
+   *  not a leak: `Ett` wraps the overlay as well (grounding §7).
+   *    THE OVERRIDE IS T5b's, AND IT IS THE ONLY CALLER THAT MAY PASS ONE. `/tui`'s re-fold has to project for
+   *  the renderer that is about to be painting rather than the one that still is: the whole point of the
+   *  ordering it runs under (see `refoldFor`) is that the re-projection lands on the side of the flip where
+   *  the `<Static>` is holding nothing, which means it necessarily runs while the ref still answers the OLD
+   *  screen. Absent — every other caller — the ref remains the sole authority. */
+  const projectionContext = (fullscreenOverride?: boolean): ProjectionContext => {
+    const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
     return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen };
   };
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
@@ -994,6 +999,51 @@ export function useChat(
       for (const item of commit) publishedIds.current.add(item.id);
       setStaticItems((s) => [...s, ...commit]);
     }
+    setPendingItems(livePending(context));
+  }
+  /** TOOL-STREAM T5b — THE FLIP RE-FOLDS WHAT IT IS ABOUT TO REPLAY, and this is the whole of the repair.
+   *
+   *  Task 5 made the fold policy RENDERER-DEPENDENT (`projectionContext().fullscreen`): the same run of
+   *  non-read shell calls is one cluster row in fullscreen and one row per call in classic. `staticItems` and
+   *  `publishedIds` are the record of what has already been PAINTED, and both were minted under whichever
+   *  policy happened to be in force at the time — so a flip left the app holding one policy's committed rows
+   *  while every later projection spoke the other's. Two consequences, both measured on main: the classic
+   *  arm's `<Static>` replayed the fullscreen-shaped rows on the way back (they were committed while the
+   *  alternate screen was up and therefore never painted), and the very next projection found the per-call
+   *  ids unspent and appended THOSE below them — both shapes, same two calls, one screen. That is precisely
+   *  the second copy `ChatApp.tsx:1154-1156` pins as unacceptable, and Ink's `fullStaticOutput` only grows.
+   *
+   *  THE REPAIR RE-PROJECTS AND REPLACES; IT NEVER CLEARS. The document is untouched — this is not
+   *  `replaceDocument`, which is the CONVERSATION boundary and drops a dozen measurements with it. Only the
+   *  two derived facts are re-derived, from the same document, under the new policy: the whole compact
+   *  projection, and the commit ratchet re-run over it from zero. Re-running the ratchet is what makes the
+   *  two agree again — `selectLiveWindow` cuts a PREFIX by height, so "committed" is a pure function of the
+   *  document, the width and the row budget, and recomputing it reproduces the accumulated set item for item
+   *  on the policy that did not change. ChatApp's render-time window subtracts `staticItems` from
+   *  `finalizedItems` by id, so the two tiers stay disjoint by construction and every row is on screen once.
+   *
+   *  THE ORDERING IS THE OTHER HALF, and it is why the caller (`/tui`) reads oddly rather than symmetrically:
+   *  this must run on the FULLSCREEN side of the flip, both ways. In fullscreen `Transcript` is handed
+   *  `EMPTY_ITEMS` (ChatApp:1185), so replacing `staticItems` there paints nothing at all — Ink's `<Static>`
+   *  never sees the swap. Entering, that means flip first and re-fold second; leaving, re-fold first and flip
+   *  second, so the classic arm's first sight of the list is already the new shape. Get it backwards and the
+   *  intervening render publishes the stale one: Ink marks the static node dirty on any update beneath it and
+   *  takes an IMMEDIATE, unthrottled render for it (`reconciler.js:73-80`), so an intermediate render is a
+   *  write to the terminal, not a frame that can be superseded.
+   *    AND IT NEEDS NO REMOUNT, which is what keeps T17's crash fix (ChatApp:1157-1167) untouched: `<Static>`
+   *  resets its index whenever `items.length` moves (`Static.js:20-22`), and the length the classic arm sees
+   *  moves `0 → M` across the flip whatever we did to the list underneath. The `staticEpoch` key stays for the
+   *  conversation boundaries that own it; nothing here unmounts anything. */
+  function refoldFor(fullscreen: boolean): void {
+    if (disposed.current) return;
+    mergeThoughtMs();
+    const context = projectionContext(fullscreen);
+    const finalized = projectCompact(documentRef.current!, context);
+    setFinalizedItems(finalized); finalizedRef.current = finalized;
+    const cap = commitCap();
+    const { commit } = selectLiveWindow(finalized, cap, cap, commitHeightOf);
+    publishedIds.current = new Set(commit.map((item) => item.id));
+    setStaticItems(commit);
     setPendingItems(livePending(context));
   }
   /** FSW T3 FIX ROUND (review I2) — publish the WHOLE live window, geometry ignored. The one caller is
@@ -1984,7 +2034,19 @@ export function useChat(
           // Outside `chatMain` there is nobody to flip: no guard, no live mode, no state above this tree.
           // The setting is still the user's to set, and saying so is the honest end of the command.
           if (!opts.switchRenderer) { append([{ text: `Saved. The ${want} renderer will apply at the next launch.`, dim: true }]); break; }
-          append(formatTuiResult(want, opts.switchRenderer(want), before));
+          // TOOL-STREAM T5b — THE FLIP AND THE RE-FOLD, IN THE ORDER THE SCREEN ALLOWS. `refoldFor`'s header
+          // carries the mechanism; what belongs here is the shape of the two arms. Both re-folds happen while
+          // the FULLSCREEN renderer is the one painting, because that is the only side on which the
+          // `<Static>` is holding nothing and a replacement of its list therefore writes no bytes — so
+          // entering flips first, leaving flips last, and neither ever exposes a classic frame to a list
+          // projected for the other screen. A `/tui` that changes no screen re-folds nothing: replacing the
+          // list under a LIVE `<Static>` would move `items.length` and replay the whole conversation for a
+          // command that did nothing.
+          let choice: RendererChoice;
+          if (after === before) choice = opts.switchRenderer(want);
+          else if (after === "fullscreen") { choice = opts.switchRenderer(want); refoldFor(choice.mode === "fullscreen"); }
+          else { refoldFor(false); choice = opts.switchRenderer(want); }
+          append(formatTuiResult(want, choice, before));
           break;
         }
         // /config [key=value] (W3 T6): bare → open the Settings shell at Config (openSettings always seeds

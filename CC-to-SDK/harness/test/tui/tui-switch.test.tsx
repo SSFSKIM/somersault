@@ -508,3 +508,62 @@ describe("the dock survives both flips, through the real tree", () => {
     r.unmount();
   });
 });
+
+// ── 4. The flip RE-FOLDS what it replays (T5b) ───────────────────────────────────────────────────────────
+// Everything above this section flips a transcript whose two projections are IDENTICAL, so it can pin the
+// replay's arithmetic (`N → 0 → N`, exactly once) without ever asking what SHAPE the replayed rows have. Since
+// the tool-stream wave the fold policy is renderer-DEPENDENT — a run of non-read shell calls is one cluster row
+// in fullscreen and one row per call in classic (`toolFold.ts`'s `fullscreen` input) — and that is the gap: rows
+// committed under one policy are replayed under the other, and the next projection appends the OTHER shape
+// below them because its per-call ids were never spent. Both shapes, same two calls, one screen.
+//   THE CORPUS IS WHAT MAKES THE CELL POSSIBLE: two contiguous non-read `Bash` calls (which diverge) followed
+// by enough prose to push them clean out of the live window (which is what COMMITS them — `commitCap()` is
+// eight painted rows at 24 rows of terminal, and only a committed row can be replayed at all).
+const shellRunEntries: TranscriptBootstrapEntry[] = [
+  { kind: "sdk", source: "disk", message: { type: "assistant", parent_tool_use_id: null, message: { id: "m-b1", content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "npm run build" } }] } } },
+  { kind: "sdk", source: "disk", message: { type: "user", uuid: "u-b1", message: { content: [{ type: "tool_result", tool_use_id: "b1", content: "ok", is_error: false }] } } },
+  { kind: "sdk", source: "disk", message: { type: "assistant", parent_tool_use_id: null, message: { id: "m-b2", content: [{ type: "tool_use", id: "b2", name: "Bash", input: { command: "npm test" } }] } } },
+  { kind: "sdk", source: "disk", message: { type: "user", uuid: "u-b2", message: { content: [{ type: "tool_result", tool_use_id: "b2", content: "ok", is_error: false }] } } },
+];
+const foldCorpus: TranscriptBootstrapEntry[] = [...shellRunEntries, ...alphaEntries(24)];
+const PER_CALL = "Bash(npm run build)";        // the classic shape of the FIRST of the two calls
+const CLUSTER = "Ran 2 shell commands";        // the fullscreen shape of BOTH of them
+
+/** Submit a prompt through the composer — the DOCUMENT MUTATION half of the defect: a flip alone changes no
+ *  document, and it is the next projection after it that appends the second shape. */
+async function sendPrompt(stdin: { write: (s: string) => void }, lastFrame: () => string | undefined, word: string): Promise<void> {
+  stdin.write(word);
+  await waitFor(() => text(lastFrame).includes(word));
+  stdin.write("\r");
+  await tick(60);
+}
+
+describe("/tui — the replay carries the NEW renderer's fold", () => {
+  // `ink-testing-library` runs Ink with `debug: true`, so every write is `fullStaticOutput + output`: the last
+  // frame IS the whole committed history plus the live frame, which is the only instrument in this suite that
+  // can count a committed row at all. The counts are therefore taken as a DELTA across the flip — the replay
+  // itself legitimately re-emits the conversation (section 2's `N → 0 → N`), so the question is never "how many
+  // times has this row ever been written" but "how many shapes did THIS flip put on the screen".
+  it("replaces the committed rows rather than adding a second copy of the same calls", async () => {
+    const born = staticProbe.born.length;
+    const { stdin, lastFrame, unmount } = mountRepl({ entries: foldCorpus });
+    await tick();
+    expect(text(lastFrame)).toContain(PER_CALL);                       // classic mount: two per-call rows, committed
+    expect(text(lastFrame)).not.toContain(CLUSTER);
+
+    await runSlash(stdin, lastFrame, "/tui fullscreen");
+    await sendPrompt(stdin, lastFrame, "ping-one");                    // …a mutation under the widened policy
+    const mid = text(lastFrame);
+    const basePerCall = occurrences(mid, PER_CALL), baseCluster = occurrences(mid, CLUSTER);
+
+    await runSlash(stdin, lastFrame, "/tui default");
+    await sendPrompt(stdin, lastFrame, "ping-two");                    // …and one under the frozen one
+    const after = text(lastFrame);
+    expect(occurrences(after, CLUSTER) - baseCluster).toBe(0);         // the classic screen folds NOTHING…
+    expect(occurrences(after, PER_CALL) - basePerCall).toBe(1);        // …and says each call exactly once
+    // …and none of it came at the price of the T17 crash fix: the component owning the `<Static>` is the same
+    // instance it was at mount, so Ink's cached `rootNode.staticNode` still points at a live yoga node.
+    expect(staticProbe.born.slice(born)).toHaveLength(1);
+    unmount();
+  }, 20000);
+});
