@@ -4,7 +4,7 @@
 flicker-free renderer, every tool call that is not a Write/Edit/Agent/plain message is
 absorbed into a compact, live-streaming cluster line, and clicking that line expands the
 cluster's calls in place — the only granular expansion control in fullscreen. ccx today
-folds only read/search/list runs (the pre-fullscreen 2.1.220 policy) and discards every
+folds only read/search/list/MCP runs (the pre-fullscreen 2.1.220 policy) and discards every
 mouse report except wheel ticks. This wave widens the fold policy to canon's fullscreen
 clauses and builds the click pipeline, without regressing text selection.
 
@@ -64,7 +64,9 @@ reaches the terminal's native selection (the BL5 status quo). What this costs, e
 **recorded divergence** reserved for a follow-on "full mouse" wave:
 
 - no hover brighten (needs 1003),
-- no expanded-row background tint (a hover-family affordance; meaningless without it),
+- no expanded-row background tint (canon gates the tint on *expanded*, not hovered —
+  549131; we drop it because the line-based row renderer has no per-item background
+  span, a cost call, not a hover dependency),
 - no click-to-position-cursor in the composer, no auto-copy-on-select,
 - tap detection approximates canon's "no selection produced" with "press and release in
   the same cell" (under mode 1000 there are no motion reports, so a drag is exactly a
@@ -74,9 +76,12 @@ Everything in §1 items 1–5 and 7 ships at full fidelity, minus the pieces abo
 
 **Not applicable to ccx (absent from the SDK tool surface), skipped with no divergence
 recorded:** PowerShell, REPL, workshop/scratchpad/memory-path Write/Edit, team memory.
-**Out of scope, unchanged:** the classic renderer's fold policy (canon gates every
-widening on `Ns()`; ours gates on the fullscreen renderer the same way), brief mode
-(ctrl+shift+b), `/tui` gating, the ctrl+o pager.
+**Out of scope, unchanged:** the classic renderer's fold policy — **a recorded
+divergence, not parity**: the Bash/ToolSearch/git widenings are genuinely `Ns()`-gated in
+canon, but TodoWrite/Task-board absorption is unconditional (`Joi.includes`, 236807), so
+canon 2.1.234's *classic* renderer absorbs those too while ccx classic stays at its
+shipped 2.1.220 subset. Also out: brief mode (ctrl+shift+b), `/tui` gating, the ctrl+o
+pager.
 
 ## 3. Design
 
@@ -92,12 +97,20 @@ module stays clock- and environment-free). Under `fullscreen`:
   237152). Standalone-Bash rendering remains the classic renderer's behavior.
 - **ToolSearch**: absorbed silently — counted nowhere, breaks nothing (canon 236808).
 - **TodoWrite, TaskCreate, TaskGet, TaskUpdate, TaskList**: absorbed silently, but an
-  errored result **pops the call out** — the run flushes and the call renders standalone
-  (canon `popsOutOnError`, 236809; the pop-out is the errored-workshop-write branch at
-  237199 generalized to this family).
-- **Git-operation scraping** (canon `odS`, 237212): when a cluster closes with
-  `bashCommands`, successful git commits/pushes/merges/rebases and `gh` PR actions are
-  scraped from the recorded commands + results into `commits[] / pushes[] / branches[] /
+  errored result **pops the call out** (canon `popsOutOnError`, 236809). Pinned now:
+  silently-absorbed calls ARE members — canon's expanded view renders every absorbed
+  `tool_use` (grounding §4), so they appear when the cluster is expanded, contributing
+  no header copy. NOT yet grounded: how canon *consumes* `popsOutOnError` — whether a
+  silent call can open a run (and so become its anchor), and whether pop-out splits the
+  run or relocates the call. **The implementing task re-reads canon's consumption sites
+  before building** (same discipline as the git scraper below), under one invariant this
+  spec owns regardless of what canon says: a pop-out must not shift the anchor identity
+  of an already-formed run — expansion state and the watermark latch key on it.
+- **Git-operation scraping** (canon `odS`, 237212): scraped **as each bash result is
+  absorbed** — canon runs `odS` inside the accumulation loop, so "committed abc123f"
+  appears in the live header mid-turn, not only at close. Successful git
+  commits/pushes/merges/rebases and `gh` PR actions are scraped from the recorded
+  commands + results into `commits[] / pushes[] / branches[] /
   prs[]` on the counts, and those bash calls move out of `bashCount` into
   `gitOpBashCount` (so "committed abc123f" and "ran 2 shell commands" never double-count
   one call). The implementing task re-reads canon's scraper (from 237212 into `odS`) and
@@ -117,36 +130,59 @@ apply unchanged to the new counts.
 **Live dressing** (canon §6, droppable to a follow-up ticket if it crowds the wave): the
 per-tool elapsed `· N.Ns` ticker and the bash `(Ns · N lines)` suffix, both appearing only
 after 2 s in flight. The existing active hint gutter (`latestDisplayHint`) already covers
-canon's "current tool" line; it gains bash commands as hint sources.
+canon's "current tool" line; it gains bash commands as hint sources. **Probe gate**: the
+bash suffix needs canon's `bash_progress`-equivalent feed; whether the installed SDK
+delivers any per-tool progress stream headlessly is an unverified declared-vs-reachable
+premise — a probe in `probes/probes/` settles it BEFORE any task is cut against it, and
+an unreachable answer pre-records the suffix as a divergence instead.
 
 ### 3.2 Mouse click pipeline (input: `keys/parse.ts` → `keys/KeymapProvider.tsx`)
 
-- `parse.ts`: SGR reports with `button & 3 !== 3` and no motion bit decode into a new
-  `MouseEvent` variant — `{ kind: "mouse"; action: "press" | "release"; button: 0 | 1 | 2;
-  col: number; row: number; ctrl; alt; shift }` (1-based col/row as the terminal sends
-  them; wheel stays a `KeyEvent` exactly as today; everything else stays
-  `ignored("mouse")`).
-- `KeymapProvider` routes `kind: "mouse"` to a registered click sink (a ref-callback slot
-  beside the existing deps, same pattern as `onUnknownSequence`) instead of dropping it.
-  Mouse events never enter the binding table — canon's clicks are not keybindings either.
+- `parse.ts`: SGR reports with `(button & 64) === 0`, `(button & 3) !== 3`, and no motion
+  bit decode into a new `MouseEvent` variant — `{ kind: "mouse"; action: "press" |
+  "release"; button: 0 | 1 | 2; col: number; row: number; ctrl; alt; shift }` (1-based
+  col/row as the terminal sends them; wheel stays a `KeyEvent` exactly as today;
+  everything else stays `ignored("mouse")`). The `& 64` term makes the rule
+  order-independent of the wheel check — without it, buttons 64/65/66 alias to 0/1/2.
+- `KeymapProvider` routes `kind: "mouse"` to a **`useMouseSink` registry hook** (the F2
+  registry pattern — innermost-wins, render-time registration — not a `KeymapDeps`
+  callback: the deps are supplied at the `chatMain` mount, but the sink's owner is
+  `ChatApp`, a descendant holding the tap state, expansion set, and row-map ref). Mouse
+  events never enter the binding table — canon's clicks are not keybindings either.
 - **Tap detection** lives in the sink's owner: a `press(0)` records `(col,row)`; a
-  `release` at the same cell within no particular deadline is a click; anything else
-  discards the anchor. Only button 0 clicks act; modified clicks (ctrl/alt/shift) are
-  ignored (Shift never arrives anyway — terminals bypass reporting for shifted mouse).
+  `release` at the same cell within no particular deadline is a click; anything else —
+  release elsewhere, a second press, **or any wheel tick in between** (the page scrolled
+  under the anchor) — discards the anchor. Only button 0 clicks act; modified clicks
+  (ctrl/alt/shift) are ignored (Shift never arrives anyway — terminals bypass reporting
+  for shifted mouse).
 
 ### 3.3 Hit-testing and expansion state (fullscreen renderer)
 
 - The fullscreen viewport already knows, for the frame it just sliced, which wrapped row
   came from which item (`wrapItems.ts` `sourceId`). It exposes the current frame's
-  row-map — `(terminalRow) → itemId | undefined` — through the same ref-channel family the
-  scroll handle uses (`scrollRef`), accounting for the region's top offset, the jump
-  pill's row, and the retained scroll offset. Rows belonging to the pill, banner, dock,
-  park row, or blank tail resolve to `undefined`.
+  row-map through the same ref-channel family the scroll handle uses (`scrollRef`), and
+  the map resolves **directly to fold anchor ids**, not raw item ids:
+  `(terminalRow) → { anchor: string; textWidth: number } | undefined`. Resolving at
+  projection time (the projection knows each fold row's, active hint block's, and
+  expanded member's owning anchor) is what keeps the churning fold-row item ids
+  (`group:<memberIds>:row|pending-row|unclosed-row`, growing with the run) out of the
+  click path — the same instability the anchor-key decision already rejects. Rows
+  belonging to the pill, dock, park row, blank tail, or any non-fold item resolve to
+  `undefined`. **Vertical origin**: the viewport knows its row grant but not where the
+  region sits on the terminal, so `FullscreenFrame` publishes the region's absolute top
+  row through the same channel — explicit, rather than a "region is always row 1"
+  invariant that a future banner would silently break.
+- **Column bound**: a click past `textWidth` on an otherwise-clickable row is dropped —
+  canon drops blank-cell clicks (549361), so the empty space right of a cluster's text
+  must stay inert here too.
 - **Expansion state**: `expandedFolds: Set<string>` keyed by the run's **anchor id**
   (`memberIds[0]` — already the stable identity `foldPendingState` ratchets on; the
   content-derived key gives canon's stays-expanded-while-growing behavior for free). It
   lives beside the transcript state in `ChatApp`/`useChat`, session-lifetime, never
-  persisted, surviving ctrl+o round-trips and later turns.
+  persisted, surviving ctrl+o round-trips and later turns. Its lifecycle mirrors
+  `FoldPendingState.reset()`'s discipline: cleared wherever the transcript document is
+  swapped or rewound (`/clear`, rewind, `/resume`); stale anchors are harmless but the
+  intent is pinned so the two states never drift apart.
 - **Projection**: `groupItems` receives the set through `ProjectionOptions`. An expanded
   run emits, instead of the one fold row, the existing **per-call verbose items** of its
   members (the same items the ctrl+o pager and classic verbose view already render), each
@@ -155,8 +191,10 @@ canon's "current tool" line; it gains bash commands as hint sources.
   on a row whose item is neither a fold row nor a member of an expanded run is a no-op
   (v1 clickable species: fold clusters only; canon's clickable error/truncated results
   are reserved).
-- **Dialog guard**: while any dialog/overlay owns the keymap, clicks are inert (the sink
-  checks the same gate the scroll keys already respect).
+- **Dialog guard**: while a dialog or overlay is mounted, clicks are inert. The gate is
+  `ChatApp`'s dialog-chain/pane-ownership state — NOT the scroll-key gate, which is
+  deliberately looser (ctrl+u/d scroll the transcript behind a decision dialog by
+  design, `FullscreenViewport.tsx:174-178`; a click must not toggle content behind one).
 - Clusters (and expanded member items) are **already outside any Static region** in
   fullscreen — the viewport is fully virtualized — matching canon's
   `collapsed_read_search → never static` (549695). No work, but the invariant is named
@@ -167,15 +205,21 @@ canon's "current tool" line; it gains bash commands as hint sources.
 In the fullscreen renderer every `(ctrl+o to expand)` chip renders as nothing: the
 `expandHint` already threaded through `ProjectionOptions`/`RenderMessageOptions` is set
 to the empty string by the fullscreen render path (the three-state contract in
-`keys/hints.ts` already treats `""` as "no hint"), covering the fold row, `hiddenToolUsesLine`,
-and `outputFold`'s compact marker. Classic renderer and pager keep their chips.
+`keys/hints.ts` already treats `""` as "no hint"). The suppression is deliberately
+**blanket** — it reaches every `expandHint` consumer, including the backgrounded-agent
+hint, the agent done-hint, and the batch header (`toolRenderer.tsx:224/284/339`), which
+matches canon's Ett context wrapping the whole virtual list; fullscreen snapshot deltas
+in those rows are expected, and A9's byte-identity claim binds the classic renderer
+only. Classic renderer and pager keep their chips.
 
 ## 4. Acceptance (observable behavior; keyed live cells run under the tmux driver with an isolated HOME under /tmp + CCX_FLEET_ROOT)
 
 - **A1 (cluster forms).** Fullscreen, live keyed turn that Reads 2 files, Greps once, and
   runs 2 non-read Bash commands with no interleaved text: exactly one dim cluster line
-  when settled, reading `Searched for 1 pattern, read 2 files, ran 2 shell commands`
-  (bold counts; first word capitalized; no `(ctrl+o to expand)` chip anywhere on it).
+  when settled, reading `Searched for 1 pattern, read 2 files, ran 2 shell commands` —
+  modulo an optional leading `Thought for <duration>, ` clause (a live turn usually
+  thinks; when present it takes the capital and `searched` goes lowercase). Bold counts;
+  no `(ctrl+o to expand)` chip anywhere on it.
 - **A2 (breakers).** A turn that Reads, then Writes a file, then Reads again: two
   clusters with the Write's full row between them. Agent dispatches and assistant text
   likewise render outside clusters, unchanged from today.
@@ -189,7 +233,8 @@ and `outputFold`'s compact marker. Classic renderer and pager keep their chips.
 - **A5 (state lifetime).** An expanded cluster stays expanded across a later turn and
   across a ctrl+o round-trip; a fresh `ccx` session starts with everything collapsed.
 - **A6 (absorbed-silent + pop-out).** TodoWrite inside a read run neither breaks the
-  cluster nor appears in its copy; a TodoWrite that errors renders standalone.
+  cluster nor appears in its copy, but DOES appear among the per-call rows when the
+  cluster is expanded (it is a member); a TodoWrite that errors renders standalone.
 - **A7 (git ops).** A turn whose Bash runs `git commit` + `git push` yields cluster copy
   containing `committed <shortsha>` and `pushed to <branch>`, and those two calls are not
   also counted in "ran N shell commands".
@@ -198,6 +243,10 @@ and `outputFold`'s compact marker. Classic renderer and pager keep their chips.
   resize-matrix all green; the BL5 acceptance pokes re-pass).
 - **A9 (classic untouched).** On the classic renderer (`--tui default`), fold policy,
   copy, and chips are byte-identical to before this wave (snapshot evidence).
+- **A10 (stays expanded while growing).** Clicking a cluster **mid-turn**, while its run
+  is still accreting members, keeps it expanded as later calls arrive and after it
+  settles — this is the cell that forces the anchor-id key; an implementation keyed on
+  the churning fold-row item id passes A1–A9 and fails here.
 
 ## 5. Testing strategy
 
@@ -238,6 +287,15 @@ and `outputFold`'s compact marker. Classic renderer and pager keep their chips.
 - **Citation target moves to 2.1.234 for new work; shipped 2.1.220 citations stay.**
   Rejected: bulk-rewriting old citations — they were verified against the binary they
   name, and the 2.1.220 tree is no longer on disk to re-verify against.
+- **Row-map resolves to anchor ids at projection time; the frame publishes the region's
+  absolute top row.** Rejected: mapping to raw item ids (fold-row ids churn with the
+  run — the instability the anchor-key decision exists to avoid) and a "region is
+  always terminal row 1" invariant (implicit geometry a future banner would silently
+  break). Both per spec-review round 1.
+- **Git ops scrape per absorbed result, not at cluster close.** Rejected: close-time
+  scraping — canon runs `odS` in the accumulation loop, so "committed …" is visible
+  live; close-time would be a mid-turn divergence A3/A7 could not see. Per spec-review
+  round 1.
 
 ## 7. Surprises & Discoveries
 
@@ -258,3 +316,15 @@ Pending — written at finish.
 - 2026-08-18: v1 authored from the canon grounding doc + module reads (toolFold,
   foldPendingState, toolRenderer, parse/KeymapProvider/types, wrapItems,
   FullscreenViewport/Frame).
+- 2026-08-18: review round 1 (independent spec reviewer; 11 Important + 6 Minor, all
+  adopted): classic-renderer rationale corrected to a recorded divergence (Joi is
+  unconditional in canon); git scraping moved to per-result absorption; pop-out
+  consumption flagged as a mandated canon re-read with the anchor-stability invariant
+  pinned and members-when-expanded grounded; mouse decode gains `(button & 64) === 0`;
+  sink is a `useMouseSink` registry hook, not a KeymapDeps callback; row-map resolves
+  anchor ids + textWidth with the frame publishing the region top; blank-tail clicks
+  dropped (column bound); dialog gate named (not the scroll gate); bash-suffix
+  progress-stream premise gets a probe gate; A1 tolerates the thought clause; A6 pins
+  members-in-expansion; A10 added (mid-turn expansion persistence); expansion-set
+  lifecycle mirrors FoldPendingState.reset(); chip suppression documented as blanket;
+  tint-drop rationale re-justified on cost.
