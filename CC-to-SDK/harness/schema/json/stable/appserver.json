@@ -1650,12 +1650,19 @@
           },
           "required": [
             "message",
-            "overridingLayer",
-            "effectiveValue"
+            "overridingLayer"
           ],
           "additionalProperties": false
         },
         "maskedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "uncheckedEditIndexes": {
           "type": "array",
           "items": {
             "type": "integer",
@@ -1712,12 +1719,19 @@
           },
           "required": [
             "message",
-            "overridingLayer",
-            "effectiveValue"
+            "overridingLayer"
           ],
           "additionalProperties": false
         },
         "maskedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "uncheckedEditIndexes": {
           "type": "array",
           "items": {
             "type": "integer",

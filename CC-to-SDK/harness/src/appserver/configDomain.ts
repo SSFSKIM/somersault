@@ -128,7 +128,11 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v ===
  *  ARRAY is itself one leaf (`effectiveView` tracks an array as a contributor list, never as a subtree), an
  *  object contributes one leaf per scalar/array nested inside it, and a `replace` with `null` — a delete —
  *  has the keyPath itself as its single leaf. An empty object introduces nothing and yields no leaves,
- *  which is the honest answer: nothing was added to the effective view, so nothing of it can be masked. */
+ *  which is the honest answer: nothing was added to the effective view, so nothing of it can be masked.
+ *
+ *  `upsert` with `null` never reaches here — `applyEdit` refuses it, inside the lock, before any masking
+ *  runs — so the fall-through that would treat it as a scalar leaf is kept only as defence against a
+ *  future caller that computes leaves without writing first. It costs no branch of its own. */
 function introducedLeaves(keyPath: string[], value: unknown, strategy: "replace" | "upsert"): string[][] {
   if (strategy === "replace" && value === null) return [keyPath];
   const out: string[][] = [];
@@ -140,13 +144,52 @@ function introducedLeaves(keyPath: string[], value: unknown, strategy: "replace"
   return out;
 }
 
-/** `origins` keys the LEAVES of the effective view, so a leaf whose object PARENT a higher layer replaced
- *  with a scalar has no entry of its own — the layer that swallowed it is named at the nearest ancestor
- *  that does. Hence the climb: an unattributed leaf must not read as "nobody is above me". */
+/** `origins` keys the LEAVES of the effective view, so a written leaf can go unattributed in two OPPOSITE
+ *  directions, and reading either absence as "nobody is above me" reports `ok` for a write that never
+ *  reaches the effective view at all.
+ *
+ *  ABOVE the leaf: a higher layer replaced an object ANCESTOR with a scalar, so the leaf has no entry of
+ *  its own and the layer that swallowed it is named at the nearest ancestor that does — hence the climb.
+ *
+ *  BELOW the leaf: a higher layer holds an OBJECT where this write put a leaf. The leaf is gone from the
+ *  effective view, but so is any entry at its own path — the survivors are the higher layer's own leaves
+ *  INSIDE that object, keyed strictly beneath it. Hence the descendant scan (review H1): `env` written as
+ *  a scalar under a project `env: {B}` had no entry at `env`, no ancestor, and therefore no contributors
+ *  at all, which the `masking.length === 0` clause — meant to make a DELETE in force by absence — then
+ *  read as "in force". `config/read`'s whole output was byte-identical before and after that write.
+ *
+ *  The scan returns a contributor LIST because an object can be assembled from several layers at once; the
+ *  caller filters it by rank exactly as it filters an array's contributor list. A delete keeps its
+ *  by-absence verdict: nothing is attributed at or under a key nobody else defines, and a delete falling
+ *  back to a LOWER layer collects only that lower layer, which no rank filter can turn into a mask. */
 const originAt = (origins: Record<string, LayerName | LayerName[]>, leaf: string[]): LayerName | LayerName[] | undefined => {
   for (let n = leaf.length; n > 0; n--) { const hit = origins[leaf.slice(0, n).join(".")]; if (hit !== undefined) return hit; }
-  return undefined;
+  const under = `${leaf.join(".")}.`;
+  const below: LayerName[] = [];
+  for (const [path, origin] of Object.entries(origins)) {
+    if (!path.startsWith(under)) continue;
+    for (const l of Array.isArray(origin) ? origin : [origin]) if (!below.includes(l)) below.push(l);
+  }
+  return below.length ? below : undefined;
 };
+
+/** Every place the merged view's DOTTED leaf addressing is ambiguous: the path of each key carrying a
+ *  literal ".". `mergeTracked` keys `origins` by dotted path, so `{"a.b": …}` and `{a:{b:…}}` are one key
+ *  there — a documented, closed limitation of the read side (D-M5-12). The write side cannot inherit it
+ *  as a GUESS: a project `{"env.PROJKEY": "PROJ"}` under a user write of `["env","PROJKEY"]` made the
+ *  reply name the value the client had just written as the value overriding it (review M1).
+ *
+ *  Scanned on the MERGED config rather than on each layer, because that is the object `origins` was keyed
+ *  from: a dotted key some higher layer replaced away is gone from both, and cannot collide with anything.
+ *  A dotted key stops the walk — the caller's prefix test covers its whole subtree. */
+function dottedKeyPaths(cfg: Record<string, unknown>, prefix = "", out: string[] = []): string[] {
+  for (const [k, v] of Object.entries(cfg)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (k.includes(".")) out.push(path);
+    else if (isPlainObject(v)) dottedKeyPaths(v, path, out);
+  }
+  return out;
+}
 
 /** Walk the merged config by SEGMENTS (never by dotted path — that is the whole point of D-M5-12's opaque
  *  keyPath). Arrays are leaves, so an array on the way down is a miss, exactly as `effectiveView` sees it. */
@@ -159,7 +202,7 @@ const valueAt = (cfg: Record<string, unknown>, keyPath: string[]): unknown => {
   return node;
 };
 
-type MaskVerdict = { maskedEditIndexes: number[]; overriddenMetadata?: { message: string; overridingLayer: LayerName; effectiveValue: unknown }; unverifiable: string[] };
+type MaskVerdict = { maskedEditIndexes: number[]; uncheckedEditIndexes: number[]; overriddenMetadata?: { message: string; overridingLayer: LayerName; effectiveValue?: unknown }; unverifiable: string[] };
 
 /** THE MASKING RULE, derived from the read side's own output so the two methods cannot disagree by
  *  construction (review F1). Settings deep-merge, so an object write PARTIALLY lands and "masked at the
@@ -178,18 +221,31 @@ type MaskVerdict = { maskedEditIndexes: number[]; overriddenMetadata?: { message
  *
  *  A DELETE is in force by ABSENCE (nothing survives at its leaf, so nothing is attributed to it), and a
  *  delete whose leaf falls back to a LOWER layer is in force too: the target's own value really is gone,
- *  and calling a lower layer an "overriding" one would send a client to edit a file that outranks nothing. */
+ *  and calling a lower layer an "overriding" one would send a client to edit a file that outranks nothing.
+ *
+ *  "Not attributed to the target" is asked of `originAt`, not of `origins` directly, because a leaf can be
+ *  unattributed from EITHER side — an ancestor above it or an object below it — and only one of those is
+ *  a lookup at the leaf's own key. */
 function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], effective: Record<string, unknown>, origins: Record<string, LayerName | LayerName[]>): MaskVerdict {
   const targetRank = LAYER_ORDER.indexOf(target);
-  const out: MaskVerdict = { maskedEditIndexes: [], unverifiable: [] };
+  const hazards = dottedKeyPaths(effective);
+  const out: MaskVerdict = { maskedEditIndexes: [], uncheckedEditIndexes: [], unverifiable: [] };
   edits.forEach((e, i) => {
     const leaves = introducedLeaves(e.keyPath, e.value, e.mergeStrategy);
     // `origins` addresses leaves by DOTTED path while a keyPath is an opaque segment array (D-M5-12), so a
-    // segment carrying a literal dot mis-splits and any verdict drawn from it would be a guess. The same
-    // hazard rides the written value's own keys, so both are checked. Reporting the gap beats reporting a
-    // wrong verdict: the edit is left out of the masking answer entirely and says so in `warnings`.
-    if ([e.keyPath, ...leaves].some((p) => p.some((seg) => seg.includes(".")))) {
-      out.unverifiable.push(`could not check whether "${e.keyPath.join(" / ")}" is overridden — a key contains "." and the effective view addresses leaves by dotted path`);
+    // segment carrying a literal dot mis-splits and any verdict drawn from it would be a guess. TWO sides
+    // carry that hazard and only one of them is this edit's own: the written keyPath and value's keys
+    // (which may never reach the merged view, so they are checked structurally), and a literal dot in some
+    // OTHER layer's key that lands on this edit's dotted path in `origins` (checked against the merged
+    // view, whose subtrees the prefix test covers in both directions). Reporting the gap beats reporting a
+    // wrong verdict: the edit is left out of the masking answer entirely, named in `warnings` BY INDEX,
+    // and listed in `uncheckedEditIndexes` so a client never has to parse prose to find it.
+    const paths = [e.keyPath, ...leaves];
+    const unchecked = paths.some((p) => p.some((seg) => seg.includes(".")))
+      || paths.map((p) => p.join(".")).some((p) => hazards.some((h) => h === p || h.startsWith(`${p}.`) || p.startsWith(`${h}.`)));
+    if (unchecked) {
+      out.uncheckedEditIndexes.push(i);
+      out.unverifiable.push(`could not check whether edit ${i} ("${e.keyPath.join(" / ")}") is overridden — a key containing "." collides with this path, and the effective view addresses leaves by dotted path`);
       return;
     }
     let inForce = false;
@@ -208,9 +264,19 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
       if (contributors.includes(target) || masking.length === 0) { inForce = true; continue; }
       for (const l of masking) if (maskedBy === undefined || LAYER_ORDER.indexOf(l) > LAYER_ORDER.indexOf(maskedBy)) maskedBy = l;
     }
+    // `maskedBy === undefined` with nothing in force is the EMPTY-OBJECT edit: it introduces no leaves, so
+    // the loop never runs, and nothing introduced is nothing that can be masked — `ok` is the honest answer.
     if (inForce || maskedBy === undefined) return;
     out.maskedEditIndexes.push(i);
-    out.overriddenMetadata ??= { message: `the ${maskedBy} layer defines this key with higher precedence`, overridingLayer: maskedBy, effectiveValue: valueAt(effective, e.keyPath) };
+    // `effectiveValue` is OMITTED, never null, when the merged view has no value at this keyPath — an
+    // ancestor is a scalar, say, so the path does not resolve at all. A settings file may legitimately hold
+    // a null leaf, so `null` would be indistinguishable from a real value; absence is unambiguous, and the
+    // published schema marks the key optional for exactly this case.
+    const effectiveValue = valueAt(effective, e.keyPath);
+    out.overriddenMetadata ??= {
+      message: `the ${maskedBy} layer defines this key with higher precedence`, overridingLayer: maskedBy,
+      ...(effectiveValue !== undefined ? { effectiveValue } : {}),
+    };
   });
   return out;
 }
@@ -270,7 +336,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
     const layers = await readLayers(layerPaths(home, managed, cwdReal));
     const { config: effective, origins } = effectiveView(layers);
-    const { maskedEditIndexes, overriddenMetadata, unverifiable } = maskingVerdict(data.edits, data.target, effective, origins);
+    const { maskedEditIndexes, uncheckedEditIndexes, overriddenMetadata, unverifiable } = maskingVerdict(data.edits, data.target, effective, origins);
     // DEDUPED (review M5): the warning names the top-level key, so three edits under one unknown key are
     // three copies of one sentence — noise a client has to collapse itself before showing it.
     const warnings = [...new Set([
@@ -281,6 +347,10 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       status: maskedEditIndexes.length ? "okOverridden" : "ok", version: written.version, filePath,
       ...(overriddenMetadata ? { overriddenMetadata } : {}),
       ...(maskedEditIndexes.length ? { maskedEditIndexes } : {}),
+      // The machine-readable half of "reported, never guessed" (review M2). `status: "ok"` beside a
+      // populated `uncheckedEditIndexes` means "not reported as overridden", NOT "verified in force", and
+      // a client can tell the two apart without string-matching a sentence — which is all it had before.
+      ...(uncheckedEditIndexes.length ? { uncheckedEditIndexes } : {}),
       ...(warnings.length ? { warnings } : {}),
     });
   } catch (e) {
