@@ -13,13 +13,18 @@ import { settingsReadParams, directoryListParams, directoryPathParams, permissio
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
 import { reviewStartParams } from "./review.js";
+import { configReadParams, configReadResult } from "./config.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
  *  which generated artifact a method lands in (`schema/emit.ts`: stable file XOR experimental file), so
  *  flipping the marker is how a method graduates — there is no second list to keep in step. Absent, not
  *  `false`, on a stable method: the marker is an exception, and an entry that says nothing says "stable". */
-export interface MethodSchema { params: z.ZodType; experimental?: true }
+/** `result` (M5, spec D-M5-19): the method's RESPONSE shape, published beside its params. Optional and
+ *  incremental on purpose — the 59 methods that predate M5 declare none, and the spec rejected
+ *  retrofitting them in this milestone, so an entry without it means "response shape not yet published",
+ *  never "no response". `schema/emit.ts` emits every declared one into the artifact's `results` map. */
+export interface MethodSchema { params: z.ZodType; result?: z.ZodType; experimental?: true }
 export const methodSchemas: Record<string, MethodSchema> = {
   "initialize": { params: initializeParams },
   "server/status": { params: serverStatusParams },
@@ -107,4 +112,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // under it is an ordinary turn on a thread this server creates, not an unproven SDK seam. The `target`
   // union rides out with it, so the generated artifact carries the four variants a client must choose from.
   "review/start": { params: reviewStartParams },
+  // M5 (§config): the settings-files domain's read half, and the FIRST entry to declare a `result` —
+  // D-M5-19's slot exists because a client cannot act on `versions` (the CAS token its next write must
+  // carry) from a params schema alone. SERVER-scoped like `fs/read`: the subject is this machine's
+  // settings files, not a thread. STABLE — the mechanism is node's own fs plus upstream's merge.
+  "config/read": { params: configReadParams, result: configReadResult },
 };

@@ -23,7 +23,8 @@ const script = "scripts/emit-appserver-schema.mjs";
 const TIERS = ["stable", "experimental"] as const;
 const vendoredPath = (tier: string) => join(harness, "schema", "json", tier, "appserver.json");
 const vendoredText = (tier: string) => readFileSync(vendoredPath(tier), "utf8");
-const vendored = (tier: string) => JSON.parse(vendoredText(tier)) as { $schema: string; methods: Record<string, unknown> };
+type VendoredDoc = { $schema: string; methods: Record<string, unknown>; results: Record<string, unknown> };
+const vendored = (tier: string) => JSON.parse(vendoredText(tier)) as VendoredDoc;
 
 describe("emit-appserver-schema", () => {
   it("vendored schema artifacts match a fresh generation", () => {
@@ -56,6 +57,30 @@ describe("emit-appserver-schema", () => {
     // 4's queue, not the method — a client pinning the stable artifact must still find `turn/start`.
     expect(Object.keys(vendored("experimental").methods)).toEqual(["turn/steer"]);
     expect(vendored("stable").methods).toHaveProperty(["turn/start"]);
+  });
+
+  it("publishes a result schema for config/read and none for thread/start", () => {
+    // M5's `MethodSchema.result` (spec D-M5-19), as the artifact sees it: declaring one publishes the
+    // response shape, and the 59 methods that declare none publish nothing — the slot is incremental, so
+    // "absent" has to stay a legible state rather than an empty object every method carries.
+    // The results live in their own top-level map because a method entry must stay a schema a strict
+    // validator can compile (emit.ts's note); the last two assertions are that claim, checked.
+    // Read off a FRESH generation, not the vendored file: the vendored bytes are an artifact of the last
+    // `emit-schema` run, so asserting on them would leave this case green while the registry entry or the
+    // emission itself was deleted (measured — the byte-comparison cases above were the only ones that
+    // fired). The two are pinned equal by those cases, so nothing is lost by generating here.
+    const stable = (JSON.parse(execFileSync("node", [script, "--stdout"], { cwd: harness, encoding: "utf8" })) as Record<string, VendoredDoc>).stable;
+    expect(stable).toEqual(vendored("stable"));
+    expect(Object.keys(stable.results)).toEqual(["config/read"]);
+    expect(stable.methods).toHaveProperty(["config/read"]);
+    expect(stable.results).not.toHaveProperty(["thread/start"]);
+    const result = stable.results["config/read"] as { type: string; required: string[]; properties: Record<string, unknown>; additionalProperties: boolean };
+    expect(result.type).toBe("object");
+    expect(result.required.sort()).toEqual(["config", "incomplete", "origins", "versions"]); // `layers` is includeLayers-only
+    expect(result.properties).toHaveProperty("layers");
+    const ajv = new Ajv({ strict: true });
+    expect(() => ajv.compile(result)).not.toThrow();
+    expect(() => ajv.compile(stable.methods["config/read"] as object)).not.toThrow();
   });
 
   it("every artifact is draft-7, and no method subschema redeclares the dialect", () => {

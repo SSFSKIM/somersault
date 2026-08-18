@@ -31,6 +31,7 @@ import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
 import { reviewStart } from "./review.js";
+import { configRead } from "./configDomain.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -75,6 +76,15 @@ export interface AppServerDeps {
   // one of its own: the production value must sit ABOVE the seam's inner 30 s SIGTERM attempt, so a suite
   // that served it honestly would spend 40 real seconds proving one branch.
   shellDeadlineMs?: number;
+  // M5: the config-files domain + archive markers. `configHome` is the base of the user layer
+  // (`<configHome>/.claude/settings.json`), defaulted to os.homedir() at each call site so tests point
+  // the whole domain at a temp dir; `managedSettingsPath` overrides the platform managed file (null =
+  // no managed layer, the win32 default); `ccxDir` is the server-state dir (`~/.claude/ccx`) the
+  // archive markers live under; `getSessionInfo` backs the D-M5-20 existence checks.
+  configHome?: string;
+  managedSettingsPath?: string | null;
+  ccxDir?: string;
+  getSessionInfo?: (id: string) => Promise<unknown | undefined>;
 }
 export interface ConnCtx {
   peer: Peer;
@@ -477,6 +487,10 @@ export class AppServer {
     // everything a client can name on it, thread/shellCommand's precedent), while the origin gate never
     // fires because a fleet thread's cwd is as reviewable as an inProcess one's.
     "review/start": reviewStart,
+    // M5 (§config): the settings-files domain's read half. SERVER-scoped like `fs/read` — it names no
+    // thread, so neither dispatch gate can fire — and it reads the files a client is about to write
+    // through, which is why the reply carries the CAS `versions` its first conditional write needs.
+    "config/read": configRead,
   };
 
   private readonly token: string;

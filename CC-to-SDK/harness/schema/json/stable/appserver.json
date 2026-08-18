@@ -1394,6 +1394,122 @@
         "target"
       ],
       "additionalProperties": false
+    },
+    "config/read": {
+      "type": "object",
+      "properties": {
+        "includeLayers": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "results": {
+    "config/read": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "origins": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "project",
+                  "local",
+                  "managed"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "project",
+                    "local",
+                    "managed"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "versions": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "incomplete": {
+          "type": "boolean",
+          "const": true
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "project",
+                  "local",
+                  "managed"
+                ]
+              },
+              "filePath": {
+                "type": "string"
+              },
+              "config": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "raw": {
+                "type": "string"
+              },
+              "disabledReason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "filePath"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "config",
+        "origins",
+        "versions",
+        "incomplete"
+      ],
+      "additionalProperties": false
     }
   }
 }
