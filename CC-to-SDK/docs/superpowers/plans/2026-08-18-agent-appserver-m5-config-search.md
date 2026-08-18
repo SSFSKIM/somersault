@@ -611,7 +611,13 @@ export function versionToken(bytes: string | null): string {
 export async function readTargetDoc(filePath: string): Promise<{ doc: Record<string, unknown>; version: string }> {
   let raw: string;
   try { raw = await readFile(filePath, "utf8"); }
-  catch (e) { if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return { doc: {}, version: "absent" }; throw e; }
+  // D-M5-18a: ENOENT is the only benign read failure. EACCES/EISDIR refuse as a VALIDATION error —
+  // rethrowing the raw fs error would surface an unreadable settings file at the wire as an internal
+  // error carrying an `EISDIR` string. Never write bytes over bytes you were never able to see.
+  catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return { doc: {}, version: "absent" };
+    throw new ConfigError("ConfigValidationError", `target settings file could not be read: ${(e as Error).message}`);
+  }
   let parsed: unknown;
   try { parsed = JSON.parse(raw.replace(/^﻿/, "")); }
   catch { throw new ConfigError("ConfigValidationError", "target settings file is not valid JSON; fix it before writing through this API"); }
