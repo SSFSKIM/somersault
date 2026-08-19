@@ -853,6 +853,36 @@ flips the `full-potential.md` rows and ships nothing.
   `thread/delete`'s own: "live in this server — close it first" is false about a holder in another process
   and unfollowable as advice. That sentence moved to `server.ts` beside the probe and is now imported by
   both methods — it was two independent literals, which is how the two answers drift apart again.
+- **D-M5-22 (Task 12 spike, rev 6) — both 0.3.234 absorb candidates are ALIVE on both origins, and the
+  promote sentence for one of them is amended before it ships.**
+  `terminal_slash_commands`: a headless init frame carries `["doctor","color"]` beside 98 slash commands,
+  and reaches BOTH the in-process router's feed and the fleet relay's. What saves the fleet origin is that
+  init is **re-emitted every turn** — a fleet thread's attach burst is replay-marked and dropped by the
+  router, so a once-only init would have been inProcess-only.
+  `context_usage`: delivered on a `/context` turn as a **wrapper-level key on the ASSISTANT frame**
+  (`message.context_usage` is absent), never on the result frame. That distinction *was* the question the
+  seam step existed to answer: result frames are consumed by the submit waiter and never relayed to fleet
+  followers, so a result-frame carrier would have been honestly **DEAD-for-us** on that origin. Measured
+  without standing up a fleet host, by noticing the host's follower relay is fed by exactly one object —
+  the per-turn `onMessage` sink handed to `Session.submit` — so both legs are observable from one turn on
+  one real `Session`.
+  **The amendment.** This spec's promote sentence said the structured card goes "into the context-usage
+  surface". Wrong, and the spike was right to refuse it rather than comply: `thread/contextUsage/read`
+  already serves `getContextUsage()`, which is **richer** (`gridRows`, `systemTools`,
+  `systemPromptSections`, `slashCommands`) and costs **no turn**, where the twin is obtainable only by
+  spending a `/context` turn. Folding the twin into that route would trade a free, richer answer for a
+  paid, thinner one. `router.ts:127` had already reached this conclusion once, in its own words: context
+  usage belongs on `thread/contextUsage/read`, "not bolted onto this route."
+  **Shipped shape, which the PLAN already had right where this spec did not:** forward the twin on the
+  **existing item/notification the router already emits for that turn**, with no retention, leaving
+  `thread/contextUsage/read` untouched. That is additive rather than destructive — a client that runs
+  `/context` as a turn gets structured output instead of text to parse, and a client that just wants the
+  numbers keeps the free richer read. What the twin genuinely adds and the control response lacks is
+  narrow but real: an `over_limit` field, and a semantic `used`/`free`/`buffer`/`deferred` classification
+  per category where the control response offers a renderer's colour flag.
+  Rejected: shipping nothing for `context_usage` (the value is small but real, and the plan's shape costs
+  no degradation to pay for it); and following the original sentence literally (it makes the surface
+  worse, which no promote criterion intends).
 
 ## Surprises & Discoveries
 
@@ -1111,6 +1141,27 @@ flips the `full-potential.md` rows and ships nothing.
   `rate_limit_event`, by contrast, is fully covered (`SDKRateLimitEvent` is in the union; `classify.ts`
   and `router.ts`'s `routeLimits` both consume it) and appeared in one of the two live streams,
   confirming it is intermittent rather than absent.
+
+- **An undeclared frame type the name-level drift scan is structurally unable to see.** While logging
+  every message on the `/context` path, Task 12 caught **`command_lifecycle`** — two frames per turn,
+  appearing in **no** 0.3.234 declaration and nowhere in `harness/src`. Its likely partner is the
+  `msg_lifecycle_v1` capability the init frame advertises but the capabilities doc comment does not list.
+  Nothing breaks today. What matters is the class: our drift instrument compares **names it can enumerate
+  from declarations** on both sides, so a frame the SDK emits but never declares is invisible to it by
+  construction — the instrument cannot report what it has no name for. (By contrast `rate_limit_event`,
+  which the same logging caught and which prompted the check, turned out **fully covered**: it is in the
+  SDK's `SDKMessage` union and consumed by both `limits/classify.ts` and the router's `routeLimits`; it is
+  intermittent, not absent.) **Generalised: a name-level drift check bounds the declared surface, not the
+  emitted one, and the gap between them is only visible by logging a live stream and reading what arrives.**
+  Parked with its trigger: a client depending on lifecycle framing, or any 0.3.235+ bump where
+  `msg_lifecycle_v1` moves from advertised to documented.
+- **The plan was right where the spec was wrong, on the same decision.** The spec said the structured
+  context card goes "into the context-usage surface"; the plan said forward it on the turn's existing
+  emission with no retention. The second is additive and the first is destructive, and only the plan's
+  version survived contact with what the code already offers. Worth keeping because the usual direction of
+  drift is the opposite — plans go stale against specs — and this milestone has now seen both directions
+  inside one document set. **The check that caught it was not comparing the two documents; it was reading
+  the code the sentence would have changed.**
 
 ## Outcomes & Retrospective
 
