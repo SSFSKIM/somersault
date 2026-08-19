@@ -44,13 +44,22 @@ const HINT_MAX_LINES = 10;
 /** `wrap` is set ONLY by the tool header (LT10: upstream's `wrap:"truncate-end"` — an MCP-length name must
  *  never wrap one header into several transcript rows). Every other line item leaves it unset and wraps
  *  normally, which is what keeps ordinary assistant text and local notices readable now that Task 4 routes
- *  the WHOLE transcript through `RenderItemView`. */
+ *  the WHOLE transcript through `RenderItemView`.
+ *
+ *  `foldAnchor` (tool-stream Task 8) is WHICH CLUSTER A ROW BELONGS TO — the fold run's anchor id, i.e.
+ *  `memberIds[0]`. It is on BOTH arms because a cluster projects to both: the collapsed fold row and its
+ *  active hint block wear it, and so does every item an EXPANDED cluster's members render. A later task
+ *  builds the painted-row map from it and turns a tap on any of those rows into `toggleFold(anchor)`, which
+ *  is why the tag names the ANCHOR rather than the group's item id: the item id is derived from the whole
+ *  membership and therefore changes every time the run absorbs another call, while the anchor never moves.
+ *  Absent on everything else, and absent is not a cluster. It must survive `wrapItems` (a hit test reads
+ *  PAINTED rows, not projected items) — see `wrapOne`, where three of the four paths carried it for free. */
 export type RenderItem =
-  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end" }
+  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string }
   // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
   // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
-  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean } };
+  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
  *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
@@ -95,7 +104,13 @@ export type { ResultProjection };
  *  separate too (the chip dies in the `Ett` context the virtual list provides, 506706/549824, whose consumer `Wv`
  *  returns null outright at 511132, while the policy takes `Ns()`). `useChat.projectionContext()` is where the
  *  two are set together; a projection handed only this flag still prints the chip, and that is correct. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; }
+/** `expandedFolds` (tool-stream Task 8) is WHICH CLUSTERS ARE OPEN, keyed by anchor id (`memberIds[0]`).
+ *  Display state, not document state — nothing on the wire or on disk says a cluster was expanded — so it
+ *  is a projection INPUT exactly as `thoughtMs`/`agentMeta` are, held in `useChat` and cleared at the
+ *  conversation boundary. Absent (the common case, and every caller that predates this task) is all-closed.
+ *  It is deliberately NOT part of `knobKey`: like `fullscreen`, what it changes is the FOLD, which runs
+ *  strictly downstream of the anchored-entry cache. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; }
 /** THE ONE WAY the renderer identity reaches the pure fold policy, and the reason it is a named helper rather
  *  than an inline object literal at each of the seven call sites: "did that site get the flag?" becomes a grep
  *  instead of a reading of seven argument lists. Task 4's review found `foldClauses` called twice with only one
@@ -398,7 +413,18 @@ export function renderToolEvent(event: ToolEvent, normalized: NormalizedToolResu
  *  token, so the row carries the failure's colour. Same shape Task 8 owes a suppressed MEMBER of an expanded
  *  cluster. Non-errored suppression is untouched — that is canon (`Joi` 2.1.234:236734) and load-bearing. */
 function poppedOnErrorItems(event: ToolEvent, options: ProjectionOptions): readonly RenderItem[] {
-  return [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, "suppressed", options), wrap: "truncate-end" }];
+  return suppressedHeaderItems(event, "suppressed", options);
+}
+/** THE ONE SHAPE A SUPPRESSED CALL WEARS WHEN IT MUST BE SEEN, shared by T5's standalone pop-out above and
+ *  T8's expanded member below so the two cannot drift into two answers for one question: the generic header
+ *  row and nothing else — a suppressed tool has no result surface at all (`Joi`), and inventing one here
+ *  would show more inside a cluster than the same call shows anywhere else.
+ *    ONLY THE STATUS DIFFERS, AND IT MUST. T5's row exists BECAUSE the call failed, so it takes `suppressed`
+ *  (which `statusToken` maps to the error token) and reads as the failure it is. An expanded cluster's
+ *  members are whatever they happen to be, and colouring a perfectly ordinary ToolSearch red would invent a
+ *  failure — so that caller passes the status the call's own result earned. */
+function suppressedHeaderItems(event: ToolEvent, status: ToolStatus, options: ProjectionOptions): readonly RenderItem[] {
+  return [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, status, options), wrap: "truncate-end" }];
 }
 function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
@@ -754,8 +780,47 @@ export function clampHintText(text: string, width: number, maxLines: number): st
   }
   return `${head.trimEnd()}…`;
 }
+/** TOOL-STREAM T8 — THE CLUSTER, OPEN. Canon's expanded cluster shows every `tool_use` it absorbed, in the
+ *  FULL listing form its virtual list renders (grounding §4) — which is the same form the ctrl+o pager
+ *  shows, so `detail-all` is what a member is rendered under here and not the compact form (a compact Read
+ *  clips its listing to three rows, and a cluster you opened in order to see the detail must not hide it).
+ *
+ *  IT IS A FRESH RENDER, NOT A REUSE, and it has to be: a `FoldGroup` carries `memberIds` and nothing else,
+ *  the per-call items the compact projection built for those calls were never built (the whole point of the
+ *  fold is that they collapsed), and the surrounding projection's items are compact anyway. So the events
+ *  are looked up in `options.toolEvents` — injected by `projectAll`/`projectPending` from the very document
+ *  being projected — and re-rendered. A member the document no longer holds is skipped rather than faked.
+ *
+ *  `emitted` IS THE DE-DUP, AND IT IS AN OBLIGATION INHERITED FROM TASK 3 rather than a defensive filter.
+ *  `segmentRuns` emits an errored `popsOutOnError` bookkeeping call STANDALONE so the failure is never
+ *  swallowed, and — when its window was not clear — leaves it in `memberIds` too, because relocation decides
+ *  membership and that one did not relocate. Canon can do both at once: it keeps the `tool_use` in the
+ *  cluster and pushes the `tool_result` out, two halves of one call. Our atoms carry both halves together,
+ *  so drawing every member would draw that call a second time. The caller passes the ids IT is emitting on
+ *  its own — the two projections emit different sets, so neither can be inferred from here. */
+function expandedMemberItems(group: FoldGroup, anchorId: string, options: ProjectionOptions, emitted: ReadonlySet<string> | undefined): readonly RenderItem[] {
+  const detail: ProjectionOptions = { ...options, projection: "detail-all", verbose: true };
+  const byId = new Map((options.toolEvents ?? []).map((event) => [event.id, event] as const));
+  const out: RenderItem[] = [];
+  for (const memberId of group.memberIds) {
+    if (emitted?.has(memberId) === true) continue;
+    const event = byId.get(memberId);
+    if (event === undefined) continue;
+    const normalized = normalizeToolResult(event, { verbose: true });
+    // A6: a suppressed member renders its generic header rather than the nothing `toolEventItems` gives it —
+    // canon's expanded cluster shows every absorbed call, and a ToolSearch that vanished from the very view
+    // opened to see what a row summarised would make the count and the listing disagree. Its status is the
+    // one its own result earned, which is where this parts from T5's deliberately error-coloured pop-out.
+    const items = normalized.status === "suppressed"
+      ? suppressedHeaderItems(event, event.result === undefined ? "running" : event.result.isError ? "error" : "success", detail)
+      : renderToolEvent(event, normalized, detail);
+    for (const item of reid(items, event.id, event.result ? event.result.resultSequence : "pending")) out.push({ ...item, foldAnchor: anchorId });
+  }
+  return out;
+}
+
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
-function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions): readonly RenderItem[] {
+function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions, emitted?: ReadonlySet<string>): readonly RenderItem[] {
   const active = form === "active";
   // R3.2's ratchet: the DYNAMIC forms latch (write the max), and the PUBLISHED form PEEKS the same maximum
   // without writing — upstream's ratchet assignment is unconditional across renders of the mounted row
@@ -772,8 +837,13 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   // fullscreen-only shell clause is the only thing a run of nothing but non-read Bash calls can say. Asked
   // classically, the answer is `[]` and the run does not render wrong — it does not render at all.
   if (foldClauses(counts, active, foldPolicy(options)).length === 0) return [];
+  // T8, AFTER the ratchet and after R3.1, both deliberately. The latch above must run whether the cluster is
+  // open or closed, or collapsing it again would show counts that had stopped being maintained; and a run
+  // with nothing to say has no row to click, so it has nothing to open either.
+  if (anchorId !== undefined && options.expandedFolds?.has(anchorId) === true) return expandedMemberItems(group, anchorId, options, emitted);
+  const tag = anchorId === undefined ? {} : { foldAnchor: anchorId };
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
-  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options) }];
+  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options), ...tag }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
   if (active) {
     const hint = pending === undefined || anchorId === undefined
@@ -785,7 +855,7 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
       // the ordinary hint (step 6) is neither clamped nor italic, just split on its own newlines.
       const text = hint.italic ? clampHintText(hint.text, options.columns - GROUP_HINT_GUTTER.length, HINT_MAX_LINES) : hint.text;
       const body = text.split("\n").map((line) => ({ text: line, dim: true, color: grey, ...(hint.italic ? { italic: true } : {}) }));
-      items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body });
+      items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body, ...tag });
     }
   }
   return items;
@@ -1101,9 +1171,14 @@ function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions)
   const atoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy });
   const standalone = new Map<ToolEvent, readonly RenderItem[]>(anchored.flatMap((a) => (a.event ? [[a.event, a.items] as const] : [])));
   const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home, ...policy });
+  const visible = folded.slice(0, trailingRunCut(atoms, folded, policy));
+  // T8's de-dup input (see `expandedMemberItems`): every call THIS stream gives a row of its own. Here that
+  // is every `tool` item without exception — a non-collapsible tool renders its items, and the one that
+  // renders none (an errored suppressed pop-out) gets the substitute row below.
+  const emitted = new Set(visible.flatMap((item) => (item.kind === "tool" ? [item.event.id] : [])));
   const out: RenderItem[] = [];
-  for (const item of folded.slice(0, trailingRunCut(atoms, folded, policy))) {
-    if (item.kind === "group") { out.push(...groupItems(item.group, "published", options)); continue; }
+  for (const item of visible) {
+    if (item.kind === "group") { out.push(...groupItems(item.group, "published", options, emitted)); continue; }
     if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
     // A popped-out failure whose own projection is empty gets the substitute row (see `poppedOnErrorItems`),
     // re-keyed exactly as `projectAll` keys a standalone unit so Static's append-once bookkeeping is unchanged.
@@ -1182,8 +1257,14 @@ export function projectPending(document: TranscriptDocument, options: Projection
   for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled, policy)))
     if (item.kind === "group") for (const id of item.group.memberIds) published.add(id);
   const items: RenderItem[] = [];
-  for (const item of segmentRuns(foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy, inert: (event) => published.has(event.id) }), fold)) {
-    if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full)); continue; }
+  const dynamic = segmentRuns(foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy, inert: (event) => published.has(event.id) }), fold);
+  // T8's de-dup input, and this region's answer is NARROWER than the compact projection's: of the `tool`
+  // items below, only a withheld batch and a still-OPEN call get a row here — a completed standalone was
+  // published by `projectAll` and is skipped. So an errored pop-out (which by definition has a result) is
+  // not emitted here, and an expanded cluster it stayed a member of therefore draws it, once.
+  const emitted = new Set(dynamic.flatMap((item) => (item.kind === "tool" && (batchItems.has(item.event) || !item.event.result) ? [item.event.id] : [])));
+  for (const item of dynamic) {
+    if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full, emitted)); continue; }
     if (item.kind !== "tool") continue;
     // A withheld agent batch draws whole — its first member stands in for the unit, and one member having a
     // result says nothing about whether Static may have it (only "every member resolved" does).

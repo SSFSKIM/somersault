@@ -158,7 +158,12 @@ function wrapOne(item: RenderItem, width: number): readonly RenderItem[] {
   if (item.wrap === "truncate-end") return [item];
   const rows = wrapLine(item.line, width);
   if (rows.length === 1 && rows[0] === item.line) return [item];
-  return rows.map((line, row) => ({ kind: "line" as const, id: `${item.id}${WRAP_ROW}${row}`, line }));
+  // SPREAD, DO NOT REBUILD (tool-stream T8). This is the one arm that mints its rows from scratch, and every
+  // per-item field that is not `id`/`line` was therefore silently dropped on exactly the items a reader is
+  // most likely to be looking at — the over-wide ones. `foldAnchor` is what made that visible: a hit test
+  // runs on PAINTED rows, so an untagged wrapped cluster row is a row that cannot be clicked. The other
+  // three paths (the gutter-block spread and both identity returns) already carried it.
+  return rows.map((line, row) => ({ ...item, id: `${item.id}${WRAP_ROW}${row}`, line }));
 }
 
 /** The whole projection in painted rows. Returns the input array itself when nothing wrapped, so a consumer

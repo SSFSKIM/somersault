@@ -278,8 +278,25 @@ export function useChat(
    *  screen. Absent — every other caller — the ref remains the sole authority. */
   const projectionContext = (fullscreenOverride?: boolean): ProjectionContext => {
     const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
-    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen };
+    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current };
   };
+  /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`memberIds[0]`).
+   *  A ref rather than state, on the same rule as `thoughtMs`/`agentMeta`: it is read at projection time by
+   *  callbacks that outlive the render that made them, and a re-render is not what makes it visible —
+   *  `reconcile()` is, and `toggleFold` calls it. Keyed on the anchor and not on the group's ITEM id because
+   *  that id is derived from the whole membership: a cluster the turn is still growing would re-key on every
+   *  absorbed call and close itself under the reader's cursor. */
+  const expandedFoldsRef = useRef<Set<string>>(new Set());
+  /** Open a cluster, or close it. The re-projection is `reconcile()` and it must be — a still-growing run is
+   *  WITHHELD from Static and lives in the pending projection, so re-projecting the finalized document alone
+   *  would leave a live cluster collapsed with nothing left to correct it: once every member has settled and
+   *  no breaker has closed the run, there is no further blink and no further append. `reconcile` re-projects
+   *  both, which is exactly the pair a toggle can move. */
+  function toggleFold(anchor: string): void {
+    if (disposed.current) return;
+    if (!expandedFoldsRef.current.delete(anchor)) expandedFoldsRef.current.add(anchor);
+    reconcile();
+  }
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
   // rewind, Ctrl-O — is projected from it; `publishedIds` is what makes reconciliation append-only, so a
   // duplicate follow record, a rehydration or a redelivered bootstrap entry can never publish a row twice.
@@ -1045,6 +1062,13 @@ export function useChat(
    *  conversation boundaries that own it; nothing here unmounts anything. */
   function refoldFor(fullscreen: boolean): void {
     if (disposed.current) return;
+    // TOOL-STREAM T8 — A RENDERER FLIP CLOSES EVERY CLUSTER, and this is the second and last place the
+    // expansion set is cleared. The affordance that opens one is the fullscreen renderer's alone, so leaving
+    // the set standing across a flip would carry an invisible expansion into a screen with no way to close
+    // it — and `reconcile()` publishes into append-only `<Static>` even in fullscreen, so rows committed
+    // while a cluster was open persist into the classic replay whatever we do (recorded in the spec, Task
+    // 13). Clearing here bounds that to what was already committed instead of letting it keep accruing.
+    expandedFoldsRef.current.clear();
     mergeThoughtMs();
     const context = projectionContext(fullscreen);
     const finalized = projectCompact(documentRef.current!, context);
@@ -1189,6 +1213,11 @@ export function useChat(
     // Same rule for the latched counters and the held hint (F3 Task 4): a rebuilt transcript reuses the very
     // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
     pendingStateRef.current!.reset();
+    // TOOL-STREAM T8, THE SAME BOUNDARY AND THE SAME CLASS as the latched counters directly above: an
+    // expansion names a fold ANCHOR, which is a tool-use id, and a rebuilt transcript (a resume, a rewind)
+    // reuses those ids for calls the reader never opened. Left standing, a `/clear` followed by a resume
+    // would open an unrelated cluster on sight.
+    expandedFoldsRef.current.clear();
     setCtxPct(undefined);               // W-S5, see above: measured against a conversation that is gone
     // THE SAME BOUNDARY AND THE SAME CLASS for /copy's one source: the retained reply was measured against a
     // conversation that is gone, so `/clear` followed by `/copy` was putting the wiped text on the system
@@ -2970,5 +2999,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

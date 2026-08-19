@@ -301,8 +301,9 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
       { text: " ", dim: true }, { text: "(ctrl+o to expand)", dim: true, color: grey },
     ]);
     // The golden paints `  ⎿  src/app.ts` as ONE dim #999999 run — connector included, which is why the
-    // gutter cells carry their own style here rather than staying plain text.
-    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: [{ text: "src/app.ts", dim: true, color: grey }] });
+    // gutter cells carry their own style here rather than staying plain text. `foldAnchor` (T8) is the
+    // cluster this row belongs to: the hint block is part of the same clickable unit as the row above it.
+    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: [{ text: "src/app.ts", dim: true, color: grey }], foldAnchor: "read-1" });
     // R4.1: a single glyph BLINKING on a 600 ms period — glyph for one half, a bare 2-column gap for the other.
     const off = projectPending(doc, { ...context, now: 600 });
     expect((off[0] as { line: RenderLine }).line.text).toBe("  Reading 1 file… (ctrl+o to expand)");   // the glyph, not the box, blinks away
@@ -663,7 +664,7 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
     const items = projectPending(doc, ctx());
     expect(items[1]).toEqual({
       kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true },
-      body: [{ text: "weighing the options", dim: true, color: grey, italic: true }],
+      body: [{ text: "weighing the options", dim: true, color: grey, italic: true }], foldAnchor: "read-1",
     });
     clock.now = 2999;
     expect(bodyOf(projectPending(doc, ctx())).map((l) => l.text)).toEqual(["weighing the options"]);
