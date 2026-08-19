@@ -5,7 +5,7 @@ import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
-import { FoldPendingState } from "../../src/tui/foldPendingState.js";
+import { FoldPendingState, stampToolStarts } from "../../src/tui/foldPendingState.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
 import { INTERRUPT_CANCELLED } from "../../src/tui/species.js";
@@ -1284,15 +1284,24 @@ describe("Tool-stream T11: the live elapsed ticker", () => {
    *  value would otherwise double as a glyph assertion. The two leader columns are dropped here and pinned
    *  where they belong, in the F1 geometry cells above. */
   const ticked = (texts: readonly string[]) => texts.map((t) => t.slice(2));
-  /** One clock drives BOTH halves, exactly as `useChat` does: the state stamps a member's first sighting off
-   *  it, and the projection reads `options.now` off the same source. */
+  /** One clock drives BOTH halves, exactly as `useChat` does: the state stamps arriving members off it, and
+   *  the projection reads `options.now` off the same source. */
   const row = (doc: TranscriptDocument, clock: { now: number }, state: FoldPendingState, over: Record<string, unknown> = {}) =>
     ticked(groupLines(projectPending(doc, { ...FS, now: clock.now, pending: state, ...over })));
+  /** `useChat`'s ingest order, mirrored (useChat.ts:1485): stamp every `tool_use` the frame carries, THEN
+   *  retain it. Every fixture below feeds through here rather than appending raw, because the stamp is a
+   *  property of ARRIVAL — a fixture that let the renderer stamp would pin the defect this suite exists to
+   *  keep out (T11 review finding A). */
+  const feed = (doc: TranscriptDocument, state: FoldPendingState, ...messages: Record<string, unknown>[]) => {
+    for (const m of messages) { stampToolStarts(state, m); doc.appendSdk("host", m); }
+    return doc;
+  };
+  const fed = (state: FoldPendingState, ...messages: Record<string, unknown>[]) => feed(new TranscriptDocument(), state, ...messages);
 
   it("stays silent under two seconds and speaks from exactly two (canon `if (YIl < 2000) return null`)", () => {
     const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
-    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
-    expect(row(doc, clock, state)).toEqual(["Reading 1 file…"]);            // t=0: the member is stamped HERE
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));   // t=0: the member is stamped HERE
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file…"]);
     clock.now = 1999;
     expect(row(doc, clock, state)).toEqual(["Reading 1 file…"]);            // one millisecond under the gate
     clock.now = 2000;
@@ -1313,11 +1322,10 @@ describe("Tool-stream T11: the live elapsed ticker", () => {
   // A watermark here would freeze the row at the oldest member's age forever.
   it("anchors on the NEWEST in-flight member, so a fresh call drops the ticker back to nothing", () => {
     const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
-    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
-    row(doc, clock, state);                                                 // stamp read-1 at 0
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));   // read-1 arrives at 0
     clock.now = 3000;
     expect(row(doc, clock, state)).toEqual(["Reading 1 file · 3s…"]);
-    doc.appendSdk("host", call("read-2", "Read", { file_path: "/work/b.ts" }));
+    feed(doc, state, call("read-2", "Read", { file_path: "/work/b.ts" }));
     expect(row(doc, clock, state)).toEqual(["Reading 2 files…"]);           // ← a ratchet keeps "· 3s" here
     clock.now = 4999;
     expect(row(doc, clock, state)).toEqual(["Reading 2 files…"]);
@@ -1331,20 +1339,51 @@ describe("Tool-stream T11: the live elapsed ticker", () => {
   // read as brand new.
   it("returns the anchor to an older in-flight member at its TRUE age when the newer one settles", () => {
     const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
-    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));
     row(doc, clock, state);
     clock.now = 3000;
-    doc.appendSdk("host", call("read-2", "Read", { file_path: "/work/b.ts" }));
+    feed(doc, state, call("read-2", "Read", { file_path: "/work/b.ts" }));
     row(doc, clock, state);
     doc.appendSdk("host", result("read-2"));
     clock.now = 6000;
     expect(row(doc, clock, state)).toEqual(["Reading 2 files · 6s…"]);      // read-1 began at 0, not at 3000
   });
 
+  // T11 REVIEW FINDING A, reproducer 2 — the SAME hand-back, minus the renders that used to do the stamping.
+  // A parallel `tool_use` batch is one assistant message holding two blocks: both members arrive together and
+  // nothing renders in between, so a stamp taken at the render site reaches only whichever member the anchor
+  // lands on. Every assertion here is about read-1, whose age no projection ever asked for until it settled.
+  it("stamps every member of a parallel BATCH at arrival, with no projection in between", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const batch = { type: "assistant", parent_tool_use_id: null, message: { id: "m-batch", content: [
+      { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } },
+      { type: "tool_use", id: "read-2", name: "Read", input: { file_path: "/work/b.ts" } },
+    ] } } as Record<string, unknown>;
+    const doc = fed(state, batch);                                          // both arrive at 0; NOTHING renders
+    clock.now = 9000;
+    expect(row(doc, clock, state)).toEqual(["Reading 2 files · 9s…"]);      // ← a render-time stamp shows nothing: read-2 is "0s old"
+    doc.appendSdk("host", result("read-2"));                                // the newer settles; the anchor hands BACK
+    expect(row(doc, clock, state)).toEqual(["Reading 2 files · 9s…"]);      // read-1's true age, not a fresh zero
+  });
+
+  // T11 REVIEW FINDING A, reproducer 1 — the expanded cluster. `groupItems` returns via `expandedMemberItems`
+  // ABOVE the ticker, so while a cluster is open NO projection ever reaches the stamp for any member. A stamp
+  // taken there therefore starts the call's clock at the moment the user collapsed the cluster again.
+  it("keeps a member's true age across an EXPAND, whose early return renders no cluster row at all", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));
+    clock.now = 3000;
+    const expanded = { expandedFolds: new Set(["read-1"]) };
+    expect(row(doc, clock, state, expanded)).toEqual([]);                   // T8: members render, the fold row does not
+    clock.now = 40_000;
+    expect(row(doc, clock, state, expanded)).toEqual([]);                   // …still nothing to stamp on
+    clock.now = 43_000;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 43s…"]);      // ← a render-time stamp says "· 3s" here
+  });
+
   it("drops the ticker the moment the cluster settles, however long it ran", () => {
     const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
-    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
-    row(doc, clock, state);
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));
     clock.now = 30_000;
     expect(row(doc, clock, state)).toEqual(["Reading 1 file · 30s…"]);
     doc.appendSdk("host", result("read-1"));
@@ -1359,8 +1398,7 @@ describe("Tool-stream T11: the live elapsed ticker", () => {
   // same clock, same pending state, one flag apart.
   it("never dresses the classic renderer's row, at any elapsed time", () => {
     const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
-    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
-    row(doc, clock, state);                                                 // stamp read-1 at 0, fullscreen
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));   // read-1 arrives at 0
     clock.now = 45_000;
     expect(ticked(groupLines(projectPending(doc, { ...context, now: clock.now, pending: state }))))
       .toEqual(["Reading 1 file… (ctrl+o to expand)"]);
@@ -1374,8 +1412,7 @@ describe("Tool-stream T11: the live elapsed ticker", () => {
   // reads canon and puts it back.
   it("emits NO bash duration/line-count suffix on a long-running shell member — only the ticker", () => {
     const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
-    const doc = built(bash("bash-1", "npm run build"));
-    row(doc, clock, state);
+    const doc = fed(state, bash("bash-1", "npm run build"));
     clock.now = 12_000;
     const rows = row(doc, clock, state);
     expect(rows).toEqual(["Running 1 shell command · 12s…"]);
@@ -1387,5 +1424,33 @@ describe("Tool-stream T11: the live elapsed ticker", () => {
     // into the bash absorb branch), and it is what canon's "current tool" line shows for a shell call.
     const gutter = groupRows(projectPending(doc, { ...FS, now: clock.now, pending: state })).find((i) => i.kind === "gutter-block");
     expect(gutter).toMatchObject({ body: [{ text: "$ npm run build" }] });
+  });
+
+  // T11 REVIEW FINDING B — WHICH member is the anchor, which is a separate question from WHEN members are
+  // stamped. A silently absorbed call (canon `Joi`: TodoWrite & the task board) touches no counter and adds no
+  // clause, but its id joins the cluster's tool-use set (`DBr(e)`, 518464) and canon's backwards scan for the
+  // newest in-flight member therefore finds it. `toolFold.absorb` assigns `newestInFlight` BEFORE its silent
+  // early return for exactly that reason; moving the assignment below the return changes what the row says.
+  it("anchors on a SILENTLY absorbed member, which joins the cluster's in-flight id set", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));
+    clock.now = 3000;
+    feed(doc, state, call("todo-1", "TodoWrite", { todos: [] }));           // absorbed silently: no clause of its own
+    clock.now = 5000;
+    // The sentence is still the Read's — and the ticker is the TodoWrite's two seconds, not the Read's five.
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 2s…"]);
+  });
+
+  // T11 REVIEW FINDING C — the ticker's own dim open/close, which every cell above is blind to because
+  // `ticked(groupLines(…))` reads SGR-stripped text. It is load-bearing: the bold count closes with
+  // `\x1b[22m`, which clears FAINT as well as bold, so a ticker appended bare would render at full intensity
+  // beside a dim sentence. These are the pre-styled bytes `composeFoldRun` produced, not Ink's re-emit.
+  it("wraps the ticker in its own dim run, which the bold count's `\\x1b[22m` has already cleared", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = fed(state, call("read-1", "Read", { file_path: "/work/a.ts" }));
+    clock.now = 2000;
+    const line = (groupRows(projectPending(doc, { ...FS, now: clock.now, pending: state }))[0] as { line: RenderLine }).line;
+    const run = line.segments!.find((s) => (s as { preStyled?: boolean }).preStyled === true)!.text;
+    expect(run).toBe("\x1b[2mReading \x1b[1m1\x1b[22m file\x1b[2m · 2s\x1b[22m…\x1b[22m");
   });
 });

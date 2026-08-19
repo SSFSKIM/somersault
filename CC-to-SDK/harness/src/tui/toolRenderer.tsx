@@ -853,10 +853,14 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
   // TS Task 11's ticker, canon `kth` (518661–518664) over the anchor `Ne` (518532–518543). Both halves of
   // canon's gate are here: `s` (the row is the ACTIVE form) and `Ns()` (the fullscreen renderer). The anchor is
-  // the newest in-flight member's LOCAL start stamp — our wire carries no timestamps, so `foldPendingState`
-  // stamps first sighting — and the delta is taken against the same injected `options.now` the blink reads, so
-  // the projection stays clock-free and a test can pin any frame. Deliberately NOT ratcheted: a newer member
-  // taking the anchor must drop the ticker back to its own age.
+  // the newest in-flight member's LOCAL start stamp — our wire carries no timestamps, so `useChat` stamps every
+  // arriving `tool_use` (`stampToolStarts`) and this line only READS — and the delta is taken against the same
+  // injected `options.now` the blink reads, so the projection stays clock-free and a test can pin any frame.
+  // Deliberately NOT ratcheted: a newer member taking the anchor must drop the ticker back to its own age.
+  //   The read is deliberately unable to write (T11 review): stamping here made the age a function of whether
+  // a projection reached this line for that particular member — an expanded cluster returns above it, and a
+  // parallel batch never reaches it for the older member — so a call could report an age far smaller than its
+  // true one. An unstamped member (a replay) gets no ticker rather than a fabricated zero.
   //   `active` is REDUNDANT TODAY and kept anyway, which is the one thing here no test can bite: only an OPEN
   // run carries a `newestInFlightId`, and today an open run reaches this function only as the `active` form
   // (`projectAll` never anchors an open call at all). It is canon's own gate (`s`), and what it guards against

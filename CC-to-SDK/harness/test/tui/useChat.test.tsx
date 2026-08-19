@@ -1034,6 +1034,43 @@ describe("useChat: decisions, mode sync, bg tasks (Goal B task 7)", () => {
     expect(itemLines(groups[0]!)[0]).toContain("Read 2 files");
   });
 
+  // TS T11 (review fix): WHERE the elapsed ticker's start stamp is taken — here, at ingest, one stamp per
+  // arriving `tool_use`, before the frame is retained. The fold-row suite stamps its own fixtures, so this is
+  // the only cell that pins the wiring itself; it also carries the `!ev.replay` guard, which rides on the same
+  // reasoning as `stampAgentCalls`': a replayed frame's arrival is when this client attached, not when the
+  // work began, so its member has no age to report rather than a fabricated one.
+  it("stamps an arriving tool_use for the elapsed ticker, and never a replayed one", async () => {
+    const clock = { now: 0 };
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() {
+      const c = useChat(() => fake, {}, { now: () => clock.now, isFullscreen: () => true });
+      snap = { pendingItems: c.state.pendingItems };
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    const groupRow = () => snap.pendingItems.filter((i) => i.id.startsWith("group:")).flatMap(itemLines)[0] ?? "";
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: READ_CALL });                                  // read-1 ARRIVES at t=0
+    await waitFor(() => groupRow().includes("Reading 1 file"));
+    clock.now = 9000;
+    await waitFor(() => groupRow().includes("· 9s"));                                      // the 600 ms repaint, on read-1's ingest stamp
+    // A replayed call joins the cluster and takes the anchor (it is the newest in flight) — with NO stamp, so
+    // the row says nothing rather than dating the work from the moment this client attached.
+    const replayed = { type: "assistant", parent_tool_use_id: null, message: { id: "assistant-replayed", content: [{ type: "tool_use", id: "read-replayed", name: "Read", input: { file_path: "/work/src/z.ts" } }] } };
+    fake.pushEvent({ kind: "message", data: replayed, replay: true });
+    await waitFor(() => groupRow().includes("Reading 2 files"));
+    clock.now = 15_000;
+    await new Promise((r) => setTimeout(r, 700));                                          // past one repaint, so the row HAS been re-projected
+    expect(groupRow()).toContain("Reading 2 files");
+    expect(groupRow()).not.toContain("·");                                                 // ← stamping the replay reports "· 6s" here
+    // …and when the replayed member settles the anchor returns to read-1, still measured from its own arrival
+    // fifteen seconds ago — a stamp no projection ever asked for in between.
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "user-replayed", message: { content: [{ type: "tool_result", tool_use_id: "read-replayed", content: "z" }] } } });
+    await waitFor(() => groupRow().includes("· 15s"));
+  });
+
   it("captures the task sidechannel so a sidecar-less Agent still gets an honest Done row (P83 rung 2)", async () => {
     const fake = fakeRemote();
     function H() { const c = useChat(() => fake, {}, { now: () => 5000 }); return <Text>{allText(c)}</Text>; }

@@ -20,6 +20,13 @@
 //      its anchor only inside `if (s && Ns())`, 518532), not here — this class stays a plain clock-reading
 //      store. The bash `(Ns · N lines)` suffix that sits beside the ticker in canon is CUT, not deferred:
 //      probe 100 found no per-tool progress feed reachable headlessly (spec §3.1, Revision Notes round 4).
+//      T11 REVIEW FIX: the stamp is written at INGEST (`stampToolStarts` below, called from `useChat` beside
+//      `stampAgentCalls`) and only READ at render. Stamping lazily at the render site — for whichever single
+//      member happened to hold the anchor, and only when a projection actually reached that line — made a
+//      member's reported age a function of the renderer: an EXPANDED cluster returns above the ticker and
+//      stamps nobody, so collapsing it 40 s later restarted the call's clock at zero, and a parallel
+//      `tool_use` batch stamped only its newest member, so the anchor handing back to the older one restarted
+//      that one too. Arrival is the one moment every in-flight member passes through exactly once.
 import type { GroupCounts } from "./toolFold.js";
 
 /** Upstream `MAH` (L428157): the hint updates at most this often. */
@@ -40,8 +47,32 @@ export interface FoldPendingHooks {
    *  which is upstream's fresh-mount recompute. */
   peek(anchorId: string, counts: GroupCounts): GroupCounts;
   hint(anchorId: string, candidate: string | undefined, thinking: string | undefined): HintView | undefined;
-  /** TS Task 11 — the elapsed ticker's anchor, keyed by TOOL-USE ID rather than by run anchor. */
-  startedAt(memberId: string): number;
+  /** TS Task 11 — the elapsed ticker's anchor, keyed by TOOL-USE ID rather than by run anchor. A pure READ:
+   *  `undefined` is a member that never arrived through ingest (a replayed frame), and the ticker then stays
+   *  silent rather than inventing an age from the moment this client happened to attach. */
+  startedAt(memberId: string): number | undefined;
+}
+
+/** The WRITE half of the same seam, for the ingest side. Separate from `FoldPendingHooks` because the
+ *  projection must never be able to stamp: a render is not evidence that anything started. */
+export interface FoldStartStamps { stamp(memberId: string): void }
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+/** One arriving host message → the start stamps for every `tool_use` it carries, mirroring
+ *  `agentProgress.stampAgentCalls` (which `useChat` calls on the line above this one) including its
+ *  `!ev.replay` guard: a replay omits durations, it does not invent them. Every block is stamped, not just
+ *  the newest — which member holds the ticker's anchor changes as calls settle, and a member unstamped at
+ *  arrival can only be stamped late. First-write-wins lives in `stamp`, so a redelivered frame is inert. */
+export function stampToolStarts(pending: FoldStartStamps, message: unknown): void {
+  if (!isRecord(message) || message.type !== "assistant") return;
+  const inner = message.message, content = isRecord(inner) ? inner.content : undefined;
+  if (!Array.isArray(content)) return;
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== "tool_use") continue;
+    const id = block.id;
+    if (typeof id === "string" && id !== "") pending.stamp(id);
+  }
 }
 
 /** The counters upstream holds in refs. `mcpServerNames` is a growing Set upstream and `thoughtForMs`
@@ -107,17 +138,17 @@ export class FoldPendingState implements FoldPendingHooks {
   /** TS Task 11 — the third piece of time-dependent row state, and the ONE that must never be ratcheted.
    *  Canon anchors its elapsed ticker on the wire timestamp of the newest message carrying an in-flight
    *  tool_use (518532–518543); P82 established our wire carries no timestamps at all, so a member's start is
-   *  the local moment this projection first saw it in flight — accurate to one repaint, and never invented
-   *  from a field the SDK does not send. Stamped ONCE per member and keyed by tool-use id, NOT by run anchor:
-   *  the ticker follows whichever member is newest in flight, and that can hand the anchor back to an older
+   *  the local moment the frame announcing it ARRIVED — accurate to the delivery, and never invented from a
+   *  field the SDK does not send. Stamped ONCE per member and keyed by tool-use id, NOT by run anchor: the
+   *  ticker follows whichever member is newest in flight, and that can hand the anchor back to an older
    *  member when a newer one settles — a single per-run slot would then re-stamp it and report a long-running
    *  call as brand new. And unlike `latch`, the value this feeds is free to FALL: a fresh call's age is zero,
    *  which is exactly what a watermark would refuse to show. */
-  startedAt(memberId: string): number {
-    const at = this.starts.get(memberId);
-    if (at !== undefined) return at;
-    const now = this.now(); this.starts.set(memberId, now); return now;
-  }
+  stamp(memberId: string): void { if (!this.starts.has(memberId)) this.starts.set(memberId, this.now()); }
+
+  /** The render-side READ, and only a read (see the type). A member with no stamp — a replayed frame, or one
+   *  that arrived before a document swap cleared the map — gets no ticker at all. */
+  startedAt(memberId: string): number | undefined { return this.starts.get(memberId); }
 
   /** The published-row read. Max against the stored latch WITHOUT writing anything back. */
   peek(anchorId: string, counts: GroupCounts): GroupCounts {

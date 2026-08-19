@@ -37,7 +37,7 @@ import { paintedHeight } from "./wrapItems.js";
 import { RESIZE_SETTLE_MS } from "./resizeRepaint.js";
 import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
-import { FoldPendingState } from "./foldPendingState.js";
+import { FoldPendingState, stampToolStarts } from "./foldPendingState.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
@@ -1482,7 +1482,10 @@ export function useChat(
         // completed Agent's dispatch and result microseconds apart is what made a mid-turn `ccx attach`
         // render `Done (2 tool uses · 0s)`. Spec §F3 Depends-on: a replay omits durations, it does not
         // invent them, and an unstamped call falls back to the clause-less honest row.
-        if (!ev.replay) stampAgentCalls(agentMetaRef.current, data, nowFn());
+        // The fold ticker's per-member start (TS T11) is the SAME arrival stamp on the same guard: every
+        // `tool_use` the frame carries, whether or not any projection ever renders that member as the
+        // cluster's anchor. `FoldPendingState` reads `nowFn` itself, so both halves share one clock.
+        if (!ev.replay) { stampAgentCalls(agentMetaRef.current, data, nowFn()); stampToolStarts(pendingStateRef.current!, data); }
         const appended = documentRef.current!.appendSdk("host", data);
         // FALSINESS, not `=== undefined`: a top-level frame carries `parent_tool_use_id: null` on the wire
         // (SDK type `string | null`), so a strict-undefined test matches only a fixture that omits the field

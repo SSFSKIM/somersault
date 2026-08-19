@@ -2,7 +2,7 @@
 // stateful behaviors, tested as pure state with an injected clock. The RENDER side (italic body, the
 // `OAH` clamp, the latched row) is pinned in toolRenderer.test.tsx; this file owns the state machine.
 import { describe, expect, it } from "vitest";
-import { FoldPendingState, HINT_DEBOUNCE_MS, THINKING_LINGER_MS } from "../../src/tui/foldPendingState.js";
+import { FoldPendingState, HINT_DEBOUNCE_MS, THINKING_LINGER_MS, stampToolStarts } from "../../src/tui/foldPendingState.js";
 import { foldClauses, segmentRuns, type FoldAtom, type GroupCounts } from "../../src/tui/toolFold.js";
 
 const counts = (patch: Partial<GroupCounts> = {}): GroupCounts =>
@@ -177,18 +177,34 @@ describe("FoldPendingState: R4.7 step 5 — the thinking summary lingers 3000 ms
 
 // TS Task 11: the elapsed ticker's anchor. Canon reads it off the wire timestamp of the newest message holding
 // an in-flight tool_use (518532–518543); our wire carries no timestamps (P82), so a member's start is the local
-// moment we first saw it in flight. It is the one piece of pending-row state that is deliberately NOT ratcheted.
+// moment its frame ARRIVED (`stampToolStarts`, called from `useChat`'s ingest beside `stampAgentCalls`). The read
+// side never writes. It is the one piece of pending-row state that is deliberately NOT ratcheted.
 describe("FoldPendingState: TS T11 — per-member start stamps", () => {
   it("stamps a member ONCE and never moves it, and gives each member its own stamp", () => {
     const clock = { now: 0 };
     const state = new FoldPendingState({ now: () => clock.now });
+    state.stamp("m1");
     expect(state.startedAt("m1")).toBe(0);
     clock.now = 5000;
+    state.stamp("m1"); state.stamp("m2");
     expect(state.startedAt("m1")).toBe(0);      // an existing stamp is a START, never re-stamped
     expect(state.startedAt("m2")).toBe(5000);   // …and the newcomer's own age begins now
     clock.now = 9000;
     expect(state.startedAt("m1")).toBe(0);      // the anchor can return to m1 at its true age
     expect(state.startedAt("m2")).toBe(5000);
+  });
+
+  // T11 REVIEW FIX: reading is not stamping. A member the ingest never saw — a replayed frame, whose arrival
+  // is when this client attached and not when the work began — has NO age, and the row must say nothing rather
+  // than start a clock at the moment somebody happened to look.
+  it("never stamps on a READ: an unstamped member reports no start at all", () => {
+    const clock = { now: 0 };
+    const state = new FoldPendingState({ now: () => clock.now });
+    expect(state.startedAt("m1")).toBeUndefined();
+    clock.now = 40_000;
+    expect(state.startedAt("m1")).toBeUndefined();   // ← a lazy stamp reports 40_000 as m1's start here
+    state.stamp("m1");
+    expect(state.startedAt("m1")).toBe(40_000);
   });
 
   it("does NOT ratchet: the elapsed time it anchors is free to FALL when a newer member takes the anchor", () => {
@@ -197,9 +213,10 @@ describe("FoldPendingState: TS T11 — per-member start stamps", () => {
     // before it. Read as canon does — `now - startedAt(newest in-flight)` — the value drops to zero.
     const clock = { now: 0 };
     const state = new FoldPendingState({ now: () => clock.now });
-    const elapsed = (member: string) => clock.now - state.startedAt(member);
-    state.startedAt("m1");
+    const elapsed = (member: string) => clock.now - state.startedAt(member)!;
+    state.stamp("m1");
     clock.now = 8000;
+    state.stamp("m2");                          // the newer call ARRIVES here
     expect(elapsed("m1")).toBe(8000);
     expect(elapsed("m2")).toBe(0);              // ← a Math.max watermark reports 8000 here
   });
@@ -210,10 +227,34 @@ describe("FoldPendingState: TS T11 — per-member start stamps", () => {
     state.latch("m1", counts({ readCount: 3 }));
     state.hint("m1", "a.ts", undefined);
     clock.now = 400;
-    expect(state.startedAt("m1")).toBe(400);    // latching/hinting an id never stamps it
+    expect(state.startedAt("m1")).toBeUndefined();                                          // latching/hinting an id never stamps it
+    state.stamp("m1");
+    expect(state.startedAt("m1")).toBe(400);
     expect(state.latch("m1", counts({ readCount: 1 }))).toMatchObject({ readCount: 3 });   // …and vice versa
     state.reset();                              // document swap: rewind / resume / clear
     clock.now = 9000;
+    expect(state.startedAt("m1")).toBeUndefined();
+    state.stamp("m1");
     expect(state.startedAt("m1")).toBe(9000);
+  });
+
+  // The ingest walker itself: one arriving frame, every `tool_use` block it carries, first-write-wins.
+  describe("stampToolStarts (the ingest half)", () => {
+    const assistant = (...blocks: Record<string, unknown>[]) =>
+      ({ type: "assistant", parent_tool_use_id: null, message: { id: "m1", content: blocks } }) as unknown;
+    const use = (id: string) => ({ type: "tool_use", id, name: "Read", input: {} });
+    it("stamps EVERY tool_use of a parallel batch, and never a non-tool block", () => {
+      const clock = { now: 7 };
+      const state = new FoldPendingState({ now: () => clock.now });
+      stampToolStarts(state, assistant({ type: "text", text: "reading both" }, use("a"), use("b")));
+      expect(state.startedAt("a")).toBe(7);
+      expect(state.startedAt("b")).toBe(7);     // ← stamping only the newest leaves this undefined
+      clock.now = 9000;
+      stampToolStarts(state, assistant(use("a")));                       // a redelivered frame
+      expect(state.startedAt("a")).toBe(7);
+      stampToolStarts(state, { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "c" }] } });
+      expect(state.startedAt("c")).toBeUndefined();                      // a RESULT starts nothing
+      stampToolStarts(state, undefined); stampToolStarts(state, { type: "assistant" });   // junk is inert
+    });
   });
 });
