@@ -836,17 +836,52 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
       const st = fakeStore(["fleet-live"]);
       boot({ ccxDir, getSessionInfo: st.getSessionInfo, sessionFactory: (c: Record<string, unknown>) => fakeEngine(c.resume as string) });
       expect((await send("thread/resume", { sessionId: "fleet-live" })).error?.message).toBe("sessionId belongs to a running fleet session; use thread/attach");
-      // The same fact, from the other handler. This method's OWN refusal is reused rather than a second one
-      // invented: BUSY, because the request is well-formed and the session is merely held. (The message is
-      // thread/delete's verbatim string, which every live-refusal on this wire shares.)
+      // The same fact, from the other handler. The CODE is this method's own — BUSY, because the request is
+      // well-formed and the session is merely held, and rpc.ts groups codes by what the client does next.
+      // The MESSAGE is not thread/delete's: "live in this server — close it first" is false about a holder
+      // in another process, and its advice is unfollowable — no request to THIS server releases that thread.
       const r = await send("thread/archive", { threadId: "fleet-live" });
-      expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in this server — close it first"]);
+      expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in another ccx process; close it there first"]);
       expect(existsSync(join(ccxDir, "archived"))).toBe(false);
       // The control that makes the refusal LIVENESS rather than mere presence: a terminal row is a finished
       // session, and shelving one is exactly what a client reaches for.
       writeRoster({ ...row, state: "done" as const, endedAt: Date.now() });
       expect((await send("thread/archive", { threadId: "fleet-live" })).result).toEqual({ ok: true });
       expect(existsSync(join(ccxDir, "archived", "fleet-live"))).toBe(true);
+      // The CONTROL that keeps the two sentences from collapsing into one: an in-process live thread, under
+      // the same roster, still gets the original. Without it a "fix" that hands every arm the fleet
+      // sentence is as green as the right one. (`boot` re-points the shared connection, so this comes last.)
+      const here = mkTmp("m5ccx-");
+      const st2 = fakeStore(["here-live"]);
+      addRecord(boot({ ccxDir: here, getSessionInfo: st2.getSessionInfo }), "here-live");
+      const rHere = await send("thread/archive", { threadId: "here-live" });
+      expect([rHere.error?.code, rHere.error?.message]).toEqual([-33001, "Thread is live in this server — close it first"]);
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  });
+
+  it("…and the fleet arm firing on the POST-MARKER RE-CHECK says the same thing: the marker is taken back out and the message still names the other process", async () => {
+    // The re-check is the forgotten half. The entry guard and the post-marker guard are the same predicate
+    // read at two moments, so a discriminator that survives to one call site and not the other ships a
+    // handler that tells the truth about a fleet host it saw on arrival and lies about the one that
+    // appeared while it was reading the store — the harder case to notice, since it needs a race to reach.
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      // The roster is EMPTY when the request arrives — the entry guard passes, and the marker gets created.
+      // The row lands inside the handler's real existence read, which is the only await between the two
+      // guards. Nothing test-only is reached into: what happens during that await is the store dep's to
+      // choose, exactly as the resume-lands-late row does it.
+      const row = { short: "ef56ab78", pid: process.pid, cwd: "/w", kind: "bg" as const, name: "late-host", state: "working" as const, startedAt: Date.now(), sessionId: "fleet-late" };
+      boot({ ccxDir, getSessionInfo: async (id: string) => { writeRoster(row); return { sessionId: id, summary: "s", lastModified: 1 }; } });
+      const r = await send("thread/archive", { threadId: "fleet-late" });
+      expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in another ccx process; close it there first"]);
+      // …and the marker this handler had already written is gone, so the refusal is a refusal and not a
+      // shelved session wearing an error.
+      expect(existsSync(join(ccxDir, "archived", "fleet-late"))).toBe(false);
     } finally {
       if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
     }

@@ -27,10 +27,20 @@ import { MarkerIdError, createArchiveMarker, listArchived, removeArchiveMarker }
 import { threadIdParams } from "./schema/core.js";
 
 /** `thread/delete`'s message, verbatim (sessionLib.ts): both refuse the same fact for the same reason, and
- *  a client that handles one string should not have to learn a second. */
+ *  a client that handles one string should not have to learn a second. IN-PROCESS arms only — see below. */
 const LIVE_REFUSAL = "Thread is live in this server — close it first";
+/** The ROSTER arm's, because that arm refuses a DIFFERENT fact. "In this server — close it first" told a
+ *  client to close a thread this server does not hold: false as a description and unfollowable as advice,
+ *  since nothing the client can send here will release it. Same CODE (rpc.ts groups codes by what the
+ *  client does next, and for all three arms that is "retry later"); only the sentence differs, and it
+ *  points at where the holder actually is — the reading `thread/resume` already publishes for this same
+ *  fact from the other method (server.ts's `RESUME_LIVE_FLEET`). */
+const LIVE_REFUSAL_FLEET = "Thread is live in another ccx process; close it there first";
 
-/** "Someone is holding, or is about to hold, this session." THREE sources, none redundant:
+/** "Someone is holding, or is about to hold, this session" — answered as the SENTENCE that says so, or
+ *  `undefined`. Returning the message rather than a boolean is what keeps the two call sites honest: the
+ *  arms do not refuse the same fact, and a `boolean` collapsed them into one wrong string at both.
+ *  THREE sources, none redundant:
  *
  *  - a registry record is the ordinary live thread;
  *  - `resumingSessions` is a `thread/resume` that has reserved its id and is still inside its PID-liveness
@@ -41,13 +51,18 @@ const LIVE_REFUSAL = "Thread is live in this server — close it first";
  *    id — refusing to resume a session a running fleet host still holds, and shelving that same id from
  *    the handler two lines away. D-M5-21's invariant is stated across servers, not within one.
  *
+ *  The first two are THIS server's and share `LIVE_REFUSAL`; the third is not, and says so.
+ *
  *  ORDER matters, and not for cheapness: the two in-process arms are evaluated before this function's
  *  first await (an async body runs synchronously until one), so they still answer inside the caller's own
  *  dispatch tick — which is what lets the entry guard see a thread admitted in that same tick. The roster
  *  arm is real I/O and cannot. That it opens a window is not new, and is exactly why the guard is checked
- *  a second time once the marker exists (see `threadArchive`). */
-const liveAnywhere = async (srv: AppServer, sessionId: string): Promise<boolean> =>
-  findLiveBySessionId(srv, sessionId) !== undefined || srv.resumingSessions.has(sessionId) || liveInFleet(srv, sessionId);
+ *  a second time once the marker exists (see `threadArchive`) — and why BOTH checks read their message
+ *  from here rather than naming one: the re-check is the side that gets forgotten. */
+const liveRefusal = async (srv: AppServer, sessionId: string): Promise<string | undefined> => {
+  if (findLiveBySessionId(srv, sessionId) !== undefined || srv.resumingSessions.has(sessionId)) return LIVE_REFUSAL;
+  return (await liveInFleet(srv, sessionId)) ? LIVE_REFUSAL_FLEET : undefined;
+};
 
 /** The SESSION store's failure, tagged at the ONE call site that can raise it. Both handlers read two
  *  different stores inside one handler body, and without this tag a `getSessionInfo` that threw was
@@ -136,14 +151,16 @@ export const threadArchive: Handler = async (srv, ctx, id, params) => {
   // FIRST, ahead of the existence read, and not merely for cheapness: a thread admitted this tick has no
   // persisted row yet, so asking the store about it would answer THREAD_NOT_FOUND for a session the client
   // is demonstrably holding. "It is live" is the truer refusal, and it is the one the client can act on.
-  if (await liveAnywhere(srv, sessionId)) { ctx.peer.replyError(id, ERR.BUSY, LIVE_REFUSAL); return; }
+  const heldAtEntry = await liveRefusal(srv, sessionId);
+  if (heldAtEntry) { ctx.peer.replyError(id, ERR.BUSY, heldAtEntry); return; }
   const deps = { ccxDir: srv.deps.ccxDir };
   try {
     if (!(await knows(srv, sessionId))) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
     await createArchiveMarker(sessionId, deps);
-    if (await liveAnywhere(srv, sessionId)) {
+    const heldAfterMarker = await liveRefusal(srv, sessionId);
+    if (heldAfterMarker) {
       await removeArchiveMarker(sessionId, deps);
-      ctx.peer.replyError(id, ERR.BUSY, LIVE_REFUSAL); return;
+      ctx.peer.replyError(id, ERR.BUSY, heldAfterMarker); return;
     }
   } catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
   ctx.peer.reply(id, { ok: true });
