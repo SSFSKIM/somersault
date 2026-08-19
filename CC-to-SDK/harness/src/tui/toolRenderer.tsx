@@ -17,6 +17,7 @@ import type { RenderLine, Segment } from "./render.js";
 import { renderMessage } from "./render.js";
 import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, INTERRUPT_CANCELLED, INTERRUPT_PLAIN, INTERRUPT_TOOL, PLAN_REJECTED_TEXT, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
 import { displayPath } from "./paths.js";
+import { formatDuration } from "./format.js";
 import { Line } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
@@ -712,9 +713,13 @@ const dimmed = (text: string, color?: string): Segment => ({ text, dim: true, ..
  *  half, a bare space for the other — R4.1), then the present-participle clauses undimmed, the separate `…`,
  *  one literal space and the always-dim expand hint (R3.6). The blink is a pure phase function of
  *  `options.now`, exactly like the standalone header's, so the caller owns the clock and a test can pin any
- *  frame. No elapsed `· Ns` suffix: its anchor `Re` is computed only `if (s && ds())` (R4.10), so a default
- *  transcript has none, and the bash progress suffix beside it is gated the same way (R4.6) — a substitute
- *  for either would be a fabrication, not fidelity. That gating does NOT extend to the 700 ms hint debounce,
+ *  frame. The elapsed `· Ns` ticker (`elapsed`, TS Task 11) rides between the clause run and the `…`, exactly
+ *  where canon puts it (518636), and is FULLSCREEN-ONLY because canon's anchor is computed only `if (s &&
+ *  Ns())` (R4.10, 518532) — so a classic transcript still has none. The bash `(Ns · N lines)` progress suffix
+ *  that sits beside it in canon (518516–518530) is CUT rather than pending: probe 100 proved no per-tool
+ *  progress feed and no output-line count are reachable headlessly, and a substitute for either would be a
+ *  fabrication, not fidelity (spec §3.1, Revision Notes round 4).
+ *    That gating does NOT extend to the 700 ms hint debounce,
  *  which F1 lumped in with them here and which F3 Task 4 corrects: `de = e8p(te, MAH)` sits in the ungated
  *  hint chain (R4.7 step 4), as does the thinking summary's `DAH` linger (step 5). Both are implemented in
  *  `foldPendingState.ts` and reach this module through `ProjectionOptions.pending`.
@@ -745,18 +750,21 @@ const dimmed = (text: string, color?: string): Segment => ({ text, dim: true, ..
  *  upstream colour. So the settled clause run carries `inactive` too. The active clause run stays
  *  dim-and-uncoloured: the golden paints `" Reading "` as a bare `\x1b[0;2m` run, and only the leader glyph
  *  and the expand hint carry the colour explicitly. */
-function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionOptions): RenderLine {
+function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionOptions, elapsed?: string): RenderLine {
   const grey = resolveThemeColor(themeTokens().inactive);
   const leader: Segment[] = active
     ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
     : [{ text: "  " }];
-  const run = composeFoldRun(foldClauses(counts, active, foldPolicy(options)), active ? "active" : "settled", { ellipsis: active });
+  const run = composeFoldRun(foldClauses(counts, active, foldPolicy(options)), active ? "active" : "settled", { ellipsis: active, ...(elapsed === undefined ? {} : { elapsed }) });
   const hint = resolveExpandHint(options.expandHint);
   const segments: Segment[] = [...leader, { text: run, preStyled: true }, ...(hint === "" ? [] : [dimmed(" "), { text: hint, dim: true, color: grey } as Segment])];
   // `run` is the ONE segment whose `text` carries SGR bytes, so the line's plain text is stripped rather
   // than joined raw — width math, the pager and every text assertion must still see the bare sentence.
   return { text: segments.map((segment) => (segment.preStyled === true ? stripSgr(segment.text) : segment.text)).join(""), segments };
 }
+/** Canon `kth`'s own floor (518664: `if (YIl < 2000) return null`) — a call under two seconds gets no ticker
+ *  at all, which is what keeps the row from flickering a duration on every quick read. */
+const ELAPSED_TICKER_MIN_MS = 2000;
 /** The three lives of one group row. `published` is the immutable Static row; `active` and `unclosed` are the
  *  DYNAMIC region's two forms of a run Static cannot have yet — active while a member is still running,
  *  settled (geometrically identical to `published`) once they have all completed but no breaker has closed the
@@ -843,7 +851,22 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   if (anchorId !== undefined && options.expandedFolds?.has(anchorId) === true) return expandedMemberItems(group, anchorId, options, emitted);
   const tag = anchorId === undefined ? {} : { foldAnchor: anchorId };
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
-  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options), ...tag }];
+  // TS Task 11's ticker, canon `kth` (518661–518664) over the anchor `Ne` (518532–518543). Both halves of
+  // canon's gate are here: `s` (the row is the ACTIVE form) and `Ns()` (the fullscreen renderer). The anchor is
+  // the newest in-flight member's LOCAL start stamp — our wire carries no timestamps, so `foldPendingState`
+  // stamps first sighting — and the delta is taken against the same injected `options.now` the blink reads, so
+  // the projection stays clock-free and a test can pin any frame. Deliberately NOT ratcheted: a newer member
+  // taking the anchor must drop the ticker back to its own age.
+  //   `active` is REDUNDANT TODAY and kept anyway, which is the one thing here no test can bite: only an OPEN
+  // run carries a `newestInFlightId`, and today an open run reaches this function only as the `active` form
+  // (`projectAll` never anchors an open call at all). It is canon's own gate (`s`), and what it guards against
+  // is expensive and silent — a ticker on an immutable Static row would freeze at whatever second it was
+  // published on and never move again.
+  const anchorMs = active && options.fullscreen === true && pending !== undefined && group.newestInFlightId !== undefined
+    ? pending.startedAt(group.newestInFlightId) : undefined;
+  const running = anchorMs === undefined ? undefined : options.now - anchorMs;
+  const elapsed = running !== undefined && running >= ELAPSED_TICKER_MIN_MS ? ` · ${formatDuration(running)}` : undefined;
+  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options, elapsed), ...tag }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
   if (active) {
     const hint = pending === undefined || anchorId === undefined

@@ -14,6 +14,12 @@
 //
 // NEITHER is `ds()`-gated: only the elapsed `· Ns` anchor (R4.10) and the bash progress suffix are, which is
 // what the F1-era comment in toolRenderer.tsx got wrong.
+//
+//   3. TS Task 11 adds the THIRD piece, and it is the fullscreen-gated one of the three: `startedAt`, the
+//      per-member start stamp the elapsed ticker anchors on. The GATE lives at the render site (canon computes
+//      its anchor only inside `if (s && Ns())`, 518532), not here — this class stays a plain clock-reading
+//      store. The bash `(Ns · N lines)` suffix that sits beside the ticker in canon is CUT, not deferred:
+//      probe 100 found no per-tool progress feed reachable headlessly (spec §3.1, Revision Notes round 4).
 import type { GroupCounts } from "./toolFold.js";
 
 /** Upstream `MAH` (L428157): the hint updates at most this often. */
@@ -34,6 +40,8 @@ export interface FoldPendingHooks {
    *  which is upstream's fresh-mount recompute. */
   peek(anchorId: string, counts: GroupCounts): GroupCounts;
   hint(anchorId: string, candidate: string | undefined, thinking: string | undefined): HintView | undefined;
+  /** TS Task 11 — the elapsed ticker's anchor, keyed by TOOL-USE ID rather than by run anchor. */
+  startedAt(memberId: string): number;
 }
 
 /** The counters upstream holds in refs. `mcpServerNames` is a growing Set upstream and `thoughtForMs`
@@ -61,6 +69,7 @@ export class FoldPendingState implements FoldPendingHooks {
   private readonly now: () => number;
   private readonly counts = new Map<string, Latched>();
   private readonly hints = new Map<string, HintState>();
+  private readonly starts = new Map<string, number>();
   constructor(deps: { now?: () => number } = {}) { this.now = deps.now ?? (() => Date.now()); }
 
   /** R3.2. Returns the counts to RENDER: the incoming ones with each ratcheted counter replaced by the
@@ -95,6 +104,21 @@ export class FoldPendingState implements FoldPendingHooks {
     return state.shown === undefined ? undefined : { text: state.shown, italic: false };
   }
 
+  /** TS Task 11 — the third piece of time-dependent row state, and the ONE that must never be ratcheted.
+   *  Canon anchors its elapsed ticker on the wire timestamp of the newest message carrying an in-flight
+   *  tool_use (518532–518543); P82 established our wire carries no timestamps at all, so a member's start is
+   *  the local moment this projection first saw it in flight — accurate to one repaint, and never invented
+   *  from a field the SDK does not send. Stamped ONCE per member and keyed by tool-use id, NOT by run anchor:
+   *  the ticker follows whichever member is newest in flight, and that can hand the anchor back to an older
+   *  member when a newer one settles — a single per-run slot would then re-stamp it and report a long-running
+   *  call as brand new. And unlike `latch`, the value this feeds is free to FALL: a fresh call's age is zero,
+   *  which is exactly what a watermark would refuse to show. */
+  startedAt(memberId: string): number {
+    const at = this.starts.get(memberId);
+    if (at !== undefined) return at;
+    const now = this.now(); this.starts.set(memberId, now); return now;
+  }
+
   /** The published-row read. Max against the stored latch WITHOUT writing anything back. */
   peek(anchorId: string, counts: GroupCounts): GroupCounts {
     const prev = this.counts.get(anchorId);
@@ -108,5 +132,5 @@ export class FoldPendingState implements FoldPendingHooks {
 
   /** Every document swap (rewind, `/resume`, `/clear`): the anchors of the rebuilt transcript are the same
    *  tool-use ids, so a stale maximum would otherwise be latched onto a run that is being re-read from disk. */
-  reset(): void { this.counts.clear(); this.hints.clear(); }
+  reset(): void { this.counts.clear(); this.hints.clear(); this.starts.clear(); }
 }

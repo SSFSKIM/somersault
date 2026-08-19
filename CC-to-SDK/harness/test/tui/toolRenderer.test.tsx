@@ -1265,3 +1265,127 @@ describe("Tool-stream T5: the fullscreen projection switch", () => {
     expect(lineTexts(projectCompact(bashOnly, context))).toEqual(["⏺ Bash(npm run build)", "⏺ Bash(npm test)", "done"]);
   });
 });
+
+// ── Tool-stream Task 11: the live elapsed ticker (canon `kth`, 518661/518664) ────────────────────────────
+// Canon's active cluster row appends `" · <duration>"` once the NEWEST in-flight member has been running two
+// seconds, anchored at 518532–518543 by walking the cluster's messages backwards for the first one holding an
+// in-flight tool_use and parsing its wire timestamp. Our wire carries no timestamps (P82), so the anchor is a
+// LOCAL first-sighting stamp held per member in `FoldPendingState`; the delta is taken against the projection's
+// own injected `options.now`, exactly as canon takes it against `Date.now()`.
+//   THE BASH `(Ns · N lines)` SUFFIX BESIDE IT IS CUT, not unimplemented (spec §3.1, Revision Notes round 4):
+// probe 100 found no per-tool progress feed reachable headlessly and no frame of any kind carrying an output
+// line count, so the second half of canon's live dressing has no honest source. The guard cell below exists
+// because that is a DECISION — a later hand reading canon 518516–518530 would otherwise "restore" it.
+describe("Tool-stream T11: the live elapsed ticker", () => {
+  const FS = { ...context, fullscreen: true, expandHint: "" };
+  const bash = (id: string, command: string) => call(id, "Bash", { command });
+  const groupLines = (items: readonly RenderItem[]) => lineTexts(groupRows(items));
+  /** The 600 ms leader blink (R4.1) is a phase function of the same `now` this suite sweeps, so every clock
+   *  value would otherwise double as a glyph assertion. The two leader columns are dropped here and pinned
+   *  where they belong, in the F1 geometry cells above. */
+  const ticked = (texts: readonly string[]) => texts.map((t) => t.slice(2));
+  /** One clock drives BOTH halves, exactly as `useChat` does: the state stamps a member's first sighting off
+   *  it, and the projection reads `options.now` off the same source. */
+  const row = (doc: TranscriptDocument, clock: { now: number }, state: FoldPendingState, over: Record<string, unknown> = {}) =>
+    ticked(groupLines(projectPending(doc, { ...FS, now: clock.now, pending: state, ...over })));
+
+  it("stays silent under two seconds and speaks from exactly two (canon `if (YIl < 2000) return null`)", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file…"]);            // t=0: the member is stamped HERE
+    clock.now = 1999;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file…"]);            // one millisecond under the gate
+    clock.now = 2000;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 2s…"]);       // exactly the gate is enough
+    clock.now = 2001;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 2s…"]);
+    // The duration is `formatDuration` (canon `da`, 82602) verbatim — whole seconds under a minute, and the
+    // minute form above it. Not a `N.Ns` of our own invention.
+    clock.now = 59_999;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 59s…"]);
+    clock.now = 65_000;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 1m 5s…"]);
+  });
+
+  // THE ANCHOR, AND THE ONE THING THAT MUST NOT BE RATCHETED. `foldPendingState` watermarks every counter so a
+  // live sentence never counts backwards — and elapsed time is the opposite: when a newer call becomes the
+  // newest in-flight member the ticker MUST fall back to that call's own age, which for a fresh call is zero.
+  // A watermark here would freeze the row at the oldest member's age forever.
+  it("anchors on the NEWEST in-flight member, so a fresh call drops the ticker back to nothing", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    row(doc, clock, state);                                                 // stamp read-1 at 0
+    clock.now = 3000;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 3s…"]);
+    doc.appendSdk("host", call("read-2", "Read", { file_path: "/work/b.ts" }));
+    expect(row(doc, clock, state)).toEqual(["Reading 2 files…"]);           // ← a ratchet keeps "· 3s" here
+    clock.now = 4999;
+    expect(row(doc, clock, state)).toEqual(["Reading 2 files…"]);
+    clock.now = 5000;
+    expect(row(doc, clock, state)).toEqual(["Reading 2 files · 2s…"]);      // read-2's OWN two seconds
+  });
+
+  // The stamp is a START, not a re-stamp of whoever currently holds the anchor: when the newer call settles the
+  // anchor returns to the older one, and its age is still measured from when IT began. A single per-cluster slot
+  // (rather than one stamp per member) passes every cell above and fails this one, reporting a five-second-old
+  // read as brand new.
+  it("returns the anchor to an older in-flight member at its TRUE age when the newer one settles", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    row(doc, clock, state);
+    clock.now = 3000;
+    doc.appendSdk("host", call("read-2", "Read", { file_path: "/work/b.ts" }));
+    row(doc, clock, state);
+    doc.appendSdk("host", result("read-2"));
+    clock.now = 6000;
+    expect(row(doc, clock, state)).toEqual(["Reading 2 files · 6s…"]);      // read-1 began at 0, not at 3000
+  });
+
+  it("drops the ticker the moment the cluster settles, however long it ran", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    row(doc, clock, state);
+    clock.now = 30_000;
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 30s…"]);
+    doc.appendSdk("host", result("read-1"));
+    clock.now = 100_000;
+    expect(row(doc, clock, state)).toEqual(["Read 1 file"]);                // the unclosed form: settled, no ticker
+    doc.appendSdk("host", prose("done"));
+    expect(ticked(groupLines(projectCompact(doc, { ...FS, now: clock.now, pending: state })))).toEqual(["Read 1 file"]);
+  });
+
+  // The classic freeze. Canon computes the anchor only inside `if (s && Ns())`, so the ticker is fullscreen-only
+  // and a projection that passes no flag renders the bytes it rendered before this task existed — same document,
+  // same clock, same pending state, one flag apart.
+  it("never dresses the classic renderer's row, at any elapsed time", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
+    row(doc, clock, state);                                                 // stamp read-1 at 0, fullscreen
+    clock.now = 45_000;
+    expect(ticked(groupLines(projectPending(doc, { ...context, now: clock.now, pending: state }))))
+      .toEqual(["Reading 1 file… (ctrl+o to expand)"]);
+    expect(row(doc, clock, state)).toEqual(["Reading 1 file · 45s…"]);      // …the same frame, fullscreen
+  });
+
+  // ── THE GUARD: the bash `(Ns · N lines)` suffix is CUT, and must stay cut ──────────────────────────────
+  // Canon 518516–518530 dresses a running shell command with ` (4s · 120 lines)` built from `bash_progress`
+  // frames. Probe 100 (live, SDK 0.3.220) found zero such frames reachable headlessly and no line count on any
+  // frame at all, so both halves of that suffix would have to be invented. This cell fails the moment anyone
+  // reads canon and puts it back.
+  it("emits NO bash duration/line-count suffix on a long-running shell member — only the ticker", () => {
+    const clock = { now: 0 }, state = new FoldPendingState({ now: () => clock.now });
+    const doc = built(bash("bash-1", "npm run build"));
+    row(doc, clock, state);
+    clock.now = 12_000;
+    const rows = row(doc, clock, state);
+    expect(rows).toEqual(["Running 1 shell command · 12s…"]);
+    const text = rows[0]!;
+    expect(text).not.toMatch(/\(\s*\d+\s*s/);        // ` (12s)` / ` (12s · N lines)`
+    expect(text).not.toMatch(/lines?\s*\)/);         // …and no line count, from any source
+    expect(text.match(/·/g)).toHaveLength(1);        // exactly ONE middot on the row: the ticker's
+    // The live `⎿` hint DOES carry the command — that half needs nothing from the wire (T4 wired `commandHint`
+    // into the bash absorb branch), and it is what canon's "current tool" line shows for a shell call.
+    const gutter = groupRows(projectPending(doc, { ...FS, now: clock.now, pending: state })).find((i) => i.kind === "gutter-block");
+    expect(gutter).toMatchObject({ body: [{ text: "$ npm run build" }] });
+  });
+});

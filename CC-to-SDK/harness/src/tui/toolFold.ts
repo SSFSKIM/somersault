@@ -287,7 +287,14 @@ export type GroupCounts = {
 /** `bashCommands` (tool-use id → command string) is the git scraper's INPUT, recorded here and consumed by T4;
  *  fullscreen-only, and omitted entirely when the run absorbed no BASH-KIND call (a read-ish shell call is not
  *  one — canon 237152 records inside its `isBash` branch alone). */
-export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
+/** `newestInFlightId` is TS Task 11's elapsed-ticker ANCHOR: the last member absorbed that has no result yet.
+ *  Canon finds the same call by walking the cluster's messages backwards for the first one holding an in-flight
+ *  tool_use (2.1.234:518532–518543); our atoms are already in transcript order, so the last one absorbed open IS
+ *  that call. It is a strict refinement of `open` (present exactly when `open` is true) and carries no time of
+ *  its own — this model stays clock-free, and the member's start is stamped by `foldPendingState`. A silently
+ *  absorbed member can hold it, exactly as canon's scan sees every `tool_use` in the cluster and not just the
+ *  counted ones. */
+export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; newestInFlightId?: string; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
 /** `poppedOnError` marks the one standalone tool this module emits for a reason of its own rather than because
  *  the policy called it non-collapsible: an errored `popsOutOnError` call, pushed out so the failure is never
  *  swallowed (see `segmentRuns`). The renderer needs the distinction because two of those names are also
@@ -303,7 +310,7 @@ const THOUGHT_CAP_MS = 600000;
 
 interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
-  mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorSequence: number; open: boolean; hint?: string;
+  mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorSequence: number; open: boolean; newestInFlight?: string; hint?: string;
   thoughtForMs: number; latestThinkingSummary?: string;
   bashCount: number; bashCommands: Map<string, string>;
   gitOpBashCount: number; commits: GitCommitOp[]; pushes: GitPushOp[]; branches: GitBranchOp[]; prs: GitPrOp[];
@@ -356,7 +363,9 @@ function scrapeGitOps(run: RunState, command: string, result: NonNullable<ToolEv
 function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list" | "mcp" | "bash" | "silent", options: { cwd: string; home: string; fullscreen?: boolean }): void {
   if (run.memberIds.length === 0) run.anchorSequence = event.callSequence;
   run.memberIds.push(event.id);
-  if (event.result === undefined) run.open = true;
+  // BEFORE the silent early return, on the same line of reasoning `open` is: canon's in-flight scan reads the
+  // cluster's whole tool-use id set (`DBr(e)`, 518464), which a silently absorbed member joins.
+  if (event.result === undefined) { run.open = true; run.newestInFlight = event.id; }
   const command = stringField(event.input, "command");
   // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
   // so it is a member and can be the anchor, but it touches no counter and no display hint.
@@ -416,6 +425,7 @@ const emit = (run: RunState): FoldGroup => ({
     ...(run.branches.length > 0 ? { branches: run.branches } : {}), ...(run.prs.length > 0 ? { prs: run.prs } : {}),
   },
   ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorSequence: run.anchorSequence, open: run.open,
+  ...(run.newestInFlight === undefined ? {} : { newestInFlightId: run.newestInFlight }),
   ...(run.latestThinkingSummary === undefined ? {} : { latestThinkingSummary: run.latestThinkingSummary }),
   ...(run.bashCommands.size === 0 ? {} : { bashCommands: run.bashCommands }),
 });

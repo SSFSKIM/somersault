@@ -174,3 +174,46 @@ describe("FoldPendingState: R4.7 step 5 — the thinking summary lingers 3000 ms
     expect([HINT_DEBOUNCE_MS, THINKING_LINGER_MS]).toEqual([700, 3000]);
   });
 });
+
+// TS Task 11: the elapsed ticker's anchor. Canon reads it off the wire timestamp of the newest message holding
+// an in-flight tool_use (518532–518543); our wire carries no timestamps (P82), so a member's start is the local
+// moment we first saw it in flight. It is the one piece of pending-row state that is deliberately NOT ratcheted.
+describe("FoldPendingState: TS T11 — per-member start stamps", () => {
+  it("stamps a member ONCE and never moves it, and gives each member its own stamp", () => {
+    const clock = { now: 0 };
+    const state = new FoldPendingState({ now: () => clock.now });
+    expect(state.startedAt("m1")).toBe(0);
+    clock.now = 5000;
+    expect(state.startedAt("m1")).toBe(0);      // an existing stamp is a START, never re-stamped
+    expect(state.startedAt("m2")).toBe(5000);   // …and the newcomer's own age begins now
+    clock.now = 9000;
+    expect(state.startedAt("m1")).toBe(0);      // the anchor can return to m1 at its true age
+    expect(state.startedAt("m2")).toBe(5000);
+  });
+
+  it("does NOT ratchet: the elapsed time it anchors is free to FALL when a newer member takes the anchor", () => {
+    // The whole reason this state lives beside the counter watermark rather than inside it. `latch` exists so a
+    // live sentence never counts backwards; elapsed time must, or a fresh call would inherit the age of the one
+    // before it. Read as canon does — `now - startedAt(newest in-flight)` — the value drops to zero.
+    const clock = { now: 0 };
+    const state = new FoldPendingState({ now: () => clock.now });
+    const elapsed = (member: string) => clock.now - state.startedAt(member);
+    state.startedAt("m1");
+    clock.now = 8000;
+    expect(elapsed("m1")).toBe(8000);
+    expect(elapsed("m2")).toBe(0);              // ← a Math.max watermark reports 8000 here
+  });
+
+  it("keeps stamps out of the counter/hint maps and forgets them all on reset", () => {
+    const clock = { now: 0 };
+    const state = new FoldPendingState({ now: () => clock.now });
+    state.latch("m1", counts({ readCount: 3 }));
+    state.hint("m1", "a.ts", undefined);
+    clock.now = 400;
+    expect(state.startedAt("m1")).toBe(400);    // latching/hinting an id never stamps it
+    expect(state.latch("m1", counts({ readCount: 1 }))).toMatchObject({ readCount: 3 });   // …and vice versa
+    state.reset();                              // document swap: rewind / resume / clear
+    clock.now = 9000;
+    expect(state.startedAt("m1")).toBe(9000);
+  });
+});

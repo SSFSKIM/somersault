@@ -40,8 +40,12 @@ export const stripSgr = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g
  *  `boldRanges` span opened and closed independently, and — for the active row only — the trailing `…`
  *  appended INSIDE the run so it rides whatever state the tail is in (plain after a count, dim when the
  *  sentence carried none). Excludes the leader glyph and the `(ctrl+o to expand)` hint: those stay
- *  ordinary segments, since the golden paints them with their own attributes. */
-export function composeFoldRun(clauses: readonly FoldClause[], form: "active" | "settled", options?: { ellipsis?: boolean }): string {
+ *  ordinary segments, since the golden paints them with their own attributes.
+ *  `elapsed` (TS Task 11) is the live ticker text, and it belongs INSIDE the run for one reason only: canon
+ *  orders the row's children clauses → ticker → `…` (518636), and the `…` is already in here. It carries its
+ *  OWN dim open/close because canon's `kth` is a separate `<Text dimColor>` sibling (518673) — which matters
+ *  after a bold count, whose `\x1b[22m` has cleared the run's faint. */
+export function composeFoldRun(clauses: readonly FoldClause[], form: "active" | "settled", options?: { ellipsis?: boolean; elapsed?: string }): string {
   if (clauses.length === 0) return "";
   const colour = form === "settled" ? foreground(resolveThemeColor(themeTokens().inactive)) : undefined;
   let out = (colour?.open ?? "") + DIM;
@@ -54,6 +58,7 @@ export function composeFoldRun(clauses: readonly FoldClause[], form: "active" | 
     }
     out += clause.text.slice(cursor);
   }
+  if (options?.elapsed !== undefined) out += DIM + options.elapsed + NORMAL_INTENSITY;
   if (options?.ellipsis === true) out += "…";
   return out + NORMAL_INTENSITY + (colour?.close ?? "");
 }
