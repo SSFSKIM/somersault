@@ -11,7 +11,7 @@ import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js"
 import { DEFAULT_MANAGED_PATH, defaultManagedPath } from "../../../src/appserver/configDomain.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 import { Ajv } from "ajv";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, chmodSync, existsSync, symlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, chmodSync, existsSync, symlinkSync, realpathSync, utimesSync } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -644,12 +644,18 @@ describe("config/value/write + config/batchWrite", () => {
     // Contention is not a validation failure: the request was well-formed and its target real, another
     // writer simply holds it — and -32602 is the one reading guaranteed to stop a client retrying (review
     // I3). BUSY is where every other "retry shortly" in this server already lives, so no new -330xx code
-    // is spent on it. The lock is planted as a DIRECTORY: `wx` still fails EEXIST, but the stale-and-stable
-    // pair of reads both come back null, so the break can never succeed and the deadline is the only exit.
+    // is spent on it. The lock planted here is a LIVE holder's (D-M5-24): a claim directory whose marker
+    // carries a lease an hour into the future, so no amount of waiting makes it breakable. That is the
+    // pairing this milestone chose — a live holder is waited for and then REFUSED, never evicted, because
+    // evicting one was measured destroying the evictor's own already-acknowledged write.
     // Only `Date` is faked — the 35s budget is otherwise real elapsed time, which a unit suite cannot
     // spend, and that budget IS the point: the stall is the reachable symptom, the refusal is the rare one.
     boot(deps());
-    mkdirSync(join(home, ".claude", "settings.json.lock"));
+    const lockDir = join(home, ".claude", "settings.json.lock");
+    mkdirSync(lockDir);
+    writeFileSync(join(lockDir, "9999-live-holder"), "9999-live-holder\n");
+    const lease = new Date(Date.now() + 3_600_000);
+    utimesSync(join(lockDir, "9999-live-holder"), lease, lease);
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const id = sendNoAwait("config/value/write", { keyPath: ["model"], value: "opus", mergeStrategy: "replace" });

@@ -431,11 +431,13 @@ async function maskingAnalysis(srv: Parameters<Handler>[0], data: WriteData, cwd
 /** The shared spine of `config/value/write` and `config/batchWrite`. Two behaviours a client has to know
  *  about, both of them properties of the design rather than gaps in it:
  *
- *  1. **Acquiring a contended target can BLOCK for tens of seconds.** The cross-process `<file>.lock` is
- *     breakable only once it reads stale, so a request that meets another writer's leftover lock waits out
- *     the remainder of that window (30s by default) before proceeding — and usually then succeeds. The
- *     `ConfigLocked` refusal (`BUSY`, -33001) is the *rarer* outcome: the lock could not be unlinked, or a
- *     live writer held it past the deadline. A client must budget for the wait, not just for the error.
+ *  1. **Acquiring a contended target can BLOCK for tens of seconds, and then may still refuse.** The
+ *     cross-process `<file>.lock` is breakable only once its owner's LEASE has expired (30s by default),
+ *     so a request that meets a dead writer's leftover waits out the remainder of that window, breaks it,
+ *     and proceeds. A writer that is merely SLOW keeps refreshing that lease, so it is never broken and
+ *     the waiter refuses `ConfigLocked` (`BUSY`, -33001) at the deadline instead — the honest answer, and
+ *     the one D-M5-24 chose over the eviction that used to silently destroy one of the two writes. A
+ *     client must budget for the wait AND handle the refusal; both mean "retry shortly".
  *
  *  2. **`okOverridden` / `overriddenMetadata` are ADVISORY, and cannot be made otherwise here.** The layer
  *     chain is read after the write and outside the lock, so a concurrent edit to a higher layer in that
@@ -462,7 +464,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     // but is not a usable directory (a dangling link, a symlink loop, a regular file where `.claude` should
     // be) used to surface as node's raw `mkdir` message under -32603, which a client can do nothing with.
     await assertWritableParent(filePath);
-    const written = await withFileLock(filePath, async () => {
+    const written = await withFileLock(filePath, async (fence) => {
       // `"unreadable"` (Task 2 review I1) is refused as an ASSERTION, ahead of the compare: it is a
       // sentinel for the server's inability to read the file, not a state of its content, so a client
       // holding it never saw the bytes it would be asserting continuity of. Mechanically it can never
@@ -476,7 +478,13 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
         throw new ConfigError("ConfigVersionConflict", `expectedVersion ${data.expectedVersion} does not match current ${version}`);
       let next = doc;
       for (const e of data.edits) next = applyEdit(next, e.keyPath, e.value, e.mergeStrategy);
-      return writeTargetDoc(filePath, next);
+      // The CAS is asserted TWICE: once here against the client's token, and once inside the commit
+      // against the bytes still on disk one syscall before the rename (D-M5-24). The second assertion is
+      // not redundant — it is the one that holds when mutual exclusion itself fails, and it is what makes
+      // "a reply of `ok` means the bytes survived" true rather than merely intended. It costs one small
+      // re-read of a file this process read moments ago, and it refuses BEFORE any byte moves, so the
+      // retry a `ConfigLocked` invites is safe even for the non-idempotent `upsert` of an array.
+      return writeTargetDoc(filePath, next, { expectVersion: version, fence });
     });
     // PAST THE COMMIT. Everything below describes bytes already on disk, so nothing below may turn this
     // into a failure reply: a client told its write failed retries it, and an `upsert` of an array is not

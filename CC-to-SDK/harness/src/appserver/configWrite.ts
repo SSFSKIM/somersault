@@ -1,10 +1,10 @@
-// src/appserver/configWrite.ts — write primitives (spec D-M5-13/14 rev 3; plan review F3/F4/F14/F20).
-// The version check is ATOMIC WITH THE WRITE: callers run read→validate→apply→write inside
-// withFileLock, which stacks an in-process per-path chain (two requests in this server) UNDER a
-// NONCE-OWNED <file>.lock (two servers on this machine). The nonce is the ownership proof: release
-// unlinks only its own, and a stale break only removes a lock read as stale-and-stable — rev 1's
-// pid-stamp-never-read lock could be stolen mid-hold and then unlink its thief's lock.
-import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink } from "node:fs/promises";
+// src/appserver/configWrite.ts — write primitives (spec D-M5-13/14 rev 3, lock rev D-M5-24; plan
+// review F3/F4/F14/F20). The version check is ATOMIC WITH THE WRITE: callers run
+// read→validate→apply→commit inside `withFileLock`, which stacks an in-process per-path chain (two
+// requests in this server) under a `<file>.lock` DIRECTORY (two servers on this machine). Ownership is
+// the NAME of the marker inside that directory and never its bytes; the claim is published by `rename`;
+// liveness is a LEASE the holder refreshes. The block above `withFileLock` says why each is load-bearing.
+import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink, readdir, rmdir, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { settingsMerge } from "./configLayers.js";
@@ -196,6 +196,18 @@ export async function assertWritableParent(filePath: string): Promise<void> {
   if (!st.isDirectory()) throw new ConfigError("ConfigValidationError", `settings directory is not a directory: ${parent}`);
 }
 
+/** What a caller asserts about the bytes it is replacing, checked at the LAST instant before the rename.
+ *  Two independent detectors, because they fail independently: `fence` asks the lock whether this process
+ *  still holds it, `expectVersion` asks the FILE whether anyone committed since the caller read it. The
+ *  second holds even if the lock fails in a way the first cannot see, which is the property that matters —
+ *  no arrangement of an advisory lock can be trusted to the point of skipping it. */
+export interface CommitGuard {
+  /** the token the doc being replaced hashed to when this caller read it */
+  expectVersion: string;
+  /** the lock's own liveness assertion; throws `ConfigLocked` if this process no longer owns the lock */
+  fence: () => Promise<void>;
+}
+
 /** 2-space JSON + trailing newline, installed by tmp+rename. The rename installs the TMP file's mode, so
  *  an existing target's mode is carried over first — settings files legitimately hold `env` values and
  *  `apiKeyHelper` paths, and without this the first write through this API turned a deliberate 0600 into
@@ -203,18 +215,32 @@ export async function assertWritableParent(filePath: string): Promise<void> {
  *  afterwards: the repair left the SAME private bytes sitting in the same directory at the umask default
  *  for the length of the write (measured — a 0600 settings file's tmp observed at 644 mid-write). The
  *  chmod stays, because `writeFile`'s `mode` is umask-masked and can only land NARROWER than asked, so
- *  it is the chmod that actually installs the destination's mode. A target that does not exist yet has
- *  no mode to carry and is created 0600 — its bytes are the same class of secret, and there is no later
- *  step that would narrow it. Anything that fails before the rename takes the tmp with it: nothing used
- *  to, so a failed rename (EISDIR against a directory at the path) parked those bytes on disk for good. */
-export async function writeTargetDoc(filePath: string, doc: Record<string, unknown>): Promise<{ version: string }> {
+ *  it is the chmod that actually installs the mode — and it is UNCONDITIONAL (fix wave C), because the
+ *  umask masks the fallback too: a FRESH file promised 0600 (D-M5-14b) landed at 0400 under `umask 0277`
+ *  and at 0200 under `umask 0477`, and 0200 is a file this API can then never read back, so `config/read`
+ *  reported the layer `unreadable` and every later write to it refused. `chmod` is not umask-masked, so
+ *  one call makes the promise true in both directions. A target that does not exist yet has no mode to
+ *  carry and is created 0600 — its bytes are the same class of secret, and there is no later step that
+ *  would narrow it. Anything that fails before the rename takes the tmp with it: nothing used to, so a
+ *  failed rename (EISDIR against a directory at the path) parked those bytes on disk for good. */
+export async function writeTargetDoc(filePath: string, doc: Record<string, unknown>, guard?: CommitGuard): Promise<{ version: string }> {
   await mkdir(dirname(filePath), { recursive: true });
   const bytes = JSON.stringify(doc, null, 2) + "\n";
   const tmp = `${filePath}.tmp-${process.pid}-${Math.floor(Math.random() * 1e9)}`;
   const mode = await stat(filePath).then((s) => s.mode & 0o7777, () => null);
   try {
     await writeFile(tmp, bytes, { encoding: "utf8", mode: mode ?? 0o600 });
-    if (mode !== null) await chmod(tmp, mode);
+    await chmod(tmp, mode ?? 0o600);
+    // The guard sits HERE — after the tmp is complete, one syscall before the rename — because that is
+    // the narrowest window a userspace writer can leave between "I am still the writer" and "these bytes
+    // are the file". Checking earlier leaves the whole serialization of the write inside the window;
+    // checking after the rename is not a check at all, it is a post-mortem on a destroyed update.
+    if (guard !== undefined) {
+      await guard.fence();
+      const current = await readFile(filePath, "utf8").then(versionToken, (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : null));
+      if (current !== guard.expectVersion)
+        throw new ConfigError("ConfigLocked", "the settings file changed while this write was being prepared; nothing was written — re-read and retry");
+    }
     await rename(tmp, filePath);
   } catch (e) { await unlink(tmp).catch(() => {}); throw e; }
   return { version: versionToken(bytes) };
@@ -222,53 +248,163 @@ export async function writeTargetDoc(filePath: string, doc: Record<string, unkno
 
 const chains = new Map<string, Promise<unknown>>();
 
-/** BLOCKS while a foreign lock is held, and the wait is the common outcome — not the refusal. A lock left
- *  behind by a dead writer is only breakable once it reads STALE (older than `staleMs`, 30s by default),
- *  so a contended call typically sits for the remainder of that window, breaks the leftover, and returns
- *  `ok`; `ConfigLocked` fires only when the lock cannot be unlinked or a live writer holds it past the
- *  deadline (`staleMs` + 5s). One number therefore sets both "when is a lock stale" and "how long do I
- *  wait" — a real seam, deliberately not split here (M5 review I3), so callers that surface this on a wire
- *  must say so: see configDomain.ts's `runConfigWrite`. */
-export async function withFileLock<T>(filePath: string, fn: () => Promise<T>, opts: { staleMs?: number } = {}): Promise<T> {
+/** `mkdir` is umask-masked and `readdir` needs r+x, so a lock created under a umask that masks the owner
+ *  bits would be a lock nobody can inspect — the shape that wedged the old lock permanently. `chmod` is
+ *  not umask-masked, which is why every mode this file installs goes through one. */
+const LOCK_DIR_MODE = 0o700;
+const errnoOf = (e: unknown): string | undefined => (e as NodeJS.ErrnoException)?.code;
+
+/** A lock is a NON-EMPTY DIRECTORY at `<file>.lock`, published by `rename`, holding exactly one marker
+ *  file whose NAME is the owner's nonce (D-M5-24). Three properties fall out of that shape, and each one
+ *  closes a defect measured on the `open(wx)` + `unlink` lock it replaces:
+ *
+ *  1. **Acquire is one atomic syscall against an already-complete claim.** The claim is assembled in a
+ *     staging directory beside the target and renamed into place; `rename` onto a NON-EMPTY directory
+ *     fails ENOTEMPTY, so a live claim cannot be clobbered, and there is no instant in which the lock
+ *     exists without naming its owner. The old lock had that instant and a contending process was caught
+ *     inside it, reading an empty owner off a lock mid-creation.
+ *  2. **Every delete is content-conditional — which POSIX gives no way to make an `unlink` be.** The
+ *     owner is the marker's NAME, so `unlink(<lock>/<nonce>)` can only ever destroy that one owner's
+ *     claim; a successor's marker has a different name and is untouched. Removing the directory
+ *     afterwards is `rmdir`, whose emptiness precondition IS the atomic "no successor has claimed it"
+ *     test. And `unlink` cannot remove a directory at all (EPERM), so a fresh claim is immune BY TYPE to
+ *     the pathname-only delete that used to destroy it: with one abandoned lock and four contenders,
+ *     43 of 250 trials on one machine and 32 of 250 on another put two or more processes inside the
+ *     critical section at once, every one of them losing an update, with zero refusals reported.
+ *  3. **Staleness is a LEASE, not an age.** The holder refreshes its marker's mtime on a timer, so a
+ *     slow-but-live holder is no longer indistinguishable from a dead one. At production settings a
+ *     writer stalled 45s had its lock broken at exactly 30s; the evictor then passed its version check,
+ *     committed, and was told `ok` — and the evicted writer's own rename destroyed those bytes 15s later.
+ *     A holder that cannot refresh (SIGSTOP, a blocked event loop, a clock jump) can still be evicted, so
+ *     it must also FENCE before it commits: see `fence` below and `CommitGuard`.
+ *
+ *  Nothing here ever reads the lock's bytes. That is what unwedges a lock created under a umask masking
+ *  the owner-read bit: the old release read its own nonce back to prove ownership, could not, and left
+ *  the lock in place forever — every later write to that target blocked out the deadline and refused.
+ *
+ *  BLOCKS while a foreign lock is live, and the wait is a normal outcome. A DEAD writer's leftover is
+ *  breakable once its lease is older than `staleMs` (30s by default), so a call that meets one waits out
+ *  the remainder of that window, breaks it, and proceeds. `ConfigLocked` fires when the leftover cannot be
+ *  removed, or when a live holder keeps its lease past the deadline (`staleMs` + 5s) — which is now the
+ *  honest answer to a genuinely slow peer rather than the theft it used to be. One number still sets both
+ *  "when is a lease dead" and "how long do I wait" (M5 review I3); callers that surface this on a wire must
+ *  say so — see configDomain.ts's `runConfigWrite`. */
+export async function withFileLock<T>(filePath: string, fn: (fence: () => Promise<void>) => Promise<T>, opts: { staleMs?: number } = {}): Promise<T> {
   const staleMs = opts.staleMs ?? 30_000;
   const lockPath = `${filePath}.lock`;
   const nonce = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const stagePath = `${lockPath}.stage-${nonce}`;
+  const markerPath = join(lockPath, nonce);
   const prev = chains.get(filePath) ?? Promise.resolve();
   const run = prev.catch(() => {}).then(async () => {
     await mkdir(dirname(lockPath), { recursive: true });
+    // The staging directory is removed on every exit from the loop below, including the refusal — but a
+    // process KILLED while it waits leaves one behind, and nothing reclaims it. Accepted, and named here
+    // rather than swept: the same is already true of `writeTargetDoc`'s tmp file, the residue is inert
+    // (no reader of this directory looks at it, and it never blocks an acquisition), and a sweep by age
+    // would be a new way to destroy a live contender's claim-in-waiting.
+    await mkdir(stagePath);
+    await chmod(stagePath, LOCK_DIR_MODE);
+    // The marker's CONTENT is a human reading it with `cat` during an incident; the mode it lands at is
+    // whatever the umask allows, and nothing depends on reading it, because ownership rides the name.
+    await writeFile(join(stagePath, nonce), `${nonce}\n${new Date().toISOString()}\n`, { mode: 0o600 });
     const deadline = Date.now() + staleMs + 5_000;
-    for (;;) {
-      try { await writeFile(lockPath, nonce, { flag: "wx" }); break; }
-      catch (e) {
-        if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
-        // ONLY a successful break may skip the retry budget (review C1). Every other outcome — the
-        // unlink failed (an immutable lock, or a read-only directory: EPERM/EACCES), the lock's bytes
-        // moved between the two reads, the lock vanished mid-inspection — falls through to the deadline
-        // and the sleep. `continue`ing on those instead was an unbounded HOT spin: no refusal ever
-        // fired, and because the spinning call sits inside the in-process chain, every later write to
-        // that path queued behind it forever with no cancellation path.
-        let broke = false;
-        try {
-          const s = await stat(lockPath);
-          if (Date.now() - s.mtimeMs > staleMs) {
-            // stale AND stable: only unlink when two reads agree — never a lock whose content moved.
-            const seen = await readFile(lockPath, "utf8").catch(() => null);
-            const again = await readFile(lockPath, "utf8").catch(() => null);
-            if (seen !== null && seen === again) broke = await unlink(lockPath).then(() => true, () => false);
-          }
-        } catch { /* the lock vanished mid-inspection — the retried `wx` below is the answer */ }
-        if (broke) continue;
-        if (Date.now() > deadline) throw new ConfigError("ConfigLocked", "config target is locked by another writer");
-        await new Promise((r) => setTimeout(r, 25));
+    try {
+      for (;;) {
+        // The lease starts when the claim LANDS, not when it was assembled. Without this a writer that
+        // waited out another's critical section acquired a claim already older than the stale window and
+        // was broken by the next contender within milliseconds — measured at 5 of 5 trials, three
+        // processes, sections outliving a 400ms window. One `utimes` per attempt keeps the marker's age
+        // bounded by a single syscall at the instant the `rename` publishes it.
+        const born = new Date();
+        await utimes(join(stagePath, nonce), born, born).catch(() => {});
+        try { await rename(stagePath, lockPath); break; }
+        catch (e) {
+          const code = errnoOf(e);
+          // ENOTEMPTY/EEXIST: someone's claim is there. ENOTDIR/EISDIR: something that is not one of our
+          // directories is. Anything else is a real filesystem failure and is not ours to absorb.
+          if (code !== "ENOTEMPTY" && code !== "EEXIST" && code !== "ENOTDIR" && code !== "EISDIR") throw e;
+          // ONLY a successful break may skip the retry budget (D-M5-14a #1). Every other outcome — the
+          // unlink failed (an immutable lock, or a read-only directory: EPERM/EACCES), a successor
+          // claimed the path first, the lock vanished mid-inspection — falls through to the deadline and
+          // the sleep. `continue`ing on those instead was an unbounded HOT spin: no refusal ever fired,
+          // and because the spinning call sits inside the in-process chain, every later write to that
+          // path queued behind it forever with no cancellation path.
+          if (await breakDeadLock(lockPath, staleMs)) continue;
+          if (Date.now() > deadline) throw new ConfigError("ConfigLocked", "config target is locked by another writer");
+          await new Promise((r) => setTimeout(r, 25));
+        }
       }
+    } catch (e) {
+      await unlink(join(stagePath, nonce)).catch(() => {});
+      await rmdir(stagePath).catch(() => {});
+      throw e;
     }
-    try { return await fn(); }
+    // Held. The lease is refreshed from a timer, so the common stall — a critical section waiting on slow
+    // I/O — keeps the lock without the holder doing anything. `unref` so a lock never keeps a process
+    // alive past its work; while real work is in flight the loop is alive and the timer fires.
+    let lost = false;
+    const touch = async (): Promise<void> => {
+      const now = new Date();
+      // Only a marker that is GONE means eviction. A transient utimes failure just skips one refresh —
+      // treating it as eviction would fail a write for a hiccup, which is the opposite of the point.
+      await utimes(markerPath, now, now).catch((e) => { if (errnoOf(e) === "ENOENT") lost = true; });
+    };
+    const beat = setInterval(() => { void touch(); }, Math.max(50, Math.floor(staleMs / 3)));
+    beat.unref?.();
+    /** Asserts, at the caller's chosen instant, that this process still owns the lock — and refreshes the
+     *  lease while it is there, so the margin AFTER a successful fence is a full `staleMs` rather than
+     *  whatever was left of it. That margin is what makes the check safe despite not being atomic with
+     *  the commit it guards: no other process may break a lease it has just seen refreshed. */
+    const fence = async (): Promise<void> => {
+      const names = lost ? null : await readdir(lockPath).catch(() => null);
+      if (names === null || names.length !== 1 || names[0] !== nonce) {
+        lost = true;
+        throw new ConfigError("ConfigLocked", "this writer's lock was broken while it was held; nothing was written");
+      }
+      await touch();
+    };
+    try { return await fn(fence); }
     finally {
-      const owner = await readFile(lockPath, "utf8").catch(() => null);
-      if (owner === nonce) await unlink(lockPath).catch(() => {});
+      clearInterval(beat);
+      // Release is ownership-scoped BY CONSTRUCTION, not by a read-then-check: the only marker we can
+      // name is our own, and `rmdir` refuses the moment a successor has claimed the directory. An
+      // overrun owner therefore cannot delete its successor's lock even in principle.
+      await unlink(markerPath).catch(() => {});
+      await rmdir(lockPath).catch(() => {});
     }
   });
   chains.set(filePath, run);
   run.finally(() => { if (chains.get(filePath) === run) chains.delete(filePath); }).catch(() => {});
   return run as Promise<T>;
+}
+
+/** One inspection of a lock we could not take. Answers whether something was actually REMOVED, because
+ *  that is the only outcome allowed to skip the retry budget. It never removes a claim whose lease is
+ *  alive, and it cannot remove a claim other than the one it inspected. */
+async function breakDeadLock(lockPath: string, staleMs: number): Promise<boolean> {
+  let names: string[];
+  try { names = await readdir(lockPath); }
+  catch (e) {
+    // ENOTDIR: something that is not a directory holds the path — a lock written by a build older than
+    // D-M5-24, or a file another tool left behind. It carries no lease, and reading its bytes is exactly
+    // what used to wedge under a hostile umask, so it is broken on AGE alone: the only guarantee the
+    // format it belongs to ever made. Leaving it would dead-end every future write to this target.
+    if (errnoOf(e) === "ENOTDIR") {
+      const st = await stat(lockPath).catch(() => null);
+      if (st === null || Date.now() - st.mtimeMs <= staleMs) return false;
+      return await unlink(lockPath).then(() => true, () => false);
+    }
+    return false; // ENOENT (it went away mid-inspection) or EACCES — the retried rename is the answer
+  }
+  // An EMPTY lock directory is nobody's claim: a break or a release is mid-flight, or a process died
+  // between the two halves of one. A claim is renamed in fully formed, so it is never empty, and `rmdir`
+  // cannot touch one. (`rename` over an empty directory succeeds anyway; this is for the filesystems
+  // where it does not, and it keeps an abandoned husk from outliving its owner.)
+  if (names.length === 0) return await rmdir(lockPath).then(() => true, () => false);
+  const st = await stat(join(lockPath, names[0])).catch(() => null);
+  if (st === null || Date.now() - st.mtimeMs <= staleMs) return false; // the lease is alive: a LIVE holder
+  const unlinked = await unlink(join(lockPath, names[0])).then(() => true, () => false);
+  const removed = await rmdir(lockPath).then(() => true, () => false);
+  return unlinked || removed;
 }

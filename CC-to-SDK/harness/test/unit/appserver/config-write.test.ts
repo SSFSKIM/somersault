@@ -1,23 +1,22 @@
 // test/unit/appserver/config-write.test.ts — M5 Task 3: the write primitives the Task 4 handlers run
 // inside. Everything here touches only its own `mkdtemp` directory.
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, rmdirSync, realpathSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 
-/** Interleaves and failures the filesystem will not schedule for us. (1) A foreign lock whose bytes
- *  CHANGE between the implementation's two consecutive reads: a real second writer cannot be timed into
- *  that gap — both reads are already queued on the libuv threadpool by the time this thread runs again.
- *  (2) A stale lock whose `unlink` FAILS: real on disk (an immutable file, a mode-0555 directory) but
- *  both reproductions are platform-specific and neither works as root. (3) The instant the tmp file
- *  exists and nothing has narrowed it yet — real, and a poller does catch it, but only on a machine
- *  whose scheduler leaves the window open long enough to be sampled. (4) A `readlink` that fails for
- *  anything but a vanished link: the only real cause is an unreadable directory, and that stops `lstat`
- *  one call earlier, so the case never reaches the code under test. All four are forced at the fs
- *  boundary. Null by default: every other call in this file is the real one. */
+/** Interleaves and failures the filesystem will not schedule for us. (1) A dead claim whose `unlink`
+ *  FAILS: real on disk (an immutable file, a mode-0555 directory) but both reproductions are
+ *  platform-specific and neither works as root. (2) The instant the tmp file exists and nothing has
+ *  narrowed it yet — real, and a poller does catch it, but only on a machine whose scheduler leaves the
+ *  window open long enough to be sampled. (3) A `readlink` that fails for anything but a vanished link:
+ *  the only real cause is an unreadable directory, and that stops `lstat` one call earlier, so the case
+ *  never reaches the code under test. All three are forced at the fs boundary. Null by default: every
+ *  other call in this file is the real one. (A fourth hook, forcing a lock's BYTES to move between two
+ *  reads, retired with D-M5-24: the lock's owner is the name of a file, and no read of a lock's content
+ *  happens anywhere any more, so there is no such interleave left to force.) */
 const fsHook = vi.hoisted(() => ({
-  readFile: null as ((path: string) => string | null) | null,
   denyUnlink: null as ((path: string) => boolean) | null,
   afterWriteFile: null as ((path: string) => void) | null,
   readlink: null as ((path: string) => Error | null) | null,
@@ -26,11 +25,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...real,
-    readFile: async (path: unknown, ...rest: unknown[]) => {
-      const forced = fsHook.readFile?.(String(path));
-      if (typeof forced === "string") return forced;
-      return (real.readFile as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
-    },
     unlink: async (path: unknown, ...rest: unknown[]) => {
       if (fsHook.denyUnlink?.(String(path))) throw Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" });
       return (real.unlink as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
@@ -276,7 +270,10 @@ describe("token + doc IO", () => {
   });
 });
 
-describe("withFileLock (D-M5-14 rev 3)", () => {
+// The claim-directory lock (D-M5-24). Everything here is single-process by design — it pins the shapes a
+// scheduler will not produce on demand. What no in-process row can pin is the property the lock exists
+// for, so mutual exclusion itself is measured with real OS processes in `config-lock-race.test.ts`.
+describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
   it("serializes concurrent critical sections on one path and releases", async () => {
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
@@ -307,37 +304,50 @@ describe("withFileLock (D-M5-14 rev 3)", () => {
     expect(order).toEqual(["a-in", "a-out", "b-in", "b-out"]);
     expect(existsSync(p + ".lock")).toBe(false);
   });
-  it("breaks a stale-and-stable foreign lock instead of hanging", async () => {
+  it("breaks a DEAD writer's claim — an expired lease — instead of hanging", async () => {
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
-    writeFileSync(p + ".lock", "dead-owner");
+    mkdirSync(p + ".lock");
+    writeFileSync(join(p + ".lock", "999-dead-owner"), "999-dead-owner\n");
     expect(await withFileLock(p, async () => "ran", { staleMs: 0 })).toBe("ran");
+    expect(existsSync(p + ".lock")).toBe(false);
   });
-  it("never unlinks a foreign LIVE lock — it waits for that owner to release", async () => {
+  it("breaks a lock left by a build older than D-M5-24 — a plain FILE — on age, without reading it", async () => {
+    // A lock whose bytes nobody can read is exactly the shape that used to wedge a target permanently:
+    // created under a umask masking the owner-read bit, its own release could not read its nonce back.
+    // Ownership no longer lives in any lock's bytes, so this one is judged on age alone — the only
+    // guarantee its format ever made — and the target is not dead-ended by a leftover from an old build.
+    const dir = mkTemp("m5l-");
+    const p = join(dir, "s.json");
+    writeFileSync(p + ".lock", "3141-pre-d-m5-24");
+    chmodSync(p + ".lock", 0o200);
+    expect(await withFileLock(p, async () => "ran", { staleMs: 0 })).toBe("ran");
+    expect(existsSync(p + ".lock")).toBe(false);
+  });
+  it("an EMPTY claim directory is nobody's lock: reclaimed at once, not waited out", async () => {
+    // A process died between `mkdir` and its marker, or a break is mid-flight. A claim is renamed in
+    // fully formed, so an empty one is never a claim — and at the PRODUCTION stale window, mistaking it
+    // for one would park this call for 35s and then refuse.
+    const dir = mkTemp("m5l-");
+    const p = join(dir, "s.json");
+    mkdirSync(p + ".lock");
+    const t0 = Date.now();
+    expect(await withFileLock(p, async () => "ran")).toBe("ran");
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(existsSync(p + ".lock")).toBe(false);
+  });
+  it("never breaks a LIVE holder's claim — a lease being kept — it waits for that owner", async () => {
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
     const lock = p + ".lock";
-    writeFileSync(lock, "live-owner"); // mtime is NOW: nowhere near the 30s stale window
+    mkdirSync(lock);
+    writeFileSync(join(lock, "777-live-owner"), "777-live-owner\n"); // mtime NOW: a full lease ahead of it
     const pending = withFileLock(p, async () => "ran");
     expect(await Promise.race([pending, sleep(150, "still-locked")])).toBe("still-locked");
-    expect(readFileSync(lock, "utf8")).toBe("live-owner"); // the live owner's lock is untouched
-    unlinkSync(lock); // the owner finishes and releases
+    expect(readdirSync(lock)).toEqual(["777-live-owner"]); // the live owner's claim is untouched
+    unlinkSync(join(lock, "777-live-owner")); rmdirSync(lock); // the owner finishes and releases
     expect(await pending).toBe("ran");
     expect(existsSync(lock)).toBe(false);
-  });
-  it("breaks a stale lock only when it is also STABLE — moving bytes are left alone", async () => {
-    const dir = mkTemp("m5l-");
-    const p = join(dir, "s.json");
-    const lock = p + ".lock";
-    writeFileSync(lock, "foreign-A");
-    let n = 0;
-    fsHook.readFile = (path) => (path === lock ? `foreign-${++n}` : null); // every read a different owner
-    const pending = withFileLock(p, async () => "ran", { staleMs: 0 });
-    expect(await Promise.race([pending, sleep(150, "still-locked")])).toBe("still-locked");
-    expect(readFileSync(lock, "utf8")).toBe("foreign-A"); // never unlinked while its bytes moved
-    fsHook.readFile = null; // the other writer stops: two reads now agree, and only then is it stale-AND-stable
-    expect(await pending).toBe("ran");
-    expect(existsSync(lock)).toBe(false); // our own release, by nonce, cleaned up after us
   });
   it("REFUSES at the deadline when a stale lock cannot be broken — it never spins forever", async () => {
     // The reachable hot spin (review C1): the lock is stale AND stable, so the break is attempted, but
@@ -351,8 +361,10 @@ describe("withFileLock (D-M5-14 rev 3)", () => {
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
     const lock = p + ".lock";
-    writeFileSync(lock, "dead-owner");
-    fsHook.denyUnlink = (path) => path === lock; // the break is attempted every pass and every pass fails
+    mkdirSync(lock);
+    const marker = join(lock, "999-dead-owner");
+    writeFileSync(marker, "999-dead-owner\n");
+    fsHook.denyUnlink = (path) => path === marker; // the break is attempted every pass and every pass fails
     const t0 = Date.now();
     const cpu0 = process.cpuUsage();
     const outcome = await Promise.race([
@@ -368,12 +380,88 @@ describe("withFileLock (D-M5-14 rev 3)", () => {
     expect(elapsed).toBeGreaterThanOrEqual(5_000); // the deadline is staleMs + 5s — it waited the budget out
     expect(elapsed).toBeLessThan(7_000);           // ...and refused promptly once the budget was spent
     expect((cpu.user + cpu.system) / 1000).toBeLessThan(1_500); // it SLEPT through the wait, it did not burn it
-    expect(readFileSync(lock, "utf8")).toBe("dead-owner"); // the unbreakable lock is still exactly as found
+    expect(readdirSync(lock)).toEqual(["999-dead-owner"]); // the unbreakable claim is still exactly as found
+    expect(readdirSync(dir).filter((f) => f.includes(".stage-"))).toEqual([]); // and our own staged claim is gone
   }, 20_000);
-  it("release never unlinks a FOREIGN lock (nonce ownership)", async () => {
+  it("release cannot touch a SUCCESSOR's claim — ownership is a file's NAME, not a read-back nonce", async () => {
+    // The other half of the eviction: our lease expires, a successor breaks our claim and takes the path.
+    // Forced here — our marker removed, theirs put in its place — because a real 30s stall cannot be spent
+    // in a unit suite. Our release names only our own marker and then `rmdir`s, which refuses a directory
+    // a successor has claimed, so neither call can reach their lock even in principle.
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
-    await withFileLock(p, async () => { writeFileSync(p + ".lock", "foreign-nonce"); }); // steal mid-hold
-    expect(readFileSync(p + ".lock", "utf8")).toBe("foreign-nonce"); // OUR release left it alone
+    const lock = p + ".lock";
+    await withFileLock(p, async () => {
+      for (const n of readdirSync(lock)) unlinkSync(join(lock, n));
+      writeFileSync(join(lock, "555-successor"), "555-successor\n");
+    });
+    expect(readdirSync(lock)).toEqual(["555-successor"]);
+  });
+  it("a holder that was EVICTED refuses at the FENCE, and writes nothing", async () => {
+    // The measured production loss: at 30s a live-but-stalled writer's lock was broken, the breaker
+    // passed its version check, committed, and was told `ok` — then the evicted writer's own rename
+    // erased those bytes 15s later, silently. The lease keeps that from happening at all for a holder
+    // whose event loop still runs; this row is the case it cannot cover (a suspended process, a blocked
+    // loop, a clock jump), where the holder must discover the theft BEFORE it commits.
+    const dir = mkTemp("m5l-");
+    const p = join(dir, "s.json");
+    const before = JSON.stringify({ model: "THE-EVICTOR-WROTE-THIS" }, null, 2) + "\n";
+    writeFileSync(p, before);
+    const outcome = await withFileLock(p, async (fence) => {
+      await fence(); // still ours — this one passes
+      const lock = p + ".lock";
+      for (const n of readdirSync(lock)) unlinkSync(join(lock, n)); // a breaker judged our lease dead
+      writeFileSync(join(lock, "42-evictor"), "42-evictor\n"); // ...and took the path
+      return writeTargetDoc(p, { model: "THE-EVICTED-WRITER" }, { expectVersion: versionToken(before), fence })
+        .then(() => "COMMITTED", (e: { code?: string; message: string }) => `${e.code}:${e.message}`);
+    });
+    expect(outcome).toBe("ConfigLocked:this writer's lock was broken while it was held; nothing was written");
+    expect(readFileSync(p, "utf8")).toBe(before); // the evictor's bytes are still the file's bytes
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp-"))).toEqual([]);
+    expect(readdirSync(p + ".lock")).toEqual(["42-evictor"]); // and the release left their claim alone
+  });
+  it("the commit guard refuses a target that changed under it — before a single byte moves", async () => {
+    // The fence asks the LOCK whether we still hold it; this asks the FILE whether anyone committed since
+    // we read it. Independent detectors, because they fail independently — this one holds even when
+    // mutual exclusion fails in a way no advisory lock can observe, and it is what makes `ok` mean the
+    // bytes survived. It refuses ahead of the rename, so the retry it invites is safe for a non-idempotent
+    // `upsert` of an array.
+    const dir = mkTemp("m5l-");
+    const p = join(dir, "s.json");
+    writeFileSync(p, '{"model":"A"}\n');
+    const stale = versionToken('{"model":"A"}\n');
+    writeFileSync(p, '{"model":"B-COMMITTED"}\n'); // another writer got there first
+    await expect(writeTargetDoc(p, { model: "C" }, { expectVersion: stale, fence: async () => {} }))
+      .rejects.toMatchObject({ code: "ConfigLocked" });
+    expect(readFileSync(p, "utf8")).toBe('{"model":"B-COMMITTED"}\n');
+    expect(readdirSync(dir)).toEqual(["s.json"]); // the tmp went with the refusal
+  });
+  it("a umask masking the owner bits changes neither the created file's 0600 nor the lock's usability", async () => {
+    // Measured, not hypothesised: `writeFile({mode:0600})` landed 0400 under `umask 0277` and 0200 under
+    // `umask 0477` — and 0200 is a settings file this API can never read back, so the layer reported
+    // `unreadable`, the write's own masking pass named the user layer as its own overrider, and every
+    // later write refused. `chmod` is not umask-masked, so one unconditional call makes D-M5-14b's
+    // promise true. The lock rode the same umask: its release could not read its own nonce back, so it
+    // leaked, and the next write to that target blocked out the deadline and refused — permanently.
+    const dir = mkTemp("m5l-"); // created BEFORE the umask narrows: a real ~/.claude already exists
+    const prev = process.umask(0o477);
+    try {
+      const p = join(dir, "s.json");
+      await writeTargetDoc(p, { model: "fresh" });
+      expect(statSync(p).mode & 0o7777).toBe(0o600);
+      expect(JSON.parse(readFileSync(p, "utf8"))).toEqual({ model: "fresh" });
+      const t0 = Date.now();
+      // Two acquisitions in a row at the PRODUCTION stale window: the second is the wedge detector — it
+      // returns promptly only if the first could inspect and release the lock it took. The mode assertion
+      // is the third umask-masked call in this path: a claim directory a contender cannot LIST is a claim
+      // nobody can ever break, which is the same wedge one level along.
+      expect(await withFileLock(p, async () => {
+        expect(statSync(p + ".lock").mode & 0o7777).toBe(0o700);
+        return "one";
+      })).toBe("one");
+      expect(await withFileLock(p, async () => "two")).toBe("two");
+      expect(Date.now() - t0).toBeLessThan(2_000);
+      expect(existsSync(p + ".lock")).toBe(false);
+    } finally { process.umask(prev); }
   });
 });
