@@ -30,10 +30,13 @@ const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts
  *  snapshot is still correct is the moment the event is emitted. Deltas carry no Item and need no clone.
  *
  *  `contextUsage` (M5 Task 13) is CARRIED THROUGH, and that is load-bearing rather than tidy: this function
- *  rebuilds the event field by field, so anything it forgets is dropped — and `fleet.ts` snapshots BEFORE
- *  it calls `emitItems`, so a snapshot that lost the twin would have made the whole mechanism in-process
- *  only, passing every in-process test while the fleet origin silently published nothing. Not cloned: the
- *  twin is a per-frame value the mapper never mutates (unlike the Items above), and it is relayed verbatim. */
+ *  rebuilds the event field by field, so anything it forgets is dropped. This function is on BOTH origins'
+ *  paths — `pushBounded` below snapshots every event into the replay buffer regardless of origin — but the
+ *  two origins lose different things when it forgets a field, which is why the carry-through is defended by
+ *  three rows and not by one. In-process the live wire keeps the raw event, so only REPLAY to a mid-turn
+ *  subscriber is starved; on the fleet path `fleet.ts` snapshots before calling `emitItems`, so the live
+ *  wire is starved too and the field never reaches a fleet client at all. Not cloned: the twin is a
+ *  per-frame value the mapper never mutates (unlike the Items above), and it is relayed verbatim. */
 export function snapshot(ev: ItemEvent): ItemEvent {
   return ev.kind === "delta" ? ev : { kind: ev.kind, item: structuredClone(ev.item), ...(ev.contextUsage === undefined ? {} : { contextUsage: ev.contextUsage }) };
 }

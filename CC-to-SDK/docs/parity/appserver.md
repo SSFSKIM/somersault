@@ -68,7 +68,11 @@ with a turn — see gap 1), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId`
 verbatim four catalogs: `terminalSlashCommands`, latched off the engine's `system/init` frames by the frame
 router's own route — its own route, never a branch inside the session-id latch, which early-returns on a
 stamped `record.sessionId` and would therefore never run on a fleet thread, whose id comes from the host's
-`state` event. Absent KEY until an init frame carries it; `[]` is the engine's own "none"),
+`state` event. EVERY init frame is authoritative: the KEY IS ABSENT only until an init frame ARRIVES, and
+one that omits the field yields `[]` — which is how the engine reports "none", since `sdk.d.ts` declares
+`terminal_slash_commands` present only when non-empty. That is what keeps a once-latched list from
+outliving its truth across the per-turn re-emission a `thread/capabilities/changed` ping tells clients to
+re-read),
 `thread/contextUsage/read` (deliberately UNCHANGED by M5 Task 13 — it answers from `getContextUsage()`,
 which is richer and costs no turn, where 0.3.234's `context_usage` twin is obtainable only by spending a
 `/context` turn; the twin is forwarded on that turn's own item notifications instead, D-M5-22),

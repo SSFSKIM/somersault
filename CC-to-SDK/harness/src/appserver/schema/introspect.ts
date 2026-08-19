@@ -19,13 +19,18 @@ import { z } from "zod/v4";
  *  terminal-bound marker at all (`SlashCommand`, sdk.d.ts). It exists for exactly the client class this
  *  server exists for: a remote or web UI that must not offer a command only a terminal can run.
  *
- *  THREE STATES, and the difference between the first two is the reason this schema is published:
- *    - key ABSENT — no init frame has carried the field on this thread yet. On a fresh thread that is
- *      simply "before the first turn"; init is re-emitted every turn, so it resolves itself.
- *    - `[]` — an init frame said so: this session advertises no terminal-bound command. A real answer.
+ *  THREE STATES, keyed on the INIT FRAME rather than on the key, which is the correction review F1 forced:
+ *    - key ABSENT — no init frame has arrived on this thread yet. On a fresh thread that is simply
+ *      "before the first turn"; init is re-emitted every turn, so it resolves itself.
+ *    - `[]` — an init frame arrived and advertised no terminal-bound command. A real answer, and the one
+ *      the ENGINE actually produces: `sdk.d.ts` declares `terminal_slash_commands` "present only when
+ *      non-empty", so a session with none, and a CLI too old to have the field, both say so by omitting
+ *      it. Those two are the same instruction for a remote UI deciding what to hide, so both land here.
  *    - a non-empty list — those commands are terminal-bound. Last frame wins, since init recurs.
- *  A client that renders `[]` and an absent key the same way is choosing to; one that cannot tell them
- *  apart has been mis-told. */
+ *  Every init frame is authoritative, which is what keeps a once-latched list from outliving its truth: a
+ *  `thread/capabilities/changed` ping tells clients to re-read, and both halves of the re-read then answer
+ *  for the same session. A client that renders `[]` and an absent key the same way is choosing to; one
+ *  that cannot tell "the engine says none" from "we have not heard from the engine" has been mis-told. */
 export const capabilitiesReadResult = z.object({
   capabilities: z.object({
     models: z.array(z.unknown()),
@@ -34,5 +39,5 @@ export const capabilitiesReadResult = z.object({
     agents: z.array(z.unknown()),
   }),
   terminalSlashCommands: z.array(z.string()).optional()
-    .describe("commands this session advertises as terminal-bound, latched from the engine's system/init frame; the KEY IS ABSENT (never null, never []) when no init frame has carried it — [] is the engine's own answer that there are none"),
+    .describe("commands this session advertises as terminal-bound, latched from the engine's system/init frame. EVERY init frame is authoritative: the KEY IS ABSENT (never null) only while no init frame has arrived on this thread; an init frame that omits the field yields [], which is how the engine reports 'none' (the SDK sends the field only when non-empty, so a session with no tagged command and a CLI predating the field are indistinguishable and mean the same thing to a client deciding what to hide); an init frame carrying the field yields it verbatim, latest frame winning"),
 });

@@ -145,18 +145,55 @@ describe("terminal_slash_commands: latched off the init frame, served by thread/
     expect(frame(lines, 4).result).toEqual({ capabilities: { models: [], commands: [], mcpServers: [], agents: [] }, terminalSlashCommands: TERMINAL });
   });
 
-  it("inProcess — the ABSENT-KEY contract: an engine that never sent the field leaves the reply without the key at all (not null, not [])", async () => {
+  it("inProcess — the ABSENT-KEY contract: with NO init frame on this thread the reply omits the key entirely (not null, not [])", async () => {
     const rig = fakeSession({ capabilities: async () => ({ models: [], commands: [], mcpServers: [], agents: [] }) });
     const { conn, lines, record } = await bootInProcess(rig.session);
-    // A whole turn's worth of frames that are NOT an init carrying the field — the record must stay clean.
-    rig.push({ type: "system", subtype: "init", session_id: "sess-1" });
+    // Frames that are not an init frame AT ALL. Absence means one thing only — this server has not heard
+    // from the engine yet. An init frame that merely omits the field is a DIFFERENT state (the engine
+    // answering "none"), and the two rows below own it.
     rig.push({ type: "assistant", message: { id: "m", content: [] } });
+    rig.push({ type: "result", subtype: "success", usage: { input_tokens: 1 } });
 
     send(conn, { id: 4, method: "thread/capabilities/read", params: { threadId: record.id } });
     await tick();
     const result = frame(lines, 4).result;
     expect(Object.hasOwn(result, "terminalSlashCommands")).toBe(false);
     expect(result).toEqual({ capabilities: { models: [], commands: [], mcpServers: [], agents: [] } });
+  });
+
+  it("inProcess — an init frame that OMITS the field is the engine answering 'none', and the read serves [] for it", async () => {
+    const rig = fakeSession({ capabilities: async () => ({ models: [], commands: [], mcpServers: [], agents: [] }) });
+    const { conn, lines, record } = await bootInProcess(rig.session);
+    // `sdk.d.ts` declares `terminal_slash_commands` "present only when non-empty; absent on CLIs that
+    // predate the field, and on sessions where no advertised command carries the tag" — so THIS frame, not
+    // an explicit `[]`, is how a real engine says nothing is terminal-bound. Both senders mean the same
+    // thing to a client deciding what to hide, so both land on `[]`.
+    rig.push({ type: "system", subtype: "init", session_id: "sess-1", slash_commands: ["/compact", "/context"] });
+    expect(record.terminalSlashCommands).toEqual([]);
+
+    send(conn, { id: 4, method: "thread/capabilities/read", params: { threadId: record.id } });
+    await tick();
+    const result = frame(lines, 4).result;
+    expect(Object.hasOwn(result, "terminalSlashCommands")).toBe(true);
+    expect(result.terminalSlashCommands).toEqual([]);
+  });
+
+  it("inProcess — a keyed init followed by a KEY-LESS one serves [], never the stale list: EVERY init frame is authoritative", async () => {
+    // The staleness this pins is not hypothetical: init recurs per turn, and `thread/capabilities/changed`
+    // exists to tell clients to re-read. A latch that only wrote on a present key would hand that re-read
+    // fresh `capabilities.commands` beside a list the session stopped advertising, with no wire value able
+    // to say "no longer any".
+    const rig = fakeSession({ capabilities: async () => ({ models: [], commands: [], mcpServers: [], agents: [] }) });
+    const { conn, lines, record } = await bootInProcess(rig.session);
+    rig.push(initFrame());
+    expect(record.terminalSlashCommands).toEqual(TERMINAL);
+
+    rig.push({ type: "system", subtype: "init", session_id: "sess-1", slash_commands: ["/compact", "/context"] });
+    expect(record.terminalSlashCommands).toEqual([]);
+
+    send(conn, { id: 4, method: "thread/capabilities/read", params: { threadId: record.id } });
+    await tick();
+    expect(frame(lines, 4).result.terminalSlashCommands).toEqual([]);
   });
 
   it("inProcess — the routeInit TRAP, in-process half: a record whose sessionId is ALREADY latched still stamps from a later init frame", async () => {
@@ -178,9 +215,13 @@ describe("terminal_slash_commands: latched off the init frame, served by thread/
     expect(record.terminalSlashCommands).toEqual(["doctor"]);
   });
 
-  it("inProcess — an engine that sends an EMPTY list is answering 'none', which is not the same as never having sent one", async () => {
+  it("inProcess — an EXPLICIT empty list is accepted as 'none' too, not treated as malformed and ignored", async () => {
+    // Belt to the row above: the SDK says it omits the key rather than sending `[]`, so this is the shape
+    // a future CLI (or a host relaying one) might send instead. It must mean the same thing, and it must
+    // not fall through the malformed branch and leave a previous answer standing.
     const rig = fakeSession({ capabilities: async () => ({ models: [], commands: [], mcpServers: [], agents: [] }) });
     const { conn, lines, record } = await bootInProcess(rig.session);
+    rig.push(initFrame(TERMINAL));
     rig.push(initFrame([]));
 
     send(conn, { id: 4, method: "thread/capabilities/read", params: { threadId: record.id } });
@@ -188,7 +229,10 @@ describe("terminal_slash_commands: latched off the init frame, served by thread/
     expect(frame(lines, 4).result.terminalSlashCommands).toEqual([]);
   });
 
-  it("inProcess — a malformed field (not an array of strings) is ignored rather than published", async () => {
+  it("inProcess — a MALFORMED field (present, but not an array of strings) is ignored rather than published, and is not read as 'none'", async () => {
+    // The one case an init frame does NOT settle. A value this server cannot parse is a frame it does not
+    // understand, not a frame saying "nothing is terminal-bound" — so the previous (here: absent) answer
+    // stands, rather than being overwritten with `[]`.
     const rig = fakeSession({ capabilities: async () => ({ models: [], commands: [], mcpServers: [], agents: [] }) });
     const { record } = await bootInProcess(rig.session);
     rig.push(initFrame("doctor"));
@@ -311,9 +355,12 @@ describe("context_usage: forwarded on the item events its own assistant frame pr
     expect(completed.params.contextUsage).toEqual(CONTEXT_USAGE);
   });
 
-  it("FLEET — the snapshot on the way into the per-turn buffer must PRESERVE the twin: fleet.ts snapshots BEFORE it emits, so a snapshot that dropped the field would make this whole mechanism inProcess-only", async () => {
+  it("FLEET — the snapshot on the way into the per-turn buffer must PRESERVE the twin, or a fleet client's replay is starved of it", async () => {
     // The same shape as the case above, asserted from the buffer rather than the wire — the two are fed by
-    // the SAME snapshot call in fleet.ts, and only the buffer can show the field survived it.
+    // the SAME snapshot call in fleet.ts, and only the buffer can show the field survived it. `snapshot()`
+    // runs on BOTH origins (`pushBounded`), so this row is not the only defender of the carry-through; what
+    // it adds is the fleet WIRE's side, since fleet.ts snapshots before emitting and the in-process wire
+    // never does. Reverting the carry-through reddens three rows, spanning both origins.
     const { fh, record } = await attached();
     fh.beginTurn(1);
     await waitFor(() => expect(record.currentTurnId).toBeTruthy());
@@ -323,7 +370,10 @@ describe("context_usage: forwarded on the item events its own assistant frame pr
     expect((buffered.event as { contextUsage?: unknown }).contextUsage).toEqual(CONTEXT_USAGE);
   });
 
-  it("a client joining mid-turn is replayed the twin with the item it belongs to (one delivery window, both origins)", async () => {
+  it("inProcess — a client joining mid-turn is replayed the twin with the item it belongs to (one delivery window)", async () => {
+    // Titled for the rig it runs (review F5). The fleet half of replay is covered by the buffer row above:
+    // `subscribe.ts` replays from `record.buffer` through the same `itemEventNotification` this rig drives,
+    // and that row asserts the fleet origin's buffered event still carries the twin.
     const rig = fakeSession();
     const { srv, conn, lines, threadId } = await bootInProcess(rig.session);
     send(conn, { id: 4, method: "turn/start", params: { threadId, input: "/context" } });

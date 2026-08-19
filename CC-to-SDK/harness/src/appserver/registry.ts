@@ -166,11 +166,13 @@ export interface ThreadRecord {
    *  place the classification exists in the whole SDK surface — `supportedCommands()`, which is what
    *  `capabilities().commands` is, carries no terminal-bound marker.
    *
-   *  UNDEFINED means "no init frame has carried the field on this thread yet", which is a different claim
-   *  from `[]` ("the engine says there are none") — the read publishes the distinction by omitting the key
-   *  entirely for the first. Not seeded at start/resume: nothing off-frame knows the answer. Last frame
-   *  wins, because init is re-emitted every turn (probe 112) — which is also what makes the field reachable
-   *  on a FLEET thread, whose attach burst is replay-marked and dropped by the router. */
+   *  UNDEFINED means "no init frame has arrived on this thread yet" — nothing weaker. Every init frame
+   *  overwrites this, INCLUDING one that omits the key, which the SDK declares is how the engine says
+   *  "none" (`router.ts`'s route says why); that case writes `[]`, so the only claim absence makes is that
+   *  the server has not heard yet. Not seeded at start/resume: nothing off-frame knows the answer. Last
+   *  frame wins, because init is re-emitted every turn (probe 112) — which is also what makes the field
+   *  reachable on a FLEET thread, whose attach burst is replay-marked and dropped by the router, and what
+   *  makes a once-latched list correctable rather than permanent. */
   terminalSlashCommands?: string[];
   config?: Record<string, unknown>; // the FULL config this thread's engine was opened with (broker
                                  // included) — stamped once at thread/start|resume and never rewritten.

@@ -859,6 +859,15 @@ flips the `full-potential.md` rows and ships nothing.
   and reaches BOTH the in-process router's feed and the fleet relay's. What saves the fleet origin is that
   init is **re-emitted every turn** — a fleet thread's attach burst is replay-marked and dropped by the
   router, so a once-only init would have been inProcess-only.
+  **Published semantics, amended by the Task 13 review (F1) before the milestone closed: EVERY init frame
+  is authoritative.** No init frame yet → the key is absent. An init frame that OMITS the field → `[]`,
+  because that omission is how the engine reports "none" (`sdk.d.ts`: "present only when non-empty; absent
+  on CLIs that predate the field, and on sessions where no advertised command carries the tag") — a
+  pre-field CLI and a session with nothing tagged are the same instruction to a remote UI deciding what to
+  hide, so collapsing them is honest rather than lossy. An init frame carrying the field → serve it, latest
+  wins. A malformed value is the one thing that settles nothing: the previous (or absent) answer stands.
+  The first shipped shape said the opposite about the empty case, which left `[]` unreachable and a
+  once-latched list permanent; the per-turn re-emission above is what makes the corrected rule self-healing.
   `context_usage`: delivered on a `/context` turn as a **wrapper-level key on the ASSISTANT frame**
   (`message.context_usage` is absent), never on the result frame. That distinction *was* the question the
   seam step existed to answer: result frames are consumed by the submit waiter and never relayed to fleet
@@ -1168,21 +1177,46 @@ flips the `full-potential.md` rows and ships nothing.
   its own frame route, because `routeInit` early-returns on `record.sessionId` and a fleet thread has that
   id before its first init frame arrives. The second was not, and nothing in the brief could have named it
   — `fleet.ts` snapshots each item event BEFORE handing it to `emitItems`, and `snapshot()` rebuilds the
-  event field by field, so a `contextUsage` it did not explicitly carry through would have been dropped on
-  the fleet origin ALONE. Same failure shape, same silence, different function: the in-process path never
-  calls `snapshot` before emitting, so every in-process test would have stayed green. **Generalised: an
+  event field by field, so a `contextUsage` it did not explicitly carry through would have been dropped
+  from the fleet WIRE, where the in-process wire still carries the live event. **Generalised: an
   origin-asymmetry warning is about a CLASS of code, not about the one function that taught it. Once a
   milestone knows one origin can be silently starved, every field-by-field rebuild on the path to that
   origin is a suspect, and the way to find them is to follow the field to the wire on both origins rather
   than to re-read the function you were warned about.**
+  **Corrected by the Task 13 review (F2), against a measurement printed in the same commit.** The first
+  draft of this entry said `snapshot()` is fleet-only — that "the in-process path never calls `snapshot`
+  before emitting, so every in-process test would have stayed green", and that reverting the carry-through
+  turns "only the two fleet rows" red. Both are false. `turns.ts`'s `pushBounded` snapshots every event
+  into the replay buffer on BOTH origins, so the sabotage row fails **three** rows spanning both — the two
+  fleet ones and the in-process mid-turn-replay row — which is exactly what the table in the same report
+  recorded. What the origins genuinely differ in is what a forgotten field costs: in-process only REPLAY is
+  starved, on the fleet path the live wire is too. The one-`Session` mimicry the controller specified would
+  therefore NOT have missed this trap — any suite carrying a mid-turn-replay row catches a snapshot-drop
+  in-process, and that row long predates this task. The deviation to the fake host stands on its own
+  merits (below); it never needed this reason, and a recorded reason that contradicts its own commit's
+  measurement is what a later milestone inherits.
 - **The absorb work's own test rule earned its keep in a way it was not written for.** The rule was
   "inject the field through the same frame path the probe observed", written against a fake that hands the
   handler a pre-stamped record. Its real yield was different: driving the FLEET leg through the fake host's
-  real socket puts a live `snapshot()` call between the mapper and the wire, which is the only reason the
-  asymmetry above is PINNED rather than merely noticed — it was caught by reading `fleet.ts` at design time,
-  and it is a sabotage row (revert the carry-through, and only the two fleet rows go red) that keeps it
-  caught. A test written against the seam fails on the seam's bugs; a test written against the handler
+  real socket exercises the real UDS, the real `FleetEngine` frame fan and real replay marking, which is
+  what makes a genuine fleet-**wire** row possible at all — same-object mimicry asserts the mapper's output,
+  not what the wire carried. That is why the carry-through is defended on the wire and not only in a
+  buffer. A test written against the seam fails on the seam's bugs; a test written against the handler
   fails on the ones its author already thought of.
+- **Task 13 review (2026-08-20): a published contract can be wrong in the one direction no test will
+  catch — against the producer's own declaration.** The task shipped `terminalSlashCommands` with three
+  states, of which the engine can only produce two: `sdk.d.ts` declares `terminal_slash_commands` "present
+  only when non-empty; absent on CLIs that predate the field, and on sessions where no advertised command
+  carries the tag", so the engine reports "none" by OMISSION. The shipped schema told clients the reverse
+  (`[]` means none, absent means no init yet), which made `[]` dead, made "none" indistinguishable from "no
+  turn yet", and — because init recurs per turn — froze a once-latched list permanently, so a
+  `thread/capabilities/changed` re-read would hand a client fresh `capabilities.commands` beside a stale
+  list. Repaired by making **every init frame authoritative**: a key-less init writes `[]`, absence means
+  only "no init frame has arrived". **Generalised: for a relayed field, the contract's authority is the
+  producer's declaration, not our own reading of the one payload we happened to observe. A probe that saw
+  the non-empty case cannot tell you what the empty case looks like, and a doc comment beside the type
+  often can.** The engine-side half here is still a doc comment rather than a live run — the keyed
+  acceptance is where a session with no terminal-bound command confirms it.
 
 ## Outcomes & Retrospective
 

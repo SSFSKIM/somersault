@@ -1656,7 +1656,7 @@
           "additionalProperties": false
         },
         "terminalSlashCommands": {
-          "description": "commands this session advertises as terminal-bound, latched from the engine's system/init frame; the KEY IS ABSENT (never null, never []) when no init frame has carried it — [] is the engine's own answer that there are none",
+          "description": "commands this session advertises as terminal-bound, latched from the engine's system/init frame. EVERY init frame is authoritative: the KEY IS ABSENT (never null) only while no init frame has arrived on this thread; an init frame that omits the field yields [], which is how the engine reports 'none' (the SDK sends the field only when non-empty, so a session with no tagged command and a CLI predating the field are indistinguishable and mean the same thing to a client deciding what to hide); an init frame carrying the field yields it verbatim, latest frame winning",
           "type": "array",
           "items": {
             "type": "string"

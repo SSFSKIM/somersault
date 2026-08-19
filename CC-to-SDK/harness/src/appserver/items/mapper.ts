@@ -25,9 +25,16 @@ export function userItem(text: string, uuid: string): UserMessageItem {
  *  Read off the WRAPPER only. A reader that fell back to the inner key would be reading a place the engine
  *  never writes, and would still pass any test that exercises only the real shape.
  *
- *  A frame that produced no events has nothing to stamp — the reconcile frame of a message already
- *  itemized through `stream_event` partials is the one such case, and it is unreachable for `/context`,
- *  whose assistant message is CLI-synthesized rather than streamed from the model. */
+ *  A frame that produced no events has nothing to stamp, so a twin riding one would be dropped. The one
+ *  such case is the reconcile frame of a message already itemized through `stream_event` partials
+ *  (`onAssistant`'s `streamedMsgIds` dedup). That bound is UNOBSERVED, not established as unreachable
+ *  (review F4): probe 111's `/context` frame list contains no `stream_event`, but the probe opened its
+ *  session WITHOUT `includePartialMessages`, under which the SDK emits no partials for ANY message — so
+ *  that absence is a property of the probe's options and says nothing about `/context`. The configuration
+ *  that would settle it is one run: a thread opened WITH `includePartialMessages` running a `/context`
+ *  turn. If `/context`'s CLI-synthesized assistant message turns out to stream, the twin lands on nothing
+ *  and this function needs a reconcile path. Parked on that trigger rather than on a claim of
+ *  impossibility. */
 function stampContextUsage(events: ItemEvent[], frame: { context_usage?: unknown }): ItemEvent[] {
   const usage = frame?.context_usage;
   if (usage === undefined || usage === null) return events;

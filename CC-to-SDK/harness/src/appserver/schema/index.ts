@@ -47,7 +47,7 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/settings/apply": { params: settingsApplyParams },
   // M5 Task 13 (D-M5-22) gives this read a second, OPTIONAL field — `terminalSlashCommands` — so it is the
   // one pre-M5 method that declares a `result`. That is not the retrofit D-M5-19 deferred: the slot is
-  // filled here because the new field's ABSENCE carries meaning ("no init frame has said"), which is a
+  // filled here because the new field's ABSENCE carries meaning ("no init frame has arrived"), which is a
   // contract no params schema and no field name can state, and a client that cannot tell an absent key
   // from `[]` has been mis-told. The other four introspection reads still publish none — they relay
   // SDK-owned payloads verbatim, so the shape to validate against is the SDK's.

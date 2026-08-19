@@ -53,15 +53,27 @@ function routeInit(srv: AppServer, record: ThreadRecord, frame: { type?: string;
  *  attaching client's follow burst is replay-marked and dropped by `installRouter`, so a once-per-process
  *  init would have been unreachable there.
  *
- *  EVERY ELEMENT MUST BE A STRING for the frame to count. An array with a non-string in it is a frame this
- *  server does not understand, and publishing a filtered copy of it would silently drop entries a client
- *  needs; ignoring the frame leaves the previous (or absent) answer standing, which is the same discipline
- *  routeTodo uses for a malformed snapshot. An EMPTY array is not malformed — it is the engine answering
- *  "none", and the read publishes that as `[]` rather than as an absent key. */
+ *  EVERY INIT FRAME IS AUTHORITATIVE, INCLUDING ONE THAT OMITS THE KEY (M5 Task 13 review, F1). The SDK
+ *  declares the field "present only when non-empty; absent on CLIs that predate the field, and on sessions
+ *  where no advertised command carries the tag" (`sdk.d.ts`, `SDKSystemInitMessage`) — so the engine
+ *  reports "none" by OMISSION and never by `[]`. A route that only wrote on a present key would therefore
+ *  have three defects at once: `[]` unreachable, "the engine says none" indistinguishable from "no init
+ *  frame yet", and — because init recurs per turn — a non-empty list latched once and then served forever,
+ *  with a `thread/capabilities/changed` re-read handing the client fresh `capabilities.commands` beside a
+ *  stale list. So a key-less init frame writes `[]`: a pre-field CLI saying "nothing to hide" and a session
+ *  saying "nothing tagged" are the same instruction for the client class this field exists for (a remote UI
+ *  deciding what to hide), and collapsing them is honest rather than lossy. The one state left to absence
+ *  is the one the server genuinely does not know: no init frame has arrived on this thread at all.
+ *
+ *  A MALFORMED VALUE IS STILL IGNORED, and that is a different case from an omitted one: an array with a
+ *  non-string in it (or any non-array) is a frame this server does not understand, not a frame saying
+ *  "none". Publishing a filtered copy would silently drop entries a client needs, so the previous (or
+ *  absent) answer stands — the same discipline routeTodo uses for a malformed snapshot. */
 function routeTerminalCommands(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; terminal_slash_commands?: unknown }): void {
   void srv;
   if (frame?.type !== "system" || frame.subtype !== "init") return;
   const list = frame.terminal_slash_commands;
+  if (list === undefined) { record.terminalSlashCommands = []; return; }
   if (!Array.isArray(list) || !list.every((c) => typeof c === "string")) return;
   record.terminalSlashCommands = list as string[];
 }
