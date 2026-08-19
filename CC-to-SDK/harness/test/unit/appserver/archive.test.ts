@@ -573,6 +573,78 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
     }
   }, 20_000);
 
+  // ── M5 fix wave A, finding A2: the FOURTH path onto an existing session id ──────────────────────────
+  // The three above are requests this server serves. This one is a transition it only WATCHES: the
+  // terminal operator runs /resume (or a rewind) on a host already attached here, and the conversation
+  // under a live thread changes to one that was on the shelf. Nothing else clears it — a re-attach hits
+  // the `held` early return, which skips the unarchive deliberately (pinned two blocks down) — so the
+  // live thread stays hidden from the default list and sits under `archived: true`, the exact state
+  // D-M5-21's invariant forbids. Both host-side writers of `record.sessionId` get a row, because they are
+  // two independent frames (`rewound` and `state`) that reach the same field.
+  const fleetListDeps = (ids: string[]) => ({
+    listSessions: async () => ids.map((sessionId) => ({ sessionId, cwd: "/w", lastModified: 5_000, createdAt: 1_000, summary: `summary of ${sessionId}` })) as never,
+    getSessionInfo: async (sessionId: string) => ({ sessionId, summary: `summary of ${sessionId}`, lastModified: 5_000 }) as never,
+  });
+  /** The default listing's thread ids, and the `archived: true` half's — the two halves of the invariant. */
+  const bothLists = async (): Promise<{ live: string[]; shelf: string[] }> => ({
+    live: ((await send("thread/list", {})).result?.data ?? []).map((r: any) => r.sessionId),
+    shelf: ((await send("thread/list", { archived: true })).result?.data ?? []).map((r: any) => r.sessionId),
+  });
+
+  it("a HOST-SIDE resume onto a shelved conversation unshelves it too — the admission this server watches rather than performs (rewound)", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      const fh = await startFakeHost({ status: { sessionId: "sess-live" } });
+      hosts.push(fh);
+      writeRoster({ ...fh.row, sessionId: "sess-live" });
+      boot({ ccxDir, ...fleetListDeps(["sess-live", "sess-shelved"]) });
+      await createArchiveMarker("sess-shelved", { ccxDir }); // the user shelved it earlier, from a GUI
+      expect((await send("thread/attach", { target: fh.row.short })).result?.thread?.sessionId).toBe("sess-live");
+      expect(await bothLists()).toEqual({ live: ["sess-live"], shelf: ["sess-shelved"] });
+
+      fh.emitRewound({ sessionId: "sess-shelved" });   // the terminal operator runs /resume sess-shelved
+      await vi.waitFor(() => expect(existsSync(join(ccxDir, "archived", "sess-shelved"))).toBe(false));
+      await vi.waitFor(() => expect(notifs("thread/unarchived").map((n) => n.params)).toEqual([{ sessionId: "sess-shelved" }]));
+      // The invariant itself, not merely the marker: the live thread is in the default list and the shelf
+      // is empty. Without the fix this row reads `{ live: [], shelf: ["sess-shelved"] }` — a running
+      // conversation, visible only under `archived: true`.
+      expect(await bothLists()).toEqual({ live: ["sess-shelved", "sess-live"], shelf: [] });
+
+      // …and a swap to a FRESH conversation adopts nothing: there is no id to take off any shelf, and a
+      // handler that ran the shelf read unconditionally would announce a transition for `undefined`.
+      fh.emitRewound({ cleared: true });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(notifs("thread/unarchived").length).toBe(1);
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  }, 20_000);
+
+  it("…and through the OTHER writer of the same field: a `state` frame carrying a different sessionId (the swap a host reports without a rewound)", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      const fh = await startFakeHost({ status: { sessionId: "sess-live2" } });
+      hosts.push(fh);
+      writeRoster({ ...fh.row, sessionId: "sess-live2" });
+      boot({ ccxDir, ...fleetListDeps(["sess-live2", "sess-shelved2"]) });
+      await createArchiveMarker("sess-shelved2", { ccxDir });
+      expect((await send("thread/attach", { target: fh.row.short })).result?.thread?.sessionId).toBe("sess-live2");
+
+      fh.setStatus({ sessionId: "sess-shelved2" });
+      await vi.waitFor(() => expect(existsSync(join(ccxDir, "archived", "sess-shelved2"))).toBe(false));
+      await vi.waitFor(() => expect(notifs("thread/unarchived").map((n) => n.params)).toEqual([{ sessionId: "sess-shelved2" }]));
+      expect(await bothLists()).toEqual({ live: ["sess-shelved2", "sess-live2"], shelf: [] });
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  }, 20_000);
+
   it("all three M5 disk readers answer for a thread whose engine has died — none is refused -33005", async () => {
     const ccxDir = mkTmp("m5ccx-");
     const st = fakeStore(["dead-1"]);

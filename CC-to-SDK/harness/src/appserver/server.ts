@@ -707,26 +707,37 @@ export class AppServer {
 
   /** D-M5-21: opening a conversation takes it off the shelf — and it is what keeps "a live thread is never
    *  hidden from the default list" true ACROSS servers, since markers are re-read per request and another
-   *  server's archive is otherwise invisible to this one until someone lists. Called from ALL THREE
-   *  admission paths onto an existing session id, which is the set the spec names: `startThread` above
-   *  (thread/resume, thread/fork), resume-carrying `thread/start`, and `thread/attach` (fleet.ts). A
-   *  FORK-carrying resume is NOT in that set and both of its callers skip this (`forksSession`, D-M5-21b):
-   *  it reads a transcript into a new id rather than admitting the one it names, so clearing that id's
-   *  marker would take a conversation off the shelf that never opened.
+   *  server's archive is otherwise invisible to this one until someone lists. Called from every path that
+   *  puts an existing session id under a live thread: the three the spec enumerates — `startThread` above
+   *  (thread/resume, thread/fork), resume-carrying `thread/start`, `thread/attach` (fleet.ts) — plus the
+   *  one it did not, a fleet host swapping its own conversation under a thread already attached here
+   *  (fleet.ts's `adoptSessionId`, M5 fix wave A). That fourth is an admission in substance and not in
+   *  shape: no request of ours performs it, we only observe it, and the shelved-and-live state it produced
+   *  is exactly the one this decision exists to make unreachable. A FORK-carrying resume is NOT in the set
+   *  and both of its request-side callers skip this (`forksSession`, D-M5-21b): it reads a transcript into
+   *  a new id rather than admitting the one it names, so clearing that id's marker would take a
+   *  conversation off the shelf that never opened.
    *
    *  GUARDED, because it runs after the reply is already on the wire: a state directory that cannot be read
    *  is not a reason to report a successful admission as failed, and the request id is spent, so an escaping
    *  rejection would reach dispatch's catch and put a SECOND frame on the wire for one request. The client
    *  is told instead — silence would leave a live thread hidden from the default list with nothing to say
    *  so, and the message goes through the handlers' own `storeRefusal` so this path cannot be the one that
-   *  puts the operator's home directory on the wire. */
-  async autoUnarchive(ctx: ConnCtx, sessionId: string): Promise<void> {
+   *  puts the operator's home directory on the wire.
+   *
+   *  `ctx` is UNDEFINED for the observed transition, because no connection asked for it. The warning then
+   *  goes where that call's success notification goes — server-scoped, to the watchers — rather than to a
+   *  requester who does not exist; the alternative, staying silent on the one path where nobody is holding
+   *  a reply open, would make the failure invisible precisely when no client can correlate it. */
+  async autoUnarchive(ctx: ConnCtx | undefined, sessionId: string): Promise<void> {
     try {
       if (!(await listArchived({ ccxDir: this.deps.ccxDir })).has(sessionId)) return;
       await removeArchiveMarker(sessionId, { ccxDir: this.deps.ccxDir });
       this.broadcastServer("thread/unarchived", { sessionId });
     } catch (e) {
-      this.warn(ctx.peer, "unarchiveFailed", `thread is live but its archive marker could not be removed — ${storeRefusal(e).message}`);
+      const message = `thread is live but its archive marker could not be removed — ${storeRefusal(e).message}`;
+      if (ctx) this.warn(ctx.peer, "unarchiveFailed", message);
+      else this.broadcastServer("warning", { code: "unarchiveFailed", message });
     }
   }
 
