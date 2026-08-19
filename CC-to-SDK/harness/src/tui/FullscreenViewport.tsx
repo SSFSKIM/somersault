@@ -144,6 +144,15 @@ export interface FullscreenViewportProps {
    *  the alt-screen guard and the status message all live in ChatApp, which is the only place they meet.
    *  Absent — every component test that does not care — and the key stays the composer's. */
   onDumpTranscript?: () => void;
+  /** tool-stream T10 — "a wheel tick happened", for the tap state machine one layer up. A pending tap anchor
+   *  names a CELL, and a tick moves the document under it, so the gesture has to be abandoned (spec §3.2).
+   *  ChatApp cannot observe that itself: a tick is a KEY (`wheelup`/`wheeldown` → `scroll:lineUp`/`lineDown`,
+   *  bindings.ts) and `handlerFor` gives a matched action to the INNERMOST handler, which is this component —
+   *  a second registration in ChatApp would simply never fire. So the notification comes from the two
+   *  handlers below, which in the `Scroll` context are the wheel's own pair and reachable by no other key
+   *  (bindings.ts's `Scroll` block binds line moves to `wheelup`/`wheeldown` alone). Absent everywhere except
+   *  ChatApp's mount. */
+  onWheelTick?: () => void;
   scrollRef?: React.Ref<ViewportScroll>;
   /** tool-stream T9 — the frame's row map, for the click path. A second handle rather than a field on
    *  `ViewportScroll`: the two answer different questions for different callers (a key binding drives the
@@ -196,7 +205,7 @@ const EMPTY_ITEMS: readonly RenderItem[] = [];
  *  file's own memoisation discipline, which is "derive what is consumed". */
 const NO_HIT_ROWS: readonly HitRow[] = [];
 
-export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, scrollRef, hitmapRef }: FullscreenViewportProps) {
+export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, onWheelTick, scrollRef, hitmapRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
   const regionTop = useRegionTop();
   const height = Math.max(0, rows ?? granted);
@@ -282,12 +291,14 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     "scroll:halfPageDown": () => scroll(PAGER_ACTIONS["scroll:halfPageDown"]!),
     // FSW BACKLOG 5 — the wheel's pair, and the only two the `Scroll` context now names that no KEY reaches.
     // Same map, same operation j/k perform in the ctrl+O pager: one physical row per tick (canon L181212).
-    "scroll:lineUp": () => scroll(PAGER_ACTIONS["scroll:lineUp"]!),
-    "scroll:lineDown": () => scroll(PAGER_ACTIONS["scroll:lineDown"]!),
+    //   …WHICH IS ALSO WHY THE TAP'S DISCARD SIGNAL HANGS HERE (T10, `onWheelTick` above): being the wheel's
+    // own pair in this context is exactly what makes these two handlers a truthful "the wheel turned".
+    "scroll:lineUp": () => { onWheelTick?.(); scroll(PAGER_ACTIONS["scroll:lineUp"]!); },
+    "scroll:lineDown": () => { onWheelTick?.(); scroll(PAGER_ACTIONS["scroll:lineDown"]!); },
     "scroll:top": () => scroll(PAGER_ACTIONS["scroll:top"]!),
     "scroll:bottom": () => stickBottom(),
     ...(showPill && onDumpTranscript ? { "scroll:dumpTranscript": () => onDumpTranscript() } : {}),
-  }), [scroll, stickBottom, showPill, onDumpTranscript]));
+  }), [scroll, stickBottom, showPill, onDumpTranscript, onWheelTick]));
 
   // ── THE JUMP PILL, AND THE ROW IT COSTS ─────────────────────────────────────────────────────────────────
   // `qqH` (455869-455878): shown only when the viewport is neither sticky nor at the end. The second half is

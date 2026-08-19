@@ -38,7 +38,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
-import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useSuspendInput, useSwallowKeys } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useMouseSink, useSuspendInput, useSwallowKeys } from "./keys/KeymapProvider.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
@@ -46,7 +46,8 @@ import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { Transcript } from "./Transcript.js";
 import { FullscreenFrame, dockCap, seamCap } from "./FullscreenFrame.js";
 import { todoPanelRows } from "./taskPanelModel.js";
-import { FullscreenViewport } from "./FullscreenViewport.js";
+import { FullscreenViewport, type ViewportHitmap } from "./FullscreenViewport.js";
+import type { MouseInputEvent } from "./keys/types.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
 import { editExternal, openInEditor } from "./externalEditor.js";
@@ -358,7 +359,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -807,6 +808,65 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.
     "chat:thinkingToggle": () => { void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
   });
+
+  // ── TOOL-STREAM T10 — THE TAP: PRESS + RELEASE ON ONE CELL, TURNED INTO ONE FOLD TOGGLE ──────────────────
+  // Everything this needs was built somewhere else and handed here. T6 decodes an SGR report into a 1-based
+  // `(col,row)`; T7 routes it to the innermost `useMouseSink`; T9 publishes, per painted frame, which fold
+  // anchor (if any) lives at a cell; T8 turns an anchor into an expansion. What is left — and what only this
+  // component can own, because only this component can see all four at once — is the GESTURE and the GATE.
+  //
+  // THE GESTURE (spec §3.2). A press of button 0 records its cell; a release on the SAME cell is a click.
+  // Anything else abandons the anchor: a release somewhere else, a second press, a modified button, or a
+  // wheel tick. There is deliberately NO deadline — a terminal reports a press and its release as they
+  // physically happen, and a slow click is still a click.
+  //   THE ANCHOR IS A REF, not state. It is written from the stdin listener, outside React, and nothing on
+  // screen renders differently for a half-finished gesture, so a `useState` here would buy a re-render of
+  // the whole tree per mouse-down and change nothing about the frame.
+  //   THE WHEEL ARM COMES FROM THE KEY SIDE, and it has to: a tick is a KeyEvent (`wheelup`/`wheeldown` →
+  // `scroll:lineUp`/`lineDown`), never a mouse report, so it cannot reach this sink. `FullscreenViewport`
+  // owns those two actions — `handlerFor` hands a matched action to the INNERMOST registration, so a
+  // duplicate here would never fire — and calls `onWheelTick` from them; see its prop's doc comment.
+  //
+  // THE GATE (spec §3.3) IS THE INPUT ROUTER, AND IS NOT RE-DERIVED. `composerOwns(inputOwnerRef.current)`
+  // already answers "is the transcript the thing the user is currently working with", folding the shortcuts
+  // overlay, the pager, every overlay in the chain, and BOTH decision flavours into one value that the whole
+  // file reads back. A gate rebuilt from `paneOwned` (:930, which deliberately EXCLUDES non-plan decisions)
+  // and `seamActive` (:1252, overlay plus the plan kind only) would look equivalent and would let a click
+  // toggle transcript content behind an inline permission or question dialog — which is the one case §3.3
+  // names outright. `fold-click.test.tsx`'s cell (e) exists to fail exactly that rebuild.
+  //   THE OTHER TWO TERMS. `fullscreen`, because mouse reporting is armed by the alt-screen enter sequence
+  // and the classic renderer never arms it. That term is REDUNDANT TODAY AND KEPT ANYWAY, which is worth
+  // stating rather than leaving for someone to "simplify": three separate facts already make a classic click
+  // dead — reporting is never armed, the viewport that owns the hitmap handle is not mounted at all, and the
+  // map's own renderer gate (T9's published origin) answers `undefined` for every cell. Deleting it leaves
+  // the whole `test/tui` suite green, measured. It stays for the reason T9's gate exists: "classic has no
+  // click path" should be true by construction, not by three coincidences a later refactor could each
+  // remove without noticing. `fold-click.test.tsx`'s classic case says exactly this, including that it
+  // cannot falsify the term. And
+  // `!footerState.searching`, the composer's own inline reverse-i-search: the owner is still "composer"
+  // there (the search lives INSIDE the composer), so the router alone cannot see it — it is the same term
+  // the viewport's own `Scroll` context is gated on, for the same reason.
+  //   IT IS CHECKED ON EVERY EVENT, not only at press. A dialog that opens between the two halves must not
+  // find a live anchor waiting for it, and one that closes must not let a press made underneath it complete.
+  //   NOT AN OCCLUSION TEST. ccx has no overdraw — a seam surface makes the dock not render rather than
+  // cover it — so the row map underneath a dialog is CURRENT, not stale. The question is ownership, and this
+  // is the whole of the answer to it.
+  const hitmapRef = useRef<ViewportHitmap>(null);
+  const tapAnchorRef = useRef<{ col: number; row: number } | null>(null);
+  const clickable = fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching;
+  const discardTap = () => { tapAnchorRef.current = null; };
+  useMouseSink((e: MouseInputEvent) => {
+    const at = tapAnchorRef.current;
+    tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
+    if (!clickable) return;
+    // Modified clicks are canon's own no-op, and a non-primary button is somebody else's gesture. Both land
+    // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
+    if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;
+    if (e.action === "press") { tapAnchorRef.current = { col: e.col, row: e.row }; return; }
+    if (!at || at.col !== e.col || at.row !== e.row) return;
+    const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
+    if (anchor !== undefined) toggleFold(anchor);
+  });
   // Live-feedback fix (2026-08-06, ctrl+o flood): the pager box alone is `rows - 6` lines (rows-10 content
   // + border 2 + header + footer), so ANY other transient chrome mounted beside it — spinner, task panel,
   // queue echo, the transcript's pending/streaming region, an inline dialog — pushes the dynamic frame past
@@ -1205,7 +1265,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
         // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
         // where the overlay never occludes it (grounding §L2.6). The classic arm above keeps the trade.
-        : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} />)
+        : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} hitmapRef={hitmapRef} onWheelTick={discardTap} />)
       : null}
   </>;
   // ── FSW TASK 13 — WHICH OF CANON'S TWO OVERLAY MECHANISMS A SURFACE GETS ──────────────────────────────
