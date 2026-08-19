@@ -853,6 +853,46 @@ flips the `full-potential.md` rows and ships nothing.
   `thread/delete`'s own: "live in this server — close it first" is false about a holder in another process
   and unfollowable as advice. That sentence moved to `server.ts` beside the probe and is now imported by
   both methods — it was two independent literals, which is how the two answers drift apart again.
+- **D-M5-21d (fix wave A, rev 7) — the roster's `sessionId` is a LIVENESS claim, so the host maintains it
+  continuously; and the admission set gains the member no request performs.** Two findings from the
+  whole-branch review, one root each, both reproduced before repair.
+  **A1 — the guard was right and its input was stale.** `liveInFleet` matches roster rows by `sessionId`,
+  but that field was written only from inside `runTask`, once per turn (`host.ts`'s `writeSessionId`). So a
+  host that HELD a conversation without having run a turn on it — every `ccx --resume <id>` idling at its
+  prompt, and every terminal-side `/resume` until the next message — had a row that did not name what it
+  held, and `thread/delete` erased it with `{ok:true}`. The same staleness inverted made the conversation a
+  host had walked away from undeletable. Decided: **fix the field, not the guard.** The host now records the
+  conversation it holds at the launch (seeded from `config.resume` when that config does not FORK — the
+  roster-side reading of D-M5-21b's predicate, since `--bg --resume` names a source it reads rather than an
+  id it holds), at every engine swap (`swapEngine`, the one seam /resume, /clear and both rewind arms share),
+  and at the first turn's init frame as before. Absence of the field now means "this host holds no persisted
+  conversation", never "not known yet". Rejected: **making the guard refuse whenever a live row carries no
+  `sessionId`** — the reading the asymmetry first suggests, and it costs a permanent, unactionable refusal of
+  every delete for as long as any fresh terminal is open, while the honest field makes the roster able to
+  answer confidently instead. Keeping the fix upstream of `liveInFleet` is also what keeps D-M5-21a's
+  invariant — `thread/resume`, `thread/archive` and `thread/delete` answering the same question the same way —
+  true by construction rather than by three parallel repairs. **Residual, unchanged in kind:** the window
+  between a swap and its roster write, and the boot window of a foreground `ccx --resume` before the client's
+  resume op reaches the host, are races of the same class D-M5-21c already accepts, not the steady states
+  this fixes.
+  **A2 — a fourth path onto an existing session id.** A fleet host swapping its own conversation (the
+  terminal operator's `/resume` or rewind, reaching this server as a `rewound` or `state` frame) moves
+  `record.sessionId` under a LIVE thread, and if that conversation was shelved the thread left the default
+  listing for the `archived: true` half — the archived-and-live state D-M5-21 exists to make unreachable —
+  with nothing to clear it, since a re-attach hits the `held` early return that deliberately skips the
+  unarchive. Decided: **it is an admission in substance and gets the same `autoUnarchive`**, from one funnel
+  both host-side writers pass through, rather than a fourth spelling of the rule. Only a MOVE adopts: a
+  rewind inside one conversation reports the id it already had, and a `cleared` swap has no id to unshelve —
+  the same reading the rejoin already publishes. `autoUnarchive`'s `ctx` became optional for it, and its
+  failure warning is server-scoped when nobody asked, matching the audience its success notification has.
+  **A3 — auto-unarchive completes after the reply and the `thread/started` push. NOT changed, deliberately.**
+  Confirmed and self-correcting: the window is one filesystem round trip and the same watchers receive
+  `thread/unarchived` immediately after. Closing it in `startThread` would invert an ordering that is pinned
+  with a reason ("the announcement follows the admission it belongs to"), and it would still leave the
+  transient at `thread/attach` — whose position is fixed by §1e's activation protocol — and at A2's path,
+  where an observed transition has no reply to order against. A2 makes "the unarchive may trail the state
+  change" a property clients must tolerate on at least one path; making them tolerate it uniformly is the
+  more honest contract than closing two of four windows.
 - **D-M5-22 (Task 12 spike, rev 6) — both 0.3.234 absorb candidates are ALIVE on both origins, and the
   promote sentence for one of them is amended before it ships.**
   `terminal_slash_commands`: a headless init frame carries `["doctor","color"]` beside 98 slash commands,
@@ -1429,3 +1469,16 @@ directory changing a permission dialog's offered rule row, not the known flake.
   review's ⚠️A2 added a parking-lot item for `thread/list`'s bare offset cursor (skip/repeat across a
   paged walk that archives) and corrected `cursorParam`'s docblock, whose justification named a
   session's lifetime where the property is really the array's stability.
+
+- **rev 7 (2026-08-20) — D-M5-21d, the fix wave that followed the whole-branch reviews.** Two
+  independent reviews converged on a path that erases user data: `thread/delete`'s cross-process
+  live-guard read a roster field the host wrote only once per turn, so a terminal idling after
+  `ccx --resume <id>` had a row that did not name the conversation it held and the transcript was
+  erased on request — the same staleness inverted making an unheld conversation undeletable. The
+  repair is upstream of the guard (the host maintains the field at launch, at every engine swap, and
+  at the first init frame), which is what keeps the three handlers D-M5-21a unified answering
+  identically. The same wave gave the admission rule its fourth member: a fleet host swapping its own
+  conversation is an admission this server watches rather than performs, and without the shared
+  `autoUnarchive` it left a LIVE thread permanently on the archived shelf. The third finding —
+  auto-unarchive completing after the reply — was judged and deliberately left, with the reasoning
+  recorded in D-M5-21d rather than in silence.
