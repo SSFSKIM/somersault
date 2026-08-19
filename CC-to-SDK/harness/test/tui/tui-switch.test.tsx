@@ -659,4 +659,50 @@ describe("/tui — the replay carries the NEW renderer's fold", () => {
     expect(rows.map((row, i) => occurrences(after, row) - before[i]!)).toEqual([0, 0, 0]);
     unmount();
   }, 20000);
+
+  // ── THE OTHER HALF OF `refoldFor`'s CLEAR (Task 8 review gap) ─────────────────────────────────────────
+  // `refoldFor` clears `expandedFoldsRef` on BOTH edges of a flip, and this file pins only the ENTERING one
+  // (the two cases above). The LEAVING clear guards a narrower but real case: `groupItems` consults
+  // `expandedFolds` with no fullscreen gate of its own (`toolRenderer.tsx`), and `Read` is collapsible under
+  // BOTH renderers (`classifyToolEvent` — unlike the non-read shell clustering above, which is fullscreen-only).
+  // So an anchor opened under fullscreen names a cluster the CLASSIC projection also forms, and if the leaving
+  // clear were missing, `/tui default` would carry that expansion onto the classic screen: the very
+  // duplicating-replay shape this whole section exists to prevent, just entered from the fold side rather than
+  // the width side. Unreachable today only because nothing outside the fullscreen mouse path calls
+  // `toggleFold` — this cell drives it directly, the same way `fold-expand.test.tsx`'s hook cells do.
+  it("a fold expanded under fullscreen does not survive the flip back to classic", async () => {
+    const fake = fakeRemote();
+    let api: { submit: (prompt: string) => void; toggleFold: (anchor: string) => void; state: { finalizedItems: readonly RenderItem[] } } | undefined;
+    function Probe() {
+      const [mode, setMode] = useState<"classic" | "fullscreen">("fullscreen");
+      const live = useRef(mode); live.current = mode;
+      const chat = useChat(() => fake, {
+        cwd: "/work", rendererChoice: FULLSCREEN,
+        selectRenderer: (tui) => (tui === "fullscreen" ? FULLSCREEN : CLASSIC),
+        switchRenderer: (tui) => { const choice = tui === "fullscreen" ? FULLSCREEN : CLASSIC; setMode(choice.mode); return choice; },
+      }, { rows: () => 24, columns: () => 100, home: "/home/me", platform: "darwin", now: () => 0,
+        isFullscreen: () => live.current === "fullscreen", savePrefs: () => {}, env: {} });
+      api = chat;
+      return <Text>x</Text>;
+    }
+    const r = render(<Probe />);
+    await tick();
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-r1", content: [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: "/work/a.ts" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "u-r1", message: { content: [{ type: "tool_result", tool_use_id: "r1", content: "body", is_error: false }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-r2", content: [{ type: "tool_use", id: "r2", name: "Read", input: { file_path: "/work/b.ts" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "u-r2", message: { content: [{ type: "tool_result", tool_use_id: "r2", content: "body", is_error: false }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-done", content: [{ type: "text", text: "done" }] } } }); // the breaker: closes the run into finalizedItems
+    await waitFor(() => api!.state.finalizedItems.some((i) => i.id.startsWith("group:")));
+
+    api!.toggleFold("r1");                                     // opens the cluster under fullscreen
+    await waitFor(() => !api!.state.finalizedItems.some((i) => i.id.startsWith("group:")));
+
+    api!.submit("/tui default");                                // the leaving arm: refoldFor(false) runs first
+    await tick(120);
+    // Read collapses under classic too, so a live expansion set says the SAME thing here it said in
+    // fullscreen — no group row — unless the leaving clear ran. This is what fails when `useChat.ts:1071`'s
+    // `expandedFoldsRef.current.clear()` is removed.
+    expect(api!.state.finalizedItems.some((i) => i.id.startsWith("group:"))).toBe(true);
+    r.unmount();
+  }, 20000);
 });
