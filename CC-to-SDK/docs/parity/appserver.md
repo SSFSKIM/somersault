@@ -176,7 +176,69 @@ while the origin gate never fires, a fleet thread's working directory being as r
 one's. Its row, and the row for the `review/findings` notification it emits, are in the review section
 below rather than in the server-origin table, so the pair reads together.
 
-**27 notifications**, all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
+Registered after it comes **M5's cluster** — seven methods over three domains, in
+`server.ts`'s own registration order, and the first seven to publish a **response** schema beside their
+request one: D-M5-19 gives `MethodSchema` an optional `result` slot and every M5 method fills it, because
+each of these replies carries a contract a params schema cannot state — a CAS token, a cursor that may be
+non-null over an empty page, a snippet range indexed into the occurrence rather than into the row.
+
+The **config trio** (`appserver/configDomain.ts`) is `config/read` and the write pair
+`config/value/write` + `config/batchWrite`: a settings-FILES surface over the user < project < local <
+managed layer chain, server-scoped for `fs/read`'s reason — the files are this machine's, and no
+conversation owns one. It is deliberately NOT the engine's applied view, which stays where it lives at
+`thread/settings/read`; policy that is not a plain file (remote managed sync, MDM) is visible only there,
+and `config/read` declares the shortfall rather than implying completeness (`incomplete`). The read merges
+with **upstream's own semantics** (deep for objects, concatenate-and-dedupe for arrays), attributes dotted
+leaf paths to the layer that won them (`origins`, naming every contributor for an array leaf), and always
+returns `versions`, the per-target CAS token a client's first conditional write has to carry — without it
+an existing file admits nothing but a last-wins write. The two writers share one spine and therefore one
+reply shape (`runConfigWrite`: one edit is the degenerate batch), take `keyPath` as an **array of opaque
+segments** rather than Codex's quoted-dotted grammar, and refuse `__proto__`/`constructor`/`prototype`
+both as a segment and as a key anywhere inside a written value (D-M5-12a — an opaque-segment contract must
+not become a prototype-pollution channel, and half that rule is worse than none). The version check is
+made **atomic with the write** rather than advisory — a per-file queue holding a nonce-owned `O_EXCL`
+lockfile across read → validate → tmp → rename — so two writers carrying the same token serialize and
+exactly one commits, the loser refusing `ConfigVersionConflict` against the winner's bytes; the guarantee
+is scoped to this protocol's writers and says so, an outside editor being last-wins. `managed` is absent
+from the target enum: unwritable by construction rather than by refusal.
+
+Then §search's pair, and the two differ in kind rather than in degree. `thread/search` is server-scoped like
+the trio — its subject is every session on this machine, mostly ones this server never opened — and pages
+a globally ordered scan on a **keyset** cursor `(sortValue, sessionId, rowIndex)` that always names the
+next position to examine, so a session deleted between pages resumes at its successor instead of
+restarting at the top. Its caps bound work per request and never coverage: a page may legitimately return
+zero matches with a non-null `nextCursor`, transcripts are read in row windows at the storage boundary,
+and a row too large to scan is disclosed in `skipped` rather than dropped — the honesty rule being that
+"no matches" is a claim about content actually scanned, which is also why a store read that FAILS refuses
+the request instead of answering zero (D-M5-8, the D-M4-1 family rule). `thread/searchOccurrences` names
+ONE thread and returns every hit in it, over exactly the corpus `sessions/rows.ts` classifies, so search
+and replay cannot drift; each occurrence on a live thread also carries `readCursor`, the server-composed
+epoch-qualified pager cursor `thread/read` accepts unchanged (D-M5-7), and `null` on a cold session rather
+than absent — so "find it" and "go there" are one round trip on a live thread and an honest refusal to
+pretend on a cold one.
+
+Registered last are §archive's `thread/archive` + `thread/unarchive`, whose subject is neither a seam nor
+a transcript but this server's own sidecar state: one marker file per shelved session under
+`~/.claude/ccx/archived/`, so archiving is one atomic create and unarchiving one unlink, and **no
+read-modify-write exists to race** — `EEXIST` and `ENOENT` both answer `{ok:true}`, idempotent in either
+direction. Archive refuses a live thread `-33001` with `thread/delete`'s own message, where "live"
+includes a resume RESERVATION and not merely a registry record, and re-checks both after writing the
+marker: if an admission won the race the marker is taken back out and the request refuses. The other
+direction is defined rather than left to luck — **every admission surface auto-unarchives what it
+opens**, `thread/resume`, a resume-carrying `thread/start` and `thread/attach` alike, all through the one
+`autoUnarchive` so the three cannot drift, each broadcasting `thread/unarchived` (D-M5-21). The partition
+they create reaches clients through this milestone's only change to an already-registered method, and it
+is additive: `thread/list` gains an `archived?` flag, which `thread/search` publishes from the same shared
+shape (`schema/core.ts`'s `archivedParam`, one spelling serving both), with Codex's exact semantics —
+absent or false excludes archived sessions, true returns only them. `thread/searchOccurrences` and both
+archive methods join `ENGINE_GONE_EXEMPT` for `thread/read`'s reason, their subject being disk rather than
+the transport; without the exemption the same session would be searchable and shelvable by its bare store
+id while its own registry id was refused, which is a difference in the answer produced by how the client
+happened to spell the thread.
+
+**29 notifications** — a hand-carried total where the method count above is a printed one, so Totals
+below states the *recipe* that regenerates it rather than asking a later reader to trust this number —
+all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
 subscribers and watchers alike — for the two losses that are facts about what the thread now IS rather
 than per-peer asides to whoever asked for something: `code:"stateRepushFailed"` when a post-swap state
@@ -195,8 +257,15 @@ and replayed FIFO by `thread/subscribe`, so a queued id is never first heard of 
 `turn/started`, `turn/completed` (carries the
 Wave T t14 `error` tag for a resolved-but-failed turn), `turn/todo/updated`, `item/started`,
 `item/completed`, `item/agentMessage/delta`, `item/reasoning/delta`, `item/toolCall/argumentsDelta`,
-`decision/requested`, `decision/resolved`, `task/changed`, `task/event`; and M4's thread-scoped
-`review/findings` (its own row below), the 27th and the only name M3 or M4 added.
+`decision/requested`, `decision/resolved`, `task/changed`, `task/event`; M4's thread-scoped
+`review/findings` (its own row below), the 27th and the only name M3 or M4 added; and M5 Task 9's
+`thread/archived` and `thread/unarchived`, the 28th and 29th — **server-scoped**, on `thread/started`'s
+own watcher fan-out rather than a thread's subscriber list, because a client that never opened the
+session is exactly the client whose list just went stale, and carrying `{sessionId}` for
+`thread/delete`'s reason (what is shelved is a store session, and the shelving server need hold no thread
+for it). They are fired by the archive pair and again by every admission that auto-unarchives what it
+opens (D-M5-21), and they are the only two notifications in this document that carry rows of their own —
+added at M5 Task 10; Totals says what earned them.
 
 **Decision wire** is main's Wave T shape, not the M2 branch's original: `plan_approve` carries the
 **granted mode** (`default|acceptEdits|bypassPermissions|auto`; `default` arms nothing — probe 97),
@@ -623,10 +692,14 @@ already parses every row for its staleness pass, so since M3 Task 15 it tallies 
 lines on every run — `N rows by status` and `N rows by origin scope`. Run it; between runs the authority
 is each row's own `status` and `origin scope` column, as it always was.
 
-What those two lines say at this sweep (**M5 Task 10, 2026-08-19** — restated per landing, never trusted
+What those two lines say at this sweep (**M5 Task 11, 2026-08-19** — restated per landing, never trusted
 between them): **99 rows, 97 of them shipped** (2 of those `shipped(M4)`, 9 `shipped(M5)`), the remaining two being the
 `N/A` pair — `seedReadState`
 (internal plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row).
+This landing writes prose and no rows, so every figure in this section stands exactly where M5 Task 10
+left it — which is the reason to rerun the gate and restate them anyway rather than skip the sweep: a
+summary left unrewritten at a docs landing is indistinguishable from one nobody rechecked, and the
+recheck is the whole value of the line.
 **Three buckets are empty, each emptied by a nameable landing:** `planned(...)` by M3 Task 9, when
 `thread/stop` shipped; `probe-gated` by M2b Wave 4's Task 5, which probed all four gated tokens live on
 2026-08-11 (three promoted — `streamInput`, `reloadPlugins`, `reloadSkills` — and one retired to `N/A`);
@@ -677,8 +750,13 @@ that carry no slash, `initialized` and `warning`. That is **29**, the two most r
 `thread/archived` and `thread/unarchived` — which **now have rows of their own**, added at M5 Task 10 in
 the server-origin table beside the pair that fires them, once `thread/list {archived}` gave a client a
 partition to repaint and made the channels a contract rather than a detail of the methods. They are the
-only notifications in this document with rows, and the recipe above is still how the OTHER 27 are counted:
-a row per notification is not the convention here, it is what a consumed channel earns. Before those,
+only notifications in this document with rows, and the recipe above is still how the OTHER 27 are counted
+— by scan, not by row: a row per notification is not the convention here, it is what a consumed channel
+earns. Those two 27s are **not the same set**, and the coincidence is arithmetic rather than meaning: the
+recipe's 27 counts slash-shaped literals and INCLUDES this pair, while the other 27 is 29 less the two
+that gained rows — which excludes the pair and takes in the two slashless names instead. Read either one as
+the headline total and it comes out short by exactly two — the same error twice over for two different
+missing pairs, which is what the "Shipped, per the code" list above carried until M5 Task 11 rewalked it. Before those,
 **27**: 26 across all of M3 — `thread/closed`
 gained an optional `reason` (Task 9) and `thread/compacted` gained a fleet emission path (Task 10), but
 neither is a new name, and none of M3's seven methods emits a notification of its own — plus M4's
