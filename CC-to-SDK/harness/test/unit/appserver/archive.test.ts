@@ -907,6 +907,41 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
     expect(parse(lines).filter((l) => l.id === r.id).length).toBe(1);
   });
 
+  it("…and when NOBODY asked, that same disclosure goes to the watchers — the audience the observed admission has (M5 fix wave A)", async () => {
+    // The host-side adoption runs with no `ctx`: there is no request to answer and no requester to warn.
+    // Silence there would make the failure invisible on the one path where no client can correlate it, so
+    // the warning goes where that call's SUCCESS notification already goes — server-scoped. The second
+    // connection is the whole assertion: it never sent a request, so a warning reaching it can only have
+    // come from the broadcast, and the attach's own requester-scoped warning must NOT appear on it.
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      writeFileSync(join(ccxDir, "archived"), ""); // ENOTDIR on every marker read, both call paths
+      const fh = await startFakeHost({ status: { sessionId: "sess-live3" } });
+      hosts.push(fh);
+      writeRoster({ ...fh.row, sessionId: "sess-live3" });
+      const srv = boot({ ccxDir });
+      const b = mkSink();
+      const connB = srv.connect(b.sink);
+      connB.feed(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "B" }, watchThreads: true } }) + "\n");
+
+      expect((await send("thread/attach", { target: fh.row.short })).result?.thread?.sessionId).toBe("sess-live3");
+      await vi.waitFor(() => expect(notifs("warning").length).toBe(1));       // the requester's own
+      expect(parse(b.lines).filter((l) => l.method === "warning")).toEqual([]); // …and only the requester's
+
+      fh.emitRewound({ sessionId: "sess-other" });
+      await vi.waitFor(() => expect(parse(b.lines).filter((l) => l.method === "warning").length).toBe(1));
+      const w = parse(b.lines).filter((l) => l.method === "warning")[0].params;
+      expect([w.code, w.message.includes("ENOTDIR")]).toEqual(["unarchiveFailed", true]);
+      expect(w.message).not.toContain(ccxDir);
+      expect(w.message).not.toContain("/");
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  }, 20_000);
+
   it("a thread/attach REJOIN deliberately does NOT re-run the auto-unarchive", async () => {
     // Recorded in a comment and on the scorecard, pinned in neither direction: making the rejoin path
     // unarchive left the whole file green, so a later editor could reverse the decision unnoticed.
