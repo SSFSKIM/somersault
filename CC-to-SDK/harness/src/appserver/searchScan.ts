@@ -121,6 +121,12 @@ const mapBack = (text: string, atLowered: number, edge: "start" | "end"): number
   // a row holding `Hİ` ends mid-expansion, and flooring that end would publish a range stopping short of
   // the İ that matched. This is the ONLY offset the two edges disagree on; everywhere else both skip an
   // expansion wholly after the offset and count one wholly before it.
+  //   The two edges need SEPARATE test rows, one per side. A symmetric guard tested on one side is a guard
+  // tested by half: this file has now twice shipped a two-sided rule with only one side pinned — this
+  // convention (the end-ceil half had a row, the start-floor half did not, and setting `straddles = 1` for
+  // both edges left the whole suite green while publishing spans that dropped a matched character), and
+  // `makeSnippet`'s pair of surrogate trims (`from < at` had a row, its mirror `to > at + n` did not).
+  // Whoever extends this: write the row for each side, and sabotage each side on its own.
   const straddles = edge === "end" ? 1 : 0;
   let shift = 0;
   let p = text.indexOf("İ");
@@ -131,6 +137,9 @@ const mapBack = (text: string, atLowered: number, edge: "start" | "end"): number
   return atLowered - shift;
 };
 
+/** PRECONDITION: `atLowered >= 0` — a real offset in `lowered`, i.e. a hit. Handed the `-1` of a MISS it
+ *  maps that through and returns a negative `at` rather than refusing; screening the miss belongs to the
+ *  caller, which has to branch on it anyway (both shipped call sites do, via `if (i >= 0)`). */
 export function originalSpan(text: string, lowered: string, atLowered: number, lenLowered: number): { at: number; len: number } {
   if (lowered.length === text.length) return { at: atLowered, len: lenLowered };
   const at = mapBack(text, atLowered, "start");

@@ -471,6 +471,36 @@ describe("searchScan — snippet windows", () => {
     expect(hi.slice(straddle.at, straddle.at + straddle.len)).toBe("Hİ");
   });
 
+  it("the outward convention's OTHER half: a start landing inside an expansion FLOORS, so the span keeps the original character that matched", () => {
+    // The row above pins the END half (`Hİ` for `hi`, where a floored end would stop before the İ that
+    // matched). This is its mirror, and it needs its own row: making the START ceil as well — `straddles = 1`
+    // on BOTH edges — left the entire suite green while publishing a span that EXCLUDES an original
+    // character part of which matched, which is exactly the defect the end row exists to prevent. Each term
+    // below opens with the combining dot U+0307, the second unit of what `İ` lowers to, so the lowered match
+    // begins BETWEEN the `i` and its dot; flooring is what pulls the start back onto the İ itself. Reachable
+    // over the wire rather than constructed: the term is client-authored and 2 units already clears `minTerm`.
+    // Every fixture's END lands on a clean boundary, so this row answers for the START side ALONE and the row
+    // above answers for the end — each side is sabotage-checked on its own rather than through a shared row.
+    const DOT = "̇"; // COMBINING DOT ABOVE
+    const cases: [string, string, { at: number; len: number }, string][] = [
+      ["aİbc", DOT + "b", { at: 1, len: 2 }, "İb"],                              // the minimal shape
+      ["xİstanbul y", DOT + "stanbul", { at: 1, len: 8 }, "İstanbul"],            // a whole word hanging off it
+      ["qİİz", DOT + "i" + DOT, { at: 1, len: 2 }, "İİ"],                        // the match encloses a second expansion
+      ["İİİhello", DOT + "hello", { at: 2, len: 6 }, "İhello"],                   // three expansions, two of them before the edge
+      ["y".repeat(40) + "İzebra", DOT + "zebra", { at: 40, len: 6 }, "İzebra"],   // …and it holds well past the first unit
+    ];
+    for (const [text, needle, want, slice] of cases) {
+      const lc = text.toLowerCase();
+      const at = lc.indexOf(needle);
+      expect(at, text).toBeGreaterThanOrEqual(0);          // the fixture really is a hit for a client-authored term…
+      expect(lc.length, text).not.toBe(text.length);       // …and it really does take the slow path
+      const s = originalSpan(text, lc, at, needle.length);
+      expect(s, text).toEqual(want);
+      expect(text.slice(s.at, s.at + s.len), text).toBe(slice);
+      expect(s.at, text).toBeLessThan(at);                 // floored onto the expansion, not passed through past it
+    }
+  });
+
   it("no caller can force a negative or inverted snippetMatchRange onto the wire", () => {
     // `snippetMatchRange` is a public wire field named verbatim from Codex's protocol, so a negative or
     // inverted range is a contract violation rather than an internal caller's private problem — the inputs
