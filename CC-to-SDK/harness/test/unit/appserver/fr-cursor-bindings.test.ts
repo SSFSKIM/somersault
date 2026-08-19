@@ -213,6 +213,26 @@ describe("D-M5-26 — a cursor is bound to the GENERATION it addresses", () => {
     expect(p2.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-c"]);
   });
 
+  it("thread/search: a session that merely GREW between pages is still walked, not refused", async () => {
+    // The other half of the same scoping, and the one that says why `r === 0` carries no stamp. Sessions
+    // are written to constantly; if a cursor naming the next session in the ORDERING were qualified by that
+    // session's transcript generation, every walk over a store anyone is using would refuse at page 2.
+    // Keyset semantics already state what happens when a session moves (D-M5-15: it may be re-encountered
+    // or skipped, and `created_at` is the key recommended for an exhaustive walk) — refusing is not one of
+    // the answers that rule allows.
+    const st = store([
+      sess("g-a", { createdAt: 1_000 }, [assistant("needle a")]),
+      sess("g-b", { createdAt: 2_000 }, [assistant("needle b")]),
+    ]);
+    boot(st.deps);
+    const p1 = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", limit: 1 });
+    expect(decodeSearchCursor(p1.result.nextCursor)).toMatchObject({ s: "g-b", r: 0, g: "" });
+    st.replace("g-b", [assistant("needle b"), assistant("needle b again")]); // a turn lands on it
+    const p2 = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", limit: 1, cursor: p1.result.nextCursor });
+    expect(p2.error).toBeUndefined();
+    expect(p2.result.data.map((d: any) => d.thread.sessionId)).toEqual(["g-b"]);
+  });
+
   it("thread/searchOccurrences: a session another ccx host holds is stamped from the STORE, and its rewind refuses the cursor", async () => {
     // The finding: this server answered `-33001 "Thread is live in another ccx process"` for archive and
     // delete on an id, and paged the same id as immutable cold storage seconds later — so the other host's
