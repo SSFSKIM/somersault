@@ -175,8 +175,14 @@ export class SessionHost {
   // This is the engine's own id EARLY, not a guess: a plain resume keeps the SAME session_id (probe 23
   // finding 3). The engine still WINS the moment it reports one — both readers are `this.session?.sessionId
   // ?? this.resumedFrom` — so even a config that forks on resume (hostMain's `--bg --resume` arm) corrects
-  // itself at the init frame. Deliberately NOT seeded from `opts.config.resume` in start(): that path IS
-  // the forking one, and it names the SOURCE conversation rather than the fork the engine will mint.
+  // itself at the init frame.
+  //   SEEDED FROM `opts.config.resume` IN start() TOO, but only when that config does NOT fork (M5 fix wave
+  // A). The launch config is a plain resume for an interactive host and a fork for a bg one (hostMain adds
+  // `forkSession` to exactly that pair), and the flag is the predicate the app server reads for the same
+  // question (server.ts's `forksSession`, D-M5-21b): a forking resume names the SOURCE conversation rather
+  // than the id this host will hold, so seeding from it would publish — and put on the roster — an id
+  // nothing here holds. A non-forking one names the conversation this host holds from its first instant,
+  // which is a whole session's worth of life before any turn exists to report it.
   private resumedFrom?: string;
   /** The conversation this host is on, as truthfully as it can be known right now (see `resumedFrom`). */
   private currentSessionId(): string | undefined { return this.session?.sessionId ?? this.resumedFrom; }
@@ -231,13 +237,18 @@ export class SessionHost {
       console.error(`cc-harness host ${this.opts.short}: could not read own procStart (${(e as Error)?.message ?? e}) — a crash will read as live`);
       return undefined;
     });
+    // The conversation this launch OPENS ON, known here and nowhere earlier (see `resumedFrom`): a
+    // `--resume <id>` host holds that conversation from this instant, and another process's thread/delete
+    // decides whether anyone holds it by reading THIS FIELD off the row below (M5 fix wave A).
+    if (!this.opts.config.forkSession) this.resumedFrom = this.opts.config.resume;
     const row: RosterRow = {
       short: this.opts.short, pid: process.pid, cwd: this.opts.cwd, kind: this.opts.kind,
       name: this.opts.name, state: "working", startedAt: Date.now(),
       ...(procStart ? { procStart } : {}),
       ...(this.opts.worktree ? { worktree: this.opts.worktree } : {}),
+      ...(this.currentSessionId() ? { sessionId: this.currentSessionId() } : {}),
     };
-    writeRoster(row, this.env);                        // written BEFORE any session id exists
+    writeRoster(row, this.env);                        // the id is here only if the LAUNCH named one
     // Seed the mode truth from the SAME config the engine is about to be opened with — before opening
     // it, so a fresh client's status bar never shows a placeholder (spec §mode-sync).
     this.mode = resolvedPermissionMode(this.opts.config);
@@ -489,6 +500,15 @@ export class SessionHost {
       model: this.model as HarnessConfig["model"],
       maxThinkingTokens: this.thinkingTokens,
     }));
+    // The roster row moves WITH the swap (M5 fix wave A), and HERE rather than beside `resumedFrom` above:
+    // `currentSessionId()` prefers the live engine's id, so a stamp taken before this assignment would
+    // re-record the conversation being abandoned. The row is what another process's `thread/delete` reads
+    // to decide whether anyone holds a conversation, and a swap moves this host from one to another —
+    // stamping only at the next turn's init frame left the row naming the abandoned conversation for the
+    // whole idle stretch after a /resume, so the conversation now held was erased on request while the one
+    // just left behind was undeletable. Both directions close here, in the one place all four swap callers
+    // (resume, clear, both rewind arms) go through.
+    this.writeSessionId();
     this.turnBuffer.reset(); this.settledBy.clear();
     this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
@@ -1001,15 +1021,30 @@ export class SessionHost {
     }
   }
 
-  /** Copy the engine's session id onto our row, if it has reported one yet. Read-then-write, and gated
-   *  on the row still existing: a `ccx rm` that unlinked it under us must not have it put back. This is
-   *  the ONLY writer of `sessionId` — nothing derives it at read time, because the engine files its own
-   *  registry rows by the pid of the CLI subprocess it spawns, never by ours. */
+  /** Copy the conversation this host is on onto our row. Read-then-write, and gated on the row still
+   *  existing: a `ccx rm` that unlinked it under us must not have it put back. This is the ONLY writer of
+   *  `sessionId` — nothing derives it at read time, because the engine files its own registry rows by the
+   *  pid of the CLI subprocess it spawns, never by ours.
+   *
+   *  `currentSessionId()`, NOT `this.session?.sessionId` (M5 fix wave A). The row is the only channel
+   *  another process has for "does anyone hold this conversation?", and `thread/delete` in an app server
+   *  answers off it: a row that does not name the conversation its host is on reads as nobody holding it,
+   *  and the transcript a terminal is sitting on is erased with `{ok:true}`. The engine reports an id only
+   *  once a turn's init frame arrives, so a host resumed and idle at its prompt — every `ccx --resume <id>`
+   *  before the user's first message — had no id on its row for as long as it stayed idle. The host's own
+   *  truth is available a whole session earlier, and it is what every OTHER surface already publishes
+   *  (`status()`, the `state` frame).
+   *
+   *  It CLEARS the field when this host is on no conversation at all, which is the same defect in the other
+   *  direction: after a /clear (or a rewind into a fresh conversation) a row still naming the discarded id
+   *  makes that conversation permanently undeletable by a guard that believes this host holds it. Absence
+   *  means "this host holds no persisted conversation", never "not known yet". */
   private writeSessionId(): void {
-    const sid = this.session?.sessionId;
-    if (!sid) return;
     const r = readRoster(this.opts.short, this.env);
-    if (r) writeRoster({ ...r, sessionId: sid }, this.env);
+    if (!r) return;
+    const sid = this.currentSessionId();
+    const { sessionId: _dropped, ...rest } = r;
+    writeRoster(sid ? { ...rest, sessionId: sid } : rest, this.env);
   }
 
   /** The session id lands here, not at start(): the engine only reports one once its first turn's
