@@ -179,14 +179,30 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // leaves the table's path here for the mouse slot (task 7). Two deliberate choices live on these lines:
     //
     //  (1) A SWALLOWING SURFACE SWALLOWS CLICKS, which is why this sits BELOW `swallowContexts` and not above
-    //  it, where task 6's placeholder return sat. A click behind a modal is the mouse equivalent of a
-    //  keystroke behind one — and it is worse than the symmetry suggests: a sink resolves a click by looking
-    //  (col,row) up in a row map published by the last transcript paint, where canon re-hit-tests the LIVE
-    //  frame on every click (grounding §5, `dispatchClick`/`b2r`). Nothing here can see that something is now
-    //  drawn over that cell, so the swallow flag is the only occlusion signal we have — and both swallowers
-    //  are surfaces where acting behind them is the harm they exist to prevent (Help covers the viewport; the
-    //  rewind hold is a multi-second file restore). Nobody gets the click, the swallower's own sink included,
-    //  exactly as nobody gets swallowed text.
+    //  it, where task 6's placeholder return sat. The reason is OWNERSHIP, not occlusion — and the distinction
+    //  matters enough to name, because ccx HAS no occlusion to appeal to: `FullscreenFrame` is flow layout, the
+    //  region is clamped to `height − cap` and the bottom band is its SIBLING, so a surface that takes the seam
+    //  makes the dock NOT RENDER rather than cover it ("occlusion is omission", named in the frame's own header
+    //  and at ChatApp.tsx:1655-1657), and nothing on this path is absolutely positioned. Neither swallower even
+    //  covers the viewport: `ShortcutsOverlay` is outside the seam bucket and draws inside the dock,
+    //  `RestoringModal` takes the seam slot, and `region` keeps rendering `<FullscreenViewport>` through both —
+    //  re-rendering on the same commit that mounts the swallower and republishing its row map for the shrunk
+    //  region. The map task 9 publishes is CURRENT while a swallower is up, so there is no stale-cell question
+    //  here and no occlusion signal to reach for; the question is only ever who owns input.
+    //    So the grounds are the ones ownership actually gives: it is EXACT SYMMETRY with the text branch below
+    //  — a full-input takeover takes the mouse with it exactly as it takes text — and it is spec §3.3's mandate
+    //  that clicks are inert while a dialog or overlay is mounted (that gate is finer-grained and still task
+    //  10's to build; this is the coarse floor for the two full-swallow surfaces). The one swallower-specific
+    //  reason is the rewind hold: toggling the expansion set there mutates state across the very
+    //  transcript-document swap the hold exists to protect. If a "no hit test" phrasing is wanted, the true
+    //  version is that the sink cannot tell whether the surface that currently owns input wants this click.
+    //    THE ASYMMETRY IS DELIBERATE: under a swallow, KEYS still resolve in the swallower's OWN context
+    //  (registry.ts:57-63) while the mouse gate gives the swallower nothing at all. Sound, because there is no
+    //  swallower→sink ownership link to route by — the innermost sink is merely whichever component mounted
+    //  last, which need not be the swallower. A future clickable modal therefore cannot just mount a sink and
+    //  expect it to fire: it must either carry a real ownership link into this gate, or take its clicks through
+    //  §3.3's dialog gate instead. Today: nobody gets the click, the swallower's own sink included, exactly as
+    //  nobody gets swallowed text.
     //
     //  (2) A GESTURE ENDS A PENDING CHORD, for the reason the text run below ends one: ctrl+x, a click that
     //  expands a tool block, then ctrl+k must not fire chat:killAgents. A report exists only because a button

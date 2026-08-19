@@ -505,6 +505,13 @@ describe("KeymapProvider — useMouseSink", () => {
     useMouseSink(props.sink, { active: props.active ?? true });
     return <Text>sink</Text>;
   }
+  /** The same owner with NO `opts` argument — the shape every real caller that has nothing to deactivate for
+   *  will use, and the ONLY shape that exercises the hook's own `active ?? true`. `MouseProbe` always passes
+   *  `{ active }`, so without this the default could be flipped to `?? false` and every cell here stays green. */
+  function BareMouseProbe(props: { sink: (e: MouseInputEvent) => void }) {
+    useMouseSink(props.sink);
+    return <Text>bare</Text>;
+  }
 
   it("delivers press and release to the registered sink, decoded, from raw bytes", async () => {
     const sink = vi.fn();
@@ -576,6 +583,33 @@ describe("KeymapProvider — useMouseSink", () => {
     h.unmount();
   });
 
+  it("a sink registered with no opts at all is LIVE — `active` defaults to true", async () => {
+    const sink = vi.fn();
+    const h = renderWithKeymap(<><Probe scope="Chat" /><BareMouseProbe sink={sink} /></>);
+    await tick();
+    h.stdin.write(PRESS);
+    expect(sink).toHaveBeenCalledTimes(1);
+    h.unmount();
+  });
+
+  // Registration REFRESHES the handler on every render, it does not merely create the entry once (registry.ts
+  // `useRegistration`: `update(ref.current)` runs on the render path, not in the effect). Every other cell here
+  // hands over a `vi.fn` that is stable across renders, so a registration that captured the FIRST handler
+  // forever would leave them all green. Task 10's owner holds the tap anchor and the expansion set inside that
+  // closure, where a stale one means clicks acting on a set two renders old — this cell is the guard for it.
+  it("a re-render's NEW handler closure receives the next report, not the closure it replaced", async () => {
+    const seen: string[] = [];
+    const tree = (expansion: string) => <><Probe scope="Chat" /><MouseProbe sink={() => seen.push(expansion)} /></>;
+    const h = renderWithKeymap(tree("before"));
+    await tick();
+    h.stdin.write(PRESS);
+    h.rerender(tree("after"));                                 // same entry, new closure over changed state
+    await tick();
+    h.stdin.write(PRESS);
+    expect(seen).toEqual(["before", "after"]);
+    h.unmount();
+  });
+
   it("a wheel tick is still a KEY — it resolves in the table and never reaches the sink", async () => {
     const sink = vi.fn(), lineUp = vi.fn();
     const h = renderWithKeymap(<><Probe scope="Scroll" actions={{ "scroll:lineUp": lineUp }} /><MouseProbe sink={sink} /></>);
@@ -588,10 +622,11 @@ describe("KeymapProvider — useMouseSink", () => {
 
   // DECISION 1 (task 7, handed over by task 6's review). Task 6's placeholder return sat ABOVE the swallow
   // gate, so the naive hand-off would deliver clicks while Help or the rewind hold owned the keyboard. The
-  // hand-off sits BELOW the gate instead — a click behind a modal is the mouse equivalent of a keystroke
-  // behind one, and our sinks cannot tell that anything is drawn over the cell their row map still names.
-  // Nobody gets the click, the swallower's own sink included, exactly as nobody gets swallowed text. Move the
-  // hand-off back above `swallowContexts` and this cell fails.
+  // hand-off sits BELOW the gate instead, on OWNERSHIP grounds: a full-input takeover takes the mouse with it
+  // exactly as it takes text, and spec §3.3 wants clicks inert while a dialog or overlay is mounted. (Not on
+  // occlusion grounds — ccx has none; the provider's own comment carries that argument in full.) Nobody gets
+  // the click, the swallower's own sink included, exactly as nobody gets swallowed text. Move the hand-off
+  // back above `swallowContexts` and this cell fails.
   it("a swallowing surface swallows clicks too, and hands them back when it unmounts", async () => {
     const outer = vi.fn(), own = vi.fn();
     const beneath = <><Probe scope="Chat" /><MouseProbe sink={outer} /></>;
