@@ -905,6 +905,28 @@ flips the `full-potential.md` rows and ships nothing.
   measurement against a specific tree, and any fix that lands after it invalidates the rows whose anchors
   it touched** — re-run the driver after the last fix, not before it.
 
+- **"The default store cannot produce it" is not "the method cannot receive it" — twice now.** Task 8's
+  review raised `uuid: ""` as a possible third state on a field documented as nullable-string. The fix wave
+  went looking for it through the real persistence path and found the state genuinely unreachable there:
+  the SDK reader admits a row only when its uuid is a string and copies it verbatim, the only mint is
+  `crypto.randomUUID`, and a scan of **10 584 real transcripts across 1 114 projects found zero**. It
+  correctly changed nothing — an unreachable state does not earn code, and a guard pinned by a fixture the
+  store cannot produce is green for the wrong reason.
+  The reviewer then narrowed the *claim* without disturbing the verdict: unreachable is a property of the
+  **default store**, not of the **method**, because the dependency interface is exported public API and is
+  exactly the seam the test suite injects through — so an embedder can hand the handler an empty uuid, and
+  the argument as stated proved something slightly smaller than it sounded.
+  **This is the same shape as Task 6's `NaN` finding**, where our own adapter-conformance gate certified an
+  unusable timestamp: in both cases the reasoning ran "the code we ship cannot produce this value", while
+  the injection seam that makes the code testable is also a published extension point. **Generalised: when
+  a reachability argument bottoms out at "our implementation never writes that", check whether the value
+  can arrive through a dependency the API invites callers to replace.**
+  The verdict stood on better ground: an empty string satisfies the published nullable-string contract, no
+  client contract distinguishes it, and the item mapper already mints `""` as the id of a row with no
+  uuid — so that meaning is this codebase's existing convention rather than a new ambiguity. Worth keeping
+  as the pattern: a conclusion can survive its own argument being corrected, and saying so is cheaper than
+  either defending the bad argument or reversing a sound call.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
