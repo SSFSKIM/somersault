@@ -317,13 +317,13 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 ### Task 11: Live dressing — elapsed ticker (Task 2's gate CUT the bash suffix)
 
 **Files:**
-- Modify: `src/tui/toolFold.ts` / `src/tui/toolRenderer.tsx` (the active group row gains: per-tool elapsed `· N.Ns` once the newest in-flight member has run ≥ 2 s, canon 518661/518664; hint sources gain bash commands via the existing `commandHint`. The bash `(Ns · N lines)` suffix is NOT built — see the gate below)
+- Modify: `src/tui/toolFold.ts` / `src/tui/toolRenderer.tsx` (the active group row gains: per-tool elapsed `· Ns` once the newest in-flight member has run ≥ 2 s, canon 518661/518664; hint sources gain bash commands via the existing `commandHint`. The bash `(Ns · N lines)` suffix is NOT built — see the gate below)
 - Modify: `src/tui/foldPendingState.ts` if the ticker needs per-anchor in-flight timestamps (injected clock)
 - Test: extend the fold-row suite (fake clock)
 
-**Gate — RESOLVED by Task 2 (probe 100, live on SDK 0.3.220): NO per-tool progress feed is reachable headlessly.** The bash `(Ns · N lines)` suffix is **CUT**; the divergence is recorded in the spec (§3.1 live dressing, Revision Notes round 4). Do not build it, and do not fake the line count from anything. This task ships the elapsed ticker ONLY, driven by the member's local start time (already stamped in the transcript) through an injected clock — not by any SDK progress field.
+**Gate — RESOLVED by Task 2 (probe 100, live on SDK 0.3.220): NO per-tool progress feed is reachable headlessly.** The bash `(Ns · N lines)` suffix is **CUT**; the divergence is recorded in the spec (§3.1 live dressing, Revision Notes round 4). Do not build it, and do not fake the line count from anything. This task ships the elapsed ticker ONLY, driven by the member's local start time — stamped LOCALLY on first sighting, since our wire carries no timestamps (P82) — through an injected clock — not by any SDK progress field.
 
-- [ ] **Step 1: Write failing tests** (ticker only): no ticker under 2 s; `· 2.0s`-form at ≥ 2 s anchored to the newest in-flight member; ticker absent on settled rows. Add one guard cell asserting NO bash suffix is emitted for a long-running bash member — the cut is a decision, not an omission, and a later hand must not "restore" it.
+- [ ] **Step 1: Write failing tests** (ticker only): no ticker under 2 s; `· 2s`-form at ≥ 2 s anchored to the newest in-flight member (whole seconds — canon's `da` floors under a minute; `· 2.0s` is unreachable); ticker absent on settled rows. Add one guard cell asserting NO bash suffix is emitted for a long-running bash member — the cut is a decision, not an omission, and a later hand must not "restore" it.
 - [ ] **Step 2: Run — FAIL. Step 3: Implement. Step 4: suites + typecheck PASS.**
 - [ ] **Step 5: Commit** — `f5(ts): T11 — live cluster dressing: elapsed ticker (bash suffix cut per probe 100)`.
 
@@ -347,7 +347,7 @@ does not fold at all, so the cell is satisfied by construction and no unit test 
   the task report's deliverable.
 
 - [ ] **Step 1: Build** (`npm run build`).
-- [ ] **Step 2: Run every spec §4 cell as written** — A1 through A10, quoting the spec's exact expected strings. A4/A10's click bytes are printf'd into the pty: `printf '\x1b[<0;COL;ROWM\x1b[<0;COL;ROWm'` (target a column inside the cluster text). A8 re-runs the BL5 pokes (wheel scroll, Shift/Option select, 75 ms arrow suppression) and the three scoped suites: `npm run test:unit && npm run test:tui && npm run test:resize-matrix`.
+- [ ] **Step 2: Run every spec §4 cell as written** — A1 through A11 (A11, the elapsed ticker, was added to §4 after T11 shipped it — the ticker had no acceptance cell), quoting the spec's exact expected strings. A4/A10's click bytes are printf'd into the pty: `printf '\x1b[<0;COL;ROWM\x1b[<0;COL;ROWm'` (target a column inside the cluster text). A8 re-runs the BL5 pokes (wheel scroll, Shift/Option select, 75 ms arrow suppression) and the three scoped suites: `npm run test:unit && npm run test:tui && npm run test:resize-matrix`.
 - [ ] **Step 3: Record the matrix** (cell → pass/fail with evidence) in the run log. Any FAIL → report BLOCKED with the transcript; do NOT mark the cell "close enough".
 - [ ] **Step 4: Commit** — `f5(ts): T12 — live acceptance A1–A10`.
 

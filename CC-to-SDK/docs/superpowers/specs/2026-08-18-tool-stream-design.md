@@ -206,8 +206,11 @@ title-case-first rule, active `…`, and the `foldPendingState` watermark ratche
 apply unchanged to the new counts.
 
 **Live dressing** (canon §6, droppable to a follow-up ticket if it crowds the wave): the
-per-tool elapsed `· N.Ns` ticker and the bash `(Ns · N lines)` suffix, both appearing only
-after 2 s in flight. The existing active hint gutter (`latestDisplayHint`) already covers
+per-tool elapsed `· Ns` ticker and the bash `(Ns · N lines)` suffix, both appearing only
+after 2 s in flight. **The ticker's format is whole seconds under a minute**, not a decimal:
+canon's formatter at this call site (`da`, bundle 82602) is byte-identical to our
+`format.ts:formatDuration`, and its one-decimal branch is gated on `ms < 1`. `· 2.0s` is
+unreachable; canon prints `· 2s`, and `· 1m 5s` past the minute. The existing active hint gutter (`latestDisplayHint`) already covers
 canon's "current tool" line; it gains bash commands as hint sources. **Probe gate —
 SETTLED, and it cut half the dressing.** Probe 100 (`probes/probes/100-tool-progress-stream.ts`,
 live on SDK 0.3.220) found no per-tool progress feed reachable headlessly: between a
@@ -218,8 +221,13 @@ appears only under `CLAUDE_CODE_REMOTE`/`CLAUDE_CODE_CONTAINER_ID` and only once
 per call — not a stream, and not a flag we adopt. Consequences, both binding:
 - **The bash `(Ns · N lines)` suffix is CUT — recorded divergence.** Its line half has no
   source and must not be faked; its second half would duplicate the ticker.
-- **The elapsed ticker ships**, driven by our own clock off the member's local start time
-  (the transcript already stamps it), not by any SDK progress field. `system/task_started`
+- **The elapsed ticker ships**, driven by our own clock off the member's local start time,
+  not by any SDK progress field. **That start time is stamped locally on first sighting,
+  not read from the transcript** — our wire carries no timestamps at all (P82), and
+  `ToolEvent` holds `callSequence`, not a clock. `FoldPendingState` stamps a member the
+  first time a projection sees it in flight and never moves the stamp, the same
+  arrival-stamp doctrine `agentProgress` already uses. Canon can afford `Date.parse` off a
+  message timestamp (518532-518543); we cannot, and must not invent the field. `system/task_started`
   and `system/task_notification` do arrive ungated and carry the real `tool_use_id`, but
   they are edges we already have — no new dependency is taken on them.
 One trap recorded for any future progress work: `tool_progress.tool_use_id` is a synthetic
@@ -388,6 +396,12 @@ grounding §7). The classic renderer keeps its chips everywhere.
   is still accreting members, keeps it expanded as later calls arrive and after it
   settles — this is the cell that forces the anchor-id key; an implementation keyed on
   the churning fold-row item id passes A1–A9 and fails here.
+- **A11 (elapsed ticker).** While a cluster's newest member is still running, the active
+  row carries `· <duration>` between the clause run and the trailing `…` once that member
+  has been in flight two seconds — whole seconds (`· 2s`, `· 11s`), never a decimal. It is
+  absent before two seconds, absent on the settled row, and absent on the classic
+  renderer. No `(Ns · N lines)` byte/line suffix appears on a long-running Bash member —
+  that half is CUT (probe 100) and its appearance would mean someone fabricated a count.
 
 ## 5. Testing strategy
 
