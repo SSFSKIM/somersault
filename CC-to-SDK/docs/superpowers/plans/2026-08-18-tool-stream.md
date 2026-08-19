@@ -364,6 +364,12 @@ Task 5b); and Task 8's published-expanded-items limitation; and the ticker's sta
 mechanism (round 16) — canon anchors on a wire message timestamp, our wire carries none, so the
 stamp is local first-sighting and is accurate to one repaint rather than to the call's true start.
 
+**Also carried out of T12, and NOT this wave's to fix:** the fullscreen renderer drops OSC-8
+hyperlink labels — a file-tool header renders `⏺ Read(` and stops, where classic renders
+`⏺ Read(alpha.txt)`. Reproduced identically on the last pre-wave commit (`ec9e7a2f97`), so it is
+pre-existing. What this wave changed is exposure: the expanded cluster is a new fullscreen surface
+full of file-tool rows. Record it in the scorecard and file it as its own ticket; do not fix it here.
+
 **Files:**
 - Modify: `docs/parity/coverage.md` (the fullscreen/transcript rows this wave moves)
 - Modify: `docs/superpowers/specs/2026-08-18-tool-stream-design.md` (Outcomes & Retrospective; Surprises & Discoveries with anything Tasks 1–12 overturned)
