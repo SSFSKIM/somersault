@@ -1,14 +1,21 @@
-// test/unit/appserver/archive.test.ts — M5 Task 5: the archive marker store (spec D-M5-3 rev 2).
+// test/unit/appserver/archive.test.ts — M5 Task 5: the archive marker store (spec D-M5-3 rev 2), and
+// M5 Task 9: `thread/archive`/`thread/unarchive`, the two handlers over it (second half of this file).
 // Everything here writes only into its own temp directory, and every one of those goes through `mkTmp` so
 // `afterAll` takes it back. The one row that exercises the DEFAULT location (no `ccxDir`) drives
 // `CCX_FLEET_ROOT`/`HOME`, because the real default is a developer's live `~/.claude`.
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { listArchived, createArchiveMarker, removeArchiveMarker } from "../../../src/appserver/archive.js";
+import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
+import { emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
+import { findLiveBySessionId } from "../../../src/appserver/sessionLib.js";
+import type { PeerSink } from "../../../src/appserver/peer.js";
+import { startFakeHost, type FakeHostControls } from "../../helpers/fakeHost.js";
+import { writeRoster } from "../../../src/fleet/roster.js";
 
 // Every temp root this file mints is recorded and removed at the end. Bare `mkdtempSync`es left ~20
 // orphan directories in $TMPDIR per suite run; the sibling config-domain.test.ts cleans each of its own.
@@ -260,3 +267,373 @@ async function race(
   const overlapped = spans.some((a, i) => spans.some((b, j) => j !== i && a[0] < b[1] && b[0] < a[1]));
   return { parked: specs.map((_, i) => readFileSync(join(bar, `r${i}`), "utf8")), overlapped };
 }
+
+// ══ M5 Task 9: `thread/archive` / `thread/unarchive` ═══════════════════════════════════════════════════
+//
+// Driven through the REAL wire (`srv.connect(sink)` + `conn.feed(...)`, search.test.ts's harness):
+// `dispatch` is private, so a request is the only way in — and going through it is what makes the params
+// gate, the error codes, the dispatch exemption and the server-scoped notifications observable at all.
+// Nothing here reaches for a test-only hook: the one race that needs an exact interleave takes it inside
+// the injected STORE dep, which is a real await on the handler's real path.
+
+const mkSink = () => { const ls: string[] = []; return { lines: ls, sink: { write: (l: string) => void ls.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
+const parse = (ls: string[]) => ls.map((l) => JSON.parse(l) as Record<string, any>);
+const servers: AppServer[] = [];
+const hosts: FakeHostControls[] = [];
+let conn!: { feed(chunk: string): void };
+let lines!: string[];
+let nextId = 100;
+
+function boot(deps: AppServerDeps = {}): AppServer {
+  const srv = new AppServer({}, deps);
+  servers.push(srv);
+  const s = mkSink();
+  conn = srv.connect(s.sink);
+  // `watchThreads: true` is not decoration: `thread/archived`/`thread/unarchived` are SERVER-scoped
+  // fan-out (broadcastServer → fanout.ts), which reaches watchers ONLY — a boot without it would make
+  // every notification assertion in this block vacuously green.
+  conn.feed(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "T" }, watchThreads: true } }) + "\n");
+  s.lines.length = 0;
+  lines = s.lines;
+  return srv;
+}
+afterEach(async () => {
+  for (const s of servers.splice(0)) await s.shutdown().catch(() => {});
+  for (const fh of hosts.splice(0)) await fh.close().catch(() => {});
+});
+
+const feed = (method: string, params: unknown): number => {
+  const id = nextId++;
+  conn.feed(JSON.stringify({ id, method, params }) + "\n");
+  return id;
+};
+/** Waits for ONE request's reply. A poll that gave up silently would turn a never-answered request into a
+ *  confusing "cannot read property of undefined" instead of the honest "no reply". */
+const reply = async (id: number, what: string): Promise<Record<string, any>> => {
+  for (let i = 0; i < 400; i++) {
+    const f = parse(lines).find((m) => m.id === id);
+    if (f) return f;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`no reply to ${what} (id ${id}) within 2s`);
+};
+const send = async (method: string, params: unknown): Promise<Record<string, any>> => reply(feed(method, params), method);
+/** Two requests in ONE chunk, so both are dispatched in one tick — `Peer.feed` loops the frames
+ *  synchronously and the second handler starts at the first handler's first `await`. Written as one chunk
+ *  rather than two `feed` calls so the "same tick" claim is structural rather than incidental. */
+const feedBoth = (a: { method: string; params: unknown }, b: { method: string; params: unknown }): [number, number] => {
+  const ida = nextId++, idb = nextId++;
+  conn.feed(JSON.stringify({ id: ida, method: a.method, params: a.params }) + "\n" + JSON.stringify({ id: idb, method: b.method, params: b.params }) + "\n");
+  return [ida, idb];
+};
+const notifs = (method: string) => parse(lines).filter((l) => l.method === method);
+
+/** D-M5-20's existence oracle, injected through `deps.getSessionInfo`. Records every call — the atom row
+ *  below asserts the SPY was consulted, not merely that the reply looked right, because a handler that
+ *  re-spelled the DI binding and dropped the `srv.deps` override reads the real session store while its
+ *  tests still pass. */
+function fakeStore(known: string[]) {
+  const infoCalls: string[] = [];
+  const rows = new Set(known);
+  return { infoCalls, rows, getSessionInfo: async (id: string) => { infoCalls.push(id); return rows.has(id) ? { sessionId: id, summary: `summary of ${id}`, lastModified: 5_000 } : undefined; } };
+}
+const fakeEngine = (sessionId: string, over: Record<string, unknown> = {}) =>
+  ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId, isEnded: () => false, ...over }) as never;
+
+function addRecord(srv: AppServer, sessionId: string, engine: Record<string, unknown> = {}): string {
+  const id = srv.registry.mint();
+  const now = Math.floor(Date.now() / 1000);
+  srv.registry.add({
+    id, origin: "inProcess", session: fakeEngine(sessionId, engine), unattended: "park", busy: false, turnSeq: 0,
+    interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(),
+    sessionId, createdAt: now, updatedAt: now, settings: {}, flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
+  } as unknown as ThreadRecord);
+  return id;
+}
+
+/** Does THIS filesystem fold case? APFS and NTFS do, ext4 does not, and the marker store's behavior
+ *  genuinely differs between them — so the case row asserts the right answer for the tree it runs on
+ *  rather than one that is only true on the author's laptop. */
+function foldsCase(dir: string): boolean {
+  writeFileSync(join(dir, "CaseProbe"), "");
+  const folds = existsSync(join(dir, "caseprobe"));
+  rmSync(join(dir, "CaseProbe"));
+  return folds;
+}
+
+describe("thread/archive + thread/unarchive (Task 9)", () => {
+  it("cold round-trip: each direction answers {ok:true}, moves the marker, announces its OWN notification, and is idempotent", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["cold-1"]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+
+    expect((await send("thread/archive", { threadId: "cold-1" })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "cold-1"))).toBe(true);
+    expect(notifs("thread/archived").map((n) => n.params)).toEqual([{ sessionId: "cold-1" }]);
+    expect(notifs("thread/unarchived")).toEqual([]);
+
+    // Idempotent on the store's EEXIST, and the marker is still exactly ONE file.
+    expect((await send("thread/archive", { threadId: "cold-1" })).result).toEqual({ ok: true });
+    expect(readdirSync(join(ccxDir, "archived"))).toEqual(["cold-1"]);
+
+    // The mirror side, which is the one that gets forgotten: unarchive is not a variant of archive, it is
+    // the other half, and it owes its own reply, its own unlink and its own notification name.
+    expect((await send("thread/unarchive", { threadId: "cold-1" })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "cold-1"))).toBe(false);
+    expect(notifs("thread/unarchived").map((n) => n.params)).toEqual([{ sessionId: "cold-1" }]);
+    expect((await send("thread/unarchive", { threadId: "cold-1" })).result).toEqual({ ok: true }); // ENOENT → fine
+
+    // Every SUCCESSFUL call announces, including an idempotent one: the store cannot tell a fresh
+    // transition from a repeat (an EEXIST and a created marker leave identical bytes), so a handler
+    // claiming to announce only real transitions would be claiming knowledge it does not have.
+    expect([notifs("thread/archived").length, notifs("thread/unarchived").length]).toEqual([2, 2]);
+  });
+
+  it("a session the store does not know refuses THREAD_NOT_FOUND from BOTH methods, and mints no phantom marker", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore([]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+    for (const method of ["thread/archive", "thread/unarchive"]) {
+      const r = await send(method, { threadId: "no-such-session" });
+      expect([method, r.error?.code, r.error?.message]).toEqual([method, -33004, "Thread not found"]);
+      expect(r.result).toBeUndefined();
+    }
+    // D-M5-20's whole point: a typo must not mint permanent archive state. The refusal precedes the store,
+    // so not even the directory exists.
+    expect(existsSync(join(ccxDir, "archived"))).toBe(false);
+    expect(notifs("thread/archived")).toEqual([]);
+  });
+
+  it("the admission rules are DIFFERENT predicates: archive admits on the store row alone, unarchive on marker-OR-row", async () => {
+    // This is the row that goes red the moment the two refusals are collapsed into one shared helper.
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore([]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+    // A marker whose session the store has forgotten (deleted out from under it). UNARCHIVE must still
+    // work — it is the only way to clear such a marker — and it must not consult the store at all, since
+    // the marker already answers.
+    await createArchiveMarker("forgotten", { ccxDir });
+    st.infoCalls.length = 0;
+    expect((await send("thread/unarchive", { threadId: "forgotten" })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "forgotten"))).toBe(false);
+    expect(st.infoCalls).toEqual([]); // the marker short-circuits the store read
+    // …and ARCHIVE of that same forgotten session refuses: a marker is not evidence a session exists, and
+    // importing unarchive's marker fallback here would re-mint exactly the phantom state D-M5-20 forbids.
+    await createArchiveMarker("forgotten", { ccxDir });
+    expect((await send("thread/archive", { threadId: "forgotten" })).error?.code).toBe(-33004);
+    expect(st.infoCalls).toEqual(["forgotten"]);
+  });
+
+  it("all three M5 admission rules consult the INJECTED deps.getSessionInfo — the shared atom, not a re-spelled binding", async () => {
+    // The failure this pins is green-for-the-wrong-reason: a handler that writes
+    // `getSessionInfo(sid, {})` without the `srv.deps` override reads the REAL session store and can
+    // still produce a correct-looking refusal, so asserting the reply alone proves nothing.
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["known-1"]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo, getSessionMessages: async () => [] });
+
+    expect((await send("thread/archive", { threadId: "known-1" })).result).toEqual({ ok: true });
+    expect(st.infoCalls).toEqual(["known-1"]);
+
+    st.infoCalls.length = 0;
+    expect((await send("thread/unarchive", { threadId: "known-2" })).error?.code).toBe(-33004); // no marker → the store arm
+    expect(st.infoCalls).toEqual(["known-2"]);
+
+    st.infoCalls.length = 0;
+    st.rows.add("known-2");
+    expect((await send("thread/unarchive", { threadId: "known-2" })).result).toEqual({ ok: true });
+    expect(st.infoCalls).toEqual(["known-2"]);
+
+    // The third rule, Task 8's, through the same atom — the reason the binding was lifted at all.
+    st.infoCalls.length = 0;
+    expect((await send("thread/searchOccurrences", { threadId: "known-3", searchTerm: "zz" })).error?.code).toBe(-33004);
+    expect(st.infoCalls).toEqual(["known-3"]);
+  });
+
+  it("a thread this server holds LIVE refuses archive by BOTH spellings of its id — and unarchive is deliberately not guarded", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["sess-live"]);
+    const srv = boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+    const threadId = addRecord(srv, "sess-live");
+    // The store KNOWS this session, so the existence check passes: what refuses here is the live-guard and
+    // nothing else. Both spellings, because `resolveThreadId` is what makes them one thread.
+    for (const spelling of [threadId, "sess-live"]) {
+      const r = await send("thread/archive", { threadId: spelling });
+      expect([spelling, r.error?.code, r.error?.message]).toEqual([spelling, -33001, "Thread is live in this server — close it first"]);
+    }
+    expect(existsSync(join(ccxDir, "archived"))).toBe(false);
+    // The mirror: `thread/unarchive` is NOT live-guarded, and must not be — admission itself unarchives
+    // (D-M5-21), so a guard here would refuse the very state this server produces.
+    await createArchiveMarker("sess-live", { ccxDir });
+    expect((await send("thread/unarchive", { threadId })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "sess-live"))).toBe(false);
+  });
+
+  it("a resume RESERVATION refuses archive too — an admission mid-probe has no record to find", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["racing"]);
+    const srv = boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+    // The refcount `thread/resume` takes synchronously before its PID-liveness probe (server.ts's
+    // `resumingSessions`) — the window in which a resume is real but unfindable by sessionId.
+    srv.resumingSessions.set("racing", 1);
+    const r = await send("thread/archive", { threadId: "racing" });
+    expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in this server — close it first"]);
+    expect(existsSync(join(ccxDir, "archived", "racing"))).toBe(false);
+    // Released → the SAME request is admitted, which is what makes the refusal above the reservation's
+    // rather than some other refusal wearing its code.
+    srv.resumingSessions.delete("racing");
+    expect((await send("thread/archive", { threadId: "racing" })).result).toEqual({ ok: true });
+  });
+
+  it("a resume landing INSIDE the existence read is still caught: the marker is unlinked and the reply refuses BUSY (plan review F12)", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    let srv!: AppServer;
+    // The reservation is taken DURING the store read — the one window the entry guard cannot see, and the
+    // whole reason the guard is checked a SECOND time once the marker exists. Nothing test-only is
+    // reached into: the await is the handler's real store read, and what lands inside it is the test's to
+    // choose. Without the re-check this row replies {ok:true} and leaves a marker on a live session.
+    srv = boot({ ccxDir, getSessionInfo: async (id: string) => { srv.resumingSessions.set(id, 1); return { sessionId: id, summary: "s", lastModified: 1 }; } });
+    const r = await send("thread/archive", { threadId: "late" });
+    expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in this server — close it first"]);
+    expect(existsSync(join(ccxDir, "archived", "late"))).toBe(false);
+  });
+
+  it("a real thread/resume and thread/archive dispatched in ONE tick converge in BOTH arrival orders: live, and off the shelf", async () => {
+    for (const archiveFirst of [true, false]) {
+      const ccxDir = mkTmp("m5ccx-");
+      const st = fakeStore(["racy"]);
+      const srv = boot({ ccxDir, getSessionInfo: st.getSessionInfo, sessionFactory: () => fakeEngine("racy") });
+      const archive = { method: "thread/archive", params: { threadId: "racy" } };
+      const resume = { method: "thread/resume", params: { sessionId: "racy" } };
+      const [firstId, secondId] = archiveFirst ? feedBoth(archive, resume) : feedBoth(resume, archive);
+      const [first, second] = [await reply(firstId, "first"), await reply(secondId, "second")];
+      const arch = archiveFirst ? first : second;
+      const res = archiveFirst ? second : first;
+      // Whichever order, the archive loses: arriving second it meets a registered record, and arriving
+      // first it creates its marker and then meets that same record on the re-check.
+      expect([archiveFirst, arch.error?.code]).toEqual([archiveFirst, -33001]);
+      expect(res.result?.thread?.sessionId).toBe("racy");
+      // The end state is the claim — never "archived AND live".
+      await vi.waitFor(() => expect(existsSync(join(ccxDir, "archived", "racy"))).toBe(false));
+      expect(findLiveBySessionId(srv, "racy")).toBeTruthy();
+    }
+  });
+
+  it("admission takes the thread off the shelf: resuming an archived session unlinks the marker and broadcasts thread/unarchived (D-M5-21)", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["shelved"]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo, sessionFactory: () => fakeEngine("shelved") });
+    expect((await send("thread/archive", { threadId: "shelved" })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "shelved"))).toBe(true);
+
+    const r = await send("thread/resume", { sessionId: "shelved" });
+    expect(r.result?.thread?.sessionId).toBe("shelved");
+    await vi.waitFor(() => expect(existsSync(join(ccxDir, "archived", "shelved"))).toBe(false));
+    await vi.waitFor(() => expect(notifs("thread/unarchived").map((n) => n.params)).toEqual([{ sessionId: "shelved" }]));
+    // The announcement follows the admission it belongs to, never precedes it.
+    expect(parse(lines).filter((l) => l.method === "thread/started" || l.method === "thread/unarchived").map((l) => l.method)).toEqual(["thread/started", "thread/unarchived"]);
+
+    // …and an admission of an UNarchived session announces nothing: the broadcast reports a TRANSITION,
+    // not the fact of resuming. Without this half a handler that broadcast unconditionally would pass.
+    await send("thread/resume", { sessionId: "shelved" });
+    await new Promise((r2) => setTimeout(r2, 30));
+    expect(notifs("thread/unarchived").length).toBe(1);
+  });
+
+  it("attach takes a fleet thread off the shelf too — the OTHER admission path, and the one that gets forgotten", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root; // its own roster, so no sibling case's row is in this listing
+    try {
+      const fh = await startFakeHost({ status: { sessionId: "sess-fleet" } });
+      hosts.push(fh);
+      writeRoster(fh.row);
+      boot({ ccxDir });
+      await createArchiveMarker("sess-fleet", { ccxDir });
+      const r = await send("thread/attach", { target: fh.row.short });
+      expect(r.result?.thread?.sessionId).toBe("sess-fleet");
+      await vi.waitFor(() => expect(existsSync(join(ccxDir, "archived", "sess-fleet"))).toBe(false));
+      await vi.waitFor(() => expect(notifs("thread/unarchived").map((n) => n.params)).toEqual([{ sessionId: "sess-fleet" }]));
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  }, 20_000);
+
+  it("all three M5 disk readers answer for a thread whose engine has died — none is refused -33005", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["dead-1"]);
+    const srv = boot({ ccxDir, getSessionInfo: st.getSessionInfo, getSessionMessages: async () => [] });
+    const threadId = addRecord(srv, "dead-1", { isEnded: () => true });
+    // Each method's OWN answer, not merely "≠ -33005": a bare inequality is satisfied by METHOD_NOT_FOUND
+    // too, so it would go green on a server where neither method is registered at all.
+    expect((await send("thread/searchOccurrences", { threadId, searchTerm: "zz" })).result).toEqual({ data: [], nextCursor: null });
+    expect((await send("thread/archive", { threadId })).error?.code).toBe(-33001); // dead, but still LIVE here
+    expect((await send("thread/unarchive", { threadId })).result).toEqual({ ok: true });
+    // …measured against a thread-scoped method that is NOT exempt on the SAME record, so the row proves an
+    // exemption rather than a gate that has stopped firing.
+    expect((await send("thread/settings/read", { threadId })).error?.code).toBe(-33005);
+  });
+
+  it("marker names are CASE-SENSITIVE while the filesystem may not be — the current, unnormalized behavior is pinned", async () => {
+    // Task 5 review, Minor 3. Unreachable with today's lowercase-UUID session ids; this row is the record
+    // of that assumption, so an id scheme that ever mixes case fails here instead of silently unlinking
+    // another session's marker in production.
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["ABCdef", "abcdef"]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+    expect((await send("thread/archive", { threadId: "ABCdef" })).result).toEqual({ ok: true });
+    expect((await send("thread/archive", { threadId: "abcdef" })).result).toEqual({ ok: true });
+    if (foldsCase(ccxDir)) {
+      // APFS/NTFS: the second create is an EEXIST on the FIRST session's file, reported as success…
+      expect(readdirSync(join(ccxDir, "archived"))).toEqual(["ABCdef"]);
+      expect((await send("thread/unarchive", { threadId: "abcdef" })).result).toEqual({ ok: true });
+      // …and the matching remove unlinks the OTHER session's marker.
+      expect(readdirSync(join(ccxDir, "archived"))).toEqual([]);
+    } else {
+      expect(readdirSync(join(ccxDir, "archived")).sort()).toEqual(["ABCdef", "abcdef"]);
+      expect((await send("thread/unarchive", { threadId: "abcdef" })).result).toEqual({ ok: true });
+      expect(readdirSync(join(ccxDir, "archived"))).toEqual(["ABCdef"]);
+    }
+  });
+
+  it("the ordering is the whole defense, and the two failures the store CAN raise get DIFFERENT codes", async () => {
+    // (a) `threadIdParams` is only `z.string().min(1)` (schema/core.ts), so a path-hostile threadId is
+    //     well-formed. What stops it is that no such session is in the store — the existence check runs
+    //     before the marker store is touched at all, from both methods.
+    const ccxDir = mkTmp("m5ccx-");
+    const empty = fakeStore([]);
+    boot({ ccxDir, getSessionInfo: empty.getSessionInfo });
+    for (const method of ["thread/archive", "thread/unarchive"]) {
+      expect([method, (await send(method, { threadId: "../escape" })).error?.code]).toEqual([method, -33004]);
+    }
+    expect(existsSync(join(ccxDir, "archived"))).toBe(false);
+    // …and the params gate itself, which both methods share.
+    expect((await send("thread/archive", {})).error?.code).toBe(-32602);
+    expect((await send("thread/unarchive", { threadId: "" })).error?.code).toBe(-32602);
+
+    // (b) belt-and-braces: where a store DID hand back such an id, `checkId`'s typed refusal is a
+    //     PARAMETER error — the fault is in the client's `threadId`, not in this server.
+    const hostile = fakeStore(["../escape"]);
+    boot({ ccxDir, getSessionInfo: hostile.getSessionInfo });
+    const r = await send("thread/archive", { threadId: "../escape" });
+    expect(r.error?.code).toBe(-32602);
+    expect(r.error?.message).toMatch(/marker-safe/);
+
+    // (c) an errno describes THIS SERVER's state directory, not the client's parameter, so it stays
+    //     -32603 (D-M5-18a) — and it carries no absolute path, because node's own message ends in one and
+    //     that one is the operator's home directory on the wire. Both methods, since they fail in
+    //     different syscalls: create's `mkdir` meets EEXIST, list's `readdir` meets ENOTDIR.
+    const bad = mkTmp("m5ccx-");
+    writeFileSync(join(bad, "archived"), ""); // the state dir occupied by a regular file
+    const known = fakeStore(["cold-x"]);
+    boot({ ccxDir: bad, getSessionInfo: known.getSessionInfo });
+    for (const [method, errno] of [["thread/archive", "EEXIST"], ["thread/unarchive", "ENOTDIR"]] as const) {
+      const e = (await send(method, { threadId: "cold-x" })).error;
+      expect([method, e?.code]).toEqual([method, -32603]);
+      expect(e?.message).toContain(errno);
+      expect(e?.message).not.toContain(bad);
+      expect(e?.message).not.toContain("/"); // no path of any shape survived into the message
+    }
+  });
+});

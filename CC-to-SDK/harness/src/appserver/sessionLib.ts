@@ -23,6 +23,7 @@ import type { ThreadRecord } from "./registry.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
 import {
   listSessions as realListSessions,
+  getSessionInfo as realGetSessionInfo,
   forkSession as realForkSession,
   renameSession as realRenameSession,
   tagSession as realTagSession,
@@ -56,6 +57,23 @@ export function resolveThreadId(srv: AppServer, threadId: string): Resolved {
  *  engine must be caught here too). */
 export function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRecord | undefined {
   return srv.registry.list().find((r) => r.sessionId === sessionId);
+}
+
+/** The store-knows ATOM (M5, D-M5-20): "does the session store have a row for this id", DI default
+ *  included, spelled ONCE. Three admission rules stand on it and they are deliberately DIFFERENT
+ *  predicates — `thread/searchOccurrences` admits on `live record OR store row`, `thread/archive` on the
+ *  store row ALONE (a live thread is separately refused BUSY by its own live-guard, so admitting on a live
+ *  record here would admit exactly the case that method must reject), `thread/unarchive` on `marker OR
+ *  store row` — so what is shared is this lookup and nothing above it. Extracting the whole refusal would
+ *  flatten three rules into one and invert `archive`.
+ *
+ *  What must not drift is the `srv.deps` OVERRIDE. Every caller's tests inject through it, so a call site
+ *  that re-spells the binding and drops the override reads the real session store while its own tests stay
+ *  green — passing for the wrong reason, and passing hardest on the machine that has real sessions on
+ *  disk. One binding, one place to get it wrong. */
+export async function storeKnows(srv: AppServer, sessionId: string): Promise<boolean> {
+  const getInfo = srv.deps.getSessionInfo ?? ((sid: string) => realGetSessionInfo(sid, {}));
+  return (await getInfo(sessionId)) !== undefined;
 }
 
 /** Store-only rows project to the SAME 14-field shape threadView produces (parent §5) — a client must not
@@ -156,7 +174,7 @@ export const threadFork: Handler = async (srv, ctx, id, params) => {
       ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down");
       return;
     }
-    srv.startThread(ctx, id, { resume: result.sessionId, unattended: parsed.data.unattended });
+    await srv.startThread(ctx, id, { resume: result.sessionId, unattended: parsed.data.unattended });
   } catch (e) {
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   }

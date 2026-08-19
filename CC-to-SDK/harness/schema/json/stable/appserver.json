@@ -1591,6 +1591,32 @@
         "searchTerm"
       ],
       "additionalProperties": false
+    },
+    "thread/archive": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "additionalProperties": false
+    },
+    "thread/unarchive": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {
@@ -1969,6 +1995,32 @@
       "required": [
         "data",
         "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "thread/archive": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "thread/unarchive": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
       ],
       "additionalProperties": false
     }

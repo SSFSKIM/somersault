@@ -33,6 +33,8 @@ import { fsRead, fsSearch, shellCommand } from "./workspace.js";
 import { reviewStart } from "./review.js";
 import { configRead, configValueWrite, configBatchWrite } from "./configDomain.js";
 import { threadSearch, threadSearchOccurrences } from "./search.js";
+import { storeRefusal, threadArchive, threadUnarchive } from "./archiveDomain.js";
+import { listArchived, removeArchiveMarker } from "./archive.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -208,6 +210,11 @@ const ENGINE_GONE_EXEMPT = new Set([
   // exemption the same session would be searchable by its bare store id (no record, no gate) and refused by
   // its own registry id, which is a difference in the answer produced by how the client spelled the thread.
   "thread/searchOccurrences",
+  // M5: disk/sidecar reads that must answer for a thread whose engine died (spec rev 3). The archive pair
+  // joins `thread/searchOccurrences` above for the same reason it is there — the subject is a file on
+  // disk, never the transport — and with one of its own: shelving a conversation is precisely the cleanup
+  // a client reaches for once a thread has died, which is `thread/delete`'s argument two lines up.
+  "thread/archive", "thread/unarchive",
 ]);
 
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
@@ -279,24 +286,33 @@ export class AppServer {
       // No roster candidate to probe (the overwhelmingly common case): fall straight through to
       // startThread in this same dispatch tick — no await, so no window for a delete to race (see
       // fleetResumeCandidates), and `startThread`'s own deletingSessions check still fences an in-flight one.
-      if (candidates.length === 0) { srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }); return; }
+      if (candidates.length === 0) { await srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }); return; }
       // R13: the probe below AWAITS. Reserve the resume synchronously HERE, before that yield, and refuse if
       // a delete is already in flight — the two arrival-time checks that make admission and deletion
       // mutually exclusive even when a concurrent delete completes inside the probe (see resumingSessions
       // and sessionLib.ts's delete). Released in a `finally` — a refused probe must not reserve forever.
       if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
       srv.resumingSessions.set(sessionId, (srv.resumingSessions.get(sessionId) ?? 0) + 1);
+      let admitted: Promise<void> | undefined;
       try {
         for (const row of candidates) {
           if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
         }
-        srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
+        // CAPTURED, not awaited, INSIDE the reservation (M5 Task 9). `startThread` registers the record
+        // synchronously and only then awaits (its D-M5-21 shelf read), and this reservation's whole job is
+        // to fence the window BEFORE that registration — after it, `findLiveBySessionId` sees the thread
+        // and `thread/delete`'s own live-guard covers the rest. Holding it across the shelf read would be
+        // incidental rather than principled, and it would make the release stop coinciding with the
+        // admission it is fencing. Awaited below the `finally` so the request is still not reported
+        // finished before its admission is.
+        admitted = srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
       } finally {
         // MY hold, not the reservation (PF2): a sibling resume may still be inside its own probe, and the
         // entry is gone only when the last of us leaves.
         const held = (srv.resumingSessions.get(sessionId) ?? 1) - 1;
         if (held > 0) srv.resumingSessions.set(sessionId, held); else srv.resumingSessions.delete(sessionId);
       }
+      await admitted;
     },
     "thread/list": threadList,
     "thread/fork": threadFork,
@@ -516,6 +532,14 @@ export class AppServer {
     // its bare store id and refused by its own registry id. Mutual exclusion is again the handler's own, and
     // it is the SAME chain the store-wide search uses: one content scan at a time per server.
     "thread/searchOccurrences": threadSearchOccurrences,
+    // M5 (§archive): the shelf pair (archiveDomain.ts). They NAME A THREAD — either spelling, a registry
+    // id or a bare store sessionId — so both meet the dispatch gates, and both are `ENGINE_GONE_EXEMPT`
+    // above: the subject is a marker file, not a live conversation. Mutual exclusion is not the dispatch
+    // table's here either, and for a stronger reason than the searches': the marker store needs none. One
+    // atomic create and one unlink per transition means no read-modify-write exists for two requests — or
+    // two SERVER PROCESSES, which no in-process chain could ever see — to lose each other's update in.
+    "thread/archive": threadArchive,
+    "thread/unarchive": threadUnarchive,
   };
 
   private readonly token: string;
@@ -561,8 +585,15 @@ export class AppServer {
    *  closure — mirroring what the real src/session/index.ts resumeSession already does internally
    *  (`openSession({...config, resume: id})`) one level up, so a DI'd `sessionFactory` (every test in this
    *  suite overrides it) can observe `resume` on the config it receives, exactly like any other flag,
-   *  instead of it being invisible to anything but the real default factory. */
-  startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): void {
+   *  instead of it being invisible to anything but the real default factory.
+   *
+   *  ASYNC as of M5 Task 9, and the async part is deliberately ALL of it and NONE of it: everything
+   *  through registration, the reply and `thread/started` still runs in the caller's own dispatch tick
+   *  (an async function body runs synchronously up to its first `await`, and the first one here is the
+   *  last line), which is exactly the property the delete/resume reservation race is decided by. The
+   *  returned promise is worth awaiting rather than dropping: it is what makes "this request is finished"
+   *  true at the dispatch seam, and it keeps `thread/resume`'s reservation held across the shelf read. */
+  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
     // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
@@ -588,6 +619,31 @@ export class AppServer {
     installRouter(this, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
     this.broadcastServer("thread/started", { thread: threadView(this, record) });
+    // LAST, once admission has fully succeeded and no step after it can fail: unarchiving a session whose
+    // admission then threw would take a conversation off the shelf that never opened.
+    await this.autoUnarchive(ctx, opts.resume);
+  }
+
+  /** D-M5-21: opening a conversation takes it off the shelf — and it is what keeps "a live thread is never
+   *  hidden from the default list" true ACROSS servers, since markers are re-read per request and another
+   *  server's archive is otherwise invisible to this one until someone lists. Called from both admission
+   *  paths onto an existing session id: `startThread` above (thread/resume, thread/fork) and `thread/attach`
+   *  (fleet.ts).
+   *
+   *  GUARDED, because it runs after the reply is already on the wire: a state directory that cannot be read
+   *  is not a reason to report a successful admission as failed, and the request id is spent, so an escaping
+   *  rejection would reach dispatch's catch and put a SECOND frame on the wire for one request. The client
+   *  is told instead — silence would leave a live thread hidden from the default list with nothing to say
+   *  so, and the message goes through the handlers' own `storeRefusal` so this path cannot be the one that
+   *  puts the operator's home directory on the wire. */
+  async autoUnarchive(ctx: ConnCtx, sessionId: string): Promise<void> {
+    try {
+      if (!(await listArchived({ ccxDir: this.deps.ccxDir })).has(sessionId)) return;
+      await removeArchiveMarker(sessionId, { ccxDir: this.deps.ccxDir });
+      this.broadcastServer("thread/unarchived", { sessionId });
+    } catch (e) {
+      this.warn(ctx.peer, "unarchiveFailed", `thread is live but its archive marker could not be removed — ${storeRefusal(e).message}`);
+    }
   }
 
   /** M3 Task 7: admit a FLEET record (fleet.ts) — the register-half of the admission `thread/start` does

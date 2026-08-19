@@ -1,7 +1,7 @@
 // appserver/schema/index.ts — the method→schema registry. Wave 4's generator and drift gate walk THIS
 // record: a shipped method missing here is a build failure, so wire and artifact cannot drift (spec §9).
 import type { z } from "zod/v4";
-import { threadIdParams, initializeParams, serverStatusParams } from "./core.js";
+import { threadIdParams, initializeParams, okResult, serverStatusParams } from "./core.js";
 import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
@@ -143,4 +143,13 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // in one row are two different windows), `readCursor` is `null` on a cold session rather than absent, and
   // `nextCursor` may again be non-null over an empty page.
   "thread/searchOccurrences": { params: threadSearchOccurrencesParams, result: threadSearchOccurrencesResult },
+  // M5 (§archive) Task 9: the shelf pair. THREAD-scoped like the occurrence search above and
+  // `ENGINE_GONE_EXEMPT` for the same reason — the subject is a marker FILE, so a thread whose engine died
+  // must still be shelvable — and taking `threadIdParams` means either spelling of a thread works, a
+  // registry id or a bare store sessionId, which is what lets a client archive a session this server has
+  // never opened. STABLE: the mechanism is one atomic file create and one unlink, nothing SDK-shaped.
+  // Both publish `okResult` (D-M5-19) and both publish the SAME one: the two methods are mirror images and
+  // a client that reads one reply reads the other, so two spellings could only ever drift.
+  "thread/archive": { params: threadIdParams, result: okResult },
+  "thread/unarchive": { params: threadIdParams, result: okResult },
 };

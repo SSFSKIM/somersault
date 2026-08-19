@@ -11,11 +11,11 @@
 // memory and a whole-transcript read followed by a row count would spend exactly what they bound.
 import { ERR } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
-import { findLiveBySessionId, resolveThreadId, storeOnlyView } from "./sessionLib.js";
+import { findLiveBySessionId, resolveThreadId, storeKnows, storeOnlyView } from "./sessionLib.js";
 import { listArchived } from "./archive.js";
 import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
-import { listSessions as realListSessions, getSessionInfo as realGetSessionInfo, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
+import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 
 type GetMessages = (sessionId: string, opts?: { limit?: number; offset?: number }) => Promise<unknown[]>;
@@ -271,7 +271,6 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
     srv.warn(ctx.peer, "limitClamped", `thread/searchOccurrences limit clamped to ${SEARCH_CAPS.maxLimit}`);
   }
   const termLc = searchTerm.toLowerCase();
-  const getInfo = srv.deps.getSessionInfo ?? ((sid: string) => realGetSessionInfo(sid, {}));
   const getMessages = srv.deps.getSessionMessages ?? ((sid: string, o?: { limit?: number; offset?: number }) => realGetSessionMessages(sid, o));
 
   try {
@@ -287,10 +286,9 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
       // page over a typo — the D-M5-8 lie in miniature. Asked of the store only when no live record backs
       // the id: a thread started this tick exists and may be searched before its first row is ever
       // persisted, and asking the store about it would refuse the very thread the client is holding.
-      if (!live) {
-        const info = await getInfo(sessionId);
-        if (info === undefined) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-      }
+      // `live record OR store row` is THIS method's admission rule; Task 9's two are different ones. What
+      // is shared with them is the lookup underneath (sessionLib.ts's `storeKnows`), never the rule.
+      if (!live && !(await storeKnows(srv, sessionId))) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
       // Epoch qualification — `thread/read`'s rule, and its message verbatim (subscribe.ts), because a
       // client that pages both should match one string. The two live arms are one condition: the thread is
       // gone, or it is here at a different generation. `e: null` is a COLD mint and passes unqualified — a

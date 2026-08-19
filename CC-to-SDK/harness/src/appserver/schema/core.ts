@@ -2,6 +2,13 @@
 // the validator — handlers import from here, never declare inline).
 import { z } from "zod/v4";
 export const threadIdParams = z.object({ threadId: z.string().min(1) });
+/** The bare acknowledgement (M5 Task 9, D-M5-19's `result` slot). `thread/close`, `thread/stop`,
+ *  `thread/delete` and the decision ops have all replied `{ok:true}` since M1 without publishing a shape;
+ *  this is that shape, declared once so the two archive methods cannot disagree about it and so a later
+ *  task can retrofit the older ones onto the SAME object rather than a second spelling of it.
+ *  `z.literal(true)` rather than `z.boolean()`: `{ok:false}` is not a reply this protocol has — a failure
+ *  is an error frame — and publishing `boolean` would tell a client to write a branch that never runs. */
+export const okResult = z.object({ ok: z.literal(true) });
 export const initializeParams = z.object({
   clientInfo: z.object({ name: z.string() }),
   authorization: z.string().optional(),

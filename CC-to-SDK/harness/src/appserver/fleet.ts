@@ -606,4 +606,15 @@ export const threadAttach: Handler = async (srv, ctx, id, params) => {
   // is what guarantees no replayed frame is lost to a missing listener or delivered ahead of
   // `thread/started`. The cast is safe by construction — `admitFleet` is the only writer of this field.
   (record.session as FleetEngineSession).activate();
+  // D-M5-21: adoption is admission, so it takes the conversation off the shelf too — server.ts's
+  // `autoUnarchive`, the same one `thread/resume` runs, never a second spelling of it. AFTER the
+  // activation above so nothing about the protocol's ordering moves for an unarchived attach (which is
+  // every attach in practice), and after the reply because a marker store that cannot be read must not
+  // turn a successful adoption into a refusal.
+  //   The `held` early return above deliberately does NOT run it: that path is a rejoin of a thread this
+  // server already holds, which its own attach already unshelved — "opening a conversation" happened
+  // once, and announcing a transition per rejoin would report one that did not occur.
+  //   Guarded on `sessionId` because a fleet record's is whatever the host and the roster could say
+  // (`admitFleet`), and a thread with no store id has no marker anyone could have written.
+  if (record.sessionId) await srv.autoUnarchive(ctx, record.sessionId);
 };

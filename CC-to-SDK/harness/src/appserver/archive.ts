@@ -14,11 +14,17 @@ export interface ArchiveDeps { ccxDir?: string }
  *  silently, since a readdir of the wrong directory just answers "nothing is archived". */
 const dirOf = (deps: ArchiveDeps): string => join(deps.ccxDir ?? fleetRoot(), "archived");
 
+/** This store's ONE typed refusal (Task 9). The store itself stays protocol-free — it knows nothing about
+ *  JSON-RPC codes, exactly as `configWrite.ts` knows nothing about them and `configDomain.ts` assigns them
+ *  — but a handler mapping this to a PARAMETER error rather than an internal one must be able to tell it
+ *  apart from an errno, and message-matching a bare `Error` is the version of that which rots. */
+export class MarkerIdError extends Error {}
+
 /** Markers are filenames; a sessionId that could walk the path refuses loudly. Store ids are UUIDs,
  *  so this rejects nothing real. */
 const checkId = (sessionId: string): void => {
   if (!/^[A-Za-z0-9._-]+$/.test(sessionId) || sessionId === "." || sessionId === "..")
-    throw new Error(`sessionId is not marker-safe: ${JSON.stringify(sessionId)}`);
+    throw new MarkerIdError(`sessionId is not marker-safe: ${JSON.stringify(sessionId)}`);
 };
 
 export async function listArchived(deps: ArchiveDeps): Promise<Set<string>> {
