@@ -341,6 +341,13 @@ flips the `full-potential.md` rows and ships nothing.
     entry costs a missing warning and never a wrong refusal, so the stakes are low — but this is the
     "instrument rots under the code it verifies" pattern, and the house-consistent fix is to teach
     `scripts/drift-check.mjs`, which already walks source tokens for exactly this class of rot.
+  - **Subagent (nested) content is searchable but not jumpable** (Task 8 review F1, D-M5-20a). Occurrences
+    inside nested rows return a snippet and a row identity but `readCursor: null`, because the item pager
+    discards nested frames by design (M1: "attribution only, not itemized"). Making them jumpable needs an
+    addressing scheme `thread/read` does not currently have — the item ids nested frames would need are not
+    minted at all. Trigger: a client asking to navigate into subagent transcripts. Fix shape: item identity
+    for nested frames first, then the pager, then the cursor — in that order, since each is the previous
+    one's prerequisite.
   - **`mergeTracked` records no origin for an object node** (Task 1 Minor M2, resurfaced as the root of a
     Task 4 High). `config/read` cannot say which layer contributed an empty object. D-M5-13d removed the
     write side's dependency on it, so nothing is currently broken by it — but it remains a real gap in
@@ -698,6 +705,39 @@ flips the `full-potential.md` rows and ships nothing.
 - **D-M5-20 (rev 3) — cold targets must exist**: occurrences/archive refuse `THREAD_NOT_FOUND` for
   sessions the store does not know. Rejected: honest-looking empty results and phantom markers
   (plan review F16).
+- **D-M5-20a (Task 8 review, rev 5) — a nested (subagent) row stays in the occurrence corpus and
+  publishes `readCursor: null`.** The corpus classifier (`rowSearchText`) sorts rows by `type`/`rowKind`
+  and never reads `parent_tool_use_id`; the transcript pager discards exactly those rows at two places
+  (`items/mapper.ts:29`, and `items/replay.ts:31`'s `!f.parent_tool_use_id`). So every nested row was
+  **searchable and un-renderable**: `thread/searchOccurrences` published a `rowOffset`, a row `uuid` and a
+  `readCursor`, and feeding that cursor back into `thread/read` at any page size returned a window not
+  containing the match. Constructed on a live thread for both kinds (nested assistant text, nested user
+  prompt). Any session that ran a subagent has such rows.
+  This was a conflict **inside the spec**, which construction surfaced and reading could not: the literal
+  corpus clause ("exactly the corpus `sessions/rows.ts` classifies") was satisfied, while acceptance cell 6
+  ("each returned `readCursor` unchanged yields a window whose last row contains the match"), the stated
+  rationale for owning the classifier ("so search and replay cannot drift"), and the handler's own reason
+  for excluding metadata ("a jump target that cannot be jumped to") were all falsified.
+  **Chosen because it is the only resolution that satisfies all four at once.** Nested rows stay in the
+  corpus, so the corpus clause holds literally and pagination is untouched — a nested row still occupies
+  its position in the occurrence sequence, and `rowOffset`, the continuation cursor's `c`, and every page
+  boundary behave exactly as before. No cursor that fails to land is published, so the acceptance cell and
+  the jump-target rule hold. `thread/search`, `thread/read`, `mapper.ts` and `replay.ts` are all untouched,
+  so nothing drifts.
+  **The mechanism was already there.** `readCursor` is nullable with the exact meaning *no jump available*
+  — it is what a cold target returns, and a mutation composing a cursor for a cold session instead of
+  `null` is RED. Reusing that state beat inventing a rule; when a contract already has a state for "I
+  cannot answer that", reach for it.
+  Rejected: **filtering nested rows out of the corpus** — it breaks the corpus clause, and because
+  `thread/search` shares the classifier it would start answering *no match* for sessions that demonstrably
+  contain the text, which is the D-M5-8 lie this spec fights everywhere else (a session's match inside
+  subagent content is a real match; only the *jump* is unavailable). Rejected: **teaching the pager to
+  render nested rows** — it overturns M1's deliberate "attribution only, not itemized" on a shipped method,
+  a scope change M5 has no business making. Rejected: **documenting the limitation** — it leaves a
+  published cursor that provably does not land, which is a wire-contract violation, not a caveat.
+  Follow-up parked, not owed by M5: making subagent content jumpable is a genuine feature (it needs an
+  addressing scheme the item pager does not currently have), triggered when a client asks to navigate
+  subagent transcripts.
 - **D-M5-21 (rev 3) — admission auto-unarchives**: resume/attach of an archived session removes the
   marker and broadcasts. Rejected: leaving the archived-and-live state reachable by racing a second
   server (plan review F12); refusing resume of archived (archive is a shelf, not a lock).
@@ -837,6 +877,33 @@ flips the `full-potential.md` rows and ships nothing.
   gate stayed happy — because that gate compares the artifact against a fresh generation of the *changed*
   source. **Generalised: "redundant for enforcement" is never sufficient grounds to delete a zod
   refinement here, because enforcement is only half of what it does.**
+
+- **An oracle built from the contract found what an oracle built from the code could not.** Task 8's
+  shipped generated sweep and the reviewer's sweep test the same property; only one could have found the
+  residual. The reviewer derived its expectation from the *published* rule (floor the start, ceil the end,
+  measured through prefix lowered-lengths) rather than from the implementation, and then widened the inputs
+  along three axes the shipped sweep had closed off: **uppercase and mixed-case terms** (the shipped sweep
+  filters them out entirely — and they are the only inputs where the term-length residual is visible at
+  all), **rows long enough that the 200-unit snippet window actually clips** (the shipped sweep's rows are
+  short enough that the snippet simply *is* the row, so the window arithmetic never runs), and an alphabet
+  extended with the genuinely hostile code points. 488 occurrences over 320 rows, all correct — and the
+  sweep is trustworthy because it goes red under three separate range mutations. **The generalisation: a
+  self-written sweep tends to generate the inputs the implementation already handles, because the same
+  mental model produced both.** Ask of any passing sweep which inputs it *cannot* produce.
+- **A guard whose failure mode is the mirror of the bug it fixed.** Task 8's sabotage driver produced a
+  false green (a syntax-error mutation collected zero tests, and "no failed assertions" read as a passing
+  guard), so a collection-count guard was added. But when that guard fires it records `RUN ERROR (likely a
+  compile break — still a red)` — counting a run that proves nothing as *defended*. The same error,
+  pointing the other way. No reported row took that path, so the evidence stood; the mechanism did not.
+  **Worth generalising: a guard added in response to a false pass needs its own answer to "what does this
+  do when it fires", or it just relocates the false pass.**
+- **Mutation evidence rots when the code under it is fixed mid-task.** One row of Task 8's sabotage table
+  (S7) was measured against a `readCursor` spelling that was replaced later in the same task by the
+  one-epoch-read fix; re-run afterwards, the driver reports `ANCHOR NOT UNIQUE (count=0) — mutation not
+  applied`, so the recorded RED count was never re-taken. The claim turned out true when re-spelled against
+  the shipped line, but the table asserted it on evidence that had expired. **A sabotage table is a
+  measurement against a specific tree, and any fix that lands after it invalidates the rows whose anchors
+  it touched** — re-run the driver after the last fix, not before it.
 
 ## Outcomes & Retrospective
 
