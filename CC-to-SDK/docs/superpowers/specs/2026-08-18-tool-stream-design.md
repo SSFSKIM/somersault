@@ -255,12 +255,24 @@ producer id (`"bash-progress-0"`); the real id lives in `parent_tool_use_id`.
   callback: the deps are supplied at the `chatMain` mount, but the sink's owner is
   `ChatApp`, a descendant holding the tap state, expansion set, and row-map ref). Mouse
   events never enter the binding table — canon's clicks are not keybindings either.
-- **Tap detection** lives in the sink's owner: a `press(0)` records `(col,row)`; a
-  `release` at the same cell within no particular deadline is a click; anything else —
-  release elsewhere, a second press, **or any wheel tick in between** (the page scrolled
-  under the anchor) — discards the anchor. Only button 0 clicks act; modified clicks
-  (ctrl/alt/shift) are ignored (Shift never arrives anyway — terminals bypass reporting
-  for shifted mouse).
+- **Tap detection** lives in the sink's owner. **The anchor is the resolved cluster, not
+  the cell** (corrected round 15): a `press(0)` records `(col,row)` *and* the anchor
+  `anchorAt` resolves there; a `release` is a click only when it lands on the same cell
+  **and still resolves to the same anchor**. There is no deadline. Only button 0 acts;
+  modified clicks (ctrl/alt/shift) are ignored (Shift never arrives anyway — terminals
+  bypass reporting for shifted mouse). A second press re-arms at its own cell rather than
+  disarming — the reading a user expects, and pinned either way.
+  Why identity rather than position: the wave's first cut discarded the anchor only on a
+  wheel tick, on the theory that the wheel is what moves the page. It is not the only
+  mover, and not even the common one — **sticky-bottom streaming shifts the document under
+  a held button with no gesture at all**. Measured during T10's review: press on
+  `Read 2 files`, two assistant messages arrive mid-click, and the release expands
+  `Read 3 files` — a cluster the user never touched, in exactly the live-turn state where
+  tool clusters appear. A physical click holds the button 60–150 ms; stream deltas arrive
+  far more often than that. Comparing the resolved anchor covers the wheel, keyboard
+  scroll, streaming, resize re-wrap and a document swap in one comparison, and is strictly
+  stronger than the cell test alone. Keep the wheel discard as well — it is cheap, it is
+  what canon does, and it kills a gesture the page has already invalidated.
 
 **Architectural fact that governs every click question in this wave (recorded round 12):
 ccx has no occlusion, because occlusion is omission.** `FullscreenFrame` is flow layout —
@@ -458,6 +470,21 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 15 — 2026-08-19, T10 review (execution).** The chain closes: a click on a collapsed
+cluster expands it, end to end. The review found the one defect isolated tests structurally
+could not — the tap was anchored to a terminal CELL, so any document movement between press
+and release lands it on whatever cluster now occupies that cell, and streaming moves the
+document with no gesture at all. Proven with a live probe. §3.2's tap rule above is corrected
+to anchor on the resolved cluster identity. Two more dead cells found by the implementer
+(seven and eight for the wave): the ctrl+o pager cell cannot test the gate, because the pager
+REPLACES the viewport so the hit map is detached and the click is inert for reasons unrelated
+to the gate — replaced with the model picker, a seam surface that leaves the viewport painting
+beneath it, which is the only shape in this codebase where the gate is the sole refuser (a
+consequence of round 12's "occlusion is omission"). And the gate's `fullscreen` term is
+unfalsifiable: three independent facts already make a classic click impossible. Kept anyway,
+deliberately — one token, versus letting "classic has no click path" rest on three incidental
+facts that separate refactors could each remove with no cell noticing.
 
 **Round 14 — 2026-08-19, T9 review (execution).** PASS/PASS. §3.3's column-bound rule was
 wrong in two independent ways and is corrected above — the implementer caught the wide-leader
