@@ -612,12 +612,17 @@ describe("main — run: foreground (Task 7)", () => {
     expect(value).toBe(1);
     expect(err.join("\n")).toContain("No conversation found with session ID: zzzz");
   });
-  it("fails on a roster row that has minted no session id yet, naming that as the reason (Task 9)", async () => {
+  it("fails on a roster row holding no conversation, naming BOTH states the absent id can mean (Task 9)", async () => {
+    // The sentence used to say "has not started a conversation yet", which was the only meaning an absent
+    // roster `sessionId` had before A1 made the field a liveness claim. A host that `/clear`s now lands
+    // here too, and it demonstrably HAS started one — so the row asserts the reason is stated as the pair
+    // the roster genuinely cannot distinguish, rather than as the half that happens to be older.
     const { err, value } = await captureLog(() => main(["--resume", "k3f9"], deps({
       isTTY: () => true, resolveResume: async () => ({ kind: "pending", short: "k3f9" }),
     })));
     expect(value).toBe(1);
-    expect(err.join("\n")).toContain("Session k3f9 has not started a conversation yet");
+    expect(err.join("\n")).toContain("Session k3f9 holds no conversation to resume");
+    expect(err.join("\n")).toContain("/clear discarded the one it had");
   });
   it("points a STILL-RUNNING session at attach rather than resuming it twice (Task 9)", async () => {
     const { err, value } = await captureLog(() => main(["--resume", "k3f9"], deps({

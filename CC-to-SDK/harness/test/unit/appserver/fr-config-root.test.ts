@@ -71,6 +71,16 @@ describe("the config domain's user layer follows CLAUDE_CONFIG_DIR", () => {
     // had its own; this holds the two together so a later edit to either cannot re-split them.
     for (const env of [{ HOME: "/h" }, { HOME: "/h", CLAUDE_CONFIG_DIR: "/t/cfg" }])
       expect(sessionsDir(env)).toBe(join(claudeConfigDir(env), "sessions"));
+    // An EXPORTED-BUT-EMPTY variable is a VALUE, not an absence — the reference resolves with `??` and
+    // reads `./settings.json` relative to its cwd, so `||` answered about a file the engine does not
+    // read. The one env shape the original fix did not cover, and a shell writes it for
+    // `CLAUDE_CONFIG_DIR="$SOMETHING_UNSET"`. Absent still falls back, which is the other side.
+    expect(claudeConfigDir({ HOME: "/h", CLAUDE_CONFIG_DIR: "" })).toBe("");
+    expect(claudeConfigDir({ HOME: "/h" })).toBe("/h/.claude");
+    // NFC, the reference's own, applied to the whole result: on a filesystem that does not fold the two
+    // forms together the engine opens the composed spelling, and a view reporting the decomposed one
+    // would be describing a different file. Two spellings of `café`, one answer.
+    expect(claudeConfigDir({ CLAUDE_CONFIG_DIR: "/t/cafe\u0301" })).toBe("/t/caf\u00e9");  // NFD in, NFC out
   });
   it("userLayerDir: the env answers in production, and an injected configHome still wins over it", () => {
     // Both sides. Without the dep the environment decides — that is the whole finding. With the dep, the
