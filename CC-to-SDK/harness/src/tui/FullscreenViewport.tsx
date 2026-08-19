@@ -65,11 +65,17 @@
 // — no second layout walk, and nothing to keep in step with the paint — and published on its own imperative
 // handle beside the scroll one, read through a ref for the reason the scroll closures are (it is called from
 // a stdin listener, outside React).
-//   THE ORIGIN COMES FROM THE FRAME (`useRegionTop`) rather than from an assumption here, and it is also the
-// RENDERER GATE: `groupItems` tags fold rows unconditionally, including under the classic renderer where the
-// field never paints, so a map keyed on "does this row carry a tag" would hand a classic surface clickable
-// rows. Keyed on a published origin, only a bounded frame has any — the classic arm publishes 0 and every
-// cell answers `undefined`.
+//   THE COLUMN ORIGIN IS THE ONE HALF STILL ASSUMED, and it is assumed HERE: column 1 is taken to be the
+// region's first column. True today — nothing on the path from `ChatApp`'s mount through the frame's three
+// Boxes sets a `padding` or a `margin`, so the region is full-bleed — and unlike the row origin there is no
+// channel publishing it, because there is nothing yet to publish. It is the same class of assumption the
+// vertical one was: a `paddingX` on the region someday shifts every column bound by that many cells with
+// nothing to say so, and the fix is the same shape (publish the inset, subtract it here).
+//   THE ROW ORIGIN COMES FROM THE FRAME (`useRegionTop`) rather than from an assumption here, and it is also
+// the RENDERER GATE: `groupItems` tags fold rows unconditionally, including under the classic renderer where
+// the field never paints, so a map keyed on "does this row carry a tag" would hand a classic surface
+// clickable rows. Keyed on a published origin, only a bounded frame has any — the classic arm publishes 0
+// and every cell answers `undefined`.
 //   WHAT IT DOES NOT NEED IS AN OCCLUSION TEST. ccx has no overdraw: the layout is flow-based and a surface
 // that takes the seam is rendered INSTEAD of the dock, never over it (spec, and `FullscreenFrame`'s header).
 // A published row map is therefore always current, and the question "is something drawn over this cell" has
@@ -153,7 +159,14 @@ type HitRow = { anchor: string; width: number } | undefined;
  *  drops blank-cell clicks (549361) — so the width is the row's PAINTED extent: its plain text, plus the
  *  gutter columns ahead of it, measured in terminal cells rather than characters (a fold row's leader is
  *  `⏺`, two columns and one character). Clamped to the region's width, which is where a `truncate-end`
- *  header — the one row that can be wider than the pane — actually stops. */
+ *  header — the one row that can be wider than the pane — actually stops.
+ *    IT IS `stringWidth` AND NOT `.length`, AND THAT IS A FIX-ROUND FINDING RATHER THAN A PREFERENCE. Swap
+ *  either measure back and an all-ASCII fixture stays green while the last cell of every ACTIVE cluster row
+ *  goes inert — the blinking-leader row, the one most likely to be clicked mid-turn. `fold-hitmap.test.tsx`
+ *  therefore carries a document whose painted extent DIFFERS from its character count (a `⏺` leader, a CJK
+ *  hint body, a gutter-bearing line); those cells are the defence, and both call sites here are covered.
+ *  The line arm's gutter term has no tagged producer today — a cluster row is never an assistant bullet —
+ *  and is the `RenderLine` contract rather than dead weight; the fixture pins it as such. */
 const hitRow = (anchor: string | undefined, width: number, columns: number): HitRow =>
   anchor === undefined ? undefined : { anchor, width: Math.min(width, columns) };
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
@@ -177,6 +190,11 @@ function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): readonl
 const START: AnchorState = { offset: Number.POSITIVE_INFINITY, sticky: true };
 /** A stable empty default, so an absent `queuedItems` cannot invalidate the document memo every render. */
 const EMPTY_ITEMS: readonly RenderItem[] = [];
+/** The map of a frame nobody can ask about. Every mount outside the click path — every component test, and
+ *  ChatApp itself until T10 wires the ref — takes this instead of walking the slices for an answer that has
+ *  no reader. The walk is one `stringWidth` per painted row and costs nothing; the guard is here for the
+ *  file's own memoisation discipline, which is "derive what is consumed". */
+const NO_HIT_ROWS: readonly HitRow[] = [];
 
 export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, scrollRef, hitmapRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
@@ -306,7 +324,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // ONE PASS, TWO PRODUCTS: the rows below and the map of them. Derived from `slices` rather than re-sliced,
   // so the map is the paint by construction — including the row the pill takes, which `body` has already
   // removed from the window and which therefore has no entry to be clicked.
-  hit.current = { top: regionTop, rows: hitRowsOf(slices, columns) };
+  hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS };
   // Keyed by item id AND slice index: one item can contribute at most one slice to a window, but the index
   // keeps the key stable when the same block is re-sliced at a different offset.
   return <>

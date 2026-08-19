@@ -114,6 +114,11 @@ export function useRegionRows(): number { return useContext(RegionRowsContext); 
  *  and a test reading it directly; widening it into an object to carry a second fact would edit all four for
  *  a value only one of them wants.
  *
+ *  MODULE-PRIVATE, like the two constants it is built from. The value crosses the boundary as the CONTEXT
+ *  and nothing else: the click path reads terminal rows and gets an anchor back, so no consumer — T10's
+ *  tap detector included — ever needs the origin as a number. Exporting it would offer a second way to
+ *  learn the same fact, which is the one thing a published origin exists to prevent.
+ *
  *  DEFAULT 0 — "this row is not addressable", which is also what the CLASSIC arm publishes and is the whole
  *  renderer gate. `groupItems` tags fold rows with `foldAnchor` unconditionally (the field simply never
  *  paints on the main screen), so a map that keyed off tag presence would hand a classic surface clickable
@@ -127,7 +132,7 @@ const FRAME_TOP_ROW = 1;
 /** How many rows the frame paints ABOVE the region. Zero: the region is the frame's first band (see the
  *  element tree below — nothing precedes it). This is the line a banner would change. */
 const ROWS_ABOVE_REGION = 0;
-export const REGION_TOP_ROW = FRAME_TOP_ROW + ROWS_ABOVE_REGION;
+const REGION_TOP_ROW = FRAME_TOP_ROW + ROWS_ABOVE_REGION;
 
 /** The park row: the one physical row of the terminal the frame deliberately does not own. */
 export const PARK_ROW = 1;

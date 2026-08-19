@@ -23,6 +23,7 @@
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { render } from "ink-testing-library";
+import stringWidth from "string-width";
 import { Box, Text } from "ink";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { FullscreenViewport, type ViewportHitmap, type ViewportScroll } from "../../src/tui/FullscreenViewport.js";
@@ -58,15 +59,42 @@ const DOC: readonly RenderItem[] = [
   { kind: "line", id: "g:read-2:row", line: { text: WRAP_TEXT }, foldAnchor: "read-2" },
   plain("P9"),
 ];
+
+/** THE WIDTH DOCUMENT — the one thing `DOC` above cannot say, because every string in it is ASCII. The bound
+ *  the viewport applies is a PAINTED extent (`stringWidth`, plus the row's gutter columns), and against pure
+ *  ASCII that is character-for-character the same number as `text.length`: swap the measure and every case in
+ *  this file stays green while the last cell of every active cluster row quietly stops answering. So these
+ *  three rows are chosen for the property that they DISAGREE with their own character count, one per width
+ *  expression the map contains.
+ *    Five painted rows, all of them inside the eight-row window, so the geometry note at the top of this file
+ *  is untouched and `rowOf` still locates each row in the frame that was painted. */
+const ACTIVE_FOLD_TEXT = "⏺ Reading 1 file";   // 16 chars, 17 columns — `⏺` is ONE character, TWO cells
+const CJK_HINT_TEXT = "読み込み中";              // 5 chars, 10 columns, at the gutter's 5-column offset
+const BULLET_TEXT = "assistant";                 // behind a `RenderLine.gutter` of `"⏺ "` — 2 chars, 3 columns
+const WIDE_DOC: readonly RenderItem[] = [
+  plain("W0"),
+  // The ACTIVE group row as `groupRowLine` really builds it: the leader is part of `line.text` (a segment,
+  // joined into the plain text), not a gutter — so `text.length` is one short of the row's last painted cell.
+  { kind: "line", id: "g:read-9:row", line: { text: ACTIVE_FOLD_TEXT }, foldAnchor: "read-9" },
+  // The same cluster's hint block with a wide body. Two bounds in one row: the five gutter columns ahead of
+  // the text, and the text's own doubled cells.
+  { kind: "gutter-block", id: "g:read-9:pending-hint", gutter: GROUP_HINT_GUTTER, body: [{ text: CJK_HINT_TEXT }], foldAnchor: "read-9" },
+  // The line arm's GUTTER term, which the two rows above do not reach. No projection tags a gutter-bearing
+  // line today (a cluster row is never an assistant bullet), so this row is the `RenderItem` union's case
+  // rather than a screenshot of production — deliberately, because it is the only cover that term has.
+  { kind: "line", id: "g:read-9:bullet", line: { text: BULLET_TEXT, gutter: { text: "⏺ " } }, foldAnchor: "read-9" },
+  plain("W1"),
+];
 const dock = (n: number) => <Box flexDirection="column">{Array.from({ length: n }, (_, i) => <Text key={i}>{`D${i}`}</Text>)}</Box>;
 
 /** The production tree, minus everything that is not this question: a real frame, the empty `<Transcript>`
  *  that really sits above the viewport in the region, and the viewport. `rows` is the viewport's own budget
- *  override — omitted everywhere except the classic case, which has no grant to be given. */
-const scene = (opts: { hitmap: React.Ref<ViewportHitmap>; scroll?: React.Ref<ViewportScroll>; classic?: boolean; rows?: number }) => (
+ *  override — omitted everywhere except the two cases that render a classic arm, which has no grant to give;
+ *  `items` swaps the document for the width fixture below. */
+const scene = (opts: { hitmap: React.Ref<ViewportHitmap>; scroll?: React.Ref<ViewportScroll>; classic?: boolean; rows?: number; items?: readonly RenderItem[] }) => (
   <FullscreenFrame mode={opts.classic ? "classic" : "fullscreen"} rows={FRAME_ROWS} dock={dock(3)} regionChildren={<>
     <Transcript staticItems={NO_ITEMS} pendingItems={NO_ITEMS} streaming={NO_LINES} />
-    <FullscreenViewport finalizedItems={DOC} pendingItems={NO_ITEMS} streaming={NO_LINES} columns={COLS}
+    <FullscreenViewport finalizedItems={opts.items ?? DOC} pendingItems={NO_ITEMS} streaming={NO_LINES} columns={COLS}
       rows={opts.rows} hitmapRef={opts.hitmap} scrollRef={opts.scroll} />
   </>} />
 );
@@ -80,8 +108,13 @@ describe("T9: the viewport hitmap resolves a terminal cell to its fold anchor", 
     const { lastFrame } = render(scene({ hitmap }));
     await settle();
     const frame = lastFrame();
-    // The origin, asserted rather than assumed: the region's first terminal row is the VIEWPORT's first row,
-    // which is only true while the `<Transcript>` above it paints nothing (see the header).
+    // THE ORIGIN INVARIANT, and this one line is the whole of its defence: the frame's FIRST PAINTED ROW is
+    // the viewport's FIRST DOCUMENT ROW. Both halves of the origin ride on it — the frame's published
+    // `REGION_TOP_ROW` (nothing paints above the region) and the viewport's "my rows start where the region
+    // does" (the `<Transcript>` sibling contributes none). Neither is measurable: Ink answers a size and
+    // never a position, so an origin can be computed or asserted against a paint, and this is the assertion.
+    // A banner, a padded region or a Transcript that starts emitting rows breaks it HERE rather than as a
+    // silent off-by-N in the click path.
     expect(strip(rowsOf(frame)[0])).toBe("P6");
     expect(rowsOf(frame)).toHaveLength(11);                          // 8 region + 3 dock — the frame's budget
 
@@ -149,6 +182,73 @@ describe("T9: the viewport hitmap resolves a terminal cell to its fold anchor", 
     const pill = 8;
     expect(strip(rowsOf(lastFrame())[pill - 1])).toContain("↓");
     expect(hitmap.current!.anchorAt(1, pill)).toBeUndefined();
+  });
+
+  it("bounds every row at its PAINTED width, never at its character count", async () => {
+    // FIX-ROUND CELL (round 1). Reverting either `stringWidth` in `hitRowsOf` to `.length` left all five of
+    // the cells above green, because `DOC` is ASCII throughout and `GROUP_HINT_GUTTER.length` happens to
+    // equal its display width. Nothing in the file could tell the two rules apart, and the rule that would
+    // survive the swap makes the last cell of every ACTIVE cluster row — the blinking-leader row, the one a
+    // reader clicks mid-turn — inert. `WIDE_DOC` exists so that it cannot.
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame } = render(scene({ hitmap, items: WIDE_DOC }));
+    await settle();
+    const frame = lastFrame();
+    // The fixture's own premise, asserted before anything is built on it: these three strings are WIDER than
+    // they are long, or the cells below would prove nothing.
+    expect(stringWidth(ACTIVE_FOLD_TEXT)).toBe(ACTIVE_FOLD_TEXT.length + 1);
+    expect(stringWidth(CJK_HINT_TEXT)).toBe(CJK_HINT_TEXT.length * 2);
+    expect(stringWidth("⏺ ")).toBe(3);
+
+    // 1 — THE LEADER ROW. `⏺` is one character and two columns, so the last cell that has text is at
+    // `stringWidth(text)`, one PAST `text.length`. A character-count bound answers `undefined` there.
+    const lead = rowOf(frame, ACTIVE_FOLD_TEXT);
+    expect(hitmap.current!.anchorAt(ACTIVE_FOLD_TEXT.length, lead)).toBe("read-9");
+    expect(hitmap.current!.anchorAt(stringWidth(ACTIVE_FOLD_TEXT), lead)).toBe("read-9");
+    expect(hitmap.current!.anchorAt(stringWidth(ACTIVE_FOLD_TEXT) + 1, lead)).toBeUndefined();
+
+    // 2 — A GUTTER BLOCK'S BODY ROW, whose text starts at column 6 and whose cells are doubled. Both terms
+    // of that arm are pinned at once: drop the gutter and the row ends at 10, count characters and it ends
+    // at 10 as well — the same wrong answer from either mistake, five cells short of the text it paints.
+    const hint = rowOf(frame, `⎿  ${CJK_HINT_TEXT}`);
+    expect(hitmap.current!.anchorAt(GROUP_HINT_GUTTER.length + 1, hint)).toBe("read-9");   // first text cell
+    expect(hitmap.current!.anchorAt(GROUP_HINT_GUTTER.length + stringWidth(CJK_HINT_TEXT), hint)).toBe("read-9");
+    expect(hitmap.current!.anchorAt(GROUP_HINT_GUTTER.length + stringWidth(CJK_HINT_TEXT) + 1, hint)).toBeUndefined();
+
+    // 3 — THE LINE ARM'S OWN GUTTER, the third width expression and the one no production row reaches yet
+    // (see `WIDE_DOC`). `"⏺ "` paints three columns out of two characters.
+    const bullet = rowOf(frame, `⏺ ${BULLET_TEXT}`);
+    expect(hitmap.current!.anchorAt(stringWidth("⏺ ") + BULLET_TEXT.length, bullet)).toBe("read-9");
+    expect(hitmap.current!.anchorAt(stringWidth("⏺ ") + BULLET_TEXT.length + 1, bullet)).toBeUndefined();
+  });
+
+  it("goes dead when a MOUNTED frame flips to classic — the gate is the published origin", async () => {
+    // FIX-ROUND CELL (round 1). The case below mounts the classic arm from cold with the viewport's own
+    // `rows` override, which means it also passes against a viewport that never reads `useRegionTop` at all:
+    // the synthetic mount hands the budget over directly while the ROWS context still answers 0, so "some
+    // gate exists" is all that is pinned. Replacing `useRegionTop()` with a local derivation kept every cell
+    // green. Flipping the SAME mounted frame from one renderer to the other, at one geometry, with one
+    // document, leaves the published origin as the only thing that changed — so this is the cell that says
+    // the gate IS the frame's origin. It is also the only cover the flip path has.
+    //   WHAT IT STILL CANNOT SEPARATE, measured rather than assumed: an origin derived from the OTHER frame
+    // channel — `useRegionRows() > 0 ? 1 : 0` — passes every cell in this file, because the rows context is
+    // 0 on exactly the renderer the top context is 0 on. The two are indistinguishable at every geometry the
+    // frame can produce, and they part company only the day something paints ABOVE the region: the rows
+    // channel would still say "bounded" while every row moved down. That day is what the published origin
+    // exists for and what no synthetic mount can stage — the paint-order canary in the first case is the
+    // half of it a test CAN hold.
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame, rerender } = render(scene({ hitmap, rows: 8 }));
+    await settle();
+    const foldRow = rowOf(lastFrame(), FOLD_TEXT);
+    expect(hitmap.current!.anchorAt(1, foldRow)).toBe("read-1");
+
+    rerender(scene({ hitmap, classic: true, rows: 8 }));
+    await settle();
+    // The paint is unchanged — same rows, same document, same window — so nothing about WHERE the cluster is
+    // can explain the answer below. Only the origin the frame publishes has moved, from 1 to 0.
+    expect(rowOf(lastFrame(), FOLD_TEXT)).toBe(foldRow);
+    expect(hitmap.current!.anchorAt(1, foldRow)).toBeUndefined();
   });
 
   it("resolves nothing under the classic renderer, tagged rows and all", async () => {
