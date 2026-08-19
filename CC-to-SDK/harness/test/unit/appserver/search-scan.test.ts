@@ -1,6 +1,6 @@
 // test/unit/appserver/search-scan.test.ts
 import { describe, it, expect } from "vitest";
-import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, rowSearchText, makeSnippet, originalSpan } from "../../../src/appserver/searchScan.js";
+import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, fingerprint, rowSearchText, makeSnippet, originalSpan } from "../../../src/appserver/searchScan.js";
 
 describe("searchScan", () => {
   it("compareTuple: nulls last both directions; sessionId tiebreak asc", () => {
@@ -21,12 +21,11 @@ describe("searchScan", () => {
     expect(sortForSearch(rows, "desc", vo).map((r) => r.sessionId)).toEqual(["a", "b", "c", "d"]);
   });
   it("both cursor codecs round-trip and reject garbage AND each other", () => {
-    const c = { v: 123, s: "sess", r: 7 };
+    const c = { v: 123, s: "sess", r: 7, q: "qq", g: "L3" };
     expect(decodeSearchCursor(encodeSearchCursor(c))).toEqual(c);
     expect(decodeSearchCursor("not-a-cursor")).toBeNull();
-    const o = { s: "x", r: 3, c: 17, e: 2 };
+    const o = { s: "x", r: 3, c: 17, q: "qq", g: "L2" };
     expect(decodeOccCursor(encodeOccCursor(o))).toEqual(o);
-    expect(decodeOccCursor(encodeOccCursor({ s: "x", r: 0, c: 0, e: null }))!.e).toBeNull();
     expect(decodeOccCursor(encodeSearchCursor(c))).toBeNull();
     expect(decodeSearchCursor(encodeOccCursor(o))).toBeNull();
   });
@@ -150,7 +149,7 @@ describe("searchScan — ordering under adversarial and equal keys", () => {
         if (page.length === 0) break;
         for (const r of page) seen.push(r.sessionId);
         const last = page[page.length - 1]!;
-        cursor = encodeSearchCursor({ v: vo(last), s: last.sessionId, r: 0 }); // round-tripped, so the codec is in the loop
+        cursor = encodeSearchCursor({ v: vo(last), s: last.sessionId, r: 0, q: "sweep", g: "" }); // round-tripped, so the codec is in the loop
       }
       return seen;
     };
@@ -194,16 +193,16 @@ describe("searchScan — cursor codecs against forged input", () => {
     // Rewriting it as `p.c !== undefined` passes every row in this file, and that is correct rather than a
     // hole: JSON carries no `undefined`, so over any `JSON.parse` result the two are the same predicate
     // (checked directly, both forms agree on `c:null`, `c:0`, `c` absent, and a `__proto__` payload).
-    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2, c: null }))).toBeNull();
-    expect(decodeOccCursor(forge({ s: "a", r: 1, c: 1, e: null, v: null }))).toBeNull();
-    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2 }))).toEqual({ v: 1, s: "a", r: 2 });
+    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2, q: "x", g: "", c: null }))).toBeNull();
+    expect(decodeOccCursor(forge({ s: "a", r: 1, c: 1, q: "x", g: "", v: null }))).toBeNull();
+    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2, q: "x", g: "" }))).toEqual({ v: 1, s: "a", r: 2, q: "x", g: "" });
   });
 
   it("round-trip is lossless for hostile sessionIds and the encoding stays URL-safe", () => {
     for (const s of ['a"b\nc\\d', "\u{1F600}\u{10FFFF}", "\uD83D", "a/b+c=d", "  ", "—em—"]) {
-      const enc = encodeSearchCursor({ v: 1, s, r: 0 });
+      const enc = encodeSearchCursor({ v: 1, s, r: 0, q: "x", g: "" });
       expect(enc).not.toMatch(/[+/=]/); // base64url, so a cursor survives a query string untouched
-      expect(decodeSearchCursor(enc)).toEqual({ v: 1, s, r: 0 });
+      expect(decodeSearchCursor(enc)).toEqual({ v: 1, s, r: 0, q: "x", g: "" });
     }
   });
 
@@ -213,18 +212,45 @@ describe("searchScan — cursor codecs against forged input", () => {
     // the cursor did not name (the intra-file skip/repeat D-M5-16 exists to kill). `r` and the occurrence
     // cursor's `c` must be non-negative safe integers; ±Infinity/NaN arrive as JSON `null` and fail too.
     for (const bad of [-1, -0.5, 2.5, NaN, Infinity, -Infinity, 2 ** 53, 1e308]) {
-      expect(decodeSearchCursor(forge({ v: 1, s: "a", r: bad }))).toBeNull();
-      expect(decodeOccCursor(forge({ s: "a", r: bad, c: 0, e: null }))).toBeNull();
-      expect(decodeOccCursor(forge({ s: "a", r: 0, c: bad, e: null }))).toBeNull();
+      expect(decodeSearchCursor(forge({ v: 1, s: "a", r: bad, q: "x", g: "" }))).toBeNull();
+      expect(decodeOccCursor(forge({ s: "a", r: bad, c: 0, q: "x", g: "" }))).toBeNull();
+      expect(decodeOccCursor(forge({ s: "a", r: 0, c: bad, q: "x", g: "" }))).toBeNull();
     }
-    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 0 }))).toEqual({ v: 1, s: "a", r: 0 }); // 0 is in range
-    expect(decodeOccCursor(forge({ s: "a", r: 0, c: 0, e: null }))).toEqual({ s: "a", r: 0, c: 0, e: null });
+    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 0, q: "x", g: "" }))).toEqual({ v: 1, s: "a", r: 0, q: "x", g: "" }); // 0 is in range
+    expect(decodeOccCursor(forge({ s: "a", r: 0, c: 0, q: "x", g: "" }))).toEqual({ s: "a", r: 0, c: 0, q: "x", g: "" });
     // The `v: null` round-trip is now a TRUE claim rather than a hazard: JSON has no NaN/Infinity so a
     // non-finite `v` encodes as null, and `sortValueOf` screens non-finite values to null as well — so the
     // cursor's "this session sorts last" is where `compareTuple` actually puts it.
-    expect(decodeSearchCursor(encodeSearchCursor({ v: NaN, s: "a", r: 0 }))).toEqual({ v: null, s: "a", r: 0 });
-    expect(decodeSearchCursor(encodeSearchCursor({ v: Infinity, s: "a", r: 0 }))).toEqual({ v: null, s: "a", r: 0 });
+    expect(decodeSearchCursor(encodeSearchCursor({ v: NaN, s: "a", r: 0, q: "x", g: "" }))).toEqual({ v: null, s: "a", r: 0, q: "x", g: "" });
+    expect(decodeSearchCursor(encodeSearchCursor({ v: Infinity, s: "a", r: 0, q: "x", g: "" }))).toEqual({ v: null, s: "a", r: 0, q: "x", g: "" });
     expect(sortValueOf({ createdAt: NaN, lastModified: 0 }, "created_at")).toBeNull();
+  });
+
+  it("a FORGED non-finite v is refused at decode — screening the mint side was only half of it", () => {
+    // D-M5-26. `JSON.stringify` cannot express Infinity, so a hand-written payload is the only way to
+    // deliver one, and `JSON.parse` turns `1e999` into it. The row above pins the MINT side (a non-finite
+    // `v` leaves as null); this pins the DECODE side, which admitted it, because `typeof p.v === "number"`
+    // is true of Infinity. Measured before the fix: in the schema's default `desc` direction `compareTuple`
+    // answered `Infinity >= 0` at index 0, so the walk restarted at the top and re-delivered every row the
+    // client already held, under a `nextCursor: null` claiming the walk was over; in `asc` the same cursor
+    // produced an empty terminal page. Neither is an answer any mint could have asked for.
+    const raw = (json: string) => Buffer.from(json, "utf8").toString("base64url");
+    expect(decodeSearchCursor(raw('{"v":1e999,"s":"a","r":0,"q":"x","g":""}'))).toBeNull();
+    expect(decodeSearchCursor(raw('{"v":-1e999,"s":"a","r":0,"q":"x","g":""}'))).toBeNull();
+    // …and the two values a mint DOES produce still decode, so this is a screen, not a blanket refusal.
+    expect(decodeSearchCursor(raw('{"v":null,"s":"a","r":0,"q":"x","g":""}'))).toEqual({ v: null, s: "a", r: 0, q: "x", g: "" });
+    expect(decodeSearchCursor(raw('{"v":0,"s":"a","r":0,"q":"x","g":""}'))).toEqual({ v: 0, s: "a", r: 0, q: "x", g: "" });
+  });
+
+  it("fingerprint separates its parts, so two different walks cannot share one binding", () => {
+    // The whole value of `q` is that a DIFFERENT query fingerprints differently; a joiner that concatenated
+    // without a separator would collide `("ab","c")` with `("a","bc")` and hand two walks one cursor.
+    expect(fingerprint(["ab", "c"])).not.toBe(fingerprint(["a", "bc"]));
+    // …and the three "empties" a search request really produces are three different walks: `cwd` absent,
+    // `cwd: ""`, and a null are distinguished rather than folded.
+    expect(new Set([fingerprint(["t", undefined]), fingerprint(["t", ""]), fingerprint(["t", null])]).size).toBe(3);
+    // Stable across calls — a fingerprint that varied would refuse every second page of every walk.
+    expect(fingerprint(["needle", "created_at", "desc", false, undefined])).toBe(fingerprint(["needle", "created_at", "desc", false, undefined]));
   });
 
   it("a cursor MISSING any required field decodes to null, in both codecs", () => {
@@ -232,16 +258,16 @@ describe("searchScan — cursor codecs against forged input", () => {
     // object, a foreign field, or a non-object payload. Relaxing `typeof p.r !== "number"` to also accept
     // `undefined` survived the whole suite — and an `undefined` `r` reaching `getSessionMessages({offset})`
     // restarts the file at row 0, returning every row of that transcript again on the next page.
-    for (const drop of ["v", "s", "r"] as const) {
-      const p: Record<string, unknown> = { v: 1, s: "a", r: 2 }; delete p[drop];
+    for (const drop of ["v", "s", "r", "q", "g"] as const) {
+      const p: Record<string, unknown> = { v: 1, s: "a", r: 2, q: "x", g: "L1" }; delete p[drop];
       expect([drop, decodeSearchCursor(forge(p))]).toEqual([drop, null]);
     }
-    for (const drop of ["s", "r", "c", "e"] as const) {
-      const p: Record<string, unknown> = { s: "a", r: 1, c: 2, e: 3 }; delete p[drop];
+    for (const drop of ["s", "r", "c", "q", "g"] as const) {
+      const p: Record<string, unknown> = { s: "a", r: 1, c: 2, q: "x", g: "L1" }; delete p[drop];
       expect([drop, decodeOccCursor(forge(p))]).toEqual([drop, null]);
     }
-    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2 }))).toEqual({ v: 1, s: "a", r: 2 }); // the complete shapes still decode
-    expect(decodeOccCursor(forge({ s: "a", r: 1, c: 2, e: 3 }))).toEqual({ s: "a", r: 1, c: 2, e: 3 });
+    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2, q: "x", g: "L1" }))).toEqual({ v: 1, s: "a", r: 2, q: "x", g: "L1" }); // the complete shapes still decode
+    expect(decodeOccCursor(forge({ s: "a", r: 1, c: 2, q: "x", g: "L1" }))).toEqual({ s: "a", r: 1, c: 2, q: "x", g: "L1" });
   });
 });
 

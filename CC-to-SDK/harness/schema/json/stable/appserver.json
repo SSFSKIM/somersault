@@ -1524,7 +1524,7 @@
           "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
         },
         "cursor": {
-          "description": "opaque keyset cursor from a previous reply's nextCursor; never client-composed",
+          "description": "opaque keyset cursor from a previous reply's nextCursor; never client-composed. Bound to the query it was minted under and to the generation of the transcript it resumes inside: re-issue the SAME searchTerm/sortKey/sortDirection/archived/cwd, or start a fresh walk. Refuses -32602 otherwise",
           "type": "string",
           "minLength": 1
         },
@@ -1579,7 +1579,7 @@
           "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
         },
         "cursor": {
-          "description": "opaque occurrence cursor from a previous reply's nextCursor; epoch-qualified on a live thread and refused after a rewind",
+          "description": "opaque occurrence cursor from a previous reply's nextCursor; bound to the search term and to the transcript's generation (live or cold), and refused -32602 after a rewind or under a different term",
           "type": "string",
           "minLength": 1
         },

@@ -179,7 +179,7 @@ describe("thread/search", () => {
     expect(p1.result.data).toEqual([]);           // zero hits…
     expect(p1.result.nextCursor).not.toBeNull();  // …and still progress, honestly reported (D-M5-16)
     const cur = decodeSearchCursor(p1.result.nextCursor)!;
-    expect(cur).toEqual({ v: 1_000, s: "s-big", r: SEARCH_CAPS.maxRowsPerPage });
+    expect(cur).toMatchObject({ v: 1_000, s: "s-big", r: SEARCH_CAPS.maxRowsPerPage });
     // Bounds hold AT THE STORAGE BOUNDARY, not just in the loop's arithmetic: no read may ask for more
     // rows than one window, and the windows must tile without a gap (a gap is a permanently unsearched row).
     expect(st.calls.every((c) => (c.limit ?? Infinity) <= SEARCH_CAPS.windowRows)).toBe(true);
@@ -202,7 +202,7 @@ describe("thread/search", () => {
     boot(st.deps);
     const p1 = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", limit: 1 });
     expect(p1.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-a"]);
-    expect(decodeSearchCursor(p1.result.nextCursor)).toEqual({ v: 2_000, s: "s-b", r: 0 });
+    expect(decodeSearchCursor(p1.result.nextCursor)).toMatchObject({ v: 2_000, s: "s-b", r: 0 });
 
     st.drop("s-b"); // the cursor now names a session the store no longer has
     st.calls.length = 0;
@@ -617,7 +617,7 @@ describe("thread/search", () => {
     boot(st.deps);
     const p1 = await search({ searchTerm: "needle" });
     expect(p1.result.data).toEqual([]);
-    expect(decodeSearchCursor(p1.result.nextCursor)).toEqual({ v: 1_000, s: "s-big", r: SEARCH_CAPS.maxRowsPerPage });
+    expect(decodeSearchCursor(p1.result.nextCursor)).toMatchObject({ v: 1_000, s: "s-big", r: SEARCH_CAPS.maxRowsPerPage });
     fakes[0].info.customTitle = "a needle in the title"; // a `thread/name/set` lands between the two pages
     const p2 = await search({ searchTerm: "needle", cursor: p1.result.nextCursor });
     expect(p2.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-big"]); // once — exactly once
@@ -644,7 +644,7 @@ describe("thread/search", () => {
     boot(st.deps);
     const p1 = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", limit: 2 });
     expect(p1.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-a", "s-b"]);
-    expect(decodeSearchCursor(p1.result.nextCursor)).toEqual({ v: 3_000, s: "s-c", r: 0 });
+    expect(decodeSearchCursor(p1.result.nextCursor)).toMatchObject({ v: 3_000, s: "s-c", r: 0 });
     st.drop("s-b");
     st.drop("s-c"); // everything at or after the cursor is gone; only s-a, which sorts BEFORE it, remains
     const p2 = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", cursor: p1.result.nextCursor });
@@ -868,7 +868,7 @@ describe("thread/searchOccurrences", () => {
     expect(p1.result.data.map((o: any) => o.rowOffset)).toEqual([0, 0]);
     expect(p1.result.data.map((o: any) => o.snippetMatchRange.start)).toEqual([0, 11]);
     expect(p1.result.nextCursor).not.toBeNull();
-    expect(decodeOccCursor(p1.result.nextCursor)).toEqual({ s: "cold-session", r: 0, c: 12, e: null });
+    expect(decodeOccCursor(p1.result.nextCursor)).toMatchObject({ s: "cold-session", r: 0, c: 12 });
     const p2 = await occ({ threadId: "cold-session", searchTerm: "needle", cursor: p1.result.nextCursor });
     expect(p2.result.data.map((o: any) => o.rowOffset)).toEqual([0]);
     expect(p2.result.data[0].snippetMatchRange.start).toBe(22);
@@ -878,7 +878,7 @@ describe("thread/searchOccurrences", () => {
   it("a live continuation cursor is refused once a rewind bumps the epoch — the pager's own message, verbatim", async () => {
     const { threadId, record } = await bootLive([sess("live-session", { createdAt: 1_000 }, [assistant("needle needle needle", "u-a")])], "live-session");
     const p1 = await occ({ threadId, searchTerm: "needle", limit: 1 });
-    expect(decodeOccCursor(p1.result.nextCursor)).toEqual({ s: "live-session", r: 0, c: 1, e: 0 });
+    expect(decodeOccCursor(p1.result.nextCursor)).toMatchObject({ s: "live-session", r: 0, c: 1, g: "L0" });
     record.epoch += 1; // a rewind, simulated: the rows this cursor named are no longer the rows at those offsets
     const stale = await occ({ threadId, searchTerm: "needle", cursor: p1.result.nextCursor });
     expect(stale.error?.code).toBe(-32602);
@@ -888,31 +888,39 @@ describe("thread/searchOccurrences", () => {
     expect((await occ({ threadId, searchTerm: "needle", cursor: p1.result.nextCursor })).result.data.map((o: any) => o.snippetMatchRange.start)).toEqual([7, 14]);
   });
 
-  it("the OTHER arm of the epoch condition: a live cursor presented once the thread is gone is refused too, while a COLD cursor stays valid after the session goes live", async () => {
+  it("the OTHER arm of the generation condition: a live cursor presented once the thread is gone is refused, and so is a COLD cursor once the session goes live", async () => {
     // Two sides, two rows (this file has twice shipped a two-sided rule with one side pinned). Side A: the
-    // thread is no longer live, so there is no generation to compare a live cursor's `e` against.
+    // thread is no longer live, so there is no live generation to compare the cursor's `g` against.
     const gone = await bootLive([sess("live-session", { createdAt: 1_000 }, [assistant("needle needle", "u-a")])], "live-session");
     const p1 = await occ({ threadId: gone.threadId, searchTerm: "needle", limit: 1 });
-    expect(decodeOccCursor(p1.result.nextCursor)!.e).toBe(0);
+    expect(decodeOccCursor(p1.result.nextCursor)!.g).toBe("L0");
     await send("thread/close", { threadId: gone.threadId });
     // Addressed by STORE id — the `thr_…` id died with the record, and the cursor's subject is the session.
     const orphan = await occ({ threadId: "live-session", searchTerm: "needle", cursor: p1.result.nextCursor });
     expect(orphan.error?.code).toBe(-32602);
     expect(orphan.error?.message).toBe("cursor invalidated by a rewind; re-read from the start");
 
-    // Side B: a COLD mint carries `e: null` and is accepted unqualified — deliberate, documented asymmetry
-    // (a store session has no generation counter), so the same walk survives the session going live.
+    // Side B, INVERTED by D-M5-26. A cold mint used to carry `e: null` and be honoured unqualified, on the
+    // documented assumption that a store session is immutable between requests. That assumption is void the
+    // instant this same server opens the session: `thread/resume` + `thread/rewind` are two of its own
+    // methods, and the constructed walk read `g1-0, g1-1, g1-2, g1-3` then `NEW-C, NEW-D` — two fabricated
+    // occurrences and two skipped ones — while the identical request with a cursor differing only in its
+    // generation was refused. The stamp now names the AUTHORITY as well as the value, so a session that was
+    // cold at the mint and live at the resume is a mismatch without anyone having to enumerate the case.
     const st = store([sess("later-live", { createdAt: 1_000 }, [assistant("needle needle", "u-a")])]);
     const srv = boot({ ...st.deps, sessionFactory: () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "later-live" }) as any });
     const cold = await occ({ threadId: "later-live", searchTerm: "needle", limit: 1 });
-    expect(decodeOccCursor(cold.result.nextCursor)!.e).toBeNull();
+    expect(decodeOccCursor(cold.result.nextCursor)!.g).toBe("S5000:"); // the store's own metadata, not a null
     expect(cold.result.data[0].readCursor).toBeNull();
+    // The cold walk CONTINUES while the session stays cold — this is a generation check, not a one-page cap.
+    const stillCold = await occ({ threadId: "later-live", searchTerm: "needle", cursor: cold.result.nextCursor });
+    expect(stillCold.error).toBeUndefined();
+    expect(stillCold.result.data.map((o: any) => o.snippetMatchRange.start)).toEqual([7]);
     await send("thread/start", {});
     expect(srv.registry.list().some((rec) => rec.sessionId === "later-live")).toBe(true);
     const after = await occ({ threadId: "later-live", searchTerm: "needle", cursor: cold.result.nextCursor });
-    expect(after.error).toBeUndefined();
-    expect(after.result.data.map((o: any) => o.snippetMatchRange.start)).toEqual([7]);
-    expect(after.result.data[0].readCursor).toBe("0:1"); // now live, so the jump cursor appears mid-walk
+    expect(after.error?.code).toBe(-32602);
+    expect(after.error?.message).toBe("cursor invalidated by a rewind; re-read from the start");
   });
 
   it("an omitted limit pages at EXACTLY 20 here too — this handler's own `?? defaultLimit`, not its sibling's", async () => {
@@ -962,7 +970,7 @@ describe("thread/searchOccurrences", () => {
     ])]);
     boot(st.deps);
     const p1 = await occ({ threadId: "cold-session", searchTerm: "needle", limit: 1 });
-    expect(decodeOccCursor(p1.result.nextCursor)).toEqual({ s: "cold-session", r: 0, c: 1, e: null });
+    expect(decodeOccCursor(p1.result.nextCursor)).toMatchObject({ s: "cold-session", r: 0, c: 1 });
     const p2 = await occ({ threadId: "cold-session", searchTerm: "needle", cursor: p1.result.nextCursor });
     // Applying `c` to every row would search row 1 from unit 1 and lose its head hit entirely.
     expect(p2.result.data.map((o: any) => [o.rowOffset, o.snippetMatchRange.start])).toEqual([[0, 7], [1, 0]]);
@@ -1034,7 +1042,7 @@ describe("thread/searchOccurrences", () => {
     boot(st.deps);
     const p1 = await occ({ threadId: "cold-session", searchTerm: "needle" });
     expect(p1.result.data).toEqual([]); // bounded progress, honestly reported (D-M5-16) — never "no matches"
-    expect(decodeOccCursor(p1.result.nextCursor)).toEqual({ s: "cold-session", r: SEARCH_CAPS.maxRowsPerPage, c: 0, e: null });
+    expect(decodeOccCursor(p1.result.nextCursor)).toMatchObject({ s: "cold-session", r: SEARCH_CAPS.maxRowsPerPage, c: 0 });
     const p2 = await occ({ threadId: "cold-session", searchTerm: "needle", cursor: p1.result.nextCursor });
     expect(p2.result.data.map((o: any) => o.rowOffset)).toEqual([4_100]);
     expect(p2.result.nextCursor).toBeNull();
@@ -1075,29 +1083,45 @@ describe("thread/searchOccurrences", () => {
     expect(p2.result).toEqual({ data: [], nextCursor: null });
   });
 
-  it("ONE epoch read per request: a rewind landing mid-scan cannot ship a reply whose two cursor families disagree", async () => {
-    // `record.epoch` is mutable and the scan awaits between window reads, so the mint's `e` and each
-    // occurrence's `readCursor` are two chances to read it. They must be one read — and it must be the read
-    // taken BEFORE the rows were examined, so both cursors carry the superseded generation and both are
-    // refused, rather than the fresh one silently addressing post-truncation rows at pre-truncation offsets.
-    const rows = [...Array(SEARCH_CAPS.windowRows + 1)].map((_, i) => assistant(i === 0 || i === SEARCH_CAPS.windowRows ? "a needle row" : `filler ${i}`, `u-${i}`));
+  it("a rewind landing mid-scan REFUSES the page rather than shipping one row from each generation", async () => {
+    // D-M5-26. `thread/rewind` runs on `record.chain` while this scan holds `runScanExclusive`'s per-server
+    // chain, so the two do not serialize and a truncation can land between two window reads. Constructed
+    // before the fix, one reply carried `rowOffset: 50` from generation 1 beside `rowOffset: 950` from
+    // generation 2 — a fabricated occurrence, at an offset computed against a transcript that no longer
+    // held that row — and both of its published `readCursor`s were then refused by `thread/read`. Stamping
+    // the superseded generation makes the jumps fail safe; it never stopped the page, which is what this
+    // now does. The refusal is `BUSY`, not `-32602`: the request's parameters were correct, and a request
+    // with no cursor at all reaches here.
+    const rows = [...Array(SEARCH_CAPS.windowRows + 2)].map((_, i) => assistant(i === 0 || i === SEARCH_CAPS.windowRows ? "a needle row" : `filler ${i}`, `u-${i}`));
     const st = store([sess("live-session", { createdAt: 1_000 }, rows)]);
     let record: { epoch: number } | undefined;
+    let bumpAt: number | undefined;
     const srv = boot({
       ...st.deps,
-      getSessionMessages: async (sid, o) => { if (record && o?.offset === 0) record.epoch += 1; return st.deps.getSessionMessages!(sid, o); },
+      getSessionMessages: async (sid, o) => { if (record && o?.offset === bumpAt) record.epoch += 1; return st.deps.getSessionMessages!(sid, o); },
       sessionFactory: () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "live-session" }) as any,
     });
     await send("thread/start", {});
     const threadId = parse(lines).find((l) => l.result?.thread)!.result.thread.id;
     record = srv.registry.get(threadId)!;
-    const r = await occ({ threadId, searchTerm: "needle", limit: 1 });
+
+    // The clean walk first, so the refusal below is a change of ANSWER and not of fixture: one read of the
+    // generation backs both cursor families, which is what makes `readCursor`'s epoch and the continuation
+    // cursor's `g` two spellings of one number rather than two chances to read a mutable field.
+    const clean = await occ({ threadId, searchTerm: "needle", limit: 1 });
+    expect(clean.result.data[0].readCursor).toBe("0:1");
+    expect(decodeOccCursor(clean.result.nextCursor)!.g).toBe("L0");
+    expect(`L${clean.result.data[0].readCursor.split(":")[0]}`).toBe(decodeOccCursor(clean.result.nextCursor)!.g);
+
+    bumpAt = SEARCH_CAPS.windowRows; // the SECOND window: the page has already gathered a generation-1 row
+    const r = await occ({ threadId, searchTerm: "needle", limit: 5 });
     expect(record.epoch).toBe(1); // the rewind really did land inside the scan
-    expect(r.result.data[0].readCursor).toBe("0:1");
-    expect(decodeOccCursor(r.result.nextCursor)!.e).toBe(0);
-    expect(Number(r.result.data[0].readCursor.split(":")[0])).toBe(decodeOccCursor(r.result.nextCursor)!.e);
-    // …and the continuation is then refused, which is the point of carrying the superseded generation.
-    expect((await occ({ threadId, searchTerm: "needle", cursor: r.result.nextCursor })).error?.code).toBe(-32602);
+    expect(r.result).toBeUndefined(); // …and no partial page went out (D-M5-8: an error, never part of one)
+    expect(r.error?.code).toBe(-33001);
+    expect(r.error?.message).toBe("the conversation was rewound during this scan; search again");
+    // Searching again, with the generation now settled, answers normally — the refusal is retryable.
+    bumpAt = undefined;
+    expect((await occ({ threadId, searchTerm: "needle", limit: 5 })).result.data.map((o: any) => o.rowOffset)).toEqual([0, SEARCH_CAPS.windowRows]);
   });
 
   // ── the two edges of the span, one row per side ──────────────────────────────────────────────────────

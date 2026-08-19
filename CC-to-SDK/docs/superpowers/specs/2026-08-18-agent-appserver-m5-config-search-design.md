@@ -131,8 +131,16 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   replaces: it evicted live holders by clock age and its check-then-delete break was not atomic.)
   The canonical parent directory (`.claude/`) is created before locking, and a target that is itself a
   symlink is resolved first so tmp+rename replaces the real file, never the link. Two writers with the
-  same `expectedVersion` therefore serialize, and exactly one commits; the loser refuses
-  `ConfigVersionConflict` against the winner's bytes. **The contract is scoped to this protocol's
+  same `expectedVersion` therefore serialize, and exactly one commits; the loser refuses. **WHICH refusal
+  depends on whether it ever entered** (rev 11, corrected — the "exactly one commits" half was false
+  before rev 9 and is now measured true, but the refusal was named too precisely): a loser that waits out
+  the winner's critical section and enters reads the winner's bytes and refuses
+  `ConfigVersionConflict`, and a loser whose winner holds its lease past the deadline never enters at all
+  and refuses `BUSY`/`ConfigLocked` (D-M5-14c). Measured on the rev-9 code, two OS processes at the
+  production 30 s window with the holder stalled 45 s: the contender refused
+  `-33001 ConfigLocked` after 35 s, the file was byte-unchanged at that instant, and the holder's commit
+  was the only one — where the same probe before rev 9 had both writers reply `ok` and one write vanish.
+  **The contract is scoped to this protocol's
   writers** (rev 3): an external editor that changes the file inside another writer's critical
   section is last-wins — the lockfile serializes `ccx` servers, not the world, and the narrowing is
   stated rather than implied. Omitted `expectedVersion` = last-wins by explicit choice, documented.
@@ -205,10 +213,12 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   that wants to page a cold transcript resumes it first — `thread/resume` exists precisely to open
   store sessions, and acceptance proves the live-thread jump end-to-end **for every returned
   occurrence, asserted against the pager's real item shape** (rev 3 — the rev-2 test checked one
-  hit against a field items do not carry). The occurrence **continuation cursor is epoch-qualified
-  on a live thread** and refused on mismatch, exactly as `thread/read`'s is (rev 3 — a rewind must
-  not make an old cursor silently search different content); on a cold session it carries no epoch
-  and the store's immutability-between-requests is the documented assumption. A `threadId` naming a
+  hit against a field items do not carry). The occurrence **continuation cursor is generation-qualified,
+  with no exemption** (rev 11, D-M5-26 — the rev-3 rule was "epoch-qualified on a LIVE thread", and its
+  cold-session escape, `e: null`, is what let three separate walks resume against content that had moved):
+  the stamp names its authority as well as its value, `L<epoch>` where this server holds the session live
+  and `S<lastModified>:<fileSize>` off the store's own metadata otherwise, and a mismatch refuses with
+  `thread/read`'s own message. Both cursors are also bound to the QUERY they were minted under. A `threadId` naming a
   session the store does not know refuses `THREAD_NOT_FOUND` (rev 3) — an honest-looking empty
   result over a typo is the D-M5-8 lie in miniature.
 - **Search honesty (D-M5-8, the D-M4-1 family rule):** a store read failure is an **error**, never
@@ -461,13 +471,16 @@ flips the `full-potential.md` rows and ships nothing.
   (review F2 — "an implementation that overwrites siblings could satisfy the stated acceptance").
 - **D-M5-14 (rev 2) — the version check is atomic with the write:** per-file in-process write queue
   + pid-stamped advisory lockfile held across read-validate-rename; token = sha256 of raw bytes,
-  `"absent"` for missing. Rejected: rev 1's advisory hash check (a TOCTOU, review F3).
+  `"absent"` for missing. Rejected: rev 1's advisory hash check (a TOCTOU, review F3). **The lockfile this
+  line describes no longer ships** — rev 9 (D-M5-24) replaced it with a claim DIRECTORY on a lease, because
+  the file evicted live holders by clock age and its check-then-delete break was not atomic.
 - **D-M5-15 (rev 2) — global keyset ordering:** full metadata sort in memory,
   `(sortValue, sessionId, rowIndex)` keyset cursor, `created_at` the stable default. Rejected:
   rev 1's capped newest-first walk (cannot serve alternate sorts truthfully — review F5).
 - **D-M5-16 (rev 2) — caps bound work, never coverage:** intra-file cursor resume, zero-hit pages
   with continuation, skipped-rows disclosure. Rejected: rev 1's per-file byte cap (permanent false
-  negatives — review F6).
+  negatives — review F6). Both cursors also carry the walk's own bindings — the query and the
+  transcript generation — and refuse rather than resume when either moved (rev 11, D-M5-26).
 - **D-M5-17 (rev 2, units fixed rev 3) — hard bounds on every client-driven scan** (term 2–256,
   limit ≤ 50 clamp-with-warning, snippet ≤ max(200, term), ≤ 40 files / ≤ 4000 rows per page,
   1,048,576 UTF-16-unit row cap, row-windowed transcript reads — the rows a page holds, not the bytes
@@ -706,7 +719,8 @@ flips the `full-potential.md` rows and ships nothing.
   different row than the cursor named, which is precisely the intra-file skip/repeat D-M5-16 exists to
   eliminate. Refusal lives in the decoders (their contract is already *null on garbage*, range is part of
   the shape of a row index, and both Tasks 7 and 8 decode — a consumer-side answer means writing it twice
-  and forgetting it once).
+  and forgetting it once). **The screen was applied to the row offset and not to the SORT VALUE beside it**
+  (rev 11, D-M5-26c): `typeof p.v === "number"` is true of `Infinity`, which this same reasoning refuses.
 - **D-M5-17a (Task 7 review, rev 4) — match offsets are mapped back to the ORIGINAL row before they
   reach a snippet or the wire.** The normative flow searched a lowercased copy and cut the snippet from
   the original, so any code point whose lowercase form is a different UTF-16 length shifts the window by
@@ -946,6 +960,17 @@ flips the `full-potential.md` rows and ships nothing.
   Rejected: shipping nothing for `context_usage` (the value is small but real, and the plan's shape costs
   no degradation to pay for it); and following the original sentence literally (it makes the surface
   worse, which no promote criterion intends).
+  **Residual, decided in fix wave E rather than left open (rev 11).** `TurnMapper.onAssistant` returns
+  early for a message id it has already itemized through a `stream_event`, and that return sits ahead of
+  the stamping call — so an assistant frame carrying `context_usage` whose id was already streamed produces
+  no event to carry it. It is NOT repaired, and the reason is that there is nothing to repair in place: by
+  the time the wrapper key arrives, that message's item events have already gone out, so delivering the
+  twin would mean a NEW notification with no item attached — a wire shape, not a fix, and one no client has
+  asked for. The only known producer is unaffected: one keyed run of `/context` with
+  `includePartialMessages: true` measured the CLI-synthesized assistant frame producing **no** partials
+  (previously-streamed = false), and the shipped mapper stamped both of its events. Recorded here so the
+  early return is read as a bounded consequence of "the twin rides the item notification" rather than as an
+  oversight; if a CLI ever streams that frame, the answer is a carrier for it, not a moved return.
 - **D-M5-23 (fix wave B, rev 8) — the config domain answers about the files the ENGINE reads, and a reply
   past the commit is never a failure.** Five findings from the two whole-branch reviews, each reproduced
   before repair. Nothing here changes the write's own semantics; four of the five change WHICH BYTES the
@@ -1147,6 +1172,99 @@ flips the `full-potential.md` rows and ships nothing.
   which replies `e.message` verbatim for every handler, so making the audit live there means auditing
   that shared catch for the leak 25a just closed — a wider surface than this wave, and the honest place
   for it is beside that decision rather than inside this one.
+- **D-M5-26 (fix wave E, rev 11) — a cursor carries the WALK, not only the position.** Six confirmed
+  defects across both search methods had one root, and finding it was the point: a cursor resumes a walk,
+  and a walk's meaning rests on two things the position does not contain — the QUERY that decides what is
+  enumerated, and the GENERATION of the content being enumerated. `thread/search`'s `{v,s,r}` carried
+  neither; `thread/searchOccurrences`' `{s,r,c,e}` carried a generation whose `null` meant "do not check".
+  All six answers were confident and wrong rather than refusals, which is the class D-M5-16a already
+  decided: a cursor is server-minted and never client-authored, so a value it could not have been minted
+  with means forged or corrupted, and repairing it converts an integrity failure into a plausible wrong
+  answer. **Both codecs now carry `q` and `g`, computed by one function at mint and at resume** — the
+  device this module was built on (one tuple ordering shared by the sort and the resume) applied to the
+  other two things a resume depends on. Constructed, all six, on the real wire:
+  **26a — the query.** Paging `alpha` then replaying that cursor under `beta` answered
+  `{"data":[],"nextCursor":null}` — an affirmative "no matches" for a term that has one, the D-M5-8 lie
+  reached with no forgery at all, and a search box that re-issues on keystroke while holding the previous
+  page's cursor produces it. A `sortKey` change compared a `created_at` value against `lastModified`
+  values; a `sortDirection` change and a `cwd` change each dropped rows. `q` fingerprints
+  `searchTerm`/`sortKey`/`sortDirection`/`archived`/`cwd` (and, on the sibling, the term), refusing
+  `-32602` with **its own sentence** — a client that changed its term was not rewound, and telling it so
+  would send it re-reading a walk that was never invalidated. `limit` is deliberately not an axis: it
+  sizes a page, it does not choose what is walked.
+  **26b — the generation, and the removal of its exemption.** Four ways a cursor addressed a generation it
+  was not minted against, three of them through `e: null`. A COLD cursor honoured after `thread/resume` +
+  `thread/rewind` — two of this same server's own methods, between the two pages — returned two fabricated
+  occurrences and skipped two real ones, while the identical request with a cursor differing only in its
+  epoch was refused. A session another ccx host held was paged as immutable cold storage while the same
+  server answered `-33001 "Thread is live in another ccx process"` for archive and delete on that id
+  seconds earlier. The store-wide cursor carried no generation at all: after a rewind it read at offset
+  4000 of a 500-row transcript and reported the walk complete while the same instant's fresh walk returned
+  the hit. And within one page, the epoch was read once and never re-checked. `g` names the AUTHORITY as
+  well as the value — `L<epoch>` where this server holds the session live, `S<lastModified>:<fileSize>`
+  otherwise — so a session that changed authority between two pages is a mismatch by construction rather
+  than by a case someone had to think of. The non-live half is a proxy and a deliberately conservative
+  one, and its premise was **measured against the real reader rather than modelled**: the pinned SDK
+  derives `lastModified` from the file's mtime (`Math.trunc(statSync(...).mtimeMs)`) and populates
+  `fileSize` for local JSONL, and rewriting a 40-row transcript to 12 rows moved the stamp from
+  `S1787170730355:7540` to `S1787170730588:2248`. It over-refuses — a foreign host merely APPENDING moves
+  the mtime, so the next page of a walk over a session that host is actively running refuses — and that is
+  the trade taken on purpose: a refusal the client retries is the honest answer to "this server cannot
+  tell whether the content moved"; a plausible page is not. On `thread/search` the check is scoped to
+  cursors that address ROWS (`r > 0`), because a cursor with `r === 0` names a place in the session
+  ORDERING that no transcript owns, and because a cursor whose session has left the listing is the case
+  D-M5-15's keyset was built for — the walk continues at the successor, and the vanished session's row
+  offset is moot rather than stale.
+  **26c — a forged non-finite sort value is refused at decode.** `decodeSearchCursor` screened `r` for
+  range and `v` only for `typeof === "number"`, which is true of `Infinity`; `JSON.parse('{"v":1e999}')`
+  produces one and no mint can (`JSON.stringify(Infinity)` is `"null"`, and D-M5-15a screens the source
+  besides). In the schema's default `desc` direction `compareTuple` answered `Infinity >= 0` at index 0,
+  so the walk RESTARTED at the top and re-delivered every row the client already held under a
+  `nextCursor: null` claiming it was over; in `asc` the same cursor answered an empty terminal page. The
+  forged page is distinguishable from the legitimate budget-exhausted one D-M5-16/17 allows, which carries
+  a NON-NULL cursor. Screened beside the row-offset range, where the same rule already lived.
+  **26d — a rewind landing inside one page refuses the page.** `thread/rewind` runs on `record.chain`
+  while a scan holds `runScanExclusive`'s per-server chain, so the two do not serialize. Constructed: one
+  reply carried `rowOffset: 50` from generation 1 beside `rowOffset: 950` from generation 2, at offsets
+  computed against the first, and both of its published `readCursor`s were then refused by `thread/read`.
+  Stamping the superseded generation makes the jumps fail safe; it never stopped the page. Both scans read
+  through the same `readWindow`, so both re-check after every window and each has its own row. The refusal
+  is `ERR.BUSY` and not `-32602`: the request's parameters were correct and a request with no cursor at
+  all reaches it, and D-M5-14c's rule is that this family groups by what the caller does next — here,
+  "search again". It is THROWN, so the outer catch discards the rows already gathered, which is D-M5-8's
+  rule that a scan unable to answer honestly answers with an error rather than with part of a page.
+  The check covers the LIVE authority only: recomputing the store half per window is a whole-transcript
+  read on this reader (D-M5-25b measured it), and between two windows of one page the store-immutability
+  assumption stands — what was wrong was trusting it at page BOUNDARIES after it had been broken, which
+  is exactly where `g` now checks it.
+  **Compatibility: a cursor minted by an older build fails the shape check and refuses `-32602`.** No
+  shim, per the house rule and because the refusal is correct on its own terms — such a cursor names a
+  walk whose bindings this server cannot verify. Rejected: signing the cursor (it is not a capability, and
+  a client that forges one reaches only sessions its token already entitles it to); folding `q` and `g`
+  into one opaque stamp (two causes with two client remedies deserve two sentences); and refusing every
+  continuation for a session held by another host (honest, but it deletes paging for fleet threads
+  outright, where the metadata stamp refuses exactly when the file moved and permits when it did not).
+- **D-M5-27 (fix wave E, rev 11) — a published capability that changes is announced, and a replay
+  exception is declared per ROUTE.** `thread/capabilities/read` serves `terminalSlashCommands`, and a
+  client reads capabilities once, at thread start — the natural moment, and before the first init frame on
+  either origin. Three transitions of that field produced ZERO frames on the wire while the neighbouring
+  `commands_changed` route fired for its own, so the client was never told to look again and its answer
+  stayed whatever it was when it asked. The announcement is the push this surface already has —
+  `thread/capabilities/changed`, a ping carrying no payload — so a client that handles the neighbour
+  handles this with no new code, and no schema moves. It fires **on change**, not on every init frame:
+  init recurs per turn, and announcing each would put a capability push on the wire per turn saying
+  nothing changed. The first latch IS a change, which is the transition the fleet origin depends on.
+  **The fleet half was worse and is the more interesting half.** `installRouter` dropped every
+  replay-marked frame (M3 Task 7), for a reason that holds of the routes it was written about: a mirror
+  the attach has already seeded from live truth must not be overwritten with buffered history. It does not
+  hold of a route whose subject has no other source — `terminal_slash_commands` rides the init frame
+  alone, nothing else seeds it, so the field was simply ABSENT after every fleet attach until the host's
+  next turn, and for an idle host indefinitely. The exception is therefore declared **per route** rather
+  than per frame: `ROUTES` became `{run, onReplay?}`, one route sets the flag, and the other nine keep the
+  old rule with their own test still measuring it. The burst is ordered and the latch is last-wins, so the
+  newest replayed init stands and the host's next live init overwrites it. Rejected: routing every
+  replayed frame (it reintroduces exactly the historical-mirror-write M3 Task 7 removed); and a
+  once-per-thread latch (it would freeze a stale list across the per-turn re-emission).
 
 ## Surprises & Discoveries
 
@@ -1732,3 +1850,20 @@ directory changing a permission dialog's offered rule row, not the known flake.
   storage read; they multiply it ~7.8x). Note the shape rev 9 named, arriving one layer up: the origin the
   doubles stood in for is the one that had to start checking itself, and the rule this milestone coined —
   **a title is not a test** — has a storage-layer twin in **an injected double is a title for the store**.
+- **rev 11 (2026-08-20) — D-M5-26 and D-M5-27, the last fix wave: what a cursor and a capability each owe
+  the client who holds one.** Seven confirmed defects, and the work worth recording is that six of them
+  were one root rather than six repairs. A cursor resumes a WALK, and a walk has two parameters outside
+  the position it names — the query that decides what is enumerated, and the generation of what is being
+  enumerated. Neither was carried; where a generation was, it had a value meaning "do not check", and
+  three of the four wrong-generation paths went through that one value. Each defect answered confidently
+  and wrongly, which is the shape D-M5-16a had already ruled on for a different field of the same cursor:
+  a server-minted value that could not have been minted is forged, and forged is refused. The seventh is
+  the same question asked of a different surface — a published capability that changes without saying so
+  is a client reading a stale answer forever, and on the fleet origin it was worse, because the blanket
+  "a replayed frame runs no route" was right about nine routes and wrong about the one whose subject the
+  attach seeds from nowhere else. Two general shapes are worth carrying out of this milestone: **a rule
+  stated for the whole of something is a rule nobody has checked against its exceptions** (the replay drop,
+  and the cold-cursor exemption, are the same mistake on two surfaces), and **the fixture that models a
+  dependency's change must model everything the real one changes** — the verifier's fleet probe swapped a
+  transcript's rows while freezing its own mtime, so the repair looked ineffective against it until the
+  real reader was measured and the fixture corrected.

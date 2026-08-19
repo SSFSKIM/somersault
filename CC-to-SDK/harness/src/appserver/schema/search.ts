@@ -11,16 +11,19 @@ import { archivedParam } from "./core.js";
  *  refusing (D-M5-17, the `thread/read` precedent), so a schema max would turn the one branch the spec
  *  chose into the one it rejected.
  *
- *  `cursor` is an OPAQUE server-minted string (base64url of `{v,s,r}` — searchScan.ts's codec), unlike
+ *  `cursor` is an OPAQUE server-minted string (base64url of `{v,s,r,q,g}` — searchScan.ts's codec), unlike
  *  `thread/list`'s decimal offset and `thread/read`'s `"<epoch>:<row>"`: it is a keyset naming the next
  *  (sortValue, sessionId, rowIndex) position to examine, and a client that composed one by hand would be
- *  composing a position in an ordering it cannot see. Garbage — including a forged row offset — refuses. */
+ *  composing a position in an ordering it cannot see. Garbage — including a forged row offset or a
+ *  non-finite sort value — refuses. So does a cursor whose WALK moved (D-M5-26): `q` fingerprints the
+ *  query it was minted under and `g` stamps the generation of the transcript its row offset addresses, and
+ *  a mismatch in either refuses rather than answering a plausible page for a walk nobody asked for. */
 export const threadSearchParams = z.object({
   searchTerm: z.string().describe("case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"),
   // `.min(1)` is redundant for enforcement — `""` decodes to `null` and refuses `-32602` one door in, the
   // same code either way — and kept for PUBLICATION: it emits `minLength: 1` into the stable JSON schema,
   // which is where a client learns the bound without reading our decoder.
-  cursor: z.string().min(1).optional().describe("opaque keyset cursor from a previous reply's nextCursor; never client-composed"),
+  cursor: z.string().min(1).optional().describe("opaque keyset cursor from a previous reply's nextCursor; never client-composed. Bound to the query it was minted under and to the generation of the transcript it resumes inside: re-issue the SAME searchTerm/sortKey/sortDirection/archived/cwd, or start a fresh walk. Refuses -32602 otherwise"),
   limit: z.number().int().positive().optional().describe("results per page, default 20; over 50 is clamped to 50 with a `warning` notification"),
   sortKey: z.enum(["created_at", "updated_at", "recency_at"]).default("created_at")
     .describe("created_at is the only key stable across pages — updated_at/recency_at (both ≡ the store's lastModified) can move a session between requests, and keyset semantics then allow it to be re-encountered or skipped; use created_at for an exhaustive walk"),
@@ -56,14 +59,16 @@ export const threadSearchResult = z.object({
  *
  *  `searchTerm` and `limit` are deliberately the SAME shapes as `thread/search`'s above, for the reasons
  *  stated there (the bounds live next to `SEARCH_CAPS`; over-cap clamps rather than refuses). `cursor` is
- *  its own codec — base64url of `{s,r,c,e}`, a row offset PLUS a character offset within that row, so a
- *  page boundary can land between two occurrences of ONE row — and on a live thread it is EPOCH-QUALIFIED:
- *  a rewind truncates rows, so a cursor minted at an earlier generation is refused (`-32602`, the pager's
- *  own message) rather than silently resumed against different content. */
+ *  its own codec — base64url of `{s,r,c,q,g}`, a row offset PLUS a character offset within that row, so a
+ *  page boundary can land between two occurrences of ONE row — and it is GENERATION-QUALIFIED with no
+ *  exemption (D-M5-26): a rewind truncates rows, so a cursor minted at an earlier generation is refused
+ *  (`-32602`, the pager's own message) rather than silently resumed against different content, and that
+ *  holds for a COLD session too, whose generation is stamped from the store's own metadata. `q` binds the
+ *  cursor to its search term for the same reason, in its own sentence. */
 export const threadSearchOccurrencesParams = z.object({
   threadId: z.string().min(1).describe("a `thr_…` registry id or a bare store sessionId; one the store does not know refuses -33004"),
   searchTerm: z.string().describe("case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"),
-  cursor: z.string().min(1).optional().describe("opaque occurrence cursor from a previous reply's nextCursor; epoch-qualified on a live thread and refused after a rewind"),
+  cursor: z.string().min(1).optional().describe("opaque occurrence cursor from a previous reply's nextCursor; bound to the search term and to the transcript's generation (live or cold), and refused -32602 after a rewind or under a different term"),
   limit: z.number().int().positive().optional().describe("occurrences per page, default 20; over 50 is clamped to 50 with a `warning` notification"),
 });
 

@@ -13,10 +13,10 @@
 // MULTIPLIER at the storage boundary rather than a memory bound; `readWindow` carries the numbers).
 import { ERR, type RpcError } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
-import { fillFromStore, findLiveBySessionId, resolveThreadId, storeKnows, storeOnlyView } from "./sessionLib.js";
+import { fillFromStore, findLiveBySessionId, resolveThreadId, storeOnlyView, storeRow } from "./sessionLib.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
 import { SessionStoreError, storeRefusal, stripPaths } from "./archiveDomain.js";
-import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
+import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, fingerprint, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
 import { auditSessionStore, listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
@@ -39,9 +39,55 @@ const storeRead = async <T>(read: () => Promise<T>): Promise<T> => {
  *  regex regardless, because a strip that covers only the branch we thought of leaks through the one we
  *  did not (`stripPaths`' own doc comment). */
 const searchRefusal = (e: unknown): RpcError =>
-  e instanceof SessionStoreError
-    ? storeRefusal(e)
-    : { code: ERR.INTERNAL, message: stripPaths(e instanceof Error ? e.message : String(e)) };
+  e instanceof ScanRewound
+    ? { code: ERR.BUSY, message: e.message }
+    : e instanceof SessionStoreError
+      ? storeRefusal(e)
+      : { code: ERR.INTERNAL, message: stripPaths(e instanceof Error ? e.message : String(e)) };
+
+/** A rewind that lands BETWEEN two windows of one page (D-M5-26). The generation is read once per request
+ *  — deliberately, so every cursor in the reply belongs to one generation — and `readWindow` awaits the
+ *  store, so a `thread/rewind` running on `record.chain` can truncate the transcript between two reads of
+ *  it. The page then holds rows from two generations at offsets computed against one, which is a
+ *  fabricated occurrence sitting beside a real one; the stamped cursors correctly refuse afterwards, but
+ *  the page they qualify was already sent.
+ *
+ *  THROWN, so the outer catch discards the rows gathered so far: D-M5-8's rule that a scan which cannot
+ *  answer honestly answers with an error, never with the part of a page it managed to compose. `ERR.BUSY`
+ *  and not `-32602` — the request's parameters were correct, and a request with no cursor at all reaches
+ *  this — with the code chosen by D-M5-14c's rule that this family groups by what the caller does next,
+ *  which here is "issue the search again". */
+class ScanRewound extends Error {
+  constructor() { super("the conversation was rewound during this scan; search again"); }
+}
+
+/** The GENERATION of a transcript, as one string, computed identically at mint and at resume — the device
+ *  this whole module was built on (one tuple ordering shared by the sort and the resume) applied to the
+ *  second thing a cursor depends on.
+ *
+ *  Two authorities, and which one answers is itself part of the stamp. A session THIS server holds live
+ *  has a generation counter that a rewind bumps, so `record.epoch` is exact. Anything else — a cold
+ *  session, or one another ccx host holds — has no counter this process can read, so the stamp is the
+ *  store's own metadata for the file: its mtime and its size, both of which a truncation moves. That is a
+ *  proxy and it is deliberately a conservative one. It over-refuses: a foreign host merely APPENDING to
+ *  its transcript moves the mtime, and the next page of a walk over that session refuses rather than
+ *  resuming. The alternative is the state this replaces — `e: null`, a cursor that declared itself
+ *  unqualified and was honoured anyway, under which a session held live in another process was paged as
+ *  immutable cold storage while the same server answered `-33001 "Thread is live in another ccx process"`
+ *  for archive and delete on that same id, seconds apart. A refusal a client can retry is the honest
+ *  answer to "this server cannot tell whether the content moved"; a plausible page is not. */
+const generationOf = (srv: AppServer, info: SDKSessionInfo): string => {
+  const live = findLiveBySessionId(srv, info.sessionId);
+  return live ? `L${live.epoch}` : `S${info.lastModified}:${info.fileSize ?? ""}`;
+};
+
+/** The refusal a moved generation earns: `thread/read`'s own message, verbatim, because a client that
+ *  pages both surfaces should match one string (the same reason the occurrence cursor took it in Task 8). */
+const REWOUND = "cursor invalidated by a rewind; re-read from the start";
+/** The refusal a different QUERY earns, and it is deliberately NOT the message above: a client that
+ *  re-issued its search with a new term while still holding the old page's cursor has not been rewound,
+ *  and telling it so would send it re-reading a walk that was never invalidated. */
+const REQUERIED = "cursor was minted for a different search; re-read from the start";
 
 /** The store's READABILITY, established rather than inferred (D-M5-25a) — run before the listing, inside
  *  the exclusive section, because it is disk work like every other read here.
@@ -133,6 +179,12 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
   // exactly the intra-file skip/repeat the keyset exists to eliminate.
   const cursor = parsed.data.cursor === undefined ? null : decodeSearchCursor(parsed.data.cursor);
   if (parsed.data.cursor !== undefined && cursor === null) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid cursor"); return; }
+  // The walk's QUERY (D-M5-26) — every axis that decides WHAT is enumerated, and no axis that decides only
+  // how much of it arrives per page: `limit` is a page size, and a client that changes it mid-walk has not
+  // changed the walk. Checked HERE, before the store is touched, because it is a property of the request
+  // alone and a refusal composed after a store read would be indistinguishable from a store failure.
+  const q = fingerprint([searchTerm, sortKey, dir, archived === true, cwd]);
+  if (cursor && cursor.q !== q) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, REQUERIED); return; }
   // CLAMP, not refuse (D-M5-17, `thread/read`'s precedent) — `limit` is the one client-authored number in
   // this request, so there is a client intent to be generous toward, and the adjustment is disclosed.
   let limit = parsed.data.limit ?? SEARCH_CAPS.defaultLimit;
@@ -174,6 +226,18 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
       // remaining session sorts before the cursor — the walk is over, and the loop below simply does not run.
       const found = cursor ? sorted.findIndex((r) => compareTuple(tupleOf(r), cursor, dir) >= 0) : 0;
       const startIdx = found < 0 ? sorted.length : found;
+      // The GENERATION half of D-M5-26, and its scope is exactly the cursors that address ROWS. `r === 0`
+      // names a place in the SESSION ORDERING, which no transcript owns, so there is nothing to compare —
+      // and a session that has left the listing entirely is the case the keyset was built for (D-M5-15: the
+      // walk continues at the successor), where the vanished session's row offset is moot rather than
+      // stale. What is left is the case that was silently wrong: a cursor resuming INSIDE a transcript that
+      // was rewound between pages, which read at offset 4000 of a 500-row generation and answered
+      // `{"data":[],"nextCursor":null}` — a terminal "no matches" for a term the same instant's fresh walk
+      // found.
+      if (cursor && cursor.r > 0) {
+        const owner = sorted.find((r) => r.sessionId === cursor.s);
+        if (owner && generationOf(srv, owner) !== cursor.g) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, REWOUND); return; }
+      }
 
       const data: { thread: Record<string, unknown>; snippet: string }[] = [];
       let filesScanned = 0, rowsScanned = 0, skipped = 0;
@@ -184,8 +248,13 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         const tup = tupleOf(info);
         // `rowIndex` applies ONLY to the session the cursor names; every other session starts at row 0.
         const startRow = cursor && compareTuple(tup, cursor, dir) === 0 ? cursor.r : 0;
+        /** Every mint in this handler, so the two bindings cannot be attached at three sites and forgotten
+         *  at a fourth. `g` is stamped from the session the offset belongs to and ONLY when there is an
+         *  offset — see the resume check above for why `r === 0` has no generation to name. */
+        const mint = (t: { v: number | null; s: string }, r: number, of: SDKSessionInfo): string =>
+          encodeSearchCursor({ ...t, r, q, g: r > 0 ? generationOf(srv, of) : "" });
         /** The cursor for "this session is finished, continue at the next one". */
-        const afterThis = (): string | null => (i + 1 < sorted.length ? encodeSearchCursor({ ...tupleOf(sorted[i + 1]), r: 0 }) : null);
+        const afterThis = (): string | null => (i + 1 < sorted.length ? mint(tupleOf(sorted[i + 1]), 0, sorted[i + 1]) : null);
 
         // The METADATA corpus: free (it is already in memory from the listing), and checked on EVERY page
         // including a mid-file resume. It cannot double-report — a metadata hit `continue`s without ever
@@ -223,17 +292,27 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         // the clause leaves the wire bytes AND the store-call log unchanged. Kept as the backstop if that
         // bound ever changes — but re-check it against this reason, not against a claim of dead code.
         if (filesScanned >= SEARCH_CAPS.maxFilesPerPage || rowsScanned >= SEARCH_CAPS.maxRowsPerPage) {
-          nextCursor = encodeSearchCursor({ ...tup, r: startRow }); break scan;
+          nextCursor = mint(tup, startRow, info); break scan;
         }
         filesScanned++;
         let row = startRow;
         let hitHere = false;
+        // The mid-scan half of D-M5-26, per session and for the LIVE authority only. `record.epoch` is one
+        // property read; recomputing the store half would be a full transcript read per window on this
+        // reader (D-M5-25b measured it), and between two windows of one page the store-immutability
+        // assumption stands — it is at page BOUNDARIES that it was being trusted after it had been broken,
+        // and that is where `g` now checks it.
+        const liveHere = findLiveBySessionId(srv, info.sessionId);
+        const epochHere = liveHere?.epoch;
         read: for (;;) {
           // The window is the smaller of one window and what is left of the page's row budget, so the cap
           // is enforced AT THE STORAGE BOUNDARY rather than after the rows are already in memory
           // (`readWindow`, shared with `thread/searchOccurrences` below).
           const w = await readWindow(getMessages, info.sessionId, row, rowsScanned);
-          if (!w) { nextCursor = encodeSearchCursor({ ...tup, r: row }); break scan; }
+          // Checked AFTER the await and before the rows are read, which is the only placement that covers
+          // the LAST window too: a check at the head of the loop never runs again after a short window.
+          if (liveHere && liveHere.epoch !== epochHere) throw new ScanRewound();
+          if (!w) { nextCursor = mint(tup, row, info); break scan; }
           for (const message of w.win) {
             rowsScanned++; row++;
             const text = rowSearchText(message);
@@ -336,6 +415,12 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
   // states for a forged row offset (D-M5-16a). Compared against the RESOLVED id, so the two spellings of one
   // thread (its registry id, its bare store id) mint interchangeable cursors.
   if (cursor && cursor.s !== sessionId) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid cursor"); return; }
+  // This method's QUERY is its term (D-M5-26): `threadId` is already pinned by `s` one line above, with its
+  // own refusal, and `limit` is a page size rather than a walk. A cursor minted for one term and replayed
+  // under another resumed at a row offset computed for a different set of matches — the store-wide search's
+  // own defect, in a single transcript.
+  const q = fingerprint([searchTerm]);
+  if (cursor && cursor.q !== q) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, REQUERIED); return; }
   // CLAMP, not refuse — `limit` is the one client-authored number in this request (D-M5-17, `thread/read`'s
   // precedent), exactly as in the store-wide search above.
   let limit = parsed.data.limit ?? SEARCH_CAPS.defaultLimit;
@@ -364,18 +449,25 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
       // the id: a thread started this tick exists and may be searched before its first row is ever
       // persisted, and asking the store about it would refuse the very thread the client is holding.
       // `live record OR store row` is THIS method's admission rule; Task 9's two are different ones. What
-      // is shared with them is the lookup underneath (sessionLib.ts's `storeKnows`), never the rule.
-      if (!live && !(await storeRead(() => storeKnows(srv, sessionId)))) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-      // Epoch qualification — `thread/read`'s rule, and its message verbatim (subscribe.ts), because a
-      // client that pages both should match one string. The two live arms are one condition: the thread is
-      // gone, or it is here at a different generation. `e: null` is a COLD mint and passes unqualified — a
-      // store session has no generation counter to compare against, and the store's immutability between
-      // requests is the documented assumption (D-M5-7).
-      if (cursor && cursor.e !== null && (!live || cursor.e !== live.epoch)) {
-        ctx.peer.replyError(id, ERR.INVALID_PARAMS, "cursor invalidated by a rewind; re-read from the start"); return;
-      }
+      // is shared with them is the lookup underneath (sessionLib.ts's `storeRow`, of which `storeKnows` is
+      // the predicate the other two use), never the rule. The ROW rather than the predicate because the
+      // generation stamp below is composed from it: one store read answers both questions.
+      const row0 = live ? undefined : await storeRead(() => storeRow(srv, sessionId));
+      if (!live && !row0) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+      // GENERATION qualification (D-M5-26), and the whole of the change is that it has no exemption. The
+      // rule and its message are `thread/read`'s, because a client that pages both should match one string.
+      // What used to sit here was `cursor.e !== null && …`, and that `null` — a COLD mint declaring itself
+      // unqualified — is what let three separate walks resume against content that had moved: a cold cursor
+      // honoured after the session was resumed AND rewound on this very server; a session another ccx host
+      // held (and rewound) paged as immutable cold storage, while the same server answered
+      // `-33001 "Thread is live in another ccx process"` for archive and delete on that id; and, on the
+      // store-wide sibling, no generation field at all. `generationOf` names the authority as part of the
+      // stamp, so a session that CHANGED authority between two pages — cold at the mint, live at the
+      // resume — is a mismatch by construction rather than by a rule someone had to think of.
+      const gen = live ? `L${live.epoch}` : generationOf(srv, row0!);
+      if (cursor && cursor.g !== gen) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, REWOUND); return; }
       // ONE epoch read per request, and every generation-carrying string in the reply is composed from it —
-      // the continuation cursor's `e` AND every occurrence's `readCursor`. `record.epoch` is mutable and a
+      // the continuation cursor's `g` AND every occurrence's `readCursor`. `record.epoch` is mutable and a
       // rewind can land between two window reads, so a second read here would ship a reply whose two cursor
       // families disagree about which generation they belong to. It also fails in the safe direction: after
       // such a rewind both cursors carry the SUPERSEDED generation, so `thread/read` and this method both
@@ -388,9 +480,15 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
       let row = cursor ? cursor.r : 0;
       scan: for (;;) {
         const w = await readWindow(getMessages, sessionId, row, rowsScanned);
+        // The mid-scan check (D-M5-26), after the await so the LAST window is covered too. A rewind runs on
+        // `record.chain` while this scan holds `runScanExclusive`'s per-server chain, so the two do not
+        // serialize: constructed, one page carried a row from generation 1 beside a row from generation 2,
+        // at offsets computed against the first, and every `readCursor` it published was then refused.
+        // Stamping the superseded generation makes the jumps fail safe; it does not stop the page.
+        if (live && live.epoch !== epoch) throw new ScanRewound();
         // The page's row budget, spent before this window opened. A zero-occurrence page with a non-null
         // cursor is the honest report of bounded progress (D-M5-16), never a "no matches" claim.
-        if (!w) { nextCursor = encodeOccCursor({ s: sessionId, r: row, c: 0, e: epoch }); break scan; }
+        if (!w) { nextCursor = encodeOccCursor({ s: sessionId, r: row, c: 0, q, g: gen }); break scan; }
         for (const message of w.win) {
           const rowOffset = row;
           rowsScanned++; row++;
@@ -425,7 +523,7 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
               // pager can produce. Both would otherwise publish a string the client cannot land.
               readCursor: epoch === null || nested ? null : `${epoch}:${rowOffset + 1}`,
             });
-            if (data.length >= limit) { nextCursor = encodeOccCursor({ s: sessionId, r: rowOffset, c: at + 1, e: epoch }); break scan; }
+            if (data.length >= limit) { nextCursor = encodeOccCursor({ s: sessionId, r: rowOffset, c: at + 1, q, g: gen }); break scan; }
           }
         }
         if (w.win.length < w.want) break scan; // short window = this transcript is exhausted

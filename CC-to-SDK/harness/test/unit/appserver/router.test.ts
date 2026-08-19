@@ -149,11 +149,13 @@ describe("frame router skeleton (spec D-M2-6, D-M2-8)", () => {
     expect(record.sessionId).toBeUndefined();
   });
 
-  it("a REPLAY-marked frame runs no route at all (M3 Task 7: buffered history is neither a mirror write nor news)", async () => {
+  it("a REPLAY-marked frame runs only the routes that DECLARE it (M3 Task 7, narrowed by D-M5-27)", async () => {
     const modes: string[] = [];
     const { session, push, pushReplay } = fakeSession({ setPermissionMode: async (m: string) => { modes.push(m); } });
     const { srv: collector, calls } = fakeSrv();
-    const record = mkRecord(session, { settings: { permissionMode: "acceptEdits" }, planUpgradeMode: "acceptEdits" });
+    // `terminalSlashCommands` pre-set, so the ONE route that does read replays is quiet here and this row
+    // keeps measuring the other nine. Its own two rows (absorb.test.ts, one per origin) own the exception.
+    const record = mkRecord(session, { settings: { permissionMode: "acceptEdits" }, planUpgradeMode: "acceptEdits", terminalSlashCommands: [] });
     installRouter(collector, record);
 
     pushReplay({ type: "system", subtype: "init", session_id: "sess-old" });
@@ -375,12 +377,17 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
   });
 
   it("system/init's own slash_commands snapshot does NOT fire the capabilities push (that is the initial snapshot, not a mid-session push)", () => {
+    // Two routes can now send this notification, and the row has to keep naming the one it is about. The
+    // first init frame DOES push, but for routeTerminalCommands' reason (the terminal field went from
+    // absent to known, D-M5-27); the later ones do not, and that is what pins routeCapabilities' silence:
+    // its trigger is the `commands_changed` subtype, so a changing `slash_commands` SNAPSHOT is not news.
     const { session, push } = fakeSession();
     const { srv, calls } = fakeSrv();
-    const record = mkRecord(session);
+    const record = mkRecord(session, { terminalSlashCommands: [] }); // already known, so the other route is quiet
     installRouter(srv, record);
 
     push({ type: "system", subtype: "init", session_id: "s1", slash_commands: ["/foo"] });
+    push({ type: "system", subtype: "init", session_id: "s1", slash_commands: ["/foo", "/bar"] });
 
     expect(calls.find((c) => c.method === "thread/capabilities/changed")).toBeUndefined();
   });

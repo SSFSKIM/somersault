@@ -46,17 +46,58 @@ const unb64 = (s: string): unknown => { try { return JSON.parse(Buffer.from(s, "
  *  is part of the shape of a row index, so decode is where it belongs (both Tasks 7 and 8 decode). */
 const offset = (x: unknown): x is number => typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
 
-export function encodeSearchCursor(c: { v: number | null; s: string; r: number }): string { return b64(c); }
-export function decodeSearchCursor(s: string): { v: number | null; s: string; r: number } | null {
-  const p = unb64(s) as { v?: unknown; s?: unknown; r?: unknown; c?: unknown } | null;
-  if (!p || (typeof p.v !== "number" && p.v !== null) || typeof p.s !== "string" || !offset(p.r) || "c" in p) return null;
-  return { v: p.v, s: p.s, r: p.r };
+/** The SORT VALUE is screened the same way and for the same reason (D-M5-26). `typeof x === "number"`
+ *  admits `Infinity` — `JSON.parse('{"v":1e999}')` produces it — and no mint can emit one:
+ *  `JSON.stringify(Infinity)` is `"null"` and `sortValueOf` screens with `Number.isFinite` besides
+ *  (D-M5-15a). So a decoded non-finite `v` is definitionally forged or corrupted, and `compareTuple`
+ *  answers `Infinity >= 0` for it, which in the schema's default `desc` direction restarts the walk at the
+ *  top and re-delivers every row the client already holds under a `nextCursor: null` that claims the walk
+ *  is over. Range is part of the shape of a keyset value exactly as it is part of the shape of a row
+ *  index, so it is screened where the row index already was. */
+const finiteOrNull = (x: unknown): x is number | null => x === null || (typeof x === "number" && Number.isFinite(x));
+
+/** FNV-1a over NUL-joined parts, base36. Not a security hash — the cursor is not a capability and this is
+ *  not a signature (a client that forges one reaches only its own sessions, which the token already
+ *  entitles it to). It answers ONE question: is the walk this cursor was minted for the walk being
+ *  resumed. The NUL join is what stops `("ab","c")` and `("a","bc")` from fingerprinting alike, and
+ *  `undefined`/`null` are distinguished from `""` because "no `cwd`" and "`cwd` is empty" are different
+ *  requests. */
+export function fingerprint(parts: readonly (string | number | boolean | null | undefined)[]): string {
+  let h = 0x811c9dc5;
+  for (const raw of parts) {
+    const part = raw === undefined ? "u" : raw === null ? "n" : String(raw);
+    for (let i = 0; i < part.length; i++) { h ^= part.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    h ^= 0; h = Math.imul(h, 0x01000193) >>> 0; // the NUL separator, folded in without allocating a joined string
+  }
+  return h.toString(36);
 }
-export function encodeOccCursor(c: { s: string; r: number; c: number; e: number | null }): string { return b64(c); }
-export function decodeOccCursor(s: string): { s: string; r: number; c: number; e: number | null } | null {
-  const p = unb64(s) as { s?: unknown; r?: unknown; c?: unknown; e?: unknown; v?: unknown } | null;
-  if (!p || typeof p.s !== "string" || !offset(p.r) || !offset(p.c) || (typeof p.e !== "number" && p.e !== null) || "v" in p) return null;
-  return { s: p.s, r: p.r, c: p.c, e: p.e };
+
+/** BOTH cursors carry the walk's own bindings beside its position (D-M5-26): `q`, a fingerprint of the
+ *  QUERY that decides what is being walked, and `g`, a stamp of the transcript GENERATION whose rows the
+ *  position addresses. A position means nothing without them — a cursor minted for `alpha` replayed under
+ *  `beta` answered a confident "no matches" for a term with a match, and a cursor minted before a rewind
+ *  resumed at row offsets of a transcript that no longer existed. Both are `string`, and neither has a
+ *  "do not check" value: `g` is `""` only where the position addresses NO rows (a `thread/search` cursor
+ *  with `r === 0` names a place in the session ordering, not in any file), which is a fact about the
+ *  position rather than a licence to skip the check. The previous `e: number | null` is what this
+ *  replaces — its `null` meant "unqualified, resume anyway", and three of the four ways a cursor addressed
+ *  a generation it was not minted against went through that one value. */
+export interface SearchCursor { v: number | null; s: string; r: number; q: string; g: string }
+export interface OccCursor { s: string; r: number; c: number; q: string; g: string }
+
+export function encodeSearchCursor(c: SearchCursor): string { return b64(c); }
+export function decodeSearchCursor(s: string): SearchCursor | null {
+  const p = unb64(s) as { v?: unknown; s?: unknown; r?: unknown; c?: unknown; q?: unknown; g?: unknown } | null;
+  if (!p || !finiteOrNull(p.v) || typeof p.s !== "string" || !offset(p.r)) return null;
+  if (typeof p.q !== "string" || typeof p.g !== "string" || "c" in p) return null;
+  return { v: p.v, s: p.s, r: p.r, q: p.q, g: p.g };
+}
+export function encodeOccCursor(c: OccCursor): string { return b64(c); }
+export function decodeOccCursor(s: string): OccCursor | null {
+  const p = unb64(s) as { s?: unknown; r?: unknown; c?: unknown; v?: unknown; q?: unknown; g?: unknown } | null;
+  if (!p || typeof p.s !== "string" || !offset(p.r) || !offset(p.c)) return null;
+  if (typeof p.q !== "string" || typeof p.g !== "string" || "v" in p) return null;
+  return { s: p.s, r: p.r, c: p.c, q: p.q, g: p.g };
 }
 
 /** The corpus (spec: Codex's "visible user messages and final assistant messages", via OUR classifier

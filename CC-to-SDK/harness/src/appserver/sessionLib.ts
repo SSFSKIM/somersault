@@ -76,8 +76,21 @@ export function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRe
  *  green — passing for the wrong reason, and passing hardest on the machine that has real sessions on
  *  disk. One binding, one place to get it wrong. */
 export async function storeKnows(srv: AppServer, sessionId: string): Promise<boolean> {
+  return (await storeRow(srv, sessionId)) !== undefined;
+}
+
+/** The same lookup, ROW and all. `storeKnows` is a predicate over it and stays a predicate, because the
+ *  three admission rules above are about existence and nothing else; this is for the one caller that needs
+ *  the row itself — `thread/searchOccurrences`, whose cursor is stamped with the transcript's generation
+ *  and derives it from the store's own metadata when this server does not hold the session live (D-M5-26).
+ *  One binding, one `srv.deps` override, one place to get it wrong — which is the whole reason the atom
+ *  above exists, so the second caller shares it rather than re-spelling it. */
+export async function storeRow(srv: AppServer, sessionId: string): Promise<SDKSessionInfo | undefined> {
   const getInfo = srv.deps.getSessionInfo ?? ((sid: string) => realGetSessionInfo(sid, {}));
-  return (await getInfo(sessionId)) !== undefined;
+  // The dep is declared `Promise<unknown | undefined>` on purpose — a test double must be able to answer
+  // with the two or three fields its own case is about rather than build a whole `SDKSessionInfo` — so the
+  // narrowing happens once, here, where the real reader's type is known, instead of at each caller.
+  return (await getInfo(sessionId)) as SDKSessionInfo | undefined;
 }
 
 /** A LIVE row's `title`/`tags`, filled from the store row for the same session — the half of the merged

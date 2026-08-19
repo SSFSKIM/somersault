@@ -129,7 +129,13 @@ export class TurnMapper {
 
   private onAssistant(mm: any): ItemEvent[] {
     const msgId = String(mm.message?.id ?? "");
-    if (msgId && this.streamedMsgIds.has(msgId)) return []; // already itemized via stream_event — no dup
+    // Already itemized via stream_event — no dup. This return is AHEAD of `stampContextUsage`, and that is
+    // a bounded consequence rather than an oversight (D-M5-22 residual, decided in fix wave E): those item
+    // events went out while the message was streaming, so a `context_usage` wrapper key arriving now has no
+    // event of its own to ride, and delivering it would mean a new notification carrying no item. The only
+    // producer we have measured — a `/context` turn under `includePartialMessages: true` — does not stream
+    // this frame, so the twin reaches both events by the normal path.
+    if (msgId && this.streamedMsgIds.has(msgId)) return [];
     const content: any[] = mm.message?.content ?? [];
     const out: ItemEvent[] = [];
     content.forEach((b, i) => {

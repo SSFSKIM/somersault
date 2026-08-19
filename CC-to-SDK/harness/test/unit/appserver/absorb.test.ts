@@ -259,10 +259,13 @@ describe("terminal_slash_commands: latched off the init frame, served by thread/
     expect(frame(lines, 4).result.terminalSlashCommands).toEqual(TERMINAL);
   });
 
-  it("FLEET — a REPLAYED init frame in the follow burst is ignored (the router's existing rule), and the next live init still lands", async () => {
-    // Why this matters and is not a nit: a fleet thread's attach burst is replay-marked and dropped, so a
-    // once-per-process init would have made this field inProcess-only. It recurs per turn, which is what
-    // makes the live frame below reachable at all.
+  it("FLEET — a REPLAYED init frame in the follow burst DOES latch the field (D-M5-27), and the next live init still wins", async () => {
+    // INVERTED by fix wave E, and the inversion is the finding. The router dropped every replayed frame,
+    // for a reason that holds of the routes it was written about — a mirror the attach has already seeded
+    // from live truth must not be overwritten with history. This field has no such seed: it rides the init
+    // frame alone, so on a fleet thread it was simply ABSENT after every attach until the host next took a
+    // turn, and for an idle host, indefinitely. The exception is declared per ROUTE, so the other nine keep
+    // the old rule (the router's own replay test pins that they do).
     const fh = await startFakeHost();
     hosts.push(fh);
     fh.emitMessage(initFrame()); // buffered BEFORE anyone attaches → replayed on follow
@@ -274,11 +277,70 @@ describe("terminal_slash_commands: latched off the init frame, served by thread/
     send(conn, { id: 2, method: "thread/attach", params: { target: fh.row.short } });
     await waitFor(() => expect(frame(s.lines, 2)).toBeTruthy());
     const record = srv.registry.get(frame(s.lines, 2).result.thread.id as string)!;
-    await tick();
-    expect(record.terminalSlashCommands).toBeUndefined(); // the replayed copy is history, not news
-
-    fh.emitMessage(initFrame());
     await waitFor(() => expect(record.terminalSlashCommands).toEqual(TERMINAL));
+
+    // …and a later LIVE init still overwrites it, so the replay is a seed and not a freeze.
+    fh.emitMessage(initFrame(["doctor"]));
+    await waitFor(() => expect(record.terminalSlashCommands).toEqual(["doctor"]));
+  });
+
+  it("inProcess — every CHANGE of the published field pushes thread/capabilities/changed, and an unchanged re-init pushes nothing", async () => {
+    // The defect: three transitions of a field `thread/capabilities/read` publishes produced ZERO frames,
+    // while the neighbouring `commands_changed` route fired for its own. A client reads capabilities at
+    // thread start — the natural moment, and before any init frame — so it was never told to look again.
+    const rig = fakeSession({ capabilities: async () => ({ models: [], commands: [], mcpServers: [], agents: [] }) });
+    const { lines, record } = await bootInProcess(rig.session);
+    const pushes = () => notifs(lines, "thread/capabilities/changed").filter((f) => f.params.threadId === record.id);
+
+    rig.push(initFrame(TERMINAL));                     // absent -> ["doctor","color"]
+    await tick();
+    expect(pushes()).toHaveLength(1);
+
+    rig.push(initFrame(TERMINAL));                     // init recurs per turn; the value did not move
+    await tick();
+    expect(pushes()).toHaveLength(1);                  // …so nothing is announced (one push per turn is noise)
+
+    rig.push(initFrame(["doctor"]));                   // narrowed
+    await tick();
+    expect(pushes()).toHaveLength(2);
+
+    rig.push({ type: "system", subtype: "init", session_id: "sess-1", slash_commands: ["/compact"] }); // -> []
+    await tick();
+    expect(pushes()).toHaveLength(3);
+
+    rig.push(initFrame("doctor"));                     // malformed: no write, and therefore no push
+    await tick();
+    expect(pushes()).toHaveLength(3);
+    expect(record.terminalSlashCommands).toEqual([]);
+  });
+
+  it("FLEET — the same announcement on the other origin: an attaching client is told the field it never had is now known", async () => {
+    // One row per origin, because the two reach this route by different paths — an in-process engine's own
+    // feed, and a host's replay burst — and it was the fleet path that had the worse symptom.
+    const fh = await startFakeHost();
+    hosts.push(fh);
+    fh.emitMessage(initFrame());
+    writeRoster(fh.row);
+    const srv = new AppServer({}, {} as never);
+    servers.push(srv);
+    const s = mkSink(); const conn = srv.connect(s.sink);
+    send(conn, { id: 1, method: "initialize", params: { clientInfo: { name: "T" }, watchThreads: true } });
+    send(conn, { id: 2, method: "thread/attach", params: { target: fh.row.short } });
+    await waitFor(() => expect(frame(s.lines, 2)).toBeTruthy());
+    const threadId = frame(s.lines, 2).result.thread.id as string;
+    send(conn, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await waitFor(() => expect(frame(s.lines, 3)).toBeTruthy());
+    const record = srv.registry.get(threadId)!;
+    await waitFor(() => expect(record.terminalSlashCommands).toEqual(TERMINAL));
+
+    // The push may have gone out before the subscribe landed, so what this row demands is that a CHANGE
+    // after the client is listening is announced — the state a long-lived client actually sits in.
+    s.lines.length = 0;
+    fh.emitMessage(initFrame(["doctor"]));
+    await waitFor(() => expect(notifs(s.lines, "thread/capabilities/changed").filter((f) => f.params.threadId === threadId)).toHaveLength(1));
+    send(conn, { id: 5, method: "thread/capabilities/read", params: { threadId } });
+    await waitFor(() => expect(frame(s.lines, 5)).toBeTruthy());
+    expect(frame(s.lines, 5).result.terminalSlashCommands).toEqual(["doctor"]);
   });
 });
 
