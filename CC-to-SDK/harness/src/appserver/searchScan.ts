@@ -83,12 +83,31 @@ export function rowSearchText(m: unknown): string | null {
  *  `start`, and `at - from ≤ pad ≤ max - n` keeps `end` inside the snippet. */
 const clampIndex = (n: number, hi: number): number => (Number.isFinite(n) ? Math.min(Math.max(0, Math.trunc(n)), Math.max(0, hi)) : 0);
 
+const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
+const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
+
 export function makeSnippet(text: string, start: number, len: number): { snippet: string; snippetMatchRange: { start: number; end: number } } {
   const at = clampIndex(start, text.length);
   const n = clampIndex(len, text.length - at);
   const max = Math.max(SEARCH_CAPS.snippetMax, n); // a term longer than 200 units still fits its own snippet
   const pad = Math.max(0, Math.floor((max - n) / 2));
-  const from = Math.max(0, at - pad);
-  const snippet = text.slice(from, from + max);
+  let from = Math.max(0, at - pad);
+  let to = Math.min(text.length, from + max);
+  // The window is measured in UTF-16 UNITS, so its two cuts land wherever the arithmetic puts them —
+  // including between the halves of an astral character, which ships a LONE SURROGATE on the wire. Not
+  // hypothetical and not parity-dependent: with emoji around the match the 97-unit pad splits BOTH edges
+  // at every one of 40 probed offsets, and the reply carries `\ude00`/`\ud83d` escapes. Node's
+  // JSON.stringify emits them without complaint, so nothing upstream notices; the cost lands on the
+  // client — measured, python's json.loads accepts the escape and the resulting string then refuses to
+  // encode back to UTF-8 ("surrogates not allowed"), and languages whose string type is UTF-8 by
+  // construction cannot hold it at all. Trimming a half-character off an excerpt costs the reader nothing.
+  //   Both trims are guarded to stay OUT of the match itself (`from < at`, `to > at + n`), because a
+  // client's own term may legitimately begin or end with a lone surrogate and cutting into the match
+  // would make `snippetMatchRange` describe a range the snippet no longer holds. And only splits this
+  // window CREATES are repaired: a lone surrogate already sitting in the source text passes through, at
+  // any position, since re-writing a caller's content is not this function's business.
+  if (from > 0 && from < at && isLowSurrogate(text.charCodeAt(from))) from++;
+  if (to > at + n && isHighSurrogate(text.charCodeAt(to - 1))) to--;
+  const snippet = text.slice(from, to);
   return { snippet, snippetMatchRange: { start: at - from, end: at - from + n } };
 }

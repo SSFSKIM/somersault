@@ -14,6 +14,7 @@ import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.j
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
 import { reviewStartParams } from "./review.js";
 import { configReadParams, configReadResult, configValueWriteParams, configBatchWriteParams, configWriteResult } from "./config.js";
+import { threadSearchParams, threadSearchResult } from "./search.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -124,4 +125,12 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // merge — and SERVER-scoped: the subject is a settings FILE, and no thread owns one.
   "config/value/write": { params: configValueWriteParams, result: configWriteResult },
   "config/batchWrite": { params: configBatchWriteParams, result: configWriteResult },
+  // M5 (§search) Task 7: the store, searched. SERVER-scoped like the config trio — it names no thread; the
+  // subject is every session on this machine, and the ones it finds are mostly threads this server never
+  // opened. STABLE: the mechanism is the session store's own `listSessions`/`getSessionMessages` readers
+  // plus our row classifier, none of it an unproven seam. Publishes a `result` (D-M5-19) because two of the
+  // reply's three fields carry contracts a params schema cannot state — `nextCursor` may be non-null over
+  // an EMPTY page (caps bound work, never coverage) and `skipped` is the disclosure that makes "no matches"
+  // an honest claim — and a client that guesses either one wrong stops paging early or over-trusts the page.
+  "thread/search": { params: threadSearchParams, result: threadSearchResult },
 };

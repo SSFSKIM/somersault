@@ -32,6 +32,7 @@ import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
 import { reviewStart } from "./review.js";
 import { configRead, configValueWrite, configBatchWrite } from "./configDomain.js";
+import { threadSearch } from "./search.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -498,6 +499,12 @@ export class AppServer {
     // process can hold too, and no per-connection or per-thread serialization could ever see that.
     "config/value/write": configValueWrite,
     "config/batchWrite": configBatchWrite,
+    // M5 (§search): the store, searched. SERVER-scoped like the config trio above — it names no thread, so
+    // neither dispatch gate can fire — and it reaches sessions this server has never opened, which is the
+    // point: the corpus is every transcript on this machine, not this process's registry. Mutual exclusion
+    // is the handler's own (`runScanExclusive`), for the same reason the config writes' is: the contended
+    // resource is this process's disk read rate, which no per-thread chain could ever see.
+    "thread/search": threadSearch,
   };
 
   private readonly token: string;

@@ -1511,6 +1511,56 @@
         "edits"
       ],
       "additionalProperties": false
+    },
+    "thread/search": {
+      "type": "object",
+      "properties": {
+        "searchTerm": {
+          "type": "string",
+          "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
+        },
+        "cursor": {
+          "description": "opaque keyset cursor from a previous reply's nextCursor; never client-composed",
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "description": "results per page, default 20; over 50 is clamped to 50 with a `warning` notification",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sortKey": {
+          "default": "created_at",
+          "description": "created_at is the only key stable across pages — updated_at/recency_at (both ≡ the store's lastModified) can move a session between requests, and keyset semantics then allow it to be re-encountered or skipped; use created_at for an exhaustive walk",
+          "type": "string",
+          "enum": [
+            "created_at",
+            "updated_at",
+            "recency_at"
+          ]
+        },
+        "sortDirection": {
+          "default": "desc",
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ]
+        },
+        "archived": {
+          "description": "false/omitted lists only unarchived sessions; true lists only archived ones",
+          "type": "boolean"
+        },
+        "cwd": {
+          "description": "scopes the store listing to one project directory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "searchTerm"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {
@@ -1752,6 +1802,54 @@
         "status",
         "version",
         "filePath"
+      ],
+      "additionalProperties": false
+    },
+    "thread/search": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "thread": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "snippet": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "thread",
+              "snippet"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
       ],
       "additionalProperties": false
     }

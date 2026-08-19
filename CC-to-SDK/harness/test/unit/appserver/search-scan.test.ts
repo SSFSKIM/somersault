@@ -343,17 +343,39 @@ describe("searchScan — snippet windows", () => {
     expect(fails).toEqual([]);
   });
 
-  it("HAZARD PIN: the window is cut on UTF-16 units, so an astral pad can leave a lone surrogate", () => {
-    // Recorded, not defended: the cap is specified in UTF-16 units (D-M5-17), and slicing on units can
-    // halve a surrogate pair at either edge. The wire survives — JSON.stringify escapes a lone surrogate —
-    // but a client renders U+FFFD. Whoever owns the wire shape should decide whether to trim the edges.
+  it("the window never HALVES a surrogate pair (Task 6's hazard pin, answered by Task 7) — and a source's own lone surrogate still passes through", () => {
+    // Task 6 recorded this and left the call to whoever owned the wire shape; `thread/search` is that
+    // owner, so the edges are now trimmed. Measured before the trim: with emoji around the match, ALL 40
+    // probed offsets shipped a lone surrogate at BOTH edges — the 97-unit pad is odd, so the cut lands
+    // mid-pair regardless of parity. The escape rides out of Node unnoticed and breaks at the client:
+    // python's json.loads accepts `\ude00` and the resulting string then refuses to encode to UTF-8.
     // (spelled as an explicit regex rather than String.isWellFormed — this tsconfig's lib predates it)
     const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-    const r = makeSnippet("\u{1F600}".repeat(200) + "NEEDLE" + "\u{1F600}".repeat(200), 400, 6);
-    expect(r.snippet.slice(r.snippetMatchRange.start, r.snippetMatchRange.end)).toBe("NEEDLE"); // the match itself is intact
-    expect(LONE.test(r.snippet)).toBe(true);
     expect(LONE.test("\u{1F600}ok\u{1F600}")).toBe(false); // the detector is not a rubber stamp
-    expect(() => JSON.parse(JSON.stringify({ s: r.snippet }))).not.toThrow();
+    expect(LONE.test("\ud83d" + "ok")).toBe(true);
+    // Both edges, at both parities of match offset, and the RANGE still recovers the match after the
+    // leading trim shifted it — the field Task 8 publishes, which a trim that forgot to adjust would break.
+    for (let lead = 0; lead < 8; lead++) {
+      const text = "z".repeat(lead) + "\u{1F600}".repeat(200) + "NEEDLE" + "\u{1F600}".repeat(200);
+      const r = makeSnippet(text, lead + 400, 6);
+      expect(LONE.test(r.snippet), `lead=${lead}`).toBe(false);
+      expect(r.snippet.slice(r.snippetMatchRange.start, r.snippetMatchRange.end)).toBe("NEEDLE");
+    }
+    // A trim may never eat the match itself. Two shapes, and the second is the one that reaches the
+    // `from < at` half of the guard: the window only starts AT the match when there is no padding left to
+    // give (a term of 200+ units), so a long term whose first unit is a lone LOW surrogate is exactly the
+    // input where an unguarded trim would delete the match's own first unit and leave the published range
+    // describing a string the snippet no longer holds.
+    const half = "\ud83d"; // a lone high surrogate, as a client's own search term
+    const withHalf = "abc" + half + "def";
+    const r2 = makeSnippet(withHalf, 3, 1);
+    expect(r2.snippet.slice(r2.snippetMatchRange.start, r2.snippetMatchRange.end)).toBe(half);
+    const lowLed = "\udc00" + "q".repeat(SEARCH_CAPS.snippetMax - 1); // 200 units, starts with a lone LOW surrogate
+    const r3 = makeSnippet("x".repeat(50) + lowLed, 50, lowLed.length);
+    expect(r3.snippet.slice(r3.snippetMatchRange.start, r3.snippetMatchRange.end)).toBe(lowLed);
+    // …and a lone surrogate the SOURCE already carries, away from both edges, is passed through, not
+    // rewritten: repairing a caller's content is not this function's business.
+    expect(LONE.test(makeSnippet("x".repeat(50) + half + "NEEDLE" + "y".repeat(50), 51, 6).snippet)).toBe(true);
   });
 
   it("no caller can force a negative or inverted snippetMatchRange onto the wire", () => {

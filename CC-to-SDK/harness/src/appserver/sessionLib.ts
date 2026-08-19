@@ -42,7 +42,7 @@ type Resolved = { ok: true; sessionId: string } | { ok: false; code: number; mes
  *  frame, so a thread started this same tick and never yet turned has no sessionId to resolve to).
  *  Anything else is treated as a bare store sessionId and passed straight through — no registry lookup at
  *  all — which is exactly what lets a client address a session this server never opened. */
-function resolveThreadId(srv: AppServer, threadId: string): Resolved {
+export function resolveThreadId(srv: AppServer, threadId: string): Resolved {
   if (!threadId.startsWith("thr_")) return { ok: true, sessionId: threadId };
   const record = srv.registry.get(threadId);
   if (!record) return { ok: false, code: ERR.THREAD_NOT_FOUND, message: "Thread not found" };
@@ -54,7 +54,7 @@ function resolveThreadId(srv: AppServer, threadId: string): Resolved {
  *  currently backed by this store sessionId — regardless of how the caller spelled `threadId` (a `thr_…`
  *  id resolves to the SAME record this finds; a bare sessionId that happens to match a live thread's
  *  engine must be caught here too). */
-function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRecord | undefined {
+export function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRecord | undefined {
   return srv.registry.list().find((r) => r.sessionId === sessionId);
 }
 
