@@ -122,6 +122,16 @@ const tMerge = (a: unknown, b: unknown): unknown => {
     for (const x of [...a, ...b]) { if (x !== null && typeof x === "object") { out.push(x); continue; } if (!seen.has(x)) { seen.add(x); out.push(x); } }
     return out;
   }
+  // An OBJECT over an ARRAY keeps the array: lodash assigns the source object's keys onto the array itself,
+  // so index keys patch elements and everything else becomes a property no JSON shows. Transcribed from a
+  // run of real lodash 4.18.1 under upstream's `settingsMergeCustomizer` (`/tmp/m5-fixB/lodash-probe.cjs`),
+  // not from `configLayers.ts` — this oracle judges that file and must not be derived from it.
+  if (Array.isArray(a) && isObj(b)) {
+    const out = [...a] as unknown[];
+    const bag = out as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(b as Record<string, unknown>)) bag[k] = Object.prototype.hasOwnProperty.call(out, k) ? tMerge(bag[k], v) : v;
+    return out;
+  }
   if (isObj(a) && isObj(b)) {
     const out = { ...(a as Record<string, unknown>) };
     for (const [k, v] of Object.entries(b as Record<string, unknown>)) out[k] = Object.prototype.hasOwnProperty.call(out, k) ? tMerge(out[k], v) : v;
@@ -796,16 +806,30 @@ describe("config/value/write + config/batchWrite", () => {
     expect(w.status).toBe("okOverridden");
     expect(w.overriddenMetadata.overridingLayer).toBe("project");
     expectAgreesWithRead(w, r, "user", edits);
-    // Same hole in array shape: `effectiveView` tracks an array as a contributor list, so an array write
-    // is one leaf too and has no entry of its own once an object above replaces it.
+    // An ARRAY write under the same object does NOT hit this hole, and the reason is upstream's merge, not
+    // this method: an object merged over an array keeps the ARRAY (measured against real lodash), so the
+    // write is in force and the object above is a contributor to it. Kept as a row because the obvious
+    // reading — "an object above always swallows what is below" — is what the array half used to assert.
     const arrEdits = [{ keyPath: ["env"], value: ["a", "b"], mergeStrategy: "replace" }];
     id = await send("config/batchWrite", { target: "user", cwd: proj, edits: arrEdits });
     const w2 = reply(id).result;
     id = await send("config/read", { cwd: proj });
     const r2 = reply(id).result;
-    expect(r2.config.env).toEqual({ B: "2" });     // the array never reaches the effective view either
-    expect(w2.status).toBe("okOverridden");
+    expect(JSON.stringify(r2.config.env)).toBe('["a","b"]');   // the array survives the object above it
+    expect(r2.origins["env"]).toEqual(["user", "project"]);
+    expect(w2.status).toBe("ok");
     expectAgreesWithRead(w2, r2, "user", arrEdits);
+    // …and an array write IS masked by a SCALAR above it, which is the shape that still has no entry of its
+    // own at the path. One row per side, so a change that lost either verdict fails here.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ env: "PROJECT-SCALAR" }));
+    id = await send("config/batchWrite", { target: "user", cwd: proj, edits: arrEdits });
+    const w3 = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r3 = reply(id).result;
+    expect(r3.config.env).toBe("PROJECT-SCALAR");
+    expect(w3.status).toBe("okOverridden");
+    expect(w3.overriddenMetadata.overridingLayer).toBe("project");
+    expectAgreesWithRead(w3, r3, "user", arrEdits);
   });
   it("the masking object can be NESTED, and the write it masks can come from a MIDDLE layer", async () => {
     // Two independent generalisations of the same hole. Depth: the swallowing object sits three segments
@@ -1054,12 +1078,16 @@ describe("config/value/write + config/batchWrite", () => {
     // so every search for "who outranks me" comes back empty and the old `masking.length === 0` clause read
     // that as "nobody does". The rule says the opposite — an unattributed leaf is masked — and it is right:
     // the merged view below contains no trace of any of these writes.
+    //
+    // Both written values are SCALARS on purpose: an empty object above an ARRAY does not swallow it at all
+    // under upstream's merge (the array survives — see the object-over-array rows), so an array here would
+    // be testing the merge rule rather than this method's verdict.
     writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ hooks: {}, env: { a: {} } }));
     writeFileSync(join(home, "managed.json"), JSON.stringify({ outputStyle: {} }));
     boot(deps());
     const edits = [
       { keyPath: ["hooks"], value: "USER", mergeStrategy: "replace" },        // top-level empty object above
-      { keyPath: ["env", "a"], value: ["W"], mergeStrategy: "replace" },      // ...and one level deeper
+      { keyPath: ["env", "a"], value: "W", mergeStrategy: "replace" },        // ...and one level deeper
     ];
     let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
     const w = reply(id).result;
@@ -1410,6 +1438,47 @@ describe("config/value/write + config/batchWrite", () => {
     expect(r2.origins["outputStyle"]).toBe("user");
     expectAgreesWithRead(w2, r2, "user", shadowed);
   });
+  it("a masking pass that cannot run leaves the write COMMITTED and reported ok, with every edit unchecked", async () => {
+    // Whole-branch review M5 / verifier `scalpel-1#7` (D-M5-23c). The masking pass runs after the bytes are
+    // on disk and used to be inside the handler's one try/catch, so a failure past the commit came back as
+    // `-32603` — and a client that reads "failed" retries, while an `upsert` of an array is not idempotent
+    // (arrays concatenate and dedupe by SameValueZero, so object entries never collapse). One hook
+    // registration became two.
+    //
+    // The reachable trigger is a pathologically deep object in ANOTHER layer: `JSON.parse` accepts depths
+    // `effectiveView`'s recursion cannot walk, and the write path's own depth screen covers only the value
+    // it was handed. The depth here is more than an order of magnitude past the measured recursion limit
+    // (~2.8k), and the `config/read` assertion below is what PROVES the premise held in this environment
+    // rather than letting a deeper stack turn this row green for the wrong reason.
+    const deep = '{"a":'.repeat(50_000) + "1" + "}".repeat(50_000);
+    writeFileSync(join(proj, ".claude", "settings.json"), deep);
+    boot(deps());
+    const upsert = { keyPath: ["hooks", "PreToolUse"], value: [{ matcher: "Bash" }], mergeStrategy: "upsert" };
+    let id = await send("config/read", { cwd: proj });
+    expect(reply(id).error?.code, "premise: this layer really is past the merge's recursion limit").toBe(-32603);
+    id = await send("config/value/write", { ...upsert, target: "user", cwd: proj });
+    const w = reply(id).result;
+    expect(reply(id).error, "the bytes landed, so this is not a failure").toBeUndefined();
+    expect(w.status).toBe("ok");
+    expect(w.uncheckedEditIndexes).toEqual([0]);       // "not reported as overridden", NOT "verified in force"
+    expect(w.warnings[0]).toMatch(/the write landed, but whether it is overridden could not be checked/);
+    expect(JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")).hooks.PreToolUse).toEqual([{ matcher: "Bash" }]);
+    // The version in that degraded reply is a real CAS token, so the client's retry defence still works:
+    // the same `expectedVersion` cannot be spent twice, which is what stops the duplicate.
+    expect(w.version).toBe(sha256(readFileSync(join(home, ".claude", "settings.json"), "utf8")));
+    id = await send("config/value/write", { ...upsert, target: "user", cwd: proj, expectedVersion: w.version });
+    expect(reply(id).result.status).toBe("ok");
+    id = await send("config/value/write", { ...upsert, target: "user", cwd: proj, expectedVersion: w.version });
+    expect(reply(id).error.data.code).toBe("ConfigVersionConflict");
+    // THE OTHER SIDE: with the deep layer gone the pass runs again and the real verdict comes back. A fence
+    // that swallowed every verdict would pass every assertion above.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ hooks: { PreToolUse: "PROJECT-WINS" } }));
+    id = await send("config/value/write", { keyPath: ["hooks", "PreToolUse"], value: "USER", mergeStrategy: "replace", target: "user", cwd: proj });
+    const w2 = reply(id).result;
+    expect(w2.status).toBe("okOverridden");
+    expect(w2.uncheckedEditIndexes).toBeUndefined();
+    expect(w2.overriddenMetadata.overridingLayer).toBe("project");
+  });
   it("SWEEP: generated layer states, driven through both methods, agree on every edit", async () => {
     // Examples find the state you thought of. Every divergence this method has shipped was found by a SWEEP
     // and missed by the examples written beside the fix — including the two this wave closes — so the rule
@@ -1522,14 +1591,19 @@ describe("config/value/write + config/batchWrite", () => {
     expect(cases, "the generator's own size").toBe(918);
     // `undecided` is the size of the READ side's blind spot measured from the outside, and it now has two
     // causes. FIRST, deletes whose path still resolves through a region `mergeTracked` attributes to
-    // nobody — the residual this wave deliberately did not close in `configLayers.ts`: 18 from pass 1, 6
+    // nobody — the residual this wave deliberately did not close in `configLayers.ts`: 18 from pass 1, 4
     // from pass 2, and 20 from pass 3 (the `{z:{}}` shape at every depth and above-layer, 12, plus `{p:{}}`
     // wherever it lands on a lower SCALAR and replaces it with a leafless object, 8). SECOND, the
     // duplicate-above state (D-M5-13d), where the read reply says "masked" and is naming rather than
     // judging: 8 from pass 3 — the two below-shapes `{p:"U"}` leaves unmoved, at both above-layers and both
-    // depths. None of the 52 go unjudged: the counterfactual oracle in `run` decides every delete in the
+    // depths. None of the 50 go unjudged: the counterfactual oracle in `run` decides every delete in the
     // sweep. If this moves, either the generator reaches new states or `mergeTracked` learned to attribute
     // object nodes — and then the read-derived oracle is stronger than it was, which deserves a second look.
-    expect(undecided, "deletes the read reply alone cannot judge").toBe(52);
+    //
+    // Pass 2 fell from 6 to 4 when the object-over-array merge was corrected: its two `flattens with array ·
+    // rebuilds sibling empty` cases used to end at a leafless object (the rebuild replaced the array), and
+    // now end at the array itself, which `origins` DOES attribute. The blind spot shrank because the merge
+    // became upstream-exact, not because anything learned to attribute an object node.
+    expect(undecided, "deletes the read reply alone cannot judge").toBe(50);
   }, 120_000);
 });

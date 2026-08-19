@@ -1,9 +1,10 @@
 // src/appserver/configDomain.ts — the config domain's three handlers: `config/read` plus the two writes.
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { homedir, platform } from "node:os";
+import { platform } from "node:os";
 import { ERR } from "./rpc.js";
 import type { Handler } from "./server.js";
+import { claudeConfigDir } from "../config/claudeHome.js";
 import { layerPaths, readLayers, effectiveView } from "./configLayers.js";
 import type { ConfigLayer, LayerName } from "./configLayers.js";
 import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, withFileLock, canonicalPath, assertWritableParent } from "./configWrite.js";
@@ -28,6 +29,21 @@ export function defaultManagedPath(platformName: string): string | null {
   return "/etc/claude-code/managed-settings.json";
 }
 export const DEFAULT_MANAGED_PATH: string | null = defaultManagedPath(platform());
+
+/** WHERE the user layer is, for both handlers — one function, because two spellings of it is how the read
+ *  and the write can start naming different files.
+ *
+ *  With no dep the answer is the ENGINE's own (`claudeConfigDir`): `CLAUDE_CONFIG_DIR` when it is set,
+ *  `~/.claude` otherwise. That is not a nicety — `ccx serve` constructs `new AppServer({ token })` with no
+ *  deps at all, so production always lands here, and a `CLAUDE_CONFIG_DIR` this harness's own tenant preset
+ *  exports made every reply describe a file no engine would ever load: `config/read` served settings the
+ *  engine ignores and `config/value/write` answered `ok` for a write nothing would read.
+ *
+ *  `configHome` keeps its meaning — the BASE whose `.claude` holds the file — and keeps winning, because it
+ *  is a test/embedder override and the alternative is a suite that points at a temp directory and is
+ *  silently redirected onto the operator's real settings by an ambient variable. */
+export const userLayerDir = (deps: { configHome?: string }, env: NodeJS.ProcessEnv = process.env): string =>
+  deps.configHome !== undefined ? join(deps.configHome, ".claude") : claudeConfigDir(env);
 
 export async function resolveConfigCwd(cwd: string, deps: { realpath: (p: string) => Promise<string> } = { realpath }): Promise<string> {
   if (!isAbsolute(cwd)) throw new ConfigError("ConfigValidationError", "cwd must be an absolute path");
@@ -60,7 +76,7 @@ const token = (layer: ConfigLayer | undefined): string =>
 export const configRead: Handler = async (srv, ctx, id, params) => {
   const parsed = configReadParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-  const home = srv.deps.configHome ?? homedir();
+  const userDir = userLayerDir(srv.deps);
   const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
   try {
     const cwd = parsed.data.cwd !== undefined ? await resolveConfigCwd(parsed.data.cwd) : undefined;
@@ -68,7 +84,7 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
     // `versions` walk below matches on `filePath`) and so a layer's `filePath` is the same string a write
     // reply gives for the same file — `resolveRealTarget` canonicalizes too, and one file answering to two
     // names across the two methods left a client with no way to correlate them (review I2).
-    const paths = await Promise.all(layerPaths(home, managed, cwd).map(async (p) => ({ ...p, filePath: await canonicalPath(p.filePath) })));
+    const paths = await Promise.all((await layerPaths(userDir, managed, cwd)).map(async (p) => ({ ...p, filePath: await canonicalPath(p.filePath) })));
     const layers = await readLayers(paths);
     const { config, origins } = effectiveView(layers);
     // D-M5-18: CAS tokens for every WRITABLE target in view — walked off `paths` (absent layers are
@@ -392,6 +408,26 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
   return out;
 }
 
+/** The post-write masking pass, and the one place it is allowed to give up. It runs AFTER the bytes are on
+ *  disk, so its failure is not the write's failure: every edit becomes `unchecked` and the reason is
+ *  reported, which is the same answer shape a dotted-key collision already produces. Only the ANALYSIS is
+ *  fenced — the write itself, and every refusal that precedes it, are untouched. */
+async function maskingAnalysis(srv: Parameters<Handler>[0], data: WriteData, cwdReal: string | undefined): Promise<{ verdict: MaskVerdict; failure?: string }> {
+  const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
+  try {
+    // Masking: EVERY edit evaluated (plan review F15), against the SAME `effectiveView` `config/read`
+    // serves — see `maskingVerdict` for why that shared derivation is the contract.
+    const layers = await readLayers(await layerPaths(userLayerDir(srv.deps), managed, cwdReal));
+    const { config: effective, origins } = effectiveView(layers);
+    return { verdict: maskingVerdict(data.edits, data.target, effective, origins, layers) };
+  } catch (e) {
+    return {
+      verdict: { maskedEditIndexes: [], uncheckedEditIndexes: data.edits.map((_, i) => i) },
+      failure: `the write landed, but whether it is overridden could not be checked: the settings layers could not be merged (${e instanceof Error ? e.message : String(e)})`,
+    };
+  }
+}
+
 /** The shared spine of `config/value/write` and `config/batchWrite`. Two behaviours a client has to know
  *  about, both of them properties of the design rather than gaps in it:
  *
@@ -415,8 +451,8 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     const cwdReal = data.cwd !== undefined ? await resolveConfigCwd(data.cwd) : undefined;
     if ((data.target === "project" || data.target === "local") && cwdReal === undefined)
       throw new ConfigError("ConfigValidationError", `target "${data.target}" requires cwd`);
-    const home = srv.deps.configHome ?? homedir();
-    const nominal = data.target === "user" ? join(home, ".claude", "settings.json")
+    const userDir = userLayerDir(srv.deps);
+    const nominal = data.target === "user" ? join(userDir, "settings.json")
       : join(cwdReal as string, ".claude", data.target === "project" ? "settings.json" : "settings.local.json");
     // Resolved BEFORE the lock, and the SAME resolved path feeds the read and the write: `withFileLock`'s
     // in-process queue is keyed by the path string, so two spellings of one file would otherwise take two
@@ -442,17 +478,21 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       for (const e of data.edits) next = applyEdit(next, e.keyPath, e.value, e.mergeStrategy);
       return writeTargetDoc(filePath, next);
     });
-    // Masking: EVERY edit evaluated (plan review F15), against the SAME `effectiveView` `config/read`
-    // serves — see `maskingVerdict` for why that shared derivation is the contract.
-    const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
-    const layers = await readLayers(layerPaths(home, managed, cwdReal));
-    const { config: effective, origins } = effectiveView(layers);
-    const { maskedEditIndexes, uncheckedEditIndexes, overriddenMetadata } = maskingVerdict(data.edits, data.target, effective, origins, layers);
+    // PAST THE COMMIT. Everything below describes bytes already on disk, so nothing below may turn this
+    // into a failure reply: a client told its write failed retries it, and an `upsert` of an array is not
+    // idempotent (arrays concatenate and dedupe by SameValueZero, so object entries never collapse), which
+    // turned one hook registration into two. The reachable failure is real, not hypothetical — a
+    // pathologically deep object in ANOTHER layer blows `effectiveView`'s recursion at a depth `JSON.parse`
+    // accepts, and the write path's own depth screen covers only the value it was handed. So the masking
+    // pass is fenced: if it cannot be computed, the reply says `ok` with every edit UNCHECKED — the
+    // vocabulary this reply already has for "not reported as overridden, and not verified in force".
+    const analysis = await maskingAnalysis(srv, data, cwdReal);
+    const { maskedEditIndexes, uncheckedEditIndexes, overriddenMetadata } = analysis.verdict;
     // DEDUPED (review M5): the warning names the top-level key, so three edits under one unknown key are
     // three copies of one sentence — noise a client has to collapse itself before showing it.
     const warnings = [...new Set([
       ...data.edits.filter((e) => !KNOWN_TOP_LEVEL.has(e.keyPath[0])).map((e) => `unknown top-level settings key "${e.keyPath[0]}" (written anyway)`),
-      ...uncheckedEditIndexes.map((i) => uncheckedWarning(i, data.edits[i].keyPath)),
+      ...(analysis.failure !== undefined ? [analysis.failure] : uncheckedEditIndexes.map((i) => uncheckedWarning(i, data.edits[i].keyPath))),
     ])];
     ctx.peer.reply(id, {
       status: maskedEditIndexes.length ? "okOverridden" : "ok", version: written.version, filePath,
