@@ -117,16 +117,21 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   (there is only ever the single final tmp+rename write, so rollback is structural, not
   compensating). No reload flag (D-M5-2): a write binds at the next engine spawn (new thread,
   reopen, clear, rewind swap) and the method docs say so.
-- **Concurrency (D-M5-14, rev 2):** the version token is `sha256` of the file's raw bytes
-  (`"absent"` for a missing file), and the check is made **atomic with the write**, not advisory:
-  per-target-file writes serialize on an in-process queue, and the queue holds an advisory lockfile
-  (`<file>.lock`, `O_EXCL` create, **nonce-owned** — rev 3: the file carries a pid+random nonce, a
-  release unlinks only after re-reading its OWN nonce, and a stale break (30s) never removes a lock
-  it cannot read as stale, so owner A overrunning the window can no longer have its lock stolen and
-  then unlink B's) across read → validate `expectedVersion` → write tmp → rename. The canonical
-  parent directory (`.claude/`) is created before locking, and a target that is itself a symlink is
-  resolved first so tmp+rename replaces the real file, never the link. Two writers with the same
-  `expectedVersion` therefore serialize, and exactly one commits; the loser refuses
+- **Concurrency (D-M5-14, rev 2; lock mechanism replaced at D-M5-24, rev 9):** the version token is
+  `sha256` of the file's raw bytes (`"absent"` for a missing file), and the check is made **atomic
+  with the write**, not advisory: per-target-file writes serialize on an in-process queue, and the
+  queue holds a cross-process lock at `<file>.lock` across read → validate `expectedVersion` → write
+  tmp → rename. That lock is a **claim directory** (rev 9): it is published by `rename`, which fails
+  against any non-empty claim; the owner is the NAME of the single marker file inside it, so every
+  delete is scoped to its own owner and no lock's bytes are ever read; and the marker's mtime is a
+  **lease the holder refreshes**, so a slow-but-live holder is not evicted and a dead one's claim
+  expires (30s). A holder that is evicted anyway **fences** before committing, and the commit
+  re-checks the file's own token one syscall before the rename — the two ways a reply of `ok` is kept
+  true when mutual exclusion fails. (Rev 3's `O_EXCL` file lock with a read-back nonce is what this
+  replaces: it evicted live holders by clock age and its check-then-delete break was not atomic.)
+  The canonical parent directory (`.claude/`) is created before locking, and a target that is itself a
+  symlink is resolved first so tmp+rename replaces the real file, never the link. Two writers with the
+  same `expectedVersion` therefore serialize, and exactly one commits; the loser refuses
   `ConfigVersionConflict` against the winner's bytes. **The contract is scoped to this protocol's
   writers** (rev 3): an external editor that changes the file inside another writer's critical
   section is last-wins — the lockfile serializes `ccx` servers, not the world, and the narrowing is
@@ -554,8 +559,10 @@ flips the `full-potential.md` rows and ships nothing.
   discriminate correctly, but every generic client would still read the outer code as "your request was
   malformed"). Recorded alongside it: the **more reachable symptom is not the error at all** — with a
   foreign lockfile present a write usually blocks ~30 s, breaks the stale lock, and succeeds; the error
-  fires only when the lock cannot be unlinked or a live writer holds it past the deadline. Documented
-  rather than re-architected. The seam a later milestone will want is separating "how long do I wait" from
+  fires only when the lock cannot be unlinked or a live writer holds it past the deadline. (Still true for
+  a DEAD writer's leftover, which is what that sentence was about. Under D-M5-24 a LIVE holder keeps its
+  lease, so that case now ends in this refusal instead of in a break — the refusal is the repair, not a
+  regression from it.) Documented rather than re-architected. The seam a later milestone will want is separating "how long do I wait" from
   "when is a lock stale" — today `withFileLock` takes only `staleMs` and derives the deadline from it.
 - **D-M5-13a (Task 4 review I-1, rev 4) — the masking report names the EFFECTIVE layer.** The scan took
   the *first* hit walking upward from the lowest layer; precedence is user < project < local < managed, so
@@ -1002,6 +1009,73 @@ flips the `full-potential.md` rows and ships nothing.
   the second filing was ranked with a reachability caveat (for a key the engine's schema knows, upstream
   discards a file it rejects, so the two implementations rarely see the same layer set) — one divergence,
   not two, and it is fixed because `config/read`'s answer is the one clients actually consume.
+- **D-M5-24 (fix wave C, rev 9) — a lock is a claim DIRECTORY: acquire is a `rename`, ownership is a
+  NAME, liveness is a LEASE, and the commit is FENCED.** This replaces the mechanism D-M5-14 rev 3
+  describes, because that mechanism failed the one hard promise this milestone makes. Both failures were
+  measured with real OS processes at production settings, not argued:
+  **24a — a LIVE holder was evicted and the evictor's acknowledged write was then destroyed.** Writer A
+  entered the critical section and stalled 45s (a suspended process, a hung network mount). At exactly
+  30s writer B broke A's lock as stale, passed its version check against bytes A had already read,
+  committed, and was told `status: "ok"` with a version token. Fifteen seconds later A's rename erased
+  B's write, and nothing anywhere reported the loss — the direct negation of D-M5-14's "two writers with
+  the same `expectedVersion` therefore serialize, and exactly one commits". The root is that staleness
+  was judged by CLOCK AGE, and by that measure a slow-but-live holder is indistinguishable from a dead
+  one. **24b — the break was not atomic, so two waiters deleted each other's fresh lock.** Ownership was
+  verified BEFORE an `unlink` that takes only a pathname; with one abandoned lock and four contenders,
+  43 of 250 trials (32 of 250 on a second machine) put two or more processes inside the critical section
+  simultaneously, every one of them losing an update, with **zero** refusals reported. Traces caught a
+  process inside the section while the lock file named a different owner, and another reading an empty
+  owner off a lock mid-creation.
+  Decided: **the lock is a non-empty directory at `<file>.lock`**, holding exactly one marker file whose
+  NAME is the owner's nonce. Three properties follow, and each closes one half of the above.
+  *Acquire* assembles the claim in a staging directory beside the target and `rename`s it into place:
+  one atomic syscall that fails ENOTEMPTY against any live claim, and no instant in which a lock exists
+  without naming its owner. *Deletes become content-conditional* — the thing POSIX gives no way to make
+  an `unlink` be — because the owner is a filename: `unlink(<lock>/<nonce>)` can only ever destroy that
+  owner's claim, `rmdir`'s emptiness precondition IS the atomic "no successor has claimed it" test, and
+  `unlink` cannot remove a directory at all, so a fresh claim is immune BY TYPE to the pathname-only
+  delete that used to destroy it. This also makes the rev-3 release rule structural rather than a
+  read-then-check: an overrun owner cannot delete its successor's lock even in principle. *Staleness
+  becomes a lease*: the holder refreshes its marker's mtime on a timer, so the common stall — a critical
+  section waiting on slow I/O — keeps its lock, and a foreign holder that keeps its lease is **waited for
+  and then refused `ConfigLocked`**, never evicted. That refusal is a deliberate behaviour change and it
+  is the D-M5-14c answer, not a new one: contention is reported, and the caller's move is still "retry
+  shortly". A holder whose event loop cannot run (SIGSTOP, a blocked loop, a clock jump) can still be
+  evicted, so it also **fences**: it re-asserts ownership one syscall before the rename, and refreshes
+  the lease while it is there, so the margin after a passing fence is a full stale window rather than the
+  microseconds the check itself takes. Beside it the commit re-reads the target's own token and refuses
+  if anything committed since the caller read it — an independent detector at the STORAGE layer, because
+  no advisory lock deserves the trust of being the only one. Both refuse before a byte moves, so the
+  retry they invite is safe for the non-idempotent `upsert` of an array.
+  Rejected, with reasons: **`flock`/`fcntl`**, which would make liveness a kernel property and need no
+  lease at all — Node core exposes no binding (`fs.constants.O_EXLOCK` is absent, measured on this
+  platform), so it costs a native dependency in a pure-TS harness, and it is precisely the network mounts
+  in 24a's scenario where advisory kernel locks are least trustworthy. **A `symlink` whose target string
+  carries the owner**, which does give an atomic self-identifying create — but its removal is still a
+  pathname-only `unlink`, so it fixes the torn read and not 24b. **`rename`ing a stale lock aside**,
+  which is one atomic syscall but is not conditional on WHAT it moves, so it steals a fresh lock exactly
+  as the unlink did. **`mkdir` then a marker inside it**, which is simpler but leaves a window where the
+  claim exists empty and a second breaker can `rmdir` it out from under its owner. **A `proper-lockfile`
+  dependency**, whose lease-plus-compromise design this converges with independently and which is the
+  reassurance that the shape is standard — declined only because the mechanism is ~60 lines we must own
+  and reason about at this seam. **Keeping the old lock and adding only the fence**, which would leave
+  the critical section genuinely non-exclusive and rely on one detector for correctness.
+  Recorded alongside: **a lock left by an older build (a plain file) is broken on AGE and never read** —
+  the format it belongs to promised nothing more, and refusing to break it would dead-end every future
+  write to that target. And **D-M5-14b's "created 0600" is now true rather than nearly true**: the
+  repairing `chmod` was conditional on a destination mode existing, so a FRESH file landed at 0400 under
+  `umask 0277` and 0200 under `umask 0477` — and 0200 is a settings file this API can never read back,
+  which made `config/read` report the layer `unreadable`, made the write's own masking pass name the user
+  layer as its own overrider, and (with the old lock inheriting the same umask, so its release could not
+  read its own nonce) wedged the target permanently. The `chmod` is unconditional; every mode this code
+  installs now goes through one, because `chmod` is not umask-masked and `writeFile`/`mkdir` are.
+  Rejected: amending the promise to "0600 or narrower" — the narrow direction is not safe here, it is a
+  denial of service on the target, and this milestone has twice ruled that a dead end through the API is
+  worse than the alternative (D-M5-14a #3).
+  **Residual, stated rather than papered over:** a holder that loses its lease between a passing fence
+  and its rename is not detectable by the fence, and only the commit-time token check stands behind it;
+  a wall-clock jump larger than the stale window can expire a live lease. Both are irreducible without
+  kernel locking, and neither can produce a lost update without also producing a refusal.
 
 ## Surprises & Discoveries
 
@@ -1565,3 +1639,13 @@ directory changing a permission dialog's offered rule row, not the known flake.
   over an array keeps the array as upstream does — and one correction to what it does when it cannot
   describe them: a masking pass that fails no longer turns a COMMITTED write into an error reply, because
   the client's retry duplicated array entries the merge rule is deliberately unable to dedupe.
+- **rev 9 (2026-08-20) — D-M5-24, the lock, which is where the milestone's own hard promise was false.**
+  Everything else this document guarantees is advisory or scoped; D-M5-14 says two writers with one token
+  serialize and exactly one commits, and two OS processes at production settings showed both committing
+  and one write vanishing with no report. The mechanism is replaced rather than patched: a claim
+  DIRECTORY published by `rename`, ownership carried by a filename so every delete is content-conditional,
+  and a lease the holder refreshes so a slow writer is waited for and refused instead of robbed. Note what
+  this rev is really about — the defect was invisible to fifteen task reviews and to a suite that pins the
+  lock's contract with an in-process double, and it took four real processes and 250 trials to see. The
+  whole-branch review's lesson generalizes past the storage layer it was written about: **a test double is
+  a title for whatever it stands in for**, and for a lock the thing it stands in for IS the concurrency.

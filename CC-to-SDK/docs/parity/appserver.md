@@ -213,10 +213,14 @@ reply shape (`runConfigWrite`: one edit is the degenerate batch), take `keyPath`
 segments** rather than Codex's quoted-dotted grammar, and refuse `__proto__`/`constructor`/`prototype`
 both as a segment and as a key anywhere inside a written value (D-M5-12a — an opaque-segment contract must
 not become a prototype-pollution channel, and half that rule is worse than none). The version check is
-made **atomic with the write** rather than advisory — a per-file queue holding a nonce-owned `O_EXCL`
-lockfile across read → validate → tmp → rename — so two writers carrying the same token serialize and
+made **atomic with the write** rather than advisory — a per-file queue holding a cross-process claim
+across read → validate → tmp → rename — so two writers carrying the same token serialize and
 exactly one commits, the loser refusing `ConfigVersionConflict` against the winner's bytes; the guarantee
-is scoped to this protocol's writers and says so, an outside editor being last-wins. `managed` is absent
+is scoped to this protocol's writers and says so, an outside editor being last-wins. That claim is a
+`<file>.lock` **directory** published by `rename` and owned by the NAME of the marker inside it, on a
+lease its holder refreshes (D-M5-24): a live holder is waited for and then refused `BUSY`/`ConfigLocked`
+rather than evicted, every break is scoped to the one owner it inspected, and the commit re-checks the
+target's own token one syscall before the rename — so a reply of `ok` means the bytes survived. `managed` is absent
 from the target enum: unwritable by construction rather than by refusal.
 
 Then §search's pair, and the two differ in kind rather than in degree. `thread/search` is server-scoped like
