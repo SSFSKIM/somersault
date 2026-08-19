@@ -586,6 +586,41 @@ flips the `full-potential.md` rows and ships nothing.
   test-side oracle read the same `origins` and inherited the same blindness. **A sweep and an oracle
   written by the author of the code share its blind spots; only an independently authored generator
   found this.**
+- **D-M5-15a (Task 6 review, rev 4) — sort values are screened `Number.isFinite`, at the point they are
+  computed.** `compareTuple` returns `NaN` for a non-finite sort value, and `Array.prototype.sort` reads
+  `NaN` as *no opinion* — so one malformed row does not sort oddly, it leaves **every other session
+  unordered**. Because the search cursor is a keyset over exactly that order, page boundaries then skip or
+  repeat sessions. Measured over 3 600 paged walks with a single bad row: **440 runs silently dropped a
+  well-formed session and 993 returned one twice**; with the screen applied, zero and zero. (One caveat
+  worth keeping: on input that happens to arrive pre-sorted, V8's TimSort run detection masks the defect
+  entirely — 0 of 999 rows misplaced — so an incidental test proves nothing here. The realistic case is
+  scrambled input, where the mean was 958 of 999 misplaced.)
+  **Reachability is not hypothetical.** The harness supports a bring-your-own session store as a
+  first-class config field; in that path `mtime` is assigned straight through with no normalizer; and the
+  project's own adapter conformance suite asserts `typeof r.mtime === "number"`, **which `NaN`
+  satisfies**. An adapter computing `new Date(row.updated_at).getTime()` over a NULL column therefore
+  passes our own certification gate and emits `NaN`. Two of `sortValueOf`'s three paths had no guard at
+  all — not even the `??`. `Infinity` is separately reachable from plain JSON (`1e999`).
+  Chosen: `Number.isFinite(x) ? x : null` on both returns of `sortValueOf`. It subsumes the existing `??`,
+  keeps `0`, does not coerce, and makes `compareTuple` total by construction, since finite minus finite is
+  never `NaN`. **Placed in the primitive, not the consumer, for a reason internal to the module:**
+  `encodeSearchCursor` already serializes a non-finite `v` as `null` (JSON has no `NaN`), so the cursor
+  claimed *this session sorts last* for a session `compareTuple` did not sort last — the two functions
+  contradicted each other. Screening at the source makes the cursor's claim true and closes both halves
+  at once. Rejected: screening in Tasks 7 and 8 (the same fix twice, and the module stays
+  self-contradictory in between).
+- **D-M5-16a (Task 6 review, rev 4) — a cursor with an out-of-range row offset is REFUSED, not clamped.**
+  Row offsets were type-checked but not range-checked: negative, fractional and absurd values decoded
+  cleanly and were destined for a transcript read offset. D-M5-17's clamp precedent does not transfer, and
+  it says so in its own terms — clamping is scoped to `limit`, *a client-authored parameter in a
+  documented public schema, where clamping serves a real client intent*. A cursor is the opposite:
+  server-minted, opaque, never authored by a client, so an out-of-range offset means forged or corrupted
+  and there is no intent to be generous toward. Clamping would be worse than either alternative, since it
+  converts an integrity failure into a plausible-looking wrong answer — resuming a transcript at a
+  different row than the cursor named, which is precisely the intra-file skip/repeat D-M5-16 exists to
+  eliminate. Refusal lives in the decoders (their contract is already *null on garbage*, range is part of
+  the shape of a row index, and both Tasks 7 and 8 decode — a consumer-side answer means writing it twice
+  and forgetting it once).
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
@@ -678,6 +713,24 @@ flips the `full-potential.md` rows and ships nothing.
   that succeed have non-interacting edits. Ordering does work; nothing measured it, and the spec's own
   acceptance criterion for it had no test. **A title is not a test, and a mutation set written by the
   same mind that wrote the code inherits its blind spots.**
+
+- **Our own adapter-certification gate certifies the value that breaks sorting.** Task 6's review
+  settled a reachability question by *building the exploit through the unmodified SDK*, and the path ran
+  straight through this project's own quality instrument: `src/store/conformance.ts` asserts
+  `typeof r.mtime === "number"` to certify a third-party session-store adapter, and `NaN` is a number. So
+  an adapter whose timestamp column is occasionally NULL passes certification and emits a value that
+  silently unorders every search result. The screen added in D-M5-15a fixes the *consumer*; **the gate
+  that blessed the input is still blessing it**, and it is outside this milestone's scope — carried to the
+  parking lot as its own item, since every future consumer of that store inherits the same trust.
+  The general shape is one this project has now hit twice: an instrument that looks like it verifies a
+  property while testing something weaker than the property (`a title is not a test`, and now
+  `typeof x === "number"` is not `x is a usable number`).
+- **A reviewer died mid-run and its findings were recovered by resuming it, not by re-running it.** Task
+  6's review terminated on a spend limit having logged only *23 mutations run, 18 red, 5 green — three of
+  those greens are real gaps*. Resuming the same agent by id recovered which three, at a fraction of the
+  cost of a fresh review, and a replacement reviewer would have built a different mutation set and
+  probably missed them. Worth remembering as a mechanic: a dead subagent's context is an asset until the
+  session ends.
 
 ## Outcomes & Retrospective
 
