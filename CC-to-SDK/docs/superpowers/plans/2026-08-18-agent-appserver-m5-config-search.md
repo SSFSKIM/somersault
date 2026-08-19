@@ -1184,6 +1184,29 @@ runScanExclusive(srv, async () => {
 - Params `threadIdParams`; result `z.object({ ok: z.literal(true) })` — define `okResult` in `schema/core.ts` unless an equivalent exists (check first, reuse if so); both methods register with it.
 - **Live-guard** = `findLiveBySessionId(srv, sid) !== undefined || srv.resumingSessions.has(sid)` — checked BEFORE marker creation and AGAIN after; a failed re-check unlinks the marker and refuses `ERR.BUSY` `"Thread is live in this server — close it first"` (plan review F12: a resume mid-admission holds only the reservation).
 - **Existence (D-M5-20):** archive of a cold session requires `getSessionInfo(sid)` to return a row, else `THREAD_NOT_FOUND`. Unarchive proceeds when a marker exists OR the store knows the session; both absent → `THREAD_NOT_FOUND`.
+- **Share the store-knows ATOM, not the refusal (Task 8 report, concern 4 — controller-adjudicated).**
+  Task 8 raised that its five-line existence refusal and this task's will drift on what *"the store does
+  not know this session"* means. The concern is right; its proposed fix is not. **The three admission
+  rules are genuinely different predicates and must stay different** — `thread/searchOccurrences` admits
+  on `live record OR store row`; `thread/archive` admits on `store row` alone, because a live thread is
+  separately refused `ERR.BUSY` by the live-guard above (importing Task 8's live-record fallback here
+  would admit exactly the case this method must reject); `thread/unarchive` admits on `marker OR store
+  row`. Extracting the whole refusal would flatten three rules into one and invert `archive`.
+  What actually must not drift is the **single atom all three share** — the store lookup and its
+  dependency-injection default, which Task 8 spells at `src/appserver/search.ts:257`:
+  ```ts
+  const getInfo = srv.deps.getSessionInfo ?? ((sid: string) => realGetSessionInfo(sid, {}));
+  ```
+  **Do this:** lift that one binding into a shared exported helper (suggested: `storeKnows(srv, sid):
+  Promise<boolean>` beside the other shared server helpers, or a `resolveGetInfo(srv)` accessor if you
+  prefer to keep the await at the call site), repoint `search.ts:257` at it in the same commit, and
+  compose each of the three admission rules from it locally. Re-spelling the binding inline is the
+  defect to avoid: the unit tests inject through `srv.deps`, so a handler that omits the `srv.deps`
+  override reads the **real** session store while its tests still pass — green for the wrong reason,
+  which is the failure mode this milestone has already paid for twice.
+  Pin it: one row asserting the injected `deps.getSessionInfo` is what each new handler consults (assert
+  the injected spy was called, not merely that the reply was right — a handler reading the real store can
+  still produce a correct-looking refusal).
 - **`ENGINE_GONE_EXEMPT`** (`server.ts:185`): add `"thread/searchOccurrences"`, `"thread/archive"`, `"thread/unarchive"` with the comment `// M5: disk/sidecar reads that must answer for a thread whose engine died (spec rev 3)`.
 - **Error mapping (Task 5 review, item 2) — the store throws protocol-free, this handler maps.** Task 5's
   store throws a bare `Error` from `checkId` and lets raw errnos escape; both now cross the wire from a
