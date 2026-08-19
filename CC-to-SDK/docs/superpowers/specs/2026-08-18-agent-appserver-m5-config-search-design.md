@@ -341,6 +341,23 @@ flips the `full-potential.md` rows and ships nothing.
     entry costs a missing warning and never a wrong refusal, so the stakes are low — but this is the
     "instrument rots under the code it verifies" pattern, and the house-consistent fix is to teach
     `scripts/drift-check.mjs`, which already walks source tokens for exactly this class of rot.
+  - **`thread/start` carrying `resume` is unguarded where `thread/resume` is guarded** (Task 9 fix wave,
+    pre-existing). That surface forks an engine over whatever session id it is given, with no live-guard
+    and no `deletingSessions` check, so two `thread/start` calls naming one session id register two
+    records for it. Predates M5; the Task 9 eager-stamp made the resulting record *visible* where it was
+    previously invisible, which is strictly an improvement but also makes the duplicate observable.
+    Trigger: any client that drives resume through `thread/start` rather than `thread/resume`. Fix shape:
+    give the surface its sibling's guards, which is a scope call about whether the two surfaces are meant
+    to be peers.
+  - **The marker store's non-errno refusal branch is stripped but unpinnable** (Task 9 fix wave, F5). The
+    only mutation of 34 to survive: removing the path-strip from that branch changes nothing observable,
+    because `archive.ts` throws either a typed `MarkerIdError` or an fs errno and the marker functions are
+    imported directly rather than injected — so no test can drive a third failure kind through them. The
+    strip was kept as defence in depth and the gap reported rather than deleting the line or writing a row
+    that cannot fail. **Same family as the two reachability items above:** what is unreachable through the
+    default wiring is often reachable through the injection seam, and here the seam does not exist yet.
+    Trigger: injecting the marker store the way `getSessionInfo` is injected — which would also make this
+    branch testable.
   - **Subagent (nested) content is searchable but not jumpable** (Task 8 review F1, D-M5-20a). Occurrences
     inside nested rows return a snippet and a row identity but `readCursor: null`, because the item pager
     discards nested frames by design (M1: "attribution only, not itemized"). Making them jumpable needs an
@@ -741,6 +758,28 @@ flips the `full-potential.md` rows and ships nothing.
 - **D-M5-21 (rev 3) — admission auto-unarchives**: resume/attach of an archived session removes the
   marker and broadcasts. Rejected: leaving the archived-and-live state reachable by racing a second
   server (plan review F12); refusing resume of archived (archive is a shelf, not a lock).
+- **D-M5-21a (Task 9 review, rev 5) — `thread/archive`'s live-guard extends to the fleet roster.** The
+  review found one server answering two contradictory questions about the same session two lines apart:
+  `thread/resume` refused a session live in another ccx process (`"sessionId belongs to a running fleet
+  session; use thread/attach"`), while `thread/archive` shelved that same id and returned `{ok:true}`.
+  The reviewer correctly reported this as **brief-conformant** — the brief defines live as
+  `findLiveBySessionId || resumingSessions` and says nothing about the roster — and flagged it as a spec
+  call rather than making it.
+  Decided: **fix.** The brief did not anticipate it, but D-M5-21's stated purpose is that the invariant
+  holds *across servers too*, and the archiving server already holds the roster data and already uses it
+  for precisely this decision in the neighbouring handler. One process giving two answers about one
+  session's liveness is a defect regardless of which document failed to forbid it.
+  Shipped small, as required: `fleetResumeCandidates` split into a synchronous half and a pid-probe half,
+  composed into an exported `liveInFleet`; `thread/resume` now uses the shared probe instead of its own
+  inline loop, and `thread/archive`'s live-guard gained it as a third arm behind the two in-process ones.
+  No new state at the call site — the roster read is a directory listing and `ps` is spawned only when a
+  roster row actually names the session.
+  **Follow-on, same round:** collapsing three arms into one boolean lost *which* arm fired, and the shared
+  refusal `"Thread is live in this server — close it first"` is false for the cross-process arm and its
+  advice unfollowable. The code stays `ERR.BUSY` for all three — the taxonomy groups by what the client
+  does next (`rpc.ts`), and that is "retry later" in every arm — while the message distinguishes them.
+  Recorded because it is the general shape: **when a guard gains an arm, the refusal it shares stops being
+  true for the new one, and a message is the half that carries the remedy.**
 
 ## Surprises & Discoveries
 
