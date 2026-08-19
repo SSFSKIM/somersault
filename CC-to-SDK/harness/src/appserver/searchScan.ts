@@ -86,31 +86,55 @@ const clampIndex = (n: number, hi: number): number => (Number.isFinite(n) ? Math
 const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
 const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
 
-/** Maps an offset found in `text.toLowerCase()` back onto `text`. Search matches on the LOWERCASED row and
- *  the snippet is cut from the ORIGINAL, so without this the window slides right by one unit per preceding
- *  case-fold expansion — a wrong excerpt here and, once Task 8 publishes `snippetMatchRange` composed off
- *  the same offset, a wrong published range at ONE expansion (`İneedle…` publishes `eedley`). Shared HERE
- *  rather than spelled at each call site: two spellings of one piece of arithmetic in one file is what let
- *  the rev-1 plan's mint and resume diverge.
+/** Maps a match located in `text.toLowerCase()` back onto `text` as a SPAN — both ends, not just the start.
+ *  Search matches on the LOWERCASED row and the snippet is cut from the ORIGINAL, and two independent
+ *  things go wrong without this. Expansions BEFORE the match slide the window right by one unit each
+ *  (`İneedle…` excerpts `eedley`). An expansion INSIDE the match changes the match's own length, and then
+ *  NEITHER length a caller already holds is the answer: searching `İstanbul` (8 units, lowering to 9)
+ *  matches 9 original units in a row holding the already-decomposed `i`+U+0307 form and 8 in a row holding
+ *  the composed `İ` — the same term, both rows hits, and the term's own length is right for neither pair.
+ *  Only mapping the two ends through the same count gives the span in `text`, and `end - start` is its true
+ *  length. Once Task 8 publishes `snippetMatchRange` off this span a wrong length is a wrong PUBLISHED
+ *  range, not merely a short excerpt. Shared HERE rather than spelled at each call site: two spellings of
+ *  one piece of arithmetic in one file is what let the rev-1 plan's mint and resume diverge.
  *
  *  Exactly one code point in Unicode changes UTF-16 length under `toLowerCase()`, and it only ever grows:
  *  swept 0..0x10FFFF, expanders = 1 (U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE → "i" + U+0307),
  *  shrinkers = 0. The context-sensitive folds (final sigma, ǅ, ﬀ, ẞ) are all length-preserving, and the
  *  Lithuanian rules that would add a dot are locale-sensitive while `toLowerCase()` is not. So
  *  `lowered.length - text.length` IS the count of U+0130 in `text`, which makes the equal-length fast path
- *  exact for every row that contains none — i.e. every real row. The correction loop is not a unit-by-unit
- *  walk (which would defeat the row cap): it runs once per U+0130 via native `indexOf`, worst case the same
- *  order as the `toLowerCase()` the caller already paid for. Matching semantics are untouched — the search
- *  is still `indexOf` over the lowered text. (A `RegExp` with `i` for native offsets was measured and
- *  rejected: under `i`, İ/i and K/k and ẞ/ß all fail to match, and under `iu`/`iv` İ still does; every
- *  variant changes which rows are hits.) */
-export function originalOffset(text: string, lowered: string, atLowered: number): number {
-  if (lowered.length === text.length) return atLowered;
+ *  exact for every row that contains none — i.e. every real row — and exact for BOTH ends, not just the
+ *  start. That holds on this second axis too and it is worth saying why: the mapping reads only the ROW's
+ *  own expansions, so a row with none is unit-for-unit aligned with its lowered copy and every offset in
+ *  it — and therefore every span between two offsets — is preserved. A row CANNOT be length-stable while a
+ *  span inside it is not: a span whose length changes needs an expansion inside it, which is exactly what
+ *  makes the row's two lengths differ. What the fast path never licensed is substituting the TERM's length
+ *  for the span's — `lenLowered` is the match measured in the lowered row and passes straight through,
+ *  while `searchTerm.length` is a third number belonging to neither string. Matching semantics are
+ *  untouched — the search is still `indexOf` over the lowered text. (A `RegExp` with `i` for native offsets
+ *  was measured and rejected: under `i`, İ/i and K/k and ẞ/ß all fail to match, and under `iu`/`iv` İ still
+ *  does; every variant changes which rows are hits.) */
+const mapBack = (text: string, atLowered: number, edge: "start" | "end"): number => {
+  // An expansion STRADDLING the offset — a match edge landing between the `i` and its U+0307 — resolves
+  // OUTWARD, so the span covers every original character any part of which matched: the start counts it
+  // (landing before it), the end does not (landing after it). Reachable, not decorative: term `hi` against
+  // a row holding `Hİ` ends mid-expansion, and flooring that end would publish a range stopping short of
+  // the İ that matched. This is the ONLY offset the two edges disagree on; everywhere else both skip an
+  // expansion wholly after the offset and count one wholly before it.
+  const straddles = edge === "end" ? 1 : 0;
   let shift = 0;
   let p = text.indexOf("İ");
-  // `p + shift` is where this İ sits in `lowered`; count only the ones strictly before the match.
-  while (p >= 0 && p + shift < atLowered) { shift++; p = text.indexOf("İ", p + 1); }
+  // `p + shift` is where this İ sits in `lowered`. Not a unit-by-unit walk (which would defeat the row
+  // cap): once per U+0130 via native `indexOf`, worst case the same order as the `toLowerCase()` the
+  // caller already paid for — and the two calls per match are two passes over the same short prefix.
+  while (p >= 0 && p + shift + straddles < atLowered) { shift++; p = text.indexOf("İ", p + 1); }
   return atLowered - shift;
+};
+
+export function originalSpan(text: string, lowered: string, atLowered: number, lenLowered: number): { at: number; len: number } {
+  if (lowered.length === text.length) return { at: atLowered, len: lenLowered };
+  const at = mapBack(text, atLowered, "start");
+  return { at, len: mapBack(text, atLowered + lenLowered, "end") - at };
 }
 
 export function makeSnippet(text: string, start: number, len: number): { snippet: string; snippetMatchRange: { start: number; end: number } } {

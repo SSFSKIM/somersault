@@ -661,6 +661,25 @@ flips the `full-potential.md` rows and ships nothing.
   would need regex escaping besides. Also rejected: cutting the snippet from the lowercased row — the wire
   must carry the row's real casing, and nothing currently pins that (a mutation shipping lowercased
   excerpts passes every gate), so a row now pins it.
+  **Both ends map, not just the start (Task 7 fix wave, rev 5).** The first cut of D-M5-17a mapped the
+  match's START and then handed the snippet the raw *search-term* length, which is a second axis and it is
+  live: the expansion only has to sit INSIDE the term rather than before the match. `İstanbul` is 8 UTF-16
+  units and lowers to 9, so a row storing the already-decomposed `i`+U+0307 form and a row storing the
+  composed `İ` are **both** hits for it while covering 9 and 8 original units — the term's own length is
+  right for neither, and neither is the lowered term's. The matched span in the lowered row is
+  `[at, at + termLc.length)`, so mapping **both** ends through the same primitive and taking the difference
+  is the whole repair, and it stays one arithmetic in one place. The equal-length fast path survives this
+  axis unchanged and the reason is worth recording: the mapping reads only the ROW's expansions, so a
+  length-stable row is unit-for-unit aligned with its lowered copy and *no span inside it can change
+  length* — a span that changes length needs an expansion inside it, which is exactly what makes the row's
+  two lengths differ. What the fast path must pass through is the span measured in the lowered row, never
+  the term's length. One convention added: a match edge landing between the `i` and its combining dot
+  resolves **outward** — the start floors, the end ceils — so the span always covers every original
+  character any part of which matched (term `hi` against a row holding `Hİ` reaches this, and a floored end
+  would publish a range holding only the `H`). Closed inside Task 7 rather than deferred to Task 8 on the
+  Task 1 precedent: the *empty object gets no origin* Minor was deferred the same way and came back as the
+  root of a wire-visible Task 4 defect. Task 8 publishes `snippetMatchRange` off this span, so handing it a
+  known-wrong length is the same trade.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).

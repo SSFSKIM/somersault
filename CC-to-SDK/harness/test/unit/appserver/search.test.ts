@@ -498,6 +498,37 @@ describe("thread/search", () => {
     expect(r.result.data.map((d: any) => d.snippet)).toEqual([centered, centered]);
   });
 
+  it("a fold INSIDE the term maps the match's LENGTH too — the term's own length is the span in neither the lowered row nor the original", async () => {
+    // The row above pins the START of the match; this one pins its LENGTH, and they are separate axes: the
+    // expansion has to sit inside the term rather than before the match. `İstanbul` is 8 UTF-16 units and
+    // lowers to 9 ("i" + U+0307 + "stanbul"), so a row storing the already-decomposed form and a row
+    // storing the composed İ are BOTH hits for it while covering 9 and 8 original units respectively —
+    // the term's length (8) is wrong for the first, the lowered term's length (9) wrong for the second.
+    // Observable here through the window, which is centered on the match and therefore shifts by one unit
+    // when the length is off by one; Task 8 publishes the same number as `snippetMatchRange`, where being
+    // one unit off is a wrong PUBLISHED range rather than a slightly off-center excerpt.
+    const DEC = "i̇stanbul";                        // "İstanbul".toLowerCase() — 9 units, and a form a row can hold
+    expect("İstanbul".toLowerCase()).toBe(DEC);
+    const y = (n: number) => "y".repeat(n);
+    const decomposed = y(300) + DEC + y(300);       // length-stable row: the fast path, and a 9-unit span
+    const composed = y(300) + "İstanbul" + y(300);  // the fold is INSIDE the match: an 8-unit span
+    const bothAxes = "İ" + y(300) + "İstanbul" + y(300); // …plus one BEFORE it, so start and length both move
+    const st = store([
+      sess("s-meta", { createdAt: 1_000, customTitle: decomposed }),          // the metadata call site
+      sess("s-dec", { createdAt: 2_000 }, [assistant(decomposed)]),
+      sess("s-com", { createdAt: 3_000 }, [assistant(composed)]),
+      sess("s-both", { createdAt: 4_000 }, [assistant(bothAxes)]),
+    ]);
+    boot(st.deps);
+    const r = await search({ searchTerm: "İstanbul", sortKey: "created_at", sortDirection: "asc" });
+    // Exact strings again: every one of these still CONTAINS the term when the length is wrong, so
+    // `toContain` is precisely the assertion that would let this through.
+    const nine = y(95) + DEC + y(96);               // pad = floor((200-9)/2) = 95
+    const eight = y(96) + "İstanbul" + y(96);       // pad = floor((200-8)/2) = 96
+    expect(r.result.data.map((d: any) => d.snippet)).toEqual([nine, nine, eight, eight]);
+    expect(r.result.data.every((d: any) => d.snippet.length === SEARCH_CAPS.snippetMax)).toBe(true);
+  });
+
   it("a rename that lands MID-WALK is reported once, not zero times — metadata is checked on every page", async () => {
     // The `startRow === 0` guard this replaces was justified as costing nothing and reporting the session
     // "exactly once"; over a store that changes between pages it reported it ZERO times, which is a

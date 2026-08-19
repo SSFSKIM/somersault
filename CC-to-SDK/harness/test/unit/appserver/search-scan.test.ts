@@ -1,6 +1,6 @@
 // test/unit/appserver/search-scan.test.ts
 import { describe, it, expect } from "vitest";
-import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, rowSearchText, makeSnippet, originalOffset } from "../../../src/appserver/searchScan.js";
+import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, rowSearchText, makeSnippet, originalSpan } from "../../../src/appserver/searchScan.js";
 
 describe("searchScan", () => {
   it("compareTuple: nulls last both directions; sessionId tiebreak asc", () => {
@@ -399,7 +399,8 @@ describe("searchScan — snippet windows", () => {
     // the window slides right by one unit per preceding expansion. Swept 0..0x10FFFF: expanders = 1 (U+0130
     // LATIN CAPITAL LETTER I WITH DOT ABOVE → "i" + U+0307), shrinkers = 0 — which is what makes the
     // equal-length fast path exact rather than merely usual.
-    const map = (text: string, needle: string) => { const lc = text.toLowerCase(); return originalOffset(text, lc, lc.indexOf(needle)); };
+    const span = (text: string, needle: string) => { const lc = text.toLowerCase(); return originalSpan(text, lc, lc.indexOf(needle), needle.length); };
+    const map = (text: string, needle: string) => span(text, needle).at;
     expect(map("plain ASCII needle here", "needle")).toBe(12);           // fast path: lengths equal, identity
     // E = 1 is already wrong without the mapping: the lowered offset is 2, the true offset is 1.
     const one = "İneedle";
@@ -409,8 +410,9 @@ describe("searchScan — snippet windows", () => {
     // …and it stays exact as the expansions pile up, and expansions AFTER the match never shift it.
     for (const e of [0, 1, 2, 50, 97, 98, 150]) {
       const text = "İ".repeat(e) + "y".repeat(20) + "needle" + "İ".repeat(7);
-      expect(originalOffset(text, text.toLowerCase(), text.toLowerCase().indexOf("needle")), `E=${e}`).toBe(e + 20);
-      const r = makeSnippet(text, map(text, "needle"), 6);
+      const s = span(text, "needle");
+      expect(s, `E=${e}`).toEqual({ at: e + 20, len: 6 });
+      const r = makeSnippet(text, s.at, s.len);
       expect(r.snippet.slice(r.snippetMatchRange.start, r.snippetMatchRange.end), `E=${e}`).toBe("needle");
     }
     // The degenerate case a SHORT row reaches: the lowered offset (6) is past the original's own length
@@ -419,10 +421,54 @@ describe("searchScan — snippet windows", () => {
     const short = "İİİab";
     const shortLc = short.toLowerCase();
     expect([short.length, shortLc.length, shortLc.indexOf("ab")]).toEqual([5, 8, 6]);
-    const fixed = makeSnippet(short, originalOffset(short, shortLc, 6), 2);
+    const sp = originalSpan(short, shortLc, 6, 2);
+    const fixed = makeSnippet(short, sp.at, sp.len);
     expect(fixed.snippet.slice(fixed.snippetMatchRange.start, fixed.snippetMatchRange.end)).toBe("ab");
     const unmapped = makeSnippet(short, 6, 2);
     expect(unmapped.snippetMatchRange.start).toBe(unmapped.snippetMatchRange.end); // zero-length, past the match
+  });
+
+  it("the match's LENGTH maps back too — a fold inside the term is a second axis, and the term's own length is right on neither side of it", () => {
+    // The start mapping above fixes expansions BEFORE the match. This is the other axis: an expansion
+    // INSIDE the match, which changes how many ORIGINAL units the match covers. `İstanbul` is 8 units and
+    // lowers to 9 ("i" + U+0307 + "stanbul"), and BOTH of these rows are hits for it — so the caller has
+    // two lengths available (8, the term; 9, the lowered term) and neither is correct for both rows. Only
+    // mapping the end through the same count answers it. Task 8 publishes this length as
+    // `snippetMatchRange`, where being one unit off is a wrong range rather than a slightly short excerpt.
+    const term = "İstanbul";
+    const termLc = term.toLowerCase();
+    const DEC = "i̇stanbul"; // what İstanbul lowers to, and a form a row can already be stored in
+    expect([term.length, termLc.length, termLc]).toEqual([8, 9, DEC]);
+    const spanOf = (text: string) => { const lc = text.toLowerCase(); return originalSpan(text, lc, lc.indexOf(termLc), termLc.length); };
+    // (a) the row holds the already-DECOMPOSED form, so it is length-stable and the fast path answers —
+    //     and the true span is 9, one MORE than the term's own length.
+    const decomposed = `in ${DEC} today`;
+    expect(decomposed.toLowerCase().length).toBe(decomposed.length);          // fast path taken
+    const a = spanOf(decomposed);
+    expect(a).toEqual({ at: 3, len: 9 });
+    expect(decomposed.slice(a.at, a.at + a.len)).toBe(DEC);
+    // (b) the row holds the COMPOSED İ, so the match covers 9 lowered units but only 8 original ones —
+    //     one FEWER than the lowered term's length.
+    const composed = "in İstanbul today";
+    const b = spanOf(composed);
+    expect(b).toEqual({ at: 3, len: 8 });
+    expect(composed.slice(b.at, b.at + b.len)).toBe("İstanbul");
+    // (c) BOTH axes live at once: an expansion before the match moves the start AND one inside it sets the
+    //     length. Neither correction subsumes the other — the start is off by the leading count, the
+    //     length by the enclosed one, and the row here needs both.
+    const both = "İzmir, İstanbul";
+    expect(both.toLowerCase().indexOf(termLc)).toBe(8);                       // the lowered offset…
+    const c = spanOf(both);
+    expect(c).toEqual({ at: 7, len: 8 });                                     // …mapped: start -1, length -1
+    expect(both.slice(c.at, c.at + c.len)).toBe("İstanbul");
+    // (d) a match edge landing INSIDE one expansion resolves OUTWARD, so the span still covers every
+    //     original character any part of which matched: `hi` matches the `h` and the `i` U+0130 folded to,
+    //     and a floored end would stop before that İ and describe a range holding only "H".
+    const hi = "Hİ there";
+    expect(hi.toLowerCase().indexOf("hi")).toBe(0);
+    const straddle = originalSpan(hi, hi.toLowerCase(), 0, 2);
+    expect(straddle).toEqual({ at: 0, len: 2 });
+    expect(hi.slice(straddle.at, straddle.at + straddle.len)).toBe("Hİ");
   });
 
   it("no caller can force a negative or inverted snippetMatchRange onto the wire", () => {

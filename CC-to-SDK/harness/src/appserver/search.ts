@@ -13,7 +13,7 @@ import { ERR } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
 import { findLiveBySessionId, storeOnlyView } from "./sessionLib.js";
 import { listArchived } from "./archive.js";
-import { SEARCH_CAPS, compareTuple, decodeSearchCursor, encodeSearchCursor, makeSnippet, originalOffset, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
+import { SEARCH_CAPS, compareTuple, decodeSearchCursor, encodeSearchCursor, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchParams } from "./schema/search.js";
 import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
@@ -109,17 +109,19 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         // it ZERO times (measured). D-M5-16 is explicit that caps bound work, never coverage, and the guard
         // saved at most four `toLowerCase()` calls per request — at most one session per page resumes mid-file.
         {
-          let hit = "", at = -1;
+          let hit = "";
+          let span: { at: number; len: number } | null = null;
           for (const field of [info.customTitle, info.summary, info.firstPrompt, info.tag]) {
             if (typeof field !== "string") continue;
             const lc = field.toLowerCase();
             const i = lc.indexOf(termLc);
-            // Lowered offset → ORIGINAL offset: the match is located in `lc` but the snippet is cut from
-            // `field` (the wire must carry the row's real casing), and searchScan.ts owns that mapping.
-            if (i >= 0) { hit = field; at = originalOffset(field, lc, i); break; }
+            // Lowered SPAN → ORIGINAL span: the match is located in `lc` but the snippet is cut from
+            // `field` (the wire must carry the row's real casing), and searchScan.ts owns that mapping —
+            // both ends of it, since `termLc.length` is the match's length in `lc` and not in `field`.
+            if (i >= 0) { hit = field; span = originalSpan(field, lc, i, termLc.length); break; }
           }
-          if (at >= 0) {
-            data.push({ thread: viewFor(srv, info), snippet: makeSnippet(hit, at, termLen).snippet });
+          if (span) {
+            data.push({ thread: viewFor(srv, info), snippet: makeSnippet(hit, span.at, span.len).snippet });
             if (data.length >= limit) { nextCursor = afterThis(); break scan; }
             continue;
           }
@@ -158,7 +160,8 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
             if (i >= 0) {
               // Same mapping as the metadata corpus above, through the same primitive — one spelling of
               // this arithmetic in this file, so Task 8's `snippetMatchRange` cannot drift from the snippet.
-              data.push({ thread: viewFor(srv, info), snippet: makeSnippet(text, originalOffset(text, lc, i), termLen).snippet });
+              const s = originalSpan(text, lc, i, termLc.length);
+              data.push({ thread: viewFor(srv, info), snippet: makeSnippet(text, s.at, s.len).snippet });
               hitHere = true; break read;
             }
           }
