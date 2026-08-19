@@ -1220,7 +1220,150 @@ flips the `full-potential.md` rows and ships nothing.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+### What shipped, against the purpose this spec opened with
+
+The purpose was one sentence: *a client can read and write the user's durable configuration, and can
+find and shelve conversations, over the same wire it drives them with.* All seven methods ship —
+`config/read`, `config/value/write`, `config/batchWrite`, `thread/search`,
+`thread/searchOccurrences`, `thread/archive`, `thread/unarchive` — plus two notifications, one
+additive parameter on `thread/list`, and both 0.3.234 absorb surfaces. Closing numbers, all
+controller-verified on the shipped tree: drift gate exit 0 at **66 registered methods / 99 scorecard
+rows** (`shipped(M5) 9`), **228 unit files / 3131 tests**, **142 TUI files / 3546 tests**, typecheck
+clean, `emit-schema` byte-identical from a fresh generation. **Keyed live acceptance 9/9 in 10.3 s**,
+with **M4's acceptance re-run 7/7 in 122 s** as the regression check that this milestone's work left
+the review domain alone.
+
+Two things the milestone added that were not in the original shape. Every one of the seven methods
+publishes its **response** schema beside its request one — D-M5-19 asked for it and D-M5-19a moved it
+into a top-level `results` map, because a method entry is compiled directly by ajv in strict mode and
+is therefore a schema, not a container. And the absorb task turned out to consume real SDK surface:
+probes 111/112 came back alive on both origins, so the assistant frame's wrapper-level `context_usage`
+and the init frame's `terminal_slash_commands` are both wired, and Task 11's written reasoning that
+"M5 consumes no new SDK surface" had to be replaced in the coverage cell rather than left standing.
+
+### The acceptance walk (Task 15), including what it found
+
+Criteria 1-8 were walked against pinning tests, and each pin was re-verified by mutation rather than
+by reading — one mutation per criterion, applied alone, sources restored and checksummed between
+cells. Criteria 2-8 all die in named rows. **Criterion 1 was the exception and is worth recording**:
+its contributor clause ("an array key contributed by two layers names both in precedence order") was
+pinned only by a wire-level row in `config-domain.test.ts` that exists for masking, while the row
+whose *title* claims it — `config-layers.test.ts`'s `effectiveView` row, written in Task 1 — planted
+`permissions.allow` in user and `permissions.deny` in local, two arrays with **one contributor each**.
+Collapsing the contributor list to "the last layer to touch this array" left that file 6/6 green. The
+row now plants a `permissions.ask` array in both layers and dies under exactly that mutation. This is
+rule 2 of this milestone's own lessons — *a title is not a test* — surviving in the one task that
+predated the rule and was never revisited by any later reviewer.
+
+### What is NOT proven
+
+- **The key-less init branch is contract-derived, not observed.** D-M5-22 says an init frame that
+  omits `terminal_slash_commands` is the engine reporting "none", and every init frame is
+  authoritative — a rule taken from the SDK's own doc comment. Acceptance leg 6 recorded what a real
+  engine actually sends: **3 `system/init` frames over 3 turns, the field present on 3/3, value
+  `["doctor","color"]`.** So the re-emission fact the fleet origin depends on is now empirical, and
+  the absent-key case **cannot be staged on this CLI** — `doctor` and `color` are CLI built-ins, the
+  thread already runs `settingSources: []`, and no wire parameter removes a built-in. The unit suite
+  pins the branch against a synthetic frame; nothing has watched a real engine produce one.
+- **Multi-process lock contention was never exercised.** The CAS lockfile is proven under in-process
+  concurrency and against planted foreign lockfiles; two real `ccx` servers writing one settings file
+  at once is untested. The measured behaviour under a foreign lock is documented rather than
+  re-architected: the write usually does not error, it blocks ~30 s, breaks the stale lock and returns
+  `ok`.
+- **The win32 arms never ran on Windows.** `defaultManagedPath`'s win32 arm is behind a seam and
+  covered by a test that dies when inverted; the managed layer's omission there, and `fleetRoot()`'s
+  `HOME`-over-`USERPROFILE` preference, are argued rather than measured.
+- **Parked, with named triggers rather than good intentions:** the store-adapter conformance gate
+  (`src/store/conformance.ts`) certifies `NaN` as a valid `mtime`, which is the door the search
+  comparator's `Number.isFinite` screen had to be built against; `KNOWN_TOP_LEVEL` is 87
+  hand-transcribed upstream keys with nothing detecting their drift (the house-consistent fix is
+  extending `scripts/drift-check.mjs`, which already exists for exactly this rot); `mergeTracked`
+  gives an empty-object node no origin, measured from outside as the sweep's `undecided` count;
+  `thread/list`'s bare offset cursor still carries the skip/repeat class `thread/search` solved with a
+  keyset (D-M5-16), now reachable because archiving is a first-party mutator between pages, and
+  closing it is a wire change to a shipped method; intra-batch shadowing is only half-reported, and
+  `overriddenMetadata` describes one masked edit rather than all of them.
+- **Cross-process archive state is transient by construction, not prevented** — criterion 7 was
+  amended (rev 5) to say so rather than keep a claim the design had already narrowed away.
+- **Domain 10 held at ~76%.** Two optional fields on messages this table has consumed since M1 are
+  real capability and still do not reach a percentage point. That is the honest reading, not a
+  rounding dodge, and it is written into the cell that way.
+
+### Lessons
+
+1. **A title is not a test.** Four separate instances: Task 4's row titled *"batch is ordered and
+   atomic"* asserted only atomicity (its batch refused, so ordering never reached disk); the plan's
+   own Task 6 row titled *"centered"* stayed green with centering destroyed; and Task 1's
+   contributor-ordering row, found in the final walk above. The pattern is not carelessness — it is
+   that a title records the author's *intent*, and intent is exactly what a test cannot check.
+2. **A checker written by the author of the code inherits its blind spots.** Task 4's masking verdict
+   took six independent reviews and six defects, every one found by *construction* — mutations,
+   probes, generated sweeps — and none by reading. The wave's own 558-state sweep passed on the
+   defective delete branch because it never planted the shape; the reviewer that found it was
+   forbidden from reading that sweep and wrote its own generator.
+3. **When a rule is restructured, every branch implementing it must be.** Task 4's value branch was
+   rewritten to compute the verdict from the rule; the delete branch was left deciding from a search,
+   and shipped one review later.
+4. **A deferred Minor in an attribution layer is a latent defect in every consumer that reasons from
+   it.** Task 1's M2 — *an empty object value gets no origin* — was recorded Minor and carried to
+   triage. Two tasks later it was the root of a wire-visible High in `config/value/write`. Task 7
+   then refused a second deferral on those exact grounds, and closed a known-wrong snippet length
+   in-task rather than handing it to Task 8.
+5. **"I could not find a repair" is not "no repair exists."** Task 7's report declared the
+   lowercase-offset drift unrepairable without walking every row. The reviewer swept all of Unicode
+   instead: **one expander (U+0130), zero shrinkers**, and the repair collapsed to comparing two
+   lengths. Bound an unbounded worst case before believing it.
+6. **An oracle is code and needs its own scepticism.** A reviewer's first adversarial sweep reported
+   437 failures that were its own oracle — it had re-lowercased an extracted slice, and `Final_Sigma`
+   is context-sensitive. All 437 involved sigma; chasing the false alarm to its cause rather than
+   tuning it away is the only reason the clean number afterwards was worth anything.
+7. **Testing one side of a symmetric guard tests half a guard.** Three occurrences inside Task 7
+   alone. The second row is the one that gets forgotten, because the first felt like it covered the
+   idea.
+8. **A validator here is also a published contract.** `cursor: z.string().min(1)` looks redundant for
+   enforcement and emits `minLength: 1` into the stable artifact — deleting it would silently shrink
+   the client-facing contract with every test green and the freshness gate happy, because that gate
+   compares against a fresh generation of the *changed* source.
+9. **When a handler starts touching disk, its tests' fixed-tick waits become timing bets.** Task 10's
+   `thread/list` began reading the marker directory per request, and every test waiting a single
+   `setTimeout(0)` had been silently asserting *this handler performs no I/O*. The review closed the
+   class rather than the instance, with a delaying `node:fs/promises` stand-in and a negative control.
+10. **A sabotage red-count is a measurement against a tree AND a collected count**, and moves when the
+    suite grows with the code untouched. Re-run the table as the last step before writing the report.
+11. **A green suite does not mean a reviewable diff** — a test file containing a literal NUL byte
+    passed every gate and reached the reviewer as an opaque binary blob.
+
+### The corrections that were worth the most, and most of them were to my own instructions
+
+This is the part a retrospective is tempted to leave out. The highest-value outputs of this milestone
+were places where a worker refused an instruction and was right:
+
+- **Task 2's fixer overruled a spread I specified** (`{...doc.methods, ...doc.results}`), which would
+  have silently dropped `config/read`'s *request* schema from the sweep — the very coverage the
+  widening existed to add.
+- **Task 3's brief contradicted itself** — D-M5-18a amended the interface text and left the code block
+  below it unamended. Following the code would have surfaced an unreadable settings file at the wire
+  as an internal error. My defect, from amending one half.
+- **Task 4's masking scan direction was wrong in the brief's own normative code**, and a plan
+  instruction would have silently reverted D-M5-18a one task after it landed, with every test green.
+- **D-M5-13c's ruling that the `mergeTracked` gap cost only the *name* was false for deletes** — it
+  was costing the *verdict*. Corrected at D-M5-13d by making the delete verdict a counterfactual over
+  merges, which removes the dependency entirely.
+- **Task 11: measurement beat three agreeing sources, one of which was me.** The plan brief, this
+  spec's own cross-cutting bullet, and my dispatch all said the notification *recipe* goes 27 → 29.
+  Applying it literally would have broken the recipe's arithmetic. The implementer refused to write
+  either number down until it had resolved which was right.
+- **Task 13 found a false justification that had propagated into four places including a test title**
+  — the claim that only the fleet path calls `snapshot()` between mapper and wire. It also showed the
+  technique I had specified would *not* have missed the trap I said it would.
+
+Process notes worth keeping. Every task ran implement → independent review → fix wave → re-review, and
+**eight of the fourteen had a reviewer-found defect the implementer's own sabotage pass missed**. One
+reviewer hit a monthly spend limit mid-run; resuming that same agent by id recovered its 23-mutation
+context instead of paying for it twice, and its resumed pass produced the milestone's only Critical
+reachability proof (a bring-your-own store adapter that passes our own conformance gate while emitting
+`NaN`). Scratch copies must live outside `~/.claude` — one reviewer's TUI failure was its own scratch
+directory changing a permission dialog's offered rule row, not the known flake.
 
 ## Revision Notes
 

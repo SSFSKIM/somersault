@@ -23,13 +23,18 @@ describe("configLayers", () => {
     expect(settingsMerge(["A"], { o: 1 })).toEqual({ o: 1 });
   });
   it("effectiveView: deep merge with leaf origins; arrays name every contributor in order", () => {
+    // `ask` is the half the TITLE is about and the fixture used to be missing: allow and deny each come
+    // from ONE layer, so a contributor list collapsed to "the last layer to touch this array" answered
+    // identically for both and this row stayed green. Only a key TWO layers contribute to can tell the
+    // two apart, and acceptance criterion 1 names exactly that case.
     const { config, origins } = effectiveView([
-      L("user", { permissions: { allow: ["WebFetch"] }, model: "opus" }),
-      L("local", { permissions: { deny: ["Bash"] }, model: "sonnet" }),
+      L("user", { permissions: { allow: ["WebFetch"], ask: ["Edit"] }, model: "opus" }),
+      L("local", { permissions: { deny: ["Bash"], ask: ["Bash(git:*)"] }, model: "sonnet" }),
     ]);
-    expect(config).toEqual({ permissions: { allow: ["WebFetch"], deny: ["Bash"] }, model: "sonnet" });
+    expect(config).toEqual({ permissions: { allow: ["WebFetch"], deny: ["Bash"], ask: ["Edit", "Bash(git:*)"] }, model: "sonnet" });
     expect(origins["permissions.allow"]).toEqual(["user"]);
     expect(origins["permissions.deny"]).toEqual(["local"]);
+    expect(origins["permissions.ask"]).toEqual(["user", "local"]); // BOTH, in precedence order — not just the winner
     expect(origins["model"]).toBe("local");
   });
   it("effectiveView: a REPLACEMENT resets the replaced subtree's contributors", () => {
