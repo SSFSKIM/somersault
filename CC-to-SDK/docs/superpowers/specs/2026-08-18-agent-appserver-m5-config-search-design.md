@@ -809,6 +809,35 @@ flips the `full-potential.md` rows and ships nothing.
   keeping distinct: disclosing a survivor is the good behaviour this project asks for; the reasoning
   attached to it still has to be checked like any other claim.
 
+- **Testing one side of a symmetric guard tests half a guard — three times in one task.** Task 7 wrote a
+  surrogate-trim guard for the leading snippet edge and pinned it; the identical trailing guard shipped
+  undefended, and removing it published a range pointing past its own string. That was fixed. Then the
+  outward-edge convention arrived with the *end* case pinned (`hi` against `Hİ`) and the *start* case
+  undefended — and the surviving mutation drops an original character that matched, on five constructed
+  inputs. Same shape, same task, third occurrence. **The rule that generalises: a mechanism with two
+  symmetric sides needs one row per side, and the second row is the one that gets forgotten** — because
+  the first one felt like it covered the idea. Written into the code beside the convention so the next
+  person extending it writes both.
+- **437 failures that were the reviewer's oracle, not the code.** Task 7's fix-wave reviewer swept the
+  outward-edge convention over 24.8 million input pairs and its first run reported 437 violations. They
+  were all artefacts of its own checker: it re-lowercased the extracted slice and required the lowered
+  term inside it, which is invalid because `Final_Sigma` is context-sensitive — a slice that drops the
+  preceding cased letter lowercases its sigma to `σ` where the full row produced `ς`. It rebuilt the
+  oracle to map the span's ends *forward* into the lowered row, re-ran, and triaged all 437: every one
+  involves sigma, none is a real violation, and all remain correct. It reported the whole sequence rather
+  than only the clean second number, noting that a reviewer who stopped at the first would have filed a
+  false Critical. **Two things worth keeping: an oracle is code and needs its own scepticism, and the
+  verified sweep — 102 811 real matches, zero invariant violations, every span not merely outward but
+  tight — was only trustworthy because the false alarm was chased to its cause rather than tuned away.**
+- **A validator in this codebase is also a published contract.** A `z.string().min(1)` on a cursor
+  parameter looked like redundant belt-and-braces, since the empty string already refuses at the decoder,
+  and review filed it as removable. The implementer kept it for a reason review had missed and then
+  endorsed: the refinement emits `minLength: 1` into the vendored stable JSON schema, so deleting it would
+  **silently shrink the client-facing contract** while every test stayed green and the schema-freshness
+  gate stayed happy — because that gate compares the artifact against a fresh generation of the *changed*
+  source. **Generalised: "redundant for enforcement" is never sufficient grounds to delete a zod
+  refinement here, because enforcement is only half of what it does.**
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
