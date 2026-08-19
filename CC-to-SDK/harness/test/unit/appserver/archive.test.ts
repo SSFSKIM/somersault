@@ -337,7 +337,9 @@ function fakeStore(known: string[]) {
   const rows = new Set(known);
   return { infoCalls, rows, getSessionInfo: async (id: string) => { infoCalls.push(id); return rows.has(id) ? { sessionId: id, summary: `summary of ${id}`, lastModified: 5_000 } : undefined; } };
 }
-const fakeEngine = (sessionId: string, over: Record<string, unknown> = {}) =>
+// `sessionId` is deliberately widened to `undefined`: a REAL engine's getter reads undefined until the
+// first turn's init frame (router.ts's routeInit), and the eager-stamp row below is about exactly that.
+const fakeEngine = (sessionId: string | undefined, over: Record<string, unknown> = {}) =>
   ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId, isEnded: () => false, ...over }) as never;
 
 function addRecord(srv: AppServer, sessionId: string, engine: Record<string, unknown> = {}): string {
@@ -645,6 +647,208 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
       expect(e?.message).toContain(errno);
       expect(e?.message).not.toContain(bad);
       expect(e?.message).not.toContain("/"); // no path of any shape survived into the message
+    }
+  });
+
+  // ── review wave ────────────────────────────────────────────────────────────────────────────────────
+  // The seven rows below were added after the independent review. Each pins something the shipped suite
+  // left undefended, and each names the construction that demonstrated the gap.
+
+  it("the THIRD admission surface: `thread/start` carrying `resume` takes the session off the shelf too (D-M5-21)", async () => {
+    // The spec names three admission surfaces — thread/resume, resume-carrying thread/start, thread/attach
+    // — and this one shipped uncovered. `config` is a parsed record the server spreads into the engine
+    // config, not an opaque blob, so the resume target is readable at admission and nothing about the
+    // engine's init latch is involved. Reachable by any client that resumes through thread/start's
+    // passthrough rather than by calling thread/resume.
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["shelved"]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo, sessionFactory: (c: Record<string, unknown>) => fakeEngine(c.resume as string) });
+    expect((await send("thread/archive", { threadId: "shelved" })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "shelved"))).toBe(true);
+
+    const r = await send("thread/start", { config: { resume: "shelved" } });
+    expect(r.result?.thread?.sessionId).toBe("shelved");
+    await vi.waitFor(() => expect(existsSync(join(ccxDir, "archived", "shelved"))).toBe(false));
+    await vi.waitFor(() => expect(notifs("thread/unarchived").map((n) => n.params)).toEqual([{ sessionId: "shelved" }]));
+    // The SAME shared `autoUnarchive` as the other two surfaces, so the announcement follows the admission
+    // it belongs to here exactly as it does there.
+    expect(parse(lines).filter((l) => l.method === "thread/started" || l.method === "thread/unarchived").map((l) => l.method)).toEqual(["thread/started", "thread/unarchived"]);
+
+    // The negative half: a FRESH start carries no resume, admits nothing that already existed, and
+    // announces no transition. Without it, a handler that unarchived on every start would pass.
+    await send("thread/start", {});
+    await new Promise((r2) => setTimeout(r2, 30));
+    expect(notifs("thread/unarchived").length).toBe(1);
+  });
+
+  it("…and the SAME surface stamps its resume target eagerly, so an archive arriving before the engine reports an id still refuses BUSY", async () => {
+    // The other direction of the one invariant, and the direction that gets forgotten: not "admission
+    // forgot to unshelve" but "the guard could not see the admission". A real engine's `sessionId` getter
+    // reads undefined until the first turn's system/init frame, so without the eager stamp the record
+    // carries no sessionId at all and this server cannot find its own live thread — for whole requests,
+    // not for a tick.
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["late-1"]);
+    let emit!: (f: unknown) => void;
+    const srv = boot({
+      ccxDir, getSessionInfo: st.getSessionInfo,
+      sessionFactory: () => fakeEngine(undefined, { onFrame: (cb: (f: unknown) => void) => { emit = cb; return () => {}; } }),
+    });
+    const started = await send("thread/start", { config: { resume: "late-1" } });
+    expect(started.result?.thread?.sessionId).toBe("late-1");
+    expect(findLiveBySessionId(srv, "late-1")).toBeTruthy();
+    const r = await send("thread/archive", { threadId: "late-1" });
+    expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in this server — close it first"]);
+    expect(existsSync(join(ccxDir, "archived", "late-1"))).toBe(false);
+    // …and the engine's own init frame, when it finally lands, CONFIRMS that id rather than contradicting
+    // it (router.ts's routeInit early-returns on a stamped record) — the stamp is not a guess.
+    emit({ type: "system", subtype: "init", session_id: "late-1" });
+    await vi.waitFor(() => expect(findLiveBySessionId(srv, "late-1")?.sessionId).toBe("late-1"));
+  });
+
+  it("a SESSION-store failure names the session store, not the marker store — and its message is path-stripped too", async () => {
+    // Both handlers read TWO stores inside one handler body. A `getSessionInfo` that threw was answered as
+    // `archive marker store failed: …`: the wrong subsystem named, on a message that never went through
+    // the marker store's composed form at all. The errno branch was stripped, this branch was not — and
+    // this is the branch that carries an operator's home directory, since the session store's failures are
+    // not ours to compose.
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, getSessionInfo: async () => { throw new Error("failed to parse session file /Users/operator/.claude/projects/x/abc.jsonl"); } });
+    for (const method of ["thread/archive", "thread/unarchive"]) {
+      const e = (await send(method, { threadId: "s-1" })).error;
+      expect([method, e?.code]).toEqual([method, -32603]);
+      expect(e?.message).toMatch(/^session store read failed:/);
+      expect(e?.message).not.toContain("/Users/operator");
+      expect(e?.message).not.toContain("/"); // no path of any shape survived into the message
+    }
+    // …and the MARKER store's own failure still names itself, so the two faults are told apart rather than
+    // merged into one wrong answer.
+    const bad2 = mkTmp("m5ccx-");
+    writeFileSync(join(bad2, "archived"), "");
+    boot({ ccxDir: bad2, getSessionInfo: fakeStore(["cold-x"]).getSessionInfo });
+    expect((await send("thread/archive", { threadId: "cold-x" })).error?.message).toMatch(/^archive marker store failed: EEXIST/);
+  });
+
+  it("the AUTO-UNARCHIVE route strips paths too — the second half of a protection whose first half was pinned", async () => {
+    // Claimed by the task report AND by the scorecard row, defended by nothing: mutating this call site to
+    // interpolate node's own errno message left the whole file green. It is the half that rots first,
+    // because it lives in server.ts while the strip it leans on lives in archiveDomain.ts.
+    const ccxDir = mkTmp("m5ccx-");
+    writeFileSync(join(ccxDir, "archived"), ""); // the state dir occupied by a regular file → ENOTDIR
+    const st = fakeStore(["w-1"]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo, sessionFactory: (c: Record<string, unknown>) => fakeEngine(c.resume as string) });
+    const r = await send("thread/resume", { sessionId: "w-1" });
+    // The admission still succeeds — a state directory that cannot be read is not a reason to report a
+    // successful admission as failed — and the failure is disclosed rather than swallowed.
+    expect(r.result?.thread?.sessionId).toBe("w-1");
+    await vi.waitFor(() => expect(notifs("warning").length).toBe(1));
+    const w = notifs("warning")[0].params;
+    expect([w.code, w.message.includes("ENOTDIR")]).toEqual(["unarchiveFailed", true]);
+    expect(w.message).not.toContain(ccxDir);
+    expect(w.message).not.toContain("/");
+    // …and the request id is spent exactly once: an escaping rejection here would put a SECOND frame on
+    // the wire for one request, which is why this route is guarded at all.
+    expect(parse(lines).filter((l) => l.id === r.id).length).toBe(1);
+  });
+
+  it("a thread/attach REJOIN deliberately does NOT re-run the auto-unarchive", async () => {
+    // Recorded in a comment and on the scorecard, pinned in neither direction: making the rejoin path
+    // unarchive left the whole file green, so a later editor could reverse the decision unnoticed.
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      const fh = await startFakeHost({ status: { sessionId: "sess-rejoin" } });
+      hosts.push(fh);
+      writeRoster(fh.row);
+      boot({ ccxDir });
+      const first = await send("thread/attach", { target: fh.row.short });
+      expect(first.result?.thread?.sessionId).toBe("sess-rejoin");
+      // A marker written while this server ALREADY holds the thread live — which only another process can
+      // do. The rejoin returns the same record, mints nothing and announces nothing…
+      await createArchiveMarker("sess-rejoin", { ccxDir });
+      const again = await send("thread/attach", { target: fh.row.short });
+      expect(again.result?.thread?.id).toBe(first.result?.thread?.id);
+      await new Promise((r) => setTimeout(r, 30));
+      // …so the marker stays where the other process put it, and nothing is broadcast: "opening a
+      // conversation" happened once, and a transition announced per rejoin would report one that did not
+      // occur. This row is the honest cost of that choice, stated rather than implied.
+      expect(existsSync(join(ccxDir, "archived", "sess-rejoin"))).toBe(true);
+      expect(notifs("thread/unarchived")).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  }, 20_000);
+
+  it("thread/resume AWAITS its captured admission: a failure raised after the reply is reported, never left as an unhandled rejection", async () => {
+    // `admitted` is captured inside the reservation and awaited below the `finally` — the release must not
+    // sit behind the shelf read (the reservation row above is why). Dropping the await left the whole file
+    // green, and it is the difference between a disclosed failure and one that escapes the process.
+    const ccxDir = mkTmp("m5ccx-");
+    writeFileSync(join(ccxDir, "archived"), ""); // ENOTDIR → the shelf read fails → the disclosure runs
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      // A non-terminal roster row is what routes this resume down the RESERVATION path; the ordinary path
+      // awaits `startThread` inline and is a different line of code. The pid is one no process holds, and
+      // a reused pid could not report this start stamp either, so the probe answers "gone" and admission
+      // proceeds.
+      writeRoster({ short: "fa5e0099", pid: 999778, cwd: "/w", kind: "bg" as const, name: "stale", state: "working" as const, startedAt: Date.now(), procStart: "1970-01-01T00:00:00Z", sessionId: "await-1" });
+      const st = fakeStore(["await-1"]);
+      const srv = new AppServer({}, { ccxDir, getSessionInfo: st.getSessionInfo, sessionFactory: (c: Record<string, unknown>) => fakeEngine(c.resume as string) });
+      servers.push(srv);
+      // A transport that dies on exactly one frame — the `warning` this admission is about to emit. That
+      // throw escapes `autoUnarchive`'s own guard (it is raised BY the disclosure, not by the store), so it
+      // is the one thing that can still reject the captured promise after the reply is on the wire.
+      const got: string[] = [];
+      let boom = true;
+      const c = srv.connect({ write: (l: string) => { if (boom && l.includes("unarchiveFailed")) { boom = false; throw new Error("peer transport died"); } got.push(l); }, buffered: () => 0, end: () => {} } as PeerSink);
+      c.feed(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "T" } } }) + "\n");
+      got.length = 0;
+      c.feed(JSON.stringify({ id: 900, method: "thread/resume", params: { sessionId: "await-1" } }) + "\n");
+      const frames = () => got.map((l) => JSON.parse(l) as Record<string, any>).filter((f) => f.id === 900);
+      await vi.waitFor(() => expect(frames().length).toBe(2));
+      // The admission answered first…
+      expect(frames()[0].result?.thread?.sessionId).toBe("await-1");
+      // …and the post-reply failure came back through dispatch's own catch, which is reachable only
+      // because the handler awaited the promise it captured.
+      expect([frames()[1].error?.code, frames()[1].error?.message]).toEqual([-32603, "peer transport died"]);
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  });
+
+  it("a session live in ANOTHER ccx process refuses archive too — one server must not give two answers about one session", async () => {
+    // Shipped, this server refused to RESUME an id a running fleet host still held and shelved that same id
+    // from the handler two lines away. D-M5-21's invariant is stated across servers, not within one, and
+    // the archiving server already had the roster data it was declining to read.
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      // Another process's session, with a pid that is certainly alive (ours). No `procStart` is the
+      // roster's own "assume live" (fleet/liveness.ts) — the same reading thread/resume takes.
+      const row = { short: "ab12cd34", pid: process.pid, cwd: "/w", kind: "bg" as const, name: "other", state: "working" as const, startedAt: Date.now(), sessionId: "fleet-live" };
+      writeRoster(row);
+      const st = fakeStore(["fleet-live"]);
+      boot({ ccxDir, getSessionInfo: st.getSessionInfo, sessionFactory: (c: Record<string, unknown>) => fakeEngine(c.resume as string) });
+      expect((await send("thread/resume", { sessionId: "fleet-live" })).error?.message).toBe("sessionId belongs to a running fleet session; use thread/attach");
+      // The same fact, from the other handler. This method's OWN refusal is reused rather than a second one
+      // invented: BUSY, because the request is well-formed and the session is merely held. (The message is
+      // thread/delete's verbatim string, which every live-refusal on this wire shares.)
+      const r = await send("thread/archive", { threadId: "fleet-live" });
+      expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in this server — close it first"]);
+      expect(existsSync(join(ccxDir, "archived"))).toBe(false);
+      // The control that makes the refusal LIVENESS rather than mere presence: a terminal row is a finished
+      // session, and shelving one is exactly what a client reaches for.
+      writeRoster({ ...row, state: "done" as const, endedAt: Date.now() });
+      expect((await send("thread/archive", { threadId: "fleet-live" })).result).toEqual({ ok: true });
+      expect(existsSync(join(ccxDir, "archived", "fleet-live"))).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
     }
   });
 });

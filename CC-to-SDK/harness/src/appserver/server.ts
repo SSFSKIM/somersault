@@ -182,6 +182,28 @@ function fleetResumeCandidates(srv: AppServer, sessionId: string): "live" | Rost
   return listRoster().filter((r) => r.sessionId === sessionId && !TERMINAL.has(r.state));
 }
 
+/** The ASYNC half of the guard above — the pid probes the candidate rows still need. Split out so
+ *  `thread/resume` can take its reservation in the gap between the two halves (see `resumingSessions`)
+ *  while a caller with no such gap composes both through `liveInFleet` below. */
+async function anyRosterPidLive(rows: RosterRow[]): Promise<boolean> {
+  for (const row of rows) if (await isPidLive(row.pid, row.procStart)) return true;
+  return false;
+}
+
+/** "Is this session live in a ccx process on this machine?" — both halves of `thread/resume`'s roster
+ *  guard, for callers that have nothing to do between them.
+ *
+ *  EXPORTED for `thread/archive` (archiveDomain.ts), which is the reason it exists at all: this server was
+ *  answering two different questions about one session, refusing to RESUME an id a running fleet session
+ *  still holds while cheerfully SHELVING that same id two lines away. D-M5-21's invariant is that a live
+ *  thread is never hidden from the default list across servers, not merely within one, and the archiving
+ *  server already has the roster data it needs to honour that. Sharing the probe rather than re-deriving
+ *  it is what keeps the two answers from drifting apart again. */
+export async function liveInFleet(srv: AppServer, sessionId: string): Promise<boolean> {
+  const candidates = fleetResumeCandidates(srv, sessionId);
+  return candidates === "live" || anyRosterPidLive(candidates);
+}
+
 /** Methods still answerable when the thread's engine is dead (dispatch's -33005 gate). The invariant is
  *  "answerable without live transport", not "is a read" — three families:
  *  close/read/subscribe/unsubscribe/decision-list, because closing and reading history are exactly what a
@@ -267,9 +289,23 @@ export class AppServer {
       if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadStartParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+      // The THIRD admission surface (spec D-M5-21 names all three: thread/resume, resume-carrying
+      // thread/start, thread/attach). `config` is a parsed record, not an opaque blob — the server
+      // spreads it into the engine config — so the resume target is readable here, and it is the same
+      // value `startThread` uses for its own eager stamp.
+      const resuming = typeof parsed.data.config?.resume === "string" ? parsed.data.config.resume : undefined;
       const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
+      // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
+      // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
+      // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
+      // client's first turn — a window, lasting whole requests rather than a tick, in which thread/archive
+      // and thread/delete both judge a live conversation to be cold.
+      if (resuming && !record.sessionId) record.sessionId = resuming;
       ctx.peer.reply(id, { thread: threadView(srv, record) });
       srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
+      // LAST, once admission has fully succeeded — same placement and same guarded helper as the other
+      // two admission surfaces, so this one cannot drift from them (D-M5-21).
+      if (resuming) await srv.autoUnarchive(ctx, resuming);
     },
     "thread/resume": async (srv, ctx, id, params) => {
       const parsed = threadResumeParams.safeParse(params);
@@ -295,9 +331,7 @@ export class AppServer {
       srv.resumingSessions.set(sessionId, (srv.resumingSessions.get(sessionId) ?? 0) + 1);
       let admitted: Promise<void> | undefined;
       try {
-        for (const row of candidates) {
-          if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
-        }
+        if (await anyRosterPidLive(candidates)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
         // CAPTURED, not awaited, INSIDE the reservation (M5 Task 9). `startThread` registers the record
         // synchronously and only then awaits (its D-M5-21 shelf read), and this reservation's whole job is
         // to fence the window BEFORE that registration — after it, `findLiveBySessionId` sees the thread
@@ -592,7 +626,13 @@ export class AppServer {
    *  (an async function body runs synchronously up to its first `await`, and the first one here is the
    *  last line), which is exactly the property the delete/resume reservation race is decided by. The
    *  returned promise is worth awaiting rather than dropping: it is what makes "this request is finished"
-   *  true at the dispatch seam, and it keeps `thread/resume`'s reservation held across the shelf read. */
+   *  true at the dispatch seam, and it is what keeps a failure raised after the reply — the shelf read's
+   *  own disclosure path throwing, say — reportable on the wire instead of escaping as an unhandled
+   *  rejection. It does NOT hold `thread/resume`'s reservation across the shelf read: that release sits in
+   *  the handler's `finally`, whose body is synchronous and therefore runs BEFORE the `await` below it.
+   *  That is the intended shape, and the capture-site comment in the resume handler is the argument for
+   *  it — the reservation fences the window before REGISTRATION, and `findLiveBySessionId` covers the
+   *  rest. */
   async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
@@ -626,9 +666,9 @@ export class AppServer {
 
   /** D-M5-21: opening a conversation takes it off the shelf — and it is what keeps "a live thread is never
    *  hidden from the default list" true ACROSS servers, since markers are re-read per request and another
-   *  server's archive is otherwise invisible to this one until someone lists. Called from both admission
-   *  paths onto an existing session id: `startThread` above (thread/resume, thread/fork) and `thread/attach`
-   *  (fleet.ts).
+   *  server's archive is otherwise invisible to this one until someone lists. Called from ALL THREE
+   *  admission paths onto an existing session id, which is the set the spec names: `startThread` above
+   *  (thread/resume, thread/fork), resume-carrying `thread/start`, and `thread/attach` (fleet.ts).
    *
    *  GUARDED, because it runs after the reply is already on the wire: a state directory that cannot be read
    *  is not a reason to report a successful admission as failed, and the request id is spent, so an escaping
