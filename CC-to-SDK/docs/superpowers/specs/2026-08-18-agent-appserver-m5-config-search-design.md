@@ -638,6 +638,29 @@ flips the `full-potential.md` rows and ships nothing.
   eliminate. Refusal lives in the decoders (their contract is already *null on garbage*, range is part of
   the shape of a row index, and both Tasks 7 and 8 decode — a consumer-side answer means writing it twice
   and forgetting it once).
+- **D-M5-17a (Task 7 review, rev 4) — match offsets are mapped back to the ORIGINAL row before they
+  reach a snippet or the wire.** The normative flow searched a lowercased copy and cut the snippet from
+  the original, so any code point whose lowercase form is a different UTF-16 length shifts the window by
+  one unit per occurrence. In `thread/search` that is a wrong excerpt; in `thread/searchOccurrences` the
+  same drift lands in `snippetMatchRange`, a field named verbatim from Codex's protocol — **wrong at the
+  FIRST occurrence, not the 98th**, and on a short row it degenerates to `start === end`, a zero-length
+  occurrence pointing past its own match.
+  The Task 7 report judged this irreparable: every repair "either walks the row unit by unit or changes
+  what case-insensitive means". Review refuted it by sweeping the whole domain — **across all of Unicode,
+  U+0130 is the only code point whose `toLowerCase()` changes UTF-16 length, and nothing shrinks** (the
+  context-sensitive folds — final sigma, ǅ, ﬀ, ẞ — are all length-preserving). That makes the mapping an
+  O(1) length comparison every real row passes for free, plus a correction loop that runs once per U+0130
+  using native `indexOf`, worst case the same order as the `toLowerCase()` already performed. Built and
+  measured: drift gone at every probed offset, all existing rows green.
+  It lives in `searchScan.ts` as a shared primitive rather than in either handler, so both methods route
+  through **one** offset mapping — two spellings of the same arithmetic in one file is exactly what
+  produced the mint/resume divergence the rev-1 plan already failed on.
+  Rejected: `RegExp` with `i` for native offsets — measured worse than the warning it was given, since
+  plain `i` fails to match İ/i **and** K/k **and** ẞ/ß (stricter than `toLowerCase` across the board),
+  while `iu`/`iv` fixes K and ẞ but still not İ; every variant changes *which rows are hits*, and the term
+  would need regex escaping besides. Also rejected: cutting the snippet from the lowercased row — the wire
+  must carry the row's real casing, and nothing currently pins that (a mutation shipping lowercased
+  excerpts passes every gate), so a row now pins it.
 - **D-M5-19 (rev 3) — response schemas ship for the seven new methods** via an optional
   `MethodSchema.result` slot, emitted. Rejected: retrofitting result schemas onto all 59 existing
   methods in this milestone (real work, separate value; the slot makes it incremental).
@@ -748,6 +771,24 @@ flips the `full-potential.md` rows and ships nothing.
   cost of a fresh review, and a replacement reviewer would have built a different mutation set and
   probably missed them. Worth remembering as a mechanic: a dead subagent's context is an asset until the
   session ends.
+
+- **"No repair exists" is a claim about the search, not about the problem.** Task 7's implementer
+  reported the case-fold offset drift as unfixable — every repair it could see either walked the row unit
+  by unit or changed matching semantics — and that reasoning was about to be inherited by Task 8, where
+  the same drift is a wire-contract violation rather than a cosmetic one. The reviewer did not argue with
+  it; it **enumerated the domain**, found that exactly one code point in all of Unicode has the offending
+  property, and that single fact collapsed the problem from "walk every row" to "compare two lengths".
+  The repair was then built and measured rather than proposed. **The general shape: when a claim of
+  impossibility rests on an unbounded worst case, bound it before believing it** — the honest report of
+  "I could not find a repair" is not the same statement as "no repair exists", and this project has now
+  seen the gap between them decide a wire contract.
+- **Two "provably dead" branches were reachable, and the conclusions survived anyway.** Task 7 disclosed
+  three surviving mutations with reasoning. Review instrumented one of them *firing* (a file exiting on a
+  hit at the last budgeted row, a path the argument missed) and measured the other reporting a session
+  **zero** times rather than the claimed once. Both conclusions held — keep the first, drop the second —
+  but the recorded *reasons* were wrong, and a wrong reason is what a future refactorer inherits. Worth
+  keeping distinct: disclosing a survivor is the good behaviour this project asks for; the reasoning
+  attached to it still has to be checked like any other claim.
 
 ## Outcomes & Retrospective
 
