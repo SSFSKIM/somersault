@@ -960,3 +960,118 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
     }
   });
 });
+
+// ══ M5 Task 10: `thread/list {archived}` — the partition the marker store publishes ════════════════════
+//
+// Driven through the same real wire as the block above (`boot`/`send`), because the claim is about a
+// REPLY: `threadList` is not exported for direct call, and the params gate that decides whether `archived`
+// is accepted at all lives in `schema/threads.ts`, one door before the handler.
+//
+// The mechanism is a PARTITION, not a filter, and a partition has two sides by construction — so each side
+// gets its own row and the sabotage that inverts the predicate (`=== wantArchived` → `!==`) has to fail
+// both. One row saying "the archived session is hidden" would stay green under a mutation that hid the
+// wrong two sessions instead.
+
+/** The store side of every row below. `lastModified` ascends with the argument order, so the merged list
+ *  order IS the argument order and each expectation can be a literal id list — read off the fixture, never
+ *  off the handler's own view builder. */
+const listing = (...ids: string[]) => async () => ids.map((sessionId, i) => ({ sessionId, summary: `s-${sessionId}`, lastModified: (i + 1) * 1_000 }));
+/** The reply projected down to the one field these rows are about. `sessionId` is `threadView`'s field and
+ *  `storeOnlyView`'s alike, so it reads the same for a live row and a cold one — including `undefined` for
+ *  a live record whose engine has not reported an id yet. */
+const listIds = async (params: unknown): Promise<(string | undefined)[]> =>
+  ((await send("thread/list", params)).result.data as { sessionId?: string }[]).map((r) => r.sessionId);
+
+describe("thread/list {archived} — the archived partition (Task 10)", () => {
+  it("`archived` OMITTED lists only unarchived sessions — the archived one is absent and the rest keep their order", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, listSessions: listing("a", "b", "c") });
+    await createArchiveMarker("b", { ccxDir });
+    expect(await listIds({})).toEqual(["a", "c"]);
+  });
+
+  it("`{archived:true}` lists only archived sessions — the other side of the same partition, and the row an inverted predicate cannot survive", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, listSessions: listing("a", "b", "c") });
+    await createArchiveMarker("b", { ccxDir });
+    expect(await listIds({ archived: true })).toEqual(["b"]);
+    // …and the two sides are a PARTITION of the merged list: their union is every session, with nothing in
+    // both and nothing in neither. Two independent filters could each drop or double-count a session and
+    // still answer the two rows above correctly.
+    expect([...(await listIds({})), ...(await listIds({ archived: true }))].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("`{archived:false}` is the omitted request, not a third behavior", async () => {
+    // Omitted is `undefined`, not `false`, so a `!== false` spelling of the test would answer this row with
+    // the ARCHIVED half while every row above stayed green.
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, listSessions: listing("a", "b", "c") });
+    await createArchiveMarker("b", { ccxDir });
+    expect(await listIds({ archived: false })).toEqual(["a", "c"]);
+  });
+
+  it("a LIVE row is partitioned by its marker exactly as a cold one is, and an UNLATCHED live row sits in the default half from both sides", async () => {
+    // Two claims, one fixture. Markers are keyed by SESSION ID, so live-vs-cold is not the axis — a marker
+    // another PROCESS wrote for a thread live here is the one case no in-process guard covers (D-M5-21),
+    // and this list is where it shows up. And a live record whose engine has not yet reported an id (real:
+    // router.ts's routeInit latches it off the first turn's init frame) has no id a marker could name: it
+    // cannot be archived, so the default half is where it belongs. A filter that asked the marker set about
+    // `undefined` would put it in NEITHER half and drop the row from every listing a client can request.
+    const ccxDir = mkTmp("m5ccx-");
+    const srv = boot({ ccxDir, listSessions: listing("cold-live") });
+    addRecord(srv, "shelved-live");
+    addRecord(srv, undefined as unknown as string);
+    await createArchiveMarker("shelved-live", { ccxDir });
+    expect(await listIds({})).toEqual([undefined, "cold-live"]);
+    expect(await listIds({ archived: true })).toEqual(["shelved-live"]);
+  });
+
+  it("the PAGE is cut from the filtered list: the cursor walks the partition and `nextCursor` ends at ITS end, not the merged one", async () => {
+    // Filtering AFTER the slice, or reporting exhaustion against the unfiltered length, both leave the first
+    // page looking right. This walks to the end, where they do not: the default partition is 3 long inside a
+    // merged list of 5, so a `consumed < merged.length` comparison mints a cursor for a page that does not
+    // exist and a client pages forever.
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, listSessions: listing("a", "b", "c", "d", "e") });
+    await createArchiveMarker("b", { ccxDir });
+    await createArchiveMarker("d", { ccxDir });
+    const p1 = (await send("thread/list", { limit: 2 })).result;
+    expect([p1.data.map((r: any) => r.sessionId), p1.nextCursor]).toEqual([["a", "c"], "2"]);
+    const p2 = (await send("thread/list", { limit: 2, cursor: p1.nextCursor })).result;
+    expect([p2.data.map((r: any) => r.sessionId), p2.nextCursor]).toEqual([["e"], null]);
+    // The archived side pages off its OWN length too — the second side, which is the one that gets forgotten.
+    const q1 = (await send("thread/list", { archived: true, limit: 1 })).result;
+    expect([q1.data.map((r: any) => r.sessionId), q1.nextCursor]).toEqual([["b"], "1"]);
+    const q2 = (await send("thread/list", { archived: true, limit: 1, cursor: q1.nextCursor })).result;
+    expect([q2.data.map((r: any) => r.sessionId), q2.nextCursor]).toEqual([["d"], null]);
+  });
+
+  it("the marker directory is re-read PER REQUEST — another process's archive shows in the very next list", async () => {
+    // D-M5-3's cross-process claim, and the one a cached set breaks silently: this server is booted once and
+    // never told anything changed. `createArchiveMarker` stands in for the other process because writing that
+    // file by that path IS the whole protocol between them.
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, listSessions: listing("a", "b") });
+    expect(await listIds({})).toEqual(["a", "b"]);
+    await createArchiveMarker("a", { ccxDir });
+    expect(await listIds({})).toEqual(["b"]);
+    expect(await listIds({ archived: true })).toEqual(["a"]);
+    await removeArchiveMarker("a", { ccxDir });
+    expect(await listIds({})).toEqual(["a", "b"]);
+    expect(await listIds({ archived: true })).toEqual([]);
+  });
+
+  it("a marker store that cannot be READ is an error, never 'nothing is archived'", async () => {
+    // D-M5-8's rule at this method. Swallowing the read into an empty set is the failure that looks like
+    // success: the default list would hand back every shelved session as though nothing were archived, and
+    // `{archived:true}` would answer an empty page meaning "none" where the truth is "unknown".
+    const ccxDir = mkTmp("m5ccx-");
+    writeFileSync(join(ccxDir, "archived"), ""); // occupied by a regular file → ENOTDIR out of readdir
+    boot({ ccxDir, listSessions: listing("a", "b") });
+    for (const params of [{}, { archived: true }]) {
+      const r = await send("thread/list", params);
+      expect([params, r.error?.code, r.result]).toEqual([params, -32603, undefined]);
+      expect(r.error?.message).toMatch(/ENOTDIR/);
+    }
+  });
+});

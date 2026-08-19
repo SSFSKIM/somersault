@@ -33,6 +33,7 @@ import {
 } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { threadListParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./schema/threads.js";
+import { inArchivedPartition, listArchived } from "./archive.js";
 
 const DEFAULT_LIST_LIMIT = 200; // same default as the pre-Task-12 registry-only thread/list (server.ts)
 
@@ -125,7 +126,13 @@ export function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
  *  turn's init frame) cannot be looked up in the store map at all — it is included as its own unmatched
  *  row, exactly like a fresh thread/list did before this task, and the store row it might one day match is
  *  independently listed as store-only until that happens. Cursor pages the MERGED array (offset cursor,
- *  Task 7's convention) — the merge, not either input alone, is what gets paginated. */
+ *  Task 7's convention) — the merge, not either input alone, is what gets paginated.
+ *
+ *  M5 Task 10 adds `archived`, and it selects a PARTITION rather than filtering one: omitted or `false`
+ *  lists only unarchived sessions — which is what this method already did, so an existing client sees no
+ *  change — and `true` lists only archived ones. It is the same partition `thread/search` publishes, off
+ *  the same predicate and the same published spelling (archive.ts's `inArchivedPartition`, core.ts's
+ *  `archivedParam`), because the spec hands it to the two methods in one sentence. */
 export const threadList: Handler = async (srv, ctx, id, params) => {
   const parsed = threadListParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
@@ -145,11 +152,23 @@ export const threadList: Handler = async (srv, ctx, id, params) => {
   });
   const storeOnlyViews = storeRows.filter((r) => !seen.has(r.sessionId)).map(storeOnlyView);
   const merged = [...liveViews, ...storeOnlyViews];
+  // The archived PARTITION (M5 Task 10, D-M5-3), applied to the MERGE and before the page is cut. The
+  // marker directory is read HERE, per request, and never cached: archived-ness is state another ccx
+  // process can change with one file operation, and a set held across requests would answer for the
+  // moment this server last looked. A failed read propagates — dispatch answers -32603 — because
+  // swallowing it into an empty set is the failure that looks like success (D-M5-8): every shelved
+  // session back in the default list, and `archived:true` answering "none" where the truth is "unknown".
+  const archivedSet = await listArchived({ ccxDir: srv.deps.ccxDir });
+  const wantArchived = parsed.data.archived === true;
+  const filtered = merged.filter((v) => inArchivedPartition(archivedSet, v.sessionId as string | undefined, wantArchived));
   const limit = parsed.data.limit ?? DEFAULT_LIST_LIMIT;
   const offset = parsed.data.cursor ? Number(parsed.data.cursor) : 0;
-  const page = merged.slice(offset, offset + limit);
+  // Paging is over `filtered`, both ends: the offset indexes the partition a client is walking, and
+  // exhaustion is reported against ITS length — comparing against `merged` would mint a cursor for a page
+  // that does not exist and leave the client paging past the end.
+  const page = filtered.slice(offset, offset + limit);
   const consumed = offset + page.length;
-  ctx.peer.reply(id, { data: page, nextCursor: consumed < merged.length ? String(consumed) : null });
+  ctx.peer.reply(id, { data: page, nextCursor: consumed < filtered.length ? String(consumed) : null });
 };
 
 /** `thread/fork`: resolve the source id, ask the store to fork it (a pure store-level copy — the source

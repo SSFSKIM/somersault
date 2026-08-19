@@ -12,7 +12,7 @@
 import { ERR } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
 import { findLiveBySessionId, resolveThreadId, storeKnows, storeOnlyView } from "./sessionLib.js";
-import { listArchived } from "./archive.js";
+import { inArchivedPartition, listArchived } from "./archive.js";
 import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
 import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
@@ -91,7 +91,7 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
       // request, so another process's archive/unarchive is visible to the very next search.
       const archivedSet = await listArchived({ ccxDir: srv.deps.ccxDir });
       const wantArchived = archived === true;
-      const rows = all.filter((r) => archivedSet.has(r.sessionId) === wantArchived);
+      const rows = all.filter((r) => inArchivedPartition(archivedSet, r.sessionId, wantArchived));
       // BOTH the sort and every cursor mint go through `sortValueOf` — never a bespoke callback. The
       // `Number.isFinite` screen lives in there (D-M5-15a), and a comparator handed a NaN returns NaN,
       // which `Array.prototype.sort` reads as "no opinion" and answers with unrelated sessions unordered.

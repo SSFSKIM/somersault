@@ -102,6 +102,10 @@
         },
         "cwd": {
           "type": "string"
+        },
+        "archived": {
+          "description": "false/omitted lists only unarchived sessions; true lists only archived ones",
+          "type": "boolean"
         }
       },
       "additionalProperties": false

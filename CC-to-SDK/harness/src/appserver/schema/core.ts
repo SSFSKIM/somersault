@@ -26,6 +26,18 @@ export const cursorParam = z.object({
   cursor: z.string().regex(/^\d+$/).optional(),
   limit: z.number().int().positive().optional(),
 });
+/** The archived PARTITION, in the ONE spelling both methods the spec gives it to publish (D-M5-3, M5
+ *  Tasks 7 and 10): `thread/search` and `thread/list`. Shared rather than declared twice because the
+ *  sentence below IS the contract — `false` and OMITTED are the same request, and only `true` selects the
+ *  other half — and two copies of a sentence are how one of them ends up saying "excludes archived
+ *  sessions" while the other says "hides them unless asked", which are different methods to a client. The
+ *  predicate that enforces it is shared for the same reason (archive.ts's `inArchivedPartition`).
+ *  Spread into each params object at its existing field position rather than `.extend`ed on the end: the
+ *  generated artifact is byte-pinned, and re-ordering a shipped method's properties is a diff about
+ *  nothing. */
+export const archivedParam = z.object({
+  archived: z.boolean().optional().describe("false/omitted lists only unarchived sessions; true lists only archived ones"),
+});
 // Task 13: thread/read pages the persisted transcript by ROW, and M2b's rewind truncates rows — a
 // bare row offset would silently address different content after a rewind. This cursor carries the
 // thread's generation counter (record.epoch) as "<epoch>:<rowOffset>"; threadRead refuses one whose

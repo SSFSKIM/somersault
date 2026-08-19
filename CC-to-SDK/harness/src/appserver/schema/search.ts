@@ -1,5 +1,6 @@
 // src/appserver/schema/search.ts — the search domain's params AND results (spec D-M5-15/16/17/19).
 import { z } from "zod/v4";
+import { archivedParam } from "./core.js";
 
 /** `searchTerm` carries no `.min/.max` HERE and is bounded in the handler instead: the two ends answer the
  *  same `-32602` either way, and keeping the check next to `SEARCH_CAPS` is what stops the published bound
@@ -24,7 +25,10 @@ export const threadSearchParams = z.object({
   sortKey: z.enum(["created_at", "updated_at", "recency_at"]).default("created_at")
     .describe("created_at is the only key stable across pages — updated_at/recency_at (both ≡ the store's lastModified) can move a session between requests, and keyset semantics then allow it to be re-encountered or skipped; use created_at for an exhaustive walk"),
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
-  archived: z.boolean().optional().describe("false/omitted lists only unarchived sessions; true lists only archived ones"),
+  // core.ts's shared `archivedParam` (M5 Task 10), spread in AT THIS POSITION so the generated artifact
+  // keeps the field order it shipped with: `thread/list` publishes the same partition off the same object,
+  // and the spec states it for the two methods in one sentence.
+  ...archivedParam.shape,
   cwd: z.string().optional().describe("scopes the store listing to one project directory"),
 });
 

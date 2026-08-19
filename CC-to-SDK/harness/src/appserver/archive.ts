@@ -31,6 +31,20 @@ export async function listArchived(deps: ArchiveDeps): Promise<Set<string>> {
   try { return new Set(await readdir(dirOf(deps))); }
   catch (e) { if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return new Set(); throw e; }
 }
+/** The archived PARTITION's one predicate (D-M5-3), shared by `thread/search` (Task 7) and `thread/list`
+ *  (Task 10) — the two methods the spec hands the partition to, in one sentence. It is a partition and not
+ *  a filter: `wantArchived` false keeps only the sessions with NO marker, true keeps only the ones with a
+ *  marker, and every session is in exactly one half. A second spelling of that could only ever drift into
+ *  "true also shows the unarchived ones", which is the reading a filter would have.
+ *
+ *  `sessionId` is optional because ONE caller has rows without one: `thread/list` merges this server's live
+ *  registry in, and a record whose engine has not yet reported a session id (router.ts's routeInit latches
+ *  it off the first turn's init frame) has no id a marker could name — so it cannot be archived, and the
+ *  DEFAULT half is where it belongs. Asking the set about `undefined` instead would put it in neither half
+ *  and drop the row from every listing a client can ask for. */
+export const inArchivedPartition = (archived: Set<string>, sessionId: string | undefined, wantArchived: boolean): boolean =>
+  sessionId === undefined ? !wantArchived : archived.has(sessionId) === wantArchived;
+
 export async function createArchiveMarker(sessionId: string, deps: ArchiveDeps): Promise<void> {
   checkId(sessionId);
   // 0700 like the root's two other creators (cli/serveMain.ts's runDir, fleet/roster.ts): `mkdir` applies a
