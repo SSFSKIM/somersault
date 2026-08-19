@@ -76,9 +76,13 @@ export const threadSearchOccurrencesParams = z.object({
  *  list on it must be able to tell "this row has no id" from "the server forgot to send one".
  *
  *  `readCursor` is the jump (D-M5-7): the server-composed, epoch-qualified `thread/read` cursor whose
- *  window ENDS at the hit row, which a client passes back unchanged. `null` on a cold session — the pager
- *  is live-only and refuses an unqualified cursor, so there is no honest string to compose; a client that
- *  wants to page a cold transcript resumes it first.
+ *  window ENDS at the hit row, which a client passes back unchanged. `null` means NO JUMP IS AVAILABLE for
+ *  this occurrence, and two row states earn it. A cold session: the pager is live-only and refuses an
+ *  unqualified cursor, so there is no honest string to compose (a client that wants to page a cold
+ *  transcript resumes it first). A NESTED (subagent) row: the pager discards every frame carrying
+ *  `parent_tool_use_id`, so no window it can produce holds that row at any `limit`. The occurrence itself is
+ *  still returned in both cases — `rowOffset`, `uuid`, `snippet` and `snippetMatchRange` are true of the row
+ *  either way, and the corpus is unchanged — so a client renders the hit and simply offers no jump for it.
  *
  *  `nextCursor` non-null over an EMPTY `data` is legitimate and expected, exactly as in `thread/search`:
  *  the per-page row cap bounds work, never coverage. `skipped` (omitted when zero) counts rows too large

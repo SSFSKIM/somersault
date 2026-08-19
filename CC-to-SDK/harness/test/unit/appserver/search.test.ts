@@ -154,6 +154,21 @@ describe("thread/search", () => {
     expect((answered as Info[]).map((i) => i.sessionId)).not.toEqual(["s-old", "s-mid", "s-new", "s-none"]);
   });
 
+  it("an omitted limit pages at EXACTLY 20 — the number the published schema promises, not merely some number below the cap", async () => {
+    // The literal 20 is the point. `SEARCH_CAPS.defaultLimit` here would agree with any value the constant
+    // took, while the vendored artifact tells clients "results per page, default 20" — so the suite has to
+    // pin the promise, not the variable. Asserted here AND on `thread/searchOccurrences`: the
+    // `?? SEARCH_CAPS.defaultLimit` line is spelled once per handler, so one row cannot cover both.
+    const fakes = [...Array(25)].map((_, i) => sess(`s-${String(i).padStart(2, "0")}`, { createdAt: 1_000 + i, summary: "a needle in the summary" }));
+    const st = store(fakes);
+    boot(st.deps);
+    const r = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc" });
+    expect(r.error).toBeUndefined();
+    expect(r.result.data.length).toBe(20);
+    expect(r.result.nextCursor).not.toBeNull(); // …and the five it did not return are still reachable
+    expect((await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", cursor: r.result.nextCursor })).result.data.length).toBe(5);
+  });
+
   it("a page that exhausts the row budget returns ZERO hits with a non-null cursor, and page 2 finds the hit — every storage read bounded by windowRows", async () => {
     const rows = [...Array(4_200)].map((_, i) => assistant(`filler ${i}`));
     rows.push(assistant("here is the needle"));
@@ -698,6 +713,46 @@ describe("thread/searchOccurrences", () => {
     expect(JSON.stringify(off.result.data)).not.toContain(texts[2]);
   });
 
+  it("a NESTED (subagent) row is still an occurrence but publishes NO jump — the pager can render no window that holds it", async () => {
+    // The corpus stays exactly `rows.ts`'s: a subagent's text IS text this session contains, and
+    // `thread/search` reports the session for it. What is impossible is the JUMP — items/mapper.ts discards
+    // every frame carrying `parent_tool_use_id` before its own type routing, and items/replay.ts mirrors
+    // that predicate on its direct user path, so a nested row sits in NO window `thread/read` can produce,
+    // at any limit. `readCursor: null` is this method's existing "no jump available" (a cold session mints
+    // the same value), not a new state — and `rowOffset`/`uuid` stay published, because they remain true of
+    // the row; only the jump was ever the broken half.
+    const nestedAsst = { type: "assistant", uuid: "u-nested-a", parent_tool_use_id: "toolu_1", message: { id: "m-nested", content: [{ type: "text", text: "a needle inside a subagent" }] } };
+    const nestedUser = { type: "user", uuid: "u-nested-u", parent_tool_use_id: "toolu_1", message: { content: "a needle the subagent was asked" } };
+    const rows = [prompt("a needle at top level", "u-top"), nestedAsst, nestedUser, assistant("a needle in the final reply", "u-tail", "m-tail")];
+    const { threadId, record } = await bootLive([sess("live-session", { createdAt: 1_000 }, rows)], "live-session");
+    const r = await occ({ threadId, searchTerm: "needle" });
+    expect(r.error).toBeUndefined();
+    // The occurrence sequence is UNCHANGED — a nested row still occupies its position, so `rowOffset`, the
+    // continuation cursor's `c` and every page boundary behave exactly as they did before the jump was
+    // withheld. Excluding nested rows from the corpus would have moved all three.
+    expect(r.result.data.map((o: any) => o.rowOffset)).toEqual([0, 1, 2, 3]);
+    expect(r.result.data.map((o: any) => o.uuid)).toEqual(["u-top", "u-nested-a", "u-nested-u", "u-tail"]);
+    for (const o of r.result.data) expect(o.snippet.slice(o.snippetMatchRange.start, o.snippetMatchRange.end)).toBe("needle");
+    expect(r.result.data[1].snippet).toBe("a needle inside a subagent");
+    expect(r.result.data[2].snippet).toBe("a needle the subagent was asked");
+    // BOTH nested kinds withhold the jump, and the two top-level rows in the SAME reply still publish one —
+    // so a mutation that nulls every cursor cannot pass this row either.
+    expect(r.result.data.map((o: any) => o.readCursor)).toEqual([`${record.epoch}:1`, null, null, `${record.epoch}:4`]);
+    for (const o of r.result.data.filter((x: any) => x.readCursor !== null)) {
+      const page = frameOf(await send("thread/read", { threadId, cursor: o.readCursor, limit: 100 }));
+      expect(page.error, o.readCursor).toBeUndefined();
+      expect(JSON.stringify(page.result.data), o.readCursor).toContain(o.snippet);
+    }
+    // …and the premise the null rests on, asserted rather than assumed: the cursor this method WOULD have
+    // composed for a nested row lands on a page that does not hold the match. If the pager ever learns to
+    // render nested rows this goes red, which is the signal to publish the jump again.
+    for (const o of r.result.data.filter((x: any) => x.readCursor === null)) {
+      const page = frameOf(await send("thread/read", { threadId, cursor: `${record.epoch}:${o.rowOffset + 1}`, limit: 100 }));
+      expect(page.error, String(o.rowOffset)).toBeUndefined();
+      expect(JSON.stringify(page.result.data), String(o.rowOffset)).not.toContain(o.snippet);
+    }
+  });
+
   it("a page boundary INSIDE one row resumes at the next occurrence of that row, not at the next row", async () => {
     const st = store([sess("cold-session", { createdAt: 1_000 }, [assistant("needle one needle two needle three", "u-a")])]);
     boot(st.deps);
@@ -750,6 +805,22 @@ describe("thread/searchOccurrences", () => {
     expect(after.error).toBeUndefined();
     expect(after.result.data.map((o: any) => o.snippetMatchRange.start)).toEqual([7]);
     expect(after.result.data[0].readCursor).toBe("0:1"); // now live, so the jump cursor appears mid-walk
+  });
+
+  it("an omitted limit pages at EXACTLY 20 here too — this handler's own `?? defaultLimit`, not its sibling's", async () => {
+    // Literal 20 for the reason stated on `thread/search`'s twin of this row: the vendored artifact promises
+    // "occurrences per page, default 20" and `SEARCH_CAPS.defaultLimit` would agree with whatever the
+    // constant said. Its OWN row because the default is spelled once per handler — the same reason the row
+    // cap needed one (S16): a change to this copy alone is invisible to the other's test.
+    const rows = [...Array(25)].map((_, i) => assistant(`needle ${i}`, `u-${i}`));
+    const st = store([sess("cold-session", { createdAt: 1_000 }, rows)]);
+    boot(st.deps);
+    const p1 = await occ({ threadId: "cold-session", searchTerm: "needle" });
+    expect(p1.error).toBeUndefined();
+    expect(p1.result.data.length).toBe(20);
+    expect(p1.result.data.map((o: any) => o.rowOffset)).toEqual([...Array(20)].map((_, i) => i));
+    expect(p1.result.nextCursor).not.toBeNull();
+    expect((await occ({ threadId: "cold-session", searchTerm: "needle", cursor: p1.result.nextCursor })).result.data.length).toBe(5);
   });
 
   it("60 single-hit rows cap at the requested 50 with a cursor for the rest, and an over-cap limit clamps with a warning", async () => {
@@ -1045,7 +1116,11 @@ describe("thread/searchOccurrences", () => {
       b64({ s: "cold-session", r: 1.5, c: 0, e: null }),           // fractional row offset
       b64({ s: "cold-session", r: 0, c: 1e30, e: null }),          // past MAX_SAFE_INTEGER
       b64({ s: "cold-session", r: 0, c: 0, e: "0" }),              // epoch is a number or null, never a string
-      b64({ v: 1_000, s: "cold-session", r: 0 }),                  // the store-wide SEARCH codec's shape
+      // The store-wide SEARCH codec's key. WELL-FORMED for this codec in every other respect — `{s,r,c,e}`
+      // all present and in range — so the refusal can only be the `"v" in p` guard. The obvious fixture
+      // `{v,s,r}` is already refused for its missing `c`, which makes it pass whether or not the guard
+      // exists: a title is not a test, and a row that cannot fail proves nothing about the line it names.
+      b64({ v: 1_000, s: "cold-session", r: 0, c: 0, e: null }),
       b64({ s: "other-session", r: 0, c: 0, e: null }),            // well-formed, but for another transcript
     ]) {
       const r = await occ({ threadId: "cold-session", searchTerm: "needle", cursor });

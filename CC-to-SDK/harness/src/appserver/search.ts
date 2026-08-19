@@ -207,6 +207,21 @@ interface Occurrence { rowOffset: number; uuid: string | null; snippet: string; 
  *  one", and an absent key reads as the second. */
 const rowUuid = (m: unknown): string | null => { const u = (m as { uuid?: unknown }).uuid; return typeof u === "string" ? u : null; };
 
+/** A NESTED (subagent) row — and therefore a row with no jump. The transcript pager discards every frame
+ *  carrying `parent_tool_use_id`: items/mapper.ts's `ingest` returns `[]` for one before its own type
+ *  routing, and items/replay.ts repeats the predicate on its direct user path so a persisted nested prompt
+ *  cannot surface as a top-level message either. So a nested row appears in NO window `thread/read` can
+ *  produce, at any `limit`, and a composed `readCursor` for it would name a page not containing the match.
+ *
+ *  It stays in the CORPUS — that is `rows.ts`'s classification and `thread/search` reports the same session
+ *  for the same text, so excluding it here would make the two methods disagree and would move `rowOffset`,
+ *  the continuation cursor's `c` and every page boundary. `rowOffset` and `uuid` stay published too: they
+ *  are the row's identity and remain true of it. Only the JUMP is impossible, so only the jump is withheld,
+ *  through this method's EXISTING "no jump available" value — `readCursor: null`, exactly what a cold
+ *  session mints. Publishing a string instead is the very thing this handler refuses metadata for: a jump
+ *  target that cannot be jumped to. */
+const rowIsNested = (m: unknown): boolean => Boolean((m as { parent_tool_use_id?: unknown }).parent_tool_use_id);
+
 /** `thread/searchOccurrences` — the same scan narrowed to ONE thread and widened to EVERY hit in a row
  *  (spec D-M5-7). Three things make it its own handler rather than a flag on the one above:
  *
@@ -219,7 +234,9 @@ const rowUuid = (m: unknown): string | null => { const u = (m as { uuid?: unknow
  *     mismatch, exactly as `thread/read`'s is: a rewind truncates rows, and an unqualified cursor would
  *     silently resume against different content.
  *  3. It answers the jump: `readCursor` is the pager's own cursor for the hit row, composed here so a client
- *     pastes it into `thread/read` unchanged.
+ *     pastes it into `thread/read` unchanged — or `null` where the pager cannot be sent to that row at all
+ *     (`rowIsNested` above, and a cold session), because a jump target that cannot be jumped to is the one
+ *     thing this method refuses to publish.
  *
  *  What it deliberately does NOT do is search metadata. The store-wide search reports a session because its
  *  title matches; there is no ROW to anchor such a hit to, and an occurrence whose `rowOffset` named nothing
@@ -311,6 +328,9 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
           // to the row the cursor names; every later row starts at 0. Applying it to all of them would skip
           // the first `c` units of every subsequent row, losing a hit that sits at the head of one.
           const fromChar = cursor && cursor.r === rowOffset ? cursor.c : 0;
+          // Read ONCE per row, beside the row's other identity, because the jump is a property of the ROW
+          // and not of the occurrence: every hit in a nested row is equally unreachable.
+          const nested = rowIsNested(message);
           // `at + 1`, not `at + termLc.length`: overlapping occurrences are real occurrences ("aa" sits at
           // three offsets in "aaaa"), and the mint below carries the same +1, so a page boundary inside a
           // row can neither skip one nor repeat one. This `at >= 0` guard also owns `originalSpan`'s
@@ -324,10 +344,11 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
             data.push({
               rowOffset, uuid: rowUuid(message), snippet, snippetMatchRange,
               // The jump (D-M5-7): the pager's cursor is `"<epoch>:<rowOffset>"` with an EXCLUSIVE upper
-              // bound, so `+1` is what makes the window it returns END at the hit row. Live-only — a cold
-              // session has no epoch, and `thread/read` refuses an unqualified cursor, so `null` says so
-              // rather than composing a string that would be refused.
-              readCursor: epoch === null ? null : `${epoch}:${rowOffset + 1}`,
+              // bound, so `+1` is what makes the window it returns END at the hit row. `null` is "no jump
+              // available", and TWO row states earn it: a cold session has no epoch and `thread/read`
+              // refuses an unqualified cursor, and a NESTED row (`rowIsNested` above) sits in no window the
+              // pager can produce. Both would otherwise publish a string the client cannot land.
+              readCursor: epoch === null || nested ? null : `${epoch}:${rowOffset + 1}`,
             });
             if (data.length >= limit) { nextCursor = encodeOccCursor({ s: sessionId, r: rowOffset, c: at + 1, e: epoch }); break scan; }
           }
