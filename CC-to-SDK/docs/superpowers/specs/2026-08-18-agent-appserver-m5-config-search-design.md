@@ -685,6 +685,36 @@ flips the `full-potential.md` rows and ships nothing.
   test-side oracle read the same `origins` and inherited the same blindness. **A sweep and an oracle
   written by the author of the code share its blind spots; only an independently authored generator
   found this.**
+- **D-M5-13e (fix wave F, rev 12) — a contributor list names the layers a reader can SEE, and the fifth
+  wave of this rule was a regression the fourth introduced.** D-M5-13b's rule ("an edit is masked exactly
+  when the read side does not attribute that leaf to the layer that was written") is unchanged and stays
+  right. What broke was the attribution it reads. B5 (fix wave B) correctly made an object merged over an
+  array keep the ARRAY — that is real lodash — but in `mergeTracked` it also made the object an
+  unconditional CO-CONTRIBUTOR at that path, appending to the list rather than replacing it. The verdict
+  is a MEMBERSHIP test, so a `config/value/write` whose every element a higher layer's index keys had
+  replaced still read as "attributed to me" and was reported `ok` — in force — while `config/read` served
+  the higher layer's value at the same path. Constructed on the real wire: user
+  `{permissions:{allow:["OLD"]}}`, project `{permissions:{allow:{"0":"PROJECT-WINS"}}}`, a user write of
+  `["USER-WRITES-THIS"]` → `{"status":"ok"}`, bytes on disk correct, effective view `["PROJECT-WINS"]`.
+  The same line revived the B4-class cosmetic over-attribution in the other direction
+  (`{hooks:["x"]}` under `{hooks:{PreToolUse:1}}` → `origins {"hooks":["user","project"]}` for an array
+  only the user is in).
+  **Resolution: ask each side of the merge its own question, and answer both from what JSON shows.** The
+  lower layers stay in the list exactly while something of theirs still surfaces — `survivesMerge`
+  mirrors `settingsMerge`'s own three branches, so it cannot drift from what the merge does — and the
+  incoming layer joins it only when it contributes an ARRAY INDEX key, since a non-index key rides the
+  array as a property no serialization shows. Both directions are the same principle: `origins` describes
+  what is served, and a layer whose whole contribution is invisible on the wire is not contributing to it.
+  Because both methods derive from this one map, an over-attribution here is not a wrong *name* — it is a
+  wrong *verdict*, and the split D-M5-13c drew between the two does not protect against it.
+  **Why it survived the sweep, which is the reusable part.** The write sweep's oracle checks attribution
+  against attribution (`origins[k].includes(target)`), so it is structurally incapable of catching an
+  over-attribution: both sides read the same wrong list and agree. Only a VALUE-level check — is what I
+  wrote present at that path in the merged view — can see it, and the new rows use exactly that as their
+  oracle. And the B5 example row pinned the new merge rule with a NON-index key, the one shape where the
+  array genuinely survives intact and `ok` is right; the index-key case that patches elements was never
+  carried into the masking verdict. **An example row chosen for the easy instance of a rule leaves the
+  hard instance unpinned, and reads as coverage of both.**
 - **D-M5-15a (Task 6 review, rev 4) — sort values are screened `Number.isFinite`, at the point they are
   computed.** `compareTuple` returns `NaN` for a non-finite sort value, and `Array.prototype.sort` reads
   `NaN` as *no opinion* — so one malformed row does not sort oddly, it leaves **every other session
@@ -913,14 +943,29 @@ flips the `full-potential.md` rows and ships nothing.
   rewind inside one conversation reports the id it already had, and a `cleared` swap has no id to unshelve —
   the same reading the rejoin already publishes. `autoUnarchive`'s `ctx` became optional for it, and its
   failure warning is server-scoped when nobody asked, matching the audience its success notification has.
-  **A3 — auto-unarchive completes after the reply and the `thread/started` push. NOT changed, deliberately.**
-  Confirmed and self-correcting: the window is one filesystem round trip and the same watchers receive
-  `thread/unarchived` immediately after. Closing it in `startThread` would invert an ordering that is pinned
-  with a reason ("the announcement follows the admission it belongs to"), and it would still leave the
-  transient at `thread/attach` — whose position is fixed by §1e's activation protocol — and at A2's path,
-  where an observed transition has no reply to order against. A2 makes "the unarchive may trail the state
-  change" a property clients must tolerate on at least one path; making them tolerate it uniformly is the
-  more honest contract than closing two of four windows.
+  **A3 — auto-unarchive completes after the reply and the `thread/started` push. NOT changed, deliberately —
+  and the reasoning below is the corrected one (fix wave F, rev 12).** The decline stands; two of the three
+  things wave A said to justify it did not.
+  *What is true:* the window is one filesystem round trip and the same watchers receive `thread/unarchived`
+  immediately after, so it is self-correcting; and closing it here would still leave the transient at
+  `thread/attach`, whose position is fixed by §1e's activation protocol, and at A2's path, where an observed
+  transition has no reply to order against. A2 makes "the unarchive may trail the state change" a property
+  clients must tolerate on at least one path, and making them tolerate it uniformly is the more honest
+  contract than closing two of four windows.
+  *What was false:* that closing it "would invert an ordering that is pinned". The two pinned assertions
+  constrain NOTIFICATION order — `thread/started` before `thread/unarchived` — not marker-versus-reply
+  order, and a mutation moving the unshelve ahead of the reply closed the window with 43 of 44 archive rows
+  still green. And the window is not merely an "ordering" nicety: it is reachable by the requesting client
+  ITSELF — a `thread/list` sent the instant the `thread/resume` reply arrives sees the just-admitted live
+  thread absent from the default list, which is the archived-and-live state D-M5-21 exists to make
+  unreachable, transiently.
+  *The argument wave A should have made, and the one the decline now rests on:* moving the unshelve ahead
+  of the reply re-creates B3's hazard — a post-admission step that can FAIL, turning a successful admission
+  into a failure reply, or leaving the caller holding a thread whose reply said it did not get. That is a
+  worse contract than a self-correcting transient, and it is a reason about consequences rather than about
+  a test that would have had to be argued with. **The lesson is the reason a decline needs auditing at all:
+  a future reader inherits the reasoning, not the outcome, and a decline defended by a constraint that does
+  not exist is one mutation away from being reopened for the wrong reason.**
 - **D-M5-22 (Task 12 spike, rev 6) — both 0.3.234 absorb candidates are ALIVE on both origins, and the
   promote sentence for one of them is amended before it ships.**
   `terminal_slash_commands`: a headless init frame carries `["doctor","color"]` beside 98 slash commands,
@@ -994,6 +1039,16 @@ flips the `full-potential.md` rows and ships nothing.
   settings by an ambient variable. Rejected: **moving `ccxDir`/`fleetRoot` under the same root** — the
   review suggested it "for consistency", but that is OUR state, not the engine's, it already has its own
   `CCX_FLEET_ROOT` override, and moving it would relocate the roster and sockets of every running host.
+  **23a rev 2 (fix wave F, rev 12) — the resolver diverged from the engine in the one env shape 23a did
+  not cover.** It read `CLAUDE_CONFIG_DIR || …`, so an EXPORTED-BUT-EMPTY variable fell back to
+  `$HOME/.claude` while the reference resolves `process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')`
+  and therefore treats `''` as a value — reading `./settings.json`, relative to its cwd. The same "we
+  answer about a file the engine does not read" defect 23a exists to fix, one env shape along, and a shell
+  writes that shape for `CLAUDE_CONFIG_DIR="$SOMETHING_UNSET"`. Now `??`, with the reference's
+  `.normalize("NFC")` applied to the whole result as it is there — near-harmless on macOS, which folds the
+  forms, and load-bearing on a filesystem that does not, where the engine opens the composed spelling.
+  `env.HOME || homedir()` stays ours: it is the seam that lets a caller pass an env, and node's `homedir()`
+  reads `$HOME` first on POSIX anyway.
   **23b — the managed layer is a FAMILY of files.** The shipped SDK bundle and the reference's
   `loadManagedFileSettings` both merge `managed-settings.json` **plus `managed-settings.d/*.json` sorted
   alphabetically on top** — the systemd/sudoers drop-in convention — and the spec's grounding sentence
@@ -1167,11 +1222,42 @@ flips the `full-potential.md` rows and ships nothing.
   text the row beside it did not have, and the same thread answering differently to two methods that
   promise one projection. The fill is now `sessionLib.ts`'s exported `fillFromStore`, called by both; a
   field the record already carries still wins, since the call that patched it persisted it too.
-  **Coupled and NOT fixed here, stated rather than left silent:** `thread/list`'s store-merge leg reads
-  the same swallowing reader and has the same blind spot. Its refusal path is dispatch's generic catch,
-  which replies `e.message` verbatim for every handler, so making the audit live there means auditing
-  that shared catch for the leak 25a just closed — a wider surface than this wave, and the honest place
-  for it is beside that decision rather than inside this one.
+  **25a rev 2 (fix wave F, rev 12) — three corrections to 25a, two of them to claims it published.**
+  *The gate was all-or-nothing.* It returned when ANY one of `listSessions`/`getSessionMessages`/
+  `getSessionInfo` was injected while the other two still read the real filesystem, so a PARTIAL
+  injection skipped the audit and then swallowed the very errno it exists to raise — constructed with
+  `listSessions` injected and a real transcript at mode 000: a page came back, no refusal. The gate now
+  asks the question the audit is actually about — does THIS request read the local filesystem store — of
+  each reader the handler calls, and the handler names its own readers. Latent in the shipped product
+  (`ccx serve` injects nothing) and reachable by any embedder that doubles one reader.
+  *The mid-scan guarantee was overstated on the scorecard, not in the code.* The row promised that a
+  transcript read failing MID-SCAN discards the hits gathered so far. That holds whenever a reader
+  raises, which is every injected store — but on the production origin the readers never raise and the
+  audit runs ONCE, before the listing, so a transcript readable at audit time and unreadable when
+  `getSessionMessages` opens it is answered `[]` and the page under-reports instead of refusing. A window
+  the width of one audit, needing a writer racing this reader, self-healing on the next request. It is a
+  residual of the mechanism 25a chose (establish the precondition, since the reader will not report it),
+  not a defect in the handlers; per-transcript re-verification would pay a whole-store walk per window on
+  this reader. The claim is corrected to what holds; the residual is recorded here.
+  *`thread/list` is fixed rather than deferred, and the stated blocker was wrong.* The deferral said the
+  audit could not live there without auditing dispatch's shared `e.message` catch across every method.
+  That is not what it needs: the session-store steps get a `try` of their own, answering through the
+  `storeRefusal` this module already imports and already calls for the marker read beside it, and
+  dispatch's catch is untouched. What the asymmetry cost was constructible — one broken store, at one
+  instant, refused `-32603` by `thread/search` and reported as `{"data":[],"nextCursor":null}` by
+  `thread/list` — and of the two surfaces the thread picker is the more likely to be believed. `storeRead`
+  and `auditIfReal` move to `sessionLib.ts` so the two readers of this store cannot spell one tag twice.
+  *And the strip that both now share under-stripped.* `stripPaths`' path body stopped at the first
+  whitespace, so a path containing a SPACE was replaced only up to it:
+  `'/Users/opname/My Projects/deal-with-acme/x.jsonl'` became `'<path> Projects/deal-with-acme/x.jsonl'`.
+  It protects the username and discloses the project — and on this store a project DIRECTORY name is the
+  operator's cwd with every non-alphanumeric folded to `-`, so a leaked trailing segment is a leaked
+  absolute path respelled. Reachable whenever the home directory or `CLAUDE_CONFIG_DIR` holds a space.
+  Two passes now: a quoted path (node's own errno shape) goes whole however many spaces it holds, and an
+  unquoted one takes a space only when a separator follows before the next whitespace — which is what
+  keeps `read /a/b or /c/d` from eating the `or`. The residual either pass leaves is an unquoted path
+  whose LAST segment holds a space with no separator after it; node produces no such message, and
+  under-stripping there beats swallowing the sentence around it.
 - **D-M5-26 (fix wave E, rev 11) — a cursor carries the WALK, not only the position.** Six confirmed
   defects across both search methods had one root, and finding it was the point: a cursor resumes a walk,
   and a walk's meaning rests on two things the position does not contain — the QUERY that decides what is
@@ -1237,6 +1323,30 @@ flips the `full-potential.md` rows and ships nothing.
   read on this reader (D-M5-25b measured it), and between two windows of one page the store-immutability
   assumption stands — what was wrong was trusting it at page BOUNDARIES after it had been broken, which
   is exactly where `g` now checks it.
+  **26e (fix wave F, rev 12) — `epoch` was never a generation, and the "by construction" claim above was
+  false for one path.** 26b's live stamp was `L<epoch>`, and an epoch is a per-record counter: it starts
+  at 0, only ever increments IN PLACE, and `thread/close` deletes the record outright — so a later
+  re-admission of the same session mints a fresh record back at 0 and a cursor minted before the close
+  compares EQUAL to it. Constructed in three ordinary wire calls, which is a normal thing for an operator
+  to do between two pages: `thread/search` → `thread/close` → `thread/start`, and the stale cursor was
+  honoured against the new record and answered `{"data":[],"nextCursor":null}` — the terminal "no
+  matches" D-M5-8 forbids — for a term the same instant's fresh walk found. The occurrences variant was
+  sharper: two pages together reported three occurrences for a transcript holding two, with a
+  `rowOffset`/`readCursor` addressing a generation that no longer existed. A *residual* rather than a
+  regression (before 26b `thread/search` carried no generation at all), but 26b's sentence claimed the
+  family was closed by construction, and for the live→close→live cycle it was not.
+  The stamp is now `L<record.id>:<epoch>`. `record.id` is minted per record (`Registry.mint`, six random
+  bytes), so it cannot repeat across a recreation, and it is stable across everything that must NOT
+  invalidate a walk: a rewind keeps the record and moves the epoch, an append moves neither. Rejected:
+  **folding the store's mtime/size into the LIVE stamp** — it closes the same hole, and it imports the
+  cold half's over-refusal into the half that has an alternative, so every page of a walk over an
+  actively-appending live session would refuse; and **a new `birth` field on `ThreadRecord`** — the id
+  already is one, and a required field would touch every record literal for nothing.
+  **Adjacent and deliberately NOT changed here:** `thread/read`'s pager cursor is `"<epoch>:<row>"`
+  (D-M5-7) and has the same reset-on-recreation property. It is a PUBLISHED string format, parsed in
+  `subscribe.ts`, asserted literally across several test files and stated in the scorecard, so changing
+  it is a wire change on a shipped surface rather than a corrective fix — the wrong thing to do in a pass
+  whose job is to close a regression. Recorded so the next owner of that cursor inherits the finding.
   **Compatibility: a cursor minted by an older build fails the shape check and refuses `-32602`.** No
   shim, per the house rule and because the refusal is correct on its own terms — such a cursor names a
   walk whose bindings this server cannot verify. Rejected: signing the cursor (it is not a capability, and
@@ -1656,6 +1766,41 @@ predated the rule and was never revisited by any later reviewer.
   keyset (D-M5-16), now reachable because archiving is a first-party mutator between pages, and
   closing it is a wire change to a shipped method; intra-batch shadowing is only half-reported, and
   `overriddenMetadata` describes one masked edit rather than all of them.
+- **Declined by fix wave F (rev 12), each with its reason — the review's minors that were NOT fixed.**
+  Every confirmed finding got a decision; these are the ones that went the other way, recorded here so a
+  reader finds a decision rather than an omission.
+  - *The store audit's mid-request TOCTOU* (the code residual behind the corrected scorecard sentence):
+    the audit runs once at the top of the exclusive section, so a transcript failing between it and
+    `getSessionMessages` is swallowed on the production origin. Re-verifying per transcript costs a
+    whole-store walk per window on this reader (D-M5-25b measured the reader); the window needs a writer
+    racing this reader and self-heals on the next request. Corrected in the claim, not in the code.
+  - *The audit is whole-store, runs per PAGE as well as per request, and one unreadable transcript refuses
+    search for every thread.* Both are consequences of refusing to reproduce the SDK's cwd-to-project
+    mapping (25a), which is the safer side of an internal we cannot watch change. Caching the audit across
+    pages would trade a real property — a store that becomes unreadable mid-walk is caught at the next page
+    — for ~125 ms on a 4643-transcript store. The sharpest instance is `thread/searchOccurrences`, which
+    touches ONE transcript and pays the full walk: recorded on its scorecard row rather than special-cased,
+    because a per-method audit scope is exactly the drift the one predicate exists to prevent.
+  - *`generationOf` degrades for a bring-your-own `SessionStore`*: `fileSize` is populated only for local
+    JSONL, so an adapter store reduces the cold stamp to a bare millisecond timestamp and a same-size,
+    same-millisecond rewrite collides. There is nothing else in `SDKSessionInfo` to fold in, and mint and
+    resume are a network round trip apart, so the collision needs a sub-millisecond rewrite between two
+    pages. A bounded property of the adapter contract, not a reachable defect.
+  - *The TUI still writes user settings and keybindings to `homedir()/.claude`*, ignoring
+    `CLAUDE_CONFIG_DIR` — the same class as D-M5-23a on a different surface. Not a one-line fix, and the
+    reason is specific: `useChat`'s `deps.home` is a DISPLAY home (it feeds `displayPath`'s and
+    `toolFold`'s `~`-shortening) and is passed explicitly on the production path, so pointing these two
+    files at `claudeConfigDir()` either changes nothing or silently redirects every test that injects
+    `home` to avoid the operator's real `~/.claude`. The correct fix is a second seam — a `configDir`
+    threaded through `useChat`'s deps, `chatMain`, `settingsFile` and `userBindings` with their tests — and
+    that is a contract change with an owner, not a corrective repair.
+  - *Two roster-row residuals A1 does not cover.* A `--continue` launch leaves the row unnamed while the
+    host holds a conversation, and it is unfixable at `start()` because no id exists there yet — the id is
+    the store's answer to "most recent", learned later. And the common foreground shape, `ccx --resume X`,
+    strips `resume` out of the host config on its way to the client (`main.ts`: launch resume goes to the
+    CLIENT, one resume code path), so A1's `start()` seed never fires and the row is stamped by the resume
+    path after the transcript read. Both are the boot-window class D-M5-21c already accepts; wave A's
+    commit message overstated the foreground case as fixed from the launch, and it is fixed from mount.
 - **Cross-process archive state is transient by construction, not prevented** — criterion 7 was
   amended (rev 5) to say so rather than keep a claim the design had already narrowed away.
 - **Domain 10 held at ~76%.** Two optional fields on messages this table has consumed since M1 are
@@ -1867,3 +2012,21 @@ directory changing a permission dialog's offered rule row, not the known flake.
   dependency's change must model everything the real one changes** — the verifier's fleet probe swapped a
   transcript's rows while freezing its own mtime, so the repair looked ineffective against it until the
   real reader was measured and the fixture corrected.
+- **rev 12 (2026-08-20) — D-M5-13e, D-M5-25a rev 2, D-M5-26e: the corrective pass over the five fix
+  waves, and its shape is the milestone's own lesson arriving one layer further in.** An independent
+  review of the waves found three items worth landing and fifteen minors. The three: a fully-overridden
+  config write reporting `ok` — a regression wave B introduced, in the exact truthfulness contract
+  D-M5-13a/b/c/d had already been rewritten for four times; a search cursor honoured across a
+  close-and-reopen, because an epoch is a per-record counter that restarts at 0 and wave E's claim of
+  closure "by construction" did not cover that path; and a scorecard sentence promising a mid-scan
+  read-failure guarantee the production reader cannot deliver. **The fifth shipped sentence measurement
+  contradicts, and the second regression introduced by a fix.** Two shapes are worth carrying out of the
+  pass. **An oracle that compares a thing to itself cannot see an over-count** — the write sweep checked
+  attribution against attribution, so both sides read one wrong contributor list and agreed, and only a
+  VALUE-level question (is what I wrote present at that path in the merged view) could see it. And **a
+  decline is inherited as its reasoning, not as its outcome**: wave A's A3 decline was right and two of
+  its three stated reasons were false, including one that named a pinned ordering that does not exist —
+  a decline defended by a constraint nobody has re-checked is one mutation away from being reopened for
+  the wrong reason. The pass also closed four minors wave D and wave B had deferred behind blockers that
+  turned out to be overstated (`thread/list`'s audit, the per-reader gate, `stripPaths`' space, the
+  empty-string `CLAUDE_CONFIG_DIR`), and recorded a decision for every minor it declined.
