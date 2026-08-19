@@ -328,6 +328,23 @@ flips the `full-potential.md` rows and ships nothing.
 - **Parking lot, demand-driven, named triggers:** inline review delivery (child-session event
   splicing); fleet elicitation bridge (D-M4-8, host-wire revision); `account`/`init` host ops (the
   two `inProcess`-only introspection rows).
+- **Parking lot, added during M5 execution:**
+  - **The store-adapter conformance gate certifies unusable numbers** (Task 6 review). `src/store/
+    conformance.ts` asserts `typeof r.mtime === "number"` to certify a third-party session-store adapter,
+    and `NaN` passes. D-M5-15a screens the *consumer* so search can no longer be broken by it, but the
+    gate that blesses the input is unchanged, and every future consumer of a certified store inherits the
+    same trust. Trigger: any new consumer that sorts, ranges, or arithmetics a store-supplied timestamp.
+    Fix shape: make the conformance assertions demand a *usable* value (finite, non-negative integer)
+    rather than a typeof.
+  - **`KNOWN_TOP_LEVEL` drift detection** (Task 4 fix wave). The advisory list of settings keys is 87
+    hand-transcribed names with nothing detecting divergence from upstream's `SettingsSchema`. A stale
+    entry costs a missing warning and never a wrong refusal, so the stakes are low — but this is the
+    "instrument rots under the code it verifies" pattern, and the house-consistent fix is to teach
+    `scripts/drift-check.mjs`, which already walks source tokens for exactly this class of rot.
+  - **`mergeTracked` records no origin for an object node** (Task 1 Minor M2, resurfaced as the root of a
+    Task 4 High). `config/read` cannot say which layer contributed an empty object. D-M5-13d removed the
+    write side's dependency on it, so nothing is currently broken by it — but it remains a real gap in
+    what attribution can answer, and the next consumer to reason from `origins` will meet it.
 
 ## Decision Log
 
