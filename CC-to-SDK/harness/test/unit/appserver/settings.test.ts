@@ -15,6 +15,10 @@ import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { THINK_LEVELS, thinkBudget } from "../../../src/tui/thinkLevels.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
+// Every `thread/list` mirror check below awaits with `waitReply`, not the bare `tick` the rest of this file
+// uses: since M5 Task 10 that handler reads the archive marker directory before replying, so its reply
+// lands a filesystem round-trip after the request rather than within one macrotask.
+import { waitReply } from "../../helpers/waitReply.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -214,8 +218,7 @@ describe("appserver settings setters (Task 9)", () => {
 
     // mirror unchanged — a follow-up thread/list must still see claude-a
     send(connA, { id: 4, method: "thread/list", params: {} });
-    await tick();
-    const list = parsed(a.lines).find((f) => f.id === 4);
+    const list = await waitReply(a.lines, 4);
     expect(list.result.data.find((t: any) => t.id === threadId).model).toBe("claude-a");
   });
 
@@ -231,8 +234,7 @@ describe("appserver settings setters (Task 9)", () => {
     expect(parsed(a.lines).find((f) => f.method === "thread/settings/changed")).toBeUndefined();
 
     send(connA, { id: 4, method: "thread/list", params: {} });
-    await tick();
-    const list = parsed(a.lines).find((f) => f.id === 4);
+    const list = await waitReply(a.lines, 4);
     expect(list.result.data.find((t: any) => t.id === threadId).permissionMode).toBe("default");
   });
 
@@ -256,8 +258,7 @@ describe("appserver settings setters (Task 9)", () => {
     }
 
     send(connA, { id: 4, method: "thread/list", params: {} });
-    await tick();
-    const view = parsed(a.lines).find((f) => f.id === 4).result.data.find((t: any) => t.id === threadId);
+    const view = (await waitReply(a.lines, 4)).result.data.find((t: any) => t.id === threadId);
     expect(view.model).toBe("claude-sonnet-5"); // mirror reflects the real (healed) engine model
     expect(view.permissionMode).toBe("default"); // mirror does NOT reflect the rejected permissionMode change
   });
@@ -274,8 +275,7 @@ describe("appserver settings setters (Task 9)", () => {
     expect(parsed(a.lines).find((f) => f.method === "thread/settings/changed")).toBeUndefined();
 
     send(connA, { id: 4, method: "thread/list", params: {} });
-    await tick();
-    const list = parsed(a.lines).find((f) => f.id === 4);
+    const list = await waitReply(a.lines, 4);
     expect(list.result.data.find((t: any) => t.id === threadId).thinking.maxTokens).toBeUndefined();
   });
 

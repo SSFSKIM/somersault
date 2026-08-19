@@ -5,6 +5,10 @@
 import { describe, it, expect } from "vitest";
 import { AppServer } from "../../../src/appserver/server.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
+// The `thread/list` replies below are awaited with `waitReply`, not the bare `tick` the rest of this file
+// uses: since M5 Task 10 that handler reads the archive marker directory before replying, so its reply
+// lands a filesystem round-trip after the request rather than within one macrotask.
+import { waitReply } from "../../helpers/waitReply.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -60,7 +64,7 @@ describe("appserver thread teardown (C1/I7)", () => {
     send(c, { id: 5, method: "thread/list", params: {} });
     send(c, { id: 6, method: "turn/start", params: { threadId, input: "x" } });
     await tick();
-    expect(parsed(s.lines).find((f) => f.id === 5).result.data).toHaveLength(0);
+    expect((await waitReply(s.lines, 5)).result.data).toHaveLength(0);
     expect(parsed(s.lines).find((f) => f.id === 6).error.code).toBe(-33004);
   });
 
@@ -312,8 +316,7 @@ describe("appserver record.sessionId (C3)", () => {
 
     // ...and thread/list now reports an id a client can hand to thread/resume
     send(c, { id: 5, method: "thread/list", params: {} });
-    await tick();
-    expect(parsed(s.lines).find((f) => f.id === 5).result.data[0].sessionId).toBe("sess-late");
+    expect((await waitReply(s.lines, 5)).result.data[0].sessionId).toBe("sess-late");
   });
 
   it("latches the id even when system/init is the LAST frame of the turn", async () => {
@@ -350,8 +353,7 @@ describe("appserver record.sessionId (C3)", () => {
     expect(seenSessionId).toBe("sess-initlast");                                    // pre-fix: undefined
     expect(parsed(s.lines).find((f) => f.id === 4).result.data.map((i: any) => i.id)).toEqual(["u-p"]);
     send(c, { id: 5, method: "thread/list", params: {} });
-    await tick();
-    expect(parsed(s.lines).find((f) => f.id === 5).result.data[0].sessionId).toBe("sess-initlast");
+    expect((await waitReply(s.lines, 5)).result.data[0].sessionId).toBe("sess-initlast");
   });
 });
 

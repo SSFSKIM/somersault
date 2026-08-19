@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeRoster } from "../../../src/fleet/roster.js";
+import { waitReply } from "../../helpers/waitReply.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -54,9 +55,11 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
     expect(thread.sessionId).toBe("sess-1");
 
     lines.length = 0;
+    // `waitReply` rather than a bare `tick` at every thread/list below: since M5 Task 10 the handler reads
+    // the archive marker directory before replying, so its reply lands a filesystem round-trip after the
+    // request rather than within one macrotask (see the helper).
     send(c, { id: 3, method: "thread/list", params: {} });
-    await tick();
-    const { data } = parsed(lines).find((f) => f.id === 3).result;
+    const { data } = (await waitReply(lines, 3)).result;
     const rows = data.filter((r: any) => r.sessionId === "sess-1");
     expect(rows).toHaveLength(1); // deduped, not two rows for the one session
     expect(rows[0].id).toBe(thread.id); // live wins — keeps the thr_ id, not the bare sessionId
@@ -98,8 +101,7 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
     await tick();
 
     send(c, { id: 2, method: "thread/list", params: { limit: 1 } });
-    await tick();
-    const page1 = parsed(lines).find((f) => f.id === 2).result;
+    const page1 = (await waitReply(lines, 2)).result;
     expect(page1.data).toHaveLength(1);
     // updatedAt/createdAt are unix SECONDS on the wire (registry.ts's ThreadRecord convention, which
     // threadView passes straight through for live rows) — a store-only row must match that unit, not
@@ -108,8 +110,7 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
     expect(page1.nextCursor).toBe("1");
 
     send(c, { id: 3, method: "thread/list", params: { limit: 1, cursor: page1.nextCursor } });
-    await tick();
-    const page2 = parsed(lines).find((f) => f.id === 3).result;
+    const page2 = (await waitReply(lines, 3)).result;
     expect(page2.data).toHaveLength(1);
     expect(page2.data[0].id).toBe("store-b");
     expect(page2.nextCursor).toBeNull();
@@ -126,8 +127,7 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
 
     lines.length = 0;
     send(c, { id: 3, method: "thread/list", params: {} });
-    await tick();
-    const { data } = parsed(lines).find((f) => f.id === 3).result;
+    const { data } = (await waitReply(lines, 3)).result;
     expect(data).toHaveLength(2); // the unlatched live thread AND the unrelated store row — no false merge
     const liveRow = data.find((r: any) => r.id === thread.id);
     expect(liveRow.sessionId).toBeUndefined();
@@ -148,8 +148,7 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
 
     lines.length = 0;
     send(c, { id: 4, method: "thread/list", params: {} });
-    await tick();
-    const row = parsed(lines).find((f) => f.id === 4).result.data.find((r: any) => r.id === thread.id);
+    const row = (await waitReply(lines, 4)).result.data.find((r: any) => r.id === thread.id);
     expect(row.title).toBe("Patched live title");
   });
 });
@@ -491,8 +490,7 @@ describe("thread/name/set + thread/tag/set (Task 12) — safe pass-through on a 
 
     // the live mirror was patched too — a follow-up thread/list (empty store) reflects it without any store round-trip
     send(c, { id: 5, method: "thread/list", params: {} });
-    await tick();
-    const row = parsed(lines).find((f) => f.id === 5).result.data.find((r: any) => r.id === thread.id);
+    const row = (await waitReply(lines, 5)).result.data.find((r: any) => r.id === thread.id);
     expect(row.tags).toEqual(["important"]);
   });
 
