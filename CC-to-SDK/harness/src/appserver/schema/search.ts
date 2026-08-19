@@ -16,6 +16,9 @@ import { z } from "zod/v4";
  *  composing a position in an ordering it cannot see. Garbage — including a forged row offset — refuses. */
 export const threadSearchParams = z.object({
   searchTerm: z.string().describe("case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"),
+  // `.min(1)` is redundant for enforcement — `""` decodes to `null` and refuses `-32602` one door in, the
+  // same code either way — and kept for PUBLICATION: it emits `minLength: 1` into the stable JSON schema,
+  // which is where a client learns the bound without reading our decoder.
   cursor: z.string().min(1).optional().describe("opaque keyset cursor from a previous reply's nextCursor; never client-composed"),
   limit: z.number().int().positive().optional().describe("results per page, default 20; over 50 is clamped to 50 with a `warning` notification"),
   sortKey: z.enum(["created_at", "updated_at", "recency_at"]).default("created_at")

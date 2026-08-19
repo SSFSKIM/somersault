@@ -224,6 +224,12 @@ describe("thread/search", () => {
     lines.length = 0;
     await search({ searchTerm: "needle", limit: SEARCH_CAPS.maxLimit });
     expect(warnings()).toEqual([]);
+    // …and ONE over the cap is the boundary that actually pins the comparison: 60 and 50 both survive an
+    // off-by-one, so without this row a `> maxLimit + 1` would hand back 51 results with nothing disclosed.
+    lines.length = 0;
+    const justOver = await search({ searchTerm: "needle", limit: SEARCH_CAPS.maxLimit + 1, sortKey: "created_at", sortDirection: "asc" });
+    expect(justOver.result.data.length).toBe(SEARCH_CAPS.maxLimit);
+    expect(warnings().map((w) => w.params.code)).toEqual(["limitClamped"]);
   });
 
   it("a row past the UTF-16 row cap is skipped AND COUNTED while a later small row in the same session still matches", async () => {
@@ -469,6 +475,71 @@ describe("thread/search", () => {
     expect(rest.result.skipped).toBe(1);
     expect(rest.result.nextCursor).toBeNull();
     expect(validate(rest.result), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("a case fold that CHANGES LENGTH does not slide the snippet window off the match — both corpora, at one occurrence", async () => {
+    // The match is located in `text.toLowerCase()`; the snippet is cut from `text`. U+0130 (Turkish
+    // capital İ) is the ONE code point in all of Unicode whose lowercase is longer than itself (swept
+    // 0..0x10FFFF: expanders 1, shrinkers 0), so each one before a match shifts the lowered offset by one
+    // unit. It is wrong at E = 1, not at some exotic threshold: unmapped, the window here starts one unit
+    // late and ends one unit late, and the same offset is what Task 8 publishes as `snippetMatchRange`.
+    const pad = "y".repeat(300);
+    const drifty = "İ" + pad + "needle" + pad;
+    expect(drifty.toLowerCase().indexOf("needle") - drifty.indexOf("needle")).toBe(1); // the drift, measured
+    const st = store([
+      sess("s-meta", { createdAt: 1_000, customTitle: drifty }),                 // the metadata call site
+      sess("s-row", { createdAt: 2_000 }, [assistant(drifty)]),                  // the transcript call site
+    ]);
+    boot(st.deps);
+    const r = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc" });
+    // Exact strings, not `toContain`: at one occurrence the drifted window still holds the term, so
+    // "the snippet contains the match" is precisely the assertion that would NOT catch this.
+    const centered = "y".repeat(97) + "needle" + "y".repeat(97);
+    expect(r.result.data.map((d: any) => d.snippet)).toEqual([centered, centered]);
+  });
+
+  it("a rename that lands MID-WALK is reported once, not zero times — metadata is checked on every page", async () => {
+    // The `startRow === 0` guard this replaces was justified as costing nothing and reporting the session
+    // "exactly once"; over a store that changes between pages it reported it ZERO times, which is a
+    // coverage loss, and D-M5-16 is explicit that the caps bound work and never coverage.
+    const fakes = [sess("s-big", { createdAt: 1_000 }, [...Array(4_200)].map((_, i) => assistant(`filler ${i}`)))];
+    const st = store(fakes);
+    boot(st.deps);
+    const p1 = await search({ searchTerm: "needle" });
+    expect(p1.result.data).toEqual([]);
+    expect(decodeSearchCursor(p1.result.nextCursor)).toEqual({ v: 1_000, s: "s-big", r: SEARCH_CAPS.maxRowsPerPage });
+    fakes[0].info.customTitle = "a needle in the title"; // a `thread/name/set` lands between the two pages
+    const p2 = await search({ searchTerm: "needle", cursor: p1.result.nextCursor });
+    expect(p2.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-big"]); // once — exactly once
+    expect(p2.result.data[0].snippet).toBe("a needle in the title");
+  });
+
+  it("a snippet carries the row's ORIGINAL casing — the wire ships the transcript, not the lowercased copy searched", async () => {
+    // Search lowercases both sides to compare them; the excerpt must not inherit that. Undefended, the
+    // wire could ship flattened transcript text past every other gate in this file.
+    const said = "Mixed CASE: a NEEDLE, Preserved Verbatim.";
+    const st = store([sess("s-case", { createdAt: 1_000 }, [assistant(said)])]);
+    boot(st.deps);
+    expect((await search({ searchTerm: "needle" })).result.data[0].snippet).toBe(said);
+  });
+
+  it("a cursor that sorts after every REMAINING session answers an honest empty page, not an internal error", async () => {
+    // Reachable without forging anything: the walk's own cursor goes stale when the sessions it named are
+    // deleted between pages. `findIndex` then answers -1, and -1 used as a start index reads `sorted[-1]`.
+    const st = store([
+      sess("s-a", { createdAt: 1_000, summary: "needle a" }),
+      sess("s-b", { createdAt: 2_000, summary: "needle b" }),
+      sess("s-c", { createdAt: 3_000, summary: "needle c" }),
+    ]);
+    boot(st.deps);
+    const p1 = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", limit: 2 });
+    expect(p1.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-a", "s-b"]);
+    expect(decodeSearchCursor(p1.result.nextCursor)).toEqual({ v: 3_000, s: "s-c", r: 0 });
+    st.drop("s-b");
+    st.drop("s-c"); // everything at or after the cursor is gone; only s-a, which sorts BEFORE it, remains
+    const p2 = await search({ searchTerm: "needle", sortKey: "created_at", sortDirection: "asc", cursor: p1.result.nextCursor });
+    expect(p2.error).toBeUndefined();
+    expect(p2.result).toEqual({ data: [], nextCursor: null });
   });
 
   it("the corpus is the classifier's, not every row: tool_results and command echoes never match", async () => {

@@ -86,6 +86,33 @@ const clampIndex = (n: number, hi: number): number => (Number.isFinite(n) ? Math
 const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
 const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
 
+/** Maps an offset found in `text.toLowerCase()` back onto `text`. Search matches on the LOWERCASED row and
+ *  the snippet is cut from the ORIGINAL, so without this the window slides right by one unit per preceding
+ *  case-fold expansion — a wrong excerpt here and, once Task 8 publishes `snippetMatchRange` composed off
+ *  the same offset, a wrong published range at ONE expansion (`İneedle…` publishes `eedley`). Shared HERE
+ *  rather than spelled at each call site: two spellings of one piece of arithmetic in one file is what let
+ *  the rev-1 plan's mint and resume diverge.
+ *
+ *  Exactly one code point in Unicode changes UTF-16 length under `toLowerCase()`, and it only ever grows:
+ *  swept 0..0x10FFFF, expanders = 1 (U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE → "i" + U+0307),
+ *  shrinkers = 0. The context-sensitive folds (final sigma, ǅ, ﬀ, ẞ) are all length-preserving, and the
+ *  Lithuanian rules that would add a dot are locale-sensitive while `toLowerCase()` is not. So
+ *  `lowered.length - text.length` IS the count of U+0130 in `text`, which makes the equal-length fast path
+ *  exact for every row that contains none — i.e. every real row. The correction loop is not a unit-by-unit
+ *  walk (which would defeat the row cap): it runs once per U+0130 via native `indexOf`, worst case the same
+ *  order as the `toLowerCase()` the caller already paid for. Matching semantics are untouched — the search
+ *  is still `indexOf` over the lowered text. (A `RegExp` with `i` for native offsets was measured and
+ *  rejected: under `i`, İ/i and K/k and ẞ/ß all fail to match, and under `iu`/`iv` İ still does; every
+ *  variant changes which rows are hits.) */
+export function originalOffset(text: string, lowered: string, atLowered: number): number {
+  if (lowered.length === text.length) return atLowered;
+  let shift = 0;
+  let p = text.indexOf("İ");
+  // `p + shift` is where this İ sits in `lowered`; count only the ones strictly before the match.
+  while (p >= 0 && p + shift < atLowered) { shift++; p = text.indexOf("İ", p + 1); }
+  return atLowered - shift;
+}
+
 export function makeSnippet(text: string, start: number, len: number): { snippet: string; snippetMatchRange: { start: number; end: number } } {
   const at = clampIndex(start, text.length);
   const n = clampIndex(len, text.length - at);
@@ -103,9 +130,11 @@ export function makeSnippet(text: string, start: number, len: number): { snippet
   // construction cannot hold it at all. Trimming a half-character off an excerpt costs the reader nothing.
   //   Both trims are guarded to stay OUT of the match itself (`from < at`, `to > at + n`), because a
   // client's own term may legitimately begin or end with a lone surrogate and cutting into the match
-  // would make `snippetMatchRange` describe a range the snippet no longer holds. And only splits this
-  // window CREATES are repaired: a lone surrogate already sitting in the source text passes through, at
-  // any position, since re-writing a caller's content is not this function's business.
+  // would make `snippetMatchRange` describe a range the snippet no longer holds. Outside the match the
+  // repair is positional, not provenance-aware: each trim looks only at the unit sitting ON its own cut,
+  // so a lone surrogate the SOURCE already carried is passed through everywhere except where it happens to
+  // land exactly on a cut this window makes (constructed: one at `from` IS trimmed). Distinguishing the
+  // two would mean inspecting the unit beyond the cut, and the excerpt is one unit shorter either way.
   if (from > 0 && from < at && isLowSurrogate(text.charCodeAt(from))) from++;
   if (to > at + n && isHighSurrogate(text.charCodeAt(to - 1))) to--;
   const snippet = text.slice(from, to);

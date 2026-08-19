@@ -13,7 +13,7 @@ import { ERR } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
 import { findLiveBySessionId, storeOnlyView } from "./sessionLib.js";
 import { listArchived } from "./archive.js";
-import { SEARCH_CAPS, compareTuple, decodeSearchCursor, encodeSearchCursor, makeSnippet, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
+import { SEARCH_CAPS, compareTuple, decodeSearchCursor, encodeSearchCursor, makeSnippet, originalOffset, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchParams } from "./schema/search.js";
 import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
@@ -101,14 +101,25 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         /** The cursor for "this session is finished, continue at the next one". */
         const afterThis = (): string | null => (i + 1 < sorted.length ? encodeSearchCursor({ ...tupleOf(sorted[i + 1]), r: 0 }) : null);
 
-        // The METADATA corpus: free (it is already in memory from the listing) and checked exactly once
-        // per session — a resumed mid-file scan has `startRow > 0` and skips it, so a session cannot be
-        // reported twice for a title that matched on an earlier page.
-        if (startRow === 0) {
-          const hit = [info.customTitle, info.summary, info.firstPrompt, info.tag]
-            .find((t): t is string => typeof t === "string" && t.toLowerCase().includes(termLc));
-          if (hit !== undefined) {
-            data.push({ thread: viewFor(srv, info), snippet: makeSnippet(hit, hit.toLowerCase().indexOf(termLc), termLen).snippet });
+        // The METADATA corpus: free (it is already in memory from the listing), and checked on EVERY page
+        // including a mid-file resume. It cannot double-report — a metadata hit `continue`s without ever
+        // content-scanning the session, so no cursor can name that session with `startRow > 0` — while
+        // skipping it on resume can under-report: a `thread/name/set` landing between pages renames a
+        // session whose earlier page already passed its metadata, and a `startRow === 0` guard then reports
+        // it ZERO times (measured). D-M5-16 is explicit that caps bound work, never coverage, and the guard
+        // saved at most four `toLowerCase()` calls per request — at most one session per page resumes mid-file.
+        {
+          let hit = "", at = -1;
+          for (const field of [info.customTitle, info.summary, info.firstPrompt, info.tag]) {
+            if (typeof field !== "string") continue;
+            const lc = field.toLowerCase();
+            const i = lc.indexOf(termLc);
+            // Lowered offset → ORIGINAL offset: the match is located in `lc` but the snippet is cut from
+            // `field` (the wire must carry the row's real casing), and searchScan.ts owns that mapping.
+            if (i >= 0) { hit = field; at = originalOffset(field, lc, i); break; }
+          }
+          if (at >= 0) {
+            data.push({ thread: viewFor(srv, info), snippet: makeSnippet(hit, at, termLen).snippet });
             if (data.length >= limit) { nextCursor = afterThis(); break scan; }
             continue;
           }
@@ -116,6 +127,13 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         // Budget checked BEFORE opening another transcript, and the cursor minted at this session's own
         // tuple — the next page re-examines exactly where this one stopped. A zero-hit page with a non-null
         // cursor is the honest report of bounded progress (D-M5-16), never a "no matches" claim.
+        //   The row-cap half is REACHABLE but not OBSERVABLE, and the distinction matters to whoever
+        // refactors the window loop. Reachable: a session whose hit lands on the last budgeted row exits
+        // through `break read` with `rowsScanned` exactly at the cap and `limit` not yet spent, so the next
+        // session arrives here with the clause true (constructed and instrumented firing). Not observable:
+        // the window loop's own `want <= 0` mints the identical cursor before any store read, so deleting
+        // the clause leaves the wire bytes AND the store-call log unchanged. Kept as the backstop if that
+        // bound ever changes — but re-check it against this reason, not against a claim of dead code.
         if (filesScanned >= SEARCH_CAPS.maxFilesPerPage || rowsScanned >= SEARCH_CAPS.maxRowsPerPage) {
           nextCursor = encodeSearchCursor({ ...tup, r: startRow }); break scan;
         }
@@ -135,14 +153,21 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
             // Too big to search — DISCLOSED, never silently dropped: `skipped` is what keeps "no matches"
             // an honest claim about what was actually read (D-M5-8).
             if (text.length > SEARCH_CAPS.maxRowUnits) { skipped++; continue; }
-            const at = text.toLowerCase().indexOf(termLc);
-            if (at >= 0) {
-              data.push({ thread: viewFor(srv, info), snippet: makeSnippet(text, at, termLen).snippet });
+            const lc = text.toLowerCase();
+            const i = lc.indexOf(termLc);
+            if (i >= 0) {
+              // Same mapping as the metadata corpus above, through the same primitive — one spelling of
+              // this arithmetic in this file, so Task 8's `snippetMatchRange` cannot drift from the snippet.
+              data.push({ thread: viewFor(srv, info), snippet: makeSnippet(text, originalOffset(text, lc, i), termLen).snippet });
               hitHere = true; break read;
             }
           }
           if (win.length < want) break read; // short window = this session is exhausted
         }
+        // `hitHere &&` is redundant and kept as documentation, not as a guard: every push is followed
+        // immediately by its own `>= limit` break, so a session is only ever entered with `data.length <
+        // limit`, and reaching the cap HERE therefore implies this session is what pushed. It names the
+        // condition the reader would otherwise have to re-derive; removing it would also strand `hitHere`.
         if (hitHere && data.length >= limit) { nextCursor = afterThis(); break scan; }
       }
       ctx.peer.reply(id, { data, nextCursor, ...(skipped ? { skipped } : {}) });

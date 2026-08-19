@@ -1,6 +1,6 @@
 // test/unit/appserver/search-scan.test.ts
 import { describe, it, expect } from "vitest";
-import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, rowSearchText, makeSnippet } from "../../../src/appserver/searchScan.js";
+import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, rowSearchText, makeSnippet, originalOffset } from "../../../src/appserver/searchScan.js";
 
 describe("searchScan", () => {
   it("compareTuple: nulls last both directions; sessionId tiebreak asc", () => {
@@ -343,7 +343,7 @@ describe("searchScan — snippet windows", () => {
     expect(fails).toEqual([]);
   });
 
-  it("the window never HALVES a surrogate pair (Task 6's hazard pin, answered by Task 7) — and a source's own lone surrogate still passes through", () => {
+  it("the window never halves a pair IT CREATED outside the match — and a source's own lone surrogate away from the cuts passes through", () => {
     // Task 6 recorded this and left the call to whoever owned the wire shape; `thread/search` is that
     // owner, so the edges are now trimmed. Measured before the trim: with emoji around the match, ALL 40
     // probed offsets shipped a lone surrogate at BOTH edges — the 97-unit pad is odd, so the cut lands
@@ -373,9 +373,56 @@ describe("searchScan — snippet windows", () => {
     const lowLed = "\udc00" + "q".repeat(SEARCH_CAPS.snippetMax - 1); // 200 units, starts with a lone LOW surrogate
     const r3 = makeSnippet("x".repeat(50) + lowLed, 50, lowLed.length);
     expect(r3.snippet.slice(r3.snippetMatchRange.start, r3.snippetMatchRange.end)).toBe(lowLed);
-    // …and a lone surrogate the SOURCE already carries, away from both edges, is passed through, not
-    // rewritten: repairing a caller's content is not this function's business.
+    // The MIRROR of that guard, on the trailing edge (`to > at + n`), which the leading row above does not
+    // reach: `to === at + n` exactly when `pad === 0`, so a 200-unit term ENDING in a lone high surrogate
+    // is the input where an unguarded trim shortens the snippet to 199 while the range still ends at 200 —
+    // a published range pointing PAST the snippet, the wire-contract violation this function exists to stop.
+    const highTailed = "q".repeat(SEARCH_CAPS.snippetMax - 1) + "\ud83d"; // 200 units, ends with a lone HIGH surrogate
+    const r4 = makeSnippet("x".repeat(50) + highTailed, 50, highTailed.length);
+    expect(r4.snippet.slice(r4.snippetMatchRange.start, r4.snippetMatchRange.end)).toBe(highTailed);
+    expect(r4.snippetMatchRange.end).toBeLessThanOrEqual(r4.snippet.length);
+    expect(r4.snippet.length).toBe(SEARCH_CAPS.snippetMax);
+    // …and a lone surrogate the SOURCE already carries, away from both cuts, is passed through, not
+    // rewritten: repairing a caller's content is not this function's business. The trims are positional,
+    // though, so one landing exactly ON a cut outside the match IS taken — asserted, because the header
+    // comment used to claim "at any position" and that claim is false at the `from` edge.
     expect(LONE.test(makeSnippet("x".repeat(50) + half + "NEEDLE" + "y".repeat(50), 51, 6).snippet)).toBe(true);
+    const lead = "z" + "\udc00" + "z".repeat(96); // 98 units: the pad is 97, so `from` lands exactly on it
+    const cut = makeSnippet(lead + "NEEDLE", lead.length, 6);
+    expect((lead + "NEEDLE").charCodeAt(1)).toBe(0xdc00);      // the SOURCE carries it, this window did not split anything…
+    expect(cut.snippet.includes("\udc00")).toBe(false);        // …and it is trimmed anyway, because `from` cuts there
+    expect(cut.snippet.slice(cut.snippetMatchRange.start, cut.snippetMatchRange.end)).toBe("NEEDLE");
+  });
+
+  it("a match offset found in the LOWERCASED row maps back onto the original — the only length-changing fold is U+0130", () => {
+    // `indexOf` runs over `text.toLowerCase()` while the snippet is cut from `text`, so without this mapping
+    // the window slides right by one unit per preceding expansion. Swept 0..0x10FFFF: expanders = 1 (U+0130
+    // LATIN CAPITAL LETTER I WITH DOT ABOVE → "i" + U+0307), shrinkers = 0 — which is what makes the
+    // equal-length fast path exact rather than merely usual.
+    const map = (text: string, needle: string) => { const lc = text.toLowerCase(); return originalOffset(text, lc, lc.indexOf(needle)); };
+    expect(map("plain ASCII needle here", "needle")).toBe(12);           // fast path: lengths equal, identity
+    // E = 1 is already wrong without the mapping: the lowered offset is 2, the true offset is 1.
+    const one = "İneedle";
+    expect(one.toLowerCase().indexOf("needle")).toBe(2);
+    expect(map(one, "needle")).toBe(1);
+    expect(one.slice(1, 7)).toBe("needle");
+    // …and it stays exact as the expansions pile up, and expansions AFTER the match never shift it.
+    for (const e of [0, 1, 2, 50, 97, 98, 150]) {
+      const text = "İ".repeat(e) + "y".repeat(20) + "needle" + "İ".repeat(7);
+      expect(originalOffset(text, text.toLowerCase(), text.toLowerCase().indexOf("needle")), `E=${e}`).toBe(e + 20);
+      const r = makeSnippet(text, map(text, "needle"), 6);
+      expect(r.snippet.slice(r.snippetMatchRange.start, r.snippetMatchRange.end), `E=${e}`).toBe("needle");
+    }
+    // The degenerate case a SHORT row reaches: the lowered offset (6) is past the original's own length
+    // (5), so `clampIndex` pins it to the row end and the range collapses to a zero-length "occurrence"
+    // pointing past the match. Both halves asserted — the repair, and the shape it repairs.
+    const short = "İİİab";
+    const shortLc = short.toLowerCase();
+    expect([short.length, shortLc.length, shortLc.indexOf("ab")]).toEqual([5, 8, 6]);
+    const fixed = makeSnippet(short, originalOffset(short, shortLc, 6), 2);
+    expect(fixed.snippet.slice(fixed.snippetMatchRange.start, fixed.snippetMatchRange.end)).toBe("ab");
+    const unmapped = makeSnippet(short, 6, 2);
+    expect(unmapped.snippetMatchRange.start).toBe(unmapped.snippetMatchRange.end); // zero-length, past the match
   });
 
   it("no caller can force a negative or inverted snippetMatchRange onto the wire", () => {
