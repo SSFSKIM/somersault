@@ -278,7 +278,8 @@ owns input) instead.
   came from which item (`wrapItems.ts` `sourceId`). It exposes the current frame's
   row-map through the same ref-channel family the scroll handle uses (`scrollRef`), and
   the map resolves **directly to fold anchor ids**, not raw item ids:
-  `(terminalRow) → { anchor: string; textWidth: number } | undefined`. Resolving at
+  `anchorAt(col, row) → string | undefined` (shipped shape, round 14 — the bound stays
+  with the data it belongs to rather than being handed to the caller). Resolving at
   projection time (the projection knows each fold row's, active hint block's, and
   expanded member's owning anchor) is what keeps the churning fold-row item ids
   (`group:<memberIds>:row|pending-row|unclosed-row`, growing with the run) out of the
@@ -288,9 +289,19 @@ owns input) instead.
   region sits on the terminal, so `FullscreenFrame` publishes the region's absolute top
   row through the same channel — explicit, rather than a "region is always row 1"
   invariant that a future banner would silently break.
-- **Column bound**: a click past `textWidth` on an otherwise-clickable row is dropped —
-  canon drops blank-cell clicks (549361), so the empty space right of a cluster's text
-  must stay inert here too.
+- **Column bound**: a click past a row's **painted extent, gutter columns included**, is
+  dropped — canon drops blank-cell clicks (549361), so the empty space right of a
+  cluster's text must stay inert here too. **The measure is display width, never
+  character count** (corrected round 14, after the earlier `text.length` wording proved
+  wrong twice over): the active-cluster leader `⏺` is one character occupying two
+  columns, so counting characters leaves the last cell of every active cluster row inert;
+  and a gutter block paints its body at a five-column offset, so counting only `text`
+  would bound a hint-block row at ~4 columns while its text sits at 6–9 — the whole body
+  of every hint block and tool result unclickable, with only the blank connector cells
+  live. Bound on `stringWidth(text)` plus the row's gutter columns.
+  Unspecified and deliberately left alone for now: a click in the leading blank connector
+  columns of a gutter-block continuation row currently hits. Canon's rule is stated only
+  for the space to the RIGHT of the text; Task 12 looks at it.
 - **Expansion state**: `expandedFolds: Set<string>` keyed by the run's **anchor id**
   (`memberIds[0]` — already the stable identity `foldPendingState` ratchets on; the
   content-derived key gives canon's stays-expanded-while-growing behavior for free). It
@@ -447,6 +458,19 @@ grounding §7). The classic renderer keeps its chips everywhere.
 Pending — written at finish.
 
 ## 9. Revision Notes
+
+**Round 14 — 2026-08-19, T9 review (execution).** PASS/PASS. §3.3's column-bound rule was
+wrong in two independent ways and is corrected above — the implementer caught the wide-leader
+half and overrode the brief; the reviewer found the worse half, that the literal rule would
+have made every gutter-block body row unclickable. The map's shape is also updated to what
+shipped. And the fifth dead cell of the wave, this one on the exact line the implementer
+deliberately changed: reverting the width rule back to character count leaves all five cells
+green, because every string in the fixture is ASCII — so the one place a later hand is most
+likely to "correct" the code back to the brief is the one place nothing would stop them. A
+fixture with real width is being added. Recorded, not changed: the whole region-top context
+channel is unfalsifiable (deleting the frame's contribution and deriving the constant locally
+keeps every cell green), so what the suite pins is that SOME gate exists, not that the gate is
+the published origin.
 
 **Round 13 — 2026-08-19, T8 review (execution).** PASS/PASS, five minors, no defect in the
 diff. Two entries here are corrections to MY OWN artifacts rather than to the work. (1) The
