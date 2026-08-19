@@ -360,7 +360,9 @@ the scorecard is where a reader looks for them): the cut bash `(Ns · N lines)` 
 round 4); all-silent clusters emitting no row (round 3); the errored-sibling scope difference
 (round 7); PR numbers rendered as text with no link affordance, `GitPrOp.url` carried but
 unscheduled (round 8); (the round-9 flip divergence is NOT in this list — it was withdrawn in round 10 and became
-Task 5b); and Task 8's published-expanded-items limitation.
+Task 5b); and Task 8's published-expanded-items limitation; and the ticker's start-time
+mechanism (round 16) — canon anchors on a wire message timestamp, our wire carries none, so the
+stamp is local first-sighting and is accurate to one repaint rather than to the call's true start.
 
 **Files:**
 - Modify: `docs/parity/coverage.md` (the fullscreen/transcript rows this wave moves)
