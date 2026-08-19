@@ -3426,14 +3426,16 @@ describe("Tool-stream T5: useChat pairs the fullscreen flag with the blank expan
     expect(f).not.toContain("shell command");
   });
 
-  // T5 FIX 1 — THE BLANKET HAS A HOLE THE PROJECTION CANNOT SEE. `projectionContext()`'s ternary covers every
-  // chip a PROJECTION derives, but the compact-summary row is baked at INGEST: the `compact_boundary` handler
-  // calls `compactSummaryLines(...)` and stores the finished lines on the entry, and `projectLocalEvent` replays
-  // those stored lines VERBATIM in compact (the hintless re-derivation off `COMPACT_SUMMARY_SPECIES` fires only
-  // for the detail projections). So a `/compact` in a fullscreen session left exactly ONE chip standing after
-  // the blanket had taken every other one on screen. Canon cannot produce that: `Ett` (2.1.234:506706, consumer
-  // `Wv` at 511132) kills the chip for EVERYTHING inside its virtual list, so a survivor is a divergence.
-  it("bakes the compact-summary row without a chip in fullscreen, and with one in classic", async () => {
+  // T5 FIX 1 — THE BLANKET HAD A HOLE THE PROJECTION COULD NOT SEE. `projectionContext()`'s ternary covers
+  // every chip a PROJECTION derives; the compact-summary row was the one baked at INGEST, so a `/compact` in a
+  // fullscreen session left exactly ONE chip standing after the blanket had taken every other one on screen.
+  // Canon cannot produce that: `Ett` (2.1.234:506706, consumer `Wv` at 511132) kills the chip for EVERYTHING
+  // inside its virtual list, so a survivor is a divergence. E2 moved the fix from the oven to the projection —
+  // `projectLocalEvent` re-derives the whole row off `COMPACT_SUMMARY_SPECIES` in both projections — which is
+  // what also makes a later `/tui` flip correct it (pinned in `tui-switch.test.tsx`). This cell is unchanged
+  // and deliberately so: it asks only what the reader SEES under each renderer, which is the claim that has to
+  // survive whichever side of the seam answers it.
+  it("shows the compact-summary row without a chip in fullscreen, and with one in classic", async () => {
     const boundary = async (fullscreen: boolean) => {
       const fake = fakeRemote();
       function H() { const c = useChat(() => fake, {}, { isFullscreen: () => fullscreen }); return <Text>{allText(c)}</Text>; }

@@ -280,12 +280,15 @@ export function useChat(
     const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
     return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current };
   };
-  /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`memberIds[0]`).
+  /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`FoldGroup.anchorId`,
+   *  the run's earliest-issued call).
    *  A ref rather than state, on the same rule as `thoughtMs`/`agentMeta`: it is read at projection time by
    *  callbacks that outlive the render that made them, and a re-render is not what makes it visible —
    *  `reconcile()` is, and `toggleFold` calls it. Keyed on the anchor and not on the group's ITEM id because
    *  that id is derived from the whole membership: a cluster the turn is still growing would re-key on every
-   *  absorbed call and close itself under the reader's cursor. */
+   *  absorbed call and close itself under the reader's cursor. E1 closed the other half of that same hole —
+   *  membership also REORDERS as overlapping members settle, which is why the anchor is call order and not
+   *  `memberIds[0]`. */
   const expandedFoldsRef = useRef<Set<string>>(new Set());
   /** Open a cluster, or close it. The re-projection is `reconcile()` and it must be — a still-growing run is
    *  WITHHELD from Static and lives in the pending projection, so re-projecting the finalized document alone
@@ -1435,16 +1438,21 @@ export function useChat(
           // a bold `Compact summary`, and the LIVE expand hint. Shape A ("Summarized N messages …") needs
           // `summarizeMetadata`, which P81 read the wire frame key-by-key and did not find, so it is recorded
           // unreachable in species.ts rather than built from `compact_metadata` it does not describe.
-          // The `species` tag is what lets the DETAIL projection drop the hint clause (`NAr = !iRe && …`,
-          // L422289): the row is baked here, so projection needs to know which baked notice this is.
+          // The `species` tag is what lets PROJECTION own the hint clause — `NAr = !iRe && …` (L422289) in the
+          // detail views, and §3.4's fullscreen blanket in the compact one: the tag is how a projection knows
+          // which notice this is, and since E2 the whole row is rebuilt from it rather than replayed.
           const divider: LocalTranscriptEvent = {
-            // TOOL-STREAM T5, THE INGEST HALF OF THE BLANKET. `projectionContext()`'s ternary covers every chip a
-            // PROJECTION derives; this row is BAKED here and `projectLocalEvent` replays the stored lines verbatim
-            // in compact (its hintless re-derivation off `COMPACT_SUMMARY_SPECIES` fires for the detail projections
-            // only), so the ternary has to be asked again at the oven. Canon's `Ett` kills the chip for everything
-            // inside its virtual list (2.1.234:506706, consumer `Wv` at 511132) — a lone survivor after `/compact`
-            // is a divergence, not a rounding error.
-            kind: "notice", lines: compactSummaryLines(isFullscreenRef.current() ? "" : expandHintRef.current, platform),
+            // TOOL-STREAM T5 / E2 — THE OVEN NO LONGER ANSWERS THE RENDERER QUESTION. It used to ask
+            // `projectionContext()`'s ternary a second time here, which put the answer in the dough: whichever
+            // renderer was painting when `/compact` landed was frozen into the stored line, and a later `/tui`
+            // could correct it in neither direction (canon's `Ett` — 2.1.234:506706, consumer `Wv` at 511132 —
+            // kills the chip for everything in its virtual list, so a survivor inside fullscreen is a divergence;
+            // and a boundary baked under fullscreen owed classic a chip it could never get back). Asking at the
+            // oven was right; STORING the answer is what made it stale, so `projectLocalEvent` now re-derives the
+            // whole row off the `COMPACT_SUMMARY_SPECIES` tag in both projections. What is baked is only the
+            // never-projected default for a reader holding the raw lines: the live chord, with no renderer
+            // opinion in it.
+            kind: "notice", lines: compactSummaryLines(expandHintRef.current, platform),
             data: { species: COMPACT_SUMMARY_SPECIES },
           };
           if (nonEmptyString(data.uuid)) appendLocalIdentified(divider, `compact-divider:${data.uuid}`); else appendNewLocal(divider);

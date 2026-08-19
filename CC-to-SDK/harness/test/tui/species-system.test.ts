@@ -90,6 +90,41 @@ describe("compactSummaryLines — `XWo` shape B (L422282–422305)", () => {
     for (const projection of ["detail-all", "detail-collapsed"] as const)
       expect(rows(projectDetail(doc, { ...ctx, projection }))).toEqual(["Compact summary", "plain notice (ctrl+o to expand)"]);
   });
+
+  // E2, from the external whole-branch review. The chip was BAKED at ingest against the renderer that
+  // happened to be painting when `/compact` landed, and only the DETAIL projections re-derived it — so a
+  // `/tui` flip could not correct it in either direction: a compaction done in classic kept its
+  // `(ctrl+o to expand)` alive inside fullscreen, where §3.4's suppression is BLANKET, and one done in
+  // fullscreen never got its chip back on the classic screen. Deriving the whole row at projection time off
+  // the species tag is what makes the stored form irrelevant, so these cells project ONE bake through the
+  // other renderer and back. `expandHint: ""` is how the fullscreen renderer asks for silence
+  // (`useChat.projectionContext`), and it is the same three-state channel an unbound chord uses.
+  const boundary = (baked: string) => {
+    const doc = new TranscriptDocument();
+    doc.appendLocal({ kind: "notice", lines: compactSummaryLines(baked, "darwin"), data: { species: COMPACT_SUMMARY_SPECIES } }, "compact-divider:u1");
+    return doc;
+  };
+  const ctx = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+  const rows = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: { text: string } }).line.text);
+
+  it("re-derives the chip from the LIVE projection, not from the renderer that baked the row", () => {
+    // Compacted in CLASSIC, then `/tui fullscreen`: the surviving chip §3.4 forbids.
+    expect(rows(projectCompact(boundary(EXPAND_HINT_FALLBACK), { ...ctx, fullscreen: true, expandHint: "" }))).toEqual(["Compact summary"]);
+    // Compacted in FULLSCREEN, then `/tui default`: the chip classic is owed comes back.
+    expect(rows(projectCompact(boundary(""), { ...ctx, expandHint: EXPAND_HINT_FALLBACK }))).toEqual(["Compact summary (ctrl+o to expand)"]);
+    // A rebind moves it too, from either bake — the row is derived, so there is no second copy to go stale.
+    expect(rows(projectCompact(boundary(""), { ...ctx, expandHint: "(ctrl+t to expand)" }))).toEqual(["Compact summary (ctrl+t to expand)"]);
+    // …and no hint threaded at all is still the literal fallback (`pA`'s no-keymap arm), from either bake.
+    for (const baked of [EXPAND_HINT_FALLBACK, ""])
+      expect(rows(projectCompact(boundary(baked), ctx))).toEqual(["Compact summary (ctrl+o to expand)"]);
+  });
+
+  it("keeps the ctrl+o pager hintless from either bake, under either renderer", () => {
+    for (const baked of [EXPAND_HINT_FALLBACK, ""])
+      for (const expandHint of [EXPAND_HINT_FALLBACK, "", "(ctrl+t to expand)"])
+        for (const projection of ["detail-all", "detail-collapsed"] as const)
+          expect(rows(projectDetail(boundary(baked), { ...ctx, projection, expandHint }))).toEqual(["Compact summary"]);
+  });
 });
 
 // ── `VAr` error sentinels ──────────────────────────────────────────────────────────────────────────────

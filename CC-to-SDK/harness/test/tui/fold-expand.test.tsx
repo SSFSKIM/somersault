@@ -5,9 +5,10 @@
 //
 // THE ANCHOR IS THE KEY, and that is the whole reason the state can be held at all. A group's ITEM id is
 // derived from its full membership (`group:read-1,bash-1:row`), so it changes every time the run absorbs
-// another call — an expansion keyed on it would close itself the moment the cluster grew. `memberIds[0]`
-// never moves (the pop-out is the one thing that could shift it, and `segmentRuns` only ever pops the LAST
-// member), so the anchor survives growth, the settle, and the hand-over from the pending region to Static.
+// another call — an expansion keyed on it would close itself the moment the cluster grew. The anchor is the
+// run's EARLIEST-ISSUED call (`FoldGroup.anchorId`) rather than `memberIds[0]`, because membership also
+// REORDERS when overlapping members settle out of order (cell (f), E1); call order is stamped once, so the
+// anchor survives growth, the settle, and the hand-over from the pending region to Static.
 //
 // AND THE RE-PROJECTION MUST COVER BOTH STREAMS. A still-growing cluster is withheld from Static and lives
 // in `projectPending`; once its last member settles there is no further blink and no further append, so a
@@ -248,5 +249,57 @@ describe("T8 (e): the growable cluster expands in the PENDING projection and sta
     await waitFor(() => lineTexts(api.c!.state.pendingItems).some((t) => t.includes("Bash(npm test)")));
     expect(groupRows(api.c!.state.pendingItems)).toEqual([]);                    // still expanded
     expect(lineTexts(api.c!.state.pendingItems).some((t) => t.includes("Read(a.ts)"))).toBe(true);
+  });
+});
+
+// ── (f) THE ANCHOR IS CALL ORDER, NOT ARRIVAL-INTO-THE-RUN ORDER ────────────────────────────────────────
+// E1, from the external whole-branch review. `memberIds` is built in ACCUMULATION order — the order the
+// anchored stream hands atoms to `segmentRuns` — and that stream anchors an OPEN call at its `callSequence`
+// but a SETTLED one at its `resultSequence`. So two overlapping calls whose later-started one finishes first
+// REORDER the run at the moment the earlier one settles: `[read-1, read-2]` becomes `[read-2, read-1]`, and an
+// anchor read off `memberIds[0]` silently moves with it. The expansion recorded under `read-1` is then
+// orphaned and the cluster collapses by itself mid-turn, with no user action — A10's "and after it settles".
+//   Cell (e) above cannot see this: its calls are sequential, so arrival order and call order agree and every
+// implementation passes. The fixture here is the smallest one where they DISAGREE, and it asserts the
+// reordering itself first so the cell cannot quietly stop exercising it.
+describe("T8 (f): a run that reorders at settlement keeps its anchor (E1)", () => {
+  // read-1 call, read-2 call, read-2 RESULT, read-1 result: the later-started call finishes first.
+  const OVERLAP = [call("read-1", "Read", { file_path: "/work/a.ts" }), call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2")];
+  const inFlight = () => built(...OVERLAP);
+  const settled = () => built(...OVERLAP, result("read-1"));
+  const live = new Set(["read-1"]);                                  // read-1 is the turn's one still-running call
+
+  it("the fixture really does reorder the run at settlement (the premise this cell rests on)", () => {
+    expect(groupRows(projectPending(inFlight(), FS, live)).map((i) => i.id)).toContain("group:read-1,read-2:pending-row");
+    expect(groupRows(projectPending(settled(), FS, live)).map((i) => i.id)).toContain("group:read-2,read-1:unclosed-row");
+  });
+
+  it("tags both frames with the EARLIEST-ISSUED call, not the first to arrive in the run", () => {
+    expect(groupRows(projectPending(inFlight(), FS, live))[0]!.foldAnchor).toBe("read-1");
+    expect(groupRows(projectPending(settled(), FS, live))[0]!.foldAnchor).toBe("read-1");
+  });
+
+  it("keeps the hand-over to Static on the same anchor once a breaker closes the run", () => {
+    const closed = built(...OVERLAP, result("read-1"), prose("done"));
+    const rows = groupRows(projectCompact(closed, FS));
+    expect(rows.map((i) => i.id)).toEqual(["group:read-2,read-1:row"]);           // still reordered…
+    expect(rows[0]!.foldAnchor).toBe("read-1");                                   // …and still anchored on read-1
+  });
+
+  it("A10: a cluster expanded while read-1 was in flight is STILL expanded after read-1 settles", () => {
+    const open = { ...FS, expandedFolds: new Set(["read-1"]) };
+    expect(groupRows(projectPending(inFlight(), open, live))).toEqual([]);
+    const after = projectPending(settled(), open, live);
+    expect(groupRows(after)).toEqual([]);                                         // the fold row must not come back
+    expect(lineTexts(after).filter((t) => t.includes("Read("))).toHaveLength(2);
+    for (const item of after) expect(item.foldAnchor).toBe("read-1");
+  });
+
+  it("keeps stability against APPENDS, which is the property (e) already relied on", () => {
+    // A third read issued and settled after both: it joins the run, and the anchor does not move to it.
+    const grown = built(...OVERLAP, result("read-1"), call("read-3", "Read", { file_path: "/work/c.ts" }), result("read-3"));
+    const rows = groupRows(projectPending(grown, FS, live));
+    expect(rows[0]!.id).toBe("group:read-2,read-1,read-3:unclosed-row");
+    expect(rows[0]!.foldAnchor).toBe("read-1");
   });
 });

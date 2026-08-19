@@ -706,3 +706,65 @@ describe("/tui — the replay carries the NEW renderer's fold", () => {
     r.unmount();
   }, 20000);
 });
+
+// ── E2: THE COMPACT-SUMMARY CHIP MUST FOLLOW THE LIVE RENDERER ───────────────────────────────────────────
+// §3.4's suppression is BLANKET — inside fullscreen no `(ctrl+o to expand)` renders anywhere, because canon's
+// `Ett` context wraps the whole virtual list. Every chip a PROJECTION derives obeys that through
+// `projectionContext()`'s `expandHint: fullscreen ? "" : …`. The compact boundary was the one row that did
+// not: it was baked into the transcript at ingest, so whichever renderer happened to be painting when
+// `/compact` landed was frozen into it and a later `/tui` could not correct it in EITHER direction. The
+// species tag is enough to re-derive the row at projection time, which is what these two cells drive through
+// the real command — `refoldFor` re-projects the finalized document with the new context, so a derived row
+// moves and a stored one cannot.
+describe("/tui — the compact-summary chip follows the live renderer (E2)", () => {
+  type Api = { submit: (prompt: string) => void; state: { finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[] } };
+  function mountFlip(start: "classic" | "fullscreen") {
+    const fake = fakeRemote();
+    const box: { api?: Api } = {};
+    function Probe() {
+      const [mode, setMode] = useState<"classic" | "fullscreen">(start);
+      const live = useRef(mode); live.current = mode;
+      const chat = useChat(() => fake, {
+        cwd: "/work", rendererChoice: start === "fullscreen" ? FULLSCREEN : CLASSIC,
+        selectRenderer: (tui) => (tui === "fullscreen" ? FULLSCREEN : CLASSIC),
+        switchRenderer: (tui) => { const choice = tui === "fullscreen" ? FULLSCREEN : CLASSIC; setMode(choice.mode); return choice; },
+      }, { rows: () => 24, columns: () => 100, home: "/home/me", platform: "darwin", now: () => 0,
+        isFullscreen: () => live.current === "fullscreen", savePrefs: () => {}, env: {} });
+      box.api = chat;
+      return <Text>x</Text>;
+    }
+    const r = render(<Probe />);
+    return { fake, r, box };
+  }
+  const summaryRows = (api: Api): string[] =>
+    [...api.state.finalizedItems, ...api.state.pendingItems]
+      .flatMap((i) => (i.kind === "line" && i.line.text.includes("Compact summary") ? [i.line.text] : []));
+  async function compactedUnder(start: "classic" | "fullscreen") {
+    const m = mountFlip(start);
+    await tick();
+    m.fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    m.fake.pushEvent({ kind: "message", data: { type: "system", subtype: "compact_boundary", uuid: `cb-${start}` } });
+    await waitFor(() => summaryRows(m.box.api!).length > 0);
+    m.fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });      // a flip is refused while a turn is running
+    await tick(60);
+    return m;
+  }
+
+  it("a boundary compacted in CLASSIC loses its chip when the session flips to fullscreen", async () => {
+    const m = await compactedUnder("classic");
+    expect(summaryRows(m.box.api!)).toEqual(["Compact summary (ctrl+o to expand)"]);
+    m.box.api!.submit("/tui fullscreen");
+    await tick(120);
+    expect(summaryRows(m.box.api!)).toEqual(["Compact summary"]);
+    m.r.unmount();
+  }, 20000);
+
+  it("a boundary compacted in FULLSCREEN gets its chip back when the session flips to classic", async () => {
+    const m = await compactedUnder("fullscreen");
+    expect(summaryRows(m.box.api!)).toEqual(["Compact summary"]);
+    m.box.api!.submit("/tui default");
+    await tick(120);
+    expect(summaryRows(m.box.api!)).toEqual(["Compact summary (ctrl+o to expand)"]);
+    m.r.unmount();
+  }, 20000);
+});

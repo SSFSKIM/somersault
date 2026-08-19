@@ -48,11 +48,12 @@ const HINT_MAX_LINES = 10;
  *  the WHOLE transcript through `RenderItemView`.
  *
  *  `foldAnchor` (tool-stream Task 8) is WHICH CLUSTER A ROW BELONGS TO — the fold run's anchor id, i.e.
- *  `memberIds[0]`. It is on BOTH arms because a cluster projects to both: the collapsed fold row and its
+ *  `FoldGroup.anchorId`. It is on BOTH arms because a cluster projects to both: the collapsed fold row and its
  *  active hint block wear it, and so does every item an EXPANDED cluster's members render. A later task
  *  builds the painted-row map from it and turns a tap on any of those rows into `toggleFold(anchor)`, which
  *  is why the tag names the ANCHOR rather than the group's item id: the item id is derived from the whole
- *  membership and therefore changes every time the run absorbs another call, while the anchor never moves.
+ *  membership, so it changes every time the run absorbs another call AND every time settlement reorders it,
+ *  while the anchor — the earliest-issued call — never moves.
  *  Absent on everything else, and absent is not a cluster. It must survive `wrapItems` (a hit test reads
  *  PAINTED rows, not projected items) — see `wrapOne`, where three of the four paths carried it for free. */
 export type RenderItem =
@@ -105,7 +106,7 @@ export type { ResultProjection };
  *  separate too (the chip dies in the `Ett` context the virtual list provides, 506706/549824, whose consumer `Wv`
  *  returns null outright at 511132, while the policy takes `Ns()`). `useChat.projectionContext()` is where the
  *  two are set together; a projection handed only this flag still prints the chip, and that is correct. */
-/** `expandedFolds` (tool-stream Task 8) is WHICH CLUSTERS ARE OPEN, keyed by anchor id (`memberIds[0]`).
+/** `expandedFolds` (tool-stream Task 8) is WHICH CLUSTERS ARE OPEN, keyed by anchor id (`FoldGroup.anchorId`).
  *  Display state, not document state — nothing on the wire or on disk says a cluster was expanded — so it
  *  is a projection INPUT exactly as `thoughtMs`/`agentMeta` are, held in `useChat` and cleared at the
  *  conversation boundary. Absent (the common case, and every caller that predates this task) is all-closed.
@@ -676,9 +677,17 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
  *
  *  ONE exception, F4 Task 10b: the compact-summary boundary. Upstream's `NAr` is `!isTranscriptMode && …`
  *  (L422289), so shape B shows `⏺ Compact summary` with NO expand clause under ctrl+O — offering the very
- *  view you are already in is the same dishonesty a stale chord is. The row is baked at ingest, so the
- *  detail projection re-derives it hintless off the `COMPACT_SUMMARY_SPECIES` tag rather than storing a
- *  second copy; the compact projection keeps the baked line untouched.
+ *  view you are already in is the same dishonesty a stale chord is. THE WHOLE ROW IS RE-DERIVED HERE off the
+ *  `COMPACT_SUMMARY_SPECIES` tag, in BOTH projections (E2). It used to be re-derived for the detail ones only
+ *  and replayed verbatim in compact, which meant the chip a `/compact` baked in was whichever renderer
+ *  happened to be painting at the time: a boundary compacted in classic kept its `(ctrl+o to expand)` alive
+ *  inside fullscreen, where §3.4's suppression is blanket, and one compacted in fullscreen never got the chip
+ *  back on the classic screen. Nothing on the wire says which renderer a compaction happened under, so there
+ *  is no fact here to store — only an answer, and an answer computed before its inputs are final goes stale.
+ *  The hint therefore comes from the live channel every other derived chip already reads: `""` under the
+ *  fullscreen renderer (or an unbound chord), the user's chord otherwise, and `EXPAND_HINT_FALLBACK` when no
+ *  keymap was in scope at all — `keys/hints.ts`'s three states, unchanged. Transcript mode still wins over
+ *  all three, because `NAr` is about the SCREEN you are on and not about the chord.
  *
  *  A SECOND exception, the mirror of the first: a `level:"info"` system notice. sdk.d.ts's `level` doc says
  *  info "shows only in transcript mode", and `dVo`'s gate agrees (see `isTranscriptOnlyNotice`) — so the row
@@ -689,8 +698,8 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
 export function projectLocalEvent(entry: LocalEntry, options?: ProjectionOptions): readonly RenderItem[] {
   const transcriptMode = options !== undefined && options.projection !== "compact";
   if (!transcriptMode && entry.event.data?.species === SYSTEM_INFO_SPECIES) return [];
-  const lines = transcriptMode && entry.event.data?.species === COMPACT_SUMMARY_SPECIES
-    ? compactSummaryLines("", options.platform) : entry.event.lines;
+  const lines = entry.event.data?.species === COMPACT_SUMMARY_SPECIES
+    ? compactSummaryLines(transcriptMode ? "" : resolveExpandHint(options?.expandHint), options?.platform) : entry.event.lines;
   return lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), line }));
 }
 
@@ -835,10 +844,11 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   // (task-4 review, `Ima` L427896), so the on-screen row must not downgrade when the run settles; but a
   // replay sweep must not CREATE latch entries for history, and a never-latched anchor peeks back its own
   // counts, which is upstream's fresh-mount recompute. R4.7's hint resolution stays dynamic-only. The
-  // anchor is the run's FIRST member id — memberIds grow as the run grows, so nothing else is stable.
-  const anchorId = group.memberIds[0];
-  const pending = anchorId === undefined ? undefined : options.pending;
-  const counts = pending === undefined || anchorId === undefined ? group.counts
+  // anchor is the run's EARLIEST-ISSUED call (`FoldGroup.anchorId`), not `memberIds[0]`: membership grows as
+  // the run grows AND reorders as its members settle, so call order is the only thing that holds still (E1).
+  const anchorId = group.anchorId;
+  const pending = options.pending;
+  const counts = pending === undefined ? group.counts
     : form === "published" ? pending.peek(anchorId, group.counts) : pending.latch(anchorId, group.counts);
   // R3.1's early exit — and the SECOND `foldClauses` call site, which asks the same question the row above
   // answers on screen: has this run anything to say? It must be asked under the same policy, because the
@@ -848,8 +858,8 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   // T8, AFTER the ratchet and after R3.1, both deliberately. The latch above must run whether the cluster is
   // open or closed, or collapsing it again would show counts that had stopped being maintained; and a run
   // with nothing to say has no row to click, so it has nothing to open either.
-  if (anchorId !== undefined && options.expandedFolds?.has(anchorId) === true) return expandedMemberItems(group, anchorId, options, emitted);
-  const tag = anchorId === undefined ? {} : { foldAnchor: anchorId };
+  if (options.expandedFolds?.has(anchorId) === true) return expandedMemberItems(group, anchorId, options, emitted);
+  const tag = { foldAnchor: anchorId };
   const id = toolGroupItemId(group.memberIds, GROUP_PART[form]);
   // TS Task 11's ticker, canon `kth` (518661–518664) over the anchor `Ne` (518532–518543). Both halves of
   // canon's gate are here: `s` (the row is the ACTIVE form) and `Ns()` (the fullscreen renderer). The anchor is
@@ -873,7 +883,7 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options, elapsed), ...tag }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
   if (active) {
-    const hint = pending === undefined || anchorId === undefined
+    const hint = pending === undefined
       ? (group.hint === undefined ? undefined : { text: group.hint, italic: false })
       : pending.hint(anchorId, group.hint, group.latestThinkingSummary);
     if (hint !== undefined) {
@@ -1035,9 +1045,10 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
  *     lets the 600 ms blink and the ticking thinking clause move while this stream holds still. (The
  *     teammate LIFECYCLE row rides that same uncached path — `renderToolEvent` — so it is fresh by
  *     construction; only the message/collapsed rows built in here need the generation.)
- *  `projectLocalEvent` reads exactly two — `projection` and `platform`, for the compact boundary's
- *  transcript-mode hint (F4 Task 10b) — and both are already key inputs, so its one derived row cannot be
- *  served across a projection switch.
+ *  `projectLocalEvent` reads exactly three — `projection`, `platform` and (since E2) `expandHint`, for the
+ *  compact boundary's re-derived row — and all three are already key inputs, so its one derived row cannot
+ *  be served across a projection switch OR across a `/tui` flip (the flip moves `expandHint`, which is what
+ *  puts it in the key; `fullscreen` itself is deliberately not keyed — see below).
  *
  *  The theme is a key input because `renderMessage` → markdown/highlight resolve theme tokens PER CALL
  *  (deliberately: a setTheme() must color the very next render — render.ts:47). A setTheme() touches no

@@ -294,7 +294,14 @@ export type GroupCounts = {
  *  its own — this model stays clock-free, and the member's start is stamped by `foldPendingState`. A silently
  *  absorbed member can hold it, exactly as canon's scan sees every `tool_use` in the cluster and not just the
  *  counted ones. */
-export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorSequence: number; open: boolean; newestInFlightId?: string; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
+/** `anchorId`/`anchorSequence` are ONE fact in two forms: the run's EARLIEST-ISSUED call — smallest
+ *  `callSequence`, ties (same-entry `tool_use` blocks) broken by absorption order — and that call's id.
+ *  It is deliberately not `memberIds[0]`. `memberIds` is ACCUMULATION order, and the anchored stream that
+ *  feeds this module orders an OPEN call by its `callSequence` but a SETTLED one by its `resultSequence`,
+ *  so a run of overlapping calls whose later-started member finishes first REORDERS as its members settle.
+ *  Everything display state is keyed on downstream — the expansion set, the counter watermark — must survive
+ *  that, and only call order does: `callSequence` is stamped once and never moves. */
+export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlightId?: string; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
 /** `poppedOnError` marks the one standalone tool this module emits for a reason of its own rather than because
  *  the policy called it non-collapsible: an errored `popsOutOnError` call, pushed out so the failure is never
  *  swallowed (see `segmentRuns`). The renderer needs the distinction because two of those names are also
@@ -310,7 +317,7 @@ const THOUGHT_CAP_MS = 600000;
 
 interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
-  mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorSequence: number; open: boolean; newestInFlight?: string; hint?: string;
+  mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlight?: string; hint?: string;
   thoughtForMs: number; latestThinkingSummary?: string;
   bashCount: number; bashCommands: Map<string, string>;
   gitOpBashCount: number; commits: GitCommitOp[]; pushes: GitPushOp[]; branches: GitBranchOp[]; prs: GitPrOp[];
@@ -318,7 +325,7 @@ interface RunState {
    *  emits NO group (see `flush`), so this is the one thing that decides whether the run is sayable at all. */
   visibleMembers: number;
 }
-const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorSequence: 0, open: false, thoughtForMs: 0, bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
+const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorId: "", anchorSequence: 0, open: false, thoughtForMs: 0, bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
 
 /** Canon reads its scrape text off `message.toolUseResult` — a single per-MESSAGE `{ stdout, stderr }` object,
  *  joined as `(stdout ?? "") + "\n" + (stderr ?? "")` (236996–236998). Our equivalent is the P94 structured
@@ -361,7 +368,9 @@ function scrapeGitOps(run: RunState, command: string, result: NonNullable<ToolEv
  *  fullscreen branches (`iNp` 237140–237160). The `readCount` quirk lives in `emit`, not here: paths and operations
  *  are counted separately and only ONE of them survives (R1.5). */
 function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list" | "mcp" | "bash" | "silent", options: { cwd: string; home: string; fullscreen?: boolean }): void {
-  if (run.memberIds.length === 0) run.anchorSequence = event.callSequence;
+  // STRICTLY smaller, so a tie keeps the member absorbed first — which is what makes the anchor immune to the
+  // pop-out below (see `segmentRuns`'s invariant note).
+  if (run.memberIds.length === 0 || event.callSequence < run.anchorSequence) { run.anchorSequence = event.callSequence; run.anchorId = event.id; }
   run.memberIds.push(event.id);
   // BEFORE the silent early return, on the same line of reasoning `open` is: canon's in-flight scan reads the
   // cluster's whole tool-use id set (`DBr(e)`, 518464), which a silently absorbed member joins.
@@ -424,7 +433,7 @@ const emit = (run: RunState): FoldGroup => ({
     ...(run.commits.length > 0 ? { commits: run.commits } : {}), ...(run.pushes.length > 0 ? { pushes: run.pushes } : {}),
     ...(run.branches.length > 0 ? { branches: run.branches } : {}), ...(run.prs.length > 0 ? { prs: run.prs } : {}),
   },
-  ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorSequence: run.anchorSequence, open: run.open,
+  ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorId: run.anchorId, anchorSequence: run.anchorSequence, open: run.open,
   ...(run.newestInFlight === undefined ? {} : { newestInFlightId: run.newestInFlight }),
   ...(run.latestThinkingSummary === undefined ? {} : { latestThinkingSummary: run.latestThinkingSummary }),
   ...(run.bashCommands.size === 0 ? {} : { bashCommands: run.bashCommands }),
@@ -504,9 +513,18 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
         absorb(run, atom.event, fold.kind, options);
         // An error result for a `popsOutOnError` tool ALWAYS ends the run (every branch of 237198–237210 flushes
         // and pushes the message); only the relocation is conditional. The spec's own invariant — a pop-out must
-        // never shift `memberIds[0]` of an already-formed run, because we stream and cannot unpublish a published
-        // row — is preserved by construction: we only ever pop the LAST member, and that can be `memberIds[0]`
-        // only in a one-member run, which is silent-only and therefore emitted no group to shift.
+        // never shift the run's ANCHOR, because we stream and cannot unpublish a published row — survives the
+        // move to earliest-`callSequence` anchoring (E1) and is now an argument rather than a coincidence.
+        // We only ever pop the LAST member, so the question is whether the last-absorbed member can be the
+        // earliest-issued one. Absorption order is the anchored stream's order, which is `resultSequence` for a
+        // settled atom; the popped call E is settled (it has an error result), so every other member M was
+        // absorbed at a smaller sequence than E's `Er`. If E were also the earliest ISSUED, `Ec < Mc` — and
+        // `Mc` (open M) or `Mc < Mr` (settled M) then falls strictly inside `(Ec, Er)`, which is exactly what
+        // `windowIsClear` refuses, so the pop never happens. The one remaining shape is `Mc === Ec`
+        // (same-entry blocks): `windowIsClear` refuses that too unless M errored as well, and a tie keeps the
+        // member absorbed FIRST as anchor (`absorb` compares strictly), so M holds it and E's departure is
+        // invisible. The old argument — `memberIds[0]` moves only in a one-member run — no longer covers the
+        // anchor and would have been the wrong claim under the new key.
         if (fold.kind === "silent" && fold.popsOutOnError && (atom.event.result?.isError ?? false)) {
           // AND an errored silent call is never swallowed — UNCONDITIONALLY (spec §3.1, round 6). Canon's
           // `n.push(c)` (237210) sits OUTSIDE the if/else, so the error row is emitted on all three branches:
