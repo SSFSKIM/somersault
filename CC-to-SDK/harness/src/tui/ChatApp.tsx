@@ -815,14 +815,27 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // anchor (if any) lives at a cell; T8 turns an anchor into an expansion. What is left — and what only this
   // component can own, because only this component can see all four at once — is the GESTURE and the GATE.
   //
-  // THE GESTURE (spec §3.2). A press of button 0 records its cell; a release on the SAME cell is a click.
-  // Anything else abandons the anchor: a release somewhere else, a second press, a modified button, or a
-  // wheel tick. There is deliberately NO deadline — a terminal reports a press and its release as they
-  // physically happen, and a slow click is still a click.
+  // THE GESTURE (spec §3.2). A press of button 0 records its cell AND THE CLUSTER PAINTED ON IT; a release on
+  // the same cell, still over the same cluster, is a click. Anything else abandons the anchor: a release
+  // somewhere else, a modified button, a wheel tick, or the document moving. A second press RE-ARMS at its
+  // own cell rather than poisoning the gesture — a swallowed release (a focus change, a tmux pass-through)
+  // would otherwise leave the next click dead for no reason the user can see. There is deliberately NO
+  // deadline — a terminal reports a press and its release as they physically happen, and a slow click is
+  // still a click.
+  //   THE ANCHOR IS THE CLUSTER, NOT THE CELL, AND THAT IS THE WHOLE OF THE STALENESS ANSWER. A cell is a
+  // coordinate on a screen the document scrolls underneath, and the wheel is neither the only mover nor the
+  // common one: with the tail sticky, every message that lands mid-turn slides the document up under a button
+  // that is physically still down. A click holds for 60–150 ms, stream deltas arrive far more often than
+  // that, and a live turn is exactly when tool clusters appear — so a cell-only rule toggles whichever run
+  // happened to slide into place. Comparing the RESOLVED ANCHOR at both ends covers that, the wheel, a
+  // keyboard scroll, a re-wrap on resize and a document swap in one comparison, and is strictly stronger than
+  // the cell test the coordinates still carry. `fold-click.test.tsx`'s (d′) is the measured repro.
   //   THE ANCHOR IS A REF, not state. It is written from the stdin listener, outside React, and nothing on
   // screen renders differently for a half-finished gesture, so a `useState` here would buy a re-render of
   // the whole tree per mouse-down and change nothing about the frame.
-  //   THE WHEEL ARM COMES FROM THE KEY SIDE, and it has to: a tick is a KeyEvent (`wheelup`/`wheeldown` →
+  //   THE WHEEL ARM IS KEPT ANYWAY, and it is not made redundant by the above: it kills a gesture the page
+  // has already invalidated at the moment it is invalidated, for the cost of one assignment. IT COMES FROM
+  // THE KEY SIDE, and it has to: a tick is a KeyEvent (`wheelup`/`wheeldown` →
   // `scroll:lineUp`/`lineDown`), never a mouse report, so it cannot reach this sink. `FullscreenViewport`
   // owns those two actions — `handlerFor` hands a matched action to the INNERMOST registration, so a
   // duplicate here would never fire — and calls `onWheelTick` from them; see its prop's doc comment.
@@ -852,9 +865,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // cover it — so the row map underneath a dialog is CURRENT, not stale. The question is ownership, and this
   // is the whole of the answer to it.
   const hitmapRef = useRef<ViewportHitmap>(null);
-  const tapAnchorRef = useRef<{ col: number; row: number } | null>(null);
+  const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
   const clickable = fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching;
-  const discardTap = () => { tapAnchorRef.current = null; };
+  const discardTap = useCallback(() => { tapAnchorRef.current = null; }, []);
   useMouseSink((e: MouseInputEvent) => {
     const at = tapAnchorRef.current;
     tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
@@ -862,10 +875,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // Modified clicks are canon's own no-op, and a non-primary button is somebody else's gesture. Both land
     // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
     if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;
-    if (e.action === "press") { tapAnchorRef.current = { col: e.col, row: e.row }; return; }
+    if (e.action === "press") { tapAnchorRef.current = { col: e.col, row: e.row, anchor: hitmapRef.current?.anchorAt(e.col, e.row) }; return; }
     if (!at || at.col !== e.col || at.row !== e.row) return;
     const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
-    if (anchor !== undefined) toggleFold(anchor);
+    if (anchor !== undefined && anchor === at.anchor) toggleFold(anchor);
   });
   // Live-feedback fix (2026-08-06, ctrl+o flood): the pager box alone is `rows - 6` lines (rows-10 content
   // + border 2 + header + footer), so ANY other transient chrome mounted beside it — spinner, task panel,

@@ -25,6 +25,7 @@ import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
 import { SEARCH_PROMPT } from "../../src/tui/historySearchInline.js";
+import type { HostEvent } from "../../src/host/wire.js";
 
 const plain = (s: string | undefined): string => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 /** OSC-8 hyperlinks wrap a path tool's argument, so an expanded `Read(a.ts)` row is not contiguous text. */
@@ -57,6 +58,26 @@ const TALL_DOC: readonly TranscriptBootstrapEntry[] = [
   ...Array.from({ length: 30 }, (_, i) => prose(`PAD-${i}`, `p${i}`)),
   ...CLUSTER, prose("tail one", "t1"), prose("tail two", "t2"),
 ];
+/** THE THIRD DOCUMENT, and the two cases it exists for both need the same thing: TWO cluster rows that are
+ *  told apart by what they SAY, so an assertion can name which one moved. Three contiguous Reads collapse to
+ *  their own sentence, one prose line keeps the two runs from merging into one, and the pad puts the whole
+ *  thing past the region so the tail is sticky — which is what lets a message arriving on the stream push the
+ *  document up under a held button, with no gesture anywhere. */
+const CLUSTER_3: readonly TranscriptBootstrapEntry[] = [
+  call("read-3", "Read", { file_path: "/work/c.ts" }), result("read-3"),
+  call("read-4", "Read", { file_path: "/work/d.ts" }), result("read-4"),
+  call("read-5", "Read", { file_path: "/work/e.ts" }), result("read-5"),
+];
+const COLLAPSED_3 = "Read 3 files";
+const TWO_CLUSTER_DOC: readonly TranscriptBootstrapEntry[] = [
+  ...Array.from({ length: 30 }, (_, i) => prose(`PAD-${i}`, `p${i}`)),
+  ...CLUSTER, prose("between", "b1"), ...CLUSTER_3, prose("tail", "t"),
+];
+/** One assistant line as it arrives LIVE on the host event stream — `pushEvent` is the same pipe the real
+ *  adapter routes a turn through, so this is the model talking, not the test scrolling. */
+const streamLine = (fake: ReturnType<typeof fakeRemote>, id: string): void =>
+  fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: `us-${id}`,
+    message: { id: `ms-${id}`, content: [{ type: "text", text: `NEW-${id}` }] } } } as HostEvent);
 
 /** The collapsed cluster's own sentence, and the sign that it is open instead: an expanded run draws each
  *  member in the FULL listing form, so its two result bodies appear where the one sentence was. The bodies
@@ -189,6 +210,68 @@ describe("T10 (d): a wheel tick between press and release discards the anchor", 
   });
 });
 
+describe("T10 (d\u2032): the document moving under a held button discards the anchor too", () => {
+  // THE WHEEL IS NOT THE ONLY MOVER, AND IT IS NOT THE COMMON ONE. Cell (d) above shows the tick discarding a
+  // gesture, but a tick is a USER action — the case that actually bites has no gesture in it at all: the tail
+  // is sticky, the model is mid-turn, and every message that lands slides the whole document up under a
+  // button that is physically still down. A click holds for 60\u2013150 ms; stream deltas arrive far more often
+  // than that, and a live turn is exactly when tool clusters appear. A rule that only compares the CELL
+  // cannot see this, and the release then toggles whichever cluster the page happened to slide into place.
+  //   SO THE ANCHOR IS THE CLUSTER, NOT THE CELL (spec \u00a73.2). The press records the resolved anchor beside the
+  // coordinates and the release must agree on both, which covers this, the wheel, a keyboard scroll, a
+  // re-wrap on resize and a document swap with one comparison. The geometry below is measured, not derived:
+  // two rows of prose-plus-cluster separate the runs, so exactly two arriving lines put the SECOND cluster on
+  // the FIRST one\u2019s cell.
+  it("refuses a tap whose row a different cluster took over mid-gesture", async () => {
+    const r = await mount(TWO_CLUSTER_DOC);
+    const foldRow = rowOf(r.lastFrame(), COLLAPSED);
+    expect(rowOf(r.lastFrame(), COLLAPSED_3)).toBe(foldRow + 2);   // premise: one prose row between the runs
+
+    r.stdin.write(press(COL, foldRow));
+    await tick();
+    streamLine(r.fake, "one"); await settle();
+    streamLine(r.fake, "two"); await settle();
+    // The measured drift: the button never moved and the user never scrolled, yet the cell under it now
+    // belongs to the OTHER cluster.
+    expect(rowOf(r.lastFrame(), COLLAPSED_3)).toBe(foldRow);
+    expect(rowOf(r.lastFrame(), COLLAPSED)).toBe(foldRow - 2);
+
+    r.stdin.write(release(COL, foldRow));
+    await settle();
+    expect(clean(r.lastFrame()), "the cluster the user pressed on must not open").toContain(COLLAPSED);
+    expect(clean(r.lastFrame()), "and neither must the one that slid under the cursor").toContain(COLLAPSED_3);
+    expect(openMembers(r.lastFrame())).toBe(0);
+
+    // The control, on the same mount and the same drifted page: a WHOLE gesture made now, on the cell
+    // `Read 3 files` currently owns, lands \u2014 so the refusal above is the anchor rule and not a dead path.
+    await tap(r, COL, foldRow);
+    expect(clean(r.lastFrame())).not.toContain(COLLAPSED_3);
+    expect(openMembers(r.lastFrame())).toBeGreaterThan(0);
+    r.unmount();
+  });
+});
+
+describe("T10: a second press RE-ARMS at its own cell rather than poisoning the gesture", () => {
+  // The brief\u2019s wording read as "a second press DISCARDS", and the spec now records the re-arm instead: a
+  // terminal that swallowed a release (a focus change, a tmux pass-through) would otherwise leave the next
+  // click dead for no reason the user can see, and re-arming makes the newest press the gesture in flight.
+  // Untested, the arm reads the same either way \u2014 mutating it to the literal discard fails no other cell.
+  it("completes the gesture the second press started, and not the one it replaced", async () => {
+    const r = await mount(TWO_CLUSTER_DOC);
+    const firstRow = rowOf(r.lastFrame(), COLLAPSED);
+    const secondRow = rowOf(r.lastFrame(), COLLAPSED_3);
+    r.stdin.write(press(COL, firstRow));
+    await tick();
+    r.stdin.write(press(COL, secondRow));
+    await tick();
+    r.stdin.write(release(COL, secondRow));
+    await settle();
+    expect(clean(r.lastFrame()), "the second press\u2019s cluster is the one that opens").not.toContain(COLLAPSED_3);
+    expect(clean(r.lastFrame()), "the first press\u2019s cluster is untouched").toContain(COLLAPSED);
+    r.unmount();
+  });
+});
+
 describe("T10 (e): an INLINE decision dialog makes the transcript behind it inert", () => {
   // THE CELL THAT FAILS A HAND-BUILT GATE. A parked non-plan decision is exactly the state that
   // `paneOwned` (ChatApp.tsx:930–933, which deliberately excludes it) and `seamActive` (:1224, overlay plus
@@ -310,16 +393,21 @@ describe("T10 (f): an open overlay makes the transcript behind it inert", () => 
   });
 });
 
-describe("T10 (g): a modified click is not a click", () => {
-  it("ignores ctrl+click, alt+click and shift+click on the very cell a bare click expands", async () => {
-    for (const mods of [16, 8, 4]) {
+describe("T10 (g): a modified click — or a non-primary button — is not a click", () => {
+  // ONE LOOP FOR BOTH HALVES OF THE GUARD, because the terminal encodes both in the SAME field: `parse.ts`
+  // reads the button out of `code & 3` and the modifiers out of bits 16/8/4 of that same number. So 16/8/4
+  // are ctrl/alt/shift on the primary button, and 2 is a bare RIGHT-button tap whose only difference from an
+  // expanding click is the button number — the `e.button !== 0` term, which the three modifier iterations
+  // cannot fail on their own.
+  it("ignores ctrl+click, alt+click, shift+click and a right-click on the very cell a bare click expands", async () => {
+    for (const code of [16, 8, 4, 2]) {
       const r = await mount(SHORT_DOC);
       const foldRow = rowOf(r.lastFrame(), COLLAPSED);
-      await tap(r, COL, foldRow, mods);
-      expect(clean(r.lastFrame()), `mods=${mods}`).toContain(COLLAPSED);
-      expect(openMembers(r.lastFrame()), `mods=${mods}`).toBe(0);
+      await tap(r, COL, foldRow, code);
+      expect(clean(r.lastFrame()), `code=${code}`).toContain(COLLAPSED);
+      expect(openMembers(r.lastFrame()), `code=${code}`).toBe(0);
       await tap(r, COL, foldRow);                               // the control, on the same mount
-      expect(openMembers(r.lastFrame()), `mods=${mods}`).toBe(2);
+      expect(openMembers(r.lastFrame()), `code=${code}`).toBe(2);
       r.unmount();
     }
   });
