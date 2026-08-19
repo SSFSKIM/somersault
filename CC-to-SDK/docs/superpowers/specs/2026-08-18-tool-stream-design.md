@@ -485,6 +485,32 @@ Pending — written at finish.
 
 ## 9. Revision Notes
 
+**Round 16 — 2026-08-19, T11 review (execution).** The last code task, and the round where the
+spec was wrong twice about the SAME feature. Both errors were mine, both were found by the
+implementer, and both were then confirmed independently by the reviewer and by me in the bundle.
+(1) §3.1 claimed the member's start time "is already stamped in the transcript"; our wire carries
+no timestamps at all (P82) and `ToolEvent` holds `callSequence`, not a clock. Canon can afford
+`Date.parse(message.timestamp)`; we cannot, and the honest port keeps canon's observable behavior
+while replacing its mechanism — recorded as a divergence, not papered over. (2) The prescribed
+`· 2.0s` pins a string canon CANNOT emit: its formatter here (`da`, 82602) floors to whole seconds
+under a minute, and the decimal formatter in that same module (`OAt`) is a different function this
+call site never calls. Ninth dead cell of the wave. The general lesson has now inverted: a
+fidelity port's characteristic failure is not under-building but over-faithfulness — writing what
+canon appears to do from a reading, against inputs we do not have.
+
+Two more findings worth keeping. The review found the wave's last real defect, and its shape is
+worth naming: `startedAt()` both read and wrote, so "when did this call start" silently meant
+"when did a projection first bother to ask" — and the expanded-cluster early return sits above
+that call, so an OPEN cluster stamped nothing and a 40-second call could print `· 3s`. The fix
+moved the stamp to ingest (the `stampAgentCalls` precedent, replay guard and all) and then split
+the capability so the render path cannot write at all: `stamp()` on `FoldStartStamps`,
+`startedAt()` as a pure read on `FoldPendingHooks`. And a second unbitten guard beyond the
+disclosed one — `toolFold.ts:368`'s pre-silent-return ordering guards reachable behavior yet no
+cell bit it.
+
+A gap in §4 itself is closed here: the ticker shipped as visible behavior with no acceptance cell,
+so the live run would have "accepted" the wave without once looking at it. **A11** is added.
+
 **Round 15 — 2026-08-19, T10 review (execution).** The chain closes: a click on a collapsed
 cluster expands it, end to end. The review found the one defect isolated tests structurally
 could not — the tap was anchored to a terminal CELL, so any document movement between press
