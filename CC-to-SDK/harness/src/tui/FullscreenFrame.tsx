@@ -98,6 +98,37 @@ import { resolveThemeColor, themeTokens } from "./theme.js";
 const RegionRowsContext = createContext(0);
 export function useRegionRows(): number { return useContext(RegionRowsContext); }
 
+/** THE REGION'S ABSOLUTE TOP ROW, published to whatever is mounted inside it (tool-stream Task 9).
+ *
+ *  A hit test arrives as a TERMINAL cell — an SGR mouse report's 1-based `(col, row)`, `keys/types.ts` — and
+ *  the viewport can only turn that into a document row if it knows which terminal row its first painted one
+ *  is. It cannot work that out: Ink exposes no absolute coordinates (`measureElement` answers a size, never
+ *  a position), so nothing below here can measure where the frame put it.
+ *    SO THIS IS A COMPUTED CONSTANT, AND SAYING SO IS THE POINT. It is not measured and it is not a promise
+ *  that a measurement was taken — it is `REGION_TOP_ROW` below, arithmetic over what this file already knows
+ *  about its own bands. Publishing it explicitly rather than letting the viewport assume "the region is at
+ *  row 1" costs one context and buys the thing an invariant-by-assumption cannot: the day a banner lands
+ *  above the region, the wrong line is ONE named line in this file, not a silent off-by-N in a click path.
+ *
+ *  A SIBLING CHANNEL, NOT A RESHAPE OF `RegionRowsContext`. That one is a bare number with three consumers
+ *  and a test reading it directly; widening it into an object to carry a second fact would edit all four for
+ *  a value only one of them wants.
+ *
+ *  DEFAULT 0 — "this row is not addressable", which is also what the CLASSIC arm publishes and is the whole
+ *  renderer gate. `groupItems` tags fold rows with `foldAnchor` unconditionally (the field simply never
+ *  paints on the main screen), so a map that keyed off tag presence would hand a classic surface clickable
+ *  rows; keying off a published origin means only a bounded frame can have any. */
+const RegionTopContext = createContext(0);
+export function useRegionTop(): number { return useContext(RegionTopContext); }
+/** The frame's own first terminal row. `enter()` writes `\x1b[2J\x1b[H` (altScreen.ts `ENTER_ALT`) and Ink
+ *  paints from the home position, so the frame starts at row 1 and the row it does NOT own is the last one —
+ *  the same arithmetic `frameHeight` states from the other end. */
+const FRAME_TOP_ROW = 1;
+/** How many rows the frame paints ABOVE the region. Zero: the region is the frame's first band (see the
+ *  element tree below — nothing precedes it). This is the line a banner would change. */
+const ROWS_ABOVE_REGION = 0;
+export const REGION_TOP_ROW = FRAME_TOP_ROW + ROWS_ABOVE_REGION;
+
 /** The park row: the one physical row of the terminal the frame deliberately does not own. */
 export const PARK_ROW = 1;
 
@@ -262,9 +293,12 @@ export function FullscreenFrame({ mode = "fullscreen", rows, regionChildren, doc
     <Box flexDirection="column" {...frameStyle}>
       <Box ref={regionRef} flexDirection="column" {...regionStyle}>
         <Box ref={contentRef} flexDirection="column" {...(bounded ? { flexShrink: 0 } : {})}>
-          {/* The provider is here on BOTH arms, at the same position, so the region's children are not
-              reconciled against a different element on a flip. Zero is "no grant" — see `useRegionRows`. */}
-          <RegionRowsContext.Provider value={bounded ? regionRows : 0}>{regionChildren}</RegionRowsContext.Provider>
+          {/* BOTH providers are here on BOTH arms, at the same positions, so the region's children are not
+              reconciled against a different element on a flip. Zero is "no grant" on the rows channel and
+              "not addressable" on the top one — see `useRegionRows` / `useRegionTop`. */}
+          <RegionTopContext.Provider value={bounded ? REGION_TOP_ROW : 0}>
+            <RegionRowsContext.Provider value={bounded ? regionRows : 0}>{regionChildren}</RegionRowsContext.Provider>
+          </RegionTopContext.Provider>
         </Box>
       </Box>
       {/* ONE BOX, TWO TENANTS — same element position, so the swap is a prop change rather than an unmount, and

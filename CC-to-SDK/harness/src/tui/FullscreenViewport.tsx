@@ -57,13 +57,31 @@
 // `total`, `height` and the scroll closures are all in scope on this component and nowhere else. Lifting
 // either one into ChatApp would re-render the composer, the footer and the dialog chain on every streamed
 // delta, and a getter on the imperative handle is not a render trigger — so the pill reads state, not a ref.
+//
+// ── THE HITMAP: WHICH CLUSTER IS PAINTED AT A CELL (tool-stream T9) ──────────────────────────────────────
+// A click arrives as a terminal cell and has to become a fold anchor. Only this component can answer, and
+// only for the frame it just painted: the document rows in the window are `pageItemSlices`' output, which
+// exists nowhere else and is different on the next render. So the map is built in the SAME pass that slices
+// — no second layout walk, and nothing to keep in step with the paint — and published on its own imperative
+// handle beside the scroll one, read through a ref for the reason the scroll closures are (it is called from
+// a stdin listener, outside React).
+//   THE ORIGIN COMES FROM THE FRAME (`useRegionTop`) rather than from an assumption here, and it is also the
+// RENDERER GATE: `groupItems` tags fold rows unconditionally, including under the classic renderer where the
+// field never paints, so a map keyed on "does this row carry a tag" would hand a classic surface clickable
+// rows. Keyed on a published origin, only a bounded frame has any — the classic arm publishes 0 and every
+// cell answers `undefined`.
+//   WHAT IT DOES NOT NEED IS AN OCCLUSION TEST. ccx has no overdraw: the layout is flow-based and a surface
+// that takes the seam is rendered INSTEAD of the dock, never over it (spec, and `FullscreenFrame`'s header).
+// A published row map is therefore always current, and the question "is something drawn over this cell" has
+// no meaning here. Which surface owns the input while a dialog is up is ChatApp's gate, one layer up.
 import React, { useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
+import stringWidth from "string-width";
 import { applyAnchor, type AnchorState } from "./scrollAnchor.js";
-import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction } from "./pager.js";
+import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type RenderItemSlice } from "./pager.js";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
 import { remapRowOffset, wrapItemsToWidth } from "./wrapItems.js";
-import { useRegionRows } from "./FullscreenFrame.js";
+import { useRegionRows, useRegionTop } from "./FullscreenFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { JumpPill } from "./JumpPill.js";
 import { editorDisplayName } from "./externalEditor.js";
@@ -79,6 +97,15 @@ export interface ViewportScroll {
   scroll(action: PagerAction): void;
   /** Canon's `scrollToBottom()` — re-stick AND re-derive in one step. The pill's action, and `scroll:bottom`'s. */
   stickBottom(): void;
+}
+
+/** The click seam (T9), on the same ref-channel family and for the same reason — the frame it describes is
+ *  this component's alone, and it changes on every render. */
+export interface ViewportHitmap {
+  /** The fold cluster painted at a TERMINAL cell — 1-based `(col, row)`, exactly as an SGR mouse report
+   *  gives them (`keys/types.ts`) — or `undefined` where nothing clickable is. Task 10 turns a press and a
+   *  release on the same answer into a tap. */
+  anchorAt(col: number, row: number): string | undefined;
 }
 
 export interface FullscreenViewportProps {
@@ -112,6 +139,34 @@ export interface FullscreenViewportProps {
    *  Absent — every component test that does not care — and the key stays the composer's. */
   onDumpTranscript?: () => void;
   scrollRef?: React.Ref<ViewportScroll>;
+  /** tool-stream T9 — the frame's row map, for the click path. A second handle rather than a field on
+   *  `ViewportScroll`: the two answer different questions for different callers (a key binding drives the
+   *  scroll, a mouse sink reads the map), and every existing `scrollRef` holder would otherwise widen. */
+  hitmapRef?: React.Ref<ViewportHitmap>;
+}
+
+/** One PAINTED row's clickable identity: the cluster it belongs to, and how far its text reaches. Absent is
+ *  a row that is not part of a cluster — kept in the array rather than skipped, because the index IS the
+ *  row number and a compacted list would resolve every row below the first cluster to the wrong one. */
+type HitRow = { anchor: string; width: number } | undefined;
+/** THE COLUMN BOUND (spec §3.3). A click past the end of a row's text is not a click on that row — canon
+ *  drops blank-cell clicks (549361) — so the width is the row's PAINTED extent: its plain text, plus the
+ *  gutter columns ahead of it, measured in terminal cells rather than characters (a fold row's leader is
+ *  `⏺`, two columns and one character). Clamped to the region's width, which is where a `truncate-end`
+ *  header — the one row that can be wider than the pane — actually stops. */
+const hitRow = (anchor: string | undefined, width: number, columns: number): HitRow =>
+  anchor === undefined ? undefined : { anchor, width: Math.min(width, columns) };
+/** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
+ *  the map cannot describe a frame other than the one on screen. A gutter block contributes one entry per
+ *  BODY row it paints (its five-column connector column is a sibling Box, blank on continuations but still
+ *  occupying the cells), a line item exactly one. */
+function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): readonly HitRow[] {
+  const out: HitRow[] = [];
+  for (const { item, start, end } of slices) {
+    if (item.kind === "line") { out.push(hitRow(item.foldAnchor, (item.line.gutter ? stringWidth(item.line.gutter.text) : 0) + stringWidth(item.line.text), columns)); continue; }
+    for (let row = start; row < end; row++) out.push(hitRow(item.foldAnchor, item.gutter.length + stringWidth(item.body[row]!.text), columns));
+  }
+  return out;
 }
 
 /** `Number.POSITIVE_INFINITY` is "the bottom, whatever the current total is" — the same idiom `TranscriptPager`
@@ -123,8 +178,9 @@ const START: AnchorState = { offset: Number.POSITIVE_INFINITY, sticky: true };
 /** A stable empty default, so an absent `queuedItems` cannot invalidate the document memo every render. */
 const EMPTY_ITEMS: readonly RenderItem[] = [];
 
-export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, scrollRef }: FullscreenViewportProps) {
+export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, scrollRef, hitmapRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
+  const regionTop = useRegionTop();
   const height = Math.max(0, rows ?? granted);
   // Queued prompts go LAST, below even the in-flight turn — canon's own order (`fNn`'s scrollable at L549395
   // ends `… spinner, ds() && <lui/>`).
@@ -163,6 +219,20 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   const scroll = useCallback((action: PagerAction) => setAnchor(anchorRef.current = applyAnchor(anchorRef.current, { kind: "scroll", action, ...geometry.current })), []);
   const stickBottom = useCallback(() => setAnchor(anchorRef.current = applyAnchor(anchorRef.current, { kind: "stickBottom", ...geometry.current })), []);
   useImperativeHandle(scrollRef, () => ({ scroll, stickBottom }), [scroll, stickBottom]);
+  // The map of the frame BEING PAINTED, written at the bottom of this render (where the slices exist) and
+  // read here at call time — the same ref discipline the scroll closures use, and for the same reason: this
+  // is called from the mouse sink, outside React, where a captured render's value would be a frame stale.
+  //   `top <= 0` IS THE RENDERER GATE (see the header): no frame, or the classic one, publishes no origin,
+  // and then no cell on the screen belongs to anything. A row above or below the window indexes past the
+  // array — the dock band, the park row, the blank tail and the jump pill's stolen row all land there.
+  const hit = useRef<{ top: number; rows: readonly HitRow[] }>({ top: 0, rows: [] });
+  const anchorAt = useCallback((col: number, row: number): string | undefined => {
+    const { top, rows: painted } = hit.current;
+    if (top <= 0) return undefined;
+    const at = painted[row - top];
+    return at !== undefined && col >= 1 && col <= at.width ? at.anchor : undefined;
+  }, []);
+  useImperativeHandle(hitmapRef, () => ({ anchorAt }), [anchorAt]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no
@@ -233,6 +303,10 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   if (settled.sticky) stickyTotal.current = total;
 
   const { slices } = pageItemSlices(items, settled.offset, body);
+  // ONE PASS, TWO PRODUCTS: the rows below and the map of them. Derived from `slices` rather than re-sliced,
+  // so the map is the paint by construction — including the row the pill takes, which `body` has already
+  // removed from the window and which therefore has no entry to be clicked.
+  hit.current = { top: regionTop, rows: hitRowsOf(slices, columns) };
   // Keyed by item id AND slice index: one item can contribute at most one slice to a window, but the index
   // keeps the key stable when the same block is re-sliced at a different offset.
   return <>
