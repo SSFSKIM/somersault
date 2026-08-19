@@ -1067,6 +1067,51 @@ flips the `full-potential.md` rows and ships nothing.
   above. **Worth keeping: prose that states an invariant is an assertion with no test behind it. When the
   invariant is load-bearing, the sentence and the row that pins it should land in the same change.**
 
+- **Task 12 (2026-08-19): both absorb probes came back ALIVE, and the seam step changed what "alive"
+  is worth.** Probe 112 measured `terminal_slash_commands: ["doctor","color"]` on a headless init frame
+  (CLI 2.1.234, 98 `slash_commands`); probe 111 measured the `context_usage` structured twin on the
+  **`assistant`** frame of a `/context` turn — a wrapper-level key, with `message.context_usage` absent,
+  exactly as the SDK doc promises. Neither result would have decided anything on its own, because
+  "the SDK emits it" and "our router receives it" are different claims. **Both were made measurable
+  without spinning up a fleet host**, because the ccx host's follower relay is fed by exactly one
+  object: the per-turn `onMessage` sink it hands to `Session.submit` (host.ts's `runTask`), re-emitted
+  as `{kind:"message"}`. Subscribing `onFrame` and `onMessage` on the same real `Session` therefore
+  measures both origin legs from one turn. Both carriers reached both feeds, so both surfaces are
+  ALIVE on both origins rather than inProcess-only. **The generalisable move: when a second origin is
+  expensive to stand up, find the ONE object its producer reads and subscribe that instead of the
+  origin.**
+- **The `result` frame would have been a DEAD-for-us answer, and only "which message" could tell us.**
+  `session.ts`'s read loop resolves `result` frames into the submit waiter and never forwards them to
+  `onMessage` (host.ts says so in its own comment; P106 measured 88 relayed message frames, zero of them
+  results). Had `context_usage` ridden the result frame — the plausible place for an end-of-turn
+  summary — the field would have been reachable in-process and invisible to every fleet follower. The
+  brief's insistence on recording **which message** carries a field, not merely that one does, is what
+  separates those two outcomes.
+- **`terminal_slash_commands` has exactly one possible source, and `routeInit` cannot be it.**
+  `thread/capabilities/read` answers from `supportedCommands()`, whose `SlashCommand` type carries no
+  terminal-bound marker — so the init frame is the only place the classification exists, and a latch is
+  mandatory rather than an optimisation. Two measured facts make that latch safe: init is **re-emitted
+  per turn** (two turns produced two init frames on both feeds), so a fleet thread is not condemned to a
+  replay-marked follow burst the router drops; and `routeInit` early-returns on `record.sessionId`,
+  which fleet threads latch from the host `state` event instead (fleet.ts) — so a new field must ride
+  its own route, never inside that guarded body.
+- **An ALIVE field is not automatically a gap worth filling.** `thread/contextUsage/read` already
+  serves `getContextUsage()`, whose control response is **richer** than the structured twin
+  (`gridRows`, `systemTools`, `systemPromptSections`, `slashCommands`) and costs no turn. What
+  `SDKContextUsage` adds is `over_limit` and a semantic `kind` per category (used/free/buffer/deferred)
+  where the control response has a renderer's `color`/`isDeferred`. So the spec's own promote sentence —
+  "the structured card into the context-usage surface" — would, taken literally, replace a better
+  payload with a worse one obtainable only by spending a turn.
+- **Two undeclared live surfaces, found for free because the probe logged every message type.**
+  `command_lifecycle` frames (two per `/context` turn through the harness `Session`) appear in **no**
+  0.3.234 type: absent from `SDKMessage`'s union and from every `sdk.d.ts` mention, and absent from
+  `harness/src`. Its likely partner is the `msg_lifecycle_v1` capability, which the init frame
+  advertises while the `capabilities` doc comment enumerates only three other values. Nothing breaks —
+  our routers compare `type` on `unknown` frames — but the name-level drift scan cannot see either.
+  `rate_limit_event`, by contrast, is fully covered (`SDKRateLimitEvent` is in the union; `classify.ts`
+  and `router.ts`'s `routeLimits` both consume it) and appeared in one of the two live streams,
+  confirming it is intermittent rather than absent.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
