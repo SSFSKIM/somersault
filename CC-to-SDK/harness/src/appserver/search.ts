@@ -76,10 +76,8 @@ class ScanRewound extends Error {
  *  immutable cold storage while the same server answered `-33001 "Thread is live in another ccx process"`
  *  for archive and delete on that same id, seconds apart. A refusal a client can retry is the honest
  *  answer to "this server cannot tell whether the content moved"; a plausible page is not. */
-const generationOf = (srv: AppServer, info: SDKSessionInfo): string => {
-  const live = findLiveBySessionId(srv, info.sessionId);
-  return live ? `L${live.epoch}` : `S${info.lastModified}:${info.fileSize ?? ""}`;
-};
+const generationOf = (live: { epoch: number } | undefined, info: SDKSessionInfo | undefined): string =>
+  live ? `L${live.epoch}` : `S${info?.lastModified}:${info?.fileSize ?? ""}`;
 
 /** The refusal a moved generation earns: `thread/read`'s own message, verbatim, because a client that
  *  pages both surfaces should match one string (the same reason the occurrence cursor took it in Task 8). */
@@ -236,7 +234,7 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
       // found.
       if (cursor && cursor.r > 0) {
         const owner = sorted.find((r) => r.sessionId === cursor.s);
-        if (owner && generationOf(srv, owner) !== cursor.g) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, REWOUND); return; }
+        if (owner && generationOf(findLiveBySessionId(srv, owner.sessionId), owner) !== cursor.g) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, REWOUND); return; }
       }
 
       const data: { thread: Record<string, unknown>; snippet: string }[] = [];
@@ -252,7 +250,7 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
          *  at a fourth. `g` is stamped from the session the offset belongs to and ONLY when there is an
          *  offset — see the resume check above for why `r === 0` has no generation to name. */
         const mint = (t: { v: number | null; s: string }, r: number, of: SDKSessionInfo): string =>
-          encodeSearchCursor({ ...t, r, q, g: r > 0 ? generationOf(srv, of) : "" });
+          encodeSearchCursor({ ...t, r, q, g: r > 0 ? generationOf(findLiveBySessionId(srv, of.sessionId), of) : "" });
         /** The cursor for "this session is finished, continue at the next one". */
         const afterThis = (): string | null => (i + 1 < sorted.length ? mint(tupleOf(sorted[i + 1]), 0, sorted[i + 1]) : null);
 
@@ -464,7 +462,7 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
       // store-wide sibling, no generation field at all. `generationOf` names the authority as part of the
       // stamp, so a session that CHANGED authority between two pages — cold at the mint, live at the
       // resume — is a mismatch by construction rather than by a rule someone had to think of.
-      const gen = live ? `L${live.epoch}` : generationOf(srv, row0!);
+      const gen = generationOf(live, row0);
       if (cursor && cursor.g !== gen) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, REWOUND); return; }
       // ONE epoch read per request, and every generation-carrying string in the reply is composed from it —
       // the continuation cursor's `g` AND every occurrence's `readCursor`. `record.epoch` is mutable and a
