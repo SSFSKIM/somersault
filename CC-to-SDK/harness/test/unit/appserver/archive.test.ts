@@ -613,8 +613,19 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
       // conversation, visible only under `archived: true`.
       expect(await bothLists()).toEqual({ live: ["sess-shelved", "sess-live"], shelf: [] });
 
-      // …and a swap to a FRESH conversation adopts nothing: there is no id to take off any shelf, and a
-      // handler that ran the shelf read unconditionally would announce a transition for `undefined`.
+      // A rewind that stays INSIDE the conversation adopts nothing, even over a marker another process
+      // wrote for the id this thread already holds — the same reading the attach REJOIN row two blocks
+      // down states: nothing opened, so nothing is announced, and that marker is left where its writer put
+      // it. This is the honest cost of the `moved` condition, pinned rather than implied.
+      await createArchiveMarker("sess-shelved", { ccxDir });
+      fh.emitRewound({ sessionId: "sess-shelved" });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(existsSync(join(ccxDir, "archived", "sess-shelved"))).toBe(true);
+      expect(notifs("thread/unarchived").length).toBe(1);
+      await removeArchiveMarker("sess-shelved", { ccxDir });
+
+      // …and a swap to a FRESH conversation adopts nothing either: there is no id to take off any shelf,
+      // and a handler that ran the shelf read unconditionally would announce a transition for `undefined`.
       fh.emitRewound({ cleared: true });
       await new Promise((r) => setTimeout(r, 30));
       expect(notifs("thread/unarchived").length).toBe(1);
