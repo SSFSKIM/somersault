@@ -1255,7 +1255,7 @@ runScanExclusive(srv, async () => {
 
 ### Task 10: `thread/list` archived filter + stage-C gate
 
-**Files:** Modify `src/appserver/schema/threads.ts` (`archived: z.boolean().optional()` on `threadListParams`), `src/appserver/sessionLib.ts` (`threadList`) · `docs/parity/appserver.md` (+4 method rows, +2 notification rows) · Test append in `archive.test.ts`
+**Files:** Modify `src/appserver/schema/threads.ts` (`archived: z.boolean().optional()` on `threadListParams`), `src/appserver/sessionLib.ts` (`threadList`) · `docs/parity/appserver.md` (**+2 notification rows only** — see the stage-C step; the four method rows already exist) · Test append in `archive.test.ts`
 
 - [ ] **Step 1: Append the failing test**
 
@@ -1289,7 +1289,7 @@ describe("thread/list archived filter", () => {
 
 and paginate `filtered` instead of `merged` (three renames below). `import { listArchived } from "./archive.js";`.
 
-- [ ] **Step 4: Stage-C gate** — rows for `thread/search` (origin `N/A` — no thread named), `thread/searchOccurrences`, `thread/archive`, `thread/unarchive` (origin `both`) and the two notifications (`both`); the section prose records the covered-by (`config/mcpServer/reload` ≡ our `mcpServer/reconnect`) and the D-M5-6 deviations (`sourceKinds`, `backwardsCursor`, `uuid`-for-`turnId/itemId`, `sessionId` notification payloads). `npm run emit-schema`; drift gate → **exit 0, 66 registered methods, 99 rows**; full unit suite green (existing thread/list tests must stay green — no markers, nothing filtered).
+- [ ] **Step 4: Stage-C gate** — **CORRECTED (controller, mid-execution): add the TWO NOTIFICATION rows only.** This step was written when it was expected to add six rows at once; in execution each method landed with its own row, so `thread/search` (origin `N/A` — no thread named), `thread/searchOccurrences`, `thread/archive` and `thread/unarchive` (origin `both`) **already have rows** — Tasks 7, 8 and 9 added them, and the scorecard's own §prose says the two notifications "have no rows of their own yet". Adding the four again would duplicate them and fail the gate's bijection check. The arithmetic that matters: the tree stands at **97 rows** entering this task, and 97 + 2 = **99**. Add rows for `thread/archived` and `thread/unarchived` (`both`); the section prose records the covered-by (`config/mcpServer/reload` ≡ our `mcpServer/reconnect`) and the D-M5-6 deviations (`sourceKinds`, `backwardsCursor`, `uuid`-for-`turnId/itemId`, `sessionId` notification payloads). `npm run emit-schema`; drift gate → **exit 0, 66 registered methods, 99 rows**; full unit suite green (existing thread/list tests must stay green — no markers, nothing filtered).
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(as5): archived filter — stage C green, 66 methods / 99 rows (Task 10)"`
 
 ## Stage D — absorb, acceptance, verification
