@@ -478,12 +478,219 @@ grounding §7). The classic renderer keeps its chips everywhere.
 - (T1) Canon's git recognition never consults an exit code; success is inferred from
   output shape alone (`vFr`, 194436–194473), while the neighbouring telemetry path does
   check it. Fidelity here means copying the looser rule.
+- (T5b) Ink 5.2.1 makes render ORDER, not remounting, the load-bearing property of a
+  renderer flip. `<Static>` resets its emit index on `items.length` alone (Static.js:16–22),
+  so a keyed remount buys nothing a re-projection does not already give; Ink takes an
+  *untrottled immediate* render whenever the static node is dirty (reconciler.js:73–80 +
+  ink.js:36–42), so an intermediate render is bytes on screen rather than a supersedable
+  frame; and Ink creates a LEGACY React root (ink.js:60), so `setState` outside batching
+  flushes synchronously and two state commits are two paints. Any embedder that swaps a
+  render policy over Ink inherits all three.
+- (T6) Under SGR (mode 1006) a mouse RELEASE carries its true button number — the anonymous
+  `3` is an X10-encoding artifact, and carrying the button is what mode 1006 is for. Also:
+  with motion tracking (1002) unarmed, tmux drops drag-motion entirely, so a drag reaches
+  the app as press-here plus release-there with nothing between — exactly the shape a
+  same-cell tap detector discards, which is why the v1 mouse cut costs less than it looks.
+- (T6) A type named `MouseEvent` would have bound DOM's global silently and typechecked
+  clean (no `lib` override in this project). The hazard is not the missing import; it is
+  that the missing import has a plausible global waiting for it.
+- (T7) **ccx has no occlusion, because occlusion is omission.** Nothing on the fullscreen
+  path is absolutely positioned: a seam surface makes the dock *not render* rather than
+  cover it. So a published row map is always current and there is no "is something on top
+  of this cell" question — click questions here resolve by ownership, never by geometry.
+- (T9) A row's clickable extent is display width, never character count, and the two part
+  company in both directions at once: the active-cluster leader `⏺` is one character in two
+  columns, and a gutter block paints its body at a five-column offset. Also worth carrying:
+  Ink reports size but never position, so the frame's absolute origin is an asserted
+  invariant with a paint-order canary, not a measurement.
+- (T10) The wheel is not what moves a document. **Sticky-bottom streaming moves it under a
+  held mouse button with no gesture at all** — a physical click holds 60–150 ms and stream
+  deltas arrive far more often — so a tap anchored to a terminal cell expands a cluster the
+  user never touched. Anchoring on the resolved cluster identity covers wheel, keyboard
+  scroll, streaming, resize re-wrap and document swap in one comparison.
+- (T12) **The SDK delivers a parallel tool batch's results together, in issue order.** A
+  fast Read issued alongside a slow Bash had its `tool_result` timestamped ~20 s after the
+  read must have finished and 13–26 ms *after* the Bash's result. Arrival order and
+  completion order therefore coincide on this wire, which is what makes the external
+  review's reordering scenario (E1) real in the code and unreachable through today's
+  transport.
+- (T12) The fullscreen renderer drops OSC-8 hyperlink labels: a file-tool header paints
+  `⏺ Read(` and stops where classic paints `⏺ Read(alpha.txt)`. Pre-existing — reproduced
+  identically on the last pre-wave commit `ec9e7a2f97` — and tmux handles the hyperlinks
+  correctly when driven directly, so it is ours. This wave changed its *exposure*, not its
+  existence: expanded clusters put many file rows on the main frame.
 
 ## 8. Outcomes & Retrospective
 
-Pending — written at finish.
+**The wave shipped.** In the fullscreen renderer, adjacent tool calls fold into one dim
+cluster row (`Searched for 1 pattern, read 2 files, ran 2 shell commands`) with all Bash
+collapsing, silent absorption of TodoWrite/Task-board tools and ToolSearch, and git
+operations scraped from bash output into their own clauses; while the turn runs the row is
+live — spinner, present-tense verbs, a `⎿` hint line and an elapsed `· 2s` once the newest
+member has run two seconds; clicking a cluster expands it in place into its members'
+per-call rows and clicking again collapses it. The classic renderer is unchanged.
+Thirteen planned tasks plus one re-scoped repair (T5b), a whole-branch external review and
+two acceptance runs, from base `832475b7e5` to `28053d292b`. Gates at close: typecheck
+clean, `test:tui` 3748 passed / 9 skipped, `test:unit` 2891 passed.
+
+**Acceptance: 10 PASS · 1 partial · 0 FAIL**, and the evidence is not uniform — read the two
+tiers separately. **Live-verified** (a real keyed turn over a pty under tmux): A1 (cluster
+forms), A3 (live form), A5's ctrl+o round trip, A11 (elapsed ticker, five sub-claims with a
+held-open control on the classic arm), and A10 in part. **Replay-verified** (hand-written
+session JSONL resumed through the harness's pure replay path, which builds the same
+in-memory document a live turn builds; everything downstream — folding, projection,
+rendering, hit-testing, click handling — is the shipped code driven over a real pty):
+A2, A4, A6, A7, A8, A9. Replay is genuine evidence for those cells and weaker evidence than
+a live turn; the distinction is recorded rather than averaged away.
+
+**A10 is a partial and must not be rounded up.** The cell as written passes live: a cluster
+clicked ~17 s into a turn with two members still in flight stayed expanded through three
+later arrivals and after settling, which does discriminate against an implementation keyed
+on the churning fold-row item id. But the specific defect the external review found — a
+later-issued call finishing first, reordering the run and orphaning the expansion — could
+not be produced, because of the transport fact recorded in §7: results arrive in issue
+order. **So E1's fix (anchor on the earliest-issued `callSequence`) is correct and cheap but
+defensive, not load-bearing.** It stays, because a transport that batches differently, or a
+future non-batched path, makes the scenario live.
+
+### What this wave is worth telling the next one
+
+**Nine prescribed test cells could not fail, across ten tasks.** Not nine bugs — nine cells
+that would have gone green forever while the behavior they named was broken. The recurring
+shape is now clear enough to state as a rule: *a cell written from a design document
+reproduces the SITUATION a bug lives in; a cell that catches the bug has to isolate the
+MECHANISM from whatever else papers over it.* What did the papering over, each time, was
+ordinary and invisible from the document: a 600 ms live-repaint interval that re-projects on
+its own tick, a fallback path that reaches the same answer by another route, an ASCII
+fixture where two candidate rules coincide, a fixture that renders between two events so a
+stamp and an arrival share a timestamp. When writing a cell from a spec, ask what else in
+the running system could produce the asserted output — and if the answer is "something",
+the cell is not yet a test. Sabotage is the cheap check: mutate the line the cell is for and
+watch it go red.
+
+**Three independent defects shared one class: a value computed at the wrong moment.** The
+elapsed timer stamped a start when a projection first *looked* rather than when the call
+*arrived*; the compact-summary chip baked a renderer-dependent string at ingest, so no later
+flip could correct it; the cluster anchor derived identity from an ordering that is stable
+only before calls settle. A fourth instance was found and deliberately left unfixed
+(`useChat.ts:1477` — unobservable today, since `systemNoticeLines` forwards `expandHint` to
+none of its branches; it becomes a live defect the moment one starts drawing a chip). The
+generalizable form: **prefer deriving at use over storing at ingest**, and be most suspicious
+where the stored value depends on something that can change later — a renderer identity, an
+ordering, a clock. Two structural moves closed the class rather than the instances: the read
+that secretly wrote was split into a write interface and a pure read interface, so the render
+path can no longer create a stamp *by construction*; and when the anchor key changed meaning,
+the pop-out invariant needed a new proof derived from the new meaning, not an edited comment.
+
+**Over-faithfulness is a fidelity port's characteristic failure, not under-building.** Twice
+the spec prescribed behavior read out of the reference product that our transport cannot
+deliver: a decimal duration format the reference's own formatter cannot emit at that call
+site (the decimal formatter is a different function, used for other rows), and a start
+timestamp our wire does not carry at all. Both were caught by implementers reading the
+bundle rather than the brief. Copying an observable behavior and copying its inputs are
+different instructions — when a port names a mechanism, verify that the mechanism's inputs
+exist here before pinning a cell to its output.
+
+**Six of the wave's corrections were to the governing artifacts — the spec and plan — found
+during execution by implementers and reviewers who overruled their briefs.** A plan
+parenthetical that contradicted the very citation it quoted survived plan review and a spec
+round, and became visible only when a later task consumed it. That is the intended direction
+of information flow: the brief is the best available guess, and the person with the code open
+is the one holding the evidence. The corollary the wave also earned: a characterization
+handed up in a task report is a *claim* — one such claim became a recorded "known limitation"
+that measurement later showed does not exist.
+
+### Recorded divergences from the reference product
+
+Each is deliberate, priced, and lives in the section that owns it; collected here because the
+scorecard reader looks for them in one place.
+
+1. **The bash `(Ns · N lines)` suffix is CUT** (§3.1, round 4). Probe 100
+   (`probes/probes/100-tool-progress-stream.ts`, live on SDK 0.3.220): zero `tool_progress`
+   frames arrive between `tool_use` and `tool_result` in the default environment, no frame of
+   any kind carries an output-line count (eleven spellings scanned), and the one elapsed
+   carrier is gated behind `CLAUDE_CODE_REMOTE`/`CLAUDE_CODE_CONTAINER_ID` and throttled to
+   one sample per 30 s. The line half has no source and must not be faked; A11 carries a
+   guard cell asserting the suffix never appears.
+2. **An all-silent cluster emits no row** (§3.1, round 3). Canon emits a zero-height but
+   clickable row; an invisible clickable region has no meaning in an item-based projection.
+3. **The errored-sibling set is per-lifetime, canon's is per-arriving-message** (§3.1,
+   round 7). They part only when same-entry siblings error in different entries, which only
+   disk-sourced multi-block entries produce, and the effect is membership-only now that the
+   failure row is unconditional.
+4. **PR numbers render as text with no link affordance** (§3.1, round 8). Canon registers the
+   hyperlink as a side effect of its own row component; `FoldClause` is text plus bold ranges
+   with nowhere to hang an href. The scraped `GitPrOp.url` is carried through the counts so a
+   future render layer can use it — **the one open backlog item this wave leaves behind**.
+5. **The elapsed ticker's start time is a local first-ingest stamp** (§3.1, round 16). Canon
+   reads a wire message timestamp; our wire carries no timestamps at all. So the ticker is
+   accurate to one repaint rather than to the call's true start, and an unstamped member
+   renders no ticker rather than a zero.
+6. **An expanded cluster that is still running shows no progress at all** (measured in T12's
+   second run). Expanding a live cluster drops the blinking leader row, the `⎿` hint block
+   and the elapsed ticker in one step; in-flight members render as bare header rows —
+   seventeen seconds of `⏺ Bash(…sleep(20)…)` with nothing beneath it. Opening a live cluster
+   trades all progress signalling for the member list. **What canon does in this state is
+   still unmeasured against the bundle**; this is the wave's most substantive fidelity gap
+   and the natural first item of a follow-up.
+7. **The v1 mouse cut** (§2): mouse arming stays `?1000h ?1006h`, so there is no hover
+   brighten, no expanded-row background tint, no click-to-position-cursor in the composer and
+   no auto-copy-on-select, and tap detection approximates canon's "no selection produced"
+   with "press and release in the same cell" (under mode 1000 the two rules coincide).
+   Reserved for a follow-on full-mouse wave with canon's selection engine.
+8. **The classic renderer keeps its 2.1.220 fold subset** (§2). Canon's `Joi` list is
+   unconditional, so canon 2.1.234's *classic* renderer absorbs the task-board tools too.
+9. **Two canon scraper bugs are not ported** (§3.1, round 3): the raw-string `--amend` match
+   and the per-block re-scrape.
+
+Three smaller items are recorded here because they were decided during execution and belong
+with the list rather than in a task report. (a) **§2's "PowerShell — not applicable, skipped"
+is now stale**: T3's implementer ported canon's separate PowerShell classifier (cmdlet sets
+and all 87 aliases, 15 of them outcome-changing) while chasing a naming Minor; the reviewer
+verified it statement by statement and judged it defensible-but-should-have-been-a-ticket, so
+it ships fullscreen-gated **with no live evidence, because the tool is unreachable on this
+platform**. (b) The **session-picker preview stays classic inside a fullscreen session** —
+deliberate, unchanged, and noted so nobody reads it as a fold bug. (c) An **SGR report torn
+across two reads leaks its tail into the composer as text**; this is pre-existing per-chunk
+input behavior, and the repair belongs where paste re-joining lives, not in the mouse decoder.
+
+**One entry is deleted rather than carried.** The "expanded rows persist into the classic
+replay" limitation — recorded from a report's characterization, withdrawn in round 13 — was
+measured live in T12 and **does not exist**: expanding a cluster and flipping to classic
+shows the recomputed COLLAPSED row with its chip, and nothing from the expanded form leaks.
+Trap recorded with the measurement, because it silently produced a non-event on the first
+attempt: with the renderer pinned by an environment variable, `/tui default` answers
+`Saved. The default renderer does not apply here (env_on)` and switches nothing.
+
+### Follow-ups leaving the wave
+
+- **The fullscreen renderer drops OSC-8 hyperlink labels** (§7, T12). Pre-existing, not a
+  regression from this wave — reproduced identically on `ec9e7a2f97` — but expanded clusters
+  put many file rows on the main frame, so its exposure is new. Its own ticket; scored on
+  `docs/parity/tui-ux.md`'s tool-use row.
+- **The open-expanded-cluster progress gap** (divergence 6) — needs a bundle measurement
+  before it needs a design.
+- **The PR-link affordance** (divergence 4) — the data is carried; nothing schedules the
+  render layer.
+- **A third instance of the wrong-moment class at `useChat.ts:1477`** — reported, not fixed,
+  deliberately: it needs the same species-tag treatment and is wider than this wave.
+- **Probe-number collision:** `100-tool-progress-stream.ts` (this wave) collides with Wave
+  C's `100-prompt-suggestion-and-spinner-tokens.ts`, as `106` and `109` already collide from
+  earlier waves. Bare "probe 100" is ambiguous in this document's prose — **cite by
+  filename**; renaming is left to a housekeeping pass rather than done here.
 
 ## 9. Revision Notes
+
+**Round 17 — 2026-08-19, T13 close-out (execution).** §8 written, §7 grown with what Tasks
+5b–12 overturned, and the last owed measurement resolved: the withdrawn "expanded rows
+persist into the classic replay" limitation was measured live and does not exist, so it is
+deleted rather than carried. Two things the close-out refused to smooth over: **A10 is
+recorded as a partial**, because the reordering scenario its fix addresses is unreachable
+through today's SDK transport (results of a parallel batch arrive together, in issue order),
+and the acceptance evidence is split into live-verified and replay-verified tiers rather than
+averaged. Scorecard: `docs/parity/coverage.md` records the wave with **no domain score
+moved** — it consumes no SDK surface — and `docs/parity/tui-ux.md` carries the two rows that
+actually move plus one mark-DOWN for the OSC-8 defect the acceptance run found.
 
 **Round 16 — 2026-08-19, T11 review (execution).** The last code task, and the round where the
 spec was wrong twice about the SAME feature. Both errors were mine, both were found by the
@@ -672,4 +879,10 @@ scraper bugs (raw-string `--amend` matching, per-block re-scrape) are not ported
   disprove it (at the harness's row grant nothing settles out of the live window, so there
   is nothing to observe). **Task 12 measures it live; Task 13 records the measured answer
   or deletes the entry.** Recording an unmeasured divergence is exactly the failure round
-  10 was written about.
+  10 was written about. **MEASURED AND DELETED (2026-08-19, T12): the limitation does not
+  exist.** An expanded cluster flipped to classic replays as the recomputed COLLAPSED row
+  with its chip; nothing from the expanded form leaks. The withdrawal was correct, and the
+  entry is closed rather than carried into the scorecard. One trap came with the
+  measurement, because it silently produced a non-event on the first attempt: with the
+  renderer pinned by an environment variable, `/tui default` answers `Saved. The default
+  renderer does not apply here (env_on)` and switches nothing.
