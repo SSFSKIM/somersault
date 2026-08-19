@@ -143,26 +143,73 @@ export function settingsMerge(target: unknown, source: unknown): unknown {
   return source;
 }
 
+/** An own key that addresses an array ELEMENT, which is the only kind of key an object merged over an
+ *  array contributes through JSON. `"01"`, `"1.0"`, `"-1"` and `" 1"` are properties, not indexes —
+ *  `settingsMerge` assigns them, and they ride the array exactly as `PreToolUse` does. */
+const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
+
+/** Does anything `target` holds still SHOW once `source` is merged over it by `settingsMerge`? The
+ *  question a contributor list has to answer for the lower layers, and the one that used to be assumed.
+ *
+ *  It mirrors `settingsMerge`'s own three branches, so it cannot drift from what the merge actually does:
+ *  concatenation keeps everything (any element at all survives), an object over an array or over an
+ *  object keeps whatever the source does not cover — and where it does cover a key, the same question is
+ *  asked one level down, because an object merged onto an object element does not displace it. Anything
+ *  else is a replacement, and nothing of the target survives it.
+ *
+ *  Only `mergeableEntries` counts as coverage: `__proto__` is never applied, so it can never displace. */
+function survivesMerge(target: unknown, source: unknown): boolean {
+  if (Array.isArray(target) && Array.isArray(source)) return target.length > 0;
+  if (Array.isArray(target) && isPlainObject(source)) {
+    const covered = new Map(mergeableEntries(source));
+    return target.some((el, i) => !covered.has(String(i)) || survivesMerge(el, covered.get(String(i))));
+  }
+  if (isPlainObject(target) && isPlainObject(source)) {
+    const covered = new Map(mergeableEntries(source));
+    return Object.keys(target).some((k) => !covered.has(k) || survivesMerge(target[k], covered.get(k)));
+  }
+  return false;
+}
+
 /** Merge one layer in while maintaining per-leaf contributor lists. `origins` keys are dotted paths of
  *  LEAVES of the running effective config; a replacement deletes every entry under the replaced path
  *  before claiming it. */
 function mergeTracked(target: Record<string, unknown>, source: Record<string, unknown>, layer: LayerName, origins: Map<string, LayerName[]>, prefix: string): Record<string, unknown> {
   const out: Record<string, unknown> = { ...target };
-  const claimArray = (path: string): void => {
-    const list = origins.get(path) ?? [];
-    if (!list.includes(layer)) list.push(layer);
+  /** ONE array-contributor step, for both array branches. A contributor list is a claim about what is
+   *  SERVED at this path, so each side is asked its own question and neither answer is assumed:
+   *  `lowerSurvives` keeps the layers already there, `sourceShows` adds this one. Both were assumed true
+   *  before, and both directions of that were wrong on a real settings shape. A source that shows nothing
+   *  (only NON-index keys, which ride the array as properties JSON never serializes) named a layer whose
+   *  contribution no reader of this reply can see — B4's cosmetic over-attribution. A source that
+   *  displaces every element the array had (index keys covering all of them) left the lower layer in the
+   *  list, and `maskingVerdict` decides "is my write in force?" by MEMBERSHIP of that list — so a
+   *  `config/value/write` whose value a higher layer had completely replaced was reported `ok`, in force,
+   *  while `config/read` served the higher layer's value at the same path. Both methods derive from this
+   *  one map, which is what makes their agreement structural; an over-attribution here is therefore not
+   *  cosmetic on the write side, it is a wrong verdict.
+   *
+   *  Neither surviving is possible only for two empty arrays, where the path serves `[]` and no layer put
+   *  anything in it; the last writer is named, which is what a scalar replacement would answer too. */
+  const claimArray = (path: string, lowerSurvives: boolean, sourceShows: boolean): void => {
+    const list = lowerSurvives ? (origins.get(path) ?? []) : [];
+    if ((sourceShows || list.length === 0) && !list.includes(layer)) list.push(layer);
     origins.set(path, list);
   };
   for (const [k, v] of mergeableEntries(source)) {
     const path = prefix ? `${prefix}.${k}` : k;
     const existing = Object.prototype.hasOwnProperty.call(out, k) ? out[k] : undefined;
     if (isPlainObject(existing) && isPlainObject(v)) { out[k] = mergeTracked(existing, v, layer, origins, path); continue; }
-    if (Array.isArray(existing) && Array.isArray(v)) { out[k] = uniqSVZ([...existing, ...v]); claimArray(path); continue; }
+    // Concatenation: every element of both sides survives (`uniqSVZ` collapses equal primitives, which
+    // leaves the element jointly theirs), so each side contributes exactly when it has an element to give.
+    if (Array.isArray(existing) && Array.isArray(v)) { out[k] = uniqSVZ([...existing, ...v]); claimArray(path, existing.length > 0, v.length > 0); continue; }
     // An object over an array is NOT a replacement upstream — the array survives and the object's keys are
     // walked onto it (`settingsMerge`). So this is an array contributor like the branch above, and the
     // object's own keys get no `origins` entries of their own: the ones JSON shows are array ELEMENTS,
-    // addressed at this path, and the rest are properties no reader of this reply can ever see.
-    if (Array.isArray(existing) && isPlainObject(v)) { out[k] = settingsMerge(existing, v); claimArray(path); continue; }
+    // addressed at this path, and the rest are properties no reader of this reply can ever see. Which is
+    // also why only an INDEX key counts as this layer showing, and why a source that covers every index
+    // takes the path over outright.
+    if (Array.isArray(existing) && isPlainObject(v)) { out[k] = settingsMerge(existing, v); claimArray(path, survivesMerge(existing, v), mergeableEntries(v).some(([key]) => ARRAY_INDEX.test(key))); continue; }
     // Replacement (new key, scalar-over-X, or type change): the discarded value's leaves are no longer
     // in the effective view — reset every contributor at or under this path, then claim it.
     for (const key of [...origins.keys()]) if (key === path || key.startsWith(path + ".")) origins.delete(key);

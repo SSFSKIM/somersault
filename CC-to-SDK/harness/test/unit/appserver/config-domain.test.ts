@@ -816,13 +816,17 @@ describe("config/value/write + config/batchWrite", () => {
     // this method: an object merged over an array keeps the ARRAY (measured against real lodash), so the
     // write is in force and the object above is a contributor to it. Kept as a row because the obvious
     // reading — "an object above always swallows what is below" — is what the array half used to assert.
+    //   `origins["env"]` names the USER ALONE, and that is the half this row got wrong before: project's
+    // key here is `B`, which is not an array index, so it rides the array as a property JSON never
+    // serializes. A layer whose whole contribution is invisible on the wire is not a contributor to what
+    // is served, and naming it is the B4 over-attribution one shape further along.
     const arrEdits = [{ keyPath: ["env"], value: ["a", "b"], mergeStrategy: "replace" }];
     id = await send("config/batchWrite", { target: "user", cwd: proj, edits: arrEdits });
     const w2 = reply(id).result;
     id = await send("config/read", { cwd: proj });
     const r2 = reply(id).result;
     expect(JSON.stringify(r2.config.env)).toBe('["a","b"]');   // the array survives the object above it
-    expect(r2.origins["env"]).toEqual(["user", "project"]);
+    expect(r2.origins["env"]).toEqual(["user"]);
     expect(w2.status).toBe("ok");
     expectAgreesWithRead(w2, r2, "user", arrEdits);
     // …and an array write IS masked by a SCALAR above it, which is the shape that still has no entry of its
@@ -836,6 +840,53 @@ describe("config/value/write + config/batchWrite", () => {
     expect(w3.status).toBe("okOverridden");
     expect(w3.overriddenMetadata.overridingLayer).toBe("project");
     expectAgreesWithRead(w3, r3, "user", arrEdits);
+  });
+  it("an INDEX-keyed object above an array write masks it when it covers every element, and does NOT when it covers only some", async () => {
+    // The regression fix wave B's B5 introduced, and the two sides of the rule that replaces it. B5 was
+    // right that an object over an array keeps the array (real lodash) — but it made the object an
+    // unconditional CO-CONTRIBUTOR in `origins`, and `maskingVerdict` reads that list by MEMBERSHIP. So a
+    // write whose every element a higher layer's index keys had replaced still read as "attributed to me"
+    // and was reported `ok`, in force, while `config/read` served the higher layer's value at the path.
+    //
+    // The ORACLE HERE IS THE VALUE, deliberately: `expectAgreesWithRead` compares attribution against
+    // attribution, which is structurally incapable of catching an over-attribution — both sides read the
+    // same wrong list and agree. It runs too (the two methods must still agree), but the assertion that
+    // actually fails when this breaks is "is what I wrote present at that path in the merged view".
+    const written = ["USER-WRITES-THIS"];
+    const wrote = (r: any) => JSON.stringify(r.config.permissions.allow) === JSON.stringify(written);
+    // (a) COVERED: one index key over a one-element array — nothing of the user's write is served.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["OLD"] } }));
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: { 0: "PROJECT-WINS" } } }));
+    boot(deps());
+    const edits = [{ keyPath: ["permissions", "allow"], value: written, mergeStrategy: "replace" }];
+    let id = await send("config/batchWrite", { target: "user", cwd: proj, edits });
+    const w = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r = reply(id).result;
+    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toContain("USER-WRITES-THIS"); // the bytes DID land
+    expect(wrote(r), "config/read must not serve the user's array here").toBe(false);
+    expect(JSON.stringify(r.config.permissions.allow)).toBe('["PROJECT-WINS"]');
+    expect(r.origins["permissions.allow"]).toEqual(["project"]);   // the user contributes nothing that shows
+    expect(w.status).toBe("okOverridden");
+    expect(w.maskedEditIndexes).toEqual([0]);
+    expect(w.overriddenMetadata.overridingLayer).toBe("project");
+    expect(w.overriddenMetadata.effectiveValue).toEqual(["PROJECT-WINS"]);
+    expectAgreesWithRead(w, r, "user", edits);
+    // (b) NOT COVERED: the same shape with a two-element write, where index 0 survives. The array the
+    // client asked for is not what is served either — but part of it IS, so the write is in force and the
+    // reply must NOT claim an override. Without this side the fix could be "always reset on an object",
+    // which is the opposite error and equally wrong.
+    const both = ["USER-KEEPS-THIS", "USER-LOSES-THIS"];
+    const edits2 = [{ keyPath: ["permissions", "allow"], value: both, mergeStrategy: "replace" }];
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: { 1: "PROJECT-PATCHES-ONE" } } }));
+    id = await send("config/batchWrite", { target: "user", cwd: proj, edits: edits2 });
+    const w2 = reply(id).result;
+    id = await send("config/read", { cwd: proj });
+    const r2 = reply(id).result;
+    expect(JSON.stringify(r2.config.permissions.allow)).toBe('["USER-KEEPS-THIS","PROJECT-PATCHES-ONE"]');
+    expect(r2.origins["permissions.allow"]).toEqual(["user", "project"]);
+    expect(w2.status).toBe("ok");
+    expectAgreesWithRead(w2, r2, "user", edits2);
   });
   it("the masking object can be NESTED, and the write it masks can come from a MIDDLE layer", async () => {
     // Two independent generalisations of the same hole. Depth: the swallowing object sits three segments
