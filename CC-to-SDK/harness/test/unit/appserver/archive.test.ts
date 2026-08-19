@@ -1015,8 +1015,12 @@ describe("thread/list {archived} — the archived partition (Task 10)", () => {
     // another PROCESS wrote for a thread live here is the one case no in-process guard covers (D-M5-21),
     // and this list is where it shows up. And a live record whose engine has not yet reported an id (real:
     // router.ts's routeInit latches it off the first turn's init frame) has no id a marker could name: it
-    // cannot be archived, so the default half is where it belongs. A filter that asked the marker set about
-    // `undefined` would put it in NEITHER half and drop the row from every listing a client can request.
+    // cannot be archived, so the default half is where it belongs, in BOTH requests.
+    //   The bound on what this row can prove, stated because a reader will otherwise credit it with more:
+    // it pins the unlatched row's PLACEMENT, not the shape of the code that places it. `inArchivedPartition`
+    // spells that case as its own branch, and dropping the branch is an equivalent mutation this row cannot
+    // fail — `Set<string>.has(undefined)` is `false`, so the set lookup gives the same answer. What it does
+    // fail is the branch INVERTED, which is the way that case can actually be got wrong.
     const ccxDir = mkTmp("m5ccx-");
     const srv = boot({ ccxDir, listSessions: listing("cold-live") });
     addRecord(srv, "shelved-live");

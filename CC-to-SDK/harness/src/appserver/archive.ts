@@ -40,8 +40,16 @@ export async function listArchived(deps: ArchiveDeps): Promise<Set<string>> {
  *  `sessionId` is optional because ONE caller has rows without one: `thread/list` merges this server's live
  *  registry in, and a record whose engine has not yet reported a session id (router.ts's routeInit latches
  *  it off the first turn's init frame) has no id a marker could name — so it cannot be archived, and the
- *  DEFAULT half is where it belongs. Asking the set about `undefined` instead would put it in neither half
- *  and drop the row from every listing a client can ask for. */
+ *  DEFAULT half is where it belongs.
+ *
+ *  That branch is a TYPE and a statement, not a behavioural fix, and the distinction is worth writing down
+ *  because it was measured rather than assumed: `Set<string>.has(undefined)` is `false` for a set built
+ *  from a `readdir`, so `false === wantArchived` is `!wantArchived` — the same answer the branch gives, at
+ *  every input. A mutation replacing the whole ternary with `archived.has(sessionId as string) ===
+ *  wantArchived` is therefore EQUIVALENT and no test can catch it (verified: it is green). What the branch
+ *  buys is that the cast — which would be a lie about the type — is not needed, and that the rule reads as
+ *  the domain fact it is. What it is NOT is arbitrary: flipping it to `? wantArchived` puts an unlatched
+ *  live row in the archived half, which is wrong and which a row does catch. */
 export const inArchivedPartition = (archived: Set<string>, sessionId: string | undefined, wantArchived: boolean): boolean =>
   sessionId === undefined ? !wantArchived : archived.has(sessionId) === wantArchived;
 
