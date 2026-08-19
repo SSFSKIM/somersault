@@ -34,6 +34,7 @@ import {
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { threadListParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./schema/threads.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
+import { storeRefusal } from "./archiveDomain.js";
 
 const DEFAULT_LIST_LIMIT = 200; // same default as the pre-Task-12 registry-only thread/list (server.ts)
 
@@ -125,8 +126,9 @@ export function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
  *  them. A live record whose `sessionId` has not yet latched (engine-faithful: undefined until the first
  *  turn's init frame) cannot be looked up in the store map at all — it is included as its own unmatched
  *  row, exactly like a fresh thread/list did before this task, and the store row it might one day match is
- *  independently listed as store-only until that happens. Cursor pages the MERGED array (offset cursor,
- *  Task 7's convention) — the merge, not either input alone, is what gets paginated.
+ *  independently listed as store-only until that happens. Cursor pages the merge (offset cursor, Task 7's
+ *  convention) — never either input alone — and since Task 10, the merge AFTER the archived partition is
+ *  cut from it: the offset indexes `filtered`, the half being walked, at both ends (see below).
  *
  *  M5 Task 10 adds `archived`, and it selects a PARTITION rather than filtering one: omitted or `false`
  *  lists only unarchived sessions — which is what this method already did, so an existing client sees no
@@ -158,7 +160,15 @@ export const threadList: Handler = async (srv, ctx, id, params) => {
   // moment this server last looked. A failed read propagates — dispatch answers -32603 — because
   // swallowing it into an empty set is the failure that looks like success (D-M5-8): every shelved
   // session back in the default list, and `archived:true` answering "none" where the truth is "unknown".
-  const archivedSet = await listArchived({ ccxDir: srv.deps.ccxDir });
+  // The `try` wraps `listArchived` ALONE, and that is the whole of why it is written this way rather than
+  // around the body: `deps.listSessions` above is the OTHER store, and a catch spanning both would answer
+  // a session-store failure with "archive marker store failed" — the mislabelling `SessionStoreError`
+  // exists to prevent (D-M5-18a). `storeRefusal` is archiveDomain's, reused rather than re-spelled, so
+  // the readers of this store describe its failures exactly as its writers do — composed from
+  // `code`+`syscall`, never node's own message, which ends in the operator's absolute home path.
+  let archivedSet: Set<string>;
+  try { archivedSet = await listArchived({ ccxDir: srv.deps.ccxDir }); }
+  catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
   const wantArchived = parsed.data.archived === true;
   const filtered = merged.filter((v) => inArchivedPartition(archivedSet, v.sessionId as string | undefined, wantArchived));
   const limit = parsed.data.limit ?? DEFAULT_LIST_LIMIT;

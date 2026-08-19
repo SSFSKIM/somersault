@@ -306,8 +306,13 @@ flips the `full-potential.md` rows and ships nothing.
    cold session the same search succeeds with `readCursor: null`.
 7. **Archive round-trips and survives races.** Archive hides from default `thread/list`, shows under
    `archived: true`, broadcasts, and unarchive restores — both idempotent; archiving a live thread
-   refuses "close it first"; an archive racing a resume converges (marker removed, BUSY) with
-   nothing live ever hidden; two processes archiving different sessions both stick (marker files).
+   refuses "close it first"; an archive racing a resume converges (marker removed, BUSY), and **no
+   transition this server mediates** leaves a live thread hidden, in either arrival order. The
+   cross-process case is excluded by construction rather than by omission: markers are re-read per
+   request instead of guarded in-process (D-M5-3), so a marker another process writes for a thread live
+   here does place that thread in the archived half — a transient, self-correcting state that the next
+   unarchive or admission clears (D-M5-10 rev 3, D-M5-21), not one this server prevents. Two processes
+   archiving different sessions both stick (marker files).
 8. **The absorb probes decide.** Probe results for `context_usage` and `terminal_slash_commands` are
    recorded; alive surfaces ship wired with tests, dead ones flip their rows.
 
@@ -385,6 +390,16 @@ flips the `full-potential.md` rows and ships nothing.
     Task 4 High). `config/read` cannot say which layer contributed an empty object. D-M5-13d removed the
     write side's dependency on it, so nothing is currently broken by it — but it remains a real gap in
     what attribution can answer, and the next consumer to reason from `origins` will meet it.
+  - **`thread/list`'s bare offset cursor carries the skip/repeat class the search keyset solved** (Task 10
+    review ⚠️A2). `cursorParam` is a decimal offset into the array being paged, so anything that changes
+    that array between two pages shifts every later position. Pre-existing — a thread closing mid-walk
+    already did it — but M5 makes it first-party: `thread/archive`/`thread/unarchive` move a session across
+    the partition `thread/list` now walks, so the mutator is a method of this very milestone rather than
+    incidental drift. The docblock's stale justification ("stays valid for their whole lifetime") is
+    corrected in place; the cursor itself is NOT changed, because re-cursoring a shipped method is a wire
+    change and out of M5's scope. Trigger: a client reporting a session missed or repeated across a paged
+    `thread/list` walk while archiving. Fix shape: the keyset `thread/search` already ships (D-M5-16) — a
+    tuple naming the next position rather than an offset counting to it.
 
 ## Decision Log
 
@@ -1107,3 +1122,16 @@ Pending — written at finish.
   defects were also caught and fixed before they could land: Task 3's instruction to collapse the
   versions walk (it would have silently reverted D-M5-18a one task after it shipped, with every test
   still green), and a `readTargetDoc` code block that contradicted its own amended interface text.
+
+- **rev 5 (2026-08-19) — acceptance criterion 7 amended to the scope the decisions actually took on**
+  (Task 10 review ⚠️A1; no behaviour changed). The sentence said "nothing live ever hidden", which was
+  written before D-M5-3 settled archived-ness as markers re-read per request and D-M5-10 rev 3 narrowed
+  its convergence claim to transitions *this server mediates*. The `thread/archive` scorecard row and
+  D-M5-10 already said so; the acceptance sentence never absorbed it, and `thread/list {archived}` made
+  the gap literal — a marker another PROCESS writes for a thread live here puts that thread in the
+  archived half, and Task 10 tests exactly that placement. Criterion 7 now states the mediated scope and
+  says in one clause why the cross-process case is excluded: markers are re-read per request rather than
+  guarded in-process, so that state is transient and self-correcting rather than prevented. The same
+  review's ⚠️A2 added a parking-lot item for `thread/list`'s bare offset cursor (skip/repeat across a
+  paged walk that archives) and corrected `cursorParam`'s docblock, whose justification named a
+  session's lifetime where the property is really the array's stability.

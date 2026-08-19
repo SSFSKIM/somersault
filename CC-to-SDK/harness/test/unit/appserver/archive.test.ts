@@ -1078,4 +1078,33 @@ describe("thread/list {archived} — the archived partition (Task 10)", () => {
       expect(r.error?.message).toMatch(/ENOTDIR/);
     }
   });
+
+  it("that error is the marker store's OWN composed message, with no absolute path — the same sentence the two WRITERS answer", async () => {
+    // Task 10 review F1. The row above pins that the failure is an error; this one pins WHICH error. Left
+    // to dispatch's catch the reply is node's verbatim message — `ENOTDIR: not a directory, scandir
+    // '/Users/<operator>/.claude/ccx/archived'` — which puts the operator's home directory on the wire
+    // and names no subsystem. `thread/archive`/`thread/unarchive` have composed their errno text from
+    // `code`+`syscall` since Task 9 (D-M5-18a); the two READERS of the same store now answer the same way.
+    const ccxDir = mkTmp("m5ccx-");
+    writeFileSync(join(ccxDir, "archived"), "");
+    boot({ ccxDir, listSessions: listing("a", "b") });
+    for (const params of [{}, { archived: true }]) {
+      const e = (await send("thread/list", params)).error;
+      expect([params, e?.message]).toEqual([params, "archive marker store failed: ENOTDIR (scandir)"]);
+      expect(e?.message).not.toContain(ccxDir);
+      expect(e?.message).not.toContain("/"); // no path of any shape survived into the message
+    }
+  });
+
+  it("the catch covers the MARKER store alone — a SESSION-store failure is not relabelled as the marker store's", async () => {
+    // The constraint that makes F1's fix correct rather than merely quiet. `threadList` awaits two stores,
+    // and a `try` spanning both would answer a `listSessions` failure with "archive marker store failed" —
+    // the precise mislabelling `SessionStoreError` exists to prevent, and the one Task 9 fixed in the
+    // archive handlers. Widening the catch by one line goes red here while every row above stays green.
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, listSessions: async () => { throw new Error("session store exploded"); } });
+    const e = (await send("thread/list", {})).error;
+    expect([e?.code, e?.message]).toEqual([-32603, "session store exploded"]);
+    expect(e?.message).not.toContain("marker store");
+  });
 });

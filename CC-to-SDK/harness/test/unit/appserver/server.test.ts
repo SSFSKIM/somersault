@@ -7,7 +7,7 @@ import type { PeerSink } from "../../../src/appserver/peer.js";
 // file uses: since M5 Task 10 that handler reads the archive marker directory before replying, so its
 // reply lands a filesystem round-trip after the request rather than within one macrotask.
 import { waitReply } from "../../helpers/waitReply.js";
-const mkSink =() => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
+const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1", ...overrides });
 // listSessions IS DI'd (Task 12): thread/list now merges in the store, and this machine's real
 // ~/.claude/projects has thousands of real sessions on it — every boot() caller that asserts an exact

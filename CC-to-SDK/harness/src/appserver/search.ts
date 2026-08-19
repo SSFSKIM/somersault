@@ -13,6 +13,7 @@ import { ERR } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
 import { findLiveBySessionId, resolveThreadId, storeKnows, storeOnlyView } from "./sessionLib.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
+import { storeRefusal } from "./archiveDomain.js";
 import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
 import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
@@ -89,7 +90,14 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
       const all = (await listFn({ cwd })) as SDKSessionInfo[];
       // Archived-ness is THIS server's state, not the store's (D-M5-3): a marker directory re-read per
       // request, so another process's archive/unarchive is visible to the very next search.
-      const archivedSet = await listArchived({ ccxDir: srv.deps.ccxDir });
+      //   The `try` wraps `listArchived` ALONE — never the scan around it. The outer catch below answers
+      // `e.message` verbatim, which for an fs errno is node's own text ending in the operator's absolute
+      // home path; widening this one to cover `listFn` or the transcript reads instead would label a
+      // SESSION-store failure as the marker store's. `storeRefusal` is archiveDomain's, reused rather than
+      // re-spelled, so this store's two readers describe its failures exactly as its two writers do.
+      let archivedSet: Set<string>;
+      try { archivedSet = await listArchived({ ccxDir: srv.deps.ccxDir }); }
+      catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
       const wantArchived = archived === true;
       const rows = all.filter((r) => inArchivedPartition(archivedSet, r.sessionId, wantArchived));
       // BOTH the sort and every cursor mint go through `sortValueOf` — never a bespoke callback. The

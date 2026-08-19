@@ -19,9 +19,17 @@ export const initializeParams = z.object({
 });
 export const serverStatusParams = z.object({});
 // The one cursor shape, reused (via .extend(cursorParam.shape)) by thread/list and decision/list.
-// Both page a plain in-memory array (the merged thread view, a parked-decision set) that a rewind
-// never truncates, so a bare decimal offset stays valid for their whole lifetime — no epoch to
-// qualify it against. thread/read used to reuse this shape too (Task 7); Task 13 below splits it off.
+// Both page a plain in-memory array (the merged thread view, a parked-decision set) that a rewind never
+// truncates, so a bare decimal offset needs no epoch to qualify it against — which is the narrow claim,
+// and the only one still true. It is NOT a claim that the offset stays valid for a session's whole
+// lifetime: the offset indexes a POSITION in the array, so anything that changes what the array holds
+// between two pages shifts every later position, and a walk can then skip or repeat a row. Since M5 Task
+// 10 `thread/list` pages a PARTITION of the merge (`archived`), and `thread/archive`/`thread/unarchive`
+// are a first-party way for a client of this same milestone to move a session across that partition
+// mid-walk — so the mutator is no longer only "a thread closed by itself". See the spec's parking lot:
+// `thread/search` already ships the keyset that solves this class (D-M5-16), and re-cursoring a shipped
+// method is a wire change M5 deliberately did not take.
+// thread/read used to reuse this shape too (Task 7); Task 13 below splits it off.
 export const cursorParam = z.object({
   cursor: z.string().regex(/^\d+$/).optional(),
   limit: z.number().int().positive().optional(),

@@ -375,6 +375,35 @@ describe("thread/search", () => {
     expect((await search({ searchTerm: "needle", archived: true })).result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-arch"]);
   });
 
+  it("a marker store that cannot be READ answers the store's OWN composed message, with no absolute path", async () => {
+    // Task 10 review F1, the second of the two READERS. D-M5-8 already made this an error rather than an
+    // empty page; what it did not pin is WHICH error. Left to this handler's outer catch the reply is
+    // node's verbatim text — `ENOTDIR: not a directory, scandir '/Users/<operator>/…/archived'` — putting
+    // the operator's home directory on the wire, where `thread/archive`/`thread/unarchive` have composed
+    // theirs from `code`+`syscall` since Task 9. Both readers now answer as both writers do.
+    const ccxDir = mkTmp("m5search-");
+    writeFileSync(join(ccxDir, "archived"), ""); // the marker dir occupied by a regular file → ENOTDIR
+    const st = store([sess("s-1", { createdAt: 1_000, summary: "needle" })]);
+    boot({ ...st.deps, ccxDir });
+    for (const params of [{ searchTerm: "needle" }, { searchTerm: "needle", archived: true }]) {
+      const e = (await search(params)).error;
+      expect([params, e?.code, e?.message]).toEqual([params, -32603, "archive marker store failed: ENOTDIR (scandir)"]);
+      expect(e?.message).not.toContain(ccxDir);
+      expect(e?.message).not.toContain("/");
+    }
+  });
+
+  it("that catch covers the MARKER store alone — a SESSION-store failure keeps its own message", async () => {
+    // The constraint that makes the fix above correct rather than merely quiet: this handler's outer catch
+    // still answers every other failure in the scan, and narrowing the inner one to `listArchived` is what
+    // keeps a `listSessions` explosion from being reported as the marker store's fault.
+    const ccxDir = mkTmp("m5search-");
+    boot({ ccxDir, listSessions: async () => { throw new Error("session store exploded"); }, getSessionMessages: async () => [] });
+    const e = (await search({ searchTerm: "needle" })).error;
+    expect([e?.code, e?.message]).toEqual([-32603, "session store exploded"]);
+    expect(e?.message).not.toContain("marker store");
+  });
+
   it("a garbage, foreign or out-of-range cursor refuses -32602 instead of silently restarting the walk", async () => {
     const st = store([sess("s-1", { createdAt: 1_000, summary: "needle" })]);
     boot(st.deps);
