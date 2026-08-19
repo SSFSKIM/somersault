@@ -609,6 +609,28 @@ describe("thread/search", () => {
     boot(st.deps);
     expect((await search({ searchTerm: "needle" })).result.data).toEqual([]);
   });
+
+  it("a session whose ONLY hit sits inside a NESTED (subagent) row is still a match — the premise D-M5-20a was decided on", async () => {
+    // D-M5-20a withholds the JUMP for a nested row (`thread/searchOccurrences`, below) and deliberately
+    // leaves the row in the corpus. Filtering it out was the rejected alternative, and THIS method is why:
+    // both share `rowSearchText`, so a filter there would make `thread/search` answer "no match" for a
+    // session that demonstrably contains the text — the D-M5-8 lie about the store, in the one place a
+    // client cannot check. Until this row that reason was defended by nothing on this side: a filter added
+    // to the shared classifier takes the behaviour away with every other `thread/search` test still green.
+    const nestedAsst = { type: "assistant", uuid: "u-nested-a", parent_tool_use_id: "toolu_1", message: { id: "m-nested", content: [{ type: "text", text: "only a subagent said quokka" }] } };
+    const topRows = [prompt("a top-level prompt with no hit", "u-top"), assistant("a reply with no hit", "u-tail")];
+    const subagent = sess("s-subagent", { createdAt: 1_000 }, [topRows[0], nestedAsst, topRows[1]]);
+    const st = store([subagent, sess("s-quiet", { createdAt: 2_000 }, [assistant("nothing of interest here", "u-q")])]);
+    boot(st.deps);
+    const r = await search({ searchTerm: "quokka" });
+    expect(r.error).toBeUndefined();
+    expect(r.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-subagent"]);
+    expect(r.result.data[0].snippet).toBe("only a subagent said quokka");
+    // …and the nested row really is the SOLE source: the term is in no metadata field of that session and
+    // in neither of its top-level rows, so a reply that still names the session cannot be getting it
+    // anywhere else.
+    expect(JSON.stringify([subagent.info, ...topRows])).not.toContain("quokka");
+  });
 });
 
 // ── thread/searchOccurrences (Task 8) ──────────────────────────────────────────────────────────────────
@@ -751,6 +773,40 @@ describe("thread/searchOccurrences", () => {
       expect(page.error, String(o.rowOffset)).toBeUndefined();
       expect(JSON.stringify(page.result.data), String(o.rowOffset)).not.toContain(o.snippet);
     }
+  });
+
+  it("a nesting marker that is PRESENT but FALSY keeps its jump — the predicate tests TRUTHINESS, exactly as the pager does", async () => {
+    // Every other row in this block asserts a WITHHELD cursor, so a predicate that over-withholds passes
+    // them all: `"parent_tool_use_id" in row` and `typeof x === "string"` are each green against a suite
+    // whose only nesting marker is truthy, while both silently cost a renderable row its jump. This row is
+    // the missing direction. `rowIsNested` uses `Boolean(...)` because that is the PAGER's own test —
+    // items/mapper.ts:29 and items/replay.ts:31 both branch on `!f.parent_tool_use_id` — so a marker that
+    // is present and falsy, and a `parent_agent_id` carried without one, are top-level to the pager and
+    // must publish a cursor that lands. The claim is the biconditional, which is why the truthy row sits in
+    // the same reply: a jump is published if and only if `thread/read` can show that row.
+    const falsyAsst = { ...assistant("a needle under an empty marker", "u-falsy-a", "m-falsy"), parent_tool_use_id: "" };
+    const falsyUser = { type: "user", uuid: "u-falsy-u", parent_tool_use_id: "", message: { content: "a needle asked under an empty marker" } };
+    const agentOnly = { ...assistant("a needle with a parent agent id alone", "u-agent", "m-agent"), parent_agent_id: "agt_1" };
+    const trulyNested = { ...assistant("a needle truly nested", "u-nested", "m-nested"), parent_tool_use_id: "toolu_1" };
+    const rows = [prompt("a needle at top level", "u-top"), falsyAsst, falsyUser, agentOnly, trulyNested];
+    const { threadId, record } = await bootLive([sess("live-session", { createdAt: 1_000 }, rows)], "live-session");
+    const r = await occ({ threadId, searchTerm: "needle" });
+    expect(r.error).toBeUndefined();
+    expect(r.result.data.map((o: any) => o.rowOffset)).toEqual([0, 1, 2, 3, 4]);
+    expect(r.result.data.map((o: any) => o.readCursor)).toEqual([
+      `${record.epoch}:1`, `${record.epoch}:2`, `${record.epoch}:3`, `${record.epoch}:4`, null,
+    ]);
+    // The PUBLISHED half is the direction with no coverage before this row, so it is asserted the strong
+    // way: each cursor is pasted into `thread/read` unchanged and the page it returns has to hold the match.
+    for (const o of r.result.data.filter((x: any) => x.readCursor !== null)) {
+      const page = frameOf(await send("thread/read", { threadId, cursor: o.readCursor, limit: 100 }));
+      expect(page.error, o.readCursor).toBeUndefined();
+      expect(JSON.stringify(page.result.data), o.readCursor).toContain(o.snippet);
+    }
+    // …and the withheld one is still unreachable, so this row cannot be passed by publishing everything.
+    const nestedPage = frameOf(await send("thread/read", { threadId, cursor: `${record.epoch}:5`, limit: 100 }));
+    expect(nestedPage.error).toBeUndefined();
+    expect(JSON.stringify(nestedPage.result.data)).not.toContain("a needle truly nested");
   });
 
   it("a page boundary INSIDE one row resumes at the next occurrence of that row, not at the next row", async () => {
