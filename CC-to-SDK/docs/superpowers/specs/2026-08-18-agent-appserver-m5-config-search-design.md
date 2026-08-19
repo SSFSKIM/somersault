@@ -341,6 +341,22 @@ flips the `full-potential.md` rows and ships nothing.
     entry costs a missing warning and never a wrong refusal, so the stakes are low — but this is the
     "instrument rots under the code it verifies" pattern, and the house-consistent fix is to teach
     `scripts/drift-check.mjs`, which already walks source tokens for exactly this class of rot.
+  - **`forkSession` survives `record.config` into the rewind swap factory** (Task 9 final review). The
+    factory overrides `resume`/`resumeAt` only, so a real engine rebuilt for a conversation rewind of a
+    forked thread would mint yet another id while the record and the `thread/rewound` broadcast keep
+    reporting the old one. Pre-existing, and D-M5-21b strictly improves matters — this is simply now the
+    LAST place a fork-carrying config can mis-identify a thread. Note `thread/reopen` already nulls
+    `resume`, `resumeAt`, `droppedTurnUuid` **and** `forkSession` before rebuilding, with a comment naming
+    this exact hazard: independent corroboration that D-M5-21b reads the flag the way this codebase had
+    already concluded elsewhere. Fix shape: the swap factory nulls what `thread/reopen` nulls.
+  - **The `deletingSessions` fence does not reach the `thread/start` surface** (Task 9 final review).
+    `createThread` never consults it, so a fork-carrying `thread/start` admits while a parent delete is in
+    flight. Pre-existing — no fence was removed here, there never was one — and it belongs with the
+    `thread/start`-is-unguarded item above, since both are the same question: whether that surface is meant
+    to be `thread/resume`'s peer. **Recorded also as a correction:** `2ca4837b3d`'s commit message states
+    the fence's coverage unqualified, where the in-code comment scopes it correctly to `startThread`. The
+    code is right and the message overclaims — worth keeping because a commit message is the artifact a
+    future reader trusts when the code is unfamiliar.
   - **`thread/start` carrying `resume` is unguarded where `thread/resume` is guarded** (Task 9 fix wave,
     pre-existing). That surface forks an engine over whatever session id it is given, with no live-guard
     and no `deletingSessions` check, so two `thread/start` calls naming one session id register two
@@ -808,6 +824,11 @@ flips the `full-potential.md` rows and ships nothing.
   admission and its first turn) is one a cold fork-then-delete has anyway. Rejected: **a second field
   recording the read-only anchor** — new state for a hazard nobody has hit.
 - **D-M5-21c (Task 9 re-review, rev 6) — `thread/delete`'s live-guard extends to the fleet roster too.**
+  *(Bound on the stale-row cost, added at final review so it is not re-litigated as worse than it is: a
+  roster row with no `procStart` means "assume live", which makes such a session undeletable as well as
+  unarchivable — but not permanently. The fleet already ships the only deleter of stale roster state, so
+  the cost is "stuck until an operator clears the row", not unbounded. The trade stands on its asymmetry:
+  a false "still running" costs a refusal, a false "finished" costs a transcript.)*
   D-M5-21a closed this for `thread/archive` and left the same blind spot one handler over: with a roster row
   naming a live pid, `thread/resume` refused `-32602` and `thread/archive` refused `-33001`, while
   `thread/delete` called through and erased the transcript a running ccx process was appending to.
