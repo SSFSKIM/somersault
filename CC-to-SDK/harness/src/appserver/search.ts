@@ -13,25 +13,15 @@
 // MULTIPLIER at the storage boundary rather than a memory bound; `readWindow` carries the numbers).
 import { ERR, type RpcError } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
-import { fillFromStore, findLiveBySessionId, resolveThreadId, storeOnlyView, storeRow } from "./sessionLib.js";
+import { auditIfReal, fillFromStore, findLiveBySessionId, resolveThreadId, storeOnlyView, storeRead, storeRow } from "./sessionLib.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
 import { SessionStoreError, storeRefusal, stripPaths } from "./archiveDomain.js";
 import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, fingerprint, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
-import { auditSessionStore, listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
+import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 
 type GetMessages = (sessionId: string, opts?: { limit?: number; offset?: number }) => Promise<unknown[]>;
-
-/** Every SESSION-store read this file performs is tagged HERE, at its own call, and the `try` wraps that
- *  one call and nothing else. Widening it would relabel one subsystem's failure as another's — the defect
- *  Task 10 already had to fix once, where a session-store throw was answered as the marker store's fault.
- *  The tag is `archiveDomain.ts`'s, not a second spelling of it: both routes into this store must describe
- *  its failures identically, which is exactly what they did not do (an `EACCES` that `thread/archive`
- *  stripped to `<path>` and `thread/search` shipped verbatim, D-M5-25a). */
-const storeRead = async <T>(read: () => Promise<T>): Promise<T> => {
-  try { return await read(); } catch (e) { throw new SessionStoreError(e); }
-};
 
 /** The refusal both handlers answer with. A tagged store failure goes through the archive domain's one
  *  `storeRefusal`, so the sentence and its path-stripping are shared with the two archive routes; anything
@@ -66,18 +56,31 @@ class ScanRewound extends Error {
  *  second thing a cursor depends on.
  *
  *  Two authorities, and which one answers is itself part of the stamp. A session THIS server holds live
- *  has a generation counter that a rewind bumps, so `record.epoch` is exact. Anything else — a cold
- *  session, or one another ccx host holds — has no counter this process can read, so the stamp is the
- *  store's own metadata for the file: its mtime and its size, both of which a truncation moves. That is a
- *  proxy and it is deliberately a conservative one. It over-refuses: a foreign host merely APPENDING to
- *  its transcript moves the mtime, and the next page of a walk over that session refuses rather than
- *  resuming. The alternative is the state this replaces — `e: null`, a cursor that declared itself
- *  unqualified and was honoured anyway, under which a session held live in another process was paged as
- *  immutable cold storage while the same server answered `-33001 "Thread is live in another ccx process"`
- *  for archive and delete on that same id, seconds apart. A refusal a client can retry is the honest
- *  answer to "this server cannot tell whether the content moved"; a plausible page is not. */
-const generationOf = (live: { epoch: number } | undefined, info: SDKSessionInfo | undefined): string =>
-  live ? `L${live.epoch}` : `S${info?.lastModified}:${info?.fileSize ?? ""}`;
+ *  has a generation counter that a rewind bumps. Anything else — a cold session, or one another ccx host
+ *  holds — has no counter this process can read, so the stamp is the store's own metadata for the file:
+ *  its mtime and its size, both of which a truncation moves. That is a proxy and it is deliberately a
+ *  conservative one. It over-refuses: a foreign host merely APPENDING to its transcript moves the mtime,
+ *  and the next page of a walk over that session refuses rather than resuming. The alternative is the
+ *  state this replaces — `e: null`, a cursor that declared itself unqualified and was honoured anyway,
+ *  under which a session held live in another process was paged as immutable cold storage while the same
+ *  server answered `-33001 "Thread is live in another ccx process"` for archive and delete on that same
+ *  id, seconds apart. A refusal a client can retry is the honest answer to "this server cannot tell
+ *  whether the content moved"; a plausible page is not.
+ *
+ *  The live stamp names the RECORD as well as its epoch, and that pair is the whole of it. `epoch` alone
+ *  was not a generation: it is a per-record counter that starts at 0 and only ever increments IN PLACE,
+ *  while `thread/close` deletes the record outright — so a later re-admission of the same session mints a
+ *  fresh record back at 0 and a cursor minted before the close compares EQUAL to it. Constructed in three
+ *  ordinary wire calls (search → close → resume): the stale cursor was honoured against the new record
+ *  and answered `{"data":[],"nextCursor":null}` — the terminal "no matches" of D-M5-8 — for a term the
+ *  same instant's fresh walk found. `record.id` is minted per record (`Registry.mint`, 6 random bytes),
+ *  so it cannot repeat across a recreation, and it is stable across everything that must NOT invalidate a
+ *  walk: a rewind keeps the record and moves the epoch, and an append moves neither. That is why the id
+ *  and not the store metadata closes this: folding mtime/size into the live stamp would also close it,
+ *  and would make every page of a walk over an actively-appending LIVE session refuse — the over-refusal
+ *  the cold half accepts because it has no alternative, imported into the half that does. */
+const generationOf = (live: { id: string; epoch: number } | undefined, info: SDKSessionInfo | undefined): string =>
+  live ? `L${live.id}:${live.epoch}` : `S${info?.lastModified}:${info?.fileSize ?? ""}`;
 
 /** The refusal a moved generation earns: `thread/read`'s own message, verbatim, because a client that
  *  pages both surfaces should match one string (the same reason the occurrence cursor took it in Task 8). */
@@ -86,21 +89,6 @@ const REWOUND = "cursor invalidated by a rewind; re-read from the start";
  *  re-issued its search with a new term while still holding the old page's cursor has not been rewound,
  *  and telling it so would send it re-reading a walk that was never invalidated. */
 const REQUERIED = "cursor was minted for a different search; re-read from the start";
-
-/** The store's READABILITY, established rather than inferred (D-M5-25a) — run before the listing, inside
- *  the exclusive section, because it is disk work like every other read here.
- *
- *  Only on the PRODUCTION origin. An injected reader is a different store, and its failures are the
- *  injector's to raise; auditing the local filesystem behind one would judge a store the request never
- *  touched. That gate is also the finding restated: this contract was pinned for fifteen reviews against
- *  doubles that throw, on a reader that never does, so the origin the doubles stand in for is precisely
- *  the one that had to start checking itself. */
-const auditIfReal = async (srv: AppServer): Promise<void> => {
-  // ANY of the three, for both methods: one predicate with one meaning ("this server reads the local
-  // filesystem store"), rather than a per-method list that drifts as each grows a reader.
-  if (srv.deps.listSessions ?? srv.deps.getSessionMessages ?? srv.deps.getSessionInfo) return;
-  await storeRead(() => auditSessionStore());
-};
 
 /** ONE bounded row window — the read half both scans share. `null` means the page's row budget is already
  *  spent, reported BEFORE any store call and left for the caller to answer, because the two methods mint
@@ -198,7 +186,7 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
     await runScanExclusive(srv, async () => {
       // BEFORE the listing: a listing that answers `[]` for a store it could not open is the reply this
       // whole method must never compose, and by then nothing distinguishes it from an empty store.
-      await auditIfReal(srv);
+      await auditIfReal(srv, ["listSessions", "getSessionMessages"]);
       const all = (await storeRead(() => listFn({ cwd }))) as SDKSessionInfo[];
       // Archived-ness is THIS server's state, not the store's (D-M5-3): a marker directory re-read per
       // request, so another process's archive/unarchive is visible to the very next search.
@@ -436,7 +424,7 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
       // BEFORE the existence check, and that ordering is the whole of this method's half of D-M5-25a: an
       // unreadable transcript makes `getSessionInfo` answer `undefined`, and this handler then denied that
       // the thread EXISTS — a store the operator can point at, reported as a typo.
-      await auditIfReal(srv);
+      await auditIfReal(srv, ["getSessionMessages", "getSessionInfo"]);
       // Read the live record INSIDE the exclusive section, once, so the epoch the refusal below checks is
       // the epoch the mint at the bottom writes. A rewind can land while this request waits its turn on the
       // chain, and a check taken before that wait would qualify the reply against a generation that no

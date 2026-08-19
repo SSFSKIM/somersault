@@ -27,14 +27,19 @@ export function userItem(text: string, uuid: string): UserMessageItem {
  *
  *  A frame that produced no events has nothing to stamp, so a twin riding one would be dropped. The one
  *  such case is the reconcile frame of a message already itemized through `stream_event` partials
- *  (`onAssistant`'s `streamedMsgIds` dedup). That bound is UNOBSERVED, not established as unreachable
- *  (review F4): probe 111's `/context` frame list contains no `stream_event`, but the probe opened its
- *  session WITHOUT `includePartialMessages`, under which the SDK emits no partials for ANY message — so
- *  that absence is a property of the probe's options and says nothing about `/context`. The configuration
- *  that would settle it is one run: a thread opened WITH `includePartialMessages` running a `/context`
- *  turn. If `/context`'s CLI-synthesized assistant message turns out to stream, the twin lands on nothing
- *  and this function needs a reconcile path. Parked on that trigger rather than on a claim of
- *  impossibility. */
+ *  (`onAssistant`'s `streamedMsgIds` dedup). That bound was parked here as UNOBSERVED — probe 111's
+ *  `/context` frame list carried no `stream_event`, but it opened its session WITHOUT
+ *  `includePartialMessages`, under which the SDK emits no partials for ANY message, so the absence was a
+ *  property of the probe's options and said nothing about `/context` (review F4).
+ *
+ *  IT IS NO LONGER UNOBSERVED. The final review ran exactly the configuration that settles it, keyed: a
+ *  thread opened WITH `includePartialMessages: true` running a `/context` turn. The CLI-synthesized
+ *  assistant frame carrying `context_usage` produced NO `stream_event` partials (its id reached
+ *  `onAssistant` with previously-streamed false), and the real frames fed through this mapper produced two
+ *  events, both carrying `contextUsage`. So the dedup path cannot drop the twin on this CLI, and the
+ *  reconcile path stays unbuilt on a measurement rather than on a park. It remains a bound, not a
+ *  guarantee: it is one CLI build's behaviour, and a future `/context` that streams would put the twin on
+ *  a frame with no events again. `onAssistant`'s early return carries the other half of this note. */
 function stampContextUsage(events: ItemEvent[], frame: { context_usage?: unknown }): ItemEvent[] {
   const usage = frame?.context_usage;
   if (usage === undefined || usage === null) return events;

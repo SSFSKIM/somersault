@@ -34,9 +34,47 @@ import {
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { threadListParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./schema/threads.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
-import { storeRefusal } from "./archiveDomain.js";
+import { SessionStoreError, storeRefusal } from "./archiveDomain.js";
+import { auditSessionStore } from "../sessions/index.js";
 
 const DEFAULT_LIST_LIMIT = 200; // same default as the pre-Task-12 registry-only thread/list (server.ts)
+
+/** Every SESSION-store read is tagged HERE, at its own call, and the `try` wraps that one call and
+ *  nothing else. Widening it would relabel one subsystem's failure as another's — the defect Task 10
+ *  already had to fix once, where a session-store throw was answered as the marker store's fault. The tag
+ *  is `archiveDomain.ts`'s, not a second spelling of it: every route into this store must describe its
+ *  failures identically, which is exactly what they did not do (an `EACCES` that `thread/archive`
+ *  stripped to `<path>` and `thread/search` shipped verbatim, D-M5-25a).
+ *
+ *  Lives HERE rather than in search.ts because `thread/list` reads the same store through the same
+ *  swallowing reader, and two spellings of one tag is how the two surfaces came to disagree in the first
+ *  place. */
+export const storeRead = async <T>(read: () => Promise<T>): Promise<T> => {
+  try { return await read(); } catch (e) { throw new SessionStoreError(e); }
+};
+
+/** The store's READABILITY, established rather than inferred (D-M5-25a) — run before the read whose
+ *  emptiness it qualifies, because it is disk work like every other read on the request.
+ *
+ *  Only on the PRODUCTION origin. An injected reader is a different store, and its failures are the
+ *  injector's to raise; auditing the local filesystem behind one would judge a store the request never
+ *  touched. That gate is also the finding restated: this contract was pinned for fifteen reviews against
+ *  doubles that throw, on a reader that never does, so the origin the doubles stand in for is precisely
+ *  the one that had to start checking itself.
+ *
+ *  PER READER, and per handler, which the first version was not: it returned when ANY one of the three
+ *  was injected while the other two still read the real filesystem, so a PARTIAL injection skipped the
+ *  audit and then swallowed the very errno it exists to raise (constructed: `listSessions` injected, a
+ *  real transcript at mode 000, a page returned and no refusal). The store the audit walks is the local
+ *  filesystem, so what the gate has to ask is whether this request reads THAT store — which is a question
+ *  about each reader the handler calls, not about the deps bag as a whole. The audit itself stays
+ *  whole-store: it cannot be narrowed to the readers named here, and one real reader is enough reason to
+ *  establish the store is readable. */
+type StoreReader = "listSessions" | "getSessionMessages" | "getSessionInfo";
+export const auditIfReal = async (srv: AppServer, readers: readonly StoreReader[]): Promise<void> => {
+  if (readers.every((r) => srv.deps[r] !== undefined)) return;
+  await storeRead(() => auditSessionStore());
+};
 
 type Resolved = { ok: true; sessionId: string } | { ok: false; code: number; message: string };
 
@@ -166,7 +204,20 @@ export const threadList: Handler = async (srv, ctx, id, params) => {
   const parsed = threadListParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const listFn = srv.deps.listSessions ?? realListSessions;
-  const storeRows = (await listFn({ cwd: parsed.data.cwd })) as SDKSessionInfo[];
+  // The SESSION store's readability, established before the listing that would otherwise report its
+  // failure as absence (D-M5-25a rev 2). `thread/search` audited from the day the finding landed and this
+  // method did not, which left the two answering opposite things about one broken store at one instant:
+  // the search box refused `-32603` while the thread picker served `{"data":[],"nextCursor":null}` — and
+  // of the two, a picker showing no threads is the more likely to be believed. The reason it was deferred
+  // was that a failure here fell through to `dispatch`'s generic catch, which replies `e.message` for
+  // EVERY handler and would have put node's absolute path on the wire; that is what this `try` removes.
+  // It wraps the two SESSION-store steps ALONE — the marker read below has its own, for the reason stated
+  // there — and answers through the same `storeRefusal` the archive routes and the search do.
+  let storeRows: SDKSessionInfo[];
+  try {
+    await auditIfReal(srv, ["listSessions"]);
+    storeRows = (await storeRead(() => listFn({ cwd: parsed.data.cwd }))) as SDKSessionInfo[];
+  } catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
   const bySessionId = new Map(storeRows.map((r) => [r.sessionId, r]));
   const seen = new Set<string>();
   const liveViews = srv.registry.list().map((r) => {

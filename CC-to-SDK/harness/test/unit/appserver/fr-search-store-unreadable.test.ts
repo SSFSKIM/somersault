@@ -64,9 +64,10 @@ afterEach(async () => {
 });
 
 /** A server on PRODUCTION session-store defaults: no `listSessions`, no `getSessionMessages`, no
- *  `getSessionInfo`. */
-function boot(): (method: string, params: unknown) => Promise<any> {
-  const srv = new AppServer({} as never, { ccxDir: join(root, "ccx") });
+ *  `getSessionInfo`. `over` is for the PARTIAL-injection rows only — a server that is production for some
+ *  readers and a double for others, which is the shape the audit's gate used to skip entirely. */
+function boot(over: Record<string, unknown> = {}): (method: string, params: unknown) => Promise<any> {
+  const srv = new AppServer({} as never, { ccxDir: join(root, "ccx"), ...over } as never);
   servers.push(srv);
   const lines: string[] = [];
   const conn = srv.connect({ write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink);
@@ -156,6 +157,58 @@ describe("thread/search on the PRODUCTION session store — an unreadable store 
     plant(A, "needle alpha");
     const miss = await send("thread/search", { searchTerm: "haystack" });
     expect([miss.error, miss.result]).toEqual([undefined, { data: [], nextCursor: null }]);
+  });
+
+  it("thread/list refuses the SAME unreadable store its sibling refuses — one instant, one answer, and no absolute path", async () => {
+    // The self-contradiction this closes was constructible: at one instant, over one broken store, the
+    // search box refused `-32603` while the thread picker answered `{"data":[],"nextCursor":null}` — and a
+    // picker showing no threads is the more likely of the two to be believed. `thread/list` reads the same
+    // swallowing `listSessions`, so absence and unreadability collapsed there exactly as D-M5-8 forbids.
+    chmodSync(join(cfg, "projects"), 0o000);
+    const send = boot();
+    const listed = await send("thread/list", {});
+    expect(listed.result).toBeUndefined();
+    expect([listed.error.code, listed.error.message.startsWith("session store read failed: EACCES")]).toEqual([-32603, true]);
+    // The half that had to be built before the audit could live there: the failure now has a refusal of
+    // its own, so it never reaches `dispatch`'s generic catch, which replies `e.message` for every handler
+    // — and node composes an fs errno with the operator's absolute home path.
+    expect([listed.error.message.includes(root), listed.error.message.includes("/")]).toEqual([false, false]);
+    expect(listed.error.message).toContain("<path>");
+    // …and the two methods agree, which is the property rather than the coincidence.
+    const searched = await send("thread/search", { searchTerm: "needle" });
+    expect(searched.error.code).toBe(listed.error.code);
+    chmodSync(join(cfg, "projects"), 0o700);
+    // Readable again: the picker answers again, and an absent store is still an honest empty rather than
+    // a refusal (the ENOENT rule, asked of this method too).
+    expect((await send("thread/list", {})).error).toBeUndefined();
+    rmSync(join(cfg, "projects"), { recursive: true });
+    const absent = await send("thread/list", {});
+    expect([absent.error, absent.result]).toEqual([undefined, { data: [], nextCursor: null }]);
+  });
+
+  it("a PARTIAL injection still audits — one real reader is enough, from either side", async () => {
+    // The gate was all-or-nothing: it returned when ANY one of the three readers was injected, while the
+    // other two still read this filesystem. So a server that doubled the listing and read real transcripts
+    // (or the reverse) skipped the audit and then swallowed the very errno it exists to raise — measured
+    // before the fix: a page came back, with no refusal, over a transcript at mode 000.
+    //   Two rows in one, because the gate has two sides and a fix that consulted only the reader it
+    // happened to think of would leave the other open. Neither double is enough on its own to make this
+    // request stop touching the real store.
+    chmodSync(join(projDir, `${A}.jsonl`), 0o000);
+    const info = { sessionId: A, cwd: work, lastModified: 5_000, createdAt: 1_000, summary: "planted" };
+    const listOnly = boot({ listSessions: async () => [info] });                       // real transcripts
+    const rList = await listOnly("thread/search", { searchTerm: "needle" });
+    expect(rList.result).toBeUndefined();
+    expect(rList.error.code).toBe(-32603);
+    const msgsOnly = boot({ getSessionMessages: async () => [] });                     // real listing
+    const rMsgs = await msgsOnly("thread/search", { searchTerm: "needle" });
+    expect(rMsgs.result).toBeUndefined();
+    expect(rMsgs.error.code).toBe(-32603);
+    // …and the control that keeps the gate a gate: with EVERY reader this handler uses injected, the store
+    // under test is the double's and this filesystem is not consulted, broken transcript and all.
+    const doubled = boot({ listSessions: async () => [], getSessionMessages: async () => [] });
+    const rDouble = await doubled("thread/search", { searchTerm: "needle" });
+    expect([rDouble.error, rDouble.result]).toEqual([undefined, { data: [], nextCursor: null }]);
   });
 
   it("no refusal puts an absolute path on the wire — the strip the archive routes already had", async () => {

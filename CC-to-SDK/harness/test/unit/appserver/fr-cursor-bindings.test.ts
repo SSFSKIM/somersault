@@ -178,7 +178,10 @@ describe("D-M5-26 — a cursor is bound to the GENERATION it addresses", () => {
     const p1 = await search({ searchTerm: "needle" });
     expect(p1.result.data).toEqual([]);                                        // bounded progress (D-M5-16)
     const cursor = p1.result.nextCursor as string;
-    expect(decodeSearchCursor(cursor)).toMatchObject({ s: "s-big", r: SEARCH_CAPS.maxRowsPerPage, g: "L0" });
+    // The live stamp is the RECORD plus its epoch, not the epoch alone: an epoch is a per-record counter
+    // that restarts at 0 when a closed thread is re-admitted, so `L0` alone made a stale cursor compare
+    // equal to a brand-new record (the close-and-reopen row below).
+    expect(decodeSearchCursor(cursor)).toMatchObject({ s: "s-big", r: SEARCH_CAPS.maxRowsPerPage, g: `L${record.id}:0` });
 
     // Control: nothing moved, so the walk continues into the rows page 1 did not reach.
     const same = await search({ searchTerm: "needle", cursor });
@@ -193,6 +196,68 @@ describe("D-M5-26 — a cursor is bound to the GENERATION it addresses", () => {
     expect(stale.result).toBeUndefined();
     // …and the fresh walk finds what the stale cursor claimed did not exist, which is the whole complaint.
     expect((await search({ searchTerm: "needle" })).result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-big"]);
+  });
+
+  it("thread/search: a cursor minted before a thread/close is refused after the same session is re-admitted", async () => {
+    // D-M5-26e. `epoch` alone was never a generation: it is a per-record counter starting at 0, bumped in
+    // place, and `thread/close` DELETES the record — so re-admitting the same session minted a fresh record
+    // back at 0 and the stale cursor compared EQUAL to it. Three ordinary wire calls (search → close →
+    // start), which is a normal thing to do between two pages, and the reply was the terminal
+    // `{"data":[],"nextCursor":null}` D-M5-8 forbids while the same instant's fresh walk returned the hit.
+    // The stamp now names the record as well as its epoch, so the two records cannot collide.
+    const rows = (n: number, tag: string) => [...Array(n)].map((_, i) => assistant(i === n - 2 ? `here is the ${tag} needle` : `filler ${i}`));
+    const st = store([sess("s-reopen", { createdAt: 1_000 }, rows(4_200, "first"))]);
+    const srv = boot({ ...st.deps, sessionFactory: () => engine("s-reopen") });
+    const first = await send("thread/start", {});
+    const firstId = first.result.thread.id;
+    expect(srv.registry.get(firstId)!.epoch).toBe(0);
+    const cursor = (await search({ searchTerm: "needle" })).result.nextCursor as string;
+    expect(decodeSearchCursor(cursor)).toMatchObject({ s: "s-reopen", r: SEARCH_CAPS.maxRowsPerPage, g: `L${firstId}:0` });
+
+    await send("thread/close", { threadId: firstId });
+    expect(srv.registry.get(firstId)).toBeUndefined();          // the record is GONE, counter and all
+    const second = await send("thread/start", {});
+    const secondId = second.result.thread.id;
+    expect(srv.registry.get(secondId)!.epoch).toBe(0);          // …and the replacement starts at 0 again
+    expect(secondId).not.toBe(firstId);
+
+    const stale = await search({ searchTerm: "needle", cursor });
+    expect(stale.error?.code).toBe(-32602);
+    expect(stale.error?.message).toBe(REWOUND);
+    expect(stale.result).toBeUndefined();
+    // Control, and the half that keeps this from being "refuse everything": a cursor minted AFTER the
+    // reopen resumes the walk against the record that is actually there.
+    const fresh = (await search({ searchTerm: "needle" })).result.nextCursor as string;
+    const p2 = await search({ searchTerm: "needle", cursor: fresh });
+    expect(p2.error).toBeUndefined();
+    expect(p2.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-reopen"]);
+  });
+
+  it("thread/searchOccurrences: the same close-and-reopen refuses there too — one row per side", async () => {
+    // The sibling half of D-M5-26e. Both methods stamp through `generationOf`, and both mint a cursor a
+    // client holds across other calls; a fix pinned on one of them would leave the other free to regress.
+    // Sharper here than on the sibling, because this cursor carries a CHARACTER offset as well as a row:
+    // honoured against a new generation the two pages together reported three occurrences for a transcript
+    // holding two.
+    const st = store([sess("o-reopen", { createdAt: 1_000 }, [assistant("needle needle needle")])]);
+    const srv = boot({ ...st.deps, sessionFactory: () => engine("o-reopen") });
+    const firstId = (await send("thread/start", {})).result.thread.id;
+    const p1 = await occ({ threadId: firstId, searchTerm: "needle", limit: 1 });
+    const cursor = p1.result.nextCursor as string;
+    expect(decodeOccCursor(cursor)).toMatchObject({ s: "o-reopen", r: 0, c: 1, g: `L${firstId}:0` });
+
+    await send("thread/close", { threadId: firstId });
+    const secondId = (await send("thread/start", {})).result.thread.id;
+    expect(srv.registry.get(secondId)!.epoch).toBe(0);
+    // Addressed by STORE id — the `thr_…` id died with the record, and the cursor's subject is the session.
+    const stale = await occ({ threadId: "o-reopen", searchTerm: "needle", cursor });
+    expect(stale.error?.code).toBe(-32602);
+    expect(stale.error?.message).toBe(REWOUND);
+    // Control: a cursor minted against the record now holding the session pages normally.
+    const p1b = await occ({ threadId: "o-reopen", searchTerm: "needle", limit: 1 });
+    const p2b = await occ({ threadId: "o-reopen", searchTerm: "needle", cursor: p1b.result.nextCursor });
+    expect(p2b.error).toBeUndefined();
+    expect(p2b.result.data.map((o: any) => o.snippetMatchRange.start)).toEqual([7, 14]);
   });
 
   it("thread/search: the keyset's DELETED-session tolerance survives the generation check", async () => {

@@ -61,11 +61,19 @@ const finiteOrNull = (x: unknown): x is number | null => x === null || (typeof x
  *  entitles it to). It answers ONE question: is the walk this cursor was minted for the walk being
  *  resumed. The NUL join is what stops `("ab","c")` and `("a","bc")` from fingerprinting alike, and
  *  `undefined`/`null` are distinguished from `""` because "no `cwd`" and "`cwd` is empty" are different
- *  requests. */
+ *  requests.
+ *
+ *  The two sentinels carry a U+0001 PREFIX, and it is load-bearing rather than decorative: without it a
+ *  `cwd` of `"u"` fingerprints exactly like `cwd: undefined`, which is two different walks sharing one
+ *  binding. U+0001 cannot appear in a cwd, a sort key or a direction, and a `searchTerm` holding one is
+ *  still separated from it by the NUL join. Written as an ESCAPE deliberately: these were literal raw
+ *  control bytes in the source, invisible in every editor and every diff, so the line READ as `"u"`/`"n"`
+ *  while meaning something else — and any tool that normalised control characters would have silently
+ *  deleted the injectivity this paragraph exists to protect. */
 export function fingerprint(parts: readonly (string | number | boolean | null | undefined)[]): string {
   let h = 0x811c9dc5;
   for (const raw of parts) {
-    const part = raw === undefined ? "u" : raw === null ? "n" : String(raw);
+    const part = raw === undefined ? "\u0001u" : raw === null ? "\u0001n" : String(raw);
     for (let i = 0; i < part.length; i++) { h ^= part.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     h ^= 0; h = Math.imul(h, 0x01000193) >>> 0; // the NUL separator, folded in without allocating a joined string
   }

@@ -97,10 +97,28 @@ const knows = async (srv: AppServer, sessionId: string): Promise<boolean> => {
  *  Over-broad in the other direction on purpose: an ambiguous bare `/` becomes `<path>` too. Over-stripping
  *  costs a token of diagnosis; under-stripping costs the operator's home directory.
  *
- *  EXPORTED for `search.ts`'s outer catch (D-M5-25), which answers messages this repo did not compose on
- *  two more routes. One strip, so the branch nobody thought of is covered by the same regex as the one
- *  they did. */
-export const stripPaths = (m: string): string => m.replace(/(?<![\w~])(?:[A-Za-z]:)?[\\/][^\s'"`]*/g, "<path>");
+ *  TWO passes, because a path may contain a SPACE and one pass cannot both stop at a space and not stop at
+ *  one. Under a single `[^\s'"`]*` the strip ended at the first space and the rest of the path went out
+ *  verbatim: `'/Users/opname/My Projects/deal-with-acme/x.jsonl'` became `'<path> Projects/deal-with-acme/
+ *  x.jsonl'`, which protects the username and discloses the project — and on this store a directory NAME
+ *  is itself a path (the SDK's project directories are the operator's cwd with every non-alphanumeric
+ *  folded to `-`), so a leaked trailing segment is a leaked absolute path spelled differently. Reachable
+ *  whenever the home directory or `CLAUDE_CONFIG_DIR` contains a space.
+ *   1. QUOTED: node composes every fs errno as `… open '<absolute path>'`, and inside quotes the path's
+ *      end is unambiguous, so the whole of it goes however many spaces it holds.
+ *   2. UNQUOTED: a space is taken only when a `[\\/]` follows before the next whitespace — i.e. when what
+ *      comes after it is still path. That is what keeps `read /a/b or /c/d` from eating the `or`, while
+ *      `scandir /Users/John Smith/.claude` is consumed whole.
+ *  The residual either pass leaves is an unquoted path whose LAST segment contains a space and is followed
+ *  by no further separator; node produces no such message, and the safe direction there is under-strip
+ *  rather than swallowing the sentence around it.
+ *
+ *  EXPORTED for `search.ts`'s outer catch and `thread/list`'s (D-M5-25), which answer messages this repo
+ *  did not compose on three more routes. One strip, so the branch nobody thought of is covered by the same
+ *  regex as the one they did. */
+export const stripPaths = (m: string): string => m
+  .replace(/(['"`])(?:[A-Za-z]:)?[\\/][^'"`\n]*\1/g, "$1<path>$1")
+  .replace(/(?<![\w~])(?:[A-Za-z]:)?[\\/](?:[^\s'"`]|[ \t](?=[^\s'"`]*[\\/]))*/g, "<path>");
 
 /** The stores throw protocol-free; the code is assigned HERE. Three kinds, and they are not the same fault:
  *

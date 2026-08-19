@@ -213,9 +213,14 @@ describe("thread/search", () => {
 
   it("a store read failure is an ERROR, term bounds refuse at both ends, and an over-cap limit clamps with a warning on the wire", async () => {
     // (a) D-M5-8: a failing list is -32603, never an honest-looking empty page.
-    boot({ listSessions: async () => { throw new Error("store is on fire"); } });
+    //   BOTH readers are injected, and `getSessionMessages` is not decoration: the store audit's gate is
+    // per reader (D-M5-25a rev 2), so a boot that injected only `listSessions` would send this request to
+    // the REAL filesystem store for its transcript half, and the audit's own errno — not this double's
+    // throw — would be what produced the -32603. The row would stay green while testing nothing it names.
+    boot({ listSessions: async () => { throw new Error("store is on fire"); }, getSessionMessages: async () => [] });
     const fail = await search({ searchTerm: "needle" });
     expect(fail.error.code).toBe(-32603);
+    expect(fail.error.message).toContain("store is on fire");   // THIS double's failure, not the audit's
     expect(fail.result).toBeUndefined();
     // …and the same rule one door in: a transcript read that fails mid-scan must not reply with the hits
     // collected so far, which would be a page that claims to have searched what it could not read.
@@ -878,7 +883,7 @@ describe("thread/searchOccurrences", () => {
   it("a live continuation cursor is refused once a rewind bumps the epoch — the pager's own message, verbatim", async () => {
     const { threadId, record } = await bootLive([sess("live-session", { createdAt: 1_000 }, [assistant("needle needle needle", "u-a")])], "live-session");
     const p1 = await occ({ threadId, searchTerm: "needle", limit: 1 });
-    expect(decodeOccCursor(p1.result.nextCursor)).toMatchObject({ s: "live-session", r: 0, c: 1, g: "L0" });
+    expect(decodeOccCursor(p1.result.nextCursor)).toMatchObject({ s: "live-session", r: 0, c: 1, g: `L${record.id}:0` });
     record.epoch += 1; // a rewind, simulated: the rows this cursor named are no longer the rows at those offsets
     const stale = await occ({ threadId, searchTerm: "needle", cursor: p1.result.nextCursor });
     expect(stale.error?.code).toBe(-32602);
@@ -893,7 +898,7 @@ describe("thread/searchOccurrences", () => {
     // thread is no longer live, so there is no live generation to compare the cursor's `g` against.
     const gone = await bootLive([sess("live-session", { createdAt: 1_000 }, [assistant("needle needle", "u-a")])], "live-session");
     const p1 = await occ({ threadId: gone.threadId, searchTerm: "needle", limit: 1 });
-    expect(decodeOccCursor(p1.result.nextCursor)!.g).toBe("L0");
+    expect(decodeOccCursor(p1.result.nextCursor)!.g).toBe(`L${gone.record.id}:0`);
     await send("thread/close", { threadId: gone.threadId });
     // Addressed by STORE id — the `thr_…` id died with the record, and the cursor's subject is the session.
     const orphan = await occ({ threadId: "live-session", searchTerm: "needle", cursor: p1.result.nextCursor });
@@ -1094,7 +1099,7 @@ describe("thread/searchOccurrences", () => {
     // with no cursor at all reaches here.
     const rows = [...Array(SEARCH_CAPS.windowRows + 2)].map((_, i) => assistant(i === 0 || i === SEARCH_CAPS.windowRows ? "a needle row" : `filler ${i}`, `u-${i}`));
     const st = store([sess("live-session", { createdAt: 1_000 }, rows)]);
-    let record: { epoch: number } | undefined;
+    let record: { id: string; epoch: number } | undefined;
     let bumpAt: number | undefined;
     const srv = boot({
       ...st.deps,
@@ -1110,8 +1115,10 @@ describe("thread/searchOccurrences", () => {
     // cursor's `g` two spellings of one number rather than two chances to read a mutable field.
     const clean = await occ({ threadId, searchTerm: "needle", limit: 1 });
     expect(clean.result.data[0].readCursor).toBe("0:1");
-    expect(decodeOccCursor(clean.result.nextCursor)!.g).toBe("L0");
-    expect(`L${clean.result.data[0].readCursor.split(":")[0]}`).toBe(decodeOccCursor(clean.result.nextCursor)!.g);
+    expect(decodeOccCursor(clean.result.nextCursor)!.g).toBe(`L${record.id}:0`);
+    // The two cursor families are still two spellings of ONE epoch read: `readCursor`'s leading number and
+    // the trailing number of the continuation cursor's `g` (which now also names the record, D-M5-26e).
+    expect(clean.result.data[0].readCursor.split(":")[0]).toBe(decodeOccCursor(clean.result.nextCursor)!.g.split(":").pop());
 
     bumpAt = SEARCH_CAPS.windowRows; // the SECOND window: the page has already gathered a generation-1 row
     const r = await occ({ threadId, searchTerm: "needle", limit: 5 });

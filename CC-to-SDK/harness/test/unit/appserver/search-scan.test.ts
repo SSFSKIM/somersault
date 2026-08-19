@@ -549,6 +549,22 @@ describe("searchScan — snippet windows", () => {
     expect(ok.snippet.slice(ok.snippetMatchRange.start, ok.snippetMatchRange.end)).toBe("NEEDLE");
   });
 
+  it("fingerprint: the absent/null sentinels cannot be spelled by a real part — the prefix is the mechanism", () => {
+    // The sentinels are `u` and `n`, and the U+0001 is what stops a literal `cwd` of `"u"`
+    // from binding a walk identically to "no cwd at all" — two different enumerations under one `q`, which
+    // is exactly what the binding exists to tell apart. They were raw control bytes in the source until
+    // this row existed: invisible in every editor and diff, so the line read as `"u"`/`"n"` and a tool
+    // that normalised control characters would have removed the property with nothing going red.
+    expect(fingerprint(["t", undefined])).not.toBe(fingerprint(["t", "u"]));
+    expect(fingerprint(["t", null])).not.toBe(fingerprint(["t", "n"]));
+    expect(fingerprint(["t", undefined])).not.toBe(fingerprint(["t", null]));
+    expect(fingerprint(["t", ""])).not.toBe(fingerprint(["t", undefined]));   // "no cwd" vs "cwd is empty"
+    // The NUL join, the other half of the same injectivity, and the reason neither is enough alone.
+    expect(fingerprint(["ab", "c"])).not.toBe(fingerprint(["a", "bc"]));
+    // …and equal inputs still agree, or the binding refuses every legitimate resume.
+    expect(fingerprint(["t", "asc", true, undefined])).toBe(fingerprint(["t", "asc", true, undefined]));
+  });
+
   it("SEARCH_CAPS carries D-M5-17's numbers exactly", () => {
     expect(SEARCH_CAPS).toEqual({
       maxFilesPerPage: 40, maxRowsPerPage: 4000, maxRowUnits: 1_048_576, maxLimit: 50,

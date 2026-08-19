@@ -885,6 +885,29 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
     expect(e?.message).toBe("session store read failed: thread/archive: cannot read <path> (state dir ~/.claude/ccx)");
   });
 
+  it("a path containing a SPACE is stripped whole, quoted or not — and the words after it are not eaten", async () => {
+    // The strip used to end at the first space, so the username was protected and everything past it went
+    // out: `'/Users/opname/My Projects/deal-with-acme/x.jsonl'` → `'<path> Projects/deal-with-acme/
+    // x.jsonl'`. Not cosmetic on this store — a project DIRECTORY name is the operator's cwd with every
+    // non-alphanumeric folded to `-`, so a leaked trailing segment is a leaked absolute path respelled.
+    // Reachable whenever the home directory or `CLAUDE_CONFIG_DIR` holds a space.
+    //   Both sides, because the two are stripped by different passes and a fix for either alone leaves the
+    // other leaking: QUOTED is node's own errno shape, UNQUOTED is any message composed around a path.
+    // The third assertion is the bound that keeps the quiet direction from becoming the greedy one.
+    const ccxDir = mkTmp("m5ccx-");
+    const quoted = "EACCES: permission denied, access '/Users/opname/My Projects/deal-with-acme/x.jsonl'";
+    const bare = "scandir /Users/John Smith/.claude/projects failed, retry later";
+    const both = "could not read /a b/c or /d e/f now";
+    const messages = [quoted, bare, both];
+    boot({ ccxDir, getSessionInfo: async () => { throw new Error(messages.shift()!); } });
+    const one = (await send("thread/archive", { threadId: "s-1" })).error?.message;
+    expect(one).toBe("session store read failed: EACCES: permission denied, access '<path>'");
+    const two = (await send("thread/archive", { threadId: "s-1" })).error?.message;
+    expect(two).toBe("session store read failed: scandir <path> failed, retry later");
+    const three = (await send("thread/archive", { threadId: "s-1" })).error?.message;
+    expect(three).toBe("session store read failed: could not read <path> or <path> now");
+  });
+
   it("the AUTO-UNARCHIVE route strips paths too — the second half of a protection whose first half was pinned", async () => {
     // Claimed by the task report AND by the scorecard row, defended by nothing: mutating this call site to
     // interpolate node's own errno message left the whole file green. It is the half that rots first,
@@ -1222,7 +1245,11 @@ describe("thread/list {archived} — the archived partition (Task 10)", () => {
     const ccxDir = mkTmp("m5ccx-");
     boot({ ccxDir, listSessions: async () => { throw new Error("session store exploded"); } });
     const e = (await send("thread/list", {})).error;
-    expect([e?.code, e?.message]).toEqual([-32603, "session store exploded"]);
+    // The sentence is the SESSION store's own, composed by the same `storeRefusal` the archive routes and
+    // `thread/search` answer with (D-M5-25a rev 2). It used to be node's raw `e.message`, reaching the
+    // wire through `dispatch`'s generic catch — which is why the audit could not live here until the
+    // failure had a refusal of its own; an fs errno there would have shipped the operator's home path.
+    expect([e?.code, e?.message]).toEqual([-32603, "session store read failed: session store exploded"]);
     expect(e?.message).not.toContain("marker store");
   });
 });
