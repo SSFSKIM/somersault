@@ -107,24 +107,68 @@ describe("searchScan — ordering under adversarial and equal keys", () => {
     expect(sortValueOf({ lastModified: 5 }, "created_at")).toBeNull();
   });
 
-  it("HAZARD PIN: a non-finite sort value corrupts the order of every OTHER row (Task 7 must filter)", () => {
-    // Not a guarantee we want — a record of one we do not have. `sortValueOf` passes `createdAt`/
-    // `lastModified` straight through from SDK `listSessions` metadata, and the SDK's own normalizer is a
-    // bare `typeof === "number"` (which NaN satisfies) while its sibling string-date normalizer explicitly
-    // rejects NaN. A NaN `v` makes `a.v - b.v` NaN, .sort() treats that as "no opinion", and the sorted
-    // rows below come out unsorted AND input-order-dependent. The null control on the next lines proves
-    // this is specific to non-finite numbers, not to "no value". If a later task guards this in
-    // compareTuple, this row goes red on purpose — update it then.
+  it("a non-finite sort value is screened to null: it sorts last and leaves every OTHER row's order alone", () => {
+    // Was a HAZARD PIN recording the opposite — the guarantee we now have. `sortValueOf` screens with
+    // `Number.isFinite`, so NaN/±Infinity become "no value" instead of poisoning `a.v - b.v` (which .sort()
+    // reads as "no opinion", leaving unrelated well-formed rows in whatever order they arrived). Reachable
+    // live: `lastModified` is a bring-your-own SessionStore's `mtime` passed straight through, and the
+    // adapter conformance gate's `typeof mtime === "number"` is satisfied by NaN.
+    expect(sortValueOf({ createdAt: NaN, lastModified: 0 }, "created_at")).toBeNull();
+    expect(sortValueOf({ createdAt: Infinity, lastModified: 0 }, "created_at")).toBeNull();
+    expect(sortValueOf({ lastModified: NaN }, "updated_at")).toBeNull();  // this path never had even a `??`
+    expect(sortValueOf({ lastModified: JSON.parse('{"v":1e999}').v }, "recency_at")).toBeNull(); // plain JSON mints Infinity
+    expect(sortValueOf({ createdAt: 0, lastModified: 5 }, "created_at")).toBe(0); // the screen subsumes `??`, keeping 0
+    // The comparator is now total by construction: finite minus finite is never NaN.
+    expect(compareTuple({ v: sortValueOf({ createdAt: NaN, lastModified: 0 }, "created_at"), s: "a" }, { v: 1, s: "b" }, "asc")).toBe(1);
     const rows = [{ sessionId: "e", createdAt: 500 }, { sessionId: "n", createdAt: NaN }, { sessionId: "a", createdAt: 100 }, { sessionId: "z", createdAt: 900 }];
-    expect(Number.isNaN(compareTuple({ v: NaN, s: "a" }, { v: 1, s: "b" }, "asc"))).toBe(true);
     const fwd = sortForSearch(rows, "asc", vo).map((r) => r.sessionId);
-    const rev = sortForSearch([...rows].reverse(), "asc", vo).map((r) => r.sessionId);
-    expect(fwd).not.toEqual(rev); // input-order-dependent: the defect, pinned
-    expect(fwd.filter((s) => s !== "n")).not.toEqual(["a", "e", "z"]); // and the finite rows lost their order
-    // Same shape with a MISSING createdAt instead of a NaN one: fully deterministic and correctly sorted.
+    expect(fwd).toEqual(["a", "e", "z", "n"]);                       // poisoned row last, the other three intact
+    expect(sortForSearch([...rows].reverse(), "asc", vo).map((r) => r.sessionId)).toEqual(fwd); // input-order-independent
+    // …and it lands exactly where a MISSING createdAt lands — which is what the minted cursor already claims.
     const ok = [{ sessionId: "e", createdAt: 500 }, { sessionId: "n" }, { sessionId: "a", createdAt: 100 }, { sessionId: "z", createdAt: 900 }];
-    expect(sortForSearch(ok, "asc", vo).map((r) => r.sessionId)).toEqual(["a", "e", "z", "n"]);
-    expect(sortForSearch([...ok].reverse(), "asc", vo).map((r) => r.sessionId)).toEqual(["a", "e", "z", "n"]);
+    expect(sortForSearch(ok, "asc", vo).map((r) => r.sessionId)).toEqual(fwd);
+  });
+
+  it("a paged keyset walk skips and repeats nothing with one poisoned row present (shuffled input)", () => {
+    // The search cursor is a keyset over exactly this order — page N+1 is "everything strictly after this
+    // tuple" — so an unordered sort is not cosmetic: rows the comparator has no opinion about drop out of
+    // the walk or come back twice. The shuffle is load-bearing, and measured rather than assumed: with the
+    // screen reverted, 40 of these 100 shuffled trials lose a WELL-FORMED session (23 skipped, 17
+    // repeated), while the same fixture pre-sorted loses 0 of 100 — V8 short-circuits an already-sorted
+    // run, so the comparator never runs on it (at N=1000: 0 of 999 rows misplaced pre-sorted, ~972
+    // shuffled). A pre-sorted fixture would therefore prove nothing about the well-formed rows.
+    let seed = 0x2f6e2b1;
+    const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const set = [...Array.from({ length: 13 }, (_, i) => ({ sessionId: `s${String(i).padStart(2, "0")}`, createdAt: (i + 1) * 10 })), { sessionId: "sNaN", createdAt: NaN }];
+    const walk = (rows: { sessionId: string; createdAt?: number }[], limit: number): string[] => {
+      const seen: string[] = []; let cursor: string | null = null;
+      for (let guard = 0; guard <= rows.length + 2; guard++) {
+        const after = cursor === null ? null : decodeSearchCursor(cursor);
+        const sorted = sortForSearch(rows, "asc", vo);
+        const rest = after === null ? sorted : sorted.filter((r) => compareTuple({ v: vo(r), s: r.sessionId }, { v: after.v, s: after.s }, "asc") > 0);
+        const page = rest.slice(0, limit);
+        if (page.length === 0) break;
+        for (const r of page) seen.push(r.sessionId);
+        const last = page[page.length - 1]!;
+        cursor = encodeSearchCursor({ v: vo(last), s: last.sessionId, r: 0 }); // round-tripped, so the codec is in the loop
+      }
+      return seen;
+    };
+    const anomalies: string[] = [];
+    for (let trial = 0; trial < 100; trial++) {
+      const rows = [...set];
+      for (let i = rows.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [rows[i], rows[j]] = [rows[j]!, rows[i]!]; }
+      const seen = walk(rows, 3);
+      const repeated = seen.filter((s, i) => seen.indexOf(s) !== i);
+      const skipped = rows.map((r) => r.sessionId).filter((s) => !seen.includes(s));
+      // Split out the poisoned row itself: losing IT is the trivial half and shows up even pre-sorted, so
+      // the causal signal is what happens to the other thirteen. Both are asserted; only this one is causal.
+      const wellFormed = [...repeated, ...skipped].filter((s) => s !== "sNaN");
+      if (repeated.length) anomalies.push(`trial ${trial} repeated ${repeated.join(",")}`);
+      if (skipped.length) anomalies.push(`trial ${trial} skipped ${skipped.join(",")}`);
+      if (wellFormed.length) anomalies.push(`trial ${trial} lost well-formed ${wellFormed.join(",")}`);
+    }
+    expect(anomalies).toEqual([]);
   });
 });
 
@@ -163,16 +207,41 @@ describe("searchScan — cursor codecs against forged input", () => {
     }
   });
 
-  it("HAZARD PIN: a non-finite v does not survive the round-trip, and r is not range-checked", () => {
-    // Both are recorded gaps, not defended guards. JSON has no NaN/Infinity, so a non-finite sort value
-    // encodes as `null` — i.e. the cursor claims "sorts last" for a session that does not. And `r` is only
-    // checked to be a number: negative, fractional and absurd values decode fine, so whichever task feeds
-    // `r` to `getSessionMessages({offset})` owns clamping it.
+  it("an out-of-range offset is REFUSED at decode, and a non-finite v is now a truthful null", () => {
+    // Was a HAZARD PIN recording both as gaps. A cursor is server-minted and opaque, so an out-of-range
+    // offset means forged or corrupted — refusing beats clamping, which would resume a transcript at a row
+    // the cursor did not name (the intra-file skip/repeat D-M5-16 exists to kill). `r` and the occurrence
+    // cursor's `c` must be non-negative safe integers; ±Infinity/NaN arrive as JSON `null` and fail too.
+    for (const bad of [-1, -0.5, 2.5, NaN, Infinity, -Infinity, 2 ** 53, 1e308]) {
+      expect(decodeSearchCursor(forge({ v: 1, s: "a", r: bad }))).toBeNull();
+      expect(decodeOccCursor(forge({ s: "a", r: bad, c: 0, e: null }))).toBeNull();
+      expect(decodeOccCursor(forge({ s: "a", r: 0, c: bad, e: null }))).toBeNull();
+    }
+    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 0 }))).toEqual({ v: 1, s: "a", r: 0 }); // 0 is in range
+    expect(decodeOccCursor(forge({ s: "a", r: 0, c: 0, e: null }))).toEqual({ s: "a", r: 0, c: 0, e: null });
+    // The `v: null` round-trip is now a TRUE claim rather than a hazard: JSON has no NaN/Infinity so a
+    // non-finite `v` encodes as null, and `sortValueOf` screens non-finite values to null as well — so the
+    // cursor's "this session sorts last" is where `compareTuple` actually puts it.
     expect(decodeSearchCursor(encodeSearchCursor({ v: NaN, s: "a", r: 0 }))).toEqual({ v: null, s: "a", r: 0 });
     expect(decodeSearchCursor(encodeSearchCursor({ v: Infinity, s: "a", r: 0 }))).toEqual({ v: null, s: "a", r: 0 });
-    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: -1 }))?.r).toBe(-1);
-    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2.5 }))?.r).toBe(2.5);
-    expect(decodeOccCursor(forge({ s: "a", r: 0, c: -5, e: null }))?.c).toBe(-5);
+    expect(sortValueOf({ createdAt: NaN, lastModified: 0 }, "created_at")).toBeNull();
+  });
+
+  it("a cursor MISSING any required field decodes to null, in both codecs", () => {
+    // The shipped guards are correct, but nothing noticed them: every other codec row supplies a complete
+    // object, a foreign field, or a non-object payload. Relaxing `typeof p.r !== "number"` to also accept
+    // `undefined` survived the whole suite — and an `undefined` `r` reaching `getSessionMessages({offset})`
+    // restarts the file at row 0, returning every row of that transcript again on the next page.
+    for (const drop of ["v", "s", "r"] as const) {
+      const p: Record<string, unknown> = { v: 1, s: "a", r: 2 }; delete p[drop];
+      expect([drop, decodeSearchCursor(forge(p))]).toEqual([drop, null]);
+    }
+    for (const drop of ["s", "r", "c", "e"] as const) {
+      const p: Record<string, unknown> = { s: "a", r: 1, c: 2, e: 3 }; delete p[drop];
+      expect([drop, decodeOccCursor(forge(p))]).toEqual([drop, null]);
+    }
+    expect(decodeSearchCursor(forge({ v: 1, s: "a", r: 2 }))).toEqual({ v: 1, s: "a", r: 2 }); // the complete shapes still decode
+    expect(decodeOccCursor(forge({ s: "a", r: 1, c: 2, e: 3 }))).toEqual({ s: "a", r: 1, c: 2, e: 3 });
   });
 });
 
@@ -189,6 +258,17 @@ describe("searchScan — corpus boundary over malformed rows", () => {
     expect(rowSearchText({ type: "system", message: { content: "sys" } })).toBeNull();
     // …and a real prompt still IS in corpus, so the row above is a boundary, not a blanket null.
     expect(rowSearchText(user("please search me"))).toBe("please search me");
+  });
+
+  it("multiple assistant text blocks join on `\\n` — the separator the spec names, one unit wide", () => {
+    // No existing row had an assistant message with two text blocks, so `join("\n")` → `join("")` left the
+    // suite green. It is not cosmetic: Task 7 maps a match offset inside this joined string back through
+    // `makeSnippet`, so a zero-width separator shifts `snippetMatchRange` by one unit per preceding block.
+    const two = { type: "assistant", message: { content: [{ type: "text", text: "one" }, { type: "tool_use", name: "X", input: {} }, { type: "text", text: "two" }] } };
+    expect(rowSearchText(two)).toBe("one\ntwo");
+    const three = { type: "assistant", message: { content: [{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] } };
+    expect(rowSearchText(three)).toBe("a\nb\nc");
+    expect(rowSearchText(three)!.indexOf("c")).toBe(4); // the offset Task 7 will hand to makeSnippet
   });
 
   it("classification is repeatable — the shared species regexes must never carry lastIndex state", () => {
@@ -274,6 +354,28 @@ describe("searchScan — snippet windows", () => {
     expect(LONE.test(r.snippet)).toBe(true);
     expect(LONE.test("\u{1F600}ok\u{1F600}")).toBe(false); // the detector is not a rubber stamp
     expect(() => JSON.parse(JSON.stringify({ s: r.snippet }))).not.toThrow();
+  });
+
+  it("no caller can force a negative or inverted snippetMatchRange onto the wire", () => {
+    // `snippetMatchRange` is a public wire field named verbatim from Codex's protocol, so a negative or
+    // inverted range is a contract violation rather than an internal caller's private problem — the inputs
+    // are clamped rather than trusted. Unclamped, `start: -5` emitted `start: -5` and a negative `len`
+    // emitted `end < start`.
+    const text = "abcdefghij";
+    const bad: [number, number][] = [[-5, 2], [3, -4], [-1, -1], [999, 2], [8, 50], [NaN, 3], [3, NaN], [Infinity, 2], [2.7, 3.9]];
+    const violations: string[] = [];
+    for (const [start, len] of bad) {
+      const r = makeSnippet(text, start, len);
+      const { start: s, end: e } = r.snippetMatchRange;
+      if (!(Number.isSafeInteger(s) && Number.isSafeInteger(e) && s >= 0 && e >= s && e <= r.snippet.length)) violations.push(`${start},${len} → ${s}..${e} of ${r.snippet.length}`);
+    }
+    expect(violations).toEqual([]);
+    expect(makeSnippet(text, -5, 2).snippetMatchRange).toEqual({ start: 0, end: 2 });   // clamped to the text start
+    expect(makeSnippet(text, 3, -4).snippetMatchRange).toEqual({ start: 3, end: 3 });   // empty, never inverted
+    expect(makeSnippet(text, 8, 50).snippetMatchRange).toEqual({ start: 8, end: 10 });  // never past the text end
+    // …and every well-formed call is untouched by the clamp.
+    const ok = makeSnippet("x".repeat(500) + "NEEDLE" + "y".repeat(500), 500, 6);
+    expect(ok.snippet.slice(ok.snippetMatchRange.start, ok.snippetMatchRange.end)).toBe("NEEDLE");
   });
 
   it("SEARCH_CAPS carries D-M5-17's numbers exactly", () => {
