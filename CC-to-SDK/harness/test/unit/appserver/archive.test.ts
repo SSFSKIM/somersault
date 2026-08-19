@@ -467,6 +467,17 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
     await createArchiveMarker("sess-live", { ccxDir });
     expect((await send("thread/unarchive", { threadId })).result).toEqual({ ok: true });
     expect(existsSync(join(ccxDir, "archived", "sess-live"))).toBe(false);
+
+    // …and the guard runs BEFORE the existence read, which is the case that decides the order rather than
+    // merely exercising both: a thread admitted this tick has nothing persisted yet, so a handler that
+    // asked the store first would answer "no such thread" about a session the client is demonstrably
+    // holding. "It is live" is the truer refusal and the one a client can act on.
+    const fresh = mkTmp("m5ccx-");
+    const blank = fakeStore([]);
+    const srv2 = boot({ ccxDir: fresh, getSessionInfo: blank.getSessionInfo });
+    const unpersisted = addRecord(srv2, "sess-unpersisted");
+    expect((await send("thread/archive", { threadId: unpersisted })).error?.code).toBe(-33001);
+    expect(blank.infoCalls).toEqual([]);
   });
 
   it("a resume RESERVATION refuses archive too — an admission mid-probe has no record to find", async () => {
