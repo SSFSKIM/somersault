@@ -21,21 +21,17 @@
 // What they SHARE is one lookup and its dependency-injection default (`sessionLib.ts`'s `storeKnows`),
 // never the refusal built on it.
 import { ERR, type RpcError } from "./rpc.js";
-import { liveInFleet, type AppServer, type Handler } from "./server.js";
+import { liveInFleet, LIVE_REFUSAL_FLEET, type AppServer, type Handler } from "./server.js";
 import { findLiveBySessionId, resolveThreadId, storeKnows } from "./sessionLib.js";
 import { MarkerIdError, createArchiveMarker, listArchived, removeArchiveMarker } from "./archive.js";
 import { threadIdParams } from "./schema/core.js";
 
 /** `thread/delete`'s message, verbatim (sessionLib.ts): both refuse the same fact for the same reason, and
- *  a client that handles one string should not have to learn a second. IN-PROCESS arms only — see below. */
+ *  a client that handles one string should not have to learn a second. IN-PROCESS arms only — the roster
+ *  arm answers `server.ts`'s exported `LIVE_REFUSAL_FLEET`, which the same two methods now share (see
+ *  `liveRefusal` below). That sentence lives beside the probe rather than here because it is two methods'
+ *  answer to one fact, and a second literal is how the two would drift apart again. */
 const LIVE_REFUSAL = "Thread is live in this server — close it first";
-/** The ROSTER arm's, because that arm refuses a DIFFERENT fact. "In this server — close it first" told a
- *  client to close a thread this server does not hold: false as a description and unfollowable as advice,
- *  since nothing the client can send here will release it. Same CODE (rpc.ts groups codes by what the
- *  client does next, and for all three arms that is "retry later"); only the sentence differs, and it
- *  points at where the holder actually is — the reading `thread/resume` already publishes for this same
- *  fact from the other method (server.ts's `RESUME_LIVE_FLEET`). */
-const LIVE_REFUSAL_FLEET = "Thread is live in another ccx process; close it there first";
 
 /** "Someone is holding, or is about to hold, this session" — answered as the SENTENCE that says so, or
  *  `undefined`. Returning the message rather than a boolean is what keeps the two call sites honest: the
@@ -51,7 +47,10 @@ const LIVE_REFUSAL_FLEET = "Thread is live in another ccx process; close it ther
  *    id — refusing to resume a session a running fleet host still holds, and shelving that same id from
  *    the handler two lines away. D-M5-21's invariant is stated across servers, not within one.
  *
- *  The first two are THIS server's and share `LIVE_REFUSAL`; the third is not, and says so.
+ *  The first two are THIS server's and share `LIVE_REFUSAL`; the third is not, and says so — "in this
+ *  server, close it first" is false about a holder in another process and its advice is unfollowable,
+ *  since nothing the client can send HERE releases it. The CODE is the same for all three (rpc.ts groups
+ *  by what the client does next, and that is "retry later" in every arm); only the sentence differs.
  *
  *  ORDER matters, and not for cheapness: the two in-process arms are evaluated before this function's
  *  first await (an async body runs synchronously until one), so they still answer inside the caller's own
@@ -78,8 +77,19 @@ const knows = async (srv: AppServer, sessionId: string): Promise<boolean> => {
 
 /** An absolute path in a wire message is the operator's home directory on the wire (the brief's words for
  *  the errno branch below, and the same leak wherever a message we did not compose reaches a client).
- *  Anchored so it strips PATHS and not method names: a `/` preceded by a word character — `thread/archive`,
- *  `and/or` — is not one. */
+ *  TWO exclusions live in that lookbehind, and both are deliberate:
+ *   - a `/` after a word character is a METHOD NAME or a pairing, not a path — `thread/archive`, `and/or`;
+ *   - a `/` after `~` is a HOME-RELATIVE path, and those are spared: `~/.claude/ccx` names no operator,
+ *     which is the entire leak this exists to stop, and it leaves a client debugging a state-directory
+ *     failure something it can act on. Reachability was checked before writing that down rather than
+ *     assumed: the only messages that arrive here are the session store's — `getSessionInfo`, a thin
+ *     passthrough to the SDK's transcript reader, whose failures are fs errnos and JSON parse errors, and
+ *     Node composes those with ABSOLUTE paths — and the marker store's non-errno throw. Neither produces a
+ *     `~` path, so this is an exclusion with no route to it rather than a hole, and widening the regex on
+ *     that evidence would be speculation. Both halves are pinned by a row, so a later widening has to
+ *     argue with a test rather than with a comment.
+ *  Over-broad in the other direction on purpose: an ambiguous bare `/` becomes `<path>` too. Over-stripping
+ *  costs a token of diagnosis; under-stripping costs the operator's home directory. */
 const stripPaths = (m: string): string => m.replace(/(?<![\w~])(?:[A-Za-z]:)?[\\/][^\s'"`]*/g, "<path>");
 
 /** The stores throw protocol-free; the code is assigned HERE. Three kinds, and they are not the same fault:

@@ -156,7 +156,36 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
+/** Does this engine config RESUME a session, or merely READ its transcript into a new one? (D-M5-21b.)
+ *  `forkSession: true` beside `resume` is the SDK's own "fork to a new session ID rather than continuing
+ *  the previous session" (sdk.d.ts), and `src/session/index.ts`'s `rewindSession` uses exactly that pair
+ *  for a non-destructive branch. Measured against a real engine rather than read off the type: a live
+ *  probe (parent `d78907bb…`) resumed with the flag reported a DIFFERENT id at init (`9dd9e17c…`), left
+ *  the parent's transcript at the message count it had before, and carried that history into the fork's
+ *  own file; the same resume WITHOUT the flag reported the parent's id back.
+ *
+ *  So the parent is not admitted by such a request, and the two things admission does to an id are both
+ *  wrong for it: stamping `record.sessionId` names a session this thread does not hold — permanently,
+ *  since `routeInit`'s latch early-returns on a stamped record, so the id the engine actually opened is
+ *  never learned and every id-keyed method answers about the parent — and `autoUnarchive` would take a
+ *  conversation off the shelf that never went live. The fork's OWN id needs neither: nothing here can know
+ *  it before the engine's first init frame (the latch is exactly the mechanism for that), and a freshly
+ *  minted id has no marker to clear.
+ *
+ *  TRUTHY rather than `=== true`: `config` is a client passthrough, this predicate only ever REMOVES an
+ *  eager guess, and the CLI reads the flag the same way. Being wrong in this direction costs the stamp's
+ *  head start; being wrong in the other costs a permanently mis-identified thread. */
+const forksSession = (config: Record<string, unknown> | undefined): boolean => Boolean(config?.forkSession);
+
 const RESUME_LIVE_FLEET = "sessionId belongs to a running fleet session; use thread/attach";
+
+/** The refusal for a session held by a live ccx process ELSEWHERE on this machine — shared by
+ *  `thread/archive` (archiveDomain.ts) and `thread/delete` (sessionLib.ts), the two methods that refuse
+ *  rather than redirect. It lives HERE, beside `liveInFleet`, because the sentence and the probe are one
+ *  fact: "in this server — close it first" is false about a holder in another process and its advice is
+ *  unfollowable, so any guard that gains the roster arm needs this sentence with it. `thread/resume`
+ *  keeps its own (`RESUME_LIVE_FLEET`) because it has a remedy to name — attach instead. */
+export const LIVE_REFUSAL_FLEET = "Thread is live in another ccx process; close it there first";
 
 /** The synchronous half of `thread/resume`'s live-session guard (spec §1c). `thread/resume` is NOT
  *  origin-gated — it CREATES a thread, so there is no record to gate on — but the hazard it opens is real:
@@ -293,7 +322,13 @@ export class AppServer {
       // thread/start, thread/attach). `config` is a parsed record, not an opaque blob — the server
       // spreads it into the engine config — so the resume target is readable here, and it is the same
       // value `startThread` uses for its own eager stamp.
-      const resuming = typeof parsed.data.config?.resume === "string" ? parsed.data.config.resume : undefined;
+      // …EXCEPT when `forkSession` rides beside it (D-M5-21b): that pair READS the named transcript into a
+      // NEW session id rather than admitting it, so this request admits no existing id at all and neither
+      // the stamp nor the shelf read below has a subject. ONE predicate decides both, because the two must
+      // agree — a stamp without its unarchive, or the reverse, is the half-shipped shape this milestone
+      // keeps paying for.
+      const cfg = parsed.data.config;
+      const resuming = typeof cfg?.resume === "string" && !forksSession(cfg) ? cfg.resume : undefined;
       const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
       // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
       // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
@@ -651,24 +686,33 @@ export class AppServer {
     // undefined on a real engine anyway). The live-guard in sessionLib.ts is what needs it — a resume
     // admitted this tick must already be findable by sessionId, or a concurrent thread/delete deletes the
     // history out from under it.
+    // …unless the caller's config FORKS (`admits` — D-M5-21b, and the same carve-out `thread/start` makes
+    // above): then the engine opens a different id, the registry legitimately knows nothing, and the latch
+    // is the only honest source. `deletingSessions` above still fences the parent for both shapes — a fork
+    // READS that transcript to replay it, so erasing it mid-admission breaks the session being opened.
     // `config` is the FULL object the factory received (broker and `resume` included) — M2b's rewind swap
     // rebuilds the replacement engine from it, so anything dropped here is silently dropped by every later
     // swap too (registry.ts's field doc).
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: opts.resume, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    const admits = !forksSession(opts.config);
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
     this.registry.add(record);
-    installRouter(this, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
+    installRouter(this, record); // a no-op init route for an ordinary resume (the id is already stamped) and the ONLY id source for a fork — one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
     this.broadcastServer("thread/started", { thread: threadView(this, record) });
     // LAST, once admission has fully succeeded and no step after it can fail: unarchiving a session whose
-    // admission then threw would take a conversation off the shelf that never opened.
-    await this.autoUnarchive(ctx, opts.resume);
+    // admission then threw would take a conversation off the shelf that never opened — which is also why a
+    // FORK skips it (`admits`): the id it names never goes live here at all.
+    if (admits) await this.autoUnarchive(ctx, opts.resume);
   }
 
   /** D-M5-21: opening a conversation takes it off the shelf — and it is what keeps "a live thread is never
    *  hidden from the default list" true ACROSS servers, since markers are re-read per request and another
    *  server's archive is otherwise invisible to this one until someone lists. Called from ALL THREE
    *  admission paths onto an existing session id, which is the set the spec names: `startThread` above
-   *  (thread/resume, thread/fork), resume-carrying `thread/start`, and `thread/attach` (fleet.ts).
+   *  (thread/resume, thread/fork), resume-carrying `thread/start`, and `thread/attach` (fleet.ts). A
+   *  FORK-carrying resume is NOT in that set and both of its callers skip this (`forksSession`, D-M5-21b):
+   *  it reads a transcript into a new id rather than admitting the one it names, so clearing that id's
+   *  marker would take a conversation off the shelf that never opened.
    *
    *  GUARDED, because it runs after the reply is already on the wire: a state directory that cannot be read
    *  is not a reason to report a successful admission as failed, and the request id is spent, so an escaping

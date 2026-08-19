@@ -17,10 +17,12 @@
 // live session (the store write is safe to make regardless; this handler just also keeps the in-memory
 // mirror in sync so a live thread's next view already reflects it). "Live" includes a session admitted
 // while the delete is mid-flight, which no single check can see: thread/delete pairs the check with a
-// reservation (server.ts's `deletingSessions`) so admission and deletion cannot both win.
+// reservation (server.ts's `deletingSessions`) so admission and deletion cannot both win. And it is not
+// only live-HERE: a session a running ccx process elsewhere on this machine holds is refused too
+// (D-M5-21c, server.ts's `liveInFleet` — the probe thread/resume and thread/archive already answer on).
 import { ERR } from "./rpc.js";
 import type { ThreadRecord } from "./registry.js";
-import { threadView, type AppServer, type Handler } from "./server.js";
+import { threadView, liveInFleet, LIVE_REFUSAL_FLEET, type AppServer, type Handler } from "./server.js";
 import {
   listSessions as realListSessions,
   getSessionInfo as realGetSessionInfo,
@@ -206,6 +208,16 @@ export const threadDelete: Handler = async (srv, ctx, id, params) => {
     if (srv.resumingSessions.has(resolved.sessionId) || findLiveBySessionId(srv, resolved.sessionId)) {
       ctx.peer.replyError(id, ERR.BUSY, "Thread is live in this server — close it first"); return;
     }
+    // The THIRD holder, and the one this guard is worst-placed to ignore (D-M5-21c): a ccx session running
+    // in ANOTHER process, found through the roster probe `thread/resume` and `thread/archive` already
+    // refuse on (server.ts's `liveInFleet`). Deleting is the one op that cannot be undone by whoever finds
+    // out later — this server was refusing to RESUME such a session and refusing to SHELVE it, then
+    // erasing the transcript that process is still appending to. The two in-process arms above stay ahead
+    // of it and stay synchronous (the reservation race is decided in this dispatch tick); this arm is real
+    // I/O, and the window it opens is the same one archive's own roster arm has and for the same reason.
+    // Its sentence is not the one above: "live in this server" is false here, and "close it first" is
+    // advice no request to this server can carry out.
+    if (await liveInFleet(srv, resolved.sessionId)) { ctx.peer.replyError(id, ERR.BUSY, LIVE_REFUSAL_FLEET); return; }
     const deleteFn = srv.deps.deleteSession ?? realDeleteSession;
     await deleteFn(resolved.sessionId);
     ctx.peer.reply(id, { ok: true });

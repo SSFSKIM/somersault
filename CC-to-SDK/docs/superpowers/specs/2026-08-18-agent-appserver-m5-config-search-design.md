@@ -780,6 +780,43 @@ flips the `full-potential.md` rows and ships nothing.
   does next (`rpc.ts`), and that is "retry later" in every arm — while the message distinguishes them.
   Recorded because it is the general shape: **when a guard gains an arm, the refusal it shares stops being
   true for the new one, and a message is the half that carries the remedy.**
+- **D-M5-21b (Task 9 re-review, rev 6) — a resume that FORKS is not an admission of the session it names.**
+  The eager `sessionId` stamp D-M5-21 relies on fires on `config.resume`, and `config` is a client
+  passthrough that can carry `forkSession` beside it — the pair this repo's own `rewindSession` uses for a
+  non-destructive branch. The re-review found that combination stamping the PARENT id on the record, which
+  then makes `routeInit`'s latch (`if (record.sessionId) return;`) a permanent no-op: the id the engine
+  actually opened is never learned, and every id-keyed method — read, delete, archive, occurrence search,
+  `thread/list` — answers about a session nothing is writing to.
+  **Settled by measurement before deciding, because the answer decides how much to skip.** A live probe:
+  parent `d78907bb…` resumed with `forkSession: true` reported `9dd9e17c…` at init, left the parent's
+  transcript at the message count it had before, and carried that history into the fork's own file; the
+  same resume without the flag reported the parent's id back. So the parent is *read*, not admitted —
+  which makes BOTH halves of admission wrong for it: the stamp names a session this thread does not hold,
+  and the auto-unarchive would take a conversation off the shelf that never opened.
+  Decided: **one predicate (`forksSession`) governs both halves at both call sites** — resume-carrying
+  `thread/start` and `startThread` (`thread/resume`, `thread/fork`). A forking admission stamps nothing and
+  unshelves nothing; the record learns the forked id from the init latch exactly as a fresh `thread/start`
+  does, and the parent stays cold — still listable, still shelvable, refused by nothing. `deletingSessions`
+  still fences the parent across the admission, because a fork READS that transcript to replay it.
+  The wart was **inherited, not introduced**: `startThread` has stamped `opts.resume` unconditionally since
+  M2a, so `thread/resume` had the same defect before this milestone; the archive wave widened it from two
+  admission surfaces to three. Repairing only the surface the task touched is the symmetric-half omission
+  this project keeps catching, so both are pinned, with a mutation each.
+  Rejected: **keeping the stamp for its side effect** — it made `thread/delete` refuse the parent while a
+  fork ran, which looks protective but is a guard standing on a false identity; a thread reporting an id it
+  does not hold is the larger defect, and the narrow hazard it covered (deleting a parent between a fork's
+  admission and its first turn) is one a cold fork-then-delete has anyway. Rejected: **a second field
+  recording the read-only anchor** — new state for a hazard nobody has hit.
+- **D-M5-21c (Task 9 re-review, rev 6) — `thread/delete`'s live-guard extends to the fleet roster too.**
+  D-M5-21a closed this for `thread/archive` and left the same blind spot one handler over: with a roster row
+  naming a live pid, `thread/resume` refused `-32602` and `thread/archive` refused `-33001`, while
+  `thread/delete` called through and erased the transcript a running ccx process was appending to.
+  Decided: **fix**, for the reason D-M5-21a gives plus one of its own — deletion is the one operation no
+  later reader can undo, so it is the last place to be the odd one out. Same shared probe
+  (`server.ts`'s `liveInFleet`), same `ERR.BUSY`, and the cross-process sentence rather than
+  `thread/delete`'s own: "live in this server — close it first" is false about a holder in another process
+  and unfollowable as advice. That sentence moved to `server.ts` beside the probe and is now imported by
+  both methods — it was two independent literals, which is how the two answers drift apart again.
 
 ## Surprises & Discoveries
 

@@ -706,6 +706,68 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
     await vi.waitFor(() => expect(findLiveBySessionId(srv, "late-1")?.sessionId).toBe("late-1"));
   });
 
+  // ── re-review wave ──────────────────────────────────────────────────────────────────────────────────
+  // The stamp the wave above added fires on `config.resume`, and `config` is a client passthrough that can
+  // carry `forkSession` beside it. What that pair does was measured against a REAL engine rather than read
+  // off the type: a live session (`d78907bb…`) resumed with the flag reported a DIFFERENT id at init
+  // (`9dd9e17c…`), left the parent's transcript at the message count it had before, and carried that
+  // history into the fork's own file; the same resume WITHOUT the flag reported the parent's id back. So
+  // the named session is READ, never admitted — and the two things admission does to an id are both wrong
+  // for it. Both surfaces that stamp are pinned, separately, because a repair on one is not a repair.
+
+  it("a FORKING thread/start admits nothing: no eager stamp, no auto-unarchive, and the engine's own id is what the record learns (D-M5-21b)", async () => {
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["parent-1"]);
+    let emit!: (f: unknown) => void;
+    const srv = boot({
+      ccxDir, getSessionInfo: st.getSessionInfo,
+      sessionFactory: () => fakeEngine(undefined, { onFrame: (cb: (f: unknown) => void) => { emit = cb; return () => {}; } }),
+    });
+    expect((await send("thread/archive", { threadId: "parent-1" })).result).toEqual({ ok: true });
+
+    const started = await send("thread/start", { config: { resume: "parent-1", forkSession: true } });
+    expect(started.result?.thread?.sessionId).toBeUndefined(); // no guess about an id this thread does not hold
+    // The parent stays on the shelf: it never went live, and clearing its marker would report a transition
+    // that did not happen. (The non-forking half of both assertions is the row two above this one.)
+    await new Promise((r) => setTimeout(r, 30));
+    expect(existsSync(join(ccxDir, "archived", "parent-1"))).toBe(true);
+    expect(notifs("thread/unarchived").length).toBe(0);
+
+    // …and the init latch, no longer short-circuited by a stamp, learns the id the engine actually opened.
+    emit({ type: "system", subtype: "init", session_id: "forked-9" });
+    await vi.waitFor(() => expect(findLiveBySessionId(srv, "forked-9")?.id).toBe(started.result?.thread?.id));
+    expect(findLiveBySessionId(srv, "parent-1")).toBeUndefined(); // the parent is not this thread, at any point
+  });
+
+  it("…and a FORKING thread/resume does the same, through the other spine — the symmetric half that gets fixed on one side only (D-M5-21b)", async () => {
+    // `thread/resume`/`thread/fork` reach `startThread`, whose own eager stamp predates this milestone and
+    // had the identical defect. Repairing only the surface this task touched would leave the wart where it
+    // started, one method over.
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["parent-2"]);
+    let emit!: (f: unknown) => void;
+    const srv = boot({
+      ccxDir, getSessionInfo: st.getSessionInfo,
+      sessionFactory: () => fakeEngine(undefined, { onFrame: (cb: (f: unknown) => void) => { emit = cb; return () => {}; } }),
+    });
+    expect((await send("thread/archive", { threadId: "parent-2" })).result).toEqual({ ok: true });
+
+    const started = await send("thread/resume", { sessionId: "parent-2", config: { forkSession: true } });
+    expect(started.result?.thread?.sessionId).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(existsSync(join(ccxDir, "archived", "parent-2"))).toBe(true);
+    expect(notifs("thread/unarchived").length).toBe(0);
+
+    emit({ type: "system", subtype: "init", session_id: "forked-7" });
+    await vi.waitFor(() => expect(findLiveBySessionId(srv, "forked-7")?.id).toBe(started.result?.thread?.id));
+    expect(findLiveBySessionId(srv, "parent-2")).toBeUndefined();
+    // The consequence the client sees: the parent is cold, so shelving it is still allowed while the fork
+    // runs — the state the stamp made permanently unreachable, since every id-keyed method answered BUSY
+    // about a session nothing was writing to.
+    expect((await send("thread/unarchive", { threadId: "parent-2" })).result).toEqual({ ok: true });
+    expect((await send("thread/archive", { threadId: "parent-2" })).result).toEqual({ ok: true });
+  });
+
   it("a SESSION-store failure names the session store, not the marker store — and its message is path-stripped too", async () => {
     // Both handlers read TWO stores inside one handler body. A `getSessionInfo` that threw was answered as
     // `archive marker store failed: …`: the wrong subsystem named, on a message that never went through
@@ -727,6 +789,17 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
     writeFileSync(join(bad2, "archived"), "");
     boot({ ccxDir: bad2, getSessionInfo: fakeStore(["cold-x"]).getSessionInfo });
     expect((await send("thread/archive", { threadId: "cold-x" })).error?.message).toMatch(/^archive marker store failed: EEXIST/);
+  });
+
+  it("the strip's two exclusions are both deliberate: a method name and a `~`-relative path survive, an absolute one does not", async () => {
+    // The comment beside the regex explained only the method-name half, so the `~` half read as an
+    // accident. It is not: an absolute path names the operator, a `~` path names nobody, and the strip
+    // exists for the first. Pinned as an EXACT string — "contains no /" would be satisfied by a strip that
+    // ate all three, which is the widening this row exists to make someone argue with.
+    const ccxDir = mkTmp("m5ccx-");
+    boot({ ccxDir, getSessionInfo: async () => { throw new Error("thread/archive: cannot read /Users/operator/.claude/projects/x.jsonl (state dir ~/.claude/ccx)"); } });
+    const e = (await send("thread/archive", { threadId: "s-1" })).error;
+    expect(e?.message).toBe("session store read failed: thread/archive: cannot read <path> (state dir ~/.claude/ccx)");
   });
 
   it("the AUTO-UNARCHIVE route strips paths too — the second half of a protection whose first half was pinned", async () => {

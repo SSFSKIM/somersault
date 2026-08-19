@@ -13,6 +13,10 @@ import { storeOnlyView } from "../../../src/appserver/sessionLib.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeRoster } from "../../../src/fleet/roster.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -254,6 +258,53 @@ describe("thread/delete (Task 12) — the live-guard (spec D-M2-7)", () => {
     send(c, { id: 2, method: "thread/delete", params: { threadId: "thr_doesnotexist" } });
     await tick();
     expect(parsed(lines).find((f) => f.id === 2).error.code).toBe(-33004);
+  });
+});
+
+describe("thread/delete — the ROSTER arm (D-M5-21c, Task 9 re-review)", () => {
+  it("refuses a session a running ccx process still holds, names THAT process rather than this server, and leaves the transcript alone", async () => {
+    // The gap this closes was a three-way disagreement about one session: `thread/resume` refused an id a
+    // live fleet host held, `thread/archive` refused it (D-M5-21a) — and `thread/delete`, the one op whose
+    // mistake nobody can undo later, erased the transcript that process was still appending to. Same probe
+    // as the other two (server.ts's `liveInFleet`), same BUSY code, and the cross-process sentence,
+    // because "close it first" is advice no request to THIS server can carry out.
+    const root = mkdtempSync(join(tmpdir(), "m5del-"));
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    try {
+      // No `procStart` is the roster's own "assume live" (fleet/liveness.ts) — the reading thread/resume
+      // and thread/archive both take, so all three now answer from one rule.
+      const row = { short: "cd34ef56", pid: process.pid, cwd: "/w", kind: "bg" as const, name: "other", state: "working" as const, startedAt: Date.now(), sessionId: "fleet-held" };
+      writeRoster(row);
+      const deleteCalls: string[] = [];
+      const { lines, c } = boot({ deleteSession: async (id) => { deleteCalls.push(id); } });
+      init(c, 1);
+      send(c, { id: 2, method: "thread/delete", params: { threadId: "fleet-held" } });
+      await tick();
+      const err = parsed(lines).find((f) => f.id === 2).error;
+      expect([err.code, err.message]).toEqual([ERR.BUSY, "Thread is live in another ccx process; close it there first"]);
+      expect(deleteCalls).toEqual([]); // the store was never reached — the whole point is that the bytes survive
+
+      // LIVENESS, not mere presence: a terminal row is a finished session, and deleting one is exactly what
+      // a client reaches for. Without this half the arm could refuse every id the roster has ever seen.
+      writeRoster({ ...row, state: "done" as const, endedAt: Date.now() });
+      send(c, { id: 3, method: "thread/delete", params: { threadId: "fleet-held" } });
+      await tick();
+      expect(parsed(lines).find((f) => f.id === 3).result).toEqual({ ok: true });
+      expect(deleteCalls).toEqual(["fleet-held"]);
+
+      // …and the two sentences do not collapse into one: an in-process live thread, under the SAME roster,
+      // still gets the original. A "fix" that handed every arm the cross-process sentence would be as green
+      // as the right one without this.
+      const thread = await startThread(c, lines, 4);
+      send(c, { id: 5, method: "thread/delete", params: { threadId: thread.id } });
+      await tick();
+      const here = parsed(lines).find((f) => f.id === 5).error;
+      expect([here.code, here.message]).toEqual([ERR.BUSY, "Thread is live in this server — close it first"]);
+    } finally {
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
