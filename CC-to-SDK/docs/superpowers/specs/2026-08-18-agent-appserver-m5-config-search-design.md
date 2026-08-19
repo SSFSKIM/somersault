@@ -932,6 +932,76 @@ flips the `full-potential.md` rows and ships nothing.
   Rejected: shipping nothing for `context_usage` (the value is small but real, and the plan's shape costs
   no degradation to pay for it); and following the original sentence literally (it makes the surface
   worse, which no promote criterion intends).
+- **D-M5-23 (fix wave B, rev 8) — the config domain answers about the files the ENGINE reads, and a reply
+  past the commit is never a failure.** Five findings from the two whole-branch reviews, each reproduced
+  before repair. Nothing here changes the write's own semantics; four of the five change WHICH BYTES the
+  domain is describing, and the fifth changes what it does when it cannot describe them.
+  **23a — `CLAUDE_CONFIG_DIR` was not consulted, so `ok` could mean nothing at all.** Measured against the
+  shipped `claude` 2.1.234: with the variable set, the engine reads `$CLAUDE_CONFIG_DIR/settings.json` and
+  ignores `$HOME/.claude/settings.json` **entirely** (`claude doctor` reports the effective value of a
+  setting placed in each in turn; the control proves the default). Our domain did the opposite — `config/read`
+  served the home file and `config/value/write` wrote it, replying `status: "ok"` for a change no engine
+  would ever load. This spec never mentions the variable, so it is an OMISSION rather than a recorded
+  decision, and the omission is narrow: **the rest of this system already follows it.** The harness's own
+  tenant preset EXPORTS a per-tenant `CLAUDE_CONFIG_DIR` (`config/tenantPreset.ts`), the fleet registry
+  reads the engine's session rows under it (probe 61), and the engine subprocess inherits it. Decided:
+  **one resolver, shared** — `config/claudeHome.ts`'s `claudeConfigDir(env)`, which the fleet registry's
+  `sessionsDir` now calls too, rather than a second spelling of an expression this repo already had right.
+  What it changes for `layerPaths`: its first parameter is the **`.claude` directory itself**, not the home
+  above it, because the variable REPLACES that directory (`$CLAUDE_CONFIG_DIR/settings.json`, no `.claude`
+  segment) and no home-shaped value can express that. The `configHome` dep keeps its old meaning (the base
+  whose `.claude` holds the file) and keeps WINNING over the variable: it is a test/embedder override, and
+  the alternative is a suite pointed at a temp directory being silently redirected onto the operator's real
+  settings by an ambient variable. Rejected: **moving `ccxDir`/`fleetRoot` under the same root** — the
+  review suggested it "for consistency", but that is OUR state, not the engine's, it already has its own
+  `CCX_FLEET_ROOT` override, and moving it would relocate the roster and sockets of every running host.
+  **23b — the managed layer is a FAMILY of files.** The shipped SDK bundle and the reference's
+  `loadManagedFileSettings` both merge `managed-settings.json` **plus `managed-settings.d/*.json` sorted
+  alphabetically on top** — the systemd/sudoers drop-in convention — and the spec's grounding sentence
+  ("only `managed-settings.json` of that family is a plain file") was false. On a machine whose
+  administrator ships policy as fragments, `config/read` reported the user's value as effective, dropped
+  policy-only keys entirely, and answered a masked write with a plain `ok`: masking verdicts computed
+  without the active policy, which is the wrong-verdict class D-M5-13 spent four waves eliminating.
+  `incomplete: true` does not cover it — that flag announces NON-FILE policy sources and these are files.
+  Decided: **compose them into the managed layer with the loader's own ordering and filter** (regular files
+  and symlinks, `.json`, no dotfiles), each drop-in a further `managed`-named entry rather than a fifth
+  precedence step. A missing directory is silence (ENOENT/ENOTDIR, upstream's own tolerance and the state
+  of every unmanaged machine); a directory that exists and cannot be LISTED becomes a disabled layer,
+  because absence and unreadability are the one pair this milestone is not allowed to collapse twice.
+  **Bounded evidence, deliberately stated:** no reviewer created `/Library/Application Support/ClaudeCode`
+  on the machine this was found on — it needs root and would take effect on the operator's own Claude Code
+  — so the ENGINE half rests on the extracted loader, and our half is pinned against a control that
+  installs the identical bytes as the base file. Not proven end to end, and the test file says so.
+  **23c — a committed write reported as failed, and a retry that duplicates.** The masking pass runs after
+  the bytes are on disk and sat inside the handler's one `try`, so a failure past the commit came back as
+  `-32603`. The reachable trigger is a pathologically deep object in ANOTHER layer: `JSON.parse` accepts
+  depths `effectiveView`'s recursion cannot walk (measured: ~2.8k), and the write path's own depth screen
+  (64) covers only the value it was handed. A client that reads "failed" retries — and an `upsert` of an
+  array is not idempotent, since the merge rule already in force concatenates and dedupes by SameValueZero
+  identity, so object entries never collapse. One hook registration became two. Decided: **fence the
+  ANALYSIS, not the write.** When the layers cannot be merged the reply is `ok` with the real version and
+  filePath, every edit listed in `uncheckedEditIndexes`, and a warning naming what could not be checked —
+  the vocabulary this reply already has for "not reported as overridden, and not verified in force".
+  Rejected: **making the merge non-recursive or dedupe by structure to make the retry idempotent** — the
+  first is a rewrite for a shape no settings file has, and the second is exactly the change plan review F2
+  refused (a structural dedupe silently eats distinct hook entries). The retry defence a client already has
+  is `expectedVersion`: the degraded reply carries a real CAS token, so the same token cannot be spent
+  twice, and a retry that carries it refuses instead of duplicating.
+  **23d/23e — the merged view now says only what upstream's merge says.** An own `__proto__` key in a
+  settings file produced a self-contradictory `config/read`: `origins` named `__proto__.polluted` while
+  `config` carried no such leaf, because `out[k] = v` on that key invokes the prototype SETTER rather than
+  creating a key. Measured at both steps of upstream's own pipeline — zod's object build drops the key for
+  object AND scalar values, and lodash's `safeGet` drops it again — so the engine's settings never carry
+  it, and the repair is to skip it in the merge: one change that removes the incoherent attribution and the
+  prototype-setter hazard together. `constructor`/`prototype` are NOT screened, because upstream keeps them.
+  And an OBJECT merged over an ARRAY: upstream keeps the **array** (lodash walks the source object's keys
+  onto it, so an index key patches an element and a non-index key becomes a property JSON never shows),
+  while ours replaced it with the object — measured against real lodash 4.18.1 under upstream's own
+  customizer. The array is now a leaf with BOTH layers as contributors, which is what the read side's
+  attribution has always meant for an array. Note for the record: the two reviews filed this once each and
+  the second filing was ranked with a reachability caveat (for a key the engine's schema knows, upstream
+  discards a file it rejects, so the two implementations rarely see the same layer set) — one divergence,
+  not two, and it is fixed because `config/read`'s answer is the one clients actually consume.
 
 ## Surprises & Discoveries
 
@@ -1482,3 +1552,16 @@ directory changing a permission dialog's offered rule row, not the known flake.
   `autoUnarchive` it left a LIVE thread permanently on the archived shelf. The third finding —
   auto-unarchive completing after the reply — was judged and deliberately left, with the reasoning
   recorded in D-M5-21d rather than in silence.
+
+- **rev 8 (2026-08-20) — D-M5-23, the config half of the same fix waves.** The headline of this
+  milestone is config writes, and for anyone who exports `CLAUDE_CONFIG_DIR` — which this harness's own
+  tenant preset does, per tenant — every one of them reported `ok` for a file no engine reads. The
+  variable appears nowhere in this document, so this was an omission rather than a decision, and the
+  repair is alignment: the fleet registry had the resolution right since probe 61, and the config domain
+  now calls the same function instead of a second spelling. Beside it, three more corrections to WHICH
+  BYTES the domain describes — the managed layer is `managed-settings.json` plus `managed-settings.d/*.json`
+  (so masking verdicts on a managed machine were being computed without the active policy), an own
+  `__proto__` key no longer draws attribution for a leaf the config does not carry, and an object merged
+  over an array keeps the array as upstream does — and one correction to what it does when it cannot
+  describe them: a masking pass that fails no longer turns a COMMITTED write into an error reply, because
+  the client's retry duplicated array entries the merge rule is deliberately unable to dedupe.
