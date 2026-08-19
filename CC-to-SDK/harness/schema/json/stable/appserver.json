@@ -1561,6 +1561,36 @@
         "searchTerm"
       ],
       "additionalProperties": false
+    },
+    "thread/searchOccurrences": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a `thr_…` registry id or a bare store sessionId; one the store does not know refuses -33004"
+        },
+        "searchTerm": {
+          "type": "string",
+          "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
+        },
+        "cursor": {
+          "description": "opaque occurrence cursor from a previous reply's nextCursor; epoch-qualified on a live thread and refused after a rewind",
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "description": "occurrences per page, default 20; over 50 is clamped to 50 with a `warning` notification",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "threadId",
+        "searchTerm"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {
@@ -1827,6 +1857,95 @@
             "required": [
               "thread",
               "snippet"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "thread/searchOccurrences": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rowOffset": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "uuid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "snippet": {
+                "type": "string"
+              },
+              "snippetMatchRange": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "end": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "start",
+                  "end"
+                ],
+                "additionalProperties": false
+              },
+              "readCursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "rowOffset",
+              "uuid",
+              "snippet",
+              "snippetMatchRange",
+              "readCursor"
             ],
             "additionalProperties": false
           }

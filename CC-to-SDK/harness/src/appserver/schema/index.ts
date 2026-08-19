@@ -14,7 +14,7 @@ import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.j
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
 import { reviewStartParams } from "./review.js";
 import { configReadParams, configReadResult, configValueWriteParams, configBatchWriteParams, configWriteResult } from "./config.js";
-import { threadSearchParams, threadSearchResult } from "./search.js";
+import { threadSearchParams, threadSearchResult, threadSearchOccurrencesParams, threadSearchOccurrencesResult } from "./search.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -133,4 +133,14 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // an EMPTY page (caps bound work, never coverage) and `skipped` is the disclosure that makes "no matches"
   // an honest claim — and a client that guesses either one wrong stops paging early or over-trusts the page.
   "thread/search": { params: threadSearchParams, result: threadSearchResult },
+  // M5 (§search) Task 8: the store-wide search's sibling — ONE thread, EVERY hit in a row. THREAD-scoped
+  // where its sibling is server-scoped, and that is the whole difference in kind: it names a thread, so both
+  // dispatch gates can fire on it, and it is `ENGINE_GONE_EXEMPT` (server.ts) precisely because its subject
+  // is disk rather than the engine — without the exemption the same session would be searchable by its bare
+  // store id and refused by its own registry id. STABLE for its sibling's reasons (the store's own readers
+  // plus our row classifier). Publishes a `result` (D-M5-19) carrying three contracts a params schema cannot
+  // state: `snippetMatchRange` indexes into the occurrence's OWN snippet rather than into the row (two hits
+  // in one row are two different windows), `readCursor` is `null` on a cold session rather than absent, and
+  // `nextCursor` may again be non-null over an empty page.
+  "thread/searchOccurrences": { params: threadSearchOccurrencesParams, result: threadSearchOccurrencesResult },
 };

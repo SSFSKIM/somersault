@@ -32,7 +32,7 @@ import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
 import { reviewStart } from "./review.js";
 import { configRead, configValueWrite, configBatchWrite } from "./configDomain.js";
-import { threadSearch } from "./search.js";
+import { threadSearch, threadSearchOccurrences } from "./search.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -203,6 +203,11 @@ const ENGINE_GONE_EXEMPT = new Set([
   // refuse the recovery in exactly the state it exists for, and the alive-engine refusal it owes (-32602)
   // is the handler's, after the exemption (rewind.ts).
   "thread/reopen",
+  // M5 (§search) Task 8: `thread/searchOccurrences` is exempt for the ORIGINAL reason — it answers off disk,
+  // like `thread/read` two lines above, reading the persisted transcript and never the transport. Without the
+  // exemption the same session would be searchable by its bare store id (no record, no gate) and refused by
+  // its own registry id, which is a difference in the answer produced by how the client spelled the thread.
+  "thread/searchOccurrences",
 ]);
 
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
@@ -505,6 +510,12 @@ export class AppServer {
     // is the handler's own (`runScanExclusive`), for the same reason the config writes' is: the contended
     // resource is this process's disk read rate, which no per-thread chain could ever see.
     "thread/search": threadSearch,
+    // …and its per-thread sibling, which DOES name a thread and therefore does meet both dispatch gates. It
+    // is `ENGINE_GONE_EXEMPT` above for the reason `thread/read` is: the subject is the persisted transcript
+    // on disk, so a thread whose engine died must still answer — otherwise the same session is searchable by
+    // its bare store id and refused by its own registry id. Mutual exclusion is again the handler's own, and
+    // it is the SAME chain the store-wide search uses: one content scan at a time per server.
+    "thread/searchOccurrences": threadSearchOccurrences,
   };
 
   private readonly token: string;
