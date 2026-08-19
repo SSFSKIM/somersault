@@ -231,11 +231,14 @@ surfaces, the repair belongs where paste re-joining already lives, in `KeymapPro
 - Modify: `src/tui/useChat.ts` (own `expandedFoldsRef: Set<string>` + a state tick; expose `toggleFold(anchor: string): void` on the hook's return — flips membership and calls **`reconcile()`** (:954–981), which re-projects BOTH `finalizedItems` AND `pendingItems` — the trailing growable run lives in the pending projection (`projectPending`, :1029–1031 consumer), so a finalized-only reproject leaves a live cluster collapsed until the next blink, and there is NO blink once all members settled with no breaker. Thread `expandedFolds` through `projectionContext()`. Clear the set in exactly one place: `replaceDocument` (**:1104**) — the one relevant `.reset()` site (the other `.reset()` greps hit task/bg refs); also clear it when the fullscreen flag flips off (renderer switch), bounding the mixed-record replay below.)
 - Test: `test/tui/` — the existing wrapItems suite (`grep -rl wrapItem test/tui/`) + a new `test/tui/fold-expand.test.tsx`
 
-**Known limitation (recorded, not fixed here):** `reconcile()` keeps publishing into
-`publishedIds`/`staticItems` even in fullscreen (`ChatApp.tsx:1165` note), so items committed while
-a cluster was expanded stay in the classic replay after a later `/tui default`. Clearing the set on
-renderer switch bounds it going forward; the already-committed rows are a recorded divergence —
-same family as the fullscreen wave's "answers commit whole" trade. Task 13 records it in the spec.
+**Known limitation — WITHDRAWN pending measurement (round 13).** The claim was that items
+committed while a cluster was expanded stay expanded-form in the classic replay after a later
+`/tui default`. It was never observed, and after T5b the code reads as though it cannot happen:
+`refoldFor` re-projects the whole document under the new policy and replaces `publishedIds`
+wholesale, on the fullscreen side of the flip where `<Static>` holds nothing. Task 12 measures it
+live (the harness's row grant is too small to settle anything, so only a real run can answer);
+Task 13 records the measured result or deletes the entry. Do not cite it as a known divergence
+until it has been seen.
 
 **Interfaces (produces):** `toggleFold(anchor)` on useChat's return; `foldAnchor` on RenderItem, survives wrapping. **Consumes:** Task 3's `memberIds` (anchor = `memberIds[0]`).
 
@@ -257,6 +260,14 @@ appears EXACTLY once in the projected items.
 ---
 
 ### Task 9: Hitmap — viewport row-map + frame origin
+
+**Handoff from Task 8's review:** `groupItems` tags fold rows with `foldAnchor` UNCONDITIONALLY,
+including under the classic renderer (harmless — the field never paints, and a conditional would
+be more code than it saves). So **the row map must gate on the renderer, not on tag presence**, or
+a classic click path would discover clickable rows. Also inherited: an expanded cluster that is
+still active loses its blinking leader and its `⎿` hint block, because both are emitted only in
+the collapsed branch — that follows §3.3 as written, but canon's behavior for an open expanded
+cluster is unverified; Task 12's acceptance should look at it.
 
 **Files:**
 - Modify: `src/tui/FullscreenFrame.tsx` — publish the region's absolute top row as a SIBLING context
@@ -319,6 +330,14 @@ Resolution: terminal row → slice row via the frame-published top + the viewpor
 ---
 
 ### Task 12: Keyed live acceptance — spec §4 as written
+
+**Three measurements this run owes beyond the A-cells** (all from Task 8's review, none
+answerable in the test harness — its row grant is too small for anything to settle out of the
+live window): (1) **the withdrawn limitation** — expand a cluster, let rows commit, `/tui default`,
+and record whether the classic replay shows expanded-form rows or the recomputed collapsed ones;
+(2) **an open expanded cluster** — what canon does with the blinking leader and hint block, which
+we currently drop; (3) **A5's ctrl+o round-trip** — the pager renders through a projection that
+does not fold at all, so the cell is satisfied by construction and no unit test exercises it.
 
 **Files:**
 - Evidence-only, NOT `test/live/` (that directory is vitest SDK e2e suites). The house form for TUI

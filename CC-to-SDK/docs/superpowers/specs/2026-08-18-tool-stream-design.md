@@ -448,6 +448,21 @@ Pending — written at finish.
 
 ## 9. Revision Notes
 
+**Round 13 — 2026-08-19, T8 review (execution).** PASS/PASS, five minors, no defect in the
+diff. Two entries here are corrections to MY OWN artifacts rather than to the work. (1) The
+"expanded rows persist into the classic replay" limitation is withdrawn pending measurement
+(see the 2026-08-18 note below) — it was recorded from a report's characterization, never
+observed, and T5b's repair plausibly removed it. (2) A fourth prescribed cell pinned nothing:
+the "stays expanded while growing" cell, written against a run with a still-OPEN member,
+passes even under a finalized-only toggle, because an open call keeps a 600 ms live-repaint
+interval that re-projects the pending region on its own tick. The implementer found it and
+rewrote it against a settled-but-unclosed run (no interval, so the toggle's own re-projection
+is the only thing that can move the row); the reviewer reproduced both halves by sabotage —
+the original passes the broken build in 669 ms, one tick after the toggle. The general lesson,
+now four for four: a cell written from a design document describes the SITUATION a bug occurs
+in; a cell that catches the bug has to isolate the MECHANISM from everything else that might
+paper over it.
+
 **Round 12 — 2026-08-19, T7 review (execution).** Both handed-down decisions were made
 deliberately and both were judged correct — a swallowing surface swallows clicks, and a
 button gesture clears a pending chord. But the review found the implementation's *recorded
@@ -557,4 +572,13 @@ scraper bugs (raw-string `--amend` matching, per-block re-scrape) are not ported
   matches canon (its overlay sits under the same Ett provider); recorded one known
   limitation for the plan's T8 — items committed to the classic replay while a cluster
   was expanded stay expanded-form after a later `/tui default` (same trade family as the
-  fullscreen wave's "answers commit whole").
+  fullscreen wave's "answers commit whole"). **WITHDRAWN pending measurement, round 13:
+  this limitation was never observed, and reading the code after T5b suggests it does not
+  exist** — `refoldFor` does not append, it re-projects the whole document under the new
+  policy, replaces `publishedIds` wholesale and runs on the fullscreen side of the flip
+  where `<Static>` is holding nothing, so the classic arm's first sight of the list is
+  already the recomputed collapsed one. T8's reviewer could neither reproduce it nor
+  disprove it (at the harness's row grant nothing settles out of the live window, so there
+  is nothing to observe). **Task 12 measures it live; Task 13 records the measured answer
+  or deletes the entry.** Recording an unmeasured divergence is exactly the failure round
+  10 was written about.
