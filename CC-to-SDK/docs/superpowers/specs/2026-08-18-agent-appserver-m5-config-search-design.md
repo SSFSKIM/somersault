@@ -1163,6 +1163,27 @@ flips the `full-potential.md` rows and ships nothing.
   inside one document set. **The check that caught it was not comparing the two documents; it was reading
   the code the sentence would have changed.**
 
+- **Task 13 (2026-08-19): the trap the spike named was real, and a SECOND one of the same shape was
+  waiting one function away.** The first is on the record: `terminal_slash_commands` had to be latched by
+  its own frame route, because `routeInit` early-returns on `record.sessionId` and a fleet thread has that
+  id before its first init frame arrives. The second was not, and nothing in the brief could have named it
+  — `fleet.ts` snapshots each item event BEFORE handing it to `emitItems`, and `snapshot()` rebuilds the
+  event field by field, so a `contextUsage` it did not explicitly carry through would have been dropped on
+  the fleet origin ALONE. Same failure shape, same silence, different function: the in-process path never
+  calls `snapshot` before emitting, so every in-process test would have stayed green. **Generalised: an
+  origin-asymmetry warning is about a CLASS of code, not about the one function that taught it. Once a
+  milestone knows one origin can be silently starved, every field-by-field rebuild on the path to that
+  origin is a suspect, and the way to find them is to follow the field to the wire on both origins rather
+  than to re-read the function you were warned about.**
+- **The absorb work's own test rule earned its keep in a way it was not written for.** The rule was
+  "inject the field through the same frame path the probe observed", written against a fake that hands the
+  handler a pre-stamped record. Its real yield was different: driving the FLEET leg through the fake host's
+  real socket puts a live `snapshot()` call between the mapper and the wire, which is the only reason the
+  asymmetry above is PINNED rather than merely noticed — it was caught by reading `fleet.ts` at design time,
+  and it is a sabotage row (revert the carry-through, and only the two fleet rows go red) that keeps it
+  caught. A test written against the seam fails on the seam's bugs; a test written against the handler
+  fails on the ones its author already thought of.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.

@@ -27,9 +27,15 @@ const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts
  *  item/started already carrying the full text — and the deltas after it, rendering "Hello worldHello
  *  world" — or a tool "started" already reading completed with its result.
  *  Cloned HERE, at buffer time, not at replay time: the mutation is continuous, so the only moment the
- *  snapshot is still correct is the moment the event is emitted. Deltas carry no Item and need no clone. */
+ *  snapshot is still correct is the moment the event is emitted. Deltas carry no Item and need no clone.
+ *
+ *  `contextUsage` (M5 Task 13) is CARRIED THROUGH, and that is load-bearing rather than tidy: this function
+ *  rebuilds the event field by field, so anything it forgets is dropped — and `fleet.ts` snapshots BEFORE
+ *  it calls `emitItems`, so a snapshot that lost the twin would have made the whole mechanism in-process
+ *  only, passing every in-process test while the fleet origin silently published nothing. Not cloned: the
+ *  twin is a per-frame value the mapper never mutates (unlike the Items above), and it is relayed verbatim. */
 export function snapshot(ev: ItemEvent): ItemEvent {
-  return ev.kind === "delta" ? ev : { kind: ev.kind, item: structuredClone(ev.item) };
+  return ev.kind === "delta" ? ev : { kind: ev.kind, item: structuredClone(ev.item), ...(ev.contextUsage === undefined ? {} : { contextUsage: ev.contextUsage }) };
 }
 
 /** Drop-oldest, with ONE item-aware exception. A plain shift() can evict an in-flight item's `item/started`
@@ -73,10 +79,18 @@ function deltaMethod(channel: ItemDeltaChannel): string {
 
 /** The live broadcast path (emitItems, below) and Task 9's subscribe-time replay (subscribe.ts) both
  *  need the SAME ItemEvent -> (method, params) mapping, so it lives in exactly one place — the two
- *  paths can never drift on method names or param shape. */
+ *  paths can never drift on method names or param shape.
+ *
+ *  `contextUsage` (M5 Task 13, spec D-M5-22) is an OPTIONAL SIBLING of `item`, spread only when the frame
+ *  carried one — a `/context` turn's assistant frame does, an ordinary one does not, and the KEY'S ABSENCE
+ *  is how a client tells those apart. It rides the existing item notification rather than a new channel
+ *  because it belongs to that frame's turn and to nothing after it: no new method, no new notification,
+ *  and `thread/contextUsage/read` untouched (that route serves the richer, turn-free control response —
+ *  router.ts's own note that context usage is not bolted onto a per-turn relay still stands). */
 export function itemEventNotification(threadId: string, turnId: string, ev: ItemEvent): { method: string; params: Record<string, unknown> } {
-  if (ev.kind === "started") return { method: "item/started", params: { threadId, turnId, item: ev.item } };
-  if (ev.kind === "completed") return { method: "item/completed", params: { threadId, turnId, item: ev.item } };
+  const twin = ev.kind === "delta" || ev.contextUsage === undefined ? {} : { contextUsage: ev.contextUsage };
+  if (ev.kind === "started") return { method: "item/started", params: { threadId, turnId, item: ev.item, ...twin } };
+  if (ev.kind === "completed") return { method: "item/completed", params: { threadId, turnId, item: ev.item, ...twin } };
   return { method: deltaMethod(ev.channel), params: { threadId, turnId, itemId: ev.itemId, delta: ev.delta } };
 }
 

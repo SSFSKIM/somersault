@@ -15,6 +15,7 @@ import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js
 import { reviewStartParams } from "./review.js";
 import { configReadParams, configReadResult, configValueWriteParams, configBatchWriteParams, configWriteResult } from "./config.js";
 import { threadSearchParams, threadSearchResult, threadSearchOccurrencesParams, threadSearchOccurrencesResult } from "./search.js";
+import { capabilitiesReadResult } from "./introspect.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -44,7 +45,13 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/permissionMode/set": { params: permissionModeSetParams },
   "thread/thinking/set": { params: thinkingSetParams },
   "thread/settings/apply": { params: settingsApplyParams },
-  "thread/capabilities/read": { params: threadIdParams },
+  // M5 Task 13 (D-M5-22) gives this read a second, OPTIONAL field — `terminalSlashCommands` — so it is the
+  // one pre-M5 method that declares a `result`. That is not the retrofit D-M5-19 deferred: the slot is
+  // filled here because the new field's ABSENCE carries meaning ("no init frame has said"), which is a
+  // contract no params schema and no field name can state, and a client that cannot tell an absent key
+  // from `[]` has been mis-told. The other four introspection reads still publish none — they relay
+  // SDK-owned payloads verbatim, so the shape to validate against is the SDK's.
+  "thread/capabilities/read": { params: threadIdParams, result: capabilitiesReadResult },
   "thread/contextUsage/read": { params: threadIdParams },
   "thread/usage/read": { params: threadIdParams },
   "thread/init/read": { params: threadIdParams },

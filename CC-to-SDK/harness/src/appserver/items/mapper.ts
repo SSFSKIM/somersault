@@ -15,6 +15,26 @@ export function userItem(text: string, uuid: string): UserMessageItem {
   return { type: "userMessage", id: uuid, text };
 }
 
+/** M5 Task 13 (spec D-M5-22): 0.3.234 delivers a `/context` turn's structured card as `context_usage`, a
+ *  WRAPPER-LEVEL sibling on the assistant frame — `frame.context_usage`, not `frame.message.context_usage`
+ *  (probe 111 measured the inner one absent, which is also why it is never replayed to the model). The
+ *  frame's markdown table stays on `message.content` and is still the canonical fallback, so the item
+ *  itself is unchanged; the twin rides beside it on the events this frame produced (`items/types.ts` says
+ *  why every event and not only the completion).
+ *
+ *  Read off the WRAPPER only. A reader that fell back to the inner key would be reading a place the engine
+ *  never writes, and would still pass any test that exercises only the real shape.
+ *
+ *  A frame that produced no events has nothing to stamp — the reconcile frame of a message already
+ *  itemized through `stream_event` partials is the one such case, and it is unreachable for `/context`,
+ *  whose assistant message is CLI-synthesized rather than streamed from the model. */
+function stampContextUsage(events: ItemEvent[], frame: { context_usage?: unknown }): ItemEvent[] {
+  const usage = frame?.context_usage;
+  if (usage === undefined || usage === null) return events;
+  for (const ev of events) if (ev.kind !== "delta") ev.contextUsage = usage;
+  return events;
+}
+
 export class TurnMapper {
   private msgId?: string;                              // current message id (from message_start / full frame)
   private blockIndexToId = new Map<number, string>();   // in-flight message's block index -> item id (stream path)
@@ -119,7 +139,7 @@ export class TurnMapper {
         out.push({ kind: "started", item });
       }
     });
-    return out;
+    return stampContextUsage(out, mm);
   }
 
   private onUser(mm: any): ItemEvent[] {

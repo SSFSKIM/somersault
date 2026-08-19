@@ -64,7 +64,15 @@ spine — on an inProcess thread; a fleet thread forwards the bare host op with 
 with a turn — see gap 1), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
 `decision/list`, `decision/respond`, `thread/model/set`,
 `thread/permissionMode/set` (`auto` self-heals the model first), `thread/thinking/set`,
-`thread/settings/apply`, `thread/capabilities/read`, `thread/contextUsage/read`, `thread/usage/read`,
+`thread/settings/apply`, `thread/capabilities/read` (M5 Task 13 adds ONE derived field beside the engine's
+verbatim four catalogs: `terminalSlashCommands`, latched off the engine's `system/init` frames by the frame
+router's own route — its own route, never a branch inside the session-id latch, which early-returns on a
+stamped `record.sessionId` and would therefore never run on a fleet thread, whose id comes from the host's
+`state` event. Absent KEY until an init frame carries it; `[]` is the engine's own "none"),
+`thread/contextUsage/read` (deliberately UNCHANGED by M5 Task 13 — it answers from `getContextUsage()`,
+which is richer and costs no turn, where 0.3.234's `context_usage` twin is obtainable only by spending a
+`/context` turn; the twin is forwarded on that turn's own item notifications instead, D-M5-22),
+`thread/usage/read`,
 `thread/init/read`, `account/read`; then M2b Wave 3's three clusters, in the order `server.ts`'s table
 registers them. The **rewind trio** — `thread/rewind/anchors` (re-read every time, never cached),
 `thread/rewind/dryRun` (un-chained; normalizes the engine's throw-vs-return split into one
@@ -256,7 +264,12 @@ echo-deduped), `thread/name/updated`, `thread/capabilities/changed`, `thread/com
 and replayed FIFO by `thread/subscribe`, so a queued id is never first heard of at its terminal event),
 `turn/started`, `turn/completed` (carries the
 Wave T t14 `error` tag for a resolved-but-failed turn), `turn/todo/updated`, `item/started`,
-`item/completed`, `item/agentMessage/delta`, `item/reasoning/delta`, `item/toolCall/argumentsDelta`,
+`item/completed` (both gain an OPTIONAL `contextUsage` sibling at M5 Task 13 — 0.3.234's structured twin of
+the `/context` report, read off the carrying assistant frame's WRAPPER key and relayed verbatim beside the
+item, with no retention and no new channel. It rides the assistant frame because that is where probe 111
+measured it: a result-frame carrier would have been honestly dead on the fleet origin, whose relay never
+forwards result frames. Absent on every ordinary turn),
+`item/agentMessage/delta`, `item/reasoning/delta`, `item/toolCall/argumentsDelta`,
 `decision/requested`, `decision/resolved`, `task/changed`, `task/event`; M4's thread-scoped
 `review/findings` (its own row below), the 27th and the only name M3 or M4 added; and M5 Task 9's
 `thread/archived` and `thread/unarchived`, the 28th and 29th — **server-scoped**, on `thread/started`'s
@@ -537,7 +550,7 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `applyFlagSettings` | sdk.d.ts (Query) | `thread/settings/apply` | inProcess | shipped(M2a) |
 | `initializationResult` | sdk.d.ts (Query) | `thread/init/read` | inProcess | shipped(M2a) — see gap 3 |
 | `reinitialize` | sdk.d.ts (Query) | `thread/reinitialize` | inProcess | shipped(M2a) |
-| `supportedCommands` | sdk.d.ts (Query) | `thread/capabilities/read` | both | shipped(M2a) |
+| `supportedCommands` | sdk.d.ts (Query) | `thread/capabilities/read` | both | shipped(M2a) — and this member is precisely why M5 Task 13's `terminalSlashCommands` is a frame LATCH rather than a read: `SlashCommand` carries no terminal-bound marker, so the `system/init` frame is the only place in the SDK surface that classification exists (probe 112) |
 | `supportedModels` | sdk.d.ts (Query) | `thread/capabilities/read` | both | shipped(M2a) |
 | `supportedAgents` | sdk.d.ts (Query) | `thread/capabilities/read` | both | shipped(M2a) |
 | `mcpServerStatus` | sdk.d.ts (Query) | `mcpServer/status/list` | both | shipped(M2b) |

@@ -37,6 +37,35 @@ function routeInit(srv: AppServer, record: ThreadRecord, frame: { type?: string;
   if (sid) record.sessionId = sid;
 }
 
+/** M5 Task 13 (spec D-M5-22): latch the init frame's `terminal_slash_commands` onto the record, which
+ *  `thread/capabilities/read` then serves as an optional field. Probe 112 measured `["doctor","color"]`
+ *  beside 98 slash commands on a headless init frame, on BOTH origins' feeds.
+ *
+ *  ITS OWN ROUTE, NOT A BRANCH INSIDE routeInit — and that is the whole design, not a style choice. The
+ *  route above early-returns on `record.sessionId`, and a FLEET thread latches that id from the host's
+ *  `state` event (fleet.ts) rather than from any init frame, so on that origin the guard is already
+ *  satisfied before the first init frame ever arrives. Folded into that body, this would have latched
+ *  perfectly in every in-process test and never once run on a fleet thread.
+ *
+ *  LAST FRAME WINS, deliberately: init is re-emitted every turn (probe 112 saw two turns produce two init
+ *  frames on both feeds), so a first-wins latch would freeze a stale answer across a `thread/reinitialize`
+ *  or a mid-session command change. The recurrence is also what makes the fleet origin work at all — an
+ *  attaching client's follow burst is replay-marked and dropped by `installRouter`, so a once-per-process
+ *  init would have been unreachable there.
+ *
+ *  EVERY ELEMENT MUST BE A STRING for the frame to count. An array with a non-string in it is a frame this
+ *  server does not understand, and publishing a filtered copy of it would silently drop entries a client
+ *  needs; ignoring the frame leaves the previous (or absent) answer standing, which is the same discipline
+ *  routeTodo uses for a malformed snapshot. An EMPTY array is not malformed — it is the engine answering
+ *  "none", and the read publishes that as `[]` rather than as an absent key. */
+function routeTerminalCommands(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; terminal_slash_commands?: unknown }): void {
+  void srv;
+  if (frame?.type !== "system" || frame.subtype !== "init") return;
+  const list = frame.terminal_slash_commands;
+  if (!Array.isArray(list) || !list.every((c) => typeof c === "string")) return;
+  record.terminalSlashCommands = list as string[];
+}
+
 /** Absorbed from the deleted `armPlanUpgrade`'s own status-frame watcher (planUpgrade.ts, D-M2-6):
  *  `armPlanUpgrade` now only sets `record.planUpgradeMode` (the mode the approval GRANTED, Wave T t10);
  *  this route is what actually applies it, once, when the engine's own post-approval status frame is
@@ -222,6 +251,7 @@ function routeTodo(srv: AppServer, record: ThreadRecord, frame: { type?: string;
 
 const ROUTES: ((srv: AppServer, record: ThreadRecord, frame: any) => void)[] = [
   routeInit,
+  routeTerminalCommands,
   routeStatus,
   routeSettingsMirror,
   routeTokenUsage,
