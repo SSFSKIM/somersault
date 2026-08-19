@@ -927,6 +927,34 @@ flips the `full-potential.md` rows and ships nothing.
   as the pattern: a conclusion can survive its own argument being corrected, and saying so is cheaper than
   either defending the bad argument or reversing a sound call.
 
+- **A scope deferral is a claim, and it needs the same construction a defect claim needs.** Task 9 shipped
+  with a disclosed scope note: resume-carrying `thread/start` is not auto-unarchived, because the session
+  id "is inside an opaque config the server does not parse" and covering it "means hooking the init latch,
+  which is a different mechanism". Both halves were false and both were cheaply checkable —
+  `threadStartParams.config` is `z.record(z.string(), z.unknown())`, which the server parses and spreads
+  into the engine config, so the id is readable at admission; and the review's repair was **three lines**
+  with no latch hook, measured at 1 005 passing with only its own probe rows red, i.e. nothing in the
+  shipped suite depended on the old behaviour.
+  Disclosing the gap was the right instinct and is the behaviour this project asks for — the failure was
+  attaching a *reason* that had not been tested. **This is D-M5-17a's lesson arriving from the opposite
+  direction:** there, "no repair exists" was refuted by bounding the domain; here, "no repair exists
+  without a different mechanism" was refuted by reading one type. Generalised: **an impossibility claim
+  earns its place only when the search behind it is described and reproducible — and a claim that some
+  value is unavailable is refuted or confirmed by looking at the type, which costs a minute.**
+  What made it expensive rather than academic: the resulting state was already client-observable through a
+  **shipped** method (`thread/search`'s archived partition, Task 7, reads the same markers), and the
+  reverse direction was worse than the forward one — because `record.sessionId` latches only at the first
+  turn, `thread/archive` succeeded on an already-live conversation and left a permanent marker, over a
+  window lasting from `thread/start` until the client's first turn. **A second lesson rides on that: when a
+  guard keys on a field that is populated late, the gap is not a race — it is a documented interval, and it
+  should be reasoned about as a state rather than as a timing accident.**
+- **Two published claims were falsified by the same defect, and one of them was a contract.** The commit
+  asserted in a code comment that "'Archived AND live' is never a state a client can observe, in either
+  arrival order", and the scorecard row — a client-facing artifact — said the same. Both were written from
+  the design's intent rather than from the shipped behaviour, and both were wrong for the whole window
+  above. **Worth keeping: prose that states an invariant is an assertion with no test behind it. When the
+  invariant is load-bearing, the sentence and the row that pins it should land in the same change.**
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
