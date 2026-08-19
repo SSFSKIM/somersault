@@ -66,8 +66,14 @@ const liveRefusal = async (srv: AppServer, sessionId: string): Promise<string | 
 /** The SESSION store's failure, tagged at the ONE call site that can raise it. Both handlers read two
  *  different stores inside one handler body, and without this tag a `getSessionInfo` that threw was
  *  answered as `archive marker store failed: …` — the wrong subsystem named, on a message that never went
- *  through the marker store's path-stripping at all. */
-class SessionStoreError extends Error {
+ *  through the marker store's path-stripping at all.
+ *
+ *  EXPORTED for `search.ts` (D-M5-25), which reads the same store on the same request and answered its
+ *  failures with `e.message` verbatim — node's errno text, ending in the operator's absolute home path.
+ *  The tag travels rather than being re-spelled there, so the two routes into one store cannot describe
+ *  its failures differently: the seam where `thread/archive` stripped and `thread/search` did not was
+ *  found on exactly that asymmetry. */
+export class SessionStoreError extends Error {
   constructor(readonly reason: unknown) { super("session store read failed"); }
 }
 const knows = async (srv: AppServer, sessionId: string): Promise<boolean> => {
@@ -89,8 +95,12 @@ const knows = async (srv: AppServer, sessionId: string): Promise<boolean> => {
  *     that evidence would be speculation. Both halves are pinned by a row, so a later widening has to
  *     argue with a test rather than with a comment.
  *  Over-broad in the other direction on purpose: an ambiguous bare `/` becomes `<path>` too. Over-stripping
- *  costs a token of diagnosis; under-stripping costs the operator's home directory. */
-const stripPaths = (m: string): string => m.replace(/(?<![\w~])(?:[A-Za-z]:)?[\\/][^\s'"`]*/g, "<path>");
+ *  costs a token of diagnosis; under-stripping costs the operator's home directory.
+ *
+ *  EXPORTED for `search.ts`'s outer catch (D-M5-25), which answers messages this repo did not compose on
+ *  two more routes. One strip, so the branch nobody thought of is covered by the same regex as the one
+ *  they did. */
+export const stripPaths = (m: string): string => m.replace(/(?<![\w~])(?:[A-Za-z]:)?[\\/][^\s'"`]*/g, "<path>");
 
 /** The stores throw protocol-free; the code is assigned HERE. Three kinds, and they are not the same fault:
  *

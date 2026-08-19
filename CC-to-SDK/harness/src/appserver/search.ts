@@ -7,32 +7,82 @@
 // PAGED. Every session's metadata is sorted in memory (metadata is cheap; transcripts are not), and the
 // cursor is a keyset over that one ordering — `(sortValue, sessionId, rowIndex)` naming the NEXT position
 // to examine, never a bare session locator that would restart at the top when its session vanished. Inside
-// a session the transcript is read in ROW WINDOWS at the storage boundary, because the caps exist to bound
-// memory and a whole-transcript read followed by a row count would spend exactly what they bound.
-import { ERR } from "./rpc.js";
+// a session the transcript is read in ROW WINDOWS, which bound how many rows a page ever holds — and NOT,
+// as this header claimed for a whole milestone, how much of the file the storage layer reads (D-M5-25b,
+// measured: the pinned SDK reads and parses the whole transcript per window, so the windows are a cost
+// MULTIPLIER at the storage boundary rather than a memory bound; `readWindow` carries the numbers).
+import { ERR, type RpcError } from "./rpc.js";
 import { threadView, type AppServer, type Handler } from "./server.js";
-import { findLiveBySessionId, resolveThreadId, storeKnows, storeOnlyView } from "./sessionLib.js";
+import { fillFromStore, findLiveBySessionId, resolveThreadId, storeKnows, storeOnlyView } from "./sessionLib.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
-import { storeRefusal } from "./archiveDomain.js";
+import { SessionStoreError, storeRefusal, stripPaths } from "./archiveDomain.js";
 import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
-import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
+import { auditSessionStore, listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 
 type GetMessages = (sessionId: string, opts?: { limit?: number; offset?: number }) => Promise<unknown[]>;
 
-/** ONE bounded row window at the STORAGE boundary — the read half both scans share. `null` means the page's
- *  row budget is already spent, reported BEFORE any store call and left for the caller to answer, because
- *  the two methods mint different cursor shapes at exactly this point. `want` rides back out beside the rows
- *  because a SHORT window is how either scan learns the transcript is exhausted, and re-deriving it at the
- *  call site would be the second spelling of one number.
+/** Every SESSION-store read this file performs is tagged HERE, at its own call, and the `try` wraps that
+ *  one call and nothing else. Widening it would relabel one subsystem's failure as another's — the defect
+ *  Task 10 already had to fix once, where a session-store throw was answered as the marker store's fault.
+ *  The tag is `archiveDomain.ts`'s, not a second spelling of it: both routes into this store must describe
+ *  its failures identically, which is exactly what they did not do (an `EACCES` that `thread/archive`
+ *  stripped to `<path>` and `thread/search` shipped verbatim, D-M5-25a). */
+const storeRead = async <T>(read: () => Promise<T>): Promise<T> => {
+  try { return await read(); } catch (e) { throw new SessionStoreError(e); }
+};
+
+/** The refusal both handlers answer with. A tagged store failure goes through the archive domain's one
+ *  `storeRefusal`, so the sentence and its path-stripping are shared with the two archive routes; anything
+ *  else is this scan's own bug, which must not be labelled as the store's — but is stripped by the same
+ *  regex regardless, because a strip that covers only the branch we thought of leaks through the one we
+ *  did not (`stripPaths`' own doc comment). */
+const searchRefusal = (e: unknown): RpcError =>
+  e instanceof SessionStoreError
+    ? storeRefusal(e)
+    : { code: ERR.INTERNAL, message: stripPaths(e instanceof Error ? e.message : String(e)) };
+
+/** The store's READABILITY, established rather than inferred (D-M5-25a) — run before the listing, inside
+ *  the exclusive section, because it is disk work like every other read here.
  *
- *  The bound is applied to the store's own `limit` rather than to a slice afterwards: the caps exist to
- *  bound MEMORY, and a whole-transcript read followed by a row count spends exactly what they bound. */
+ *  Only on the PRODUCTION origin. An injected reader is a different store, and its failures are the
+ *  injector's to raise; auditing the local filesystem behind one would judge a store the request never
+ *  touched. That gate is also the finding restated: this contract was pinned for fifteen reviews against
+ *  doubles that throw, on a reader that never does, so the origin the doubles stand in for is precisely
+ *  the one that had to start checking itself. */
+const auditIfReal = async (srv: AppServer): Promise<void> => {
+  // ANY of the three, for both methods: one predicate with one meaning ("this server reads the local
+  // filesystem store"), rather than a per-method list that drifts as each grows a reader.
+  if (srv.deps.listSessions ?? srv.deps.getSessionMessages ?? srv.deps.getSessionInfo) return;
+  await storeRead(() => auditSessionStore());
+};
+
+/** ONE bounded row window — the read half both scans share. `null` means the page's row budget is already
+ *  spent, reported BEFORE any store call and left for the caller to answer, because the two methods mint
+ *  different cursor shapes at exactly this point. `want` rides back out beside the rows because a SHORT
+ *  window is how either scan learns the transcript is exhausted, and re-deriving it at the call site would
+ *  be the second spelling of one number.
+ *
+ *  WHAT THE WINDOW BOUNDS, corrected (D-M5-25b). The bound is applied to the store's own `limit` rather
+ *  than to a slice afterwards, and the stated reason used to be that this keeps a whole transcript out of
+ *  memory. It does not, on the shipped reader: SDK 0.3.234's `getSessionMessages` reads the whole file,
+ *  parses every line and rebuilds the conversation chain before `{offset, limit}` is applied. Measured on
+ *  a 6.1 MB / 4000-row transcript: `limit: 1` at offset 0 costs 13.3 ms, `limit: 1` at offset 3999 11.3 ms,
+ *  `limit: 500` 12.4 ms, and the WHOLE file 10.8 ms — one number, four requests. So the eight windows of a
+ *  full page cost 84.8 ms against 10.9 ms for a single read of the same file: the window loop is a ~7.8x
+ *  cost MULTIPLIER at this storage boundary, not a bound.
+ *
+ *  What the window DOES bound is the rows this process holds and scans per page, which is what
+ *  `maxRowsPerPage` is spent against; the memory in force is file-size x concurrent scans, held to one by
+ *  `runScanExclusive` (one scan per server) rather than by the caps. The trigger is transcript SIZE and
+ *  nothing else — today's are small, and search answers correctly at any size. The loop stays in this shape
+ *  because it is already the shape a ranged reader needs and passing `{offset, limit}` cannot be worse than
+ *  withholding it; a store of giant transcripts wants that reader before it wants anything else here. */
 async function readWindow(getMessages: GetMessages, sessionId: string, row: number, rowsScanned: number): Promise<{ win: unknown[]; want: number } | null> {
   const want = Math.min(SEARCH_CAPS.windowRows, SEARCH_CAPS.maxRowsPerPage - rowsScanned);
   if (want <= 0) return null;
-  return { win: await getMessages(sessionId, { offset: row, limit: want }), want };
+  return { win: await storeRead(() => getMessages(sessionId, { offset: row, limit: want })), want };
 }
 
 /** ONE content scan at a time per server (D-M5-17), the same device `record.chain` is for a thread — a
@@ -55,10 +105,19 @@ export function runScanExclusive<T>(srv: AppServer, fn: () => Promise<T>): Promi
 /** A hit's `thread` is the same projection `thread/list` serves, chosen the same way: a session this server
  *  holds LIVE renders as its registry row (fresher — it carries the turn/settings state the store cannot
  *  know), everything else as the store-only projection. A client must not be able to tell a searched row
- *  from a listed one. */
+ *  from a listed one.
+ *
+ *  Including `thread/list`'s STORE FILL (D-M5-25c), which this projection used to skip. A live record
+ *  carries no `title`/`tags` until a `thread/name/set` patches it, so a session matched on its stored
+ *  `customTitle` came back as a row that did not show the field the match was made against — the same
+ *  session, listed and searched, differing in nothing but which method asked. One fill, in `sessionLib`,
+ *  so the two projections cannot drift again. */
 export function viewFor(srv: AppServer, info: SDKSessionInfo): Record<string, unknown> {
   const live = findLiveBySessionId(srv, info.sessionId);
-  return live ? threadView(srv, live) : storeOnlyView(info);
+  if (!live) return storeOnlyView(info);
+  const view = threadView(srv, live);
+  fillFromStore(view, info);
+  return view;
 }
 
 export const threadSearch: Handler = async (srv, ctx, id, params) => {
@@ -87,7 +146,10 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
 
   try {
     await runScanExclusive(srv, async () => {
-      const all = (await listFn({ cwd })) as SDKSessionInfo[];
+      // BEFORE the listing: a listing that answers `[]` for a store it could not open is the reply this
+      // whole method must never compose, and by then nothing distinguishes it from an empty store.
+      await auditIfReal(srv);
+      const all = (await storeRead(() => listFn({ cwd }))) as SDKSessionInfo[];
       // Archived-ness is THIS server's state, not the store's (D-M5-3): a marker directory re-read per
       // request, so another process's archive/unarchive is visible to the very next search.
       //   The `try` wraps `listArchived` ALONE — never the scan around it. The outer catch below answers
@@ -201,8 +263,11 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
     });
   } catch (e) {
     // D-M5-8: a store read failure is an ERROR. Never an empty page, and never the hits gathered before it
-    // failed — both would claim the store was searched when it was not.
-    ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    // failed — both would claim the store was searched when it was not. The MESSAGE goes through
+    // `searchRefusal` (D-M5-25a): it is node's errno text, and node composes those with the operator's
+    // absolute home path.
+    const r = searchRefusal(e);
+    ctx.peer.replyError(id, r.code, r.message);
   }
 };
 
@@ -285,6 +350,10 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
     // The SAME per-server chain `thread/search` queues on: the resource being rationed is this process's
     // disk read rate, not one method's, and the existence read below is a store read like any other.
     await runScanExclusive(srv, async () => {
+      // BEFORE the existence check, and that ordering is the whole of this method's half of D-M5-25a: an
+      // unreadable transcript makes `getSessionInfo` answer `undefined`, and this handler then denied that
+      // the thread EXISTS — a store the operator can point at, reported as a typo.
+      await auditIfReal(srv);
       // Read the live record INSIDE the exclusive section, once, so the epoch the refusal below checks is
       // the epoch the mint at the bottom writes. A rewind can land while this request waits its turn on the
       // chain, and a check taken before that wait would qualify the reply against a generation that no
@@ -296,7 +365,7 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
       // persisted, and asking the store about it would refuse the very thread the client is holding.
       // `live record OR store row` is THIS method's admission rule; Task 9's two are different ones. What
       // is shared with them is the lookup underneath (sessionLib.ts's `storeKnows`), never the rule.
-      if (!live && !(await storeKnows(srv, sessionId))) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+      if (!live && !(await storeRead(() => storeKnows(srv, sessionId)))) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
       // Epoch qualification — `thread/read`'s rule, and its message verbatim (subscribe.ts), because a
       // client that pages both should match one string. The two live arms are one condition: the thread is
       // gone, or it is here at a different generation. `e: null` is a COLD mint and passes unqualified — a
@@ -365,7 +434,9 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
     });
   } catch (e) {
     // D-M5-8 again, and for the same reason: a failed read is an ERROR, never an empty page and never the
-    // occurrences gathered before it failed.
-    ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    // occurrences gathered before it failed — through the same `searchRefusal`, since this method leaked
+    // the same absolute paths its sibling did.
+    const r = searchRefusal(e);
+    ctx.peer.replyError(id, r.code, r.message);
   }
 };

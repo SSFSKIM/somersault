@@ -80,6 +80,20 @@ export async function storeKnows(srv: AppServer, sessionId: string): Promise<boo
   return (await getInfo(sessionId)) !== undefined;
 }
 
+/** A LIVE row's `title`/`tags`, filled from the store row for the same session — the half of the merged
+ *  projection that is not in `threadView`, because the registry record only carries these once a
+ *  `thread/name/set` or `thread/tag/set` has patched them. A patched field always wins: the same call that
+ *  wrote it persisted it, so the record is at least as fresh as the store.
+ *
+ *  EXPORTED, and the reason is a defect (D-M5-25c): `thread/search` composed its live rows with
+ *  `threadView` alone, so a session found BY its stored title came back as a row that did not carry the
+ *  title — the search's own `snippet` showing text the row it sits beside did not have. Two methods claim
+ *  to serve one projection, so the projection is one function. */
+export function fillFromStore(view: Record<string, unknown>, match: SDKSessionInfo): void {
+  if (view.title === undefined) view.title = match.summary;
+  if (view.tags === undefined) view.tags = match.tag !== undefined ? [match.tag] : undefined;
+}
+
 /** Store-only rows project to the SAME 14-field shape threadView produces (parent §5) — a client must not
  *  be able to tell a live row from a stored one by its shape alone, only by its content. No `thr_` id
  *  exists for a session this server never opened, so `id` IS the store sessionId; `status` is always idle
@@ -145,11 +159,7 @@ export const threadList: Handler = async (srv, ctx, id, params) => {
   const liveViews = srv.registry.list().map((r) => {
     const match = r.sessionId ? bySessionId.get(r.sessionId) : undefined;
     const view = threadView(srv, r);
-    if (match) {
-      seen.add(r.sessionId!);
-      if (view.title === undefined) view.title = match.summary;
-      if (view.tags === undefined) view.tags = match.tag !== undefined ? [match.tag] : undefined;
-    }
+    if (match) { seen.add(r.sessionId!); fillFromStore(view, match); }
     return view;
   });
   const storeOnlyViews = storeRows.filter((r) => !seen.has(r.sessionId)).map(storeOnlyView);

@@ -400,7 +400,9 @@ describe("thread/search", () => {
     const ccxDir = mkTmp("m5search-");
     boot({ ccxDir, listSessions: async () => { throw new Error("session store exploded"); }, getSessionMessages: async () => [] });
     const e = (await search({ searchTerm: "needle" })).error;
-    expect([e?.code, e?.message]).toEqual([-32603, "session store exploded"]);
+    // Named for the store that actually failed, and stripped — one `storeRefusal`, shared with the archive
+    // routes (D-M5-25a). What must NOT happen is the marker store's name on a session-store failure.
+    expect([e?.code, e?.message]).toEqual([-32603, "session store read failed: session store exploded"]);
     expect(e?.message).not.toContain("marker store");
   });
 
@@ -437,6 +439,27 @@ describe("thread/search", () => {
     expect(r.result.data.map((d: any) => d.thread.id)).toEqual([threadId, "s-cold"]);
     expect(r.result.data[0].thread.sessionId).toBe("sess-live");
     expect(srv.registry.get(threadId)!.sessionId).toBe("sess-live");
+  });
+
+  it("a LIVE row still carries the store title and tag the match was made against — the same fill thread/list applies", async () => {
+    // D-M5-25c. `threadView` alone leaves `title`/`tags` undefined until a thread/name/set patches the
+    // record, so a session found BY its stored title came back as a row that did not show the field that
+    // produced the hit — the reply's own `snippet` quoting text the row beside it did not have.
+    const st = store([sess("sess-live", { createdAt: 1_000, summary: "the needle title", tag: "release" })]);
+    const srv = boot({ ...st.deps, sessionFactory: () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-live" }) as any });
+    await send("thread/start", {});
+    const threadId = parse(lines).find((l) => l.result?.thread)!.result.thread.id;
+    const row = (await search({ searchTerm: "needle" })).result.data[0];
+    expect(row.snippet).toContain("needle");
+    // The row is the LIVE projection (its `id` is the registry id) AND it carries the store's fields.
+    expect([row.thread.id, row.thread.title, row.thread.tags]).toEqual([threadId, "the needle title", ["release"]]);
+    // …and the same thread listed answers identically, which is the property the two projections owe.
+    const listed = frameOf(await send("thread/list", {})).result.data.find((t: any) => t.id === threadId);
+    expect([listed.title, listed.tags]).toEqual([row.thread.title, row.thread.tags]);
+    // A field the RECORD carries still wins over the store's — the fill only fills what is missing, since
+    // the call that patched the record persisted it too, making the record at least as fresh as the store.
+    srv.registry.get(threadId)!.title = "renamed by the client";
+    expect((await search({ searchTerm: "needle" })).result.data[0].thread.title).toBe("renamed by the client");
   });
 
   it("two overlapping searches do not interleave — one content scan at a time per server", async () => {
@@ -1244,7 +1267,10 @@ describe("thread/searchOccurrences", () => {
     });
     const r = await occ({ threadId: "cold-session", searchTerm: "needle" });
     expect(r.error?.code).toBe(-32603);
-    expect(r.error?.message).toBe("unreadable transcript");
+    // The message is the session store's own, NAMED as the session store's and stripped of absolute paths
+    // (D-M5-25a): node composes an fs errno with the operator's home directory in it, and this reply used
+    // to ship `e.message` verbatim where `thread/archive` had stripped the same text for a milestone.
+    expect(r.error?.message).toBe("session store read failed: unreadable transcript");
     expect(r.result).toBeUndefined();
   });
 

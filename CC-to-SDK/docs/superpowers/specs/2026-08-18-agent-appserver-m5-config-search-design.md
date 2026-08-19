@@ -177,9 +177,11 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   page) bound **work per request, never coverage**: the cursor carries the intra-file row position,
   a page that exhausted its budget mid-file resumes exactly there, and **a page may legitimately
   return zero matches with a non-null `nextCursor`** — bounded progress, honestly reported.
-  Transcripts are read in **row windows at the storage boundary** (rev 3: `getSessionMessages`
-  already takes `{offset, limit}`; loading a whole giant transcript and then counting rows would
-  spend the memory the caps exist to bound). Rows larger than the row cap are skipped **and
+  Transcripts are read in **row windows** — `getSessionMessages`'s own `{offset, limit}` — which bound
+  the rows a page holds and scans (rev 10, D-M5-25b: they do **not** bound the storage read, and the
+  rev-3 sentence claiming they did is withdrawn; the shipped reader materializes the whole transcript
+  per window, so the loop is a measured ~7.8x cost multiplier and the memory in force is file size ×
+  concurrent scans, held to one by `runScanExclusive`). Rows larger than the row cap are skipped **and
   counted** in `skipped`, never silently.
 - **Hard bounds (D-M5-17):** `searchTerm` 2–256 UTF-16 units; `limit` ≤ 50 (over-cap CLAMPS with a
   `warning`, the `thread/read` precedent, deviating from the plan review's refuse-recommendation);
@@ -211,7 +213,10 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   result over a typo is the D-M5-8 lie in miniature.
 - **Search honesty (D-M5-8, the D-M4-1 family rule):** a store read failure is an **error**, never
   zero hits — a directory that cannot be listed or a file that cannot be opened refuses the request;
-  "no matches" is a claim about content actually scanned, and `skipped` discloses what was not.
+  "no matches" is a claim about content actually scanned, and `skipped` discloses what was not. The
+  failure is **established by auditing the store with plain `fs` before the scan** (rev 10, D-M5-25a),
+  because the SDK's readers answer `[]`/`undefined` for one and never throw; `ENOENT` alone is the
+  honest empty. The refusal carries the store's own errno with absolute paths stripped.
 - Dropped from Codex's shape, documented (D-M5-6): `sourceKinds` (our store records no source kind)
   and `backwardsCursor` (our `thread/list` never had one; reverse by flipping `sortDirection`).
 
@@ -436,7 +441,8 @@ flips the `full-potential.md` rows and ships nothing.
   driving client).
 - **D-M5-8 — search honesty.** A store read failure is an error, never an empty result; partial
   coverage is disclosed (`skipped`, zero-hit pages with `nextCursor`). The D-M4-1 rule re-derived
-  for this surface.
+  for this surface. **The MECHANISM is D-M5-25a (rev 10), not the handlers' catch clauses** — the
+  shipped readers never throw, so the failure is established by verifying the store ourselves.
 - **D-M5-9 — config errors ride `error.data.code`** (`ConfigVersionConflict`,
   `ConfigValidationError`) on existing JSON-RPC codes. `ConfigLayerReadonly` does not ship — the
   managed layer is unwritable by enum construction, so the refusal is unreachable (review F10).
@@ -464,7 +470,8 @@ flips the `full-potential.md` rows and ships nothing.
   negatives — review F6).
 - **D-M5-17 (rev 2, units fixed rev 3) — hard bounds on every client-driven scan** (term 2–256,
   limit ≤ 50 clamp-with-warning, snippet ≤ max(200, term), ≤ 40 files / ≤ 4000 rows per page,
-  1,048,576 UTF-16-unit row cap, row-windowed storage reads, one scan at a time). Rejected:
+  1,048,576 UTF-16-unit row cap, row-windowed transcript reads — the rows a page holds, not the bytes
+  the store reads, D-M5-25b — one scan at a time). Rejected:
   unbounded scanning (review F9); refusing over-cap limits (the `thread/read` clamp precedent
   governs).
 - **D-M5-18 (rev 3) — `config/read` serves the CAS tokens** (`versions` map, always present for the
@@ -1076,6 +1083,70 @@ flips the `full-potential.md` rows and ships nothing.
   and its rename is not detectable by the fence, and only the commit-time token check stands behind it;
   a wall-clock jump larger than the stale window can expire a live lease. Both are irreducible without
   kernel locking, and neither can produce a lost update without also producing a refusal.
+- **D-M5-25 (fix wave D, rev 10) — a store read failure is ESTABLISHED, because the reader will not
+  raise one.** D-M5-8's sentence is unchanged and its mechanism is replaced. The handlers' error paths
+  were always correct code; they could not run. SDK 0.3.234's readers swallow every filesystem failure —
+  `listSessions` wraps its `readdir` in `catch { return [] }`, `getSessionMessages` answers `[]`,
+  `getSessionInfo` answers `undefined` — so on the production origin an unreadable store was
+  indistinguishable from an empty one. Measured through a real server on the real wire with default
+  readers: a transcript at mode 000 vanished from `thread/search` with no error, no `skipped` and
+  `nextCursor: null` (the shape reserved for "there is nothing more"), the same file made
+  `thread/searchOccurrences` deny the thread EXISTS, and an unlistable projects directory answered
+  `{"data":[],"nextCursor":null}` — acceptance criterion 5's own words inverted. Every unit row pinning
+  the contract injected a reader that THROWS, and all of them passed while this was true: **an injected
+  double is a title for the storage layer** — a substitute more honest than the real dependency proves
+  nothing about the real one.
+  **25a — the precondition is verified with plain `fs`, where an errno propagates** (`sessions/storeAudit.ts`,
+  run before the listing and before the existence check, inside `runScanExclusive` because it is disk
+  work). It walks `<CLAUDE_CONFIG_DIR ?? ~/.claude>/projects` and each project directory, then `access`es
+  each `*.jsonl` — one `access` per transcript, `stat` only for a dirent that is not already a regular
+  file — and throws the store's own errno for the first thing it cannot read. **`ENOENT` is the one
+  honest empty** (a store never written, an entry that raced away); every other errno is an inability to
+  read something that is there. It runs on the PRODUCTION origin only — an injected reader is a different
+  store whose failures are the injector's to raise — which is the finding restated as a gate: the origin
+  the doubles stood in for is the one that now checks itself. Cost, measured on a real 1005-directory /
+  4643-transcript store: ~30-45 ms for the dirent walk, ~125-160 ms with the per-file check, against
+  ~1.9-2.25 s for the `listSessions()` it verifies; on that store all 4642 transcripts were readable and
+  the nine the reader drops for shape reasons produced no false refusal. **The path leak lands in the same
+  commit, because fixing the contract is what makes it live:** search's two error replies answered
+  `e.message` verbatim — node composes an fs errno with the operator's absolute home path — where
+  `thread/archive` had stripped the same text all along. Both now answer through `archiveDomain.ts`'s one
+  exported `storeRefusal`/`stripPaths`, with every session-store call tagged at its own site and each
+  `try` wrapping exactly the call it attributes.
+  Rejected, with reasons: **reproducing the SDK's cwd-to-project-directory mapping** so the audit could
+  be scoped to one project — it is internal (a character fold, a 200-character truncation with a hash
+  suffix, a `CLAUDE_CODE_PROJECT_DIR_NAME` override), and a wrong mapping fails silently open; the price
+  is that an unreadable corner of the store refuses even a `cwd`-scoped search, which is the direction
+  D-M5-8 chooses. **Reading transcripts ourselves** instead of through `getSessionMessages` — it would
+  make search and `thread/read` disagree about what a conversation says, which the whole corpus design
+  exists to prevent. **A `SessionStore` adapter** — the SDK wraps those calls too, and it would replace
+  the store rather than check it. **Narrowing the record instead** ("read failures are indistinguishable
+  from absence on this store") — available, and refused: three surfaces state the contract and the
+  fix is bounded.
+  **25b — the row-window rationale is withdrawn.** D-M5-16 rev 3 and the `thread/search` scorecard row
+  both said transcripts are read in row windows *at the storage boundary* because loading a whole
+  transcript would spend the memory the caps bound. Measured on a 6.1 MB / 4000-row transcript:
+  `limit: 1` at offset 0 costs 13.3 ms, `limit: 1` at offset 3999 11.3 ms, `limit: 500` 12.4 ms, the
+  whole file 10.8 ms — one number, four requests — and the eight windows of one full page cost 84.8 ms
+  against 10.9 ms for a single read of that file. The windows are a ~7.8x cost MULTIPLIER, not a bound.
+  Results are correct at any size and today's transcripts are small; what was false was the reason.
+  What the windows do bound is the rows a page holds and scans (`maxRowsPerPage`); the memory in force
+  is file size × concurrent scans, held to one by `runScanExclusive`. Decided: **correct the claim and
+  record the gap with its trigger** — transcript size, nothing else — rather than build the ranged
+  reader now. Rejected: making the mechanism real, which means our own JSONL reader and therefore the
+  corpus divergence 25a rejected for the same reason; and leaving the sentence standing, which is the
+  false-justification-propagated class this milestone has already had to correct four times.
+  **25c — one projection, one fill.** `thread/search` composed a live hit's row with `threadView` alone,
+  while `thread/list` fills `title`/`tags` from the store row for the same session. A session found BY
+  its stored title came back as a row that did not carry the title — the reply's own `snippet` quoting
+  text the row beside it did not have, and the same thread answering differently to two methods that
+  promise one projection. The fill is now `sessionLib.ts`'s exported `fillFromStore`, called by both; a
+  field the record already carries still wins, since the call that patched it persisted it too.
+  **Coupled and NOT fixed here, stated rather than left silent:** `thread/list`'s store-merge leg reads
+  the same swallowing reader and has the same blind spot. Its refusal path is dispatch's generic catch,
+  which replies `e.message` verbatim for every handler, so making the audit live there means auditing
+  that shared catch for the leak 25a just closed — a wider surface than this wave, and the honest place
+  for it is beside that decision rather than inside this one.
 
 ## Surprises & Discoveries
 
@@ -1649,3 +1720,15 @@ directory changing a permission dialog's offered rule row, not the known flake.
   lock's contract with an in-process double, and it took four real processes and 250 trials to see. The
   whole-branch review's lesson generalizes past the storage layer it was written about: **a test double is
   a title for whatever it stands in for**, and for a lock the thing it stands in for IS the concurrency.
+- **rev 10 (2026-08-20) — D-M5-25, search honesty, where that same lesson was first written down.**
+  D-M5-8 says a store read failure is an error, never an empty page, and acceptance criterion 5 says so
+  in its own words; on the production origin both were false, because the SDK's readers answer `[]` and
+  `undefined` for a failure and never throw, while every unit row pinning the contract injected a reader
+  that does. A double more honest than its dependency proves nothing about the dependency. The repair is
+  not a better catch clause — none can fire — but a precondition verified with plain `fs` before the scan,
+  on the production origin only. Two corrections travel with it: the leak that fixing the contract makes
+  live (search's error replies shipped node's errno text, absolute home path included, where the archive
+  routes had stripped it all along), and a rationale measurement contradicts (row windows do not bound the
+  storage read; they multiply it ~7.8x). Note the shape rev 9 named, arriving one layer up: the origin the
+  doubles stood in for is the one that had to start checking itself, and the rule this milestone coined —
+  **a title is not a test** — has a storage-layer twin in **an injected double is a title for the store**.
