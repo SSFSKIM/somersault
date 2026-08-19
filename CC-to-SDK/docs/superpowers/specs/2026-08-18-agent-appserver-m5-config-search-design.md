@@ -251,7 +251,7 @@ flips the `full-potential.md` rows and ships nothing.
 ### Cross-cutting
 
 - Scorecard: seven new rows in the server-origin table plus two notification rows; registered
-  methods 59 → 66; the notification recipe 27 → 29. The drift gate's three passes enforce
+  methods 59 → 66; the notification TOTAL 27 → 29 — **not the recipe, which stays at 27** (corrected at Task 11, where measurement beat three agreeing sources: this bullet, the plan, and the controller's dispatch all said "recipe 27 → 29", and applying it literally would have broken the recipe's own arithmetic). The recipe counts SLASH-SHAPED wire literals and **already includes** `thread/archived` and `thread/unarchived`; the total reaches 29 by adding the two names carrying no slash, `initialized` and `warning`. The document therefore holds two different 27s that share a number and share no members — the recipe's set, and "the other 27" (29 less the two that now carry rows). Both are right in their own scope and the collision is named explicitly in the Totals section rather than resolved by picking one. The drift gate's three passes enforce
   registration, staleness and bijection; schema artifacts regenerate in the same change. **Every one
   of the seven methods ships its exact request AND response zod schema** (rev 3: `MethodSchema`
   gains an optional `result` slot, emitted into the generated artifacts for methods that declare it
