@@ -1778,4 +1778,41 @@ describe("config/value/write + config/batchWrite", () => {
     id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: { "0": "Bash(pwd)" }, mergeStrategy: "upsert", target: "user", cwd: proj });
     expect(reply(id).result.status).toBe("ok");
   });
+
+  /** FIX WAVE I / SWEEP#1, at the wire — the SAME consequence through the key the row above could not
+   *  reach. `length` is not an index, so G5's bound returned early on it and `bag["length"] = v` invoked
+   *  the array's own setter: 100,000,000 slots and 500 MB of `JSON.stringify` output for a settings file
+   *  a client can write, and an uncaught `RangeError` for `{"length": {}}`. Both origins, because both
+   *  reach the same merge and neither may be the one that gets through. */
+  it("a `length` key that would expand an array past the bound refuses on BOTH methods, and an unassignable one is a parameter error", async () => {
+    boot(deps());
+    // The READ side: a settings FILE on disk, over a lower layer's array.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["Bash"] } }));
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: { length: 100000000 } } }));
+    let id = await send("config/read", { cwd: proj });
+    expect(reply(id).result).toBeUndefined();
+    expect([reply(id).error.code, reply(id).error.data.code]).toEqual([-32602, "ConfigValidationError"]);
+    expect(reply(id).error.message).toMatch(/may not extend it past 65536 entries \(key "length"\)/);
+    // …and the shape an array cannot accept at all is a refusal here rather than a -32603 carrying node's
+    // own `RangeError: Invalid array length`.
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: { length: { nope: 1 } } } }));
+    id = await send("config/read", { cwd: proj });
+    expect(reply(id).error.data.code).toBe("ConfigValidationError");
+    expect(reply(id).error.message).toMatch(/may not set its "length"/);
+    // The WRITE side: the client's own upsert value, refused inside the lock with nothing written.
+    rmSync(join(proj, ".claude", "settings.json"));
+    const before = readFileSync(join(home, ".claude", "settings.json"), "utf8");
+    id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: { length: 100000000 }, mergeStrategy: "upsert", target: "user", cwd: proj });
+    expect(reply(id).result).toBeUndefined();
+    expect(reply(id).error.data.code).toBe("ConfigValidationError");
+    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(before);
+    // …and the control: an AFFORDABLE `length` still merges and still writes, so this is a bound and not
+    // a new refusal of the key. The write lands as an object and the read serves the truncated array.
+    id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: { length: 0 }, mergeStrategy: "upsert", target: "project", cwd: proj });
+    expect(reply(id).result.status).toBe("ok");
+    id = await send("config/read", { cwd: proj });
+    expect(reply(id).result.config.permissions.allow).toEqual([]);
+    // …and the layer that emptied it is the one named for it (the attribution half of the same repair).
+    expect(reply(id).result.origins["permissions.allow"]).toEqual(["project"]);
+  });
 });

@@ -129,6 +129,51 @@ const mergeableEntries = (source: Record<string, unknown>): Array<[string, unkno
  *  them, and they ride the array exactly as `PreToolUse` does, WITHOUT moving `length`. */
 const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
 
+/** The array's OTHER length-moving key, and the one an index-shaped bound cannot see (fix wave I / sweep#1).
+ *  `length` is not a slot: assigning it invokes `Array.prototype`'s own setter, which coerces whatever it is
+ *  handed (`"2"`, `true` and `[]` are all lengths to it) and raises `RangeError: Invalid array length` for
+ *  the rest. So `{"length": 100000000}` is the very shape the index bound below exists to refuse, spelled a
+ *  way that bound could not read — measured on the shipped module at 100,000,000 slots and 500 MB of
+ *  `JSON.stringify` output in 4.7 s, while `{"100000000": "x"}` was refused — and `{"length": {}}` escaped
+ *  as an uncaught `RangeError` for a shape a client can send.
+ *
+ *  It is also the only source key whose effect on the array is decided by its VALUE rather than by its name,
+ *  which is why the bound below is asked about the value that will actually be assigned rather than about
+ *  the key alone. `undefined` here means "an array cannot accept this at all", which is a refusal to compose
+ *  rather than a `RangeError` to leak. */
+const LENGTH_KEY = "length";
+function lengthAfterAssign(key: string, value: unknown, current: number): number | undefined {
+  if (key === LENGTH_KEY) {
+    const n = Number(value);
+    return Number.isInteger(n) && n >= 0 && n <= 0xffff_ffff ? n : undefined;
+  }
+  if (!ARRAY_INDEX.test(key)) return current;             // a property, not an index: `length` never moves
+  return Math.max(current, Number(key) + 1);
+}
+
+/** The `length` an object source sets on an array it is merged over, or `undefined` if it sets none. It
+ *  never shows on the wire itself, but it decides how many of the array's OWN elements are still there — so
+ *  the contributor list has to ask for it too, or a layer that emptied an array is not named as a
+ *  contributor to the `[]` it produced (measured: `{"length":0}` in local over `["a","b"]` in project served
+ *  `[]` and attributed it to `project` alone, which is the membership `maskingVerdict` decides a write's
+ *  verdict from). Truncation is PERMANENT — a later index key that re-extends the array adds holes, never
+ *  the values it dropped — so `min` is the whole rule and the source's key order does not change it. */
+const sourceLength = (source: Record<string, unknown>): number | undefined => {
+  if (!Object.prototype.hasOwnProperty.call(source, LENGTH_KEY)) return undefined;
+  const n = Number(source[LENGTH_KEY]);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+};
+
+/** "Does anything this object source puts on the array SHOW to a reader of the reply?" — the source half of
+ *  `claimArray`'s two questions, for the object-over-array branch. An INDEX key writes an element; a
+ *  `length` that MOVES the length removes elements or adds holes (`JSON.stringify` renders a hole as
+ *  `null`); every other key rides the array as a property JSON never serializes. */
+const arraySourceShows = (target: unknown[], source: Record<string, unknown>): boolean => {
+  const len = sourceLength(source);
+  if (len !== undefined && len !== target.length) return true;
+  return mergeableEntries(source).some(([k]) => ARRAY_INDEX.test(k));
+};
+
 /** The merge's own refusal (fix wave G / G5). Not a `ConfigError`: this module knows nothing about wire
  *  codes and must not — `configWrite.ts` owns that class and imports THIS file, so the dependency only runs
  *  one way. `configDomain.ts` assigns the code, exactly as it does for the store's typed refusals. */
@@ -153,13 +198,23 @@ export class SettingsMergeError extends Error {}
  *  Both origins reach it and both should: a client's `upsert` (refused as a bad parameter) and a settings
  *  file already on disk (refused as a file to go fix — the same answer `readTargetDoc` gives unparseable
  *  bytes). The engine's own lodash would build the same array, so a view that reported it would be
- *  describing a config no engine can actually serve either. */
+ *  describing a config no engine can actually serve either.
+ *
+ *  ASKED OF THE ASSIGNMENT, NOT OF THE KEY (fix wave I / sweep#1). The first shape of this bound read the
+ *  key alone and returned for anything that was not an index — which is every key EXCEPT the one other key
+ *  that moves an array's length, `length` itself. The repair is not a second clause for that name: it is
+ *  that the question asked here is now "what length will this array have once `key = value` has been
+ *  assigned", which is the quantity the bound is actually about, and there is no key the array branch can
+ *  write that this question has not been asked of. An assignment an array cannot accept at all
+ *  (`length = {}`, a `RangeError` in the raw setter) is refused here as the same class of bad input rather
+ *  than escaping as an internal error. */
 const MAX_MERGE_ARRAY_LENGTH = 65_536;
-function assertIndexInBounds(key: string, length: number): void {
-  if (!ARRAY_INDEX.test(key)) return;                       // a property, not an index: `length` never moves
-  const i = Number(key);
-  if (i < length || i < MAX_MERGE_ARRAY_LENGTH) return;     // patches an element, or extends within bounds
-  throw new SettingsMergeError(`an object merged over an array may not extend it past ${MAX_MERGE_ARRAY_LENGTH} entries (index "${key}")`);
+function assertAssignInBounds(key: string, value: unknown, current: number): void {
+  const next = lengthAfterAssign(key, value, current);
+  if (next === undefined)
+    throw new SettingsMergeError(`an object merged over an array may not set its "length" to ${JSON.stringify(value) ?? String(value)}`);
+  if (next > current && next > MAX_MERGE_ARRAY_LENGTH)     // patches an element, or extends within bounds
+    throw new SettingsMergeError(`an object merged over an array may not extend it past ${MAX_MERGE_ARRAY_LENGTH} entries (${ARRAY_INDEX.test(key) ? "index" : "key"} "${key}")`);
 }
 
 /** UPSTREAM-EXACT for the mixed shapes, which is not the obvious answer for one of them: an OBJECT merged
@@ -174,8 +229,11 @@ export function settingsMerge(target: unknown, source: unknown): unknown {
     const out = [...target] as unknown[];
     const bag = out as unknown as Record<string, unknown>;
     for (const [k, v] of mergeableEntries(source)) {
-      assertIndexInBounds(k, out.length);
-      bag[k] = Object.prototype.hasOwnProperty.call(out, k) ? settingsMerge(bag[k], v) : v;
+      // The value is composed BEFORE the bound is asked, so the bound weighs exactly what the assignment
+      // will use — the key alone does not decide what `bag[k] = …` does to `out.length` (see the bound).
+      const assigned = Object.prototype.hasOwnProperty.call(out, k) ? settingsMerge(bag[k], v) : v;
+      assertAssignInBounds(k, assigned, out.length);
+      bag[k] = assigned;
     }
     return out;
   }
@@ -201,7 +259,10 @@ function survivesMerge(target: unknown, source: unknown): boolean {
   if (Array.isArray(target) && Array.isArray(source)) return target.length > 0;
   if (Array.isArray(target) && isPlainObject(source)) {
     const covered = new Map(mergeableEntries(source));
-    return target.some((el, i) => !covered.has(String(i)) || survivesMerge(el, covered.get(String(i))));
+    // A `length` in the source TRUNCATES before anything is covered, and elements past it are gone whatever
+    // the key order was (fix wave I / sweep#1) — so an element survives only if it is still there to survive.
+    const kept = Math.min(target.length, sourceLength(source) ?? target.length);
+    return target.some((el, i) => i < kept && (!covered.has(String(i)) || survivesMerge(el, covered.get(String(i)))));
   }
   if (isPlainObject(target) && isPlainObject(source)) {
     const covered = new Map(mergeableEntries(source));
@@ -248,7 +309,10 @@ function mergeTracked(target: Record<string, unknown>, source: Record<string, un
     // addressed at this path, and the rest are properties no reader of this reply can ever see. Which is
     // also why only an INDEX key counts as this layer showing, and why a source that covers every index
     // takes the path over outright.
-    if (Array.isArray(existing) && isPlainObject(v)) { out[k] = settingsMerge(existing, v); claimArray(path, survivesMerge(existing, v), mergeableEntries(v).some(([key]) => ARRAY_INDEX.test(key))); continue; }
+    // …and `length` counts as this layer SHOWING exactly when it moves the length (fix wave I / sweep#1):
+    // a truncation removes elements a reader can see are gone and an extension adds holes JSON renders as
+    // `null`, while a `length` equal to the one the array already has changes nothing anyone can observe.
+    if (Array.isArray(existing) && isPlainObject(v)) { out[k] = settingsMerge(existing, v); claimArray(path, survivesMerge(existing, v), arraySourceShows(existing, v)); continue; }
     // Replacement (new key, scalar-over-X, or type change): the discarded value's leaves are no longer
     // in the effective view — reset every contributor at or under this path, then claim it.
     for (const key of [...origins.keys()]) if (key === path || key.startsWith(path + ".")) origins.delete(key);

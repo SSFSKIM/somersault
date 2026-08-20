@@ -199,4 +199,61 @@ describe("configLayers", () => {
     const bag = settingsMerge(["a"], { "4294967294xyz": 1, PreToolUse: 2 }) as unknown as Record<string, unknown>;
     expect([(bag as unknown as unknown[]).length, bag.PreToolUse]).toEqual([1, 2]);
   });
+
+  /** FIX WAVE I / SWEEP#1. `length` is the array's OTHER length-moving key, and the index-shaped bound
+   *  above could not read it: `{"length": 100000000}` is the very shape G5 refuses, spelled a way that
+   *  returned early. MEASURED on the pre-fix module: 100,000,000 slots and 500,000,000 bytes of
+   *  `JSON.stringify` output in 4,685 ms, while the index spelling of the same number was refused; and
+   *  `{"length": {}}` escaped as an uncaught `RangeError: Invalid array length` for a shape a client can
+   *  send. The bound now weighs the LENGTH THE ASSIGNMENT LEAVES rather than the key's shape, so there is
+   *  no key the array branch can write that it has not been asked about. */
+  it("a `length` key is bounded by the same rule as an index, and an unassignable one refuses rather than throwing RangeError", () => {
+    for (const v of [100_000_000, 4_294_967_295, 65_537, "100000000"])
+      expect(() => settingsMerge(["a"], { length: v })).toThrow(SettingsMergeError);
+    // …and the bound's own edge is the SAME entry count the index spelling permits: `length: 65536` and
+    // index `"65535"` both leave exactly 65,536 entries, and both are allowed.
+    expect((settingsMerge(["a"], { length: 65_536 }) as unknown[]).length).toBe(65_536);
+    // Not a `RangeError` escaping as an internal error: an array cannot accept these at all, and that is
+    // refused as the same class of bad input.
+    for (const v of [{ nope: 1 }, ["x"], -1, 1.5, "nope"])
+      expect(() => settingsMerge(["a"], { length: v })).toThrow(SettingsMergeError);
+    // UPSTREAM-EXACT for everything affordable — truncation, hole extension, and the setter's own coercion.
+    expect(settingsMerge(["a", "b"], { length: 0 })).toEqual([]);
+    expect(settingsMerge(["a"], { length: 3 })).toEqual([undefined, undefined, undefined].fill("a", 0, 1));
+    expect((settingsMerge(["a"], { length: 3 }) as unknown[]).length).toBe(3);
+    expect(settingsMerge(["a", "b", "c"], { length: "2" })).toEqual(["a", "b"]);
+    // `null`, `true` and `[]` are lengths to the real setter (0, 1, 0), so they are lengths here too —
+    // upstream-exactness is the rule, and only the shapes the setter itself refuses are refused.
+    expect(settingsMerge(["a", "b"], { length: null })).toEqual([]);
+    expect(settingsMerge(["a", "b"], { length: true })).toEqual(["a"]);
+    // …and an array already past the bound may still be truncated, because truncation costs nothing.
+    const long = Array.from({ length: 70_000 }, (_, i) => `r${i}`);
+    expect((settingsMerge(long, { length: 10 }) as unknown[]).length).toBe(10);
+  });
+
+  /** FIX WAVE I / SWEEP#1, the attribution half. `origins` is the map `maskingVerdict` decides a write's
+   *  verdict from by MEMBERSHIP, so a layer whose contribution a reader can see must be in it. A `length`
+   *  key is not an element key and it is not an index, so the source-shows test could not see it: measured
+   *  pre-fix, `{"length":0}` in local over `["a","b"]` in project served `[]` and attributed it to
+   *  `project` ALONE — the layer that emptied the array was not named as a contributor to the `[]` it
+   *  produced, and the layer whose values are all gone was. */
+  it("a `length` key that MOVES the length is a contributor; one that does not is not", () => {
+    const at = (localAllow: Record<string, unknown>): { value: unknown; origin: unknown } => {
+      const { config, origins } = effectiveView([
+        L("project", { permissions: { allow: ["a", "b"] } }),
+        L("local", { permissions: { allow: localAllow } }),
+      ]);
+      return { value: (config.permissions as Record<string, unknown>).allow, origin: origins["permissions.allow"] };
+    };
+    // Truncated to nothing: only `local` shows, and `project`'s elements are gone.
+    expect(at({ length: 0 })).toEqual({ value: [], origin: ["local"] });
+    // Partially truncated: `project`'s surviving element and `local`'s cut are both visible.
+    expect(at({ length: 1 })).toEqual({ value: ["a"], origin: ["project", "local"] });
+    // Extended with holes, which JSON renders as `null` — visible, so `local` shows.
+    expect(at({ length: 4 }).origin).toEqual(["project", "local"]);
+    // A `length` equal to the one the array already has changes nothing a reader can see.
+    expect(at({ length: 2 })).toEqual({ value: ["a", "b"], origin: ["project"] });
+    // …and a plain non-index property still shows nothing, which is the rule this extends rather than replaces.
+    expect(at({ tag: 1 }).origin).toEqual(["project"]);
+  });
 });
