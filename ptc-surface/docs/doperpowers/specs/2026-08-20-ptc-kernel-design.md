@@ -843,6 +843,48 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
 - Observation: `jupyter_client`'s BlockingKernelClient heartbeat channel is a liability for short-lived control connections — its teardown raced the interrupt call with `ZMQError: Too many open files` from the hb thread, and the heartbeat's accidental startup delay was the only reason the control-channel `interrupt_request` ever flushed before teardown (SIGINT quietly did the real interrupting). The client now connects hb-less and awaits `interrupt_reply` before teardown; a wall-clock test bound (settle < the 2s SIGINT grace) guards the control path against regressing to SIGINT-only.
   Evidence: T6 execution (commit 1fa23ae189) — hand-found; measured 0.13s control-channel settle vs 4.34s with the control send sabotaged. Fail-closed admission also gained the sent-but-unacknowledged marker (commit a49c46ae80): any failure after `execute_request` leaves `pending.json` under the submit lock, closing the crash-mid-submit and slow-joiner silent-queue routes.
 
+- Observation: [S1 verdict — PROMOTE] claude-agent-sdk ran cleanly inside ipykernel's own
+  asyncio loop — one-shot `query()`, two concurrent `ClaudeSDKClient` sessions with follow-up
+  sends, mid-stream cancellation, `interrupt()`, and a SIGKILL of the CLI under a live stream,
+  all with the kernel still executing cells afterwards. `nest_asyncio` was NOT needed and is
+  not even imported (ipykernel 7.3.0 awaits a top-level-`await` cell on its own loop, so
+  nothing ever nests `run_until_complete`); the spec's conditional at "nest_asyncio is applied
+  only if spike S1 proves it necessary" therefore resolves to *not applied*. CLI-death raised
+  `ProcessError` in ~1.5 s — the SDK's reported indefinite-hang mode did NOT reproduce on
+  0.2.142 + bundled CLI 2.1.237 — and a fresh query in the same kernel afterwards succeeded.
+  The pre-designed background-thread fallback and its cross-thread handle protocol are NOT
+  built. Two caveats for T20: cancellation/interrupt UNWIND is slow and highly variable
+  (0.6 s–5.7 s to await a cancelled task, 4.0 s–13.0 s to drain after `interrupt()`), so
+  teardown needs its own budget separate from the call deadline; and an interrupted turn does
+  not raise — it ends with a normal `ResultMessage` carrying
+  `terminal_reason='aborted_streaming'` / `is_error=True` (a completed one carries
+  `terminal_reason='completed'`).
+  Evidence: `test/spikes/s1_sdk_in_kernel.py`, two live passes —
+  `one_shot: ok / ONE_SHOT_OK ResultMessage`;
+  `two_concurrent: ok / CONCURRENT_OK True True`;
+  `cancel_midstream: ok / CANCEL_OK + STILL_ALIVE 2`;
+  `client_lifecycle: ok / CLIENTS_OK (True, True) (True, True) + LEAKED []`;
+  `client_interrupt: ok / INTERRUPT_OK`;
+  `kill_cli_midstream: ok / KILL_RESULT RAISED ProcessError + STILL_ALIVE_2 4` (cell 1620 ms);
+  `loop_identity: NEST_ASYNCIO_IMPORTED False / LOOP asyncio.unix_events._UnixSelectorEventLoop
+  ... patched False`; `cancel_reaps_child: CANCEL_CHILDREN before/during/after 0 1 0 /
+  CANCEL_ORPHANS []`; `recover_after_cli_death: subtype 'success' after the kill`;
+  `interrupt_terminal_reason: subtype 'error_during_execution', terminal_reason
+  'aborted_streaming'`.
+
+- Observation: `ClaudeAgentOptions(setting_sources=None)` — the default — means "load
+  everything the CLI would": the user's `~/.claude/settings.json`, project settings, their
+  hooks, and CLAUDE.md. An in-kernel agent therefore inherits the host user's whole Claude Code
+  configuration unless it opts out, and the user's own hooks execute inside the child. Measured
+  on one identical trivial prompt: inherited $0.252102 / 4 HookEventMessages / 12 514
+  cache-write tokens versus `setting_sources=[]` $0.053303 / 0 hook events / 5 217 cache-write
+  tokens — ~4.7x the cost plus foreign hook execution. PTC's SDK backend should pass
+  `setting_sources=[]` and configure children explicitly. Even isolated, a trivial call still
+  costs ~5 200 prompt tokens of CLI base system prompt, so `llm()` is not a cheap primitive.
+  Evidence: `test/spikes/s1_sdk_in_kernel.py::ADDENDUM["settings_isolation"]` —
+  `SETTINGS_INHERITED cost_usd 0.252102 hook_msgs 4 in 2 cache_read 1452 cache_write 12514` /
+  `SETTINGS_ISOLATED cost_usd 0.053302999999999996 hook_msgs 0 in 2 cache_read 0 cache_write 5217`.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
