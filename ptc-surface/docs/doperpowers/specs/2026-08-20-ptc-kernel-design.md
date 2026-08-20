@@ -200,8 +200,10 @@ kernel with the namespace intact.
   broadcast-only); the record makes completion, result, error, and duration recoverable by a
   **fresh adapter** — a cell is "running" iff its log exists and its record does not and the
   kernel process is live. On each kernel (re)spawn the previous epoch's `cells/` directory is
-  rotated to `cells-prev-<ts>/` so execution counts never collide across kernel processes;
-  `wait` on a rotated cell reports that it belongs to a previous kernel epoch. Display-data images are captured kernel-side (a display-publisher
+  rotated to `cells-prev-<ts>/`, and the new kernel's counters are continued **above the
+  highest archived cell id** (monotonic across epochs), so a cell id can never be reused;
+  `wait` on an archived cell settles immediately from the archive, labeled as belonging to
+  a previous kernel epoch. Display-data images are captured kernel-side (a display-publisher
   shim saves PNGs to `cells/<n>-<k>.png` and lists them in the record).
 - **Audit log**: every mutation made through the runtime API appends a JSON line to
   `~/.ptc/kernels/<key>/audit.jsonl`:
@@ -751,6 +753,25 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   (`USER_TYPE=ant`) users — live-disproven in this project's own external-account session.
   Date/Author: 2026-08-20 / independent spec review.
 
+- Decision: Plan-review revisions (Codex gpt-5.6-sol, xhigh, over the execution plan):
+  cell numbering derives from IPython's pre-incremented counter (`count-1` when history is
+  stored) with an end-to-end alignment test as the guard; the submit lock is held until the
+  kernel publishes the cell (fail-closed with a pending marker — no 3 s escape hatch);
+  cell ids are **monotonic across kernel epochs** and `wait` settles archived cells from
+  `cells-prev-*/`; the spawn transaction covers bootstrap and kills the kernel on any
+  failure (and a live-but-never-ready owner is reaped before respawn); the watchdog calls
+  `os._exit` while still holding the flock; agent handles retain their driver task, take
+  the shared semaphore and deadline on `send`, and tear down the SDK client on
+  interrupt/error; spike S1 exercises real `ClaudeSDKClient` lifecycle (two clients,
+  follow-up sends, interrupt, leaked-process check); the codex client implements the full
+  initialize/initialized handshake, camelCase sandbox enums, and turn-id-carrying
+  interrupts against a fake that rejects invalid shapes; `ptc.runtime` exports its API at
+  module level; and acceptance A11 asserts an actual `mcp__ptc__exec` tool_use event on a
+  prompt that never mentions ptc.
+  Rationale: all ten review findings verified against IPython/app-server sources and
+  accepted; none were rebutted.
+  Date/Author: 2026-08-20 / independent plan review.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
@@ -835,3 +856,7 @@ Pending — written at finish.
   extras gain `matplotlib` (the display shim needs the inline backend to see figures); and
   `cells/` rotates to `cells-prev-<ts>/` on every kernel respawn so execution counts never
   collide across kernel processes. Plan: `docs/doperpowers/plans/2026-08-20-ptc-kernel.md`.
+- 2026-08-20 (plan review): the independent plan review's ten accepted findings are folded
+  into the plan and reflected here — atomic admission wording under the exec row, monotonic
+  cell ids + archived settlement in the capture section, and the plan-review Decision Log
+  entry above.

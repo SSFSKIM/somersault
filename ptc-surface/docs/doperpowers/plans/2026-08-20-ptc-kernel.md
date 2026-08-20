@@ -131,7 +131,7 @@ def default_offset(key, cell_id) -> int; def save_offset(key, cell_id, offset: i
 # client.py
 @dataclass class Completed: cell_id: int; record: CellRecord; output: str
 @dataclass class Running: cell_id: int; output: str; next_offset: int
-@dataclass class Busy: cell_id: int | None
+@dataclass class Busy: cell_id: int | None   # -1 = a submission is still being acknowledged
 class KernelClient:
     def __init__(self, key: str)
     def exec_cell(self, code: str, timeout_s: float, config: Config) -> Completed | Running | Busy
@@ -934,7 +934,15 @@ def _rotate_cells(kd: Path) -> None:
         cd.rename(kd / f"cells-prev-{int(time.time())}")
 
 
-def _clean_stale(kd: Path) -> None:
+def _clean_stale(kd: Path, key: str) -> None:
+    o = read_owner(key)
+    if o and owner_alive(o):
+        # a live kernel with no `ready` (e.g. bootstrap failed) must be reaped
+        # before respawn, or every retry leaks a detached process (F4)
+        try:
+            os.kill(o.pid, signal.SIGKILL)
+        except OSError:
+            pass
     for name in ("owner.json", "ready", "connection.json"):
         (kd / name).unlink(missing_ok=True)
     _rotate_cells(kd)
@@ -976,7 +984,7 @@ def ensure_kernel(key: str, *, cwd: str | None = None,
         if o and owner_alive(o) and (kd / "ready").exists():
             return KernelInfo(key, o.pid, kd / "connection.json", False, None)
         expired = consume_expiry(key)
-        _clean_stale(kd)
+        _clean_stale(kd, key)
         cells_dir(key).mkdir(parents=True, exist_ok=True)
         (cells_dir(key) / "offsets").mkdir(exist_ok=True)
         conn = kd / "connection.json"
@@ -1119,6 +1127,20 @@ def test_exec_writes_log_and_record(ptc_home):
     out2 = kc.exec_cell("print(x + 1)", timeout_s=60, config=Config.from_env())
     assert "43" in out2.output and out2.cell_id == out.cell_id + 1
     kill_kernel("c1")
+
+
+def test_cell_id_alignment(ptc_home):
+    """F1 guard: execute_input id == current.json == log == record == audit cell.
+    If an IPython release changes hook/count ordering, THIS fails — fix _cell_no."""
+    ensure_kernel("ca1", cwd=str(ptc_home))
+    kc = KernelClient("ca1")
+    out = kc.exec_cell("print('align')", timeout_s=60, config=Config.from_env())
+    n = out.cell_id
+    cells = ptc_home / "kernels" / "ca1" / "cells"
+    assert (cells / f"{n}.log").exists() and "align" in (cells / f"{n}.log").read_text()
+    assert read_record("ca1", n) is not None
+    assert current_cell("ca1") == n
+    kill_kernel("ca1")
 
 
 def test_error_cell_records_error(ptc_home):
@@ -1267,9 +1289,19 @@ def _write_json_atomic(path: Path, obj) -> None:
     tmp.replace(path)
 
 
+def _cell_no(ip, info) -> int:
+    """IPython increments execution_count BEFORE pre_run_cell fires when history is
+    stored, so the starting cell's number is count-1 in the store_history case (plan
+    review F1). test_cell_id_alignment is the guard: if an IPython release changes
+    this ordering, that test fails loudly — flip the correction here with it."""
+    if getattr(info, "store_history", True):
+        return int(ip.execution_count) - 1
+    return int(ip.execution_count)
+
+
 def _pre_run_cell(info):
     ip = _ip()
-    n = ip.execution_count
+    n = _cell_no(ip, info)
     STATE.current_cell = n
     STATE.cell_started = time.perf_counter()
     STATE.last_activity = time.time()
@@ -1350,9 +1382,12 @@ def _watchdog():
                     f"expired after {idle / 3600:.2f} h idle at {time.strftime('%F %T')}")
                 (STATE.kernel_dir / "owner.json").unlink(missing_ok=True)
                 (STATE.kernel_dir / "ready").unlink(missing_ok=True)
+                # Exit WHILE holding the flock: process death releases it atomically,
+                # so a concurrent spawner can never observe a half-dead kernel (F5).
+                os._exit(0)
         except Exception:
-            pass
-        os._exit(0)
+            continue  # cleanup failed: keep ownership and retry next tick — never
+                      # exit leaving partial state behind (F5)
 
 
 def install(config_json: str) -> str:
@@ -1370,6 +1405,24 @@ def install(config_json: str) -> str:
         tee = _Tee(getattr(sys, stream_name))
         _tees.append(tee)
         setattr(sys, stream_name, tee)
+    # Monotonic cell ids across kernel epochs (F3): continue numbering above the
+    # highest archived cell id so a yielded pre-restart cell id can never collide
+    # with a new epoch's cell. The shell counter is pre-incremented relative to the
+    # kernel counter (see _cell_no); test_cell_id_alignment guards the arithmetic.
+    try:
+        prev_max = 0
+        for d in STATE.kernel_dir.glob("cells-prev-*"):
+            for f in d.glob("*.log"):
+                try:
+                    prev_max = max(prev_max, int(f.stem))
+                except ValueError:
+                    pass
+        if prev_max and prev_max + 1 > int(ip.execution_count):
+            ip.execution_count = prev_max + 1              # next cell number = prev_max+1
+            if getattr(ip, "kernel", None) is not None:
+                ip.kernel.execution_count = prev_max       # next execute_input = prev_max+1
+    except Exception:
+        pass
     ip.events.register("pre_run_cell", _pre_run_cell)
     ip.events.register("post_run_cell", _post_run_cell)
     _install_display_shim()
@@ -1532,6 +1585,10 @@ class KernelClient:
 
 
 def run_bootstrap(key: str, config: Config) -> None:
+    """NOTE (T6): once exec_cell requires kernel-side current.json confirmation, the
+    bootstrap cell cannot use it (the hooks it waits on are installed BY that very
+    cell). run_bootstrap therefore submits directly and follows the shell-channel
+    execute_reply instead — see _exec_raw below, added in T6."""
     payload = json.dumps({
         "key": key,
         "kernel_dir": str(kernel_dir(key)),
@@ -1555,7 +1612,26 @@ Wire into `kernel.py` — in `ensure_kernel`, immediately before `return KernelI
         run_bootstrap(key, cfg)
 ```
 
-(Bootstrap runs while the key lock is held — a concurrent client cannot observe a ready-but-unbootstrapped kernel because `ready` is written before, and cell 1 is always the bootstrap. Move the `(kd / "ready").write_text(epoch)` line **after** `run_bootstrap` so `ready` means bootstrapped.)
+Then restructure the tail of `ensure_kernel` so the whole birth is one transaction (F4) —
+replace the block from `epoch = str(int(time.time()))` through the final `return` with:
+
+```python
+        epoch = str(int(time.time()))
+        try:
+            write_owner(key, Owner(proc.pid, proc_start_time(proc.pid),
+                                   time.time(), secrets.token_hex(8), epoch))
+            write_meta(key, kernel_key=key, claude_session_id=claude_session_id,
+                       cwd=work, depth=cfg.depth, epoch=epoch)
+            from .client import run_bootstrap
+            run_bootstrap(key, cfg)
+            (kd / "ready").write_text(epoch)   # ready means BOOTSTRAPPED
+        except Exception:
+            proc.kill()                        # never leak a detached kernel (F4)
+            (kd / "owner.json").unlink(missing_ok=True)
+            (kd / "ready").unlink(missing_ok=True)
+            raise
+        return KernelInfo(key, proc.pid, conn, True, expired)
+```
 
 - [ ] **Step 5: Run tests**
 
@@ -1621,6 +1697,26 @@ def test_yield_wait_busy_interrupt(ptc_home):
     kill_kernel("y1")
 
 
+def test_wait_on_archived_epoch_cell(ptc_home):
+    """F3: a cell yielded before a restart settles from the archive, never from a
+    new epoch's cell — ids are monotonic across epochs."""
+    from ptc.kernel import restart_kernel
+    ensure_kernel("y3", cwd=str(ptc_home))
+    cfg = Config.from_env()
+    out = KernelClient("y3").exec_cell("import time\nprint('old-epoch', flush=True)\ntime.sleep(600)",
+                                       timeout_s=2, config=cfg)
+    assert isinstance(out, Running)
+    old_id = out.cell_id
+    restart_kernel("y3")
+    w = KernelClient("y3").wait_cell(old_id, timeout_s=5)
+    assert isinstance(w, Completed)
+    assert "previous kernel epoch" in w.output and "old-epoch" in w.output
+    # monotonic: the new epoch's first user cell id is above the archived max
+    out2 = KernelClient("y3").exec_cell("print('new')", timeout_s=30, config=cfg)
+    assert out2.cell_id > old_id
+    kill_kernel("y3")
+
+
 def test_wait_on_dead_kernel_reports_kernel_died(ptc_home):
     info = ensure_kernel("y2", cwd=str(ptc_home))
     kc = KernelClient("y2")
@@ -1648,7 +1744,7 @@ Replace the `exec_cell` body and add methods in `ptc-surface/ptc/src/ptc/client.
 import os
 import signal
 
-from .cells import current_cell, default_offset, save_offset
+from .cells import current_cell, default_offset, save_offset  # (json, kernel_dir already imported)
 from .kernel import kernel_alive
 from .lock import submit_lock
 from .ownership import read_owner
@@ -1657,25 +1753,34 @@ from .ownership import read_owner
 class KernelClient:
     # ... __init__, _connect, _await_cell_id, _follow unchanged ...
 
+    # -- busy model (F2): a kernel is busy when the kernel-side current.json names a
+    # cell with no terminal record, OR when a submitted request has not yet been
+    # acknowledged (pending.json, written only on the confirm-failure path).
     def is_busy(self) -> int | None:
         cur = current_cell(self.key)
-        if cur is None:
-            return None
         from .cells import read_record
-        if read_record(self.key, cur) is None and kernel_alive(self.key):
+        if cur is not None and read_record(self.key, cur) is None and kernel_alive(self.key):
             return cur
+        pend = kernel_dir(self.key) / "cells" / "pending.json"
+        try:
+            data = json.loads(pend.read_text())
+            if time.time() - data.get("submitted_at", 0) < 60 and kernel_alive(self.key):
+                return -1          # busy admitting an unacknowledged cell
+            pend.unlink(missing_ok=True)
+        except (OSError, json.JSONDecodeError):
+            pass
         return None
 
-    def _await_current_json(self, cell_id: int, timeout: float = 3.0) -> None:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if current_cell(self.key) == cell_id:
-                return
-            time.sleep(0.02)
-        # kernel-side pre_run_cell is late; proceed anyway (busy check still sound via records)
-
     def exec_cell(self, code: str, timeout_s: float, config: Config) -> Completed | Running | Busy:
-        with submit_lock(self.key):
+        """Atomic admission (F2): the submit lock is held from the busy check until the
+        kernel-side pre_run_cell has published current.json for OUR cell. A loser that
+        times out on the lock is told busy — a submitted request is never silently queued."""
+        try:
+            lock_cm = submit_lock(self.key)
+            lock_cm.__enter__()
+        except TimeoutError:
+            return Busy(self.is_busy())
+        try:
             busy = self.is_busy()
             if busy is not None:
                 return Busy(busy)
@@ -1683,10 +1788,49 @@ class KernelClient:
             try:
                 msg_id = kc.execute(code, store_history=True, allow_stdin=False, stop_on_error=False)
                 cell_id = self._await_cell_id(kc, msg_id)
-                self._await_current_json(cell_id)
+                deadline = time.monotonic() + 15.0
+                while current_cell(self.key) != cell_id:
+                    if time.monotonic() >= deadline:
+                        # fail closed: mark the unacknowledged submission so every
+                        # later busy check sees it, then surface the fault (F2)
+                        pend = kernel_dir(self.key) / "cells" / "pending.json"
+                        pend.parent.mkdir(parents=True, exist_ok=True)
+                        pend.write_text(json.dumps(
+                            {"msg_id": msg_id, "submitted_at": time.time()}))
+                        raise RuntimeError(
+                            f"kernel {self.key} accepted cell {cell_id} but never "
+                            "published it; the kernel may be wedged — interrupt() or "
+                            "restart()")
+                    time.sleep(0.02)
+                (kernel_dir(self.key) / "cells" / "pending.json").unlink(missing_ok=True)
             finally:
                 kc.stop_channels()
+        finally:
+            lock_cm.__exit__(None, None, None)
         return self._follow(cell_id, timeout_s)
+
+    def _archived(self, cell_id: int) -> Completed | None:
+        """A cell id from a previous kernel epoch (F3): settle it from the archive."""
+        for d in sorted(kernel_dir(self.key).glob("cells-prev-*"), reverse=True):
+            log = d / f"{cell_id}.log"
+            if not log.exists():
+                continue
+            text = log.read_text(errors="replace")
+            rec = None
+            try:
+                rec = json.loads((d / f"{cell_id}.json").read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
+            if rec is None:
+                rec = {"status": "error", "duration_ms": 0, "result_repr": None,
+                       "error": {"ename": "KernelEpochEnded",
+                                 "evalue": "the kernel restarted before this cell finished",
+                                 "traceback": ""},
+                       "images": [], "mutations": []}
+            rec.setdefault("error", None)
+            note = f"\n[cell {cell_id} belongs to a previous kernel epoch — archived at {d}]"
+            return Completed(cell_id, CellRecord(**rec), text + note)
+        return None
 
     def wait_cell(self, cell_id: int, timeout_s: float, since: int = -1) -> Completed | Running:
         offset = default_offset(self.key, cell_id) if since < 0 else since
@@ -1697,6 +1841,10 @@ class KernelClient:
                 text, new_off = read_output_since(self.key, cell_id, offset)
                 save_offset(self.key, cell_id, new_off)
                 return Completed(cell_id, rec, text)
+            if not (kernel_dir(self.key) / "cells" / f"{cell_id}.log").exists():
+                arch = self._archived(cell_id)
+                if arch is not None:
+                    return arch
             if not kernel_alive(self.key):
                 text, new_off = read_output_since(self.key, cell_id, offset)
                 dead = CellRecord(status="error", duration_ms=0, result_repr=None,
@@ -1733,7 +1881,36 @@ class KernelClient:
                 os.kill(o.pid, signal.SIGINT)
             except OSError:
                 pass
+
+    def _exec_raw(self, code: str, timeout_s: float) -> Completed | Running:
+        """Bootstrap-only path: no submit lock, no current.json wait (the hooks are
+        installed by the very cell this runs). Follows the shell execute_reply."""
+        kc = self._connect()
+        try:
+            msg_id = kc.execute(code, store_history=True, allow_stdin=False, stop_on_error=False)
+            cell_id = self._await_cell_id(kc, msg_id)
+            deadline = time.monotonic() + timeout_s
+            while time.monotonic() < deadline:
+                try:
+                    reply = kc.get_shell_msg(timeout=1.0)
+                except Exception:
+                    continue
+                if reply.get("parent_header", {}).get("msg_id") == msg_id:
+                    ok = reply["content"].get("status") == "ok"
+                    text, _ = read_output_since(self.key, cell_id, 0)
+                    rec = read_record(self.key, cell_id) or CellRecord(
+                        status="ok" if ok else "error", duration_ms=0, result_repr=None,
+                        error=None if ok else {"ename": reply["content"].get("ename", "Error"),
+                                               "evalue": reply["content"].get("evalue", ""),
+                                               "traceback": ""},
+                        images=[], mutations=[])
+                    return Completed(cell_id, rec, text)
+            return Running(cell_id, "", 0)
+        finally:
+            kc.stop_channels()
 ```
+
+And switch `run_bootstrap` to it: `out = KernelClient(key)._exec_raw(code, timeout_s=60)`.
 
 - [ ] **Step 4: Run tests (including a re-run of T4/T5 suites — the protocol touched shared code)**
 
@@ -1874,11 +2051,13 @@ def _header(cell_id, status: str, dur_ms: int | None, degraded: bool) -> str:
 def render(outcome, key: str, config: Config, degraded: bool = False) -> Rendered:
     log_path = cells_dir(key)
     if isinstance(outcome, Busy):
+        which = ("a just-submitted cell is being admitted" if (outcome.cell_id in (None, -1))
+                 else f"cell {outcome.cell_id} is still running")
         return Rendered(
             f"[kernel busy{' · [keying: adapter-local]' if degraded else ''}] "
-            f"cell {outcome.cell_id} is still running. "
-            f"Use wait(cell_id={outcome.cell_id}) for its output, interrupt() to stop it, "
-            "or resubmit after it finishes. Nothing was queued.", [])
+            f"{which}. "
+            + (f"Use wait(cell_id={outcome.cell_id}) for its output, " if outcome.cell_id not in (None, -1) else "")
+            + "interrupt() to stop it, or resubmit after it finishes. Nothing was queued.", [])
     if isinstance(outcome, Running):
         body = _truncate(outcome.output, config.max_output_chars, log_path / f"{outcome.cell_id}.log")
         return Rendered(
@@ -2377,6 +2556,54 @@ CASES = {
         # kernel still responsive?
         print("STILL_ALIVE", 1 + 1)
     """,
+    "client_lifecycle": """
+        # Two REAL ClaudeSDKClient sessions: connect, first turn, follow-up send,
+        # interrupt on one, disconnect both, and no leaked claude processes (F7).
+        import subprocess as _sp, os as _os
+        from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+
+        def _kids():
+            out = _sp.run(["pgrep", "-P", str(_os.getpid())], capture_output=True, text=True)
+            return set(out.stdout.split())
+
+        base = _kids()
+        async def session_flow(word):
+            c = ClaudeSDKClient(options=ClaudeAgentOptions(
+                max_turns=1, tools=[], permission_mode="bypassPermissions"))
+            await c.connect()
+            await c.query(f"Reply with exactly: {word}")
+            got = ""
+            async for m in c.receive_response():
+                for b in getattr(m, "content", []) or []:
+                    got += getattr(b, "text", "")
+            await c.query(f"Now reply with exactly: {word}2")
+            got2 = ""
+            async for m in c.receive_response():
+                for b in getattr(m, "content", []) or []:
+                    got2 += getattr(b, "text", "")
+            await c.disconnect()
+            return word in got, f"{word}2" in got2
+        r1, r2 = await asyncio.gather(session_flow("RED"), session_flow("BLUE"))
+        print("CLIENTS_OK", r1, r2)
+        await asyncio.sleep(1)
+        leaked = _kids() - base
+        print("LEAKED", sorted(leaked))
+    """,
+    "client_interrupt": """
+        c = ClaudeSDKClient(options=ClaudeAgentOptions(
+            tools=[], permission_mode="bypassPermissions"))
+        await c.connect()
+        await c.query("Count slowly from 1 to 500, one number per line.")
+        await asyncio.sleep(2)
+        await c.interrupt()
+        try:
+            async for m in c.receive_response():
+                pass
+        except Exception as e:
+            print("INTERRUPT_RAISED", type(e).__name__)
+        await c.disconnect()
+        print("INTERRUPT_OK")
+    """,
     "kill_cli_midstream": """
         import subprocess, signal
         async def ask_with_kill():
@@ -2420,7 +2647,7 @@ if __name__ == "__main__":
 ```bash
 cd ptc-surface/ptc && PTC_LIVE=1 uv run --group dev python test/spikes/s1_sdk_in_kernel.py
 ```
-Observe: each case's status line; whether `ONE_SHOT_OK`/`CONCURRENT_OK`/`CANCEL_OK` print; whether `KILL_RESULT` returns (RAISED is fine — a hang past the 20 s wait_for is the failure mode); whether `STILL_ALIVE*` print (kernel loop healthy). Note: the kernel bootstrap does NOT apply `nest_asyncio` — if `await` at top level plus SDK internals work as-is, nest_asyncio is unnecessary; record that.
+Observe: each case's status line; whether `ONE_SHOT_OK`/`CONCURRENT_OK`/`CANCEL_OK`/`CLIENTS_OK`/`INTERRUPT_OK` print and `LEAKED` is empty; whether `KILL_RESULT` returns (RAISED is fine — a hang past the 20 s wait_for is the failure mode); whether `STILL_ALIVE*` print (kernel loop healthy). Note: the kernel bootstrap does NOT apply `nest_asyncio` — if `await` at top level plus SDK internals work as-is, nest_asyncio is unnecessary; record that.
 
 - [ ] **Step 3: Record the verdict and route it**
 
@@ -3406,18 +3633,23 @@ live = pytest.mark.skipif(os.environ.get("PTC_LIVE") != "1", reason="PTC_LIVE=1 
 
 @live
 def test_model_uses_ptc_for_bulk_prompt(tmp_path):
+    """A11: the prompt does NOT mention ptc — the skill must route the model there,
+    and the proof is an actual mcp__ptc__exec tool_use event in the stream (F10)."""
     (tmp_path / "src").mkdir()
     for i in range(12):
         (tmp_path / "src" / f"m{i}.py").write_text(f"# TODO item {i}\nx = {i}\n")
     r = subprocess.run(
         ["claude", "-p", "--plugin-dir", str(PKG / "plugin"),
-         "--permission-mode", "bypassPermissions", "--output-format", "json",
-         "count TODO lines across all files under src/ using the ptc kernel; "
+         "--permission-mode", "bypassPermissions",
+         "--output-format", "stream-json", "--verbose",
+         "analyze all python files under src/ for TODO density; "
          "keep intermediate data in variables"],
         capture_output=True, text=True, cwd=tmp_path, timeout=600)
     assert r.returncode == 0, r.stderr[-2000:]
-    payload = json.loads(r.stdout)
-    assert "12" in json.dumps(payload)
+    used_ptc = any('"name": "mcp__ptc__exec"' in line or "mcp__ptc__exec" in line
+                   for line in r.stdout.splitlines() if '"tool_use"' in line or "tool_use" in line)
+    assert used_ptc, "model never called mcp__ptc__exec; skill routing failed"
+    assert "12" in r.stdout
 ```
 
 Run: `PTC_LIVE=1 uv run --group dev pytest test/live/test_plugin_smoke.py -q` → expected: pass (uses subscription quota). Keyless run must SKIP cleanly (`uv run --group dev pytest test/live -q` → skipped).
@@ -3807,11 +4039,13 @@ class AgentResult:
 
 
 class AgentHandle:
-    def __init__(self, owner: "_Agent", name: str, provider: str):
+    def __init__(self, owner: "_Agent", name: str, provider: str, timeout: float | None):
         self._owner = owner
         self.name = name
         self.provider = provider
+        self._timeout = timeout
         self._session = None
+        self._driver: asyncio.Task | None = None      # retained — never discarded (F6)
         self._status = "running"
         self._result_fut: asyncio.Future = asyncio.get_event_loop().create_future()
 
@@ -3831,7 +4065,9 @@ class AgentHandle:
             await self.result()
         if self._session is None:
             raise RuntimeError(f"agent {self.name!r} has no live session to send to")
-        r = await self._session.send(msg)
+        async with self._owner._semaphore():           # send holds a permit too (F6)
+            coro = self._session.send(msg)
+            r = await (asyncio.wait_for(coro, self._timeout) if self._timeout else coro)
         self._owner._registry_update(self, status=self._status)
         return r
 
@@ -3845,15 +4081,27 @@ class AgentHandle:
         return history(self.session_id)
 
     async def interrupt(self) -> None:
+        """Cancel the driver, tear the session down, and settle exactly once (F6)."""
+        self._status = "interrupted"
         if self._session:
             await self._session.interrupt()
+        if self._driver and not self._driver.done():
+            self._driver.cancel()
+            try:
+                await self._driver
+            except (asyncio.CancelledError, Exception):
+                pass
         if not self._result_fut.done():
-            self._status = "interrupted"
             self._result_fut.cancel()
+        await self.close()
+        self._owner._registry_update(self, "interrupted")
 
     async def close(self) -> None:
         if self._session:
-            await self._session.close()
+            try:
+                await self._session.close()
+            finally:
+                self._session = None
 
 
 class _Agent:
@@ -3925,29 +4173,33 @@ class _Agent:
         name = name or f"agent-{uuid.uuid4().hex[:6]}"
         if name in self._handles and self._handles[name].status == "running":
             raise ValueError(f"agent name already in use: {name!r}")
-        h = AgentHandle(self, name, o.provider)
+        h = AgentHandle(self, name, o.provider, o.timeout)
         self._handles[name] = h
         audit.append("agent", name=name, task=task[:120], provider=o.provider)
 
         async def drive():
             try:
-                async with self._semaphore():
+                async with self._semaphore():          # permit released on EVERY path (F6)
                     h._session = await self._backends[o.provider].open_session(task, o)
                     self._registry_update(h, "running", task_head=task)
-                    r = await h._session.wait_result()
+                    coro = h._session.wait_result()
+                    r = await (asyncio.wait_for(coro, o.timeout) if o.timeout else coro)
                 h._status = "done"
                 self._registry_update(h, "done")
                 if not h._result_fut.done():
                     h._result_fut.set_result(r)
             except asyncio.CancelledError:
-                h._status = "interrupted"
-                self._registry_update(h, "interrupted")
+                if h._status != "interrupted":
+                    h._status = "interrupted"
+                    self._registry_update(h, "interrupted")
+                raise
             except Exception as e:                     # noqa: BLE001 — surfaced via result()
                 h._status = "error"
                 self._registry_update(h, "error")
+                await h.close()                        # tear down the CLI process tree (F6)
                 if not h._result_fut.done():
                     h._result_fut.set_exception(e)
-        asyncio.ensure_future(drive())
+        h._driver = asyncio.ensure_future(drive())
         return h
 
     async def fork(self, task: str, **kw) -> AgentResult:
@@ -3980,7 +4232,7 @@ class _Agent:
 
     def resume(self, session_id: str, **kw) -> AgentHandle:
         o = self._opts(kw)
-        h = AgentHandle(self, f"resumed-{session_id[:8]}", o.provider)
+        h = AgentHandle(self, f"resumed-{session_id[:8]}", o.provider, o.timeout)
         self._handles[h.name] = h
 
         async def open_():
@@ -4144,22 +4396,41 @@ async def open_session(task: str | None, o: AgentOpts, *, resume: str | None = N
 - [ ] **Step 5: Bind in `runtime/__init__.py`**
 
 ```python
-def bind(ip) -> None:
-    import asyncio as _asyncio
-    from . import claude_backend, shell
+"""The in-kernel runtime API. Everything bind() puts in the user namespace is ALSO a
+module-level export, so `from ptc.runtime import *` works as the spec promises (F9).
+Later tasks extend _NAMES and the imports in lockstep."""
+import asyncio
+
+from .files import edit, read, write            # noqa: F401
+from .shell import bash                          # noqa: F401
+
+__all__ = ["read", "write", "edit", "bash", "agent", "asyncio"]
+agent = None                                     # constructed per-kernel in bind()
+
+
+def _make_agent():
+    from . import claude_backend
     from .agents import _Agent
-    from .files import edit, read, write
     from .state import STATE
     backends = {"claude": claude_backend}
     try:
-        from . import codex_backend            # T22; absent until then is fine
+        from . import codex_backend              # T22; absent until then is fine
         backends["codex"] = codex_backend
     except ImportError:
         pass
-    ns = {"read": read, "write": write, "edit": edit, "bash": shell.bash,
-          "agent": _Agent(STATE.config, backends), "asyncio": _asyncio}
+    return _Agent(STATE.config, backends)
+
+
+def bind(ip) -> None:
+    global agent
+    agent = _make_agent()
+    ns = {name: globals()[name] for name in __all__}
     ip.user_ns.update(ns)
 ```
+
+(T23/T24/T25/T26 each add their names the same way: module-level import + `__all__` entry —
+e.g. T23 adds `from .llm import llm` and `"llm"` to `__all__`; T24 `web_fetch`/`web_search`;
+T25 `history`; T26 `workflow`. `bind()` never changes again.)
 
 - [ ] **Step 6: Run unit tests**
 
@@ -4376,13 +4647,24 @@ def send(obj):
 
 def main():
     threads = 0
+    initialized = False
     for line in sys.stdin:
         msg = json.loads(line)
         if "method" not in msg:      # a response to our approval request
             continue
         m, rid, p = msg["method"], msg.get("id"), msg.get("params", {})
         if m == "initialize":
+            ci = p.get("clientInfo", {})
+            if not ci.get("name") or not ci.get("version"):
+                send({"id": rid, "error": {"code": -32602,
+                                           "message": "clientInfo.name and .version required"}})
+                continue
             send({"id": rid, "result": {"userAgent": "fake-codex"}})
+        elif m == "initialized":
+            initialized = True       # notification, no reply
+        elif not initialized and rid is not None:
+            send({"id": rid, "error": {"code": -32600,
+                                       "message": "initialized notification required first"}})
         elif m == "thread/start":
             threads += 1
             send({"id": rid, "result": {"thread": {"id": f"th-{threads}"}}})
@@ -4398,7 +4680,10 @@ def main():
                   "params": {"item": {"type": "agentMessage", "text": f"echo:{text}"}}})
             send({"method": "turn/completed", "params": {"turn": {"id": "t1", "status": "completed"}}})
         elif m == "turn/interrupt":
-            send({"id": rid, "result": {}})
+            if not p.get("turnId"):
+                send({"id": rid, "error": {"code": -32602, "message": "turnId required"}})
+            else:
+                send({"id": rid, "result": {}})
 
 
 if __name__ == "__main__":
@@ -4480,7 +4765,12 @@ class CodexProc:
             *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL)
         self._reader_task = asyncio.ensure_future(self._reader())
-        await self.request("initialize", {"clientInfo": {"name": "ptc"}})
+        # Full v2 handshake (F8): initialize carries name AND version, and the client
+        # must follow with an `initialized` notification before any other method.
+        from ptc import __version__
+        await self.request("initialize",
+                           {"clientInfo": {"name": "ptc", "version": __version__}})
+        await self._send({"method": "initialized", "params": {}})
 
     async def _reader(self):
         while True:
@@ -4528,8 +4818,9 @@ class CodexProc:
     async def turn(self, thread_id: str, text: str, timeout: float = 1800.0) -> str:
         self._agent_texts.clear()
         self._turn_done.clear()
-        await self.request("turn/start",
-                           {"threadId": thread_id, "input": [{"type": "text", "text": text}]})
+        r = await self.request("turn/start",
+                               {"threadId": thread_id, "input": [{"type": "text", "text": text}]})
+        self.current_turn_id = (r.get("turn") or {}).get("id")     # retained for interrupt (F8)
         await asyncio.wait_for(self._turn_done.wait(), timeout=timeout)
         return "\n".join(t for t in self._agent_texts if t)
 
@@ -4546,12 +4837,13 @@ class CodexProc:
 
 def _thread_params(o: AgentOpts) -> dict:
     p = {"cwd": o.cwd or os.getcwd(), "approvalPolicy": "never",
-         "sandbox": "workspace-write"}
+         "sandbox": "workspaceWrite"}      # wire enum is camelCase (F8); S4 verifies
     if o.model:
         p["model"] = o.model
     if o.effort:
         p["effort"] = o.effort
-    return p                     # adjust field names per the S4-recorded wire shapes
+    return p                     # field names above are schema-valid for the vendored
+                                 # app-server protocol; S4's live run re-verifies them
 
 
 def _thread_id(result: dict) -> str:
@@ -4583,8 +4875,12 @@ class Session:
                            int((time.time() - t0) * 1000))
 
     async def interrupt(self) -> None:
+        tid = getattr(self._proc, "current_turn_id", None)
+        if not tid:
+            return
         try:
-            await self._proc.request("turn/interrupt", {"threadId": self.session_id})
+            await self._proc.request("turn/interrupt",
+                                     {"threadId": self.session_id, "turnId": tid})
         except Exception:
             pass
 
