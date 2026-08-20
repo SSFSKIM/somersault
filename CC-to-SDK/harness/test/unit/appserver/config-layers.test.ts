@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layerPaths, readLayers, settingsMerge, effectiveView, type ConfigLayer } from "../../../src/appserver/configLayers.js";
+import { layerPaths, readLayers, settingsMerge, effectiveView, SettingsMergeError, type ConfigLayer } from "../../../src/appserver/configLayers.js";
 import type { Dirent } from "node:fs";
 
 const L = (name: ConfigLayer["name"], config?: Record<string, unknown>, disabledReason?: string): ConfigLayer =>
@@ -170,5 +170,33 @@ describe("configLayers", () => {
     expect(layers[2].config).toBeUndefined();
     expect(layers[2].disabledReason).toMatch(/JSON/);
     expect(layers[2].raw).toBe(`{not json`);          // raw retained — the CAS token hashes bytes, not parses
+  });
+
+  /** FIX WAVE G / G5. An object over an array patches BY INDEX and an index past the end extends with
+   *  holes — upstream lodash, reproduced deliberately. What upstream never has to do is serialize the
+   *  result onto a wire. MEASURED before the bound, on this machine: one key of "100000000" made the array
+   *  100,000,001 slots and `JSON.stringify` produced 500,000,004 bytes in 5,183 ms of blocked event loop;
+   *  "30000000" cost 1,472 ms and 150 MB; and at the 32-bit ceiling "4294967294" `JSON.stringify` threw
+   *  `RangeError: Invalid string length` outright. All of it lands before `Peer` can weigh its buffered
+   *  output, so the pressure gate built for exactly this cannot fire. */
+  it("an index that would EXPAND an array past the bound refuses; patching and ordinary growth do not", () => {
+    // The refusal, at the two magnitudes that were measured.
+    for (const k of ["4294967294", "100000000", "65536"])
+      expect(() => settingsMerge(["a"], { [k]: "x" })).toThrow(SettingsMergeError);
+    // …and the same shape one level down, where the recursion reaches it.
+    expect(() => settingsMerge({ permissions: { allow: ["Bash"] } }, { permissions: { allow: { "100000000": "x" } } })).toThrow(SettingsMergeError);
+    // NOT a bound on arrays: concatenation is untouched at any length, so a legitimately long list
+    // assembled the ordinary way still merges. 70000 entries is past the index bound and merges fine.
+    const long = Array.from({ length: 70_000 }, (_, i) => `r${i}`);
+    expect((settingsMerge(long, ["extra"]) as unknown[]).length).toBe(70_001);
+    // …and neither patching an existing element nor a modest extension is affected — including an
+    // extension into an array that is ALREADY past the bound, where the index only has to be in range.
+    expect(settingsMerge(["a", "b"], { "1": "B" })).toEqual(["a", "B"]);
+    expect(settingsMerge(["a"], { "3": "d" })).toEqual(["a", undefined, undefined, "d"]);
+    expect((settingsMerge(long, { "69999": "LAST" }) as string[])[69_999]).toBe("LAST");
+    // A NON-index key never moves `length`, so the bound has nothing to say about it — it rides the
+    // array as a property, exactly as before.
+    const bag = settingsMerge(["a"], { "4294967294xyz": 1, PreToolUse: 2 }) as unknown as Record<string, unknown>;
+    expect([(bag as unknown as unknown[]).length, bag.PreToolUse]).toEqual([1, 2]);
   });
 });

@@ -135,4 +135,49 @@ describe("the config domain's user layer follows CLAUDE_CONFIG_DIR", () => {
     const after = await send("config/read", {});
     expect(after.result.versions.user).toBe(wr.result.version);
   });
+
+  /** FIX WAVE G / G6 — the one env shape D-M5-23a left open. `claudeConfigDir` deliberately keeps an
+   *  exported-but-EMPTY `CLAUDE_CONFIG_DIR` as a VALUE (the first row above pins that), because the engine
+   *  resolves it to '' and reads `./settings.json` relative to the cwd it was launched with. Both handlers
+   *  then derived the user layer from that empty root WITHOUT resolving it, so `canonicalPath` anchored the
+   *  tail on the APP SERVER's own cwd — which for this suite is the harness checkout. Measured before the
+   *  fix: `config/read` named `<harness>/settings.json` for the user layer and `config/value/write` created
+   *  that file, both replying `ok`, while an engine for the request's project would read a different file
+   *  entirely. A successful operation on the wrong file, which is the class wave B exists for.
+   *
+   *  A shell writes an empty value for `CLAUDE_CONFIG_DIR="$SOMETHING_UNSET"`, so this is not exotic. */
+  it("an EMPTY CLAUDE_CONFIG_DIR is anchored on the REQUEST's cwd, not on the app server's", async () => {
+    process.env.CLAUDE_CONFIG_DIR = "";
+    const proj = join(root, "proj");
+    mkdirSync(join(proj, ".claude"), { recursive: true });
+    writeFileSync(userFileIn(proj), JSON.stringify({ model: "FROM-THE-REQUEST-CWD" }));
+    const send = boot();
+    const rd = await send("config/read", { cwd: proj, includeLayers: true });
+    const layer = rd.result.layers.find((l: any) => l.name === "user");
+    // The redirection FIRST, before any bytes are believed: the layer must name the file under the
+    // request's cwd and NOT one under the process cwd this suite happens to run in.
+    expect(layer.filePath.replace(/^\/private/, "")).toBe(userFileIn(proj));
+    expect(layer.filePath.startsWith(process.cwd())).toBe(false);
+    expect(rd.result.config.model).toBe("FROM-THE-REQUEST-CWD");
+    // …and the write lands in the same file, leaving nothing behind in the app server's own directory.
+    const wr = await send("config/value/write", { keyPath: ["model"], value: "WRITTEN-THERE", mergeStrategy: "replace", target: "user", cwd: proj });
+    expect([wr.result.status, wr.result.filePath]).toEqual(["ok", layer.filePath]);
+    expect(body(userFileIn(proj))).toEqual({ model: "WRITTEN-THERE" });
+    expect(existsSync(join(process.cwd(), "settings.json"))).toBe(false);
+  });
+  it("…and with no cwd to anchor on, the app server's own is what is left — which is what an engine here would resolve too", () => {
+    // The other side, and it is NOT a defect: a request that names no project has no project cwd to
+    // resolve against, and the process cwd is what an engine started here would resolve too. Asserted on
+    // the resolver rather than on the wire because the wire half would mean writing into the app server's
+    // own directory, which for this suite is the checkout. The row exists so a later "fix" that refuses,
+    // or that silently falls back to $HOME/.claude, has to argue with a test.
+    expect(userLayerDir({}, { HOME: "/h", CLAUDE_CONFIG_DIR: "" })).toBe(process.cwd());
+    expect(userLayerDir({}, { HOME: "/h", CLAUDE_CONFIG_DIR: "" }, "/proj")).toBe("/proj");
+    // A relative-but-non-empty root resolves the same way — empty is not a special case, it is the
+    // smallest relative path, and the engine treats it as one.
+    expect(userLayerDir({}, { HOME: "/h", CLAUDE_CONFIG_DIR: "cfg/here" }, "/proj")).toBe("/proj/cfg/here");
+    // …and an ABSOLUTE root is never re-anchored, whatever cwd the request carries.
+    expect(userLayerDir({}, { HOME: "/h", CLAUDE_CONFIG_DIR: "/t/cfg" }, "/proj")).toBe("/t/cfg");
+    expect(userLayerDir({ configHome: "/injected" }, { HOME: "/h", CLAUDE_CONFIG_DIR: "" }, "/proj")).toBe("/injected/.claude");
+  });
 });

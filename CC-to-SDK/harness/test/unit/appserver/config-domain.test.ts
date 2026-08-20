@@ -1663,4 +1663,68 @@ describe("config/value/write + config/batchWrite", () => {
     // became upstream-exact, not because anything learned to attribute an object node.
     expect(undecided, "deletes the read reply alone cannot judge").toBe(50);
   }, 120_000);
+
+  /** FIX WAVE G / P2-1#2 — the write side and the read side addressing one contribution at two different
+   *  granularities. `introducedLeaves` walks the written VALUE, so an upsert of `{"0": …}` at
+   *  `permissions.allow` reported the leaf `permissions.allow.0`; `effectiveView` never keys `origins`
+   *  below an array, because an object merged over an array is an ARRAY contributor claimed at the array's
+   *  own path. The lookup missed, the edit was marked `okOverridden`, and — with nothing above the target
+   *  to name — it named the TARGET, telling the client its write was dead while `config/read` served
+   *  exactly what it had written, from exactly that layer. Both replies are checked here, in one instant. */
+  it("an upsert that patches an array BY INDEX is in force — the two methods agree at the array's own path", async () => {
+    boot(deps());
+    // The array is the USER layer's; the write goes to PROJECT, whose own file has no such key — so the
+    // project layer's value really is an object merged over the user layer's array, which is the shape
+    // `claimArray` exists for and the shape whose leaves the two methods spelled differently.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["FromUser", "AlsoUser"] } }));
+    let id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: { "0": "Patched" }, mergeStrategy: "upsert", target: "project", cwd: proj });
+    const w = reply(id).result;
+    // Measured before the fix: `okOverridden`, with `overriddenMetadata.overridingLayer: "project"` — the
+    // reply naming the very layer it had just written, for an element `config/read` was already serving.
+    expect([w.status, w.maskedEditIndexes, w.overriddenMetadata]).toEqual(["ok", undefined, undefined]);
+    // …and the read side, at the same instant, must both SERVE the patched element and carry the written
+    // layer in the array's contributor list. Either half alone would leave the disagreement possible.
+    id = await send("config/read", { cwd: proj });
+    let rd = reply(id).result;
+    expect(rd.config.permissions.allow).toEqual(["Patched", "AlsoUser"]);
+    expect(rd.origins["permissions.allow"]).toEqual(["user", "project"]);
+    // THE OTHER SIDE, and it must stay MASKED: a NON-index key rides the array as a property JSON never
+    // serializes, so nothing a client can see came of it. It truncates to the same array path, and
+    // `claimArray` correspondingly refuses to name its layer — one mapping, two opposite answers.
+    rmSync(join(proj, ".claude", "settings.json"));
+    writeFileSync(join(proj, ".claude", "settings.local.json"), JSON.stringify({ permissions: { allow: ["FromLocal"] } }));
+    id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: { PreToolUse: "x" }, mergeStrategy: "upsert", target: "project", cwd: proj });
+    const w2 = reply(id).result;
+    expect(w2.status).toBe("okOverridden");
+    expect(w2.overriddenMetadata.overridingLayer).toBe("local");
+    id = await send("config/read", { cwd: proj });
+    rd = reply(id).result;
+    expect([rd.config.permissions.allow, rd.origins["permissions.allow"]]).toEqual([["FromUser", "AlsoUser", "FromLocal"], ["user", "local"]]);
+  });
+
+  /** FIX WAVE G / G5, at the wire. The unit bound lives in `config-layers.test.ts`; this is the
+   *  consequence it exists for — `config/read` serializing the merged view, and `config/value/write`
+   *  merging a client's own value, both of which reach `JSON.stringify` before `Peer` can weigh a single
+   *  buffered byte. Measured before the bound: 500 MB and 5.2 s of blocked event loop for one key. */
+  it("an array index that would expand an array to billions of slots refuses on BOTH methods", async () => {
+    boot(deps());
+    // The READ side: a settings FILE on disk holds the shape, over a lower layer's array.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["Bash"] } }));
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: { "4294967294": "x" } } }));
+    let id = await send("config/read", { cwd: proj });
+    expect(reply(id).result).toBeUndefined();
+    expect([reply(id).error.code, reply(id).error.data.code]).toEqual([-32602, "ConfigValidationError"]);
+    expect(reply(id).error.message).toMatch(/may not extend it past 65536 entries \(index "4294967294"\)/);
+    // The WRITE side: the client's own upsert value, refused inside the lock with nothing written.
+    rmSync(join(proj, ".claude", "settings.json"));
+    const before = readFileSync(join(home, ".claude", "settings.json"), "utf8");
+    id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: { "100000000": "x" }, mergeStrategy: "upsert", target: "user", cwd: proj });
+    expect(reply(id).result).toBeUndefined();
+    expect(reply(id).error.data.code).toBe("ConfigValidationError");
+    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(before);
+    // …and the control: the same shape one index below the bound still merges and still writes, so the
+    // refusal is a BOUND and not a new refusal of index keys.
+    id = await send("config/value/write", { keyPath: ["permissions", "allow"], value: { "0": "Bash(pwd)" }, mergeStrategy: "upsert", target: "user", cwd: proj });
+    expect(reply(id).result.status).toBe("ok");
+  });
 });

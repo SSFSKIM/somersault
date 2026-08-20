@@ -121,6 +121,44 @@ const uniqSVZ = (a: unknown[]): unknown[] => {
 const mergeableEntries = (source: Record<string, unknown>): Array<[string, unknown]> =>
   Object.entries(source).filter(([k]) => k !== "__proto__");
 
+/** An own key that addresses an array ELEMENT, hoisted above `settingsMerge` because the bound below has to
+ *  recognise one. `"01"`, `"1.0"`, `"-1"` and `" 1"` are properties, not indexes — `settingsMerge` assigns
+ *  them, and they ride the array exactly as `PreToolUse` does, WITHOUT moving `length`. */
+const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
+
+/** The merge's own refusal (fix wave G / G5). Not a `ConfigError`: this module knows nothing about wire
+ *  codes and must not — `configWrite.ts` owns that class and imports THIS file, so the dependency only runs
+ *  one way. `configDomain.ts` assigns the code, exactly as it does for the store's typed refusals. */
+export class SettingsMergeError extends Error {}
+
+/** An object merged over an array patches it BY INDEX, and an index past the end extends it with holes —
+ *  upstream's own lodash behaviour, and `settingsMerge` reproduces it deliberately. What upstream never has
+ *  to survive is the same array being SERIALIZED onto a wire afterwards. One key of `"100000000"` makes the
+ *  array 100,000,001 slots long, and `config/read` then hands `JSON.stringify` a sparse array that renders
+ *  as 500 MB of `null,` — measured at 5.2 s of blocked event loop for that one key, 1.5 s for `"30000000"`,
+ *  and at the 32-bit ceiling (`"4294967294"`) `JSON.stringify` throws `RangeError: Invalid string length`,
+ *  which reaches the client as an internal error for a shape it supplied. All of it happens BEFORE `Peer`
+ *  can weigh the buffered output, so the pressure gate that exists for exactly this cannot fire.
+ *
+ *  So an index may PATCH any existing element for free, and may EXTEND the array only within a bound. 65536
+ *  is chosen against what a settings array is: `permissions.allow` in the largest real policy is a few
+ *  thousand rules, and the bound is an order of magnitude past that while a 65536-slot array serializes in
+ *  a few milliseconds. It applies to this branch ALONE — array-over-array concatenation is untouched, so a
+ *  legitimately long array assembled the ordinary way is unaffected, and only the shape whose cost is
+ *  wildly out of proportion to its input is refused.
+ *
+ *  Both origins reach it and both should: a client's `upsert` (refused as a bad parameter) and a settings
+ *  file already on disk (refused as a file to go fix — the same answer `readTargetDoc` gives unparseable
+ *  bytes). The engine's own lodash would build the same array, so a view that reported it would be
+ *  describing a config no engine can actually serve either. */
+const MAX_MERGE_ARRAY_LENGTH = 65_536;
+function assertIndexInBounds(key: string, length: number): void {
+  if (!ARRAY_INDEX.test(key)) return;                       // a property, not an index: `length` never moves
+  const i = Number(key);
+  if (i < length || i < MAX_MERGE_ARRAY_LENGTH) return;     // patches an element, or extends within bounds
+  throw new SettingsMergeError(`an object merged over an array may not extend it past ${MAX_MERGE_ARRAY_LENGTH} entries (index "${key}")`);
+}
+
 /** UPSTREAM-EXACT for the mixed shapes, which is not the obvious answer for one of them: an OBJECT merged
  *  over an ARRAY keeps the array (lodash walks the source's keys onto the array itself), so a numeric key
  *  patches an element, a numeric key past the end extends with holes, and a non-index key becomes a
@@ -132,7 +170,10 @@ export function settingsMerge(target: unknown, source: unknown): unknown {
   if (Array.isArray(target) && isPlainObject(source)) {
     const out = [...target] as unknown[];
     const bag = out as unknown as Record<string, unknown>;
-    for (const [k, v] of mergeableEntries(source)) bag[k] = Object.prototype.hasOwnProperty.call(out, k) ? settingsMerge(bag[k], v) : v;
+    for (const [k, v] of mergeableEntries(source)) {
+      assertIndexInBounds(k, out.length);
+      bag[k] = Object.prototype.hasOwnProperty.call(out, k) ? settingsMerge(bag[k], v) : v;
+    }
     return out;
   }
   if (isPlainObject(target) && isPlainObject(source)) {
@@ -142,11 +183,6 @@ export function settingsMerge(target: unknown, source: unknown): unknown {
   }
   return source;
 }
-
-/** An own key that addresses an array ELEMENT, which is the only kind of key an object merged over an
- *  array contributes through JSON. `"01"`, `"1.0"`, `"-1"` and `" 1"` are properties, not indexes —
- *  `settingsMerge` assigns them, and they ride the array exactly as `PreToolUse` does. */
-const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
 
 /** Does anything `target` holds still SHOW once `source` is merged over it by `settingsMerge`? The
  *  question a contributor list has to answer for the lower layers, and the one that used to be assumed.

@@ -1,11 +1,11 @@
 // src/appserver/configDomain.ts — the config domain's three handlers: `config/read` plus the two writes.
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:os";
 import { ERR } from "./rpc.js";
 import type { Handler } from "./server.js";
 import { claudeConfigDir } from "../config/claudeHome.js";
-import { layerPaths, readLayers, effectiveView } from "./configLayers.js";
+import { layerPaths, readLayers, effectiveView, SettingsMergeError } from "./configLayers.js";
 import type { ConfigLayer, LayerName } from "./configLayers.js";
 import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, withFileLock, canonicalPath, assertWritableParent } from "./configWrite.js";
 import { configReadParams, configValueWriteParams, configBatchWriteParams } from "./schema/config.js";
@@ -17,6 +17,20 @@ import { configReadParams, configValueWriteParams, configBatchWriteParams } from
  *  `INVALID_PARAMS`: "your params are wrong" is the one reading guaranteed to stop a client retrying,
  *  and the params were fine. Everything else here really is a bad request. */
 const configErrorWireCode = (code: ConfigError["code"]): number => (code === "ConfigLocked" ? ERR.BUSY : ERR.INVALID_PARAMS);
+
+/** The typed refusals of the two modules under this one, mapped in ONE place because both handlers catch
+ *  the same set and a mapping written twice is a mapping that drifts once.
+ *
+ *  `SettingsMergeError` (configLayers, fix wave G / G5) rides `ConfigValidationError`'s code and carries
+ *  its `data.code`, and the reason is the precedent `readTargetDoc` already set for unparseable bytes: the
+ *  answer to a settings FILE that cannot be represented is "go fix the file", not "the server failed". It
+ *  reaches `config/read` (where a layer on disk holds the shape) and the two writes (where the client's own
+ *  `upsert` value does) through the same sentence, which names the index it refused. */
+function replyConfigError(ctx: Parameters<Handler>[1], id: Parameters<Handler>[2], e: unknown): boolean {
+  if (e instanceof ConfigError) { ctx.peer.replyError(id, configErrorWireCode(e.code), e.message, { code: e.code }); return true; }
+  if (e instanceof SettingsMergeError) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, e.message, { code: "ConfigValidationError" }); return true; }
+  return false;
+}
 
 /** win32: null — the spec declares Windows managed paths out of this file-backed view, and a Linux
  *  default there would invent a drive-root layer (plan review F19). The mapping takes the platform as a
@@ -41,9 +55,21 @@ export const DEFAULT_MANAGED_PATH: string | null = defaultManagedPath(platform()
  *
  *  `configHome` keeps its meaning — the BASE whose `.claude` holds the file — and keeps winning, because it
  *  is a test/embedder override and the alternative is a suite that points at a temp directory and is
- *  silently redirected onto the operator's real settings by an ambient variable. */
-export const userLayerDir = (deps: { configHome?: string }, env: NodeJS.ProcessEnv = process.env): string =>
-  deps.configHome !== undefined ? join(deps.configHome, ".claude") : claudeConfigDir(env);
+ *  silently redirected onto the operator's real settings by an ambient variable.
+ *
+ *  RESOLVED AGAINST THE REQUEST'S CWD when it is relative (fix wave G / G6). `claudeConfigDir` deliberately
+ *  preserves an exported-but-EMPTY `CLAUDE_CONFIG_DIR` as a value rather than falling back, because the
+ *  engine does: it resolves `''` and reads `./settings.json` — relative to the cwd the ENGINE was launched
+ *  with, which for every project-scoped request is the cwd the request carries. Deriving the path without
+ *  resolving it left `canonicalPath` to anchor the tail on the APP SERVER's cwd instead, so `config/read`
+ *  described, and `config/value/write` successfully wrote, a `settings.json` no engine for that project
+ *  would ever open — the same class as reading the wrong root, in the one env shape D-M5-23a's fix left.
+ *  With no cwd in the request there is nothing else to anchor to and `process.cwd()` is the honest answer;
+ *  making that explicit changes nothing and states which cwd is meant. */
+export const userLayerDir = (deps: { configHome?: string }, env: NodeJS.ProcessEnv = process.env, cwd?: string): string => {
+  const dir = deps.configHome !== undefined ? join(deps.configHome, ".claude") : claudeConfigDir(env);
+  return isAbsolute(dir) ? dir : resolve(cwd ?? process.cwd(), dir);
+};
 
 export async function resolveConfigCwd(cwd: string, deps: { realpath: (p: string) => Promise<string> } = { realpath }): Promise<string> {
   if (!isAbsolute(cwd)) throw new ConfigError("ConfigValidationError", "cwd must be an absolute path");
@@ -76,10 +102,12 @@ const token = (layer: ConfigLayer | undefined): string =>
 export const configRead: Handler = async (srv, ctx, id, params) => {
   const parsed = configReadParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-  const userDir = userLayerDir(srv.deps);
   const managed = srv.deps.managedSettingsPath !== undefined ? srv.deps.managedSettingsPath : DEFAULT_MANAGED_PATH;
   try {
     const cwd = parsed.data.cwd !== undefined ? await resolveConfigCwd(parsed.data.cwd) : undefined;
+    // AFTER the cwd, not before it (fix wave G / G6): a relative config root is anchored on the request's
+    // own cwd, so the user layer cannot be derived until that cwd has been resolved.
+    const userDir = userLayerDir(srv.deps, process.env, cwd);
     // Canonicalized HERE, before `readLayers`, so `paths` and `layers` still agree by string (the
     // `versions` walk below matches on `filePath`) and so a layer's `filePath` is the same string a write
     // reply gives for the same file — `resolveRealTarget` canonicalizes too, and one file answering to two
@@ -97,7 +125,7 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
     }
     ctx.peer.reply(id, { config, origins, versions, incomplete: true, ...(parsed.data.includeLayers ? { layers } : {}) });
   } catch (e) {
-    if (e instanceof ConfigError) { ctx.peer.replyError(id, configErrorWireCode(e.code), e.message, { code: e.code }); return; }
+    if (replyConfigError(ctx, id, e)) return;
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   }
 };
@@ -354,11 +382,34 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
     }
     return value === undefined || sameValue(value, below) ? { masked: false } : { masked: true, by };
   };
+  /** A leaf, moved up to the granularity the READ side actually attributes at (fix wave G / P2-1#2).
+   *  `introducedLeaves` walks the written VALUE, so an upsert of `{"0": "Bash(ls)"}` at `permissions.allow`
+   *  reports `permissions.allow.0`. `effectiveView` never keys `origins` below an array: an object merged
+   *  over an array is an ARRAY contributor claimed at the array's own path (configLayers.ts's `claimArray`),
+   *  and its numeric keys address ELEMENTS of that array, which have no entries of their own. So the lookup
+   *  missed, every such edit was `okOverridden`, and — with nothing above the target to name — self-named,
+   *  telling the client its write was dead while `config/read` served exactly what it had written.
+   *
+   *  Truncating at the array is not a special case bolted on: it is the same granularity the rule is stated
+   *  in, applied to a path that was addressing one level too deep. The NON-index keys of such an object
+   *  truncate to the same path and stay MASKED, which is also right — they ride the array as properties
+   *  JSON never serializes, so nothing a client can see came of them, and `claimArray` correspondingly
+   *  refuses to name their layer. One mapping decides both. */
+  const atArrayLeaf = (leaf: string[]): string[] => {
+    let node: unknown = effective;
+    for (let i = 0; i < leaf.length; i++) {
+      node = isPlainObject(node) ? node[leaf[i]] : undefined;
+      if (Array.isArray(node)) return leaf.slice(0, i + 1);
+    }
+    return leaf;
+  };
   const hazards = dottedKeyPaths(effective);
   const out: MaskVerdict = { maskedEditIndexes: [], uncheckedEditIndexes: [] };
   const masked: Array<{ by?: LayerName; effectiveValue: unknown }> = [];
   edits.forEach((e, i) => {
-    const leaves = introducedLeaves(e.keyPath, e.value, e.mergeStrategy);
+    // DEDUPED after the truncation: two numeric keys of one object land on one array path, and a leaf
+    // counted twice would only ever be looked up twice with the same answer.
+    const leaves = [...new Map(introducedLeaves(e.keyPath, e.value, e.mergeStrategy).map(atArrayLeaf).map((p) => [p.join(" "), p])).values()];
     // `origins` addresses leaves by DOTTED path while a keyPath is an opaque segment array (D-M5-12), so a
     // segment carrying a literal dot mis-splits and any verdict drawn from it would be a guess. TWO sides
     // carry that hazard and only one of them is this edit's own: the written keyPath and value's keys
@@ -417,7 +468,7 @@ async function maskingAnalysis(srv: Parameters<Handler>[0], data: WriteData, cwd
   try {
     // Masking: EVERY edit evaluated (plan review F15), against the SAME `effectiveView` `config/read`
     // serves — see `maskingVerdict` for why that shared derivation is the contract.
-    const layers = await readLayers(await layerPaths(userLayerDir(srv.deps), managed, cwdReal));
+    const layers = await readLayers(await layerPaths(userLayerDir(srv.deps, process.env, cwdReal), managed, cwdReal));
     const { config: effective, origins } = effectiveView(layers);
     return { verdict: maskingVerdict(data.edits, data.target, effective, origins, layers) };
   } catch (e) {
@@ -453,7 +504,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     const cwdReal = data.cwd !== undefined ? await resolveConfigCwd(data.cwd) : undefined;
     if ((data.target === "project" || data.target === "local") && cwdReal === undefined)
       throw new ConfigError("ConfigValidationError", `target "${data.target}" requires cwd`);
-    const userDir = userLayerDir(srv.deps);
+    const userDir = userLayerDir(srv.deps, process.env, cwdReal);
     const nominal = data.target === "user" ? join(userDir, "settings.json")
       : join(cwdReal as string, ".claude", data.target === "project" ? "settings.json" : "settings.local.json");
     // Resolved BEFORE the lock, and the SAME resolved path feeds the read and the write: `withFileLock`'s
@@ -513,7 +564,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       ...(warnings.length ? { warnings } : {}),
     });
   } catch (e) {
-    if (e instanceof ConfigError) { ctx.peer.replyError(id, configErrorWireCode(e.code), e.message, { code: e.code }); return; }
+    if (replyConfigError(ctx, id, e)) return;
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   }
 }
