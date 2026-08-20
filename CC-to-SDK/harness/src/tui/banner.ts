@@ -180,8 +180,10 @@ export function welcomeBanner(info: BannerInfo): RenderLine[] {
     { text: "" },
     { text: `  cwd    ${shortCwd(info.cwd)}`, dim: true },
     { text: `  model  ${modelSeg}   ·   mode  ${info.mode ?? "default"}`, dim: true },
-    { text: "" },
-    ...(tipsVisible(tips) ? [{ text: "  Tips for getting started" }, ...renderTips(tips, info.inHomeDir === true)] : []),
+    // The separator belongs to the checklist, not to the block above it: once `tipsVisible` goes false —
+    // the common case in any repo that already has a CLAUDE.md — a standalone blank here would leave the
+    // banner ending on TWO consecutive empty lines.
+    ...(tipsVisible(tips) ? [{ text: "" }, { text: "  Tips for getting started" }, ...renderTips(tips, info.inHomeDir === true)] : []),
     { text: "" },
   ];
   return out;

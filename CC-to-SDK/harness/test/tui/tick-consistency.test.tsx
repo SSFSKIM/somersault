@@ -118,4 +118,17 @@ describe("Finding A — every consuming surface agrees under win32 with no unico
       expect(TODO_GLYPH.completed).toBe("√");
     });
   });
+
+  // The tick is not the only glyph in that row. Canon takes `tick`, `squareSmallFilled` and `squareSmall`
+  // from ONE table (L107735) and selects all three with a single `EJi` call, so they cannot disagree there.
+  // ccx's consolidation originally moved only `completed` onto the shared predicate and left the squares on
+  // `TERM !== "linux"` — which on this exact arm draws an ASCII tick beside UNICODE squares, a mixed set
+  // canon never produces. Asserting the whole record, not just the tick, is what pins that.
+  it("TaskPanel.tsx's WHOLE glyph row falls back together, tick and squares alike", async () => {
+    await underWin32NoUnicode(async () => {
+      vi.resetModules();
+      const { TODO_GLYPH } = await import("../../src/tui/TaskPanel.js");
+      expect(TODO_GLYPH).toStrictEqual({ completed: "√", in_progress: "■", pending: "□" });
+    });
+  });
 });

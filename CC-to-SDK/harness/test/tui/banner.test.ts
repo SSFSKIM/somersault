@@ -16,6 +16,17 @@ describe("shortCwd", () => {
 });
 
 describe("welcomeBanner", () => {
+  // F8 T8 re-review: the blank line above the checklist belongs TO the checklist. Once `tipsVisible` goes
+  // false — the common case in any repo that already has a CLAUDE.md — a standalone separator would leave
+  // the banner ending on two consecutive empty lines. Asserting the last two entries rather than "contains
+  // no double blank" so the assertion fails on the exact shape the bug produced.
+  it("does not end on a double blank line when the checklist is complete and hidden", () => {
+    const lines = welcomeBanner({ cwd: "/x", emptyWorkspace: false, hasClaudeMd: true }).map((l) => l.text);
+    expect(lines.at(-1)).toBe("");
+    expect(lines.at(-2)).not.toBe("");
+    expect(lines.some((l) => l.includes("Tips for getting started"))).toBe(false);
+  });
+
   it("renders the CC welcome header in accent + the cwd/model/mode snapshot", () => {
     const lines = welcomeBanner({ cwd: "/home/me/proj", model: "claude-opus-4-8", mode: "default" });
     const text = lines.map((l) => l.text).join("\n");

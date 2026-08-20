@@ -21,7 +21,7 @@ import { Box, Text } from "ink";
 import type { TaskItem, TaskStatus } from "./taskList.js";
 import { truncateLabel } from "./select/selectModel.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
-import { TICK } from "./figures.js";
+import { TICK, unicodeSupported } from "./figures.js";
 import {
   activityWidth, blockedByLine, OWNER_TAG_WIDTH, openTaskIds, orderTasks, RECENT_COMPLETE_MS, showsOwnerTag,
   subjectWidth, todoCounts, todoOverflowLine, todoWindowSize,
@@ -31,11 +31,14 @@ const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 
 /** `Ge.tick` / `Ge.squareSmallFilled` / `Ge.squareSmall` (L104968) as `DCp` (L407196) picks them, with the
  *  ASCII fallbacks from the same table's `Lkg` block for a terminal that cannot draw them. */
-const UNICODE = process.env.TERM !== "linux";
+// ONE predicate for the whole row, because canon uses one: `tick`, `squareSmallFilled` and `squareSmall`
+// sit in the SAME table (L107735) and canon selects all three with a single `EJi` call. Splitting them —
+// the tick on the win32-aware predicate, the squares on `TERM !== "linux"` — would draw an ASCII tick beside
+// unicode squares on a bare cmd.exe, a mixed set canon never produces.
+const UNICODE = unicodeSupported();
 // `completed` is TICK() itself, not a literal — see figures.ts (F8 T8): the same glyph banner.ts's startup
-// checklist and Select's list rows draw, so the surfaces can't disagree on a TERM=linux/win32 terminal. The
-// glyph doesn't vary with UNICODE below (that's the square glyphs' own axis, not this one), so it's hoisted
-// out of the ternary rather than repeated in both arms.
+// checklist and Select's list rows draw, so the surfaces can't disagree. Hoisted out of the ternary because
+// it now shares that ternary's own predicate rather than varying independently of it.
 const completed = TICK();
 export const TODO_GLYPH: Record<TaskStatus, string> = UNICODE
   ? { completed, in_progress: "◼", pending: "◻" }
