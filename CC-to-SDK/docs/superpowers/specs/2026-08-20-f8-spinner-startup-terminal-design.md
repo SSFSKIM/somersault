@@ -872,6 +872,19 @@ Task 5's fix wave:** a wave that makes a latent defect user-visible owns it. Two
 `"deleted"` removes the task, and a status in neither union discards the whole update including any
 `subject`/`activeForm` carried with it, which is what canon's `safeParse` rejection does.
 
+**S-F8-w — `chatMain.tsx`'s option assembly is structurally untestable, and F8 keeps adding to it.**
+Task 6's reviewer established that `runChatClient` is never executed anywhere in the suite — `test/unit/
+cli-main.test.ts` carries it only as a stub that throws if called. So every line of that function's
+`hookOpts` assembly is unpinned, including the pre-existing `initialShowTurnDuration` and
+`initialPromptSuggestionEnabled` seeds beside F8's new `initialPrefersReducedMotion` and the terminal
+title's startup `reducedMotion`. Confirmed by sabotage: cutting the title's link contributed ZERO failures
+to a three-link cut that otherwise killed four tests. Both halves either side of the seam are independently
+tested — the title's own behavior, and the hook honoring a seeded value — so what is unpinned is exactly one
+argument per option. This is a wave-level gap, not a task-level one: closing it means building a `chatMain`
+harness, which no F8 task is scoped to do. Recorded so the next wave that adds an option here knows the
+seam it is adding to has no net under it. Task 12 (the notifier wiring) lands in the same function — its
+review should read this first.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.
