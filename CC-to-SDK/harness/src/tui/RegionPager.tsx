@@ -46,8 +46,11 @@ export interface RegionPagerProps extends Omit<TranscriptPagerProps, "height"> {
 
 export function RegionPager({ columns, ...props }: RegionPagerProps): React.ReactElement {
   const rows = useRegionRows();
+  // `overflowY`, not `overflow`: the horizontal half of Ink's clip mangles OSC-8 hyperlinks (slice-ansi
+  // counts URL bytes as printable) and buys nothing here — the pager wraps its body to the region's inner
+  // width before slicing, so only rows can ever overflow. See FullscreenFrame's constraint-set note.
   return (
-    <Box flexDirection="column" height={rows} overflow="hidden">
+    <Box flexDirection="column" height={rows} overflowY="hidden">
       <Box flexDirection="column" flexShrink={0}>
         {/* `columns` is handed DOWN as well as spent here: it is the width the pager's own body wraps at
             (T17 fix round), and the region's width is not the terminal's `stdout.columns` fallback. */}

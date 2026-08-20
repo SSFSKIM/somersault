@@ -291,9 +291,16 @@ export function FullscreenFrame({ mode = "fullscreen", rows, regionChildren, doc
   });
   // THE THREE CONSTRAINT SETS, HOISTED (T15) — every one of them is the FRAME's, and the classic arm is the
   // same tree with all three empty. Spread rather than passed as `undefined` for the reason in the header.
-  const frameStyle = bounded ? { height, overflow: "hidden" as const } : {};
-  const regionStyle = bounded ? { flexGrow: 1, flexShrink: 1, minHeight: regionFloor, overflow: "hidden" as const } : {};
-  const slotStyle = bounded ? { flexShrink: 0, overflow: "hidden" as const } : {};
+  // `overflowY`, NEVER `overflow` — the clip must be VERTICAL ONLY. Ink's horizontal clip runs every line
+  // through `sliceAnsi(line, 0, stringWidth(line))` (output.js:88) even when nothing overhangs, and
+  // slice-ansi 7.1.2 counts an OSC-8 link's URL bytes as printable where string-width does not — so that
+  // "no-op" slice cut every file-tool header mid-URL and the label never reached the screen (the tool-stream
+  // wave's filmed mark-down, `fullscreen-osc8.test.tsx`). Nothing is given up: rows are the only load-bearing
+  // axis (the clip-not-shove I9a case), the vertical clip is byte-safe `lines.slice`, and horizontally
+  // nothing can overhang because every occupant wraps to its width before windowing (wrapItems' rule).
+  const frameStyle = bounded ? { height, overflowY: "hidden" as const } : {};
+  const regionStyle = bounded ? { flexGrow: 1, flexShrink: 1, minHeight: regionFloor, overflowY: "hidden" as const } : {};
+  const slotStyle = bounded ? { flexShrink: 0, overflowY: "hidden" as const } : {};
   return (
     <Box flexDirection="column" {...frameStyle}>
       <Box ref={regionRef} flexDirection="column" {...regionStyle}>

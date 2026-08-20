@@ -331,7 +331,7 @@
 >   **no message timestamps at all**, so any "when did this call start" is a local arrival stamp; the
 >   honest port keeps the reference's observable behavior and replaces its mechanism, accurate to one
 >   repaint rather than to the true start.
->   **One defect found by the acceptance run and left open as its own ticket:** the fullscreen renderer
+>   **One defect found by the acceptance run, filed as its own ticket — CLOSED by the 2026-08-21 follow-up** (axis-scoped clipping, `overflowY` on the fullscreen clip boxes; the culprit was slice-ansi 7.1.2 counting OSC-8 URL bytes as printable inside Ink's horizontal clip; `test/tui/fullscreen-osc8.test.tsx`)**:** the fullscreen renderer
 >   drops **OSC-8 hyperlink labels** — a file-tool header paints `⏺ Read(` and stops where classic paints
 >   `⏺ Read(alpha.txt)`. Pre-existing (reproduced identically on the last pre-wave commit `ec9e7a2f97`) and
 >   not an SDK issue — tmux renders the hyperlinks correctly when driven directly — but this wave raised
