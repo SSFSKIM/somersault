@@ -16,7 +16,7 @@ Python cell that reads every file into variables, filters them deterministically
 `agent.spawn(...)` children over the survivors, gathers their answers, and prints a 30-line
 summary — with the model's context receiving only that summary. State (variables, imports, parsed
 data, child-agent handles) persists across tool calls, across turns, across compaction, and across
-`claude --resume`.
+`claude --resume` (for as long as the kernel lives — see the idle TTL below).
 
 To see it working end to end:
 
@@ -67,6 +67,8 @@ Claude Code as an MCP server + CLI + skill instead of a whole replacement harnes
   (`codex mcp add ptc -- ptc-mcp`) is documented, not exercised by the acceptance suite.
 - No Workflow *tool* replication: `workflow` ships as thin helpers + doctrine, because PTC itself
   is the orchestration language (a Workflow script is just a Python cell here).
+- No Windows support in v1 (detached spawn, flock-based ownership, and the launcher are
+  POSIX-only; macOS + Linux). Windows is future work, noted in the README.
 
 ## Architecture
 
@@ -137,8 +139,19 @@ A kernel is spawned on first `exec` for a session key:
   directory, stdout/stderr → `~/.ptc/kernels/<key>/kernel.log`.
 - Environment: the adapter's environment, minus nothing, plus
   `PTC_SESSION=<key>`, `PTC_CWD=<cwd>`, `PTC_DEPTH=<n>`, `PTC_MAX_DEPTH`, and the tunables below.
-- `connection.json` mode 0600; a `pid` file enables liveness checks (`kill(pid, 0)`) and
-  `ptc kill`.
+- **Spawn ownership (race-proof).** All spawn/respawn/reap paths take a per-key `flock` on
+  `~/.ptc/kernels/<key>/lock`. Under the lock, the spawner writes `owner.json`
+  `{pid, proc_start_time, spawned_at, nonce}` (process identity = pid **plus** its OS start
+  time, so PID reuse can never be mistaken for liveness) and publishes a `ready` marker only
+  after a successful `kernel_info` round-trip. Clients treat a kernel as live only when
+  `owner.json` identity matches the running process; anything else is dead state to be cleaned
+  under the same lock. `connection.json` mode 0600.
+- **Kernel metadata.** `meta.json` `{kernel_key, claude_session_id?, cwd, transcript_path?,
+  depth}` — written at spawn from the best identity available. The kernel key and the Claude
+  session id are *distinct fields*: `agent.fork` and `history()` use `claude_session_id` from
+  `meta.json`, never the kernel key, so an alias-keyed kernel (fallbacks 3–5 below) degrades
+  those two features explicitly (`RuntimeError("no claude_session_id known for this kernel")`)
+  instead of resuming a wrong or nonexistent session.
 - A bootstrap cell (executed by whichever client spawned the kernel, at
   `SNAPSHOT`-style raised output cap) binds the runtime API into the namespace, applies
   `nest_asyncio`, installs the per-cell output tee and the idle watchdog, and sets
@@ -147,17 +160,24 @@ A kernel is spawned on first `exec` for a session key:
 **Session-key resolution**, in order (first hit wins):
 
 1. Explicit `session` argument on the MCP tool call / `-s` on the CLI.
-2. The plugin's **SessionStart hook** run-file: the hook process and the MCP adapter are both
-   children of the same `claude` process, so both see the same `getppid()`. The hook writes
-   `~/.ptc/run/claude-<PPID>.json = {"session_id": ..., "cwd": ..., "written_at": ...}`; the
-   adapter reads `~/.ptc/run/claude-<its own PPID>.json`. Stale files (> 7 days, or dead pid)
-   are garbage-collected opportunistically.
+2. The plugin's **SessionStart hook** run-file. The hook receives `session_id` and `cwd` on
+   stdin (Claude Code's hook input contract) and writes
+   `~/.ptc/run/claude-<claude-pid>.json = {"session_id": ..., "cwd": ..., "written_at": ...}`.
+   Hooks are launched through a shell, so the hook's *immediate* parent may be a transient
+   `sh` — the hook therefore **walks its ancestor chain to the nearest process whose command
+   is `claude`** and keys the file by that pid. The MCP adapter, a direct child, reads
+   `~/.ptc/run/claude-<its own PPID>.json` (verifying that pid is alive and named `claude`,
+   else walking up the same way). The hook fires on every session start including `--resume`,
+   rewriting the file. Stale files (dead pid) are garbage-collected opportunistically.
 3. `PTC_SESSION` env (set for kernels' own child processes, so a child's adapter joins the
    child's key, not the parent's).
 4. `CLAUDE_CODE_SESSION_ID` env (present in Bash-tool environments; makes the CLI correct by
    default).
-5. Fallback: `adapter-<adapter pid>` (functional, but not resume-stable) — the adapter notes the
-   degraded keying in its first tool result.
+5. Fallback: `adapter-<adapter pid>` (functional, but not resume-stable) — degraded keying is
+   stated in **every** tool result header (not just the first), and `meta.json` records no
+   `claude_session_id`, which disables `agent.fork`/`history()` with an explicit error rather
+   than silently touching a wrong session. The CLI's newest-live-kernel default likewise always
+   prints which kernel it picked.
 
 The skill additionally interpolates `${CLAUDE_SESSION_ID}` (Claude Code substitutes it inside
 SKILL.md at load), so the model itself knows the session id and can pass `session=` explicitly if
@@ -170,14 +190,27 @@ kernel with the namespace intact.
   `sys.stdout`/`sys.stderr` for every cell into `~/.ptc/kernels/<key>/cells/<execution_count>.log`
   (raw, uncapped). Because capture is kernel-side, it works identically for MCP and CLI clients
   and survives adapter restarts; `wait` is implemented against these files.
+- **Terminal record (kernel-side)**: `post_run_cell` also writes `cells/<execution_count>.json`
+  atomically (`.tmp` + rename): `{status: "ok"|"error"|"interrupted", duration_ms,
+  result_repr?, error?: {ename, evalue, traceback}, images: [saved paths], mutations: [...]}`.
+  Streams alone cannot reconstruct a finished cell for a client that subscribed late (iopub is
+  broadcast-only); the record makes completion, result, error, and duration recoverable by a
+  **fresh adapter** — a cell is "running" iff its log exists and its record does not and the
+  kernel process is live. Display-data images are captured kernel-side (a display-publisher
+  shim saves PNGs to `cells/<n>-<k>.png` and lists them in the record).
 - **Audit log**: every mutation made through the runtime API appends a JSON line to
   `~/.ptc/kernels/<key>/audit.jsonl`:
   `{ts, cell, kind: "write"|"edit"|"bash"|"agent", path?, added?, removed?, command?, task?, provider?}`.
   Raw `open(...,"w")` writes are *not* captured — the audit trail is visibility for the
   cooperative path, not enforcement (Trust model).
-- **Idle watchdog (kernel-side thread)**: self-exits the kernel after `PTC_IDLE_HOURS` (default
-  6) with no cell execution, removing its run directory's `pid` file. `ptc list` shows last-used
-  times; `ptc kill`/`ptc restart` are the manual controls.
+- **Idle watchdog (kernel-side thread)**: self-exits the kernel after `PTC_IDLE_HOURS`
+  (default **24**) with no cell execution. It exits **under the per-key lock**: takes the flock,
+  re-checks idleness, writes an `expired.marker` (timestamp + idle duration), removes
+  `owner.json`, then exits — so a concurrent client either sees the live kernel or a clean
+  expiry, never a half-dead one. The next `exec` on that key reports plainly: "previous kernel
+  expired after N h idle; starting a fresh namespace (agent sessions remain resumable via
+  `agent.list()`)". Every persistence promise in this spec and in the skill is qualified by
+  this TTL. `ptc list` shows last-used times; `ptc kill`/`ptc restart` are the manual controls.
 
 ## The MCP adapter (`ptc-mcp`)
 
@@ -188,8 +221,8 @@ loaded. Five tools:
 
 | tool | params | behavior |
 |---|---|---|
-| `exec` | `code: str` (required), `session?: str`, `timeout_s: int = 300`, `max_output_chars: int = 12000` | Run a cell. If the kernel is **idle**: submit, stream until done or `timeout_s`, then either return the finished result or yield `status: running` + `cell_id` + partial output. If the kernel is **busy** with another cell: do not queue silently — return `status: busy` + the running `cell_id` + guidance (`wait`, `interrupt`, or resubmit later). |
-| `wait` | `cell_id: int`, `session?`, `timeout_s: int = 300`, `max_output_chars: int = 12000` | Return output produced since the previous yield for that cell (tail of `cells/<id>.log` past the recorded offset), plus completion status. May yield again. Works from a fresh adapter (offsets are kept in a sidecar `cells/<id>.offset`). |
+| `exec` | `code: str` (required), `session?: str`, `timeout_s: int = 300`, `max_output_chars: int = 12000` | Run a cell. The idle-check **and** submit happen under the per-key submit `flock` (all local clients share it), so exactly one client wins: the winner submits and streams until done or `timeout_s`, then returns the finished result or yields `status: running` + `cell_id` + partial output + `next_offset`; every loser gets `status: busy` + the running `cell_id` + guidance (`wait`, `interrupt`, or resubmit later). Nothing is ever silently queued. |
+| `wait` | `cell_id: int`, `session?`, `timeout_s: int = 300`, `max_output_chars: int = 12000`, `since: int = -1` | Return output produced after offset `since` in `cells/<id>.log` (default `-1` = the offset this adapter last served, else 0), plus the cell's state from the terminal record. Returns `next_offset` — a caller-held cursor, so retries are idempotent and two waiters cannot consume each other's output. Completion (status, result repr, error, duration, images) comes from `cells/<id>.json`, so a **fresh adapter** can settle a cell it never started. May yield again. |
 | `interrupt` | `session?` | `interrupt_request` on the control channel, then SIGINT after 2 s if still busy. Returns the interrupted cell's tail. |
 | `restart` | `session?` | Shut down + respawn + re-bootstrap. States plainly that the namespace was lost and child agents remain resumable via `agent.list()`. |
 | `kernels` | — | List known kernels: key, pid, alive?, cwd, last-used, depth. |
@@ -205,18 +238,23 @@ loaded. Five tools:
 edited src/a.py (+3/−1) · wrote notes/out.md · ran: npm test · spawned agent "api-reviewer"
 ```
 
-- Header states cell id, status (`ok | error | running | busy | interrupted`), duration.
+- Header states cell id, status (`ok | error | running | busy | interrupted`), duration, and —
+  when keying is degraded (fallback 5) — a `[keying: adapter-local]` note.
 - **Truncation**: head+tail slices totaling `max_output_chars`, elision marker
-  `… [truncated N chars — full output: ~/.ptc/kernels/<S>/cells/14.log]`. The cap keeps results
-  far under Claude Code's default 25 000-token MCP output ceiling (`MAX_MCP_OUTPUT_TOKENS`).
+  `… [truncated N chars — full output: ~/.ptc/kernels/<S>/cells/14.log]`. `max_output_chars`
+  is clamped server-side to 50 000; an aggregate response budget (~4 MB text+images) bounds the
+  whole reply regardless of caller arguments. Both keep results far under Claude Code's default
+  25 000-token MCP output ceiling (`MAX_MCP_OUTPUT_TOKENS`).
 - **Mutation footer** built from the cell's `audit.jsonl` entries (see above) — one line, only
   when mutations occurred.
 - **Images**: `display_data` with `image/png`/`image/jpeg` (matplotlib, PIL) becomes an MCP image
   content block after the text block, capped at 2 per cell and ~1.5 MB each; always also saved to
   `cells/<id>-<k>.png` and named in the text. (Spike S5 verifies Claude Code renders the block;
   the file path is the fallback.)
-- `structuredContent` mirrors everything machine-readably:
-  `{cell_id, status, duration_ms, stdout, stderr, result_repr, error?, mutations[], images[], full_log}`.
+- **No `structuredContent` in v1.** Claude Code's handling of `structuredContent` can take
+  precedence over the content array (stringifying it and discarding formatted text/image
+  blocks), which would defeat the shaped result. The MCP reply is the content array alone; the
+  machine-readable form lives in `ptc wait/exec --json` on the CLI, which does not cross MCP.
 
 Long-cell safety: Claude Code's MCP tool timeout defaults to ~27.8 h (`MCP_TOOL_TIMEOUT`), so the
 adapter's own `timeout_s` yield is the binding limit, never the host's.
@@ -228,8 +266,8 @@ adapter (same client library, same result shaping, text output).
 
 ```
 ptc setup                       # provision/refresh ~/.ptc/venv
-ptc exec [-s KEY] [-t SECS] [CODE | -]     # run a cell (CODE arg, or stdin with -)
-ptc wait  -s KEY CELL_ID [-t SECS]
+ptc exec [-s KEY] [-t SECS] [--json] [CODE | -]   # run a cell (CODE arg, or stdin with -)
+ptc wait  -s KEY CELL_ID [-t SECS] [--json]       # --json: the machine-readable result object
 ptc interrupt [-s KEY]
 ptc restart   [-s KEY]
 ptc list                        # kernels + last-used + alive
@@ -291,11 +329,18 @@ agent.resume(session_id, **options) -> AgentHandle
   `await .result()`, `await .send(msg)` (a follow-up turn on the same session — this is the
   SendMessage equivalent), `.messages()` (transcript so far), `.history()` (parsed `Transcript`),
   `.interrupt()`, `.close()`.
-- **Claude backend**: `claude-agent-sdk` in-kernel. `run` = `query(...)`; `spawn` =
-  `ClaudeSDKClient` with its own session (streamed to a registry entry as it goes); `fork` =
-  `resume=<the parent Claude Code session id, from PTC_SESSION>` + `fork_session=True`. Children
-  get `cwd` = kernel cwd, the user's default model unless `model=` given, and env
-  `PTC_DEPTH=<depth+1>` so their own kernels know their depth.
+- **Claude backend**: `claude-agent-sdk` in-kernel, version-pinned in the venv. `run` =
+  `query(...)`; `spawn` = `ClaudeSDKClient` with its own session (streamed to a registry entry
+  as it goes); `fork` = `resume=<claude_session_id from meta.json>` + `fork_session=True`
+  (errors explicitly when the kernel has no known Claude session id). Children get `cwd` =
+  kernel cwd and the user's default model unless `model=` given. Two child-env rules are
+  load-bearing: (1) **`PTC_SESSION` is always overridden** to a fresh child key — a child must
+  never inherit the parent's key, or its adapter would attach to the parent's kernel; (2)
+  `PTC_DEPTH=<depth+1>` is set alongside it. Children do not inherit `--plugin-dir`, so the
+  ptc capability is passed explicitly: `mcp_servers={"ptc": {command: <launcher>}}` in the SDK
+  options (tools without the skill; the server `instructions` carry the basics). Every SDK call
+  releases the concurrency semaphore in `try/finally` and kills its CLI process tree on
+  cancellation, so a hung child can be `h.interrupt()`ed without leaking permits.
 - **Codex backend**: a ~200-line stdio JSON-RPC client that spawns `codex app-server` and speaks
   `initialize` → `thread/start {cwd, approvalPolicy: "never", sandbox, model?}` →
   `turn/start {threadId, input:[{type:"text",text}]}` → collect `item/completed` agentMessage
@@ -307,9 +352,13 @@ agent.resume(session_id, **options) -> AgentHandle
   `await h.result()` blocks the *cell*, not the model; the exec/wait yield keeps the model free.
   Handles persist in the namespace across turns, so "spawn now, gather next turn" works without
   any host-side message injection (which Claude Code cannot do).
-- **Depth guard**: `PTC_MAX_DEPTH` (default 1). At `PTC_DEPTH >= PTC_MAX_DEPTH`,
-  `agent.run/spawn/fork` raise
+- **Depth guard — a cooperative recursion brake, not a boundary.** `PTC_MAX_DEPTH` (default 1).
+  At `PTC_DEPTH >= PTC_MAX_DEPTH`, `agent.run/spawn/fork` raise
   `RuntimeError("agent depth limit reached (PTC_DEPTH=1, PTC_MAX_DEPTH=1); raise PTC_MAX_DEPTH to allow grandchildren")`.
+  This is an env check inside a process that exposes arbitrary Python: a determined child can
+  spawn agents by other means (native Agent tool, its own SDK install). The guard exists to stop
+  *accidental* recursion storms on the cooperative path; the actual boundary remains the
+  `mcp__ptc__exec` allow decision (Trust model).
 - **Concurrency**: one semaphore (default 8, `PTC_MAX_CONCURRENCY`) across all SDK-spawning
   calls (`agent.*`, `llm`, `web_search`) bounds subprocess storms.
 - **Registry**: `~/.ptc/kernels/<key>/agents.json` — `{name, provider, session_id/thread_id,
@@ -319,7 +368,8 @@ agent.resume(session_id, **options) -> AgentHandle
 ### Sub-LM calls
 
 ```python
-await llm(prompt, *, model="haiku", system=None, max_tokens=4096, json_schema=None) -> str | dict
+await llm(prompt, *, model="haiku", system=None, max_tokens=4096, json_schema=None,
+          timeout=300) -> str | dict
 ```
 
 One-shot SDK `query()` with **no tools** (`tools=[]`, `max_turns=1`), `json_schema` mapped to the
@@ -332,8 +382,8 @@ RLM `llm_query` primitive for semantic map-reduce:
 
 ```python
 await web_fetch(url, *, prompt=None, timeout=30) -> FetchResult(url, status, title, text)
-await web_search(query, *, allowed_domains=None, blocked_domains=None, max_results=10)
-    -> list[SearchResult(title, url, snippet)]
+await web_search(query, *, allowed_domains=None, blocked_domains=None, max_results=10,
+                 timeout=300) -> list[SearchResult(title, url, snippet)]   # .raw keeps the source blocks
 ```
 
 - `web_fetch`: `httpx` GET (redirects followed, 10 MB cap) → `markdownify` → full text stays in
@@ -341,8 +391,10 @@ await web_search(query, *, allowed_domains=None, blocked_domains=None, max_resul
   runs `llm(prompt, over the text)` and fills `FetchResult.summary`.
 - `web_search`: a scoped one-shot SDK query allowed only the `WebSearch` tool; the runtime
   **parses the `WebSearch` tool_result block out of the message stream** and returns the
-  structured results, discarding the model's prose (spike S6 pins the block shape). Domain
-  filters pass through to the tool input. Subscription-billed.
+  structured results, discarding the model's prose (spike S6 pins the block shape). Whatever S6
+  finds, the return type is always `list[SearchResult]` — under the S6 fallback the parse is
+  best-effort and `SearchResult.raw` retains the source block for the caller. Domain filters
+  pass through to the tool input. Subscription-billed.
 
 ### History (lossless memory)
 
@@ -353,8 +405,10 @@ Transcript: .path, .messages (list[dict]), .user(), .assistant(), .tool_calls(na
 ```
 
 Resolves `~/.claude/projects/<munged-cwd>/<session>.jsonl` (munge: non-alphanumeric → `-`);
-falls back to globbing `~/.claude/projects/*/<session>.jsonl`. Default session =
-`PTC_SESSION`. This is the PRO-LONG-style lever: pre-compaction history stays queryable as data.
+falls back to globbing `~/.claude/projects/*/<session>.jsonl`. Default session = the kernel's
+`claude_session_id` from `meta.json` (explicit `RuntimeError` when the kernel is alias-keyed
+and none is known). This is the PRO-LONG-style lever: pre-compaction history stays queryable as
+data.
 `AgentHandle.history()` returns the same type for children.
 
 ### Workflow helpers
@@ -388,8 +442,11 @@ ptc/
     cli.py                  # the ptc CLI
   plugin/
     .claude-plugin/plugin.json
-    .mcp.json               # {"mcpServers": {"ptc": {"command": "<venv>/bin/ptc-mcp"}}}
-    hooks/hooks.json        # SessionStart → writes ~/.ptc/run/claude-<ppid>.json
+    .mcp.json               # {"mcpServers": {"ptc": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/ptc-launch"}}}
+    bin/ptc-launch          # checked-in stdlib-python launcher: provisions ~/.ptc/venv if
+                            #   missing/stale, then execs <venv>/bin/ptc-mcp — so a clean
+                            #   profile can start the server that installs itself
+    hooks/hooks.json        # SessionStart → writes ~/.ptc/run/claude-<pid>.json (tree-walk)
     skills/ptc/SKILL.md
   test/                     # unit / integration (real kernel) / live (auth-gated) / acceptance
   README.md                 # install, trust model, Codex registration note
@@ -403,8 +460,8 @@ in a variable". Body teaches, in order (Prime's doctrine transposed, tightened f
 harness):
 
 1. **What the kernel is** — persistent notebook; variables/imports/handles survive calls, turns,
-   compaction, and `--resume`. Session id available as `${CLAUDE_SESSION_ID}` for explicit
-   `session=`.
+   compaction, and `--resume`, until the kernel's idle TTL (default 24 h) or a restart. Session
+   id available as `${CLAUDE_SESSION_ID}` for explicit `session=`.
 2. **When to use it vs native tools** — use PTC for bulk read/filter/transform, fan-out,
    aggregation, iterative loops with state, agent orchestration; use native Edit for a single
    known edit, native Read for images/PDFs/notebooks, native tools whenever the user should see
@@ -434,7 +491,7 @@ harness):
 
 - Dev: `claude --plugin-dir ptc-surface/ptc/plugin`.
 - Settings snippet (README): allow `mcp__ptc__*` in `permissions.allow` for prompt-free use.
-- Codex (documented only): `codex mcp add ptc -- ~/.ptc/venv/bin/ptc-mcp` — works because the
+- Codex (documented only): `codex mcp add ptc -- <plugin>/bin/ptc-launch` — works because the
   adapter is plain stdio MCP; session keying degrades to explicit `session=`/`PTC_SESSION`.
 
 ## Trust model (README + skill, stated identically)
@@ -456,7 +513,7 @@ shadows OAuth in the `claude` CLI and silently flips billing to metered API.
 | `PTC_MAX_CONCURRENCY` | `8` | SDK-subprocess semaphore |
 | `PTC_YIELD_S` | `300` | default `exec`/`wait` timeout_s |
 | `PTC_MAX_OUTPUT_CHARS` | `12000` | default result cap |
-| `PTC_IDLE_HOURS` | `6` | kernel self-reap |
+| `PTC_IDLE_HOURS` | `24` | kernel self-reap (the TTL qualifying all persistence promises) |
 
 ## Delegated unknowns → spikes
 
@@ -464,18 +521,25 @@ Each spike is a small runnable probe committed under `ptc/test/spikes/`; promote
 are binding.
 
 - **S1 — SDK inside ipykernel's loop.** `claude-agent-sdk` (anyio) running on ipykernel's
-  asyncio loop with `nest_asyncio`, including two concurrent `ClaudeSDKClient`s under
-  `asyncio.gather`. *Promote* if both complete and the kernel stays responsive. *Fallback*
-  (pre-designed): run all SDK I/O on one dedicated background thread with its own loop; the
-  public API is unchanged.
+  asyncio loop, including: two concurrent `ClaudeSDKClient`s under `asyncio.gather`;
+  cancellation mid-stream; the CLI subprocess being killed mid-stream (the SDK has a reported
+  indefinite-hang mode here — verify our timeout + process-tree kill unsticks it); semaphore
+  release on every path; whether `nest_asyncio` is necessary at all (apply it only if the spike
+  proves it is). *Promote* if all complete and the kernel stays responsive. *Fallback*
+  (pre-designed): run all SDK I/O on one dedicated background thread with its own loop — the
+  spike must then also exercise the cross-thread handle protocol (`spawn` on the kernel loop,
+  `.result()` awaited from a cell).
 - **S2 — live-session fork.** `resume=<parent session>, fork_session=True` while the parent
   Claude Code session is mid-turn (its JSONL partially flushed). *Promote* if the fork child
   answers a parent-only fact. *Fallback*: document fork as sound between turns; mid-turn the
   child sees the transcript up to the last flushed message (acceptable; note in skill).
-- **S3 — hook PPID discovery.** SessionStart hook and MCP adapter observe the same PPID in
-  release Claude Code 2.1.236, including `--resume` (hook must fire per-start and rewrite the
-  run-file). *Promote* if `kernels()` shows the right key with zero configuration. *Fallback*:
-  chain already includes `${CLAUDE_SESSION_ID}` (skill) and `CLAUDE_CODE_SESSION_ID` (CLI).
+- **S3 — hook discovery.** The SessionStart hook's ancestor tree-walk lands on the same
+  `claude` pid the MCP adapter sees, in release Claude Code 2.1.236, including `--resume`
+  (hook fires per-start and rewrites the run-file) and two concurrent windows in one cwd
+  (each keyed to its own pid → its own session). *Promote* if `kernels()` shows the right key
+  with zero configuration in all three scenarios. *Fallback*: chain already includes
+  `${CLAUDE_SESSION_ID}` (skill) and `CLAUDE_CODE_SESSION_ID` (CLI; live-verified present in
+  this project's own session on 2.1.236).
 - **S4 — headless codex approvals.** Exact `thread/start` params (`approvalPolicy`, `sandbox`)
   that produce zero server→client approval requests on current `codex app-server`
   (codex-cli 0.146.0). *Promote* when a trivial turn completes unattended. *Fallback*:
@@ -483,22 +547,43 @@ are binding.
 - **S5 — MCP image blocks.** Claude Code 2.1.236 renders an image content block returned by an
   MCP tool. *Promote* → plots visible inline. *Fallback*: text mentions the saved PNG path only.
 - **S6 — WebSearch tool_result shape.** The structured results block is reachable in the SDK
-  message stream and parseable. *Promote* → `web_search` returns `list[SearchResult]`.
-  *Fallback*: return the raw block(s) plus best-effort regex extraction, flagged in the docstring.
+  message stream and parseable. *Promote* → clean field mapping into `SearchResult`.
+  *Fallback*: best-effort extraction with `SearchResult.raw` retaining the source block —
+  the return type is `list[SearchResult]` either way (A7 holds under both outcomes).
 
 ## Acceptance
 
 All commands run from `ptc-surface/ptc/`. "A session" means `claude --plugin-dir ./plugin` (or
-`claude -p` for scripted checks) with `mcp__ptc__*` allowed. Live/acceptance tests are gated on
-`claude` being logged in; they skip cleanly otherwise.
+`claude -p` for scripted checks) with `mcp__ptc__*` allowed.
+
+Two tiers, and the tiering is part of the contract:
+
+- **Keyless tier (non-skippable).** Everything that needs only a real kernel — exec/wait/
+  interrupt/restart, the busy protocol under two simultaneous clients, fresh-adapter recovery
+  (kill the adapter after a yield, settle the cell from a new one), spawn-race (two concurrent
+  first execs → one kernel), truncation, terminal records, audit, read/write/edit/bash, CLI
+  parity — runs against the real ipykernel with **no Claude auth** and cannot skip. Agent
+  registry/semaphore/timeout logic runs keyless against a fake backend (DI). A milestone's
+  exit criteria are satisfied only by this tier plus the live tier actually passing —
+  a skipped live test satisfies nothing.
+- **Live tier (auth-gated).** A-cells as phrased below run inside a Claude Code session, so
+  they are live-tier; they skip cleanly without auth, and milestone sign-off requires running
+  them on an authenticated machine. A1, A3, A6, A10, and A12 additionally have keyless
+  equivalents in the keyless tier (same behavior, driven straight over the Jupyter protocol),
+  so the kernel substrate is provable without auth. A15 needs `codex` login as well.
 
 - **A1 State persists across calls.** In one session: `exec("x = 42")`, later `exec("print(x)")`
   → `42`.
-- **A2 State survives resume.** Quit; `claude --resume <S> --plugin-dir ./plugin`;
-  `exec("print(x)")` → `42` on the same kernel (verify pid unchanged via `kernels`).
-- **A3 Yield/wait/interrupt.** `exec("import time; time.sleep(600)", timeout_s=5)` returns
-  `status: running` + cell_id within ~5 s; `wait(cell_id, timeout_s=5)` yields again;
-  `interrupt()` settles the cell as interrupted; a following `exec("1+1")` returns `2`.
+- **A2 State survives resume (within the TTL).** *live.* Quit; `claude --resume <S>
+  --plugin-dir ./plugin`; `exec("print(x)")` → `42` on the same kernel (pid unchanged via
+  `kernels`). Companion keyless case: with `PTC_IDLE_HOURS` set to a test-small value, an
+  expired kernel's next `exec` reports the expiry notice and a fresh namespace.
+- **A3 Yield/wait/interrupt + fresh-adapter recovery.** `exec("import time; time.sleep(600)",
+  timeout_s=5)` returns `status: running` + cell_id within ~5 s; `wait(cell_id, timeout_s=5)`
+  yields again; **kill the adapter, start a new one**, `wait(cell_id)` from it still tracks the
+  cell; `interrupt()` settles it as interrupted (terminal record status `interrupted`); a
+  following `exec("1+1")` returns `2`. While the cell runs, a second client's `exec` gets
+  `status: busy` (never silent queueing).
 - **A4 Fan-out/fan-in.** One cell: `hs = [agent.spawn(t) for t in tasks3]; print(len(hs))` ends;
   next cell `await agent.gather(*hs)` returns 3 results; `agent.list()` shows all three;
   after `restart()`, `agent.list()` still shows them and `agent.resume(<id>)` + `.send()` gets a
@@ -507,9 +592,10 @@ All commands run from `ptc-surface/ptc/`. "A session" means `claude --plugin-dir
   `await agent.fork("what marker fact did we establish? answer only the fact")` → the fact.
 - **A6 Audit footer.** A cell calling `edit()` on a repo file returns a footer containing
   `edited <path> (+a/−r)`; `audit.jsonl` has the matching entry.
-- **A7 web_search structured + subscription.** With no `ANTHROPIC_API_KEY` in the kernel env,
-  `await web_search("anthropic claude release notes")` returns ≥1 `SearchResult` with real URLs
-  (parsed from the tool_result, not prose).
+- **A7 web_search structured.** *live.* `await web_search("anthropic claude release notes")`
+  returns ≥1 `SearchResult` with real URLs (holds under either S6 outcome). The test asserts
+  the kernel env carries no `ANTHROPIC_API_KEY`; billing-mode itself follows the CLI's auth
+  resolution and is an environment discipline (Trust model), not something this test can prove.
 - **A8 llm map-reduce.** `await asyncio.gather(*[llm(f"one word for: {w}") for w in five])` →
   5 non-empty strings; with `json_schema` → parsed dicts.
 - **A9 history().** After ≥2 turns, `history().user()` contains the first user prompt verbatim
@@ -530,14 +616,23 @@ All commands run from `ptc-surface/ptc/`. "A session" means `claude --plugin-dir
 
 ## Milestones
 
-- **M1 — kernel + surface.** Venv provisioning; spawn/discovery (hook, run-file, keying);
-  exec/wait/interrupt/restart/kernels on MCP + CLI; result shaping incl. truncation + footer;
-  read/write/edit/bash + audit; skill v0 + plugin packaging. Spikes S3, S5.
-  Exit: A1–A3, A6, A10, A12.
-- **M2 — agents + llm.** SDK backend (run/spawn/fork/gather/send/resume/registry), codex
-  backend, depth + concurrency, `llm()`. Spikes S1, S2, S4. Exit: A4, A5, A8, A14, A15.
-- **M3 — web + history + polish.** web_fetch/web_search (S6), history(), workflow helpers,
-  skill final wording, README + trust model, full acceptance run incl. A7, A9, A11, A13.
+Spikes come **before** the milestones whose architecture they decide, as an explicit gate.
+
+- **M0 — spike gate + kernel spine.** Run S1, S3, S5 as committed probes and record verdicts
+  in this spec (Surprises & Discoveries). Build the minimal explicit-session spine: venv
+  provisioning + launcher, race-proof spawn/ownership, exec/wait/interrupt with terminal
+  records and bounded text shaping, keyless integration suite covering the A1/A3/A12
+  equivalents. Exit: keyless tier green; S1/S3/S5 verdicts written (each promoting its design
+  or switching to its named fallback).
+- **M1 — surface.** Automatic discovery (hook tree-walk, run-file, keying chain, meta.json);
+  `restart`/`kernels`; CLI parity; read/write/edit/bash + audit + mutation footer; images per
+  the S5 verdict; skill v0 + plugin packaging. Exit: A1–A3, A6, A10, A12 (live phrasing).
+- **M2 — agents + llm.** Spikes S2, S4 first, then: SDK backend
+  (run/spawn/fork/gather/send/resume/registry, child env rules, semaphore/timeout hardening),
+  codex backend, depth brake, `llm()`. Exit: A4, A5, A8, A14, A15.
+- **M3 — web + history + polish.** S6 first, then web_fetch/web_search, history(), workflow
+  helpers, skill final wording, README + trust model, full acceptance run incl. A7, A9, A11,
+  A13.
 
 ## Decision Log
 
@@ -624,11 +719,32 @@ All commands run from `ptc-surface/ptc/`. "A session" means `claude --plugin-dir
   every layer functional if it breaks (spike S3).
   Date/Author: 2026-08-20 / design composition (flagged review-carefully; approved).
 
-- Decision: **Controlled track** (spec → writing-plans → subagent execution), milestones M1–M3.
+- Decision: **Controlled track** (spec → writing-plans → subagent execution), milestones M0–M3.
   Rejected: autonomous execplan; direct implementation.
-  Rationale: mid-size build with taste-heavy surfaces (skill wording, API ergonomics) and five
+  Rationale: mid-size build with taste-heavy surfaces (skill wording, API ergonomics) and six
   spikes worth human-visible checkpoints.
   Date/Author: 2026-08-20 / grill round 3 (user).
+
+- Decision: Adversarial-review revisions (Codex gpt-5.6-sol, xhigh): kernel-side per-cell
+  **terminal records** + caller-held `wait` cursors; per-key **flocks** for spawn ownership
+  (pid + start-time identity) and atomic busy-check-plus-submit; hook discovery by
+  **ancestor tree-walk** (hooks launch through a shell, so raw PPID is a transient `sh`);
+  `meta.json` separating kernel key from Claude session id (fork/history fail explicitly on
+  alias-keyed kernels); children get explicit `mcp_servers` + a **fresh `PTC_SESSION`** (never
+  inherited — inheriting would attach the child's adapter to the parent's kernel); depth guard
+  restated as a cooperative brake; **no `structuredContent`** in v1 (Claude Code may prioritize
+  it over formatted content); server-side output caps (50k clamp + ~4 MB aggregate); idle TTL
+  raised to 24 h with an expiry notice and TTL-qualified promises; `.mcp.json` →
+  checked-in **launcher** that provisions the venv before exec'ing the adapter; keyless
+  real-kernel suite made the non-skippable milestone gate; spikes pulled into an M0 gate;
+  Windows explicitly out of scope.
+  Rejected from the same review: a per-session coordinator process and supervisor-enforced
+  depth/concurrency quotas (over-machinery — the honest boundary is the `mcp__ptc__exec` allow
+  decision, and per-key flocks already serialize local clients); fail-closed session discovery
+  (an explicit degraded-keying notice on every result preserves usability without silent
+  wrong-namespace attaches); the claim that `CLAUDE_CODE_SESSION_ID` is gated to internal
+  (`USER_TYPE=ant`) users — live-disproven in this project's own external-account session.
+  Date/Author: 2026-08-20 / independent spec review.
 
 ## Surprises & Discoveries
 
@@ -673,6 +789,22 @@ All commands run from `ptc-surface/ptc/`. "A session" means `claude --plugin-dir
   Evidence: `CC-to-SDK/docs/parity/appserver.md`;
   `CC-to-SDK/codex-plugin-cc/plugins/codex/scripts/lib/app-server.mjs`.
 
+- Observation: live check in this project's own session (external account, Claude Code
+  2.1.236): `CLAUDE_CODE_SESSION_ID` **is** present in the Bash-tool environment and matches
+  the session id, and the Bash process's parent is the `claude` process itself — contradicting
+  the independent review's claim that the variable is internal-only, and directly supporting
+  keying fallbacks 3–4.
+  Evidence: `echo $CLAUDE_CODE_SESSION_ID` → this session's UUID; `ps -o ppid=` → `claude`.
+
+- Observation: the independent review surfaced three host behaviors treated as design
+  constraints, none previously in the spec: Claude Code hooks launch through a shell (raw
+  `$PPID` in a hook is a transient `sh`, hence the tree-walk); `structuredContent` in an MCP
+  reply can take precedence over the content array and be JSON-stringified (hence dropping it);
+  and the Python SDK has a reported indefinite-hang mode when its CLI subprocess dies
+  mid-stream (hence S1's kill-and-recover case and per-call deadlines).
+  Evidence: adversarial-review run of commit 20b6da563f (job log under
+  `~/.claude/doperpowers/codex-companion`).
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
@@ -683,3 +815,10 @@ Pending — written at finish.
   `Conversation.md`, Prime Agent source, CC-to-SDK, Claude Code 2.1.236 reference source).
   Includes the post-presentation user revisions: SDK-only `llm`/`web_search` (no `anthropic`
   dependency), and no search guidance in the skill.
+- 2026-08-20 (same day, post-review): Applied the independent adversarial review — terminal
+  records + wait cursors, flock-based spawn ownership and atomic busy-check, hook tree-walk +
+  `meta.json` key/session separation, child env + `mcp_servers` rules, cooperative depth-brake
+  wording, `structuredContent` dropped, output caps, 24 h TTL + expiry notice, provisioning
+  launcher, two-tier testing with a non-skippable keyless gate, M0 spike gate, Windows
+  non-goal. Rejections and the live counter-evidence are recorded in the Decision Log and
+  Surprises & Discoveries.
