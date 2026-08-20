@@ -1236,7 +1236,7 @@ export function startupTips(facts: { emptyWorkspace: boolean; hasClaudeMd: boole
   ];
 }
 
-/** canon's `Enc` (L559386): enabled only, incomplete first, `✔ ` on the complete, home-dir note last.
+/** canon's `Enc` (L559388): enabled only, incomplete first, `✔ ` on the complete, home-dir note last.
  *  The sort key is `Number(isComplete)` and `Array.sort` is stable, so same-state tips keep their order. */
 export function renderTips(tips: readonly Tip[], inHomeDir: boolean): RenderLine[] {
   const rows = tips.filter((t) => t.isEnabled).slice()
@@ -1268,12 +1268,31 @@ In `src/cli/main.ts`, beside Task 7's additions:
 
 importing `readdirSync`/`existsSync` from `node:fs`, `join` from `node:path`, `homedir` from `node:os`.
 
-- [ ] **Step 5: Verify and commit**
+**The tick glyph is a judgment call, not a given.** Canon's is `et.tick`, a theme entry that is `\u2714`
+("✔") in the unicode table and `\u221A` ("√") in the ASCII one. ccx already makes that same choice, at
+`TaskPanel.tsx:33-36`, keyed on `process.env.TERM !== "linux"` — and its ASCII arm is "√", canon's exact
+fallback. Hardcoding "✔" here means the same tick renders two different ways in one product on a
+`TERM=linux` terminal. That selector is a local const in a `.tsx` component, so reusing it is not free.
+Decide and say which you did: lift the selector somewhere both can import, or hardcode and record why.
 
-Run: `cd harness && npx vitest run test/tui/banner.test.ts && npm run typecheck`
+- [ ] **Step 5: Prove the CALL SITE passes the three facts**
+
+Same wiring case as Task 7, and the third in this wave: every test in Step 1 hands `startupTips` its facts
+directly, so all of them stay green if Step 4 never happens and the banner is fed nothing. Use the same
+call-site harness Task 7 used — `test/unit/cli-main.test.ts`'s `main(…, deps({…}))` + `bannerText(call)`
+(helper at :449). The cheap arm to drive is `inHomeDir`, since `deps` can point `cwd` at a temp directory
+you control; `hasClaudeMd` follows from the same temp directory. Pin at least one arm end to end.
+
+**Confirm by sabotage:** delete the fact you pinned from the call site, watch the test fail, restore it.
+Report the result. If an arm genuinely cannot be reached without a new `deps` seam, say so rather than
+inventing one — that judgment is being made separately for Task 7's `rows`.
+
+- [ ] **Step 6: Verify and commit**
+
+Run: `cd harness && npx vitest run test/tui/banner.test.ts test/unit/cli-main.test.ts && npm run typecheck`
 
 ```bash
-git add harness/src/tui/banner.ts harness/src/cli/main.ts harness/test/tui/banner.test.ts
+git add harness/src/tui/banner.ts harness/src/cli/main.ts harness/test/tui/banner.test.ts harness/test/unit/cli-main.test.ts
 git commit -m "f5(f8): T8 — tips become canon's two-entry completion checklist"
 ```
 
