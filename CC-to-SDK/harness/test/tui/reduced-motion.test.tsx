@@ -161,4 +161,57 @@ describe("ChatApp: CLAUDE_AX_SCREEN_READER freezes all three live-turn indicator
       expect(line(lastFrame)).toBe(first);                                     // countdown never advanced on its own
     } finally { unmount(); }
   });
+
+  // Controls, `retry-row.test.tsx`'s "WITHOUT reduced motion… proving the freeze above is the prop, not a
+  // test artifact" idiom applied to all three mounts: same fixture, same elapsed time, `CLAUDE_AX_SCREEN_
+  // READER` left UNSET. Without one of these, a future change that stopped a row repainting for some other
+  // reason (a broken timer, an accidentally-`null` interval) would leave the freeze test above green forever
+  // — it only ever proves "the frame didn't change", never "…and it would have without the flag".
+  it("CONTROL: without the flag, the same elapsed time DOES move the turn spinner glyph", async () => {
+    const fake = fakeRemote();
+    const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await rafTick();
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
+      for (let i = 0; i < 400 && !spinnerUp(line(lastFrame)); i++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+      expect(spinnerUp(line(lastFrame))).toBe(true);
+      const first = line(lastFrame);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      expect(line(lastFrame)).not.toBe(first);
+    } finally { unmount(); }
+  });
+
+  it("CONTROL: without the flag, the same elapsed time DOES move the compaction bar", async () => {
+    const fake = fakeRemote();
+    const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await rafTick();
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fake.pushEvent({ kind: "message", data: { type: "system", subtype: "status", status: "compacting" } }); });
+      for (let i = 0; i < 400 && !line(lastFrame).includes("Compacting conversation…"); i++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+      expect(line(lastFrame)).toContain("Compacting conversation…");
+      const first = line(lastFrame);
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(line(lastFrame)).not.toBe(first);
+    } finally { unmount(); }
+  });
+
+  it("CONTROL: without the flag, the same elapsed time DOES move the retry countdown row", async () => {
+    const fake = fakeRemote();
+    const { lastFrame, unmount } = renderWithKeymap(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work" />);
+    await rafTick();
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fake.pushEvent({ kind: "turn", phase: "start", seq: 1 }); });
+      await act(async () => {
+        fake.pushEvent({ kind: "message", data: { type: "system", subtype: "api_retry", attempt: 2, max_retries: 10, retry_delay_ms: 60_000, error_status: 529, error: "overloaded" } });
+      });
+      for (let i = 0; i < 400 && !line(lastFrame).includes("Retrying in"); i++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+      expect(line(lastFrame)).toContain("Retrying in");
+      const first = line(lastFrame);
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(line(lastFrame)).not.toBe(first);
+    } finally { unmount(); }
+  });
 });
