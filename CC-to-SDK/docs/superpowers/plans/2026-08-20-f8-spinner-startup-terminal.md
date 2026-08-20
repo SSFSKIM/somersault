@@ -994,8 +994,11 @@ export function reducedMotion(prefs: Pick<CcxPrefs, "prefersReducedMotion">, env
 
 - [ ] **Step 4: Walk all eight touch points**
 
-1. `prefs.ts`: add `prefersReducedMotion?: boolean;` to `CcxPrefs`; drop a non-boolean value in the
-   loader exactly as the other booleans are handled.
+1. `prefs.ts`: add `prefersReducedMotion?: boolean;` to `CcxPrefs`. Do NOT add loader validation — the
+   loader validates only `theme`, `model` and `tui`, and NO boolean field is validated there, so "handle it
+   like the other booleans" means adding nothing. That is also correct rather than merely consistent: those
+   three are validated because a bad value reaches a lookup or a ladder rung that has no case for it, while
+   every boolean is read through an explicit `=== true`, which makes any hand-edited garbage safely falsy.
 2. `useChat.ts` beside line 691: `const [prefersReducedMotion, setPrefersReducedMotionState] = useState<boolean>(opts.initialPrefersReducedMotion ?? false);`
 3. `useChat.ts` beside line 2478:
    ```ts
