@@ -984,7 +984,173 @@ explicitly to the review.
 
 ## 9. Outcomes & Retrospective
 
-Pending — written at finish.
+**Status: shipped and closed, 2026-08-20.** Eleven implementation tasks, each independently reviewed,
+plus this verification pass. All four units in § 3 landed across the eight stages § 6 named; no unit
+landed atomically, and every commit typechecks.
+
+### 9.1 What shipped
+
+- **Unit 1 — the escape builders** (`src/tui/terminalEscapes.ts`). A leaf module of pure builders:
+  `osc()`, `passthrough()`, `isMuxed()`, `notifyTerminator()`, `sanitizeNotificationText()`. It writes
+  nothing and owns no lifecycle, and that emptiness is the design — writing stays with the modules
+  that own their output path, and the signal handler stays singular in `cli/main.ts`. Two canon bugs
+  are transcribed rather than corrected and are now recorded so nobody "fixes" them: `passthrough`
+  doubles ESC for GNU screen as well as tmux (screen's string machine already passes a single ESC
+  verbatim, so doubling corrupts it), and zellij is a recognised multiplexer with no wrapping arm.
+- **Unit 2 — spinner motion.** `SPINNER_BASE`'s six glyphs walked by `raisedCosine`/`glyphIndex` over
+  a 2000 ms period, the ghostty six-glyph variant, `spinnerInterval`'s 100/50 ms cadence, and
+  `animationClock.ts` — canon's `Cg`, monotone, quantized to the live interval and clamped so a mode
+  flip cannot step the clock backwards. `TurnSpinner` and `CompactionRow` both read it; the
+  twelve-frame 120 ms ping-pong is gone.
+- **Unit 2 — the message ladder.** `spinnerMessage`'s four rungs and `activeSpinnerTask`'s provenance
+  filter, fed by `TaskItem.subagent` recorded at ingest from the frame's `parent_tool_use_id`.
+- **Unit 3 — startup geometry.** `welcomeBanner`'s degraded branch (screen reader, or fewer than 30
+  rows) as two spans; `startupTips`/`tipsVisible`/`renderTips` — canon's two-entry checklist, its tick,
+  its home-directory note and its hide-when-complete gate — replacing ccx's three static strings.
+- **Unit 4 — notifications, reduced motion, theme.** `desktopNotify.ts` (six channels plus a disable,
+  per-emulator composition, multiplexer-aware resolution) on the permission-consult and turn-settle
+  seams; `motion.ts`'s one resolver and its four consumers plus the `Reduce motion` settings row;
+  `detectTerminalBackground` and a live-resolving `auto` theme.
+
+### 9.2 What the acceptance run found
+
+**15 of 16 cells executed. 15 PASS, 0 FAIL, 1 owner-verified-pending (A11).** Gates at close:
+`npm run typecheck` clean · `npm run test:unit` 2902 passed in 221 files · `npm run test:tui` 3869
+passed in 151 files, 9 live-skips · `npm run test:resize-matrix` 10 passed / 0 failed, with 2 keyed
+cells skipping for want of a credential.
+
+| Cell | Verdict | Instrument |
+|---|---|---|
+| A1 glyph curve | PASS | Keyless. Index matches `round(((1−cos(2πt/2000))/2)×5)` at all 2001 ms of one period; walk `·✢✳✶✻✽✻✶✳✢·`; dwell histogram 42,32,27,27,32,41 shows the easing; ghostty sixth glyph `✻` |
+| A2 cadence | PASS | Keyless. 100 ms responding, 50 ms requesting, `null` under reduced motion; neither `TurnSpinner` nor `CompactionRow` retains a 120 ms timer (the only `120` in either file is a comment about the old one) and both derive time from `useAnimationClock`, never from a tick count × interval |
+| A3a reduced motion, by setting | PASS | Keyless render. Glyph `·` and unchanging, **zero** intervals armed, compaction bar and retry row frozen, title holds `✳`; `Reduce motion` row present; pref round-trips through the prefs file. Every freeze paired with a motion-on control that must differ |
+| A3b reduced motion, by screen reader | PASS | Keyless render. All four surfaces equally still with `prefersReducedMotion` unset and `CLAUDE_AX_SCREEN_READER=1` |
+| A3c timer lifecycle | PASS | Keyless render with an instrumented `setInterval`. Armed count 1 · 1 · 0 · 0 across requesting → responding → reduced-motion → unmount; the clock reads 150 at 150 ms on the 50 ms quantum and does not fall to 100 when the quantum becomes 100 |
+| A4 message ladder | PASS | Keyless. All five rungs, including the empty-string-is-absence rule |
+| A4b provenance | PASS | End to end through the real path (`TaskList` → `useChat` → `TurnSpinner`) on nested frames; the nested task appears in the panel and never in the spinner |
+| A5 startup degradation | PASS | **Live pty.** One line at 24 rows with no box, no cwd/model line, no tips; the box unchanged at 30; the one-line form at 40 rows under the screen-reader ladder. The two spans asserted on the SGR bytes: `ESC[38;2;215;119;87m ✻ Welcome to Claude Code ESC[2m ESC[39m ccx v0.1.0` |
+| A6 tips checklist | PASS (on the amended design — see 9.3) | Keyless. Ticked line, unchecked line, workspace tip, home note last, and the visibility gate |
+| A7 notification bytes | PASS (5 of 6 rows verbatim; the sixth on the amendment — see 9.3) | Keyless, 28 full-string equality assertions over six channels × three environments, kitty's three writes each asserted whole, both bell halves asserted unwrapped in both multiplexers |
+| A8 policy | PASS | Keyless. Default pair delivers; a subagent completing writes zero bytes; enabling `agent_completed` makes the same event deliver; `notifications_disabled` silences all four; settings read at call time |
+| A8b sanitization | PASS | Keyless, both dialects driven through their shipped call sites. Notification: `ESC`, `BEL`, `DEL`, `U+0085` each → a space, length preserved. Title: CSI stripped, C0 and DEL deleted, `U+0085` left, trimmed. The outputs differ, which is the point of the cell |
+| A9 auto theme | PASS | Keyless. unset → dark · `15;0` → dark · `0;15` → light · `15;8` → dark · `0;banana` → dark, no throw |
+| A10 signal exit | PASS | **Live pty.** `SIGTERM` put `ESC ] 0 ; BEL` on the wire (captured with `pipe-pane`) and the pane exited status 0. Asserts the title clear and a clean exit; **not** 143, and makes no raw-mode claim |
+| A10b frame integrity | PASS | **Live pty**, fullscreen renderer, 12 staged transcript rows. Ten notifications — 688 bytes, 41 ESCs, including both kitty three-write forms and four DCS-wrapped sequences — written straight to the pane's tty. The captured frame is **byte-identical** before and after, the alternate screen is still up, and the dock is still on row 39 of 100×40 |
+| A11 manual pass | **OWNER-VERIFIED-PENDING** | Cannot be automated; see 9.4 |
+
+**Isolation held.** Live cells ran on a private tmux server (`tmux -L f8verify`) under an isolated
+`HOME` beneath `/tmp` with `CCX_FLEET_ROOT` set. Every session was `f8v-`-prefixed and killed by name;
+the owner's two long-lived sessions on the default server were listed before and after and were
+untouched.
+
+### 9.3 Divergences held, and two acceptance cells the spec's own evidence superseded
+
+Recording these is the point: a wave that quietly re-writes its acceptance text to match what it built
+has not been verified at all.
+
+- **A7's last table row is stale, and the implementation is right.** The row says `auto` on an
+  unidentified terminal writes "nothing at all" in both columns. S-F8-s changed that design on
+  measurement after § 4 was written: a tmux pane inherits the *server's* environment, so an emulator
+  sniff finding nothing is the ordinary case rather than the exotic one, and silence is the single
+  outcome a user cannot distinguish from a broken feature. The muxed-unknown arm rings a bell.
+  Executed both ways: bare + `auto` + unknown writes nothing (the row holds); `$TMUX`/`$STY` + `auto`
+  + unknown writes one bare `\x07`. The other five rows pass verbatim.
+- **A6's first sentence is stale, and the implementation is right.** It says that in a repository
+  carrying a `CLAUDE.md` the tips block reads the ticked `/init` line. S-F8-t added the visibility gate
+  afterwards, so `renderTips` produces exactly that line and `welcomeBanner` prints no tips section at
+  all in that case — which is the whole point of the gate, since most repositories have a `CLAUDE.md`
+  and would otherwise carry a permanent tick forever. Both halves executed; both pass.
+- **Deliberate divergences shipped as designed:** the narrowed default event set (D-F8-5), Apple
+  Terminal always answering the bell (D-F8-11), the degraded banner's leading `✻` (D-F8-12), the two
+  canon bugs transcribed in `passthrough` and in kitty's body chunk (S-F8-q), and kitty ids being
+  monotonic per notifier rather than random (better, not a shortcut — a repeated id replaces the prior
+  notification in kitty's protocol).
+- **One asymmetry, recorded rather than hidden:** `terminalTitle` is a long-lived object rather than a
+  rendered component, so it resolves `reducedMotion` once at construction. A mid-session `/config`
+  toggle reaches the spinner, the compaction bar and the retry row on the next frame, and reaches the
+  tab title only on the next launch. This is what holds `tui-ux.md`'s reduced-motion row at 🟡.
+
+### 9.4 A11 — owner-verified-pending
+
+**Date verified: _______ · Terminal used: _______ · Result: _______**
+
+A11 terminates inside an emulator no instrument in this repo can drive, so it is not marked passed. It
+also closes **Task 10 Step 1's delegated unknown**: whether the environment marker the notification
+resolver sniffs for each terminal is the one that actually survives into that terminal's tmux panes.
+This machine's shell carries none of those markers, so the survival test used synthetic values — the
+*transport* was measured, the *attribution* was not.
+
+Reproduction, in a real **iTerm2** or **Ghostty** window (not inside tmux for steps 2–4; step 5 is the
+tmux half):
+
+```bash
+# 1. Build, and use a scratch HOME so nothing touches your real prefs.
+cd CC-to-SDK/harness && npm run build
+export H=$(mktemp -d)/home && mkdir -p "$H/.claude/ccx"
+
+# 2. Confirm the marker this terminal actually exports (the delegated unknown).
+#    iTerm2 is expected to set LC_TERMINAL=iTerm2; Ghostty, GHOSTTY_RESOURCES_DIR.
+env | grep -E 'LC_TERMINAL|KITTY_WINDOW_ID|KITTY_PID|GHOSTTY_RESOURCES_DIR|TERM=|TERM_PROGRAM='
+
+# 3. Launch ccx and ask it for something needing permission, e.g. "run `ls` for me".
+#    EXPECT: the permission prompt raises a SYSTEM notification titled "ccx".
+HOME=$H CCX_FLEET_ROOT=$H/.claude/ccx node dist/cli/bin.js
+
+# 4. While it runs, watch the TAB TITLE.
+#    EXPECT: "✳ ccx" (or "✳ <session title>") at idle, and the prefix alternating
+#            between ⠂ and ⠐ roughly once a second while a turn is in flight.
+#    Then, from a second window:  kill -TERM <the ccx pid>
+#    EXPECT: ccx exits cleanly AND the tab title returns to the shell's own.
+
+# 5. The tmux half — the delegated unknown proper. From THIS terminal:
+tmux -L a11check kill-server 2>/dev/null; tmux -L a11check new-session -d -s a11 \
+  'env | grep -E "LC_TERMINAL|KITTY_WINDOW_ID|GHOSTTY_RESOURCES_DIR" > /tmp/a11-markers.txt; sleep 5'
+sleep 6; cat /tmp/a11-markers.txt; tmux -L a11check kill-server
+#    EXPECT (the claim under test): the marker seen in step 2 appears here too.
+#    If it is EMPTY, `auto` cannot identify this emulator inside tmux and correctly falls back to the
+#    bell — which is the designed behaviour, not a defect. Record which of the two happened.
+```
+
+Two facts to hold while reading the result. tmux overwrites both `TERM` and `TERM_PROGRAM` inside a
+pane, so neither identifies the emulator. And `allow-passthrough` has defaulted **off** since tmux 3.3,
+so inside tmux a DCS-wrapped notification is dropped unless the user enabled it — which is exactly why
+an `auto`-resolved channel also rings a bell there. Hearing a bell but seeing no banner inside tmux is
+the *designed* outcome on a default configuration, not a failure of step 3.
+
+### 9.5 Parity
+
+`docs/parity/tui-ux.md` rescored in the F8 recount: **§3 ~71% → ~79%** (the spinner glyph and verb rows
+reach ✅; desktop notifications and reduced motion leave ❌ for 🟡, each with its arms named),
+**§6 ~67% → ~75%** (the two mirror rows rise; one new 🟡 row for the `auto` theme), **overall ~76% →
+~78%**. The § 5 deferrals — `CH30`, `CH34`, `TH3` tier 2 — are in that file's tail list with this
+section as their evidence.
+
+`docs/parity/coverage.md` carries the wave's entry and states plainly that **no domain score moves**:
+F8 consumes no SDK surface at all, exactly as the fullscreen and tool-stream waves did. The only wire
+field it reads is `parent_tool_use_id`, which that table already claims. Two environment facts were
+carried there instead, because any embedder writing to a terminal inherits them: a tmux pane inherits
+the *server's* environment (so emulator markers are commonly absent, not stale), and `allow-passthrough`
+defaults off (so the sniff *succeeding* is the silent case).
+
+### 9.6 What this wave should be remembered for
+
+**A faithful transcriber cannot audit the thing being transcribed** (S-F8-p). Task 10 was the only task
+whose implementer reported no defect in its brief, and its review established why: the brief was taken
+on faith, thirteen of seventeen mutations survived its tests, and the brief's own binding constraints
+went unasserted. The checks a task cannot perform on itself — here, verifying escape bytes against the
+terminals' own documentation rather than against the brief — have to be assigned to the review
+explicitly.
+
+**Measurement beat the design twice, in opposite directions, inside one unit.** S-F8-s found that the
+emulator sniff *failing* is the ordinary case inside tmux; S-F8-r then found that the sniff
+*succeeding* is the silent one, because tmux drops the passthrough by default. Neither was reachable by
+reasoning; both came from running tmux and reading what came back.
+
+**An acceptance section written before the evidence is not self-updating.** Two of the sixteen cells in
+§ 4 were made stale by findings recorded in § 8 of this same document, and both were caught only
+because the verification pass executed the cell text as written rather than executing the tests the
+wave had already produced. The habit worth keeping: read § 4 against the shipped code with a fresh
+instrument, and when they disagree, say which one is wrong and why.
 
 ## 10. Revision Notes
 

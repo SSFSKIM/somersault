@@ -341,6 +341,49 @@
 >   the `104`/`104b` resolution above did not become a convention. Bare "probe 100" is ambiguous in prose;
 >   **cite probes by filename**. A renaming pass is owed and is not part of this wave.
 
+> - **F8 spinner / startup / terminal-integration wave (2026-08-20)** — the chrome around a turn rather
+>   than the turn itself. Canon's **six-glyph cosine spinner** (`·✢✳✶✻✽` walked by a raised cosine over
+>   2000 ms, repainting at 100 ms responding / 50 ms requesting, with the ghostty `TERM` variant) on a
+>   monotone animation clock; a **four-rung message ladder** that titles the spinner from the running task
+>   (`activeForm` → `subject` → default verb → random draw) and **refuses a subagent's task**, which is
+>   recorded per task at ingest from the frame's `parent_tool_use_id`; **reduced motion** as one resolver
+>   over the setting *or* the screen-reader signal, freezing all four animating surfaces; a **welcome
+>   banner that collapses** to one two-span line below 30 rows or under a screen reader, with ccx's three
+>   static tips replaced by canon's two-entry completion checklist and the gate that hides it once done;
+>   an **`auto` theme** that resolves off `COLORFGBG` instead of aliasing dark; and **desktop
+>   notifications** on four emulator protocols (`iterm2`, `kitty`, `ghostty`, `terminal_bell`, plus `auto`
+>   and a disable), wired to the permission-consult and turn-settle seams. Eleven implementation tasks,
+>   each reviewed, plus a verification pass. Spec
+>   `docs/superpowers/specs/2026-08-20-f8-spinner-startup-terminal-design.md`.
+>   **Acceptance: 15 of 16 cells executed, 15 PASS / 0 FAIL / 1 owner-verified-pending** — twelve keyless
+>   against the shipped modules and three (A5, A10, A10b) on a real pty under an isolated `HOME` on a
+>   private tmux server. **A11 is the pending one and is not rounded up**: it terminates inside an emulator
+>   no instrument here can drive, so it ships as a reproduction script for the owner. Two § 4 cells were
+>   superseded by the spec's own later measurements and the implementation follows the evidence — recorded
+>   in that spec's § 8 (S-F8-s, S-F8-t) rather than silently re-written. Gates at close: typecheck clean,
+>   unit 2902, tui 3869 (9 live-skips), resize matrix 10/0.
+>   **No domain score below moves, and that is the accurate result** — as with the fullscreen and
+>   tool-stream waves, this is terminal bytes, Ink layout, ccx's own settings file and pure projection
+>   code. It consumes **no SDK method, option or frame at all**; the only wire fact it reads is
+>   `parent_tool_use_id`, which this table already claims. The parity it buys is scored in `tui-ux.md`'s
+>   F8 recount (§3 ~71% → ~79%, §6 ~67% → ~75%, overall ~76% → ~78%).
+>   **Two environment facts came out of it that any embedder writing to a terminal inherits, both
+>   measured rather than assumed.** (1) **A tmux pane inherits the tmux *server's* environment, not the
+>   client's** (measured on tmux 3.7b): `LC_TERMINAL`, `KITTY_WINDOW_ID` and `GHOSTTY_RESOURCES_DIR` reach
+>   a pane only when the server is freshly created by the same shell that had them — on any long-running
+>   server, any server started from a launch agent, and any started from a bare shell they are *absent
+>   entirely*, not stale. Combined with tmux overwriting both `TERM` and `TERM_PROGRAM` inside a pane, an
+>   emulator sniff inside a multiplexer legitimately finds nothing, which is why ccx rings a bell there
+>   rather than resolving to silence. (2) **tmux's `allow-passthrough` has defaulted OFF since 3.3**, so a
+>   DCS-wrapped escape — the standard way to reach the real emulator through a multiplexer — is simply
+>   dropped unless the user turned it on. The sniff *succeeding* is therefore the silent case, which
+>   inverts the half of the problem the design started out solving; an `auto`-resolved channel now also
+>   emits a bare unwrapped BEL, which reaches tmux's own bell handling regardless of the setting.
+>   **One environment fact confirmed for testing rather than for the product:** `process.stdout.rows`,
+>   `.columns` and `.isTTY` are all `undefined` inside every vitest worker, verified under a real pty — so
+>   anything geometry-dependent has to arrive through an injected seam, and a test that reads them
+>   directly is measuring nothing.
+
 > - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36
 >   re-verified REACHABLE on 0.3.211; after an auth interruption (the old subscription OAuth token was
