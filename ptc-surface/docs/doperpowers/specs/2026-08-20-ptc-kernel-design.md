@@ -840,6 +840,9 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
 - Observation: "idle" for the watchdog must exclude in-flight cells — the spec's TTL as first implemented measured only time-since-last-cell-boundary, so a computation outrunning the TTL was os._exit'd mid-cell. Idleness is now (no cell in flight) AND (TTL exceeded). Accepted tradeoff: a permanently hung cell never idle-expires; the TTL is a bound on idle lifetime, not total lifetime. Known residual: a sub-millisecond window between a client's execute_request landing and `pre_run_cell` stamping the cell can theoretically still race the watchdog; if hit, the client sees an honest kernel-died abort, never silence.
   Evidence: T5 review finding I1 + fix commit c055c28ae0 (`test_watchdog_spares_running_cell` overlaps a 14.4s cell against a 3.6s TTL).
 
+- Observation: `jupyter_client`'s BlockingKernelClient heartbeat channel is a liability for short-lived control connections — its teardown raced the interrupt call with `ZMQError: Too many open files` from the hb thread, and the heartbeat's accidental startup delay was the only reason the control-channel `interrupt_request` ever flushed before teardown (SIGINT quietly did the real interrupting). The client now connects hb-less and awaits `interrupt_reply` before teardown; a wall-clock test bound (settle < the 2s SIGINT grace) guards the control path against regressing to SIGINT-only.
+  Evidence: T6 execution (commit 1fa23ae189) — hand-found; measured 0.13s control-channel settle vs 4.34s with the control send sabotaged. Fail-closed admission also gained the sent-but-unacknowledged marker (commit a49c46ae80): any failure after `execute_request` leaves `pending.json` under the submit lock, closing the crash-mid-submit and slow-joiner silent-queue routes.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
