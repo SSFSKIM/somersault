@@ -359,8 +359,20 @@ tips. Above the threshold, today's box renders exactly as it does now.
 The banner stays a **seeded transcript notice** rather than becoming a live component (D-F8-6). The
 branch is therefore chosen once, at seed time, from the rows known then. `main.ts` already reads
 `process.stdout.columns` at that moment; it gains the matching `rows` read and the screen-reader
-verdict, which `renderer.ts:187`'s existing ladder already computes for the renderer decision — one
-resolution, two consumers, per the same rule Wave C applied to the model.
+verdict.
+
+That verdict needs a small extraction rather than a reach-in. `selectRenderer` computes it today as an
+inline rung (`renderer.ts:187`), so the only way to consume it from outside would be to test
+`choice.reason === "screen_reader"` — which is true only when that rung *wins*, and silently false
+under a non-TTY, coupling the banner to rung ordering that has nothing to do with it. Instead
+`renderer.ts` exports the predicate itself:
+
+```ts
+export function screenReaderEnabled(env: NodeJS.ProcessEnv): boolean;   // CLAUDE_AX_SCREEN_READER
+```
+
+and its own ladder calls it. One resolution, two consumers, per the rule Wave C applied to the model.
+The signal stays env-only — that is `renderer.ts`'s recorded divergence 4, unchanged by this wave.
 
 **The tips checklist.** The three static strings are replaced by canon's mechanism and canon's
 inventory:
@@ -412,9 +424,15 @@ but default off, settable. This is a deliberate divergence from canon's all-even
 permission to use <tool>` and `ccx is waiting for your input`, with the default title `ccx`
 (D-F8-8).
 
-**Trigger sites.** `permission_prompt` fires where the consult dialog is raised; `idle_prompt` where
-the turn settles and the composer regains focus. Both are existing seams in `useChat.ts`; the
-notifier is injected as a dep so both are unit-testable without a terminal.
+**Trigger sites.** `permission_prompt` fires where the consult dialog is raised. `idle_prompt` fires
+where the turn settles — `useChat.ts:1557`, the same `setBusy(false)` the terminal title already
+drives off — but **only when the queue is empty**. That line ends `setBusy(false); … drainNext()`, so
+a session with queued input goes busy again immediately; notifying there would fire between queued
+turns, when ccx is not waiting on anyone. The condition is "the turn ended and nothing drained", not
+"the turn ended".
+
+Both are existing seams in `useChat.ts`; the notifier is injected as a dep, so both are unit-testable
+without a terminal.
 
 **Reduced motion** adds `prefersReducedMotion` to the settings file with a `Reduce motion` boolean row
 in `SettingsDialog`, positioned as canon positions it, and threads to the four consumers named in
