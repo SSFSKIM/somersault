@@ -35,6 +35,14 @@ below is against that file.
   `ccx is waiting for your input`; default title `ccx`.
 - **Default notification events:** `permission_prompt` and `idle_prompt` only.
 - Commit after every task. No `Co-Authored-By` trailer. Do not push.
+- **Every assertion must fail against the nearest wrong implementation.** Before accepting a test as
+  written here, ask what a plausible wrong version would do and whether this assertion would still pass:
+  a range check missing its upper bound, a sniff where a parameter was required, one OR-arm of three, a
+  wrap that forgot to escape. Prefer exact equality over `toContain`/`startsWith` wherever the value is
+  fully known. **For each task's central assertion, confirm red-green explicitly** — break the
+  implementation, watch the test fail, restore it — and report that in the task report. A regression test
+  nobody has seen fail is not yet a regression test. Where a test block below is weaker than this rule
+  requires, strengthen it and say so; the blocks are a starting point, not a ceiling.
 
 ## File Structure
 
@@ -88,8 +96,12 @@ describe("osc", () => {
     expect(osc("st", OSC_KITTY, "i=1:d=0:p=title", "ccx")).toBe("\x1b]99;i=1:d=0:p=title;ccx\x1b\\");
   });
   it("takes the terminator as a parameter, never sniffing", () => {
-    // the title keeps BEL on EVERY terminal, kitty included (terminalTitle.ts's Wave C skip)
-    expect(osc("bel", OSC_TITLE, "x").endsWith("\x07")).toBe(true);
+    // HOSTILE ENV ON PURPOSE: on a non-kitty host this assertion passes against a SNIFFING
+    // implementation too, which makes it worthless. Stub kitty in, then demand BEL anyway — the title
+    // keeps BEL on every terminal, kitty included (terminalTitle.ts's Wave C skip).
+    vi.stubEnv("TERM", "xterm-kitty"); vi.stubEnv("KITTY_WINDOW_ID", "1");
+    expect(osc("bel", OSC_TITLE, "x")).toBe("\x1b]0;x\x07");
+    vi.unstubAllEnvs();
   });
 });
 
@@ -111,6 +123,8 @@ describe("notifyTerminator", () => {
   it("is ST under kitty and BEL everywhere else", () => {
     expect(notifyTerminator({ TERM: "xterm-kitty" } as NodeJS.ProcessEnv)).toBe("st");
     expect(notifyTerminator({ TERM_PROGRAM: "iTerm.app" } as NodeJS.ProcessEnv)).toBe("bel");
+    expect(notifyTerminator({ KITTY_WINDOW_ID: "1" } as NodeJS.ProcessEnv)).toBe("st");
+    expect(notifyTerminator({ TERM_PROGRAM: "kitty" } as NodeJS.ProcessEnv)).toBe("st");
     expect(notifyTerminator({} as NodeJS.ProcessEnv)).toBe("bel");
   });
 });
@@ -126,6 +140,14 @@ describe("sanitizeNotificationText", () => {
   it("never shortens the string", () => {
     const s = "\x00\x01\x02abc\x7f";
     expect(sanitizeNotificationText(s)).toHaveLength(s.length);
+  });
+  it("leaves every character above the C1 range alone", () => {
+    // THE BOUNDARY IS THE TEST. An implementation written `c < 32 || c >= 127` — no upper bound —
+    // passes every other assertion here while mangling accented letters, the spinner glyphs and every
+    // box-drawing character in the product.
+    expect(sanitizeNotificationText("a é✳b")).toBe("a é✳b");
+    expect(sanitizeNotificationText("\x9f")).toBe(" ");        // last C1 byte, replaced
+    expect(sanitizeNotificationText("\u00a0")).toBe("\u00a0");  // first byte past it, preserved
   });
 });
 ```
