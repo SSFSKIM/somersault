@@ -3,12 +3,12 @@
 // different file; see the module comment on prefs.ts). vitest isolates modules per FILE, not per test —
 // every test here that calls setTheme() resets it in afterEach so it can never leak into a later test in
 // THIS file (a leak across files is not possible: each test file gets a fresh module graph).
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ACCENT, ANSI_COLOR_NAMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, isLightTheme, isThemeColor, resolveThemeColor, setTheme, themeGeneration, themeTokens } from "../../src/tui/theme.js";
+import { ACCENT, ANSI_COLOR_NAMES, SUBAGENT_THEMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, detectTerminalBackground, isLightTheme, isThemeColor, resolveThemeColor, resolveThemeId, setTheme, subagentTokens, themeGeneration, themeTokens } from "../../src/tui/theme.js";
 import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
 import { resolveModelAlias } from "../../src/config/models.js";
 import { renderDiff } from "../../src/tui/diffRender.js";
@@ -103,6 +103,77 @@ describe("theme.ts", () => {
       const bare = source.match(/["'](?:red|green|yellow|blue|magenta|cyan|white|black|gray|grey)(?:Bright)?["']/g) ?? [];
       expect(new Set(bare)).toEqual(new Set(['"blue"', '"red"', '"green"']));
     });
+  });
+});
+
+// F8 Task 9: `auto` stops being a static alias of `dark` — `detectTerminalBackground` reads canon's `eTp`
+// (bundle L188327) off COLORFGBG, and `resolveThemeId` maps `auto` onto it. Every assertion below is aimed
+// at the nearest wrong implementation (this wave's Global Constraint), named in the comment beside it.
+describe("detectTerminalBackground", () => {
+  const e = (COLORFGBG?: string) => ({ ...(COLORFGBG !== undefined ? { COLORFGBG } : {}) }) as NodeJS.ProcessEnv;
+
+  it("reads the LAST `;`-separated field, not the first", () => {
+    // "15;0" and "0;15" share both digits — only field ORDER distinguishes them, so a first-field reader
+    // passes trivial cases and only fails here.
+    expect(detectTerminalBackground(e("15;0"))).toBe("dark");
+    expect(detectTerminalBackground(e("0;15"))).toBe("light");
+  });
+
+  it("maps 0-6 to dark and 7+ (except 8) to light", () => {
+    expect(detectTerminalBackground(e("0;0"))).toBe("dark");
+    expect(detectTerminalBackground(e("0;6"))).toBe("dark");
+    expect(detectTerminalBackground(e("0;7"))).toBe("light");   // kills an off-by-one `n <= 7` guard
+    expect(detectTerminalBackground(e("0;15"))).toBe("light");
+  });
+
+  it("special-cases 8 back to dark, the one break in the otherwise-monotonic rule", () => {
+    expect(detectTerminalBackground(e("0;8"))).toBe("dark");    // kills a dropped `n === 8` arm
+    expect(detectTerminalBackground(e("0;9"))).toBe("light");   // neighbor of 8 stays light — the arm is exact, not a range
+  });
+
+  it("returns undefined for absent, empty, non-integer, or out-of-range values — never a guessed default", () => {
+    for (const v of [undefined, "", "0;", "0;banana", "0;16", "0;-1", "0;7.5"]) {
+      expect(detectTerminalBackground(e(v)), JSON.stringify(v)).toBeUndefined();
+    }
+  });
+});
+
+describe("resolveThemeId", () => {
+  it("maps auto onto the detected background", () => {
+    expect(resolveThemeId("auto", { COLORFGBG: "0;15" } as NodeJS.ProcessEnv)).toBe("light");
+    expect(resolveThemeId("auto", { COLORFGBG: "15;0" } as NodeJS.ProcessEnv)).toBe("dark");
+  });
+
+  it("falls back to dark when the terminal reports nothing — auto's pre-F8 behavior, unchanged", () => {
+    expect(resolveThemeId("auto", {} as NodeJS.ProcessEnv)).toBe("dark");
+  });
+
+  it("leaves an explicit theme alone, even with a light-reporting terminal in scope", () => {
+    // Kills a resolver that maps EVERY id through the detector instead of only "auto" — a test that only
+    // ever passes "auto" cannot distinguish the two.
+    expect(resolveThemeId("light", { COLORFGBG: "15;0" } as NodeJS.ProcessEnv)).toBe("light");
+    expect(resolveThemeId("dark-daltonized", { COLORFGBG: "0;15" } as NodeJS.ProcessEnv)).toBe("dark-daltonized");
+  });
+});
+
+describe("themeTokens()/subagentTokens()/isLightTheme() route \"auto\" through resolveThemeId", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("themeTokens() and subagentTokens() flip to light under a light-reporting terminal", () => {
+    // Both read `process.env` fresh through resolveThemeId's default parameter on every call — no
+    // module-load snapshot, no re-import needed (contrast the ACCENT block below).
+    vi.stubEnv("COLORFGBG", "0;15");
+    expect(themeTokens()).toEqual(THEMES.light);
+    expect(subagentTokens()).toEqual(SUBAGENT_THEMES.light);
+  });
+
+  it("isLightTheme(\"auto\") reflects the detected background, not the literal id", () => {
+    vi.stubEnv("COLORFGBG", "0;15");
+    // isLightTheme reads process.env through resolveThemeId's default parameter, so no re-import is needed
+    // here (unlike ACCENT below) — it has no module-load snapshot to go stale.
+    expect(isLightTheme("auto")).toBe(true);
+    vi.stubEnv("COLORFGBG", "15;0");
+    expect(isLightTheme("auto")).toBe(false);
   });
 });
 
@@ -222,5 +293,42 @@ describe("prefs.ts", () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, "prefs.json"), JSON.stringify({ theme: "dark-daltonized" }));
     expect(loadPrefs({ CCX_FLEET_ROOT: root })).toEqual({ theme: "dark-daltonized" });
+  });
+});
+
+// Subtlety called out in the task brief: ACCENT is seeded ONCE at module load from resolveThemeId("auto"),
+// while themeTokens() re-resolves on every call. Stubbing COLORFGBG after this file's top-level import
+// changes themeTokens() (proven above) but can never change the already-evaluated ACCENT binding — proving
+// that requires a FRESH module instance created after the stub is in place. Placed LAST in the file (same
+// convention tick-consistency.test.tsx uses for TaskPanel's module-level TODO_GLYPH): `vi.resetModules()`
+// only affects the registry used to resolve FUTURE dynamic imports, so it cannot retroactively unbind this
+// file's own already-linked static imports above — but there is no reason to rely on that ordering fact
+// mid-file when the tests can simply run last instead.
+describe("ACCENT is a module-load snapshot, not a live read", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  // NOTE: `claude` (the token ACCENT resolves) is byte-identical between DARK and LIGHT — canon's own
+  // brand orange does not change between those two themes, only between the daltonized variants, which
+  // `auto` never resolves to. So ACCENT's *value* cannot distinguish "seeded from a light environment"
+  // from "seeded from a dark one" — asserting `fresh.ACCENT !== resolveThemeColor(THEMES.dark.claude)`
+  // would be a false assertion about the product, not a stronger test. The freeze/live asymmetry is
+  // provable instead, and unambiguously, through the other 29 tokens `themeTokens()` carries — proven below.
+  it("evaluates the seeding expression correctly at import time", async () => {
+    vi.stubEnv("COLORFGBG", "0;15");   // light
+    vi.resetModules();
+    const fresh = await import("../../src/tui/theme.js");
+    expect(fresh.currentTheme()).toBe("auto");   // seeding ACCENT must not itself mutate `current`
+    expect(fresh.ACCENT).toBe(fresh.resolveThemeColor(fresh.THEMES[fresh.resolveThemeId("auto")].claude));
+  });
+
+  it("does not move when the environment changes after that module has loaded, unlike themeTokens()", async () => {
+    vi.resetModules();
+    const fresh = await import("../../src/tui/theme.js");            // loaded with no COLORFGBG stub → dark
+    const accentAtLoad = fresh.ACCENT;
+    expect(fresh.themeTokens()).toEqual(fresh.THEMES.dark);           // dark before the flip, on every token
+    vi.stubEnv("COLORFGBG", "0;15");                                  // now flip the environment to light
+    expect(fresh.ACCENT).toBe(accentAtLoad);                          // ACCENT: frozen at the old (dark) value
+    expect(fresh.themeTokens()).toEqual(fresh.THEMES.light);          // themeTokens(): live, sees the flip on every token
+    expect(fresh.themeTokens().text).not.toBe(fresh.THEMES.dark.text);// e.g. `text` genuinely differs dark vs. light
   });
 });

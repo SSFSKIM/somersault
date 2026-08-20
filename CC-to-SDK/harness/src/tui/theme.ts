@@ -4,8 +4,11 @@
 // wrong for their own name — `background` is a teal, `remember` is not a hue anyone would guess — because
 // they are faithful captures of the shipping product, NOT judgement calls. Do not "correct" one: fidelity
 // to the installed product is the goal, and a role-plausible substitute is exactly the failure this table
-// exists to prevent. `auto` is an exact alias of `dark` (terminal-background detection isn't reachable
-// headlessly — recorded divergence); the two ANSI-only themes stay out of scope.
+// exists to prevent. `auto` resolves live off COLORFGBG via `resolveThemeId`/`detectTerminalBackground`
+// (F8 Task 9) — it is no longer a static alias of `dark`, though `THEMES.auto`/`SUBAGENT_THEMES.auto`
+// stay wired to the dark tables as the `Record<ThemeId, …>` type still requires an entry and as the
+// fallback resolveThemeId falls back to when the terminal reports nothing; nothing reads those two
+// entries directly any more. The two ANSI-only themes stay out of scope.
 //
 // Token VALUES use upstream's own color grammar (TH2): `rgb(r,g,b)` / `#rgb` / `#rrggbb` / `ansi256(n)` /
 // `ansi:<name>`. Ink handles hex, `ansi256(n)` AND `rgb(r,g,b)` (`ink/build/colorize.js` matches an rgbRegex
@@ -107,7 +110,7 @@ export const SUBAGENT_THEMES: Record<ThemeId, SubagentTokens> = {
   auto: SUB_DARK, dark: SUB_DARK, light: SUB_LIGHT, "dark-daltonized": SUB_DARK_DALTONIZED, "light-daltonized": SUB_LIGHT_DALTONIZED,
 };
 /** The palette for the CURRENT theme — read per render, never captured, exactly like `themeTokens()`. */
-export function subagentTokens(): SubagentTokens { return SUBAGENT_THEMES[current]; }
+export function subagentTokens(): SubagentTokens { return SUBAGENT_THEMES[resolveThemeId(current)]; }
 /** One agent's INDEX → an Ink-safe colour, cycling `Ov`'s order. Upstream has no cycling at all (`t4`,
  *  L424866, reads a colour the teammate MESSAGE carries, which comes from the agent definition or a user
  *  override via `Out`, L188606, and defaults to `cyan_FOR_SUBAGENTS_ONLY`) — our SDK stream carries no such
@@ -152,11 +155,32 @@ const hex = (red: number, green: number, blue: number) => `#${red.toString(16).p
  *  exactly the 256-colour terminal `jmH` exists for — and `\x1b[37m` at level 1. Clamping stays because TH2
  *  accepts an out-of-range `ansi256(999)`, which chalk would turn into an invalid SGR. */
 export function resolveThemeColor(value: ThemeColor): string { const rgb = rgbMatch(value); if (rgb) return hex(byte(rgb[1]!), byte(rgb[2]!), byte(rgb[3]!)); const ansi256 = ansi256Match(value); if (ansi256) return `ansi256(${byte(ansi256[1]!)})`; return value.startsWith("ansi:") ? value.slice(5) : value; }
-/** TH4: upstream's is-light predicate (`lpo(e) { return e.startsWith("light") }`), used for contrast calls. */
-export const isLightTheme = (id: ThemeId) => id.startsWith("light");
+/** TH4: upstream's is-light predicate (`lpo(e) { return e.startsWith("light") }`), used for contrast calls.
+ *  Routed through resolveThemeId so `isLightTheme("auto")` reflects the detected background rather than
+ *  the literal id (which never starts with "light"). */
+export const isLightTheme = (id: ThemeId) => resolveThemeId(id).startsWith("light");
+
+/** canon's `eTp` (L188327): the LAST `;`-separated field of COLORFGBG, an integer 0-15, where 0-6 and 8
+ *  are dark. A pure env read — no terminal round trip, nothing to await, nothing to parse off the tty.
+ *  (The OSC 11 query tier canon also has is deferred whole — spec § 5.) */
+export function detectTerminalBackground(env: NodeJS.ProcessEnv = process.env): "dark" | "light" | undefined {
+  const raw = env.COLORFGBG;
+  if (!raw) return undefined;
+  const last = raw.split(";").at(-1);
+  if (last === undefined || last === "") return undefined;
+  const n = Number(last);
+  if (!Number.isInteger(n) || n < 0 || n > 15) return undefined;
+  return n <= 6 || n === 8 ? "dark" : "light";
+}
+
+/** `auto` stops being a static alias of dark. Everything else passes through. The fallback IS dark —
+ *  exactly what `auto` resolved to before this wave — so a terminal that reports nothing sees no change. */
+export function resolveThemeId(id: ThemeId, env: NodeJS.ProcessEnv = process.env): ThemeId {
+  return id === "auto" ? (detectTerminalBackground(env) === "light" ? "light" : "dark") : id;
+}
 
 let current: ThemeId = "auto";
-export let ACCENT = resolveThemeColor(THEMES.auto.claude); // Claude brand orange — live binding, see setTheme
+export let ACCENT = resolveThemeColor(THEMES[resolveThemeId("auto")].claude); // Claude brand orange — live binding, see setTheme
 let generation = 0;
 
 export function currentTheme(): ThemeId { return current; }
@@ -169,8 +193,8 @@ export function themeGeneration(): number { return generation; }
 /** The full token set for the CURRENT theme. Consumers call this per render/projection rather than caching
  *  it, so a setTheme() mid-session — including the /theme picker's own live-preview navigation — is visible
  *  on the very next paint. */
-export function themeTokens(): ThemeTokens { return THEMES[current]; }
+export function themeTokens(): ThemeTokens { return THEMES[resolveThemeId(current)]; }
 /** Mutates ACCENT + the current theme. No persistence here — that's the caller's job: ThemeDialog calls
  *  the injected savePrefs on Enter, and boot applies a saved pref via loadPrefs() before the first render
  *  (see prefs.ts + chatMain.tsx). */
-export function setTheme(id: ThemeId): void { current = id; ACCENT = resolveThemeColor(THEMES[id].claude); generation++; }
+export function setTheme(id: ThemeId): void { current = id; ACCENT = resolveThemeColor(THEMES[resolveThemeId(id)].claude); generation++; }
