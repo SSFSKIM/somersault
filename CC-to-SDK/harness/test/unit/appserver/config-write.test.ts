@@ -132,7 +132,7 @@ describe("applyEdit (D-M5-13 merge table)", () => {
 describe("token + doc IO", () => {
   it("token: sha256 of bytes, absent for null", () => {
     expect(versionToken(null)).toBe("absent");
-    expect(versionToken("x")).toBe(createHash("sha256").update("x").digest("hex"));
+    expect(versionToken(Buffer.from("x"))).toBe(createHash("sha256").update("x").digest("hex"));
   });
   it("readTargetDoc: missing = empty+absent; malformed refuses", async () => {
     const dir = mkTemp("m5w-");
@@ -159,10 +159,42 @@ describe("token + doc IO", () => {
     // "absent" is reserved for NO SUCH FILE, and this file exists.
     const dir = mkTemp("m5w-");
     const zero = join(dir, "zero.json"); writeFileSync(zero, "");
-    expect(await readTargetDoc(zero)).toEqual({ doc: {}, version: versionToken("") });
+    expect(await readTargetDoc(zero)).toEqual({ doc: {}, version: versionToken(Buffer.alloc(0)) });
     expect((await readTargetDoc(zero)).version).not.toBe("absent");
     const ws = join(dir, "ws.json"); const wsBytes = "﻿ \n\t\n"; writeFileSync(ws, wsBytes);
-    expect(await readTargetDoc(ws)).toEqual({ doc: {}, version: versionToken(wsBytes) });
+    expect(await readTargetDoc(ws)).toEqual({ doc: {}, version: versionToken(Buffer.from(wsBytes, "utf8")) });
+  });
+  /** FIX WAVE H / H3. D-M5-18 defines the version token as the sha256 of the file's RAW BYTES, and the
+   *  implementation read every one of them through `readFile(…, "utf8")` — so it hashed the DECODED TEXT
+   *  and contradicted its own published definition. The two are not the same function: 0x80 and 0x81
+   *  inside an otherwise valid JSON string are two different files whose bytes hash differently and whose
+   *  decodes are both U+FFFD, so both were minted ONE token. Measured before the repair: both files came
+   *  back `69c9032f…`, and neither token was the sha256 of the bytes it claimed to describe. */
+  it("the version token is the sha256 of the file's BYTES — invalid UTF-8 that decodes alike still differs", async () => {
+    const dir = mkTemp("m5w-");
+    const bytes = (b: number) => Buffer.concat([Buffer.from('{"k":"'), Buffer.from([b]), Buffer.from('"}\n')]);
+    const [a, b] = [join(dir, "a.json"), join(dir, "b.json")];
+    writeFileSync(a, bytes(0x80));
+    writeFileSync(b, bytes(0x81));
+    const ra = await readTargetDoc(a);
+    const rb = await readTargetDoc(b);
+    // Both files parse — the invalid byte decodes to U+FFFD, which is an ordinary character in a JSON
+    // string — so this is a live pair of settings files, not a pair of rejects.
+    expect(ra.doc).toEqual({ k: "�" });
+    expect(rb.doc).toEqual({ k: "�" });
+    // The definition, stated as an equality against the bytes on disk rather than as "they differ":
+    // a token that merely differed could still be a hash of something else.
+    expect(ra.version).toBe(createHash("sha256").update(bytes(0x80)).digest("hex"));
+    expect(rb.version).toBe(createHash("sha256").update(bytes(0x81)).digest("hex"));
+    expect(`same token for different bytes: ${ra.version === rb.version}`).toBe("same token for different bytes: false");
+    // …and the COMMIT GUARD reads the same way, so a write conditioned on one file's token is not
+    // admitted against the other's bytes. `expectVersion` is A's token; the file holds B's bytes.
+    await expect(writeTargetDoc(b, { k: "x" }, { expectVersion: ra.version, fence: async () => {} }))
+      .rejects.toMatchObject({ code: "ConfigLocked" });
+    expect(readFileSync(b)).toEqual(bytes(0x81));
+    // The reply's own token is the token of the bytes it just wrote — one Buffer, written and hashed.
+    const { version } = await writeTargetDoc(b, { k: "x" });
+    expect(version).toBe(createHash("sha256").update(readFileSync(b)).digest("hex"));
   });
   it("writeTargetDoc round-trips with a matching token AND creates the missing .claude parent", async () => {
     const dir = mkTemp("m5w-");
@@ -412,7 +444,7 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
       const lock = p + ".lock";
       for (const n of readdirSync(lock)) unlinkSync(join(lock, n)); // a breaker judged our lease dead
       writeFileSync(join(lock, "42-evictor"), "42-evictor\n"); // ...and took the path
-      return writeTargetDoc(p, { model: "THE-EVICTED-WRITER" }, { expectVersion: versionToken(before), fence })
+      return writeTargetDoc(p, { model: "THE-EVICTED-WRITER" }, { expectVersion: versionToken(Buffer.from(before, "utf8")), fence })
         .then(() => "COMMITTED", (e: { code?: string; message: string }) => `${e.code}:${e.message}`);
     });
     expect(outcome).toBe("ConfigLocked:this writer's lock was broken while it was held; nothing was written");
@@ -429,7 +461,7 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
     writeFileSync(p, '{"model":"A"}\n');
-    const stale = versionToken('{"model":"A"}\n');
+    const stale = versionToken(Buffer.from('{"model":"A"}\n', "utf8"));
     writeFileSync(p, '{"model":"B-COMMITTED"}\n'); // another writer got there first
     await expect(writeTargetDoc(p, { model: "C" }, { expectVersion: stale, fence: async () => {} }))
       .rejects.toMatchObject({ code: "ConfigLocked" });

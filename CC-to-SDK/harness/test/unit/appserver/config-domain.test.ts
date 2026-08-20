@@ -282,6 +282,23 @@ describe("config/read", () => {
     // the exact inverse of what this row promises, and reads as "no such file" to a conditional write.
     expect(r.versions.project).toBe(sha256("{broken"));
   });
+  /** FIX WAVE H / H3, the READ side of the same token. `config/read` mints a layer's version from the
+   *  bytes `readLayers` kept, and that reader decoded them to a string first — so the token this method
+   *  publishes was the hash of the decode, not of the file, exactly as the write side's was. Both halves
+   *  must move together or a client's `expectedVersion`, taken from a `config/read` reply, would be
+   *  compared against a token computed a different way one method over. */
+  it("a layer's published version is the sha256 of its BYTES — two files that decode alike do not share one", async () => {
+    const bytes = (b: number) => Buffer.concat([Buffer.from('{"model":"'), Buffer.from([b]), Buffer.from('"}\n')]);
+    writeFileSync(join(home, ".claude", "settings.json"), bytes(0x80));
+    writeFileSync(join(proj, ".claude", "settings.json"), bytes(0x81));
+    boot(deps());
+    const id = await send("config/read", { cwd: proj, includeLayers: true });
+    const r = reply(id).result;
+    expect(r.versions.user).toBe(createHash("sha256").update(bytes(0x80)).digest("hex"));
+    expect(r.versions.project).toBe(createHash("sha256").update(bytes(0x81)).digest("hex"));
+    expect(`user and project share a token: ${r.versions.user === r.versions.project}`)
+      .toBe("user and project share a token: false");
+  });
   it("a present-but-unreadable layer mints \"unreadable\", never \"absent\"", async () => {
     // D-M5-18's "absent" means NO SUCH FILE. A file that exists but whose bytes never reached us is a
     // third state, and this handler is the only place the difference is knowable — downstream sees the
@@ -495,6 +512,40 @@ describe("config/value/write + config/batchWrite", () => {
     expect(r.status).toBe("okOverridden");                                // rev 1 checked only the last edit
     expect(r.overriddenMetadata.overridingLayer).toBe("local");
     expect(r.maskedEditIndexes).toEqual([0]);
+  });
+  /** FIX WAVE H / H6. The leaf dedup keyed a path by joining its segments with a NUL, so two DIFFERENT
+   *  leaves whose segments differ only in where that NUL falls collapsed onto one key — and `Map` keeps
+   *  the last value for a duplicate key, so the surviving entry is the one written LAST and the other
+   *  leaf is never looked up at all.
+   *
+   *  A settings key may contain a NUL: it comes out of `JSON.parse`, which accepts `\u0000` in a string,
+   *  and the write path's keyPath screen refuses `.`-carrying segments and the three prototype names, not
+   *  control characters. So this is a client-reachable pair, and the direction that shows is the harmful
+   *  one: the LANDED leaf is dropped, only the masked leaf is asked about, and a write that really is in
+   *  force is reported `okOverridden` naming a layer that overrides nothing of it. (The opposite order is
+   *  not a defect — the rule is "ok when ANY leaf is attributed to the target", so dropping a masked leaf
+   *  cannot change an answer the surviving landed leaf already decides.)
+   *
+   *  The repair is a key with no delimiter in it at all rather than an escape: `JSON.stringify` of the
+   *  segment array, which is injective over string arrays for the same reason JSON round-trips. */
+  it("two leaves that differ only in where a NUL falls are two leaves, not one (the dedup key is injective)", async () => {
+    const NUL = "\u0000";
+    writeFileSync(join(proj, ".claude", "settings.json"), JSON.stringify({ x: { a: { b: "PROJECT-WINS" } } }));
+    boot(deps());
+    // `a\u0000b` lands (nothing else defines it); `a.b` is masked by the project layer. They join to the
+    // same NUL-delimited key, and `a\u0000b` — written FIRST — is the one the Map drops.
+    const id = await send("config/value/write", {
+      target: "user", cwd: proj, keyPath: ["x"], mergeStrategy: "upsert",
+      value: { [`a${NUL}b`]: "USER-LANDS", a: { b: "user-masked" } },
+    });
+    const w = reply(id).result;
+    // The write really is in force at the dropped leaf — asked of `config/read`, the side that decides it.
+    const rid = await send("config/read", { cwd: proj });
+    const r = reply(rid).result;
+    expect(r.origins[`x.a${NUL}b`]).toBe("user");
+    expect(r.config.x[`a${NUL}b`]).toBe("USER-LANDS");
+    expect(`${w.status} ${w.overriddenMetadata?.overridingLayer ?? "-"}`).toBe("ok -");
+    expect(w.maskedEditIndexes).toBeUndefined();
   });
   it("unknown top-level key warns; project without cwd refuses; batch is ordered and atomic", async () => {
     boot(deps());

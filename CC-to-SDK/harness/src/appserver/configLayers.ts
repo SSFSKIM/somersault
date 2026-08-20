@@ -9,7 +9,10 @@ import type { Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 
 export type LayerName = "user" | "project" | "local" | "managed";
-export interface ConfigLayer { name: LayerName; filePath: string; config?: Record<string, unknown>; raw?: string; disabledReason?: string }
+/** `raw` is the file's BYTES, not its decoded text (fix wave H / H3): the CAS token it feeds is defined as
+ *  the sha256 of the bytes on disk, and a `string` here is a decode the hash can never undo — two files
+ *  differing only in invalid UTF-8 decode alike and were minted one token for two files. */
+export interface ConfigLayer { name: LayerName; filePath: string; config?: Record<string, unknown>; raw?: Buffer; disabledReason?: string }
 /** A path to read, or — for the one source that is a DIRECTORY listing rather than a file — a reason it
  *  could not be listed. `readLayers` passes such an entry straight through as a disabled layer. */
 export interface LayerPath { name: LayerName; filePath: string; disabledReason?: string }
@@ -69,16 +72,16 @@ export async function layerPaths(userConfigDir: string, managedSettingsPath: str
  *  hash of bytes, and a client deserves the token even for a file it must fix). */
 export async function readLayers(
   paths: LayerPath[],
-  deps: { readFile: (p: string) => Promise<string> } = { readFile: (p) => fsReadFile(p, "utf8") },
+  deps: { readFile: (p: string) => Promise<Buffer> } = { readFile: (p) => fsReadFile(p) },
 ): Promise<ConfigLayer[]> {
   const out: ConfigLayer[] = [];
   for (const { name, filePath, disabledReason } of paths) {
     // Already known unreadable before any file was named — a drop-in DIRECTORY that could not be listed.
     if (disabledReason !== undefined) { out.push({ name, filePath, disabledReason }); continue; }
-    let raw: string;
+    let raw: Buffer;
     try { raw = await deps.readFile(filePath); }
     catch (e) { if ((e as NodeJS.ErrnoException)?.code === "ENOENT") continue; out.push({ name, filePath, disabledReason: String((e as Error).message ?? e) }); continue; }
-    const body = raw.replace(/^﻿/, "");
+    const body = raw.toString("utf8").replace(/^﻿/, "");
     if (body.trim() === "") { out.push({ name, filePath, config: {}, raw }); continue; }
     try {
       const parsed: unknown = JSON.parse(body);

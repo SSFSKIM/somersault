@@ -159,7 +159,7 @@ describe("configLayers", () => {
     const files: Record<string, string> = {
       "/x/user.json": "﻿" + `{"model":"opus"}`, "/x/project.json": "   \n", "/x/local.json": `{not json`,
     };
-    const deps = { readFile: async (p: string) => { if (p in files) return files[p]; const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; } };
+    const deps = { readFile: async (p: string) => { if (p in files) return Buffer.from(files[p], "utf8"); const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; } };
     const layers = await readLayers([
       { name: "user", filePath: "/x/user.json" }, { name: "project", filePath: "/x/project.json" },
       { name: "local", filePath: "/x/local.json" }, { name: "managed", filePath: "/x/managed.json" },
@@ -169,7 +169,7 @@ describe("configLayers", () => {
     expect(layers[1].config).toEqual({});            // blank = empty layer, not disabled
     expect(layers[2].config).toBeUndefined();
     expect(layers[2].disabledReason).toMatch(/JSON/);
-    expect(layers[2].raw).toBe(`{not json`);          // raw retained — the CAS token hashes bytes, not parses
+    expect(layers[2].raw?.toString("utf8")).toBe(`{not json`);          // raw retained — the CAS token hashes bytes, not parses
   });
 
   /** FIX WAVE G / G5. An object over an array patches BY INDEX and an index past the end extends with

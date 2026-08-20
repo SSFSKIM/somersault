@@ -71,16 +71,23 @@ export function applyEdit(doc: Record<string, unknown>, keyPath: string[], value
   return out;
 }
 
-/** TWO cases only — bytes in, token out. The wire's THIRD token, "unreadable" (a settings file that is
+/** TWO cases only — BYTES in, token out. The wire's THIRD token, "unreadable" (a settings file that is
  *  there but whose bytes never reached us), is minted by configDomain.ts's versions walk from LAYER
- *  state; it is not a property of any bytes, so it cannot be minted here. */
-export function versionToken(bytes: string | null): string {
+ *  state; it is not a property of any bytes, so it cannot be minted here.
+ *
+ *  A `Buffer`, and the type is the point (fix wave H / H3). D-M5-18 defines the version token as the
+ *  sha256 of the file's RAW BYTES, and every caller used to reach it through `readFile(…, "utf8")` — so
+ *  what was hashed was the DECODED TEXT, and the published definition and the implementation disagreed.
+ *  They disagree observably: 0x80 and 0x81 inside an otherwise valid JSON string are two different files
+ *  that both decode to U+FFFD, so both were minted the same token while their sha256s differ. Taking a
+ *  `Buffer` is what makes the decoded string unhashable here rather than merely unhashed. */
+export function versionToken(bytes: Buffer | null): string {
   return bytes === null ? "absent" : createHash("sha256").update(bytes).digest("hex");
 }
 
 export async function readTargetDoc(filePath: string): Promise<{ doc: Record<string, unknown>; version: string }> {
-  let raw: string;
-  try { raw = await readFile(filePath, "utf8"); }
+  let bytes: Buffer;
+  try { bytes = await readFile(filePath); }
   catch (e) {
     if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return { doc: {}, version: "absent" };
     // The write-side half of Task 2 review I1: a target that EXISTS but could not be read (EACCES on a
@@ -88,17 +95,17 @@ export async function readTargetDoc(filePath: string): Promise<{ doc: Record<str
     // not leaked as an internal error — never write bytes over bytes we were never able to see.
     throw new ConfigError("ConfigValidationError", `target settings file could not be read: ${(e as Error).message ?? String(e)}`);
   }
-  const body = raw.replace(/^﻿/, "");
+  const body = bytes.toString("utf8").replace(/^﻿/, "");
   // A blank (or BOM-only) file is an EMPTY doc, exactly as `readLayers` already treats it — upstream's
   // loader does too (review I2). Sending it to JSON.parse instead made `config/read` report the file
   // healthy while every write against it refused forever, with no way out through the API. The token is
   // the hash of the real bytes, NOT "absent": the file exists, and a CAS check must be able to see it.
-  if (body.trim() === "") return { doc: {}, version: versionToken(raw) };
+  if (body.trim() === "") return { doc: {}, version: versionToken(bytes) };
   let parsed: unknown;
   try { parsed = JSON.parse(body); }
   catch { throw new ConfigError("ConfigValidationError", "target settings file is not valid JSON; fix it before writing through this API"); }
   if (!isPlainObject(parsed)) throw new ConfigError("ConfigValidationError", "target settings file is not a JSON object");
-  return { doc: parsed, version: versionToken(raw) };
+  return { doc: parsed, version: versionToken(bytes) };
 }
 
 /** ONE spelling per LOOKUP path (review I2): whatever a caller names, this answers with the same string
@@ -262,11 +269,13 @@ async function assertNotRelinked(filePath: string): Promise<void> {
  *  failed rename (EISDIR against a directory at the path) parked those bytes on disk for good. */
 export async function writeTargetDoc(filePath: string, doc: Record<string, unknown>, guard?: CommitGuard): Promise<{ version: string }> {
   await mkdir(dirname(filePath), { recursive: true });
-  const bytes = JSON.stringify(doc, null, 2) + "\n";
+  // ONE bytes value, built once: it is what `writeFile` puts on disk AND what the reply's token hashes,
+  // so the two cannot describe different things (fix wave H / H3).
+  const bytes = Buffer.from(`${JSON.stringify(doc, null, 2)}\n`, "utf8");
   const tmp = `${filePath}.tmp-${process.pid}-${Math.floor(Math.random() * 1e9)}`;
   const mode = await stat(filePath).then((s) => s.mode & 0o7777, () => null);
   try {
-    await writeFile(tmp, bytes, { encoding: "utf8", mode: mode ?? 0o600 });
+    await writeFile(tmp, bytes, { mode: mode ?? 0o600 });
     await chmod(tmp, mode ?? 0o600);
     // The guard sits HERE — after the tmp is complete, one syscall before the rename — because that is
     // the narrowest window a userspace writer can leave between "I am still the writer" and "these bytes
@@ -275,7 +284,7 @@ export async function writeTargetDoc(filePath: string, doc: Record<string, unkno
     if (guard !== undefined) {
       await guard.fence();
       await assertNotRelinked(filePath);
-      const current = await readFile(filePath, "utf8").then(versionToken, (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : null));
+      const current = await readFile(filePath).then(versionToken, (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : null));
       if (current !== guard.expectVersion)
         throw new ConfigError("ConfigLocked", "the settings file changed while this write was being prepared; nothing was written — re-read and retry");
     }

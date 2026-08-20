@@ -99,6 +99,14 @@ const token = (layer: ConfigLayer | undefined): string =>
     : layer.raw === undefined ? "unreadable"
       : versionToken(layer.raw);
 
+/** `layers[].raw` is published as TEXT while the token above hashes BYTES, and the two are different
+ *  questions about one file (fix wave H / H3). `raw` is there for a human to look at the file it must go
+ *  fix, so a decode — lossy for invalid UTF-8, exactly as any editor's would be — is the right thing to
+ *  send; the identity a conditional write compares is `versions[name]`, which is byte-exact. The decode
+ *  happens HERE, at the wire, so no code path can mistake the published text for the hashable bytes. */
+const wireLayer = (l: ConfigLayer): Record<string, unknown> =>
+  ({ ...l, ...(l.raw === undefined ? {} : { raw: l.raw.toString("utf8") }) });
+
 export const configRead: Handler = async (srv, ctx, id, params) => {
   const parsed = configReadParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
@@ -123,7 +131,7 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
       if (name === "managed") continue;
       versions[name] = token(layers.find((l) => l.filePath === filePath));
     }
-    ctx.peer.reply(id, { config, origins, versions, incomplete: true, ...(parsed.data.includeLayers ? { layers } : {}) });
+    ctx.peer.reply(id, { config, origins, versions, incomplete: true, ...(parsed.data.includeLayers ? { layers: layers.map(wireLayer) } : {}) });
   } catch (e) {
     if (replyConfigError(ctx, id, e)) return;
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
@@ -409,7 +417,14 @@ function maskingVerdict(edits: WriteData["edits"], target: WriteData["target"], 
   edits.forEach((e, i) => {
     // DEDUPED after the truncation: two numeric keys of one object land on one array path, and a leaf
     // counted twice would only ever be looked up twice with the same answer.
-    const leaves = [...new Map(introducedLeaves(e.keyPath, e.value, e.mergeStrategy).map(atArrayLeaf).map((p) => [p.join(" "), p])).values()];
+    //   The key is `JSON.stringify` of the SEGMENTS, which has no delimiter for a segment to impersonate
+    // (fix wave H / H6). It was the segments joined on a NUL, and a settings key may CONTAIN a NUL — it
+    // comes out of `JSON.parse`, and the keyPath screen refuses `.` and the three prototype names, not
+    // control characters — so `["a\u0000b"]` and `["a","b"]` deduped onto one entry and `Map` kept the
+    // one written last. The dropped leaf is then never looked up: a write that really landed at it came
+    // back `okOverridden`, naming a layer that overrides nothing of it. Escaping the delimiter would have
+    // worked too; having none is the version a later caller cannot get wrong.
+    const leaves = [...new Map(introducedLeaves(e.keyPath, e.value, e.mergeStrategy).map(atArrayLeaf).map((p) => [JSON.stringify(p), p])).values()];
     // `origins` addresses leaves by DOTTED path while a keyPath is an opaque segment array (D-M5-12), so a
     // segment carrying a literal dot mis-splits and any verdict drawn from it would be a guess. TWO sides
     // carry that hazard and only one of them is this edit's own: the written keyPath and value's keys
