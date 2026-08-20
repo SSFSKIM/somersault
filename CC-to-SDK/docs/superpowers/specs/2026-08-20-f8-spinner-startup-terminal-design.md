@@ -489,6 +489,31 @@ export function createDesktopNotifier(deps: {
 Every dynamic part goes through `sanitizeNotificationText` before assembly (§ 3.1), never the title
 sanitizer, which behaves differently on purpose.
 
+**Inside a multiplexer, `TERM_PROGRAM` is a lie, and `auto` must not believe it.** This is the
+difference between a feature and a dead feature: tmux ≥ 3.2 stamps `TERM_PROGRAM=tmux` over whatever
+the outer terminal set — `renderer.ts` already records the fact, in the note explaining why its own
+tmux heuristic is unreachable on modern tmux. `resolveTerminalName` reads `TERM_PROGRAM` before its
+`TMUX` fallback, so inside tmux it answers `"tmux"`, `auto` resolves to `none`, and **not one
+notification is ever delivered in the environment this project is actually used and tested in**. The
+DCS passthrough would be wrapping bytes nobody ever emits.
+
+So notification channel resolution does **not** reuse `resolveTerminalName`. It gets its own resolver
+whose first question is whether a multiplexer is present:
+
+- **Outside a multiplexer**, `TERM_PROGRAM` / `TERM` are trustworthy and the sniff is canon's.
+- **Inside one**, they are not, and the resolver falls back to the markers a terminal exports into the
+  environment its shells inherit — the same trick every tmux-aware tool uses. **Which markers those
+  are is an empirical question about three specific terminals, and it is answered by measurement, not
+  by assertion**: the implementing task begins by printing the environment inside a real tmux pane
+  under each target terminal and recording what survives. The resolver is then written against what
+  was observed, and the observation goes in § 8.
+- **Whatever the sniff concludes, `preferredNotifChannel` overrides it.** That setting is the
+  guaranteed escape hatch, and a user whose terminal exports nothing recognizable sets it once.
+
+A stale marker is the known limit of this approach — a tmux server started from terminal A and later
+attached from terminal B carries A's environment — and it is accepted rather than solved: the wrong
+emulator's escape is ignored by the right one, and the setting overrides.
+
 **Apple Terminal is a recorded divergence.** Canon's resolver is asynchronous there —
 `case "Apple_Terminal": return await p9T() ? "terminal_bell" : "no_method_available"` (L505907) —
 where `p9T` inspects the active Terminal profile. ccx resolves synchronously and always chooses
@@ -559,12 +584,18 @@ per standing project practice.
   above the existing box renders unchanged. With the screen-reader ladder firing, the one-line form
   renders at any height. The leading `✻` is **not** canon's, which opens on the bare words; it is
   carried from ccx's own box title so the two forms of the same banner agree (D-F8-12).
+  **The line is two spans, not one**: the title accent-coloured and the ` ccx v<version>` suffix dim,
+  as canon's degraded row is (L500766). `RenderLine.segments` already expresses exactly this, so a
+  uniformly-accent line is a defect the test must catch — assert the segment styles, not just the text.
 - **A6 (tips checklist).** In a non-empty directory containing a `CLAUDE.md`, the tips block reads
   `✔ Run /init to create a CLAUDE.md file with instructions for Claude`. Without one, the same line
   renders unchecked. In an empty directory, the workspace tip renders instead and never carries a
   check. Launched from `$HOME`, the home-directory note is the last line.
-- **A7 (notification bytes — the full matrix).** Each channel is asserted **positively**, bare and
-  under both multiplexers, so no declared branch can be a silent no-op:
+- **A7 (notification bytes — the full matrix).** Every channel is asserted **positively and exactly**
+  — full-string equality, never `startsWith` or `contains` — across **three** environments: bare,
+  `$TMUX`, and `$STY`. A `contains` assertion would pass on an emitter that dropped its passthrough or
+  emitted extra bytes, which is the failure this matrix exists to catch. Kitty's three writes are each
+  asserted whole, and the bell halves are asserted unwrapped in both multiplexers:
 
   | channel | bare | under `$TMUX` / `$STY` |
   |---|---|---|
@@ -587,7 +618,11 @@ per standing project practice.
 - **A9 (auto theme).** `COLORFGBG` unset → dark. `15;0` → dark. `0;15` → light. `15;8` → dark.
   `0;banana` → dark (malformed falls back, never throws).
 - **A10 (signal exit, a regression guard).** `SIGTERM` to a running ccx leaves the pty with the title
-  cleared — `ESC ] 0 ; BEL` on the wire — and exits 143. This asserts **existing** behavior
+  cleared — `ESC ] 0 ; BEL` on the wire — and exits cleanly. **Not 143**, which v2 of this document
+  asserted and which was never ccx's contract: `cli/main.ts`'s handler ends with
+  `host.stop("done").finally(() => process.exit(0))`, a deliberate graceful stop. Inventing a
+  signal-exit-code requirement inside a spinner wave would change a CLI contract nothing here needs
+  changed. This asserts **existing** behavior
   (`cli/main.ts`'s single handler draining `createChatTeardown`, whose third step is `clearTitle`)
   and exists so this wave's changes to title composition cannot break it.
 
@@ -708,6 +743,13 @@ this wave. Nothing in F8 touches it, and nothing in F8 needs to.
   profile state, which is not portably reachable, and the wave has no other async resolution.
   *Rejected: send nothing, matching the negative arm* — that trades a harmless ignored byte for a
   silently missing notification. Recorded, one-directional, cheap.
+- **D-F8-13 — notification channel resolution is multiplexer-aware and measurement-backed.**
+  *Rejected: reuse `resolveTerminalName`* — it answers `"tmux"` inside tmux, which resolves `auto` to
+  `none` and ships the feature dead where it is used. *Rejected: guess the surviving marker names from
+  memory* — three external products' environment contracts are exactly the class of fact this project
+  probes rather than asserts. *Rejected: drop `auto` and require an explicit setting* — a default that
+  works nowhere is not a default. The measurement is one command inside a real pane and it happens
+  before the resolver is written.
 - **D-F8-12 — the degraded startup line keeps ccx's `✻`.** Canon's opens on the bare words. *Rejected:
   drop the glyph for byte fidelity* — the full-size form is ccx's own box whose title line carries the
   glyph, and a degraded form that drops it would make one banner disagree with itself. Recorded rather
@@ -750,6 +792,22 @@ design rather than the prose:
   `true`, and a subagent's todo list can retitle the main spinner. Porting a guard's code without its
   surrounding structure ports nothing at all.
 
+### From the adversarial review of the plan (2026-08-20)
+
+Eleven more findings, again none rebutted. Two changed the design rather than the plan:
+
+- **`TERM_PROGRAM` is `tmux` inside tmux, and this codebase already knew.** `renderer.ts` carries the
+  fact in a note explaining why its own tmux heuristic is unreachable on tmux ≥ 3.2. The notification
+  design reused `resolveTerminalName` anyway, which would have resolved `auto` to `none` in every tmux
+  pane — shipping the wave's one genuinely new *capability* dead in the environment the whole
+  acceptance rig runs in. **A fact recorded in one module does not propagate to the next design by
+  itself**; it has to be looked up, and the place to look was a file this wave was already editing.
+- **An acceptance cell asserted a contract the product does not have.** A10 required exit 143 on
+  `SIGTERM`. ccx's handler ends `host.stop("done").finally(() => process.exit(0))` — a deliberate
+  graceful stop — so the cell was unreachable, and satisfying it would have meant changing a CLI exit
+  contract from inside a spinner wave. Writing an acceptance cell from what *ought* to be true rather
+  than from what is, is how a wave acquires scope nobody chose.
+
 ### From the grounding pass
 
 - **F8's parent-spec text was stale in three places, and the audit is why.** Wave C shipped `CH17`
@@ -788,6 +846,16 @@ Pending — written at finish.
 - **v1 (2026-08-20)** — authored from the grounding pass against 2.1.236 and an eight-question grill.
   Born landed: every decision in § 7 was settled before writing, and § 0.1's audit replaces the
   parent spec's cell list as this wave's scope of record.
+- **v3 (2026-08-20, adversarial review of the implementation plan — 4 high / 6 medium / 1 low; 11
+  adopted, 0 rebutted).** Two spec-level changes. **Notification channel resolution is now
+  multiplexer-aware and measurement-backed** (§ 3.4, D-F8-13): reusing `resolveTerminalName` would have
+  answered `"tmux"` inside tmux and resolved `auto` to `none`, shipping the wave's one new capability
+  dead in the environment it is tested in. **A10 drops its exit-143 requirement**, which was invented
+  rather than observed — ccx exits 0 on a signal by design. A5 now requires the degraded line's two
+  spans (accent title, dim version) rather than a uniformly-accent line, and A7 requires exact
+  full-string equality across bare / `$TMUX` / `$STY` for every channel, because a `contains`
+  assertion passes on an emitter that dropped its passthrough. The remaining eight findings were plan
+  defects and are fixed there.
 - **v2 (2026-08-20, adversarial review — 3 high / 7 medium / 1 low; 10 adopted, 1 adopted in part,
   0 rebutted).** Unit 1 rewritten: it is a **pure builder module**, it registers no signal handler,
   and the signal half of its charter is withdrawn as already-done (§ 8). Two sanitizers instead of
