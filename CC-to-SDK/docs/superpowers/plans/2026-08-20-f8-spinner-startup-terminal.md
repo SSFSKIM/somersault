@@ -25,6 +25,13 @@ below is against that file.
 - **Dense hand-style, NO Prettier.** Match surrounding code. Do not reformat files you touch.
 - **ESM:** import specifiers end in `.js` even though sources are `.ts`.
 - **DI-by-deps:** inject `write`, `now`, `env`, `setInterval` — never reach for a global in a testable path.
+  This binds at CALL SITES too, not only inside modules. A bare `process.stdout.*` read in `cli/main.ts` is
+  worse than untested: **`process.stdout.rows`/`columns`/`isTTY` are all `undefined` inside every vitest
+  worker**, verified under a genuine pty (`script -q /dev/null npx vitest run`) — the forks pool hands the
+  worker a pipe whatever terminal launched it. So such a read evaluates to a constant under test, and
+  deleting it changes nothing any test can observe. The house idiom is `useChat.ts:239`
+  (`deps.rows ?? (() => process.stdout.rows ?? 24)`) and `banner.ts:29`'s `cols` (an override parameter in
+  front of the global, which the banner tests actually drive). Seam it, then pin the arm.
 - **TDD:** failing test → red → minimal implementation → green → `npm run typecheck`.
 - **Never run bare `npm test`.** Only `npm run test:unit`, `npm run test:tui`, `npm run test:resize-matrix`.
 - **Never touch `src/appserver/`** — a concurrent session owns it for this wave's duration.

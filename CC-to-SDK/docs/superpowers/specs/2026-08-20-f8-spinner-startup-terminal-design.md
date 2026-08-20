@@ -885,6 +885,17 @@ harness, which no F8 task is scoped to do. Recorded so the next wave that adds a
 seam it is adding to has no net under it. Task 12 (the notifier wiring) lands in the same function — its
 review should read this first.
 
+**S-F8-v — terminal geometry is `undefined` in every test worker, which makes a bare global read inert
+rather than merely unpinned.** Task 7's reviewer measured it: under `script -q /dev/null npx vitest run` —
+a genuine pty, not a pipe — a worker reports `isTTY=undefined rows=undefined cols=undefined`, because the
+default forks pool gives the worker a pipe regardless of the launching terminal. The consequence is sharper
+than "this line has no test": `rows: process.stdout.rows` at the launch site always evaluated to `undefined`
+under test, `undefined` is exactly the unknown case that renders the FULL banner, and passing it versus not
+passing it were indistinguishable to any test this harness could contain. Deleting it left 118/118 green.
+Fixed by seaming it through `MainDeps`, the idiom `useChat.ts:239` already uses. Recorded because the same
+trap waits for anything that reads terminal geometry at a call site — and because the seam must keep
+returning `number | undefined` rather than defaulting, or every unknown silently becomes a measurement.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.
