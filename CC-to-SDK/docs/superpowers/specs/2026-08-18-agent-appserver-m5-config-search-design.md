@@ -1738,6 +1738,47 @@ row now plants a `permissions.ask` array in both layers and dies under exactly t
 rule 2 of this milestone's own lessons — *a title is not a test* — surviving in the one task that
 predated the rule and was never revisited by any later reviewer.
 
+### What happened AFTER this section was first written — the part that matters most
+
+The paragraphs above were written at Task 15, when fifteen tasks had each passed an independent review,
+the acceptance walk was green, and both keyed live suites passed. **Then two whole-branch reviews found
+twenty confirmed defects that all fifteen reviews had missed**, including one that could erase a user's
+transcript. Six fix waves (A–F) repaired them; a review of those waves found three more Important items —
+one a regression a wave had itself introduced — and a corrective pass closed them. **Every review round in
+this milestone found something real.** The record would be dishonest if it stopped at the sentence above.
+
+**One sentence explains most of the twenty, and it is this milestone's most valuable output:**
+*an injected test double is a title for the storage layer.* Our tests pinned contracts by injecting fakes
+that **throw**; the shipped SDK readers **swallow** every read failure and return empty. So the guarantee
+was true on the injected origin and false on the shipped one — and fifteen independent reviewers could not
+see it, because every one of them reviewed against the same doubles. It is this project's own rule (*a
+title is not a test*) one layer down, and the generalisation is sharper than the instance: **a substitute
+that is more honest than the real dependency tests your handling of an error that never arrives.** The
+corollary appeared too, in wave E: a substitute *less* honest than reality (a store that changed a file's
+bytes while freezing its mtime) produced a false FAILURE, which is the more dangerous direction, because
+acting on a false failure feels like diligence.
+
+**The signature defect of this milestone was a published sentence that measurement contradicts** — counted
+five times before the final pass, and wave F had to withdraw more. The pattern is specific: it happens at
+the moment someone genuinely fixes something and describes the fix slightly more broadly than they built
+it. D-M5-22's promote sentence, the row-window memory rationale, the lock's refusal code, the notification
+recipe, the "epoch family closed by construction" claim — each was written by someone who had just done
+real work and was right about the work. **Prose stating an invariant is an assertion with no test behind
+it; when the invariant is load-bearing, the sentence and the row that pins it belong in the same change.**
+
+**What the per-task loop did earn.** Both whole-branch reviews independently judged the domains' own logic
+clean — the fifteen reviews genuinely cleaned that layer, and none of the twenty was a wrong-answer defect
+inside a handler's own reasoning. What that loop is structurally unable to see is a property shared by
+every task's instrument. **Reviewing N tasks against one blind spot yields one blind spot, not N reviews of
+it** — and the only thing that found it was changing the altitude of the reader, not the count.
+
+**Corrections outnumbered discoveries, and several were to instructions this milestone's own controller
+gave.** The plan was wrong twice about scorecard counts; a dispatch asserted "recipe 27 → 29" that three
+sources agreed on and measurement refuted; a safety rule ("when the roster cannot answer confidently,
+refuse") was correct for the broken state and would have been a new defect once the state was repaired; a
+claim that a testing shortcut would have missed a trap was false. In each case the worker checked rather
+than complied. **A process that only catches the workers' errors is half a process.**
+
 ### What is NOT proven
 
 - **The key-less init branch is contract-derived, not observed.** D-M5-22 says an init frame that
