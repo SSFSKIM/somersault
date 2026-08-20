@@ -40,7 +40,13 @@ export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80,
   const kindRef = useRef<SpinnerPhase["kind"]>("none");
 
   const animMs = useAnimationClock(spinnerInterval(meter.mode, reducedMotion), startedAt, now);
-  // Under reduced motion the eased count SNAPS to its target (canon L507779: `if (t) ie.current = B`).
+  // The easing's cursor belongs to the clock, so it resets WITH the clock. A new `startedAt` sends `animMs`
+  // back to 0 while `animRef.at` still holds the last turn's high mark, and `floor((0 - at)/50)` is negative
+  // — no step ever runs, so the second turn's token figure sits on the first turn's number until the clock
+  // climbs back past it. One stamp, one cursor.
+  const stampRef = useRef(startedAt);
+  if (stampRef.current !== startedAt) { stampRef.current = startedAt; animRef.current = { chars: 0, at: 0 }; }
+  // Under reduced motion the eased count SNAPS to its target (canon L507780: `if (t) ie.current = B`).
   // There is no animation to ease, and easing against a clock nobody advances would freeze the number.
   if (reducedMotion) animRef.current = { chars: meter.chars, at: animMs };
   else {

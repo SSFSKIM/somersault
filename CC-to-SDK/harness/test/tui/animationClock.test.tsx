@@ -34,6 +34,11 @@ describe("useAnimationClock", () => {
     rerender(<Probe interval={null} startedAt={1000} now={now} />);
     await flushEffects();
     expect(vi.getTimerCount()).toBe(0);
+    // RE-ARM before unmounting. Asserting 0 straight off the `null` rerender proves nothing about unmount —
+    // the count was already 0 — so the cleanup path for a LIVE timer went unexercised.
+    rerender(<Probe interval={100} startedAt={1000} now={now} />);
+    await flushEffects();
+    expect(vi.getTimerCount()).toBe(1);
     unmount();
     await flushEffects();
     expect(vi.getTimerCount()).toBe(0);
@@ -66,5 +71,27 @@ describe("useAnimationClock", () => {
     expect(lastFrame()).toBe("t=5000");              // held by the high-water mark
     started = 4000; rerender(probe());               // a NEW turn stamped at 4000
     expect(lastFrame()).toBe("t=0");
+    clock = 5000; rerender(probe());                 // and it must RISE again — a reset that stayed at 0
+    expect(lastFrame()).toBe("t=1000");              // (water line never re-armed) passed the assert above
+  });
+
+  // FINDING 1. `null` means FROZEN, not merely "no timer of my own". Left recomputing elapsed, the hook
+  // advanced its water line on every unrelated parent rerender, so a caller that stopped repainting still
+  // read a rising number — CompactionRow's frozen glyph over a creeping bar.
+  it("freezes the water line while disarmed, and still restarts on a new stamp", () => {
+    let clock = 6000, started = 1000, interval: number | null = 100;
+    const probe = () => <Probe interval={interval} startedAt={started} now={() => clock} />;
+    const { lastFrame, rerender } = render(probe());
+    expect(lastFrame()).toBe("t=5000");
+    interval = null; rerender(probe());
+    expect(lastFrame()).toBe("t=5000");
+    clock = 60_000; rerender(probe());               // a minute of wall clock, and a rerender to notice it
+    expect(lastFrame()).toBe("t=5000");              // held: disarmed is FROZEN
+    started = 60_000; rerender(probe());             // the turn boundary still cuts through a frozen clock
+    expect(lastFrame()).toBe("t=0");
+    clock = 90_000; rerender(probe());
+    expect(lastFrame()).toBe("t=0");                 // and stays frozen at the new stamp
+    interval = 100; rerender(probe());               // re-armed, it picks the real elapsed straight back up
+    expect(lastFrame()).toBe("t=30000");
   });
 });

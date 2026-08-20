@@ -44,8 +44,11 @@ describe("spinner glyph", () => {
     expect([at(0), at(1000), at(2000), at(3000)]).toEqual([0, 5, 0, 5]);
     expect(at(100)).toBe(at(0));            // dwells at the bottom
     expect(at(900)).toBe(at(1000));         // and at the top
-    const firstHalf = [0, 200, 400, 600, 800, 1000].map(at);
-    expect(firstHalf).toEqual([...firstHalf].sort((a, b) => a - b));
+    // The EXACT eased walk, not merely an ascending one: `expect(x).toEqual([...x].sort())` is satisfied by
+    // a linear ping-pong, which is the implementation this case exists to reject. Six even samples across
+    // the out-stroke give [0,0,2,3,5,5] off the raised cosine — dwelling at both ends, two steps at a time
+    // through the middle — where a linear walk gives [0,1,2,3,4,5].
+    expect([0, 200, 400, 600, 800, 1000].map(at)).toEqual([0, 0, 2, 3, 5, 5]);
   });
 
   it("glyphIndex is negative-safe and never leaves the array", () => {

@@ -224,6 +224,32 @@ describe("TurnSpinner", () => {
     expect(shown).toBe(75);                                  // six +50 steps, eased — not the 1000 a snap gives
     expect(shown).toBeLessThan(1000);                        // still climbing toward 4000/4
   });
+  // F8 TASK 3 REVIEW (finding 2). The easing cursor is an offset into the ANIMATION clock, and that clock
+  // restarts on a new `startedAt` — so a cursor left holding the previous turn's high mark makes every
+  // `floor((animMs - at)/50)` negative, and the token figure sits on the OLD turn's number until the clock
+  // climbs back past it. Mid-mount restarts are the ordinary case: ChatApp keeps one spinner across turns.
+  it("restarts the eased token count when the turn does, instead of stalling on the last turn's figure", () => {
+    let clock = 1000, started = 1000;
+    const spinner = () => <TurnSpinner startedAt={started} verb="Cogitating" now={() => clock} meter={meter({ mode: "responding", chars: 4000 })} />;
+    const { lastFrame, rerender } = render(spinner());
+    clock = 1300; rerender(spinner());
+    expect(stripAnsi(lastFrame() ?? "")).toContain("↓ 75 tokens");    // turn one, six +50 steps in
+    started = 1300; rerender(spinner());                             // turn two, stamped at the same instant
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain("tokens");     // back to zero, not stuck at 75
+    clock = 1400; rerender(spinner());
+    expect(stripAnsi(lastFrame() ?? "")).toContain("↓ 25 tokens");    // and climbing again from there
+  });
+  // F8 TASK 3 REVIEW (finding 1, the other side of it). Freezing the animation clock must NOT freeze the
+  // tail's elapsed: the spinner reads that from `now() - startedAt` directly, and reduced motion suppresses
+  // animation, not the passage of time. The glyph stands still; the clock in the parenthetical does not.
+  it("keeps the elapsed clock running under reduced motion even though the glyph is frozen", () => {
+    let clock = 21_000;
+    const spinner = () => <TurnSpinner startedAt={1000} verb="Cogitating" now={() => clock} reducedMotion />;
+    const { lastFrame, rerender } = render(spinner());
+    expect(stripAnsi(lastFrame() ?? "")).toBe("· Cogitating… (20s)");
+    clock = 81_000; rerender(spinner());
+    expect(stripAnsi(lastFrame() ?? "")).toBe("· Cogitating… (1m 20s)");
+  });
   it("re-picks the gerund on a phase transition and holds it inside one phase", () => {
     const picks = ["Baking", "Herding", "Noodling"]; let i = 0;
     const pick = () => picks[Math.min(i++, picks.length - 1)]!;

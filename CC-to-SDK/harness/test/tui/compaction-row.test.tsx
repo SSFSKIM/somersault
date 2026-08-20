@@ -41,6 +41,24 @@ describe("CompactionRow", () => {
     clock = 31_000; rerender(<CompactionRow startedAt={1_000} now={() => clock} columns={50} />);
     expect(line(lastFrame)).toContain("63%");                        // not 28% — monotonic
   });
+
+  // F8 TASK 3 REVIEW (finding 1). Reduced motion has to stop the WHOLE row, and the bar is the half that
+  // used to keep going: `compactionRatio` is monotone and floors on `ratioRef`, so a reduced-motion branch
+  // that still read `now()` was a provable no-op and the percentage crept up under a stationary glyph.
+  // The freeze lives in `useAnimationClock(null, …)`; this is the case that says so from outside.
+  it("freezes BOTH the glyph and the bar under reduced motion", () => {
+    let clock = 1_000;
+    const row = () => <CompactionRow startedAt={1_000} now={() => clock} columns={50} reducedMotion />;
+    const { lastFrame, rerender } = render(row());
+    const first = line(lastFrame);
+    expect(first).toContain("Compacting conversation…");
+    expect(first).toContain("· Compacting");                         // the base glyph, not a pulse frame
+    expect(first).toContain(" 0%");
+    clock = 91_000; rerender(row());                                 // ninety seconds and a repaint
+    expect(line(lastFrame)).toBe(first);                             // glyph AND percentage unmoved
+    clock = 601_000; rerender(row());
+    expect(line(lastFrame)).toBe(first);
+  });
 });
 
 describe("ChatApp: compaction owns the live-turn slot", () => {

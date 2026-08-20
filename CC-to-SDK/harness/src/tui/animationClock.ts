@@ -14,7 +14,12 @@
 // count frozen for the whole of the second turn. A changed `startedAt` therefore resets the water line;
 // nothing else does.
 //
-// `null` DISARMS rather than freezes: under reduced motion the component does no periodic work at all.
+// `null` FREEZES. It disarms the timer — under reduced motion the component does no periodic work at all —
+// and it also stops the water line where it stands: a disarmed clock that still recomputed `now() - startedAt`
+// on every unrelated parent rerender would hand its callers a RISING value with no repaints behind it, which
+// is how CompactionRow ended up with a frozen glyph over a creeping bar. Callers write `null` meaning "hold
+// still", so hold still. The one thing that still moves a frozen clock is a NEW `startedAt`, which resets it
+// to 0 on the disarmed path exactly as on the armed one — that is the turn boundary, not an animation.
 import { useEffect, useRef, useState } from "react";
 
 export function useAnimationClock(intervalMs: number | null, startedAt: number, now: () => number = Date.now): number {
@@ -27,11 +32,12 @@ export function useAnimationClock(intervalMs: number | null, startedAt: number, 
     return () => clearInterval(h);
   }, [intervalMs]);
   if (stamp.current !== startedAt) { stamp.current = startedAt; highWater.current = 0; }
+  if (intervalMs === null) return highWater.current;      // frozen: do not even ask the clock what time it is
   // A non-positive stamp reads as "just started" — `useChat` sets busy and the start stamp in two
   // setStates that do not commit together, so one painted frame can hold busy=true and startedAt=0, and
   // `now() - 0` rendered as "(29758130m 59s)" in a real binary (pty acceptance, w3.9).
   const elapsed = startedAt > 0 ? Math.max(0, now() - startedAt) : 0;
-  const quantized = intervalMs === null ? elapsed : Math.floor(elapsed / intervalMs) * intervalMs;
+  const quantized = Math.floor(elapsed / intervalMs) * intervalMs;
   if (quantized > highWater.current) highWater.current = quantized;
   return highWater.current;
 }

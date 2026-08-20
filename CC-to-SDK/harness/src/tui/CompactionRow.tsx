@@ -31,8 +31,9 @@ export function CompactionRow({ startedAt, now = Date.now, columns, reducedMotio
   const animMs = useAnimationClock(reducedMotion ? null : SPINNER_INTERVAL_MS, startedAt, now);
   // The BAR freezes with the glyph. Its ratio is a function of wall-clock elapsed, so left reading `now()`
   // it would keep advancing on any unrelated parent rerender while the glyph stood still — a half-stopped
-  // animation, which is worse than either state. Under reduced motion it reads the frozen clock instead,
-  // and `ratioRef`'s monotonic floor keeps it from ever walking back.
+  // animation, which is worse than either state. Under reduced motion it reads the frozen clock instead:
+  // `useAnimationClock(null, …)` holds its water line still rather than merely disarming its timer, so this
+  // branch is the whole of the freeze. `ratioRef`'s monotonic floor keeps it from ever walking back.
   //
   // A non-positive stamp reads as "just started". NOT TurnSpinner's race — that one exists because `busy` and
   // `turnStartedAt` are two separate setStates, so a frame can legally have busy=true and startedAt=0; here
