@@ -57,6 +57,14 @@ const composerLine = (f: () => string | undefined) => {
   const lines = stripAnsiAll(frame(f)).split("\n").filter((l) => l.includes("❯"));
   return lines[lines.length - 1] ?? "";
 };
+/** THE LIVE SPINNER'S ROW ALONE — an asterisk-pulse glyph and whatever titles the turn (F8 T5). Scoped to
+ *  one line rather than matched against the whole frame because the todo panel prints an in-progress task's
+ *  `activeForm` as its own `…`-terminated line: a whole-frame `not.toContain` could never tell "the spinner
+ *  refused the subagent's task" from "the panel never drew it", and would pass either way. The LAST such
+ *  line, since `render.ts`'s collapsed-thinking placeholder (`✻ Thinking…`) can sit above it in the
+ *  transcript; the spinner is below everything the transcript owns. */
+const spinnerLine = (f: () => string | undefined) =>
+  stripAnsiAll(frame(f)).split("\n").filter((l) => /^\s*[·✢✳✶✻✽] \S/.test(l)).pop() ?? "";
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -517,6 +525,65 @@ describe("<ChatApp>", () => {
     stdin.write("\x14");
     await waitFor(() => !TODO_ROW.test(lastFrame() ?? ""));
     expect(saved).toEqual([{ showExpandedTodos: true }, { showExpandedTodos: false }]);
+  });
+
+  // ── F8 TASK 5 (A4/A4b) — THE MESSAGE LADDER, PROVED THROUGH THE REAL PATH ─────────────────────────────
+  // `useChat` ingests tasks from the host's `{kind:"message"}` EVENT (useChat.ts:1405), never from submit's
+  // `onMessage` callback, so every frame here goes down BOTH channels the way the neighbouring turn tests do
+  // — `onMessage` alone feeds the transcript and would leave the task store empty, which is a test that
+  // proves nothing about the ladder.
+  //
+  // THE FIXTURE IS ORDERED SO THE NEAREST WRONG IMPLEMENTATIONS DIE ON IT. The nested task is created FIRST
+  // (id 1, so it sorts ahead of everything in `snapshot()`) and the pending one LAST:
+  //   · "show the first task"           → "Nested chore" / "Doing a nested chore"
+  //   · "first task that is not completed", or any selector without the provenance filter → the same
+  //   · "show the last task"            → "Write the docs", once it exists
+  //   · "search from the end"           → "Write the docs", once it is in progress too
+  //   · "activeForm only, no subject rung" → a random verb (the main agent's task carries no activeForm,
+  //                                       which is the shape probe 81 Q3 watched a real run send)
+  //   · `tasks` never wired into TurnSpinner → a random verb, which is what the first waitFor sees
+  it("an in-progress task retitles the spinner; a subagent's does not (F8 A4/A4b)", async () => {
+    let fake!: ReturnType<typeof fakeRemote>;
+    let deliver!: (m: unknown) => void;
+    const create = (tu: string, id: number, subject: string, o: { nested?: boolean; activeForm?: string } = {}) => {
+      deliver({ type: "assistant", parent_tool_use_id: o.nested ? "agent_1" : null, message: { content: [{ type: "tool_use", id: tu, name: "TaskCreate", input: { subject, ...(o.activeForm ? { activeForm: o.activeForm } : {}) } }] } });
+      deliver({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: tu, content: `Task #${id} created successfully: ${subject}` }] } });
+    };
+    const setStatus = (id: number, status: string, nested = false) => {
+      deliver({ type: "assistant", parent_tool_use_id: nested ? "agent_1" : null, message: { content: [{ type: "tool_use", id: `up${id}${status}`, name: "TaskUpdate", input: { taskId: String(id), status } }] } });
+    };
+    fake = fakeRemote({
+      submit: async (_p, onMessage) => {
+        deliver = (m: unknown) => { onMessage(m); fake.pushEvent({ kind: "message", data: m }); };
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        return new Promise<{ result: unknown }>(() => {});          // hold the turn open so the spinner stays up
+      },
+    });
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
+        deps={{ columns: () => 100, rows: () => 24 }} />);           // pin the geometry: the panel window is a function of rows
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    stdin.write("go"); stdin.write("\r");
+    await waitFor(() => spinnerUp(frame(lastFrame)));                // the turn is live, still titled by a random verb
+
+    create("tu1", 1, "Nested chore", { nested: true, activeForm: "Doing a nested chore" });
+    setStatus(1, "in_progress", true);
+    create("tu2", 2, "Fix the parser");
+    setStatus(2, "in_progress");
+    await waitFor(() => spinnerLine(lastFrame).includes("Fix the parser…"));   // the SUBJECT rung, live
+    // The nested task really did reach the store AND really is in progress — the panel draws its activity
+    // line, which is the only reason this test can tell "the spinner refused it" from "it never arrived".
+    expect(stripAnsiAll(frame(lastFrame))).toContain("Doing a nested chore…");
+    expect(spinnerLine(lastFrame)).not.toContain("Nested chore");
+    expect(spinnerLine(lastFrame)).not.toContain("Doing a nested chore");
+
+    create("tu3", 3, "Write the docs");                              // pending, and now the LAST task in the list
+    await waitFor(() => /◻\s+Write the docs/.test(stripAnsiAll(frame(lastFrame))));
+    expect(spinnerLine(lastFrame)).toContain("Fix the parser…");     // a "show the last task" reading dies here
+    setStatus(3, "in_progress");                                     // a SECOND task of the main agent's, in progress
+    await waitFor(() => /◼\s+Write the docs/.test(stripAnsiAll(frame(lastFrame))));
+    expect(spinnerLine(lastFrame)).toContain("Fix the parser…");     // canon takes the FIRST match, not the last
+    expect(spinnerLine(lastFrame)).not.toContain("Write the docs");
   });
 
   it("initialPrompt submits once on mount", async () => {

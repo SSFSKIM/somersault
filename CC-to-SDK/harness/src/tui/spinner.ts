@@ -27,6 +27,7 @@
 // lives here; if a surface ever does, port it then and name its call site.
 import stringWidth from "string-width";
 import { formatCompactNumber, formatDuration } from "./format.js";
+import type { TaskItem } from "./taskList.js";
 
 /** The darwin asterisk-pulse base chars (`MSt`, L495134-495137). SIX entries, not a ping-pong of twelve:
  *  canon walks them with an eased index, and the out-and-back falls out of the cosine. */
@@ -307,4 +308,49 @@ export function spinnerStatus(tail: SpinnerTail): string {
     ...(showPhase && label !== null ? [label] : []),
   ];
   return parts.length === 0 ? "" : `(${parts.join(JOINER)})`;
+}
+
+// ── F8 TASK 5: the message ladder (canon L508022) ─────────────────────────────────────────────────────
+// Canon builds the gerund from whatever task is actually running, and only falls back to a verb when
+// nothing is: `J = (a ?? W?.activeForm ?? W?.subject ?? (y || ee)) + "…"`, where `W` is the first task that
+// is neither pending nor completed. Four rungs, in that order, and the whole thing is arithmetic on a list
+// — so it lives here, beside `spinnerStatus`, and `TurnSpinner.tsx` stays the clock and the refs.
+
+export interface SpinnerMessageInput {
+  /** canon's `a` — an explicit override; nothing sets one yet, and the rung stays so something can. */
+  overrideMessage?: string;
+  activeTask?: { activeForm?: string; subject?: string };
+  /** canon's `y`, the store's `defaultVerb`. */
+  defaultVerb?: string;
+  /** canon's `ee`, drawn once per turn. */
+  randomVerb: string;
+}
+
+const rung = (s: string | undefined): string | undefined => (s !== undefined && s.trim() !== "" ? s : undefined);
+
+/** `J = (a ?? W?.activeForm ?? W?.subject ?? (y || ee))` (L508022). The `subject` rung is why this ladder
+ *  fires at all on our wire: `activeForm` is optional in the tool schema and a real run was observed
+ *  sending `TaskCreate {subject, description}` with no `activeForm` (taskList.ts's header).
+ *
+ *  Every rung is `rung()`-gated rather than `??`-gated. Canon's bottom step is already an `||` (`y || ee`),
+ *  and the same reasoning applies the whole way up: an empty string is a wire absence, not a title, and
+ *  taking it would paint a blank gerund with nothing to say. */
+export function spinnerMessage(input: SpinnerMessageInput): string {
+  return rung(input.overrideMessage) ?? rung(input.activeTask?.activeForm) ?? rung(input.activeTask?.subject)
+    ?? rung(input.defaultVerb) ?? input.randomVerb;
+}
+
+/** canon's `W`, with canon's `B` gate folded in as a provenance filter.
+ *
+ *  Canon gates the whole `find` on "is this the MAIN agent's spinner" (`B = _ === void 0 || _ === Di()`),
+ *  because its task store is per-agent and a subagent's spinner reads its own. Ours is one global store
+ *  (`taskList.ts`), so the same rule has to be asked of each task instead of once of the store — hence
+ *  `TaskItem.subagent`, recorded at ingest from the frame's `parent_tool_use_id`. Same outcome: a
+ *  subagent's task cannot retitle the main spinner.
+ *
+ *  The status test keeps canon's DOUBLE NEGATIVE rather than `=== "in_progress"`. Canon's own TaskUpdate
+ *  schema admits a status we do not model (`"deleted"`), and the negative form is the faithful transplant;
+ *  validating the wire's status belongs at the ingest boundary, not in the selector. */
+export function activeSpinnerTask(tasks: readonly TaskItem[]): TaskItem | undefined {
+  return tasks.find((t) => t.subagent !== true && t.status !== "pending" && t.status !== "completed");
 }

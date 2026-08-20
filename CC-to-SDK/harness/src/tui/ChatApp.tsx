@@ -1584,7 +1584,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       {(state.busy || state.compacting) && !paneOwned
         ? (state.retryStatus ? <RetryRow status={state.retryStatus} />
           : state.compacting ? <CompactionRow startedAt={state.compacting.startedAt} columns={terminalColumns()} {...(deps?.now ? { now: deps.now } : {})} />
-          : <TurnSpinner startedAt={state.turnStartedAt} meter={state.turnMeter} columns={terminalColumns()} />)
+          : <TurnSpinner startedAt={state.turnStartedAt} meter={state.turnMeter} columns={terminalColumns()} tasks={state.tasks} />)
         : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
           prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no

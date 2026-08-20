@@ -17,8 +17,10 @@ import { Text } from "ink";
 import { ACCENT } from "./banner.js";
 import {
   glyphFor, spinnerBase, spinnerInterval, pickVerb, spinnerStatus, easeChars, estimateTokens, EASE_STEP_MS,
-  initPhaseState, advancePhase, phaseFor, thinkingStatusOf, rotateVerb, type SpinnerPhase,
+  initPhaseState, advancePhase, phaseFor, thinkingStatusOf, rotateVerb, spinnerMessage, activeSpinnerTask,
+  type SpinnerPhase,
 } from "./spinner.js";
+import type { TaskItem } from "./taskList.js";
 import { useAnimationClock } from "./animationClock.js";
 import { IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import stringWidth from "string-width";
@@ -26,9 +28,13 @@ import stringWidth from "string-width";
 /** F8 TASK 3 replaced the twelve-frame ping-pong at 120 ms with canon's own animation: SIX glyphs walked by
  *  a raised cosine (`spinner.ts`'s `glyphFor`) off `useAnimationClock`, which repaints at 100 ms — 50 while
  *  requesting — and is the same clock the character easing counts its 50 ms steps against. */
-export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80, verbose = false, reducedMotion = false, env = process.env, now = Date.now, pick = pickVerb }: {
+export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80, verbose = false, reducedMotion = false, tasks = [], env = process.env, now = Date.now, pick = pickVerb }: {
   startedAt: number; verb?: string; meter?: SpinnerMeter; columns?: number; verbose?: boolean;
-  reducedMotion?: boolean; env?: NodeJS.ProcessEnv; now?: () => number; pick?: () => string;
+  reducedMotion?: boolean;
+  /** F8 T5 — the live task list, so the turn can be titled by what it is actually doing (`spinnerMessage`).
+   *  The random verb below is the LAST rung of that ladder, not the only one. */
+  tasks?: readonly TaskItem[];
+  env?: NodeJS.ProcessEnv; now?: () => number; pick?: () => string;
 }) {
   // LAZY, not `useRef(verb ?? pick())`: an argument is evaluated on every render, so the eager form drew a
   // fresh verb from `pick` each frame and threw it away — invisible with `Math.random`, and an off-by-N
@@ -76,7 +82,10 @@ export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80,
     kindRef.current = phase.kind;
   }
 
-  const gerund = `${verbRef.current!}…`;
+  // F8 T5: the verb the refs above keep is only the ladder's BOTTOM rung — a running task's own words
+  // outrank it (canon L508022), and the re-pick on phase transitions stays exactly as it was for the turns
+  // where there is no task to speak for.
+  const gerund = `${spinnerMessage({ activeTask: activeSpinnerTask(tasks), randomVerb: verbRef.current! })}…`;
   const status = spinnerStatus({
     elapsedMs, tokens: estimateTokens(animRef.current.chars), mode: meter.mode, phase,
     columns, messageWidth: stringWidth(gerund), verbose,   // `Y`; spinnerStatus adds upstream's own +2 glyph cell

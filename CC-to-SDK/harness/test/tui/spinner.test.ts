@@ -4,8 +4,10 @@ import {
   spinnerInterval, pickVerb, spinnerStatus,
   thinkingWord, modeArrow, easeChars, estimateTokens, EASE_STEP_MS, QUIET_MS,
   initPhaseState, advancePhase, phaseFor, phaseLabel, thinkingStatusOf, rotateVerb,
+  spinnerMessage, activeSpinnerTask,
   type PhaseInput,
 } from "../../src/tui/spinner.js";
+import type { TaskItem, TaskStatus } from "../../src/tui/taskList.js";
 import { spinnerRows, spinnerUp } from "./helpers/spinnerRow.js";
 import { THINKING_PLACEHOLDER } from "../../src/tui/render.js";
 
@@ -308,5 +310,45 @@ describe("gerund rotation", () => {
     expect(i).toBe(0);
     expect(rotateVerb("Baking", "none", "thinking", pick)).toBe("Baking");    // first pick off the injected list
     expect(rotateVerb("Baking", "thinking", "tool-running", pick)).toBe("Herding");
+  });
+});
+
+// ── F8 TASK 5 — the message ladder (canon L508022) ──────────────────────────────────────────────────────
+describe("spinnerMessage", () => {
+  it("walks canon's ladder: override, activeForm, subject, defaultVerb, random", () => {
+    const base = { randomVerb: "Baking" };
+    expect(spinnerMessage({ ...base, overrideMessage: "Compacting", activeTask: { activeForm: "Running tests", subject: "Fix parser" } })).toBe("Compacting");
+    expect(spinnerMessage({ ...base, activeTask: { activeForm: "Running tests", subject: "Fix parser" } })).toBe("Running tests");
+    expect(spinnerMessage({ ...base, activeTask: { subject: "Fix parser" } })).toBe("Fix parser");
+    expect(spinnerMessage({ ...base, defaultVerb: "Churning" })).toBe("Churning");
+    expect(spinnerMessage(base)).toBe("Baking");
+  });
+  it("treats an empty or blank rung as absent", () => {
+    expect(spinnerMessage({ randomVerb: "Baking", overrideMessage: "  ", activeTask: { subject: "" } })).toBe("Baking");
+    // `(y || ee)` is canon's own bottom rung — an empty `defaultVerb` falls through to the random verb
+    // rather than painting a blank gerund.
+    expect(spinnerMessage({ randomVerb: "Baking", defaultVerb: "" })).toBe("Baking");
+    // A blank `activeForm` does not swallow the subject beneath it.
+    expect(spinnerMessage({ randomVerb: "Baking", activeTask: { activeForm: "   ", subject: "Fix parser" } })).toBe("Fix parser");
+  });
+});
+
+describe("activeSpinnerTask", () => {
+  const t = (subject: string, status: TaskStatus, extra: Partial<TaskItem> = {}): TaskItem => ({ id: subject, subject, status, ...extra });
+  it("picks the first task that is neither pending nor completed", () => {
+    expect(activeSpinnerTask([t("a", "completed"), t("b", "in_progress"), t("c", "in_progress")])!.subject).toBe("b");
+    expect(activeSpinnerTask([t("a", "pending"), t("b", "completed")])).toBeUndefined();
+  });
+  it("never picks a subagent's task", () => {
+    expect(activeSpinnerTask([t("nested", "in_progress", { subagent: true })])).toBeUndefined();
+    expect(activeSpinnerTask([t("nested", "in_progress", { subagent: true }), t("mine", "in_progress")])!.subject).toBe("mine");
+  });
+  // Canon spells the selector as a DOUBLE NEGATIVE, not `=== "in_progress"`, because its own TaskUpdate
+  // schema admits a fourth status (`"deleted"`) that our `TaskStatus` union does not. This pins the faithful
+  // transplant. It also exhibits the latent hazard the transplant inherits: `taskList.ts` casts the wire's
+  // status straight to `TaskStatus` without validating, so a `"deleted"` update reaches this selector looking
+  // active. The fix belongs at the INGEST boundary, not here — see the F8 T5 report.
+  it("keeps canon's negative form, so an unmodelled status still counts as active", () => {
+    expect(activeSpinnerTask([t("gone", "deleted" as TaskStatus)])!.subject).toBe("gone");
   });
 });
