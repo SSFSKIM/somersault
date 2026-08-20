@@ -1139,12 +1139,37 @@ At `src/cli/main.ts`'s `welcomeBanner({…})` call, add:
 
 importing `screenReaderEnabled` from `../tui/renderer.js`.
 
-- [ ] **Step 5: Verify and commit**
+- [ ] **Step 5: Prove the CALL SITE passes them — the banner tests above cannot**
 
-Run: `cd harness && npx vitest run test/tui/banner.test.ts && npm run typecheck`
+Every test in Step 1 hands `rows`/`screenReader` to `welcomeBanner` directly, so all of them stay green if
+Step 4 is never done and the launch site passes neither. That is the Global Constraint's wiring case, and
+this file already has the harness for it: `test/unit/cli-main.test.ts:443-461` tests the banner's CALL SITE
+rather than the function, written after a bug where `welcomeBanner` was correct and the call site handed it
+the wrong thing. Its shape:
+
+```ts
+const clientCalls: any[] = [];
+const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+await captureLog(() => main(["task"], deps({
+  isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+})));
+const text = bannerText(clientCalls[0]);          // helper at :449
+```
+
+Add a case there that stubs the screen-reader env (`vi.stubEnv("CLAUDE_AX_SCREEN_READER", "1")`) and asserts
+the banner comes back as the ONE-line degraded form. The env arm is the cheap one to drive; if `rows` can be
+injected through `deps` as cleanly, pin that arm too, and if it cannot, say so in your report rather than
+reaching into `process.stdout`.
+
+**Confirm by sabotage:** delete `screenReader: screenReaderEnabled(process.env)` from the call site, watch
+this new test fail, restore it. Report the result.
+
+- [ ] **Step 6: Verify and commit**
+
+Run: `cd harness && npx vitest run test/tui/banner.test.ts test/unit/cli-main.test.ts && npm run typecheck`
 
 ```bash
-git add harness/src/tui/banner.ts harness/src/cli/main.ts harness/test/tui/banner.test.ts
+git add harness/src/tui/banner.ts harness/src/cli/main.ts harness/test/tui/banner.test.ts harness/test/unit/cli-main.test.ts
 git commit -m "f5(f8): T7 — the banner degrades below 30 rows and for screen readers, in canon's two spans"
 ```
 
