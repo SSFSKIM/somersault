@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
 import { THEMES, type ThemeId } from "./theme.js";
+import { NOTIF_CHANNELS, NOTIF_EVENTS, type NotifChannel, type NotifEvent } from "./desktopNotify.js";
 
 /** `queuedUpHintSessions` is upstream's `queuedCommandUpHintCount` (bundle L377294 default, L495114 gate, L495115 literal) — how many
  *  sessions have already shown `Press up to edit queued messages`; the hint stops at `QUEUED_UP_HINT_LIMIT`.
@@ -48,7 +49,11 @@ import { THEMES, type ThemeId } from "./theme.js";
 /** `prefersReducedMotion` is F8 T6's setting and canon's own key (bundle L383488 row, `r?.prefersReducedMotion
  *  ?? !1` L507998) — DEFAULT FALSE. It is one of two rungs `motion.ts`'s `reducedMotion()` reads, the other
  *  being the `CLAUDE_AX_SCREEN_READER` env var; this file only ever sees the setting half. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean }
+/** `preferredNotifChannel`/`notifEvents` are F8 T11's settings, over Task 10's `desktopNotify.ts`: which
+ *  emulator escape to emit (or `auto` to sniff) and which of the four `NotifEvent`s are enabled. Read at
+ *  CALL time by the notifier's `settings()` closure (chatMain.tsx), never captured at boot — so this file
+ *  stays the one seam a `/config` change flows through, like every other client-side setting here. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[] }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 
@@ -78,6 +83,16 @@ export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
     // nothing and the decision falls through to the shipped default, which is the honest reading of a value
     // this file could not understand.
     if (prefs.tui !== undefined && prefs.tui !== "fullscreen" && prefs.tui !== "default") delete prefs.tui;
+    // F8 T11: `preferredNotifChannel` is a CLOSED set like `theme`/`tui` — a hand-edited value `resolveChannel`
+    // has no case for reaches its own exhaustiveness guard (which rings a bell rather than throw), so dropping
+    // it here isn't a crash guard, it's keeping an unrecognized channel from silently overriding `auto`.
+    if (prefs.preferredNotifChannel !== undefined && !NOTIF_CHANNELS.includes(prefs.preferredNotifChannel)) delete prefs.preferredNotifChannel;
+    // `notifEvents` feeds `enabledEvents.includes(event)` at every notify() call — the ARRAY shape has to be
+    // checked, not just its members: a hand-edited non-array (an object, a string) would reach `.includes`
+    // and throw at the exact moment a permission prompt opens, turning a bad setting into a crash on the one
+    // path that matters most. A malformed array is dropped whole rather than filtered, matching `theme`'s
+    // drop-not-coerce rule elsewhere in this loader.
+    if (prefs.notifEvents !== undefined && (!Array.isArray(prefs.notifEvents) || !prefs.notifEvents.every((e) => NOTIF_EVENTS.includes(e)))) delete prefs.notifEvents;
     return prefs;
   } catch { return {}; }
 }

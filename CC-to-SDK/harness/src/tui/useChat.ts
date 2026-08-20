@@ -42,6 +42,7 @@ import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgres
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
+import type { DesktopNotifier } from "./desktopNotify.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
 import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
@@ -230,7 +231,11 @@ export function useChat(
      *  the two timers its 300 ms debounce and its `refreshInterval` poll run on. Supplying `runStatusLine`
      *  REPLACES the wrapper below that carries cwd/env/COLUMNS/LINES, which is the point: the wrapper is the
      *  only thing between this hook and a real child process. */
-    statusLine?: StatusLineDriverDeps } = {},
+    statusLine?: StatusLineDriverDeps;
+    /** F8 T11: Task 10's OS-notification sender, wired to the two seams that mean "ccx wants you" — a
+     *  permission park and an empty-queue settle. Absent everywhere but the real chatMain boot (every test
+     *  here, every embedder), where absent means neither seam fires anything. */
+    notifier?: DesktopNotifier } = {},
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
@@ -1563,7 +1568,14 @@ export function useChat(
         // `session_name`, so the turn's one run has to be later than the read rather than racing it.
         // W-C T10 / W2 A8: the two refreshers AND the status line's one refresh for this turn — see
         // `statusRefreshAfterTurn`, which owns the ordering that makes it one run rather than two.
-        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void statusRefreshAfterTurn(adoptAiTitle()); drainNext();
+        setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); void statusRefreshAfterTurn(adoptAiTitle());
+        // F8 T11: the QUEUE is the condition, not the turn — `drainNext()` below may start another turn
+        // immediately, and a notification fired between two queued turns tells the user ccx wants them when
+        // it does not. Read BEFORE `drainNext()` mutates it: that call pops `queueRef.current` synchronously
+        // for a non-empty queue (its own dispatch is deferred to a macrotask), so reading after would see an
+        // already-emptied ref and fire even though a queued prompt is about to run.
+        if (queueRef.current.length === 0) deps.notifier?.notify("idle_prompt", "ccx is waiting for your input");
+        drainNext();
         // W-C T12 (EP-C5), annex §C5.2: `acd(d, c?.lastResult)` — FIRE AND FORGET, at the end of an assistant
         // turn, after the last tool round-trip. Not a `useEffect`, not idle-based, no debounce and no
         // cooldown; the eligibility chain inside is the only thing that declines.
@@ -1812,6 +1824,10 @@ export function useChat(
     // themselves, so this covers the one case they cannot: a directory granted by ANOTHER client on the same
     // session. It is one call per parked decision, and a late answer simply re-renders the open dialog.
     refreshWorkDirs();
+    // F8 T11: ONE FIFO, FOUR KINDS. `PendingDecision` carries permission, question, plan and elicitation
+    // parks through this single function, so an unguarded notify here would announce a plan approval as a
+    // permission prompt. Only the permission kind gets the permission copy.
+    if (entry.kind === "permission") deps.notifier?.notify("permission_prompt", `ccx needs your permission to use ${entry.toolName}`);
     if (pendingRef.current === null) setPending(entry);
     else setPendingQueue((q) => [...q, entry]);
   }

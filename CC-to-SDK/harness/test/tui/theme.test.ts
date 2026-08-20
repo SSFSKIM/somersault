@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACCENT, ANSI_COLOR_NAMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, detectTerminalBackground, isLightTheme, isThemeColor, resolveThemeColor, resolveThemeId, setTheme, themeGeneration, themeTokens } from "../../src/tui/theme.js";
 import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
+import { NOTIF_CHANNELS, NOTIF_EVENTS } from "../../src/tui/desktopNotify.js";
 import { resolveModelAlias } from "../../src/config/models.js";
 import { renderDiff } from "../../src/tui/diffRender.js";
 import type { ResolvedPatch } from "../../src/tui/diffSource.js";
@@ -297,6 +298,65 @@ describe("prefs.ts", () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, "prefs.json"), JSON.stringify({ theme: "dark-daltonized" }));
     expect(loadPrefs({ CCX_FLEET_ROOT: root })).toEqual({ theme: "dark-daltonized" });
+  });
+
+  // F8 T11, from Task 10's review: real Claude Code's OWN configuration UI displays `notifications_disabled`
+  // AS `"none"` (the same way it shows `terminal_bell` as "bell" and `iterm2_with_bell` as "iterm2+bell"), so
+  // `"none"` is the single most likely string a user copies out of that display and hand-edits in — and it is
+  // NOT a legal `NotifChannel` (the real disabled value is `notifications_disabled`). Measured: unvalidated,
+  // `"none"` flows through `resolveChannel` unchanged, hits its own default branch, and writes nothing — in
+  // both bare and multiplexer environments. Silence, arriving from a plausible user action, is the one outcome
+  // `desktopNotify.ts` exists to avoid, so the drop belongs here, at the tolerant-loader choke point every
+  // caller already goes through for `theme`/`tui`.
+  it("loadPrefs drops the realistic bad channel \"none\" (a display label, not a real NotifChannel)", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ preferredNotifChannel: "none" }));
+    const prefs = loadPrefs({ CCX_FLEET_ROOT: root });
+    expect(prefs.preferredNotifChannel).toBeUndefined();      // dropped, not coerced to notifications_disabled
+  });
+
+  it("loadPrefs drops any other unrecognized preferredNotifChannel, same closed-set rule as theme/tui", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ preferredNotifChannel: "hyper-terminal-9000" }));
+    expect(loadPrefs({ CCX_FLEET_ROOT: root }).preferredNotifChannel).toBeUndefined();
+  });
+
+  it("loadPrefs round-trips every real NotifChannel untouched", () => {
+    for (const channel of NOTIF_CHANNELS) {
+      const root = tmpRoot();
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(root, "prefs.json"), JSON.stringify({ preferredNotifChannel: channel }));
+      expect(loadPrefs({ CCX_FLEET_ROOT: root }).preferredNotifChannel).toBe(channel);
+    }
+  });
+
+  // `notifEvents` feeds `enabledEvents.includes(event)` at every `notify()` call (desktopNotify.ts). A
+  // hand-edited NON-ARRAY reaching that `.includes` would throw at the exact moment a permission prompt
+  // opens — turning a bad setting into a crash on the one path that matters most — so the SHAPE has to be
+  // checked, not just the members once it's known to be an array.
+  it("loadPrefs drops a non-array notifEvents, so a hand-edited value cannot crash a live prompt", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ notifEvents: "permission_prompt" }));
+    const prefs = loadPrefs({ CCX_FLEET_ROOT: root });
+    expect(prefs.notifEvents).toBeUndefined();
+    expect(() => (prefs.notifEvents ?? []).includes("permission_prompt" as never)).not.toThrow();
+  });
+
+  it("loadPrefs drops the WHOLE notifEvents array when any one member is unrecognized (drop, not filter)", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ notifEvents: ["permission_prompt", "made_up_event"] }));
+    expect(loadPrefs({ CCX_FLEET_ROOT: root }).notifEvents).toBeUndefined();
+  });
+
+  it("loadPrefs round-trips a valid notifEvents array untouched", () => {
+    const root = tmpRoot();
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ notifEvents: [...NOTIF_EVENTS] }));
+    expect(loadPrefs({ CCX_FLEET_ROOT: root }).notifEvents).toEqual([...NOTIF_EVENTS]);
   });
 });
 

@@ -24,6 +24,7 @@ import { createResizeRepaint, parkColumn, parkSequence, type FrameWriteInfo } fr
 import { setTheme } from "./theme.js";
 import { createTerminalTitle } from "./terminalTitle.js";
 import { reducedMotion } from "./motion.js";
+import { createDesktopNotifier, NOTIF_DEFAULT_EVENTS } from "./desktopNotify.js";
 
 export interface ChatClientOpts {
   socketPath: string;
@@ -835,6 +836,19 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // `/config` toggle reaches it on the next relaunch rather than the next frame (recorded asymmetry, task
   // report). The three rendered consumers below read the resolver live, every render.
   const title = createTerminalTitle({ write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); }, reducedMotion: reducedMotion(prefs) });
+  // F8 T11: Task 10's OS notifier, wired to useChat's two real seams (permission park, empty-queue settle).
+  // `settings` reads through `loadPrefs()` on EVERY call, not the `prefs` object loaded once above —
+  // `savePrefs` writes a new object to disk and never mutates the one loaded at boot, so closing over
+  // `prefs` here would be a startup snapshot wearing a call-time signature. A re-read per event is
+  // affordable at these rates (at most two per turn) and is what makes `settings: () => …`'s contract
+  // honest: a `/config` change takes effect on the very next notification.
+  const notifier = createDesktopNotifier({
+    write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); },
+    settings: () => ({
+      preferredNotifChannel: loadPrefs().preferredNotifChannel ?? "auto",
+      enabledEvents: loadPrefs().notifEvents ?? NOTIF_DEFAULT_EVENTS,
+    }),
+  });
   // ── FSW T6 (spec §A3/§A6) — THE ALT-SCREEN GUARD AND THE EXIT GUARANTEE ──────────────────────────────
   // CONSTRUCTED ON EVERY LAUNCH, ARMED BY NOBODY YET. `enter()` is the arming, and only the fullscreen
   // renderer calls it (T9); until then every method here is inert and this block costs a classic launch two
@@ -912,7 +926,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
           hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
           initialTodosOpen={prefs.showExpandedTodos ?? true}
           renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess} altHandoff={altGuard.handoff}
-          {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} />
+          {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} deps={{ notifier }} />
       </UserKeymap>,
       { exitOnCtrlC: false, stdout: output.stdout },
     );

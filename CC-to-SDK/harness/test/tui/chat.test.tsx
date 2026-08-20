@@ -206,6 +206,70 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).not.toContain("? for shortcuts");
   });
 
+  // F8 T11: the notifier is wired to two real seams -- the decision FIFO (`pushPending`) and the settle
+  // path (`setBusy(false)` ... `drainNext()`) -- and this test kills the two settle-path wrong implementations:
+  // notifying on EVERY settle regardless of queue depth, and firing more than once for one idle moment.
+  //   DEPARTS FROM THE PLAN'S OWN SNIPPET, which held only turn 1 open on the assumption that observing
+  // `turns === 2` catches a real window between "turn 2 dispatched" and "turn 2 settled". Measured, it does
+  // not: `drainNext`'s dispatch runs on a bare `setTimeout(..., 0)`, and a turn-2 submit with no `await` before
+  // its own `turn:end` increments `turns` and fires `idle_prompt` inside the SAME synchronous macrotask -- a
+  // `waitFor` (which itself only yields on real timers) can never observe one without the other; the plan's
+  // exact snippet was run and failed on that ordering. Holding EVERY turn open makes the window real: turn 2
+  // parks at its own deferred right after announcing `turn:start`, so `turns === 2` becomes an event strictly
+  // before turn 2's settle can fire.
+  it("notifies on a permission prompt only, and on idle only with an empty queue (F8 T11)", async () => {
+    const events: string[] = [];
+    const notifier = { notify: (e: string) => events.push(e) };
+    const releases: Array<() => void> = [];
+    let fake: ReturnType<typeof fakeRemote>;
+    let turns = 0;
+    fake = fakeRemote({
+      submit: async () => {
+        const seq = ++turns;
+        fake.pushEvent({ kind: "turn", phase: "start", seq });
+        await new Promise<void>((r) => { releases[seq] = r; });     // every turn held open -- settle is caller-timed
+        fake.pushEvent({ kind: "turn", phase: "end", seq });
+        return { result: "done" };
+      },
+    });
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ notifier }} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+
+    stdin.write("first"); stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("esc to interrupt"));
+    stdin.write("second"); await waitFor(() => frame(lastFrame).includes("second"));
+    stdin.write("\r");
+    await waitFor(() => isQueued(lastFrame, "second"));      // a turn runs with one prompt queued behind it
+
+    releases[1]();                                           // turn 1 settles WITH the queue non-empty
+    await waitFor(() => turns === 2);                        // drainNext dispatched "second" as turn 2, itself held open
+    expect(events).not.toContain("idle_prompt");              // turn 2 hasn't settled yet -- nobody is being waited on
+
+    releases[2]();                                           // turn 2 settles with an EMPTY queue
+    await waitFor(() => events.includes("idle_prompt"));
+    expect(events.filter((e) => e === "idle_prompt")).toHaveLength(1);
+  });
+
+  // Kills the two decision-FIFO wrong implementations: notifying on every DecisionKind (a plan approval
+  // would read as a permission prompt) rather than "permission" only, and dropping the real toolName out of
+  // the copy. Drives the SAME decision feed the dialog tests above use (`fake.parkPermission`) rather than
+  // calling pushPending directly, so the assertion reaches the notify call through the real wire.
+  it("notifies for a permission decision and for no other decision kind", async () => {
+    const events: string[] = [];
+    const notifier = { notify: (e: string, msg: string) => events.push(`${e}:${msg}`) };
+    const fake = fakeRemote();
+    const { lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ notifier }} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    fake.parkPermission({ sessionId: "s", toolUseID: "perm", toolName: "Bash", kind: "permission", input: { command: "ls" }, createdAt: Date.now() });
+    await waitFor(() => frame(lastFrame).includes("Bash command"));   // F6 T6: a Bash consult's own dialog marker
+    fake.parkPermission({ sessionId: "s", toolUseID: "plan", toolName: "ExitPlanMode", kind: "plan", input: { plan: "ship it" }, createdAt: Date.now() });   // queues behind — dialog stays on the permission
+    expect(events).toEqual(["permission_prompt:ccx needs your permission to use Bash"]);
+  });
+
   it("never paints a stale editor hint in any frame after a draft or autocomplete takes input ownership", async () => {
     const { stdin, stdout, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd="/__ccx-empty-cwd__" />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
