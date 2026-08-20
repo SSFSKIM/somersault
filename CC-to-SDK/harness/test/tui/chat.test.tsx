@@ -252,6 +252,32 @@ describe("<ChatApp>", () => {
     expect(events.filter((e) => e === "idle_prompt")).toHaveLength(1);
   });
 
+  // F8 T11 review finding B: a REDELIVERED `turn:end` for the same turn (the wire's own retry, same shape
+  // as the `compact_boundary`/`message` redeliveries this file already guards above) must not earn a SECOND
+  // `idle_prompt` — the duration row is already latched against this exact case (useChat.ts:1549, consuming
+  // `turnStartRef` once); the notification wasn't, and got the same latch.
+  it("fires idle_prompt once even when turn:end is redelivered for the same turn", async () => {
+    const events: string[] = [];
+    const notifier = { notify: (e: string) => events.push(e) };
+    const fake = fakeRemote({
+      submit: async () => {
+        fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+        fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+        return { result: "done" };
+      },
+    });
+    const { stdin, lastFrame } = render(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ notifier }} />,
+    );
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    stdin.write("hi"); stdin.write("\r");
+    await waitFor(() => events.includes("idle_prompt"));
+
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });   // the SAME turn:end, redelivered
+    await new Promise((r) => setTimeout(r, 30));
+    expect(events.filter((e) => e === "idle_prompt")).toHaveLength(1);
+  });
+
   // Kills the two decision-FIFO wrong implementations: notifying on every DecisionKind (a plan approval
   // would read as a permission prompt) rather than "permission" only, and dropping the real toolName out of
   // the copy. Drives the SAME decision feed the dialog tests above use (`fake.parkPermission`) rather than

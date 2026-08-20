@@ -711,6 +711,12 @@ export function useChat(
   // `undefined` start = no turn is being clocked, which is what the bare-truncated idle follow tail leaves.
   const turnStartRef = useRef<number | undefined>(undefined);
   const turnDisqualifiedRef = useRef(false);
+  // F8 T11 review finding B: the notification's own latch, on the SAME idiom as `turnStartRef` above
+  // (armed at turn:start, consumed exactly once at turn:end) — but a DIFFERENT ref, because `turnStartRef`
+  // is already legitimately `undefined` on a genuine first end that never got a clock (a mid-turn joiner's
+  // replay-cleared start, or the bare-truncated idle follow tail) and reusing it here would wrongly swallow
+  // the notification for those real cases, not just a redelivered one.
+  const turnEndNotifiedRef = useRef(false);
   // ── Wave C Task 12 (EP-C5): the follow-up suggestion ─────────────────────────────────────────────────
   // Seeded by the caller for the same reason `showTurnDuration` above is, and OFF unless the caller says
   // otherwise (`suggester.promptSuggestionEnabled` owns the polarity). Everything else here is a ref, because
@@ -1365,7 +1371,7 @@ export function useChat(
         // W-C T7: the duration row's clock, on the INJECTED `nowFn` rather than the `Date.now()` beside it —
         // that one feeds `TurnSpinner`'s wall-clock render loop and has to match it; this one is measured and
         // then FORMATTED into a permanent transcript row, so a test has to be able to place both ends of it.
-        turnStartRef.current = nowFn(); turnDisqualifiedRef.current = false;
+        turnStartRef.current = nowFn(); turnDisqualifiedRef.current = false; turnEndNotifiedRef.current = false;
         liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnMeter(IDLE_METER); setStreaming([]); clearRetry(); armStall();
       }
       else if (ev.kind === "message") {
@@ -1574,7 +1580,10 @@ export function useChat(
         // it does not. Read BEFORE `drainNext()` mutates it: that call pops `queueRef.current` synchronously
         // for a non-empty queue (its own dispatch is deferred to a macrotask), so reading after would see an
         // already-emptied ref and fire even though a queued prompt is about to run.
-        if (queueRef.current.length === 0) deps.notifier?.notify("idle_prompt", "ccx is waiting for your input");
+        // Review finding B: latched against a REDELIVERED `turn:end` for the same turn, same idiom as the
+        // duration row's `turnStartRef` consumption above — a second delivery must not earn a second notice.
+        const alreadyNotified = turnEndNotifiedRef.current; turnEndNotifiedRef.current = true;
+        if (!alreadyNotified && queueRef.current.length === 0) deps.notifier?.notify("idle_prompt", "ccx is waiting for your input");
         drainNext();
         // W-C T12 (EP-C5), annex §C5.2: `acd(d, c?.lastResult)` — FIRE AND FORGET, at the end of an assistant
         // turn, after the last tool round-trip. Not a `useEffect`, not idle-based, no debounce and no

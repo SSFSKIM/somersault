@@ -844,10 +844,13 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // honest: a `/config` change takes effect on the very next notification.
   const notifier = createDesktopNotifier({
     write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); },
-    settings: () => ({
-      preferredNotifChannel: loadPrefs().preferredNotifChannel ?? "auto",
-      enabledEvents: loadPrefs().notifEvents ?? NOTIF_DEFAULT_EVENTS,
-    }),
+    // ONE read per call, not two: two separate `loadPrefs()` calls read and parse the file twice, and the
+    // two fields could in principle come from different versions of it. Bind the call, read both fields off
+    // the same object — still call-time, not construction-time, so the comment above still holds.
+    settings: () => {
+      const p = loadPrefs();
+      return { preferredNotifChannel: p.preferredNotifChannel ?? "auto", enabledEvents: p.notifEvents ?? NOTIF_DEFAULT_EVENTS };
+    },
   });
   // ── FSW T6 (spec §A3/§A6) — THE ALT-SCREEN GUARD AND THE EXIT GUARANTEE ──────────────────────────────
   // CONSTRUCTED ON EVERY LAUNCH, ARMED BY NOBODY YET. `enter()` is the arming, and only the fullscreen

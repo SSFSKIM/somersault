@@ -336,13 +336,20 @@ describe("prefs.ts", () => {
   // hand-edited NON-ARRAY reaching that `.includes` would throw at the exact moment a permission prompt
   // opens — turning a bad setting into a crash on the one path that matters most — so the SHAPE has to be
   // checked, not just the members once it's known to be an array.
-  it("loadPrefs drops a non-array notifEvents, so a hand-edited value cannot crash a live prompt", () => {
+  //
+  // Review finding A: removing the `Array.isArray` half of the guard still passes `notifEvents.toBeUndefined()`
+  // — the `.every` throw it lets through is caught by `loadPrefs`'s own outer `try/catch`, which returns `{}`,
+  // an object whose `notifEvents` is ALSO undefined. That wrong implementation is not benign: on a malformed
+  // non-array value it silently discards the WHOLE prefs file (theme, model, everything), not just the one
+  // bad key. A sibling valid key is the only thing that tells the two implementations apart — it survives on
+  // the shipped code's key-scoped drop, and disappears under the mutant's whole-file catch.
+  it("loadPrefs drops a non-array notifEvents but keeps its sibling keys, so a hand-edited value cannot silently discard the whole file", () => {
     const root = tmpRoot();
     mkdirSync(root, { recursive: true });
-    writeFileSync(join(root, "prefs.json"), JSON.stringify({ notifEvents: "permission_prompt" }));
+    writeFileSync(join(root, "prefs.json"), JSON.stringify({ theme: "dark-daltonized", notifEvents: "permission_prompt" }));
     const prefs = loadPrefs({ CCX_FLEET_ROOT: root });
     expect(prefs.notifEvents).toBeUndefined();
-    expect(() => (prefs.notifEvents ?? []).includes("permission_prompt" as never)).not.toThrow();
+    expect(prefs.theme).toBe("dark-daltonized");   // red under the mutant (whole file dropped), green on shipped code
   });
 
   it("loadPrefs drops the WHOLE notifEvents array when any one member is unrecognized (drop, not filter)", () => {
