@@ -46,7 +46,7 @@ export class TaskList {
       // the result that carries the id arrives later, on a frame of its own that says nothing about origin.
       // Same idiom as every other nested-frame reader here (toolRenderer `isNested`): a top-level frame sends
       // `parent_tool_use_id: null` on the wire, so only a non-empty string means nested.
-      const nested = typeof mm.parent_tool_use_id === "string" && mm.parent_tool_use_id !== "" ? true as const : undefined;
+      const nested = str(mm.parent_tool_use_id) ? (true as const) : undefined;
       for (const b of mm.message?.content ?? []) {
         if (b?.type !== "tool_use") continue;
         if (b.name === "TaskCreate") this.pending.set(String(b.id ?? ""), { subject: String(b.input?.subject ?? ""), ...(str(b.input?.activeForm) ? { activeForm: str(b.input.activeForm)! } : {}), ...(nested ? { subagent: nested } : {}) });
