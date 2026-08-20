@@ -1939,8 +1939,9 @@ file rather than invent a second one; neither leaves a requirement unstated.
 
 **Interfaces verified against the real files before this plan was committed**, because each is
 load-bearing and none is obvious: `ChatApp` exposes `deps?: Parameters<typeof useChat>[2]`
-(`ChatApp.tsx:214`); `queueRef.current` is the authoritative queue depth (`useChat.ts:2752`);
-`pushPending` is the single decision FIFO (`useChat.ts:1801`) and `PendingEntry.kind` distinguishes the
+(`ChatApp.tsx:215`); `queueRef.current` is the authoritative queue depth (declared `useChat.ts:655`, read
+in `drainNext` at `useChat.ts:2769`); `pushPending` is the single decision FIFO (`useChat.ts:1810`) and
+`PendingEntry.kind` distinguishes the
 kinds; `RenderLine.segments` exists for per-span styling (`render.ts:10`); `fakeRemote.submit` returns
 `Promise<{ result: unknown }>`; the byte-level title tests live in `test/unit/terminal-title.test.ts`,
 whose sibling `.tsx` file states in its own header that it is the wiring half.
