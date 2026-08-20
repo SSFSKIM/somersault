@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { welcomeBanner, shortCwd, ACCENT, bannerHeader, billingLabel, startupTips, renderTips } from "../../src/tui/banner.js";
+import { describe, it, expect, vi } from "vitest";
+import { welcomeBanner, shortCwd, ACCENT, bannerHeader, billingLabel, startupTips, renderTips, tipsVisible } from "../../src/tui/banner.js";
 import { CCX_VERSION } from "../../src/tui/statusLine.js";
 
 describe("shortCwd", () => {
@@ -149,15 +149,38 @@ describe("startupTips", () => {
 
 describe("renderTips", () => {
   const tips = [
-    { key: "done", text: "Finished thing", isEnabled: true, isComplete: true },
-    { key: "todo", text: "Unfinished thing", isEnabled: true, isComplete: false },
-    { key: "off", text: "Hidden thing", isEnabled: false, isComplete: false },
+    { key: "done", text: "Finished thing", isEnabled: true, isComplete: true, isCompletable: true },
+    { key: "todo", text: "Unfinished thing", isEnabled: true, isComplete: false, isCompletable: true },
+    { key: "off", text: "Hidden thing", isEnabled: false, isComplete: false, isCompletable: true },
   ];
+  // Review finding H: the expected literal is pinned by fixing TERM, not by calling TICK() in the
+  // assertion — asserting a value via the function that produces it is tautological against any glyph.
   it("drops disabled tips, sorts incomplete first, ticks the complete", () => {
-    expect(renderTips(tips, false).map((l) => l.text)).toEqual(["  Unfinished thing", "  ✔ Finished thing"]);
+    vi.stubEnv("TERM", "xterm-256color");
+    try { expect(renderTips(tips, false).map((l) => l.text)).toEqual(["  Unfinished thing", "  ✔ Finished thing"]); }
+    finally { vi.unstubAllEnvs(); }
   });
   it("appends the home-directory note last", () => {
     expect(renderTips(tips, true).at(-1)!.text).toContain("home directory");
+  });
+  it("ends canon's home-directory note on 'instead' (finding C)", () => {
+    expect(renderTips([], true)[0]!.text).toBe("  Note: You have launched ccx in your home directory. For the best experience, launch it in a project directory instead.");
+  });
+});
+
+// Review finding B: canon hides the WHOLE section (header, rows, and the home-dir note alike) once every
+// completable, enabled tip is complete — not just the ticked row. Without gating this, a repo that already
+// has a CLAUDE.md (this one included) prints a permanent tick forever.
+describe("tipsVisible", () => {
+  it("hides once every completable+enabled tip is complete", () => {
+    expect(tipsVisible([{ key: "a", text: "t", isEnabled: true, isComplete: true, isCompletable: true }])).toBe(false);
+  });
+  it("stays visible while any completable+enabled tip is incomplete", () => {
+    expect(tipsVisible([{ key: "a", text: "t", isEnabled: true, isComplete: false, isCompletable: true }])).toBe(true);
+  });
+  it("ignores a complete tip that is disabled or not completable", () => {
+    expect(tipsVisible([{ key: "a", text: "t", isEnabled: false, isComplete: false, isCompletable: true }])).toBe(false);
+    expect(tipsVisible([{ key: "a", text: "t", isEnabled: true, isComplete: false, isCompletable: false }])).toBe(false);
   });
 });
 
@@ -170,9 +193,20 @@ describe("welcomeBanner — the checklist wired end to end", () => {
     expect(notEmpty).toContain("Run /init to create a CLAUDE.md file with instructions for Claude");
     expect(notEmpty).not.toContain("✔");
   });
-  it("ticks the init tip once hasClaudeMd is true", () => {
+  // Review finding B (red→green): the ONLY enabled tip in this scenario (claudemd) is now complete, so the
+  // section — including its header — must disappear entirely, not print a permanently-ticked row. Before
+  // the fix this test read `expect(text).toContain("✔ Run /init…")`; that is now the WRONG expectation, since
+  // the mechanism's natural terminal state (a repo that already has a CLAUDE.md) is silence, not a tick.
+  it("hides the checklist section entirely once its only enabled tip (claudemd) is complete", () => {
     const text = welcomeBanner({ cwd: "/x", emptyWorkspace: false, hasClaudeMd: true }).map((l) => l.text).join("\n");
-    expect(text).toContain("✔ Run /init to create a CLAUDE.md file with instructions for Claude");
+    expect(text).not.toContain("Tips for getting started");
+    expect(text).not.toContain("/init");
+    expect(text).not.toContain("✔");
+  });
+  it("still shows the section (uncompleted) when hasClaudeMd is false", () => {
+    const text = welcomeBanner({ cwd: "/x", emptyWorkspace: false, hasClaudeMd: false }).map((l) => l.text).join("\n");
+    expect(text).toContain("Tips for getting started");
+    expect(text).toContain("Run /init to create a CLAUDE.md file with instructions for Claude");
   });
   it("appends the home-directory note only when inHomeDir is true", () => {
     const home = welcomeBanner({ cwd: "/home/me", inHomeDir: true }).map((l) => l.text).join("\n");

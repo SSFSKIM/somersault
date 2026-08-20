@@ -4,7 +4,8 @@
 // per RenderLine, so the box is uniformly accent-colored (CC's logo lines are colored too).
 // CC ref: components/LogoV2/WelcomeV2.tsx ("✻ Welcome to Claude Code") + feedConfigs "Tips for getting started".
 import type { RenderLine } from "./render.js";
-import { ACCENT, TICK } from "./theme.js";
+import { ACCENT } from "./theme.js";
+import { TICK } from "./figures.js";
 import { CCX_VERSION } from "./statusLine.js";
 import { effortTitle, type EffortLevel } from "./modelPickerModel.js";
 export { ACCENT };
@@ -81,25 +82,41 @@ export function billingLabel(account?: AccountFacts | null): string | undefined 
 // three static tips (spec D-F8-7's only deliberate content deletion): a checklist whose entries can never
 // complete is a checklist in shape only, and the affordances they named stay reachable from `? for
 // shortcuts`.
+//
+// Review finding B: canon HIDES the whole section — header, rows and the home-dir note alike — once every
+// completable, enabled tip is complete (`v4v`/`oMi`, L384140/L384155-384156: `n = !r.filter(({isCompletable,
+// isEnabled}) => isCompletable && isEnabled).every(({isComplete}) => isComplete)`, and the caller only ever
+// builds the section when `n` is true — L559798 `Enc(Xsl())` runs inside `if (imo)`). Without `isCompletable`
+// a repo that already has a CLAUDE.md — most of them — would print a permanent tick forever, which is worse
+// than the three static tips this task deleted. DEFERRED (deliberately, out of this task's scope): canon's
+// other two hide rungs, a persisted `hasCompletedProjectOnboarding` flag and `projectOnboardingSeenCount >=
+// 4`, need new persisted preference state this task does not add.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-export interface Tip { key: string; text: string; isEnabled: boolean; isComplete: boolean }
+export interface Tip { key: string; text: string; isEnabled: boolean; isComplete: boolean; isCompletable: boolean }
 
 export function startupTips(facts: { emptyWorkspace: boolean; hasClaudeMd: boolean }): Tip[] {
   return [
-    { key: "workspace", text: "Ask Claude to create a new app or clone a repository", isComplete: false, isEnabled: facts.emptyWorkspace },
-    { key: "claudemd", text: "Run /init to create a CLAUDE.md file with instructions for Claude", isComplete: facts.hasClaudeMd, isEnabled: !facts.emptyWorkspace },
+    { key: "workspace", text: "Ask Claude to create a new app or clone a repository", isComplete: false, isCompletable: true, isEnabled: facts.emptyWorkspace },
+    { key: "claudemd", text: "Run /init to create a CLAUDE.md file with instructions for Claude", isComplete: facts.hasClaudeMd, isCompletable: true, isEnabled: !facts.emptyWorkspace },
   ];
+}
+
+/** `v4v`/`oMi`'s `n` (L384140/L384156): whether the section shows at all. Vacuously true (hidden) when no
+ *  tip is both completable and enabled — the same "nothing left to say" verdict canon reaches. */
+export function tipsVisible(tips: readonly Tip[]): boolean {
+  return !tips.filter((t) => t.isCompletable && t.isEnabled).every((t) => t.isComplete);
 }
 
 /** canon's `Enc` (L559388): enabled only, incomplete first, the shared `TICK()` glyph on the complete,
  *  home-dir note last. The sort key is `Number(isComplete)` and `Array.prototype.sort` is stable, so two
- *  tips sharing a completion state keep their inventory order. */
+ *  tips sharing a completion state keep their inventory order. Pure formatting only — whether this is
+ *  called at all is `tipsVisible`'s call, made once by `welcomeBanner` below. */
 export function renderTips(tips: readonly Tip[], inHomeDir: boolean): RenderLine[] {
   const rows = tips.filter((t) => t.isEnabled).slice()
     .sort((a, b) => Number(a.isComplete) - Number(b.isComplete))
     .map((t) => ({ text: `  ${t.isComplete ? TICK() + " " : ""}${t.text}`, dim: true }));
-  if (inHomeDir) rows.push({ text: "  Note: You have launched ccx in your home directory. For the best experience, launch it in a project directory.", dim: true });
+  if (inHomeDir) rows.push({ text: "  Note: You have launched ccx in your home directory. For the best experience, launch it in a project directory instead.", dim: true });
   return rows;
 }
 
@@ -152,6 +169,10 @@ export function welcomeBanner(info: BannerInfo): RenderLine[] {
   // that maps id → name is a `capabilities()` round-trip the banner seeds before anyone has made.
   const billing = billingLabel(info.account);
   const modelSeg = `${info.model ?? "(default)"}${info.effort ? ` with ${effortTitle(info.effort)} effort` : ""}${billing ? ` · ${billing}` : ""}`;
+  // Finding B: the WHOLE section — header included — is gated on `tipsVisible`, mirroring canon's own
+  // `if (imo) Enc(Xsl())` (L559798): a checklist with nothing left to say is not drawn at all, not drawn
+  // with every row ticked.
+  const tips = startupTips({ emptyWorkspace: info.emptyWorkspace === true, hasClaudeMd: info.hasClaudeMd === true });
   const out: RenderLine[] = [
     { text: top, color: ACCENT },
     { text: "│ " + title.padEnd(inner) + " │", color: ACCENT, bold: true },
@@ -160,8 +181,7 @@ export function welcomeBanner(info: BannerInfo): RenderLine[] {
     { text: `  cwd    ${shortCwd(info.cwd)}`, dim: true },
     { text: `  model  ${modelSeg}   ·   mode  ${info.mode ?? "default"}`, dim: true },
     { text: "" },
-    { text: "  Tips for getting started" },
-    ...renderTips(startupTips({ emptyWorkspace: info.emptyWorkspace === true, hasClaudeMd: info.hasClaudeMd === true }), info.inHomeDir === true),
+    ...(tipsVisible(tips) ? [{ text: "  Tips for getting started" }, ...renderTips(tips, info.inHomeDir === true)] : []),
     { text: "" },
   ];
   return out;

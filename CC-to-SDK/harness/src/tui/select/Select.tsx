@@ -21,6 +21,7 @@ import { useRefState } from "../keys/refState.js";
 import { toKeyFlags } from "../keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "../keys/types.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
+import { unicodeSupported, TICK } from "../figures.js";
 import {
   clampVisible, digitTarget, isTwoColumn, labelColumnWidth, perOptionRows, truncateLabel, viewAfterFocus,
   windowBounds, VISIBLE_OPTION_COUNT, type SelectView,
@@ -28,16 +29,14 @@ import {
 
 /** `EJi` (L104958-104962): whether the terminal gets the unicode figure set or the ASCII fallback. Frozen at
  *  module load, like upstream's own `Ge`. `arrowUp`/`arrowDown` live in the shared base table (L104968) and
- *  are the same glyph either way; only `pointer` and `tick` have a fallback. */
-const UNICODE = process.platform !== "win32"
-  ? process.env.TERM !== "linux"
-  : Boolean(process.env.WT_SESSION) || Boolean(process.env.TERMINUS_SUBLIME) || process.env.ConEmuTask === "{cmd::Cmder}"
-    || process.env.TERM_PROGRAM === "Terminus-Sublime" || process.env.TERM_PROGRAM === "vscode"
-    || ["xterm-256color", "alacritty", "rxvt-unicode", "rxvt-unicode-256color"].includes(process.env.TERM ?? "")
-    || process.env.TERMINAL_EMULATOR === "JetBrains-JediTerm";
+ *  are the same glyph either way; only `pointer` and `tick` have a fallback — `tick` is `figures.ts`'s `TICK`
+ *  (F8 T8 review finding A: the same product-wide glyph `banner.ts`/`TaskPanel.tsx`/`MultiSelect.tsx` draw,
+ *  re-exported here rather than recomputed so this file cannot drift from theirs), `pointer` is local since
+ *  no other surface needs it. */
+const UNICODE = unicodeSupported();
 export const POINTER = UNICODE ? "❯" : ">";
 export const ARROW_UP = "↑", ARROW_DOWN = "↓";
-export const TICK = UNICODE ? "✔" : "√";
+export { TICK };
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 
@@ -325,7 +324,7 @@ export function Select({
                       ? <InputText text={text} cursor={cursor} placeholder={o.placeholder || o.label} />
                       : <Text color={text ? undefined : role("inactive")}>{text || o.placeholder || o.label}</Text>}
                 </Box>
-                {isCurrent ? <Text color={role("success")}>{TICK}</Text> : null}
+                {isCurrent ? <Text color={role("success")}>{TICK()}</Text> : null}
               </Box>
               {o.description
                 ? <Box paddingLeft={indexWidth + 4}><Text dimColor={o.dimDescription !== false} color={color}>{o.description}</Text></Box>
@@ -344,7 +343,7 @@ export function Select({
               <Box flexDirection="row" flexShrink={0}>
                 <Text> </Text>
                 <Text dimColor={disabled} color={color}>{!hideIndexes ? index : null}{labelNode(shown, highlightText)}</Text>
-                {isCurrent ? <Text> <Text color={role("success")}>{TICK}</Text></Text> : null}
+                {isCurrent ? <Text> <Text color={role("success")}>{TICK()}</Text></Text> : null}
                 {pad > 0 ? <Text>{" ".repeat(pad)}</Text> : null}
               </Box>
               <Box flexGrow={1} marginLeft={2}>
@@ -379,7 +378,7 @@ export function Select({
               // upstream asks for `wrap-trim` here (L397241); stock Ink 5 has no such mode, so `wrap` it is.
               ? <Box flexShrink={99} marginLeft={2}><Text wrap="wrap" dimColor={descDim} color={color}>{o.description}</Text></Box>
               : null}
-            {isCurrent ? <Text color={role("success")}>{TICK}</Text> : null}
+            {isCurrent ? <Text color={role("success")}>{TICK()}</Text> : null}
           </Box>
         );
       })}

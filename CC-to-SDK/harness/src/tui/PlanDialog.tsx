@@ -453,7 +453,7 @@ export function PlanDialog({ req, onDecision, editor = editExternal, editorName,
                     stays `ctrl+g to edit in {name}` (upstream's is `edit in {name}`); re-spelling hints is a
                     later wave's, and only the path is this task's. */}
                 <Text dimColor>ctrl+g to edit in {name}{planPath ? ` · ${planPath}` : ""}</Text>
-                {saved ? <><Text dimColor>{" · "}</Text><Text color={role("success")}>{TICK} {PLAN_SAVED}</Text></> : null}
+                {saved ? <><Text dimColor>{" · "}</Text><Text color={role("success")}>{TICK()} {PLAN_SAVED}</Text></> : null}
               </Text>
             </Box>
           )

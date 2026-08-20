@@ -186,7 +186,7 @@ export function MultiSelect({
         const gutter = isFocused ? <Text color={role(focusColor)}>{POINTER}</Text>
           : showDown ? <Text dimColor>{ARROW_DOWN}</Text>
             : showUp ? <Text dimColor>{ARROW_UP}</Text> : <Text> </Text>;
-        const box = <Text color={selected ? role("success") : undefined}>{`[${selected ? TICK : " "}]`}</Text>;
+        const box = <Text color={selected ? role("success") : undefined}>{`[${selected ? TICK() : " "}]`}</Text>;
 
         if (o.type === "input") {                              // L397488: `RLe` with the box as its child
           const text = textOf(o);
@@ -200,7 +200,7 @@ export function MultiSelect({
                   {/* `RLe` pads the number to `maxIndexWidth + 2` (L396593) where V3 hands it `EK_`; the plain
                       rows below pad to `EK_` and pick up their spacing from the row's own gap instead. */}
                   <Box flexShrink={0}><Text dimColor>{`${at + 1}.`.padEnd(indexWidth + 2)}</Text></Box>
-                  <Text color={selected ? role("success") : undefined}>{`[${selected ? TICK : " "}] `}</Text>
+                  <Text color={selected ? role("success") : undefined}>{`[${selected ? TICK() : " "}] `}</Text>
                   {withLabel
                     ? isFocused
                       ? <><Text color={role(focusColor)}>{o.label}{separator}</Text><InputText text={text} cursor={cursor} placeholder={o.placeholder} /></>

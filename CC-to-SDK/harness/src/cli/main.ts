@@ -31,8 +31,8 @@ import { prepareAttach as realPrepareAttach } from "./attach.js";
 import { resolveResumeArg as realResolveResume } from "./resolveResume.js";
 import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
 // F8 T8: the three facts startupTips branches on — same plain-fs/no-React safety as prefs.ts above.
-import { readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { opendirSync, existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 // type-only: main.ts stays React-free. The ink import happens only inside the DEFAULT runChatClient,
 // via a dynamic import — an interactive path that never runs (e.g. every non-TTY/-p/--bg invocation)
@@ -115,13 +115,24 @@ const defaults: MainDeps = {
   rows: () => process.stdout.rows,
 };
 
+/** Review finding E: canon's `jCu` (L40335) probes emptiness with `opendir` + exactly ONE `read()`,
+ *  deliberately avoiding enumeration on the launch path, and — because `opendir` sees dotfiles — a
+ *  directory holding only `.git` is NOT empty to canon (a git repository is not an empty workspace, and
+ *  that reading is the better one, not just the faithful one). `readdirSync().filter(dotfile)` disagreed on
+ *  both counts. The handle is always closed, sync mirror of canon's `finally { await t.close() }`. */
+function isEmptyWorkspace(cwd: string): boolean {
+  const dir = opendirSync(cwd);
+  try { return dir.readSync() === null; }
+  finally { dir.closeSync(); }
+}
+
 /** F8 T8's two fs-derived checklist facts. Guarded, deliberately deviating from the plan's literal bare
  *  reads (found live: `args-bypass.test.ts`'s "consent gate runs BEFORE --worktree touches the disk" test
  *  fakes `ensureWorktree`/`makeHost` without ever creating the directory on disk, and a bare `readdirSync`
  *  threw ENOENT there, killing the whole launch over a checklist tip). Same rule the account race a few
  *  lines below already lives by: this is chrome, and chrome must never cost the user their launch. */
 function checklistFsFacts(cwd: string): { emptyWorkspace: boolean; hasClaudeMd: boolean } {
-  try { return { emptyWorkspace: readdirSync(cwd).filter((n) => !n.startsWith(".")).length === 0, hasClaudeMd: existsSync(join(cwd, "CLAUDE.md")) }; }
+  try { return { emptyWorkspace: isEmptyWorkspace(cwd), hasClaudeMd: existsSync(join(cwd, "CLAUDE.md")) }; }
   catch { return { emptyWorkspace: false, hasClaudeMd: false }; }
 }
 
@@ -502,7 +513,10 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
         // same rule `cwd` above already exists to enforce), inHomeDir compares it against the real home.
         : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}), rows: deps.rows(), screenReader: screenReaderEnabled(process.env),
           ...checklistFsFacts(cwd),
-          inHomeDir: cwd === homedir() }) } }] }),
+          // Review finding D: RESOLVED, not the raw --cwd value — canon compares its resolved cwd, and a
+          // trailing slash (what shell tab-completion produces, e.g. `--cwd ~/`) survived string equality
+          // as a mismatch, silently suppressing the note.
+          inHomeDir: resolve(cwd) === homedir() }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has

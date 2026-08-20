@@ -10,10 +10,10 @@ import type { AgentsRow } from "../../src/fleet/project.js";
 import type { prepareAttach as realPrepareAttach } from "../../src/cli/attach.js";
 import type { ChatClientOpts } from "../../src/tui/chatMain.js";
 // F8 T8 — the checklist's call-site wiring is proven through a REAL directory (`--cwd`), not a deps seam:
-// main.ts reads readdirSync/existsSync/homedir directly (no injection point exists or is warranted for a
+// main.ts reads opendirSync/existsSync/homedir directly (no injection point exists or is warranted for a
 // plain fs/os read), so a temp dir plus the real `homedir()` is the only way to reach the fact through the
 // actual chain rather than handing it to a seam.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
@@ -543,20 +543,29 @@ describe("main — run: foreground (Task 7)", () => {
   // welcomeBanner as pure functions handed their facts directly, which stays green even if main.ts never
   // computes emptyWorkspace/hasClaudeMd/inHomeDir at all (this wave's Global Constraint, shipped twice
   // already). These two tests reach the facts through the REAL chain: `--cwd` points the launch at a
-  // directory this test controls, and main.ts's own `readdirSync`/`existsSync`/`homedir()` reads decide
+  // directory this test controls, and main.ts's own `opendirSync`/`existsSync`/`homedir()` reads decide
   // what the banner sees — nothing here hands the banner a fact it didn't derive itself.
   describe("the checklist facts (Task 8), reached through --cwd rather than handed in", () => {
     let dir: string;
     beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "ccx-cwd-")); });
     afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
+    // The home-directory note is coupled to the checklist's OWN completion (banner.ts finding B: canon
+    // hides the whole section, note included, once the checklist is done) — so these two tests point $HOME
+    // at a FRESH, empty temp directory (real `homedir()` still reads it, via POSIX's own $HOME lookup) rather
+    // than the tester's actual home, which may already hold a CLAUDE.md and would otherwise make this test's
+    // outcome depend on whoever's machine it runs on.
     it("inHomeDir: a launch whose --cwd IS the real home directory appends the home-directory note", async () => {
-      const clientCalls: any[] = [];
-      const fakeHost = { start: async () => {}, stop: async () => {} } as any;
-      await captureLog(() => main(["--cwd", homedir(), "task"], deps({
-        isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
-      })));
-      expect(bannerText(clientCalls[0])).toContain("launched ccx in your home directory");
+      const fakeHome = mkdtempSync(join(tmpdir(), "ccx-home-"));
+      vi.stubEnv("HOME", fakeHome);
+      try {
+        const clientCalls: any[] = [];
+        const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+        await captureLog(() => main(["--cwd", homedir(), "task"], deps({
+          isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+        })));
+        expect(bannerText(clientCalls[0])).toContain("launched ccx in your home directory");
+      } finally { vi.unstubAllEnvs(); rmSync(fakeHome, { recursive: true, force: true }); }
     });
     it("inHomeDir: a launch --cwd'd at an ordinary temp directory omits the note", async () => {
       const clientCalls: any[] = [];
@@ -565,6 +574,21 @@ describe("main — run: foreground (Task 7)", () => {
         isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
       })));
       expect(bannerText(clientCalls[0])).not.toContain("home directory");
+    });
+    // Review finding D: `inHomeDir` used to compare the RAW --cwd value, so a trailing slash — what shell
+    // tab-completion produces (`--cwd ~/`) — survived string equality as a mismatch and silently suppressed
+    // the note. `resolve(cwd)` normalizes it away.
+    it("inHomeDir: a trailing slash on --cwd (tab-completion's own output) still resolves to home", async () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "ccx-home-"));
+      vi.stubEnv("HOME", fakeHome);
+      try {
+        const clientCalls: any[] = [];
+        const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+        await captureLog(() => main(["--cwd", homedir() + "/", "task"], deps({
+          isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+        })));
+        expect(bannerText(clientCalls[0])).toContain("launched ccx in your home directory");
+      } finally { vi.unstubAllEnvs(); rmSync(fakeHome, { recursive: true, force: true }); }
     });
     it("emptyWorkspace/hasClaudeMd: an empty --cwd offers the workspace tip", async () => {
       const clientCalls: any[] = [];
@@ -576,14 +600,33 @@ describe("main — run: foreground (Task 7)", () => {
       expect(text).toContain("Ask Claude to create a new app or clone a repository");
       expect(text).not.toContain("/init");
     });
-    it("emptyWorkspace/hasClaudeMd: a --cwd holding a real CLAUDE.md ticks the init tip", async () => {
+    // Review finding B (red→green): the ONLY enabled tip here (claudemd) is now complete, so the whole
+    // checklist section hides — a permanently-ticked "Run /init" line was the defect this fix removes.
+    it("emptyWorkspace/hasClaudeMd: a --cwd holding a real CLAUDE.md hides the checklist entirely", async () => {
       writeFileSync(join(dir, "CLAUDE.md"), "# notes\n");
       const clientCalls: any[] = [];
       const fakeHost = { start: async () => {}, stop: async () => {} } as any;
       await captureLog(() => main(["--cwd", dir, "task"], deps({
         isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
       })));
-      expect(bannerText(clientCalls[0])).toContain("✔ Run /init to create a CLAUDE.md file with instructions for Claude");
+      const text = bannerText(clientCalls[0]);
+      expect(text).not.toContain("Tips for getting started");
+      expect(text).not.toContain("/init");
+      expect(text).not.toContain("✔");
+    });
+    // Review finding E (red→green): canon's `opendir`-based probe sees dotfiles, so a directory holding
+    // ONLY `.git` is not an empty workspace — the former `readdirSync().filter(dotfile)` disagreed and
+    // offered the "create a new app" tip over a real repository.
+    it("emptyWorkspace: a --cwd holding only a .git directory is NOT an empty workspace (finding E)", async () => {
+      mkdirSync(join(dir, ".git"));
+      const clientCalls: any[] = [];
+      const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+      await captureLog(() => main(["--cwd", dir, "task"], deps({
+        isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+      })));
+      const text = bannerText(clientCalls[0]);
+      expect(text).not.toContain("Ask Claude to create a new app or clone a repository");
+      expect(text).toContain("Run /init to create a CLAUDE.md file with instructions for Claude");
     });
   });
   // The auth segment's four branches are pinned as a pure mapping in test/tui/banner.test.ts; what this

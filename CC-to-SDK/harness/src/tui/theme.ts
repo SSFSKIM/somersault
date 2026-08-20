@@ -15,14 +15,6 @@
 // `Transcript.Line` re-applies it as the final safety boundary for preformatted RenderLine producers
 // (the resolver is idempotent on hex/plain names, so double application is safe).
 //
-/** `Ge.tick` (L104968), unicode vs ASCII — the one glyph this module shares OUTSIDE the theme table
- *  itself: `TaskPanel.tsx`'s completed-row glyph and `banner.ts`'s startup checklist (F8 T8) both draw
- *  canon's same tick, and a `TERM=linux` terminal can't draw `✔` in either place. Lifted here (an
- *  import-free module both already reach) rather than duplicated, so the two surfaces cannot drift into
- *  showing two different ticks on the same terminal. `env` is a parameter, not a bare global read, for the
- *  same testability reason every other terminal-capability reader in this package takes one. */
-export const TICK = (env: NodeJS.ProcessEnv = process.env): string => (env.TERM !== "linux" ? "✔" : "√");
-
 // Fixed role mapping used by the consumers: syntax/inline code `suggestion` · literal strings `success` ·
 // numbers `warning` · comments and unknown code `inactive` · bash composer `bashBorder` · status default
 // `success` · status auto/permission `permission` · warnings `warning` ·
