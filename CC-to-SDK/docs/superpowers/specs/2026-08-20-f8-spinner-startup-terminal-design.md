@@ -837,6 +837,22 @@ Eleven more findings, again none rebutted. Two changed the design rather than th
   Canon's fallback to `subject` is what makes the rung fire anyway — the probe would have returned a
   negative that changed nothing.
 
+**S-F8-x — Task ids cannot collide across agents, and canon works hard to guarantee it.** Task 4's
+implementer flagged a hazard it could not settle: ccx keys one global map on the `Task #N` id parsed out of
+the tool result, so if a subagent's numbering restarted at 1 a nested create would silently replace the main
+agent's row. Canon settles it. `OBp` (L232405) allocates `String(count + 1)` scoped to ONE task list id from
+`MG()` (L232296), under a file lock, with an `ifAbsent` write precondition and a retry loop that takes the
+next free id when the listing under-reports. Subagents write into that same list. So ids are unique per list
+by construction, not by convention — the collision is unreachable on the wire, and Task 5's selector may rely
+on an id resolving to exactly one row. Residual, recorded not chased: `MG()` can be redirected per process by
+`CLAUDE_CODE_TASK_LIST_ID`, so two lists in one session would break the guarantee; nothing in ccx does that.
+
+**S-F8-y — canon's create-result id is `\S+`, ours is `\d+`.** Canon parses with `/^Task #(\S+) created
+successfully/` (L235685) while ccx uses `/Task #(\d+) created/`. Since the allocator emits a stringified
+integer, the two agree on every id that actually occurs, and ccx additionally sorts by `Number(id)`. Recorded
+as a latent fidelity gap rather than a defect: if canon ever emits a non-numeric id, ccx drops the task
+entirely and the sort would go to `NaN`.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.

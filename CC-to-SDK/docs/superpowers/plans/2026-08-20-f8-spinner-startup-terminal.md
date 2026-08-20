@@ -677,8 +677,12 @@ and the result-drain that moves `pending` into `tasks`:
 
 - [ ] **Step 4: Verify and commit**
 
-Run: `cd harness && npx vitest run test/tui/taskList.test.ts test/tui/task-panel.test.tsx && npm run typecheck`
-Expected: PASS, and the panel suite unchanged — if a panel assertion moved, the filter leaked into ingest.
+Run: `cd harness && npm run test:tui && npm run typecheck`
+Expected: PASS. The no-filter guarantee needs a suite that actually drives `TaskList.ingest` with a real
+TaskCreate/tool_result pair — `test/tui/task-panel.test.tsx` builds `TaskItem` objects by hand and never
+calls `ingest`, so it CANNOT detect an ingest-side filter. `test/tui/chat.test.tsx` and
+`test/tui/rewind-picker.test.tsx` do drive the real wire pair; the whole suite is the cheap way to cover
+both plus anything else that reads a snapshot.
 
 ```bash
 git add harness/src/tui/taskList.ts harness/test/tui/taskList.test.ts
