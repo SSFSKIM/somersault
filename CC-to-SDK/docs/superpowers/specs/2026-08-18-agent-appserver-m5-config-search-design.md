@@ -2143,7 +2143,8 @@ the acceptance walk was green, and both keyed live suites passed. **Then two who
 twenty confirmed defects that all fifteen reviews had missed**, including one that could erase a user's
 transcript. Six fix waves (A–F) repaired them; a review of those waves found three more Important items —
 one a regression a wave had itself introduced — and a corrective pass closed them. **Every review round in
-this milestone found something real.** The record would be dishonest if it stopped at the sentence above.
+this milestone found something real.** The record would be dishonest if it stopped at the sentence above —
+and equally dishonest to stop at wave F, which is why the subsection below exists.
 
 **One sentence explains most of the twenty, and it is this milestone's most valuable output:**
 *an injected test double is a title for the storage layer.* Our tests pinned contracts by injecting fakes
@@ -2176,6 +2177,71 @@ sources agreed on and measurement refuted; a safety rule ("when the roster canno
 refuse") was correct for the broken state and would have been a new defect once the state was repaired; a
 claim that a testing shortcut would have missed a trap was false. In each case the worker checked rather
 than complied. **A process that only catches the workers' errors is half a process.**
+
+### Three more rounds after that — and what the lock taught across five of them
+
+Wave F was not the end either. A six-lane Codex panel — a different altitude again, and a different
+model — swept the branch three more times. The first returned `incorrect` with **eighteen
+verifier-confirmed findings, three of them P1s in code the fix waves had themselves just added**;
+wave G closed sixteen and declined two with reasons. The second returned **six more**, all closed by
+wave H. The third — **the first COMPLETE sweep this branch ever had** — returned **eleven** (four P1),
+of which wave I fixed seven and declined four. The running total is that fifteen clean per-task
+reviews were followed by **fifty-eight confirmed defects across six review rounds at three
+altitudes**, and no round has yet come back empty.
+
+**A verdict has two halves — what the review found and what it looked at — and only the first is
+ever in the report.** Rounds two and three of the panel ran with lanes dead on provider limits, and a
+partial sweep cannot support "nothing else is there." Forcing a complete one exposed a further defect
+class nobody had reached. The first attempt at that complete round lost *all six* lanes to a
+different cause worth recording: the panel pins its base ref at the start and re-validates it at the
+end, and a concurrent session was advancing `main` every few minutes, so every lane's report
+described a range that no longer existed. Pinning the base to the **merge-base commit hash** rather
+than the branch name fixed it — the identical diff, named immutably. **When a check compares against
+a moving reference, name the thing rather than the pointer to it.**
+
+**The lock is the thread worth following: it produced a finding in five consecutive rounds, and every
+one was the same shape** — decide something by looking, act on the decision later, with a gap in
+between. Wave C answered it on the ACQUIRE path by construction (`unlink` cannot remove a directory,
+`rmdir` requires emptiness, so a stale holder has no verb that removes a fresh claim). Wave G found
+the fence still deciding on a clock. Wave H found `breakDeadLock` doing it one function away and put
+the lease in the marker's **filename**, so the judgment and the delete name one string. Wave I found
+the fence again from a new angle and removed the caller's ability to say *verify, then work, then
+commit* at all — `commit(from)` now performs the assertion, the refresh and the rename itself.
+
+**So the lesson is not that the lock was buggy; it is that immunity does not propagate.** Proving one
+path safe by construction says nothing about its siblings, and the reviewer who attacked the acquire
+path hardest was never looking at the release path. **A property proven by construction is proven for
+the construction, not for the module.** The corollary is about counting: **the number of findings in
+a region measures the attention it has received, not how broken it is** — regions nobody swept score
+zero, which is exactly what a partial sweep manufactures.
+
+**The declines cost more than most of the fixes, and that is the sharpest finding of the three
+rounds.** Four of wave I's eleven were correct observations about limits this spec had already
+examined and accepted — and in two of them the sentence describing the accepted limit **had stopped
+being true**. `liveInFleet`'s own doc asked "is this session live in a ccx process on this machine?",
+which is not the question it answers; D-M5-26d claimed a store immutability that holds only while
+nobody else is writing. Correcting those sentences *was* the work. This is the milestone's signature
+defect — a published sentence that measurement contradicts — surfacing one layer out, at the
+boundary descriptions rather than the implementation: **an accepted limit is a claim, and it decays
+under the repairs made around it.**
+
+**A disagreement between two verifiers was retired without deciding who was right.** On the
+version-token collision this project's verifier refuted the finding (two files that hash alike are
+indistinguishable to every reader, so no update can be lost) while the panel's confirmed it as a CAS
+bypass. Rather than adjudicate reachability, the fix went in on *definition* grounds: this spec
+defines the token as sha256 of the file's **raw bytes**, and the code hashed decoded text. **When two
+competent reviewers disagree about whether a defect is reachable, ask instead whether the code
+matches its own written definition** — that question usually has an answer, and it is cheaper than
+the argument. Wave I used the same move on a finding it could not stage: it declined to fake the
+storage layer to reproduce a threadpool-timing worst case, said so plainly, and rested the repair on
+the undisputed ground that the code contradicted its own written invariant.
+
+**The instruments kept rotting, and only the mutation passes noticed.** Wave H's new test asserting
+that both search methods publish their term bounds read the *committed generated artifact*, so
+deleting the constraint from the source left it green — **a test that reads a generated artifact is
+testing the artifact, not the generator.** Wave I's pass reported one mutation as ANCHOR MISSING from
+a bug in its own search string, and recorded it rather than quietly re-running, on the grounds that
+**an unread "anchor missing" is indistinguishable from an unpinned mechanism.**
 
 ### What is NOT proven
 
@@ -2575,3 +2641,24 @@ directory changing a permission dialog's offered rule row, not the known flake.
   `configDomain.ts` was invisible in every editor and diff — and it made the file BINARY to `grep`, so
   every search of the config domain's 583 lines silently returned nothing. The behavioural bug it caused
   was real too, but the invisibility is what let it ship.
+
+- **rev 16 (2026-08-20) — the retrospective, carried through wave I.** The `## Outcomes & Retrospective`
+  narrative stopped at fix wave F while the Decision Log had run on to D-M5-30, so the section closed the
+  story three rounds early — **this milestone's signature defect committed by the document that names
+  it.** The new subsection records the three panel rounds after F (18, 6 and 11 confirmed findings; waves
+  G, H and I), bringing the honest total to **fifty-eight confirmed defects across six review rounds**
+  after fifteen clean per-task reviews. Three lessons are new and none is about the app-server:
+  **(1) a verdict has two halves — what a review found and what it looked at — and only the first is ever
+  in the report**, which is why the partial rounds could not support "nothing else is there" and why
+  forcing a complete sweep exposed a further class. A corollary on counting: **the number of findings in
+  a region measures the attention it has received, not how broken it is.**
+  **(2) An accepted limit is a claim, and it decays under the repairs made around it.** Two of wave I's
+  four declines were limits this spec had already examined — and both descriptions had stopped being
+  true (`liveInFleet`'s doc asked a question it does not answer; D-M5-26d asserted a store immutability
+  that holds only while nobody else writes). Correcting those sentences *was* the work, and it cost more
+  than most of the fixes. The signature defect, one layer out at the boundary descriptions.
+  **(3) When a check compares against a moving reference, name the thing rather than the pointer.** The
+  first attempt at the complete sweep lost all six lanes to "review target moved while the review ran" —
+  a concurrent session was advancing `main` every few minutes and the panel re-validates its pinned base
+  at the end of a run. Pinning to the merge-base commit hash named the identical diff immutably. The same
+  move the lock made when it put its lease in the marker's filename.
