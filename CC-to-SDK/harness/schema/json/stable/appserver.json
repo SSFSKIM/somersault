@@ -1521,6 +1521,8 @@
       "properties": {
         "searchTerm": {
           "type": "string",
+          "minLength": 2,
+          "maxLength": 256,
           "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
         },
         "cursor": {
@@ -1576,6 +1578,8 @@
         },
         "searchTerm": {
           "type": "string",
+          "minLength": 2,
+          "maxLength": 256,
           "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
         },
         "cursor": {

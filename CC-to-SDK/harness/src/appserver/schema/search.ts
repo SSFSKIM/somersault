@@ -1,11 +1,15 @@
 // src/appserver/schema/search.ts — the search domain's params AND results (spec D-M5-15/16/17/19).
 import { z } from "zod/v4";
 import { archivedParam } from "./core.js";
+import { SEARCH_CAPS } from "../searchScan.js";
 
-/** `searchTerm` carries no `.min/.max` HERE and is bounded in the handler instead: the two ends answer the
- *  same `-32602` either way, and keeping the check next to `SEARCH_CAPS` is what stops the published bound
- *  and the enforced one from drifting apart (D-M5-17 owns the numbers, and Task 8's sibling method must
- *  read the same ones). The `.describe()` below is where a client learns them.
+/** `searchTerm` PUBLISHES its bounds, taken from `SEARCH_CAPS` so there is one number and not two (fix
+ *  wave H / H4). It used to carry them only in the handler and only in prose: the generated stable schema
+ *  therefore said `"type":"string"` with no `minLength`/`maxLength`, and a client validating against the
+ *  published contract accepted requests both methods then refused `-32602`. A zod refinement here IS the
+ *  published contract — it emits into the vendored client-facing artifact — so a bound that lives only in
+ *  a handler is a bound the contract does not have. The handler's own copy of the check is gone with it:
+ *  zod answers first, so a second spelling could only ever be unreachable code that drifts.
  *
  *  `limit` is `positive()` and deliberately UNBOUNDED above: over-cap CLAMPS with a `warning` rather than
  *  refusing (D-M5-17, the `thread/read` precedent), so a schema max would turn the one branch the spec
@@ -19,7 +23,7 @@ import { archivedParam } from "./core.js";
  *  query it was minted under and `g` stamps the generation of the transcript its row offset addresses, and
  *  a mismatch in either refuses rather than answering a plausible page for a walk nobody asked for. */
 export const threadSearchParams = z.object({
-  searchTerm: z.string().describe("case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"),
+  searchTerm: z.string().min(SEARCH_CAPS.minTerm).max(SEARCH_CAPS.maxTerm).describe("case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"),
   // `.min(1)` is redundant for enforcement — `""` decodes to `null` and refuses `-32602` one door in, the
   // same code either way — and kept for PUBLICATION: it emits `minLength: 1` into the stable JSON schema,
   // which is where a client learns the bound without reading our decoder.
@@ -65,7 +69,7 @@ export const threadSearchResult = z.object({
  *  empty page (D-M5-20).
  *
  *  `searchTerm` and `limit` are deliberately the SAME shapes as `thread/search`'s above, for the reasons
- *  stated there (the bounds live next to `SEARCH_CAPS`; over-cap clamps rather than refuses). `cursor` is
+ *  stated there (the bounds are published from `SEARCH_CAPS`; over-cap clamps rather than refuses). `cursor` is
  *  its own codec — base64url of `{s,r,c,q,g}`, a row offset PLUS a character offset within that row, so a
  *  page boundary can land between two occurrences of ONE row — and it is GENERATION-QUALIFIED with no
  *  exemption (D-M5-26): a rewind truncates rows, so a cursor minted at an earlier generation is refused
@@ -74,7 +78,7 @@ export const threadSearchResult = z.object({
  *  cursor to its search term for the same reason, in its own sentence. */
 export const threadSearchOccurrencesParams = z.object({
   threadId: z.string().min(1).describe("a `thr_…` registry id or a bare store sessionId; one the store does not know refuses -33004"),
-  searchTerm: z.string().describe("case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"),
+  searchTerm: z.string().min(SEARCH_CAPS.minTerm).max(SEARCH_CAPS.maxTerm).describe("case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"),
   cursor: z.string().min(1).optional().describe("opaque occurrence cursor from a previous reply's nextCursor; bound to the search term and to the transcript's generation (live or cold), and refused -32602 after a rewind or under a different term"),
   limit: z.number().int().positive().optional().describe("occurrences per page, default 20; over 50 is clamped to 50 with a `warning` notification"),
 });

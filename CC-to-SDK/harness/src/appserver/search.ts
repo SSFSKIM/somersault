@@ -188,10 +188,6 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
   const parsed = threadSearchParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const { searchTerm, sortKey, sortDirection: dir, archived, cwd } = parsed.data;
-  const termLen = searchTerm.length;
-  if (termLen < SEARCH_CAPS.minTerm || termLen > SEARCH_CAPS.maxTerm) {
-    ctx.peer.replyError(id, ERR.INVALID_PARAMS, `searchTerm must be ${SEARCH_CAPS.minTerm}-${SEARCH_CAPS.maxTerm} UTF-16 units`); return;
-  }
   // A cursor this server did not mint (or minted for the OTHER codec, or carrying an out-of-range row
   // offset) is refused, not repaired: D-M5-16a. Resuming a transcript at a row the cursor did not name is
   // exactly the intra-file skip/repeat the keyset exists to eliminate.
@@ -421,10 +417,6 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
   const parsed = threadSearchOccurrencesParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const { searchTerm } = parsed.data;
-  const termLen = searchTerm.length;
-  if (termLen < SEARCH_CAPS.minTerm || termLen > SEARCH_CAPS.maxTerm) {
-    ctx.peer.replyError(id, ERR.INVALID_PARAMS, `searchTerm must be ${SEARCH_CAPS.minTerm}-${SEARCH_CAPS.maxTerm} UTF-16 units`); return;
-  }
   // The session library's ONE id rule (sessionLib.ts's resolveThreadId, never re-implemented): a `thr_…` id
   // resolves through the registry, anything else is a bare store id passed through — which is what lets a
   // client search a session this server has never opened by the same call it searches a live one.

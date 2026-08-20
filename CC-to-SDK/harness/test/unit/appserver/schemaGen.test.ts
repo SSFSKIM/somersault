@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { methodSchemas } from "../../../src/appserver/schema/index.js";
+import { SEARCH_CAPS } from "../../../src/appserver/searchScan.js";
 
 const harness = fileURLToPath(new URL("../../../", import.meta.url));
 const script = "scripts/emit-appserver-schema.mjs";
@@ -56,6 +57,35 @@ describe("emit-appserver-schema", () => {
       execFileSync("node", [script, "--out", dir], { cwd: harness, encoding: "utf8" });
       for (const tier of TIERS) expect(readFileSync(join(dir, tier, "appserver.json"), "utf8"), tier).toBe(vendoredText(tier));
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /** FIX WAVE H / H4. A zod refinement in `schema/` is not a private guard — it EMITS into this vendored,
+   *  client-facing artifact, which is the only thing a client can validate against. `searchTerm` was an
+   *  unconstrained `z.string()` on both search methods with the 2–256 bound enforced in the handlers and
+   *  stated only in prose, so a conforming validator accepted requests the published methods then refused
+   *  `-32602`: the artifact was wrong about the contract it exists to describe. Both methods, because the
+   *  sibling inherited the shape verbatim.
+   *
+   *  Asserted against `SEARCH_CAPS` rather than against the literals, so the row goes red if the numbers
+   *  are changed in one place only — which is what publishing them from the caps table is FOR. And the
+   *  refusal is exercised through a real validator, because "the keyword is present" is a weaker claim
+   *  than "a conforming client refuses what the server refuses". */
+  it("both search methods publish the term bounds they enforce — a conforming validator refuses what they refuse", () => {
+    const doc = vendored("stable");
+    for (const method of ["thread/search", "thread/searchOccurrences"]) {
+      const schema = doc.methods[method] as { properties: { searchTerm: Record<string, unknown> } };
+      expect(`${method} minLength=${schema.properties.searchTerm.minLength}`).toBe(`${method} minLength=${SEARCH_CAPS.minTerm}`);
+      expect(`${method} maxLength=${schema.properties.searchTerm.maxLength}`).toBe(`${method} maxLength=${SEARCH_CAPS.maxTerm}`);
+      const validate = new Ajv({ strict: true, allErrors: true }).compile(schema as object);
+      const params = (term: string) => (method === "thread/search" ? { searchTerm: term } : { threadId: "t", searchTerm: term });
+      expect(`${method} 1 unit accepted by the published schema: ${validate(params("a"))}`).toBe(`${method} 1 unit accepted by the published schema: false`);
+      expect(`${method} ${SEARCH_CAPS.maxTerm + 1} units accepted: ${validate(params("x".repeat(SEARCH_CAPS.maxTerm + 1)))}`)
+        .toBe(`${method} ${SEARCH_CAPS.maxTerm + 1} units accepted: false`);
+      // …and both legal boundaries still validate, or the published bound would refuse requests the
+      // methods answer — the same off-by-one, in the other direction.
+      expect(`${method} 2 units: ${validate(params("ab"))}`).toBe(`${method} 2 units: true`);
+      expect(`${method} ${SEARCH_CAPS.maxTerm} units: ${validate(params("x".repeat(SEARCH_CAPS.maxTerm)))}`).toBe(`${method} ${SEARCH_CAPS.maxTerm} units: true`);
+    }
   });
 
   it("every methodSchemas entry lands in exactly one artifact", () => {

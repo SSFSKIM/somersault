@@ -57,10 +57,10 @@ const offset = (x: unknown): x is number => typeof x === "number" && Number.isSa
  *  index, so it is screened where the row index already was. */
 const finiteOrNull = (x: unknown): x is number | null => x === null || (typeof x === "number" && Number.isFinite(x));
 
-/** SHA-256 over NUL-joined parts, base64url-truncated to 128 bits. Still not a SIGNATURE — the cursor is
- *  not a capability, and a client that forges one reaches only its own sessions, which the token already
+/** SHA-256 over LENGTH-FRAMED parts, base64url-truncated. Still not a SIGNATURE — the cursor is not a
+ *  capability, and a client that forges one reaches only its own sessions, which the token already
  *  entitles it to. It answers ONE question: is the walk this cursor was minted for the walk being resumed.
- *  The NUL join is what stops `("ab","c")` and `("a","bc")` from fingerprinting alike, and
+ *  The framing is what stops `("ab","c")` and `("a","bc")` from fingerprinting alike, and
  *  `undefined`/`null` are distinguished from `""` because "no `cwd`" and "`cwd` is empty" are different
  *  requests.
  *
@@ -74,19 +74,31 @@ const finiteOrNull = (x: unknown): x is number | null => x === null || (typeof x
  *  ordinary. 32 bits puts that at the birthday bound of ~2^16 walks, which one client can reach; 128 puts
  *  it out of reach of anything, and costs one hash per REQUEST (never per row).
  *
- *  The two sentinels carry a U+0001 PREFIX, and it is load-bearing rather than decorative: without it a
- *  `cwd` of `"u"` fingerprints exactly like `cwd: undefined`, which is two different walks sharing one
- *  binding. U+0001 cannot appear in a cwd, a sort key or a direction, and a `searchTerm` holding one is
- *  still separated from it by the NUL join. Written as an ESCAPE deliberately: these were literal raw
- *  control bytes in the source, invisible in every editor and every diff, so the line READ as `"u"`/`"n"`
- *  while meaning something else — and any tool that normalised control characters would have silently
- *  deleted the injectivity this paragraph exists to protect. */
+ *  IT IS FRAMED BY LENGTH, NOT BY A DELIMITER (fix wave H / H5), and that is the difference between an
+ *  encoding no part can forge and one that merely makes forging awkward. The delimited version wrote each
+ *  part as sentinel-or-value followed by a NUL, with `undefined`/`null` spelled U+0001 `u` / U+0001 `n`
+ *  so that a `cwd` of `"u"` could not read as "no cwd" — but nothing stopped a `cwd` from BEING U+0001
+ *  `u`, and nothing stopped a part from carrying the NUL separator itself. Both collide, and both were
+ *  measured: a request whose `cwd` is U+0001 `u` fingerprinted identically to one with no `cwd` at all
+ *  (`k0sysMoBeM-l-cIrE_VIA5`), the same for U+0001 `n` against `null`, and one part holding a NUL against
+ *  the two parts it splits into. A POSIX path may hold any byte but `/` and NUL, so the first of those is
+ *  a `cwd` a client can actually send.
+ *
+ *  Each part is now written as `<tag><byte-length>:<body>`, so the stream parses back to exactly one
+ *  sequence of parts whatever the bodies contain: the length says where a body ends, so no body can end
+ *  it early, and no delimiter is left for a value to impersonate. The tag separates the three empty
+ *  bodies — `undefined`, `null` and `""` — and, at no extra cost, keeps the number `1` from
+ *  fingerprinting like the string `"1"`. Nothing is left to escape, which is why this is preferred to
+ *  escaping: an escape is a rule every future caller has to keep, and a length is not. */
 const FINGERPRINT_CHARS = 22; // 22 base64url chars — 132 bits of sha256, truncated
+const partTag = (raw: string | number | boolean | null | undefined): string =>
+  raw === undefined ? "u" : raw === null ? "n" : typeof raw === "string" ? "s" : typeof raw === "number" ? "d" : "b";
 export function fingerprint(parts: readonly (string | number | boolean | null | undefined)[]): string {
   const h = createHash("sha256");
   for (const raw of parts) {
-    h.update(raw === undefined ? "\u0001u" : raw === null ? "\u0001n" : String(raw), "utf8");
-    h.update("\0", "utf8"); // the separator, fed in rather than joined — nothing depends on one whole string
+    const body = raw === undefined || raw === null ? "" : String(raw);
+    h.update(`${partTag(raw)}${Buffer.byteLength(body, "utf8")}:`, "utf8");
+    h.update(body, "utf8"); // fed in rather than joined — nothing depends on one whole string
   }
   return h.digest("base64url").slice(0, FINGERPRINT_CHARS);
 }

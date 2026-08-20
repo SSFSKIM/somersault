@@ -181,7 +181,7 @@ describe("searchScan — cursor codecs against forged input", () => {
       expect(decodeSearchCursor(forge(payload))).toBeNull();
       expect(decodeOccCursor(forge(payload))).toBeNull();
     }
-    for (const junk of ["", " ", "!!!", "%%%%", " ", "😀", "e30", "bnVsbA"]) {
+    for (const junk of ["", " ", "!!!", "%%%%", "\u0000", "😀", "e30", "bnVsbA"]) {
       expect(decodeSearchCursor(junk)).toBeNull();
       expect(decodeOccCursor(junk)).toBeNull();
     }
@@ -549,18 +549,26 @@ describe("searchScan — snippet windows", () => {
     expect(ok.snippet.slice(ok.snippetMatchRange.start, ok.snippetMatchRange.end)).toBe("NEEDLE");
   });
 
-  it("fingerprint: the absent/null sentinels cannot be spelled by a real part — the prefix is the mechanism", () => {
-    // The sentinels are `u` and `n`, and the U+0001 is what stops a literal `cwd` of `"u"`
-    // from binding a walk identically to "no cwd at all" — two different enumerations under one `q`, which
-    // is exactly what the binding exists to tell apart. They were raw control bytes in the source until
-    // this row existed: invisible in every editor and diff, so the line read as `"u"`/`"n"` and a tool
-    // that normalised control characters would have removed the property with nothing going red.
-    expect(fingerprint(["t", undefined])).not.toBe(fingerprint(["t", "u"]));
-    expect(fingerprint(["t", null])).not.toBe(fingerprint(["t", "n"]));
-    expect(fingerprint(["t", undefined])).not.toBe(fingerprint(["t", null]));
-    expect(fingerprint(["t", ""])).not.toBe(fingerprint(["t", undefined]));   // "no cwd" vs "cwd is empty"
-    // The NUL join, the other half of the same injectivity, and the reason neither is enough alone.
+  /** FIX WAVE H / H5. The parts are framed BY LENGTH, so no part can spell another part's boundary —
+   *  a stronger statement than "the sentinels are unusual characters", which is what this row used to
+   *  check and all the delimited encoding could offer. It spelled `undefined` as U+0001 `u`, and nothing
+   *  stopped a `cwd` from being exactly that string (a POSIX path may hold any byte but `/` and NUL);
+   *  nothing stopped a part from carrying the NUL separator either. Both collided on the real function
+   *  before the repair, and a collision here is two different walks sharing one cursor binding. */
+  it("fingerprint: no part can forge another part's boundary — the framing is a length, not a delimiter", () => {
+    const U1 = "\u0001";
+    // THE THREE MEASURED COLLISIONS, each a pair of genuinely different walks that shared one `q`.
+    expect(fingerprint(["t", undefined])).not.toBe(fingerprint(["t", `${U1}u`])); // a cwd spelling "no cwd"
+    expect(fingerprint(["t", null])).not.toBe(fingerprint(["t", `${U1}n`]));      // …and spelling `null`
+    expect(fingerprint(["a\u0000b"])).not.toBe(fingerprint(["a", "b"]));          // a part carrying the separator
+    // What the old encoding did get right, kept: a plain `"u"` is not "no cwd", and the three EMPTY
+    // bodies stay apart — "no cwd", "cwd is null" and "cwd is empty" are three different requests.
+    expect(fingerprint(["t", "u"])).not.toBe(fingerprint(["t", undefined]));
+    expect(new Set([fingerprint(["t", undefined]), fingerprint(["t", null]), fingerprint(["t", ""])]).size).toBe(3);
+    // Concatenation-equal part lists — the property any framing has to have at all.
     expect(fingerprint(["ab", "c"])).not.toBe(fingerprint(["a", "bc"]));
+    // The tag rides along with the length, so a number and its decimal spelling are different bindings.
+    expect(fingerprint([1])).not.toBe(fingerprint(["1"]));
     // …and equal inputs still agree, or the binding refuses every legitimate resume.
     expect(fingerprint(["t", "asc", true, undefined])).toBe(fingerprint(["t", "asc", true, undefined]));
   });
