@@ -149,7 +149,7 @@ Create `src/tui/terminalEscapes.ts`:
 // `signalsOwned` flag) and would drop SIGHUP.
 //
 // Canon (2.1.236): `tI` assembles OSC (L188457), `Fq` wraps for a multiplexer (L188461), `s$n`
-// sanitizes notification text (L202524), codes come from `wC` (L188790).
+// sanitizes notification text (L202519), codes come from `wC` (L188790).
 //
 // THE TERMINATOR IS A PARAMETER, NOT A SNIFF. Canon's `tI` picks ST when the terminal is kitty. Ours
 // cannot decide that internally, because the one existing caller — the terminal title — keeps BEL on
@@ -187,7 +187,7 @@ export function notifyTerminator(env: NodeJS.ProcessEnv = process.env): OscTermi
   return kitty ? "st" : "bel";
 }
 
-/** canon's `s$n` (L202524): every C0 byte, DEL, and every C1 byte becomes a SPACE — length-preserving,
+/** canon's `s$n` (L202519): every C0 byte, DEL, and every C1 byte becomes a SPACE — length-preserving,
  *  because the point is to neutralise a byte that would terminate or reopen the sequence carrying it,
  *  not to tidy the text.
  *

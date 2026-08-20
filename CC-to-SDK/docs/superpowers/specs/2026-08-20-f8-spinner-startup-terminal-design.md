@@ -194,7 +194,7 @@ The four writers live in one hook, `are()` (L202527–202566):
 | ghostty | `Fq(tI(777, "notify", title, message))` |
 | bell | `FK` — a bare `\x07` |
 
-`sanitize` (`s$n`, L202524) replaces every byte below 0x20 and 0x7f–0x9f with a space.
+`sanitize` (`s$n`, L202519) replaces every byte below 0x20 and 0x7f–0x9f with a space.
 
 Channel selection (`c9T`/`u9T`, L505876–505912) reads the setting `preferredNotifChannel`, whose
 default is `"auto"` (L100411, `DEFAULT_GLOBAL_CONFIG`); the legal set (`Mie`, L45315) is
@@ -273,7 +273,7 @@ would silently change shipped behavior:
 
 | | canon | what it does |
 |---|---|---|
-| notification | `s$n` (L202524) | replaces C0, DEL **and C1** with a **space** |
+| notification | `s$n` (L202519) | replaces C0, DEL **and C1** with a **space** |
 | title | inside `CVe` | strips CSI, **deletes** C0/DEL, leaves C1, trims |
 
 `terminalTitle.ts`'s existing sanitizer is the second and stays exactly where it is, untouched. The
