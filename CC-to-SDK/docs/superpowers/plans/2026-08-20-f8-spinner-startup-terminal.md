@@ -757,17 +757,28 @@ it("an in-progress task retitles the spinner; a subagent's does not (F8 A4/A4b)"
   await waitFor(() => frame(lastFrame).includes("Fix the parser…"));   // the SUBJECT rung, live
 
   // now a NESTED task goes in progress — the spinner must not follow it
-  fake.pushMessage({ type: "assistant", parent_tool_use_id: "agent_1", message: { content: [{ type: "tool_use", id: "tu3", name: "TaskCreate", input: { subject: "Nested chore", activeForm: "Doing a nested chore" } }] } });
-  fake.pushMessage({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu3", content: "Task #2 created successfully: Nested chore" }] } });
-  fake.pushMessage({ type: "assistant", parent_tool_use_id: "agent_1", message: { content: [{ type: "tool_use", id: "tu4", name: "TaskUpdate", input: { taskId: "2", status: "in_progress" } }] } });
+  deliver({ type: "assistant", parent_tool_use_id: "agent_1", message: { content: [{ type: "tool_use", id: "tu3", name: "TaskCreate", input: { subject: "Nested chore", activeForm: "Doing a nested chore" } }] } });
+  deliver({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu3", content: "Task #2 created successfully: Nested chore" }] } });
+  deliver({ type: "assistant", parent_tool_use_id: "agent_1", message: { content: [{ type: "tool_use", id: "tu4", name: "TaskUpdate", input: { taskId: "2", status: "in_progress" } }] } });
   await waitFor(() => frame(lastFrame).includes("Nested chore"));      // it DID reach the panel
   expect(frame(lastFrame)).toContain("Fix the parser…");               // and the spinner did not move
   expect(frame(lastFrame)).not.toContain("Doing a nested chore…");
 });
 ```
 
-If `fakeRemote` exposes no `pushMessage`, deliver the three nested frames through the same `onMessage`
-callback the first three use, by holding a reference to it — do not add a second delivery mechanism.
+**Frame delivery — the snippet's channel is WRONG and correcting it is part of this task.** `useChat.ts:1405`
+ingests into `TaskList` from `ev.data` of a `{ kind: "message" }` EVENT, not from the `onMessage` callback,
+and `fakeRemote` has no `pushMessage` at all — its only push is `pushEvent`. So EVERY frame in this test,
+the first three included, must be delivered the way the neighbouring tests already do it
+(`test/tui/chat.test.tsx:321`):
+
+```tsx
+const deliver = (m: unknown) => { onMessage(m); fake.pushEvent({ kind: "message", data: m }); };
+```
+
+`onMessage` alone feeds the transcript but never the task store, so a test written against it would sit on
+an empty panel and prove nothing about the ladder. Hold a reference to `onMessage` so the nested trio can be
+delivered the same way after the first `waitFor` observes the subject rung.
 
 - [ ] **Step 3: Run both and watch them fail**
 
