@@ -2,8 +2,10 @@
 import { describe, it, expect } from "vitest";
 import { TaskList } from "../../src/tui/taskList.js";
 
-const create = (id: string, subject: string) => [
-  { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: `tc${id}`, name: "TaskCreate", input: { subject, description: "d" } }] } },
+// `frame` is the CREATE frame's own top-level fields — F8 T4 reads provenance from there, so a case needs to
+// be able to vary it (nested id / omitted field / empty string) while the RESULT frame keeps carrying none.
+const create = (id: string, subject: string, frame: Record<string, unknown> = { parent_tool_use_id: null }) => [
+  { type: "assistant", ...frame, message: { content: [{ type: "tool_use", id: `tc${id}`, name: "TaskCreate", input: { subject, description: "d" } }] } },
   { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `tc${id}`, content: `Task #${id} created successfully: ${subject}` }] } },
 ];
 const update = (taskId: string, status: string) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: `tu${taskId}${status}`, name: "TaskUpdate", input: { taskId, status } }] } });
@@ -42,6 +44,28 @@ describe("TaskList", () => {
     const add = (ids: unknown[]) => tl.ingest({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: `tu${ids.join()}`, name: "TaskUpdate", input: { taskId: "7", addBlockedBy: ids } }] } });
     add(["3"]); add([3, "4"]);                      // a number id is stringified; a repeat does not duplicate
     expect(tl.snapshot()).toEqual([{ id: "7", subject: "ship", status: "pending", activeForm: "Shipping", blockedBy: ["3", "4"] }]);
+  });
+
+  // F8 T4. Canon's spinner asks "is this the MAIN agent's task?" and can, because its task store is per-agent;
+  // ours is one global store, so the origin has to be recorded at ingest instead. Recorded ONLY — nothing is
+  // filtered here, and the panel keeps showing every task (see the length/order of the expectation below).
+  // The four creates are deliberately interleaved with their results: provenance belongs to the pending
+  // TaskCreate, not to whichever frame arrived most recently, and the results themselves carry no origin at
+  // all — so reading it off the result frame, or off a per-instance "last frame was nested" flag, marks the
+  // wrong task. `toStrictEqual` also pins absent-rather-than-empty: an unmarked task must not carry the key.
+  it("records subagent provenance per task from the create frame, and still shows every task", () => {
+    const tl = new TaskList();
+    const [mainCreate, mainResult] = create("1", "main work");
+    const [subCreate, subResult] = create("2", "nested work", { parent_tool_use_id: "agent_1" });
+    const [omitCreate, omitResult] = create("3", "field-absent work", {});
+    const [emptyCreate, emptyResult] = create("4", "empty-string work", { parent_tool_use_id: "" });
+    for (const m of [mainCreate, subCreate, mainResult, subResult, omitCreate, emptyCreate, emptyResult, omitResult]) tl.ingest(m);
+    expect(tl.snapshot()).toStrictEqual([
+      { id: "1", subject: "main work", status: "pending" },
+      { id: "2", subject: "nested work", status: "pending", subagent: true },
+      { id: "3", subject: "field-absent work", status: "pending" },
+      { id: "4", subject: "empty-string work", status: "pending" },
+    ]);
   });
 
   it("ignores an update for an unknown id and resets", () => {
