@@ -75,7 +75,7 @@ import { Footer, footerRows, type FooterStatusInput } from "./Footer.js";
 import type { StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
 import type { RendererChoice } from "./renderer.js";
-import { screenReaderEnabled } from "./renderer.js";
+import { reducedMotion } from "./motion.js";
 
 import { IDLE_COMPOSER_FOOTER_STATE, type ComposerFooterState } from "./ChatComposer.js";
 import { SessionPicker } from "./SessionPicker.js";
@@ -1019,11 +1019,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan");
   // F8 T6 — READ LIVE, NOT AT STARTUP: a `/config` toggle of `Reduce motion` must take effect on the very
   // next frame, which it cannot do if resolved once in `chatMain`. Computed once per render, here, and
-  // handed to all three live-turn indicator components below — the SAME resolver's setting half is already
-  // `state.prefersReducedMotion` (useChat's own state, kept live by `setPrefersReducedMotion`); this line is
-  // `motion.ts`'s `reducedMotion()` OR spelled out against `state` rather than a `CcxPrefs` object, since
-  // there is no prefs object in scope here — only the two rungs canon's own `hx(...) || hl()` reads.
-  const motionReduced = state.prefersReducedMotion || screenReaderEnabled(process.env);
+  // handed to all three live-turn indicator components below — `motion.ts`'s `reducedMotion()` is the SAME
+  // resolver `chatMain.tsx`'s startup title uses, called against `state.prefersReducedMotion` (useChat's own
+  // state, kept live by `setPrefersReducedMotion`), which satisfies its `Pick<CcxPrefs, "prefersReducedMotion">`
+  // parameter exactly.
+  const motionReduced = reducedMotion({ prefersReducedMotion: state.prefersReducedMotion });
   // WAVE C TASK 2 — the rewind arm's feedback moved from its own ROW to the notification QUEUE, which is
   // upstream's placement for every "press it again" message (annex §C1.6's `escape-again-to-clear` and
   // `left-arrow-again-for-agents` are both `immediate` feedback entries, not permanent lines). Same string,

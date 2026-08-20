@@ -174,6 +174,11 @@ function windowsOverSsh(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): bool
   return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY);
 }
 
+/** The screen-reader rung as a predicate rather than an inline test, because F8's banner and its motion
+ *  resolver need the same verdict and `choice.reason === "screen_reader"` is not it — that is true only
+ *  when this rung WINS, and is silently false under a non-TTY. Env-only, per divergence 4 above. */
+export function screenReaderEnabled(env: NodeJS.ProcessEnv): boolean { return envBool(env.CLAUDE_AX_SCREEN_READER) === true; }
+
 /** Decided ONCE, at startup; a resize never re-runs it (spec §L2.1). `platform` is injectable for the same
  *  reason `useChat`'s is — the Windows-over-SSH rung would otherwise be unpinnable off Windows — and
  *  defaults to the live process, so the three-field shape the plan declares is what every caller writes.
@@ -181,11 +186,6 @@ function windowsOverSsh(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): bool
  *  one-shot callers that do not pass one, since the rung's expensive half only runs when the cheap env test
  *  has already missed — and `runChatClient` injects a `makeTmuxProbe()` closure so its two calls share one
  *  answer. A test can pin either verdict without a tmux on the machine. */
-/** The screen-reader rung as a predicate rather than an inline test, because F8's banner and its motion
- *  resolver need the same verdict and `choice.reason === "screen_reader"` is not it — that is true only
- *  when this rung WINS, and is silently false under a non-TTY. Env-only, per divergence 4 above. */
-export function screenReaderEnabled(env: NodeJS.ProcessEnv): boolean { return envBool(env.CLAUDE_AX_SCREEN_READER) === true; }
-
 export function selectRenderer(deps: { isTTY: boolean; env: NodeJS.ProcessEnv; prefs: CcxPrefs; platform?: NodeJS.Platform; tmuxProbe?: (env: NodeJS.ProcessEnv) => boolean }): RendererChoice {
   const { isTTY, env, prefs, platform = process.platform, tmuxProbe = probeTmuxControlMode } = deps;
   if (!isTTY) return { mode: "classic", reason: "not_tty" };

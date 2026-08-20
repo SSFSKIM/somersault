@@ -56,6 +56,52 @@ describe("RetryRow: the retrying variant", () => {
   });
 });
 
+// F8 T6 REVIEW (Finding B). `reducedMotion` is a NEW prop on this component (RetryRow.tsx:47) and a new
+// disarm path at RetryRow.tsx:48 (`useAnimationClock(reducedMotion ? null : 120, 0, now)`), and unlike
+// TurnSpinner/CompactionRow — whose reduced-motion branches shipped with tests in earlier tasks — this file
+// had never once mentioned the string `reducedMotion` before this block. `useAnimationClock`'s own contract
+// (animationClock.ts:30) is that a `null` interval never even calls `setInterval`, so under reduced motion
+// the row has NOTHING driving a self-triggered repaint — its 120 ms tick is the only thing that would; the
+// countdown text still computes fresh off `now()` on any render RetryRow gets for an unrelated reason (a new
+// wire frame, say), which is why this is framed as "no self-repaint" rather than "the text is frozen".
+describe("RetryRow: reduced motion (F8 T6)", () => {
+  it("disarms the periodic repaint — the countdown holds still across elapsed time with nothing else forcing a render", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);                                            // deterministic small `Date.now()`, not the real epoch
+    try {
+      const status = { kind: "retrying" as const, attempt: 2, maxRetries: 10, deadline: 20_000, label: "API error" };
+      const { lastFrame } = render(<RetryRow status={status} reducedMotion />);   // `now` defaults to Date.now
+      const first = lastFrame();
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });   // far past the 120ms tick this disarms
+      expect(lastFrame()).toBe(first);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("stalled variant: reduced motion disarms the same tick (the glyph never animates in this branch anyway, but the seam is shared)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const { lastFrame } = render(<RetryRow status={{ kind: "stalled" }} reducedMotion />);
+      const first = lastFrame();
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      expect(lastFrame()).toBe(first);
+      expect(line(lastFrame)).toBe("✻ Waiting for API response · check your network");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("WITHOUT reduced motion (the default), the same elapsed time DOES move the row — proving the freeze above is the prop, not a test artifact", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const status = { kind: "retrying" as const, attempt: 2, maxRetries: 10, deadline: 20_000, label: "API error" };
+      const { lastFrame } = render(<RetryRow status={status} />);   // reducedMotion defaults false
+      const first = lastFrame();
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      expect(lastFrame()).not.toBe(first);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("retryCountdown: canon `ra` restricted to whole-second remainders", () => {
   it("prints bare seconds under a minute", () => {
     expect(retryCountdown(0)).toBe("0s");
