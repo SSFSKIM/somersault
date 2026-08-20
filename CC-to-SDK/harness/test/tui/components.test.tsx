@@ -15,6 +15,7 @@ import { PermissionDialog } from "../../src/tui/PermissionDialog.js";
 import { modeColor } from "../../src/tui/modeTable.js";
 import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { TurnSpinner } from "../../src/tui/TurnSpinner.js";
+import { reducedMotion } from "../../src/tui/motion.js";
 import { IDLE_METER, type SpinnerMeter } from "../../src/tui/liveTurn.js";
 import type { PermissionDecision } from "../../src/index.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
@@ -249,6 +250,18 @@ describe("TurnSpinner", () => {
     expect(stripAnsi(lastFrame() ?? "")).toBe("· Cogitating… (20s)");
     clock = 81_000; rerender(spinner());
     expect(stripAnsi(lastFrame() ?? "")).toBe("· Cogitating… (1m 20s)");
+  });
+  // F8 TASK 6. The component contract is a boolean prop (pinned above); THIS pins the other half — that
+  // `motion.ts`'s resolver, which is what actually SETS that prop from a screen-reader signal nobody
+  // threads by hand, agrees with the same verdict. A component test that only ever passes the prop directly
+  // cannot fail against a build where nothing upstream ever calls the resolver; asserting the resolver's
+  // output here, in the same test as the component's frozen frame, is what closes that gap.
+  it("freezes the spinner glyph under reduced motion, by setting or by screen reader", () => {
+    const bySetting = render(<TurnSpinner startedAt={1000} verb="Baking" reducedMotion now={() => 2000} />);
+    expect(stripAnsi(bySetting.lastFrame() ?? "")).toContain("· Baking…");
+    // the screen-reader arm arrives as the same prop, resolved one level up — pinned here so the
+    // component contract is explicit even though the resolver is what maps the env onto it
+    expect(reducedMotion({}, { CLAUDE_AX_SCREEN_READER: "1" } as NodeJS.ProcessEnv)).toBe(true);
   });
   it("re-picks the gerund on a phase transition and holds it inside one phase", () => {
     const picks = ["Baking", "Herding", "Noodling"]; let i = 0;

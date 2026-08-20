@@ -133,6 +133,30 @@ describe("the busy prefix animation (`dhi`/`phi` L549523/L549863, `abm = 960`)",
   });
 });
 
+describe("reduced motion (F8 T6) — the STARTUP `deps.reducedMotion`, not a live resolver read", () => {
+  it("does not alternate the busy prefix under reduced motion", () => {
+    const writes: string[] = [];
+    let fire: (() => void) | undefined;
+    const title = createTerminalTitle({
+      write: (s) => writes.push(s), reducedMotion: true,
+      setInterval: (fn) => { fire = fn; return 1; }, clearInterval: () => {},
+    });
+    title.setTitle("work"); title.setBusy(true);
+    expect(fire).toBeUndefined();                        // no animation timer armed at all
+    expect(writes.at(-1)).toBe("\x1b]0;✳ work\x07");     // the IDLE prefix, held
+  });
+
+  it("animates normally when reducedMotion is absent or explicitly false", () => {
+    const h = harness();                                  // harness()'s deps carry no `reducedMotion` at all
+    h.title.setTitle("ccx");
+    h.title.setBusy(true);
+    expect(h.armed()).toBe(1);
+    expect(h.writes.at(-1)).toBe(osc(`${TERMINAL_TITLE_BUSY_FRAMES[0]} ccx`));
+    h.fire();
+    expect(h.writes.at(-1)).toBe(osc(`${TERMINAL_TITLE_BUSY_FRAMES[1]} ccx`));
+  });
+});
+
 describe("dedupe — one write per CHANGE of the composed string", () => {
   it("ignores a repeated setTitle with the same text", () => {
     const h = harness();

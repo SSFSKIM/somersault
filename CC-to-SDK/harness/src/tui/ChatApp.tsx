@@ -75,6 +75,7 @@ import { Footer, footerRows, type FooterStatusInput } from "./Footer.js";
 import type { StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
 import type { RendererChoice } from "./renderer.js";
+import { screenReaderEnabled } from "./renderer.js";
 
 import { IDLE_COMPOSER_FOOTER_STATE, type ComposerFooterState } from "./ChatComposer.js";
 import { SessionPicker } from "./SessionPicker.js";
@@ -201,7 +202,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
    *  users already rely on. */
   initialTodosOpen?: boolean;
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -359,7 +360,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -1016,6 +1017,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     || state.settings.open                                        // Wave S t5 — its Config list is windowed now
     || state.permissions.open                                     // Wave S t6b — its rule/workspace lists are windowed now
     || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan");
+  // F8 T6 — READ LIVE, NOT AT STARTUP: a `/config` toggle of `Reduce motion` must take effect on the very
+  // next frame, which it cannot do if resolved once in `chatMain`. Computed once per render, here, and
+  // handed to all three live-turn indicator components below — the SAME resolver's setting half is already
+  // `state.prefersReducedMotion` (useChat's own state, kept live by `setPrefersReducedMotion`); this line is
+  // `motion.ts`'s `reducedMotion()` OR spelled out against `state` rather than a `CcxPrefs` object, since
+  // there is no prefs object in scope here — only the two rungs canon's own `hx(...) || hl()` reads.
+  const motionReduced = state.prefersReducedMotion || screenReaderEnabled(process.env);
   // WAVE C TASK 2 — the rewind arm's feedback moved from its own ROW to the notification QUEUE, which is
   // upstream's placement for every "press it again" message (annex §C1.6's `escape-again-to-clear` and
   // `left-arrow-again-for-agents` are both `immediate` feedback entries, not permanent lines). Same string,
@@ -1475,6 +1483,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                 ? <SettingsDialog tab={state.settings.tab ?? "Config"} onTabChange={setSettingsTab}
                     model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
                     showTurnDuration={state.showTurnDuration} setShowTurnDuration={setShowTurnDuration}
+                    reduceMotion={state.prefersReducedMotion} setReduceMotion={setPrefersReducedMotion}
                     promptSuggestionEnabled={state.promptSuggestionEnabled} setPromptSuggestionEnabled={setPromptSuggestionEnabled}
                     onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
                     fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
@@ -1582,9 +1591,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           the more urgent news and the rarer state. Compacting then beats the ordinary spinner because it is
           strictly more specific: it names the pass that is running instead of a random thinking verb. */}
       {(state.busy || state.compacting) && !paneOwned
-        ? (state.retryStatus ? <RetryRow status={state.retryStatus} />
-          : state.compacting ? <CompactionRow startedAt={state.compacting.startedAt} columns={terminalColumns()} {...(deps?.now ? { now: deps.now } : {})} />
-          : <TurnSpinner startedAt={state.turnStartedAt} meter={state.turnMeter} columns={terminalColumns()} tasks={state.tasks} />)
+        ? (state.retryStatus ? <RetryRow status={state.retryStatus} reducedMotion={motionReduced} />
+          : state.compacting ? <CompactionRow startedAt={state.compacting.startedAt} columns={terminalColumns()} reducedMotion={motionReduced} {...(deps?.now ? { now: deps.now } : {})} />
+          : <TurnSpinner startedAt={state.turnStartedAt} meter={state.turnMeter} columns={terminalColumns()} tasks={state.tasks} reducedMotion={motionReduced} />)
         : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
           prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no

@@ -219,7 +219,7 @@ describe("/detach (F0 KB5 — detach moved off Ctrl-Z)", () => {
 });
 
 describe("/config key=value (W3 T6)", () => {
-  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default", showTurnDuration: true, promptSuggestionEnabled: false };
+  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false };
   const freshRows = () => buildRows(FRESH_CTX);
 
   it("no arg → open", () => {
@@ -267,6 +267,17 @@ describe("/config key=value (W3 T6)", () => {
     expect((r as any).value).toBe("false");
     const off = parseConfigArg("showTurnDuration=false", buildRows({ ...FRESH_CTX, showTurnDuration: false }));
     expect(off).toEqual({ kind: "error", lines: [{ text: "showTurnDuration is already off.", dim: true }] });
+  });
+
+  // F8 T6's row — reaches the SAME generic boolean arm through its own id, proving the row is wired into
+  // /config's validation rather than only into buildRows.
+  it("reduceMotion=true is a validated set, and repeating it against an on row is the 'already off' notice's mirror", () => {
+    const r = parseConfigArg("reduceMotion=true", freshRows());
+    expect(r.kind).toBe("set");
+    expect((r as any).id).toBe("reduceMotion");
+    expect((r as any).value).toBe("true");
+    const already = parseConfigArg("reduceMotion=false", freshRows());   // FRESH_CTX.reduceMotion is false
+    expect(already).toEqual({ kind: "error", lines: [{ text: "reduceMotion is already off.", dim: true }] });
   });
 
   it("permissionMode (enum) rejects an out-of-domain value, listing the exact 4 options", () => {

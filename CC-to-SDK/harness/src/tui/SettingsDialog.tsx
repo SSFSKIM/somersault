@@ -317,7 +317,7 @@ export function settingsWrapRows(columns?: number): number {
 export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24, columns?: number, thinkingTouched: boolean = false): number =>
   Math.max(1, rows - SETTINGS_CHROME_ROWS - (thinkingTouched ? settingsWrapRows(columns) : 0));
 
-export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, showTurnDuration, promptSuggestionEnabled, onDone, applyMode, setThink, setShowTurnDuration, setPromptSuggestionEnabled, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
+export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, showTurnDuration, reduceMotion, promptSuggestionEnabled, onDone, applyMode, setThink, setShowTurnDuration, setReduceMotion, setPromptSuggestionEnabled, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
   tab: string;
   onTabChange: (tab: string) => void;
   model?: string;
@@ -328,6 +328,9 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
    *  is a claim about a persisted pref, and a component that quietly renders `true` while the file says
    *  otherwise would be lying in the one place `/config` exists to tell the truth. */
   showTurnDuration: boolean;
+  /** F8 T6: the `Reduce motion` row's live value and its toggle — `showTurnDuration`'s shape exactly, and
+   *  required for the same reason. */
+  reduceMotion: boolean;
   /** W-C T12: the `Prompt suggestions` row's live value and its toggle — the row above's shape exactly, and
    *  required for the same reason. */
   promptSuggestionEnabled: boolean;
@@ -335,6 +338,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   applyMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
   setShowTurnDuration: (next: boolean) => void;
+  setReduceMotion: (next: boolean) => void;
   setPromptSuggestionEnabled: (next: boolean) => void;
   applyOutputStyle: (id: string) => Promise<void>;
   fetchStatus: () => Promise<RenderLine[]>;
@@ -369,7 +373,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     return () => { cancelled = true; };
   }, [activeTab]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, promptSuggestionEnabled };
+  const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, reduceMotion, promptSuggestionEnabled };
   // NOT `rows` any more (Wave S t5): that name is the TERMINAL HEIGHT prop now, and two things called `rows`
   // in one component is how a geometry bug hides.
   const configRows = buildRows(ctx);
@@ -419,6 +423,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     // branch is by ID, not by type. `showTurnDuration` is a pure client flag with nothing to warn about.
     if (row.id === "thinking") { setThinkingTouched(true); void setThink(row.value === "true" ? "off" : "default"); }
     else if (row.id === "showTurnDuration") setShowTurnDuration(row.value !== "true");
+    else if (row.id === "reduceMotion") setReduceMotion(row.value !== "true");
     else if (row.id === "promptSuggestionEnabled") setPromptSuggestionEnabled(row.value !== "true");
     else if (row.type === "enum") { void applyMode(cycleEnum(row)); }
     else if (row.id === "theme") setSub("theme");

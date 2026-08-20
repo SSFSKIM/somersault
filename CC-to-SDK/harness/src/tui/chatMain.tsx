@@ -23,6 +23,7 @@ import { createCursorReports, probeReflow } from "./reflowOracle.js";
 import { createResizeRepaint, parkColumn, parkSequence, type FrameWriteInfo } from "./resizeRepaint.js";
 import { setTheme } from "./theme.js";
 import { createTerminalTitle } from "./terminalTitle.js";
+import { reducedMotion } from "./motion.js";
 
 export interface ChatClientOpts {
   socketPath: string;
@@ -35,7 +36,7 @@ export interface ChatClientOpts {
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -691,6 +692,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     // install that has never touched the setting neither generates suggestions nor shows the first-run
     // `Try "…"` template that upstream gates on the same key.
     initialPromptSuggestionEnabled: opts.hookOpts?.initialPromptSuggestionEnabled ?? promptSuggestionEnabled(prefs),
+    // F8 T6: and the `Reduce motion` row from the same read — DEFAULT FALSE, canon's own polarity.
+    initialPrefersReducedMotion: opts.hookOpts?.initialPrefersReducedMotion ?? (prefs.prefersReducedMotion ?? false),
     // W-C T10 (EP-C2): the ONE place ccx reads a settings file for its own UI, and the one place it can be:
     // canon L154558 honours `statusLine` from the USER file only (a checked-out project may not install a
     // command on the machine that checks it out), and every layer below this is a pure function or a hook a
@@ -828,7 +831,10 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // animation tick for a write that changes nothing on the pane.
   // THIS IS ALSO THE CONTAINMENT: only the REPL builds one, so a daemon/HOST session — which never
   // calls `runChatClient` — cannot retitle a terminal it does not own.
-  const title = createTerminalTitle({ write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); } });
+  // F8 T6: the STARTUP value only — this object is long-lived, not a rendered component, so a mid-session
+  // `/config` toggle reaches it on the next relaunch rather than the next frame (recorded asymmetry, task
+  // report). The three rendered consumers below read the resolver live, every render.
+  const title = createTerminalTitle({ write: (s) => { if (process.stdout.isTTY) process.stdout.write(s); }, reducedMotion: reducedMotion(prefs) });
   // ── FSW T6 (spec §A3/§A6) — THE ALT-SCREEN GUARD AND THE EXIT GUARANTEE ──────────────────────────────
   // CONSTRUCTED ON EVERY LAUNCH, ARMED BY NOBODY YET. `enter()` is the arming, and only the fullscreen
   // renderer calls it (T9); until then every method here is inert and this block costs a classic launch two

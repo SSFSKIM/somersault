@@ -476,18 +476,18 @@ const CATALOG: CommandEntry[] = [
 ];
 // WAVE S t5 — the Config tab's rows, at a pane tall enough that the whole catalog is on screen (the
 // windowing itself is settings-dialog.test.tsx's; what this pins is that all five key groups now arrive here).
-// SEVEN rows since W-C T12 added `Prompt suggestions` below W-C T7's `Show turn duration`; that new row
-// is the list's last one.
+// EIGHT rows since F8 T6 added `Reduce motion` below W-C T7's `Show turn duration` and above W-C T12's
+// `Prompt suggestions`, which stays the list's last row.
 const SETTINGS_PROPS = {
   tab: "Config", onTabChange: () => {}, mode: "default", thinkLevel: "default", outputStyle: "default",
   onDone: () => {}, applyMode: async () => {}, setThink: async () => {}, applyOutputStyle: async () => {},
   fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
-  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {}, promptSuggestionEnabled: false, setPromptSuggestionEnabled: () => {},
+  onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {}, reduceMotion: false, setReduceMotion: () => {}, promptSuggestionEnabled: false, setPromptSuggestionEnabled: () => {},
 };
 pinsListNavigation(
   "the Settings dialog's Config list",
   () => opened(<SettingsDialog {...SETTINGS_PROPS} rows={40} columns={100} />, "Prompt suggestions"),
-  ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode", "Show turn duration", "Prompt suggestions"],
+  ["Theme", "Model", "Output style", "Default permission mode", "Thinking mode", "Show turn duration", "Reduce motion", "Prompt suggestions"],
 );
 
 // WAVE S t6b — the Allow tab's rule list, at a pane tall enough that all three rows are on screen (the

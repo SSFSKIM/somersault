@@ -4,12 +4,12 @@
 import { describe, it, expect } from "vitest";
 import { buildRows, filterRows, cycleEnum, summarizeChanges, THINKING_WARNING, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
 
-const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true, promptSuggestionEnabled: false };
+const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false };
 
 describe("settingsRows.ts", () => {
-  it("buildRows returns the 7 rows in the pinned order, ending with showTurnDuration then promptSuggestionEnabled", () => {
+  it("buildRows returns the 8 rows in the pinned order, ending with showTurnDuration, reduceMotion, then promptSuggestionEnabled", () => {
     const rows = buildRows(BASE_CTX);
-    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration", "promptSuggestionEnabled"]);
+    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration", "reduceMotion", "promptSuggestionEnabled"]);
   });
 
   it("row labels + hints match the Global Constraints table (theme/model carry a hint, the rest don't)", () => {
@@ -27,6 +27,8 @@ describe("settingsRows.ts", () => {
     expect(byId.thinking.hint).toBeUndefined();
     expect(byId.showTurnDuration.label).toBe("Show turn duration");
     expect(byId.showTurnDuration.hint).toBeUndefined();
+    expect(byId.reduceMotion.label).toBe("Reduce motion");
+    expect(byId.reduceMotion.hint).toBeUndefined();
     expect(byId.promptSuggestionEnabled.label).toBe("Prompt suggestions");
     expect(byId.promptSuggestionEnabled.hint).toBeUndefined();
   });
@@ -57,6 +59,14 @@ describe("settingsRows.ts", () => {
     expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.type).toBe("boolean");
     expect(buildRows(BASE_CTX).find((r) => r.id === "showTurnDuration")!.value).toBe("true");
     expect(buildRows({ ...BASE_CTX, showTurnDuration: false }).find((r) => r.id === "showTurnDuration")!.value).toBe("false");
+  });
+
+  // F8 TASK 6. Canon's own id and label, character for character (bundle L383488), riding
+  // `showTurnDuration`'s exact shape one row below it — DEFAULT FALSE, canon's own polarity (`?? !1`).
+  it("reduceMotion is a boolean row echoing the pref, which defaults FALSE", () => {
+    expect(buildRows(BASE_CTX).find((r) => r.id === "reduceMotion")!.type).toBe("boolean");
+    expect(buildRows(BASE_CTX).find((r) => r.id === "reduceMotion")!.value).toBe("false");
+    expect(buildRows({ ...BASE_CTX, reduceMotion: true }).find((r) => r.id === "reduceMotion")!.value).toBe("true");
   });
 
   // WAVE C TASK 12 (EP-C5). Upstream's own id and label (bundle L315485), label-only there and here — but

@@ -19,9 +19,10 @@
 // no honest source for that number out here and it is omitted rather than invented — the same reduction
 // `retryStatus.ts` documents for upstream's `b0p` disjunction. If a future wire frame ever carries the
 // abort instant, `RetryStatus["stalled"]` gains a `deadline` and the clause comes back verbatim.
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Text } from "ink";
 import { resolveThemeColor, themeTokens } from "./theme.js";
+import { useAnimationClock } from "./animationClock.js";
 import type { RetryStatus } from "./retryStatus.js";
 
 const GLYPH = "✻";                                        // canon `i5`, L41482 — U+273B, held still, not animated
@@ -40,10 +41,11 @@ export function retryCountdown(remainingMs: number): string {
 
 /** The indicator row for a live `RetryStatus`. `now` is injectable exactly as TurnSpinner's is, so a test
  *  pins the countdown without touching timers; the 120 ms tick only exists to make the countdown move on its
- *  own, which is what canon's per-animation-frame recompute buys. */
-export function RetryRow({ status, now = Date.now }: { status: RetryStatus; now?: () => number }) {
-  const [, setTick] = useState(0);
-  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 120); return () => clearInterval(t); }, []);
+ *  own, which is what canon's per-animation-frame recompute buys. F8 T6: that tick is `useAnimationClock`
+ *  now, disarmed under reduced motion — its RETURN VALUE is unused (the countdown arithmetic below still
+ *  reads `now()` directly), it is only here to force the periodic repaint, or none at all when frozen. */
+export function RetryRow({ status, now = Date.now, reducedMotion = false }: { status: RetryStatus; now?: () => number; reducedMotion?: boolean }) {
+  useAnimationClock(reducedMotion ? null : 120, 0, now);
   const err = resolveThemeColor(themeTokens().error);
   if (status.kind === "stalled")
     return (

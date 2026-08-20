@@ -45,7 +45,10 @@ import { THEMES, type ThemeId } from "./theme.js";
  *  equivalent to CLAUDE_CODE_NO_FLICKER=1"). It is one rung of `renderer.ts`'s decision ladder — below the
  *  env levers, above the shipped default — and is read ONCE at boot. Upstream keeps it in the settings FILE;
  *  ours lives here, the client-side seam this module already owns, like `model` and `showTurnDuration`. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default" }
+/** `prefersReducedMotion` is F8 T6's setting and canon's own key (bundle L383488 row, `r?.prefersReducedMotion
+ *  ?? !1` L507998) — DEFAULT FALSE. It is one of two rungs `motion.ts`'s `reducedMotion()` reads, the other
+ *  being the `CLAUDE_AX_SCREEN_READER` env var; this file only ever sees the setting half. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 

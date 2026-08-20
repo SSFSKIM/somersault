@@ -59,6 +59,19 @@ describe("CompactionRow", () => {
     clock = 601_000; rerender(row());
     expect(line(lastFrame)).toBe(first);
   });
+
+  // F8 TASK 6, the wiring half. The test above pins the freeze against a HAND-PASSED prop; this pins that
+  // the freeze survives the shape ChatApp actually drives it in — a parent rerender that also changes an
+  // unrelated prop (`columns`), which a build that resolved `reducedMotion` once at mount (instead of
+  // reading it on every render) could still pass by accident.
+  it("freezes BOTH the glyph and the bar under reduced motion, even across a parent rerender", () => {
+    let clock = 1000;
+    const { lastFrame, rerender } = render(<CompactionRow startedAt={1000} columns={80} reducedMotion now={() => clock} />);
+    const first = lastFrame();
+    clock = 60_000;                                     // a minute of wall clock passes
+    rerender(<CompactionRow startedAt={1000} columns={80} reducedMotion now={() => clock} />);
+    expect(lastFrame()).toBe(first);                    // the bar must not have advanced either
+  });
 });
 
 describe("ChatApp: compaction owns the live-turn slot", () => {

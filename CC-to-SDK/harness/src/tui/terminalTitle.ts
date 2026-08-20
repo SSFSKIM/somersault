@@ -65,6 +65,10 @@ export interface TerminalTitleDeps {
   setInterval?: (fn: () => void, ms: number) => unknown;
   clearInterval?: (h: unknown) => void;
   env?: NodeJS.ProcessEnv;
+  /** F8 T6 — the STARTUP value of `motion.ts`'s `reducedMotion()`. This object is long-lived, not a rendered
+   *  component, so it is resolved once at construction; a mid-session toggle reaches it on the next relaunch
+   *  (recorded asymmetry, task report), unlike the three rendered consumers that read the resolver live. */
+  reducedMotion?: boolean;
 }
 
 export interface TerminalTitle {
@@ -93,7 +97,7 @@ export function createTerminalTitle(deps: TerminalTitleDeps): TerminalTitle {
   let handle: unknown, last: string | undefined;
 
   const emit = (): void => {
-    const prefix = busy ? TERMINAL_TITLE_BUSY_FRAMES[frame % TERMINAL_TITLE_BUSY_FRAMES.length] : TERMINAL_TITLE_IDLE_PREFIX;
+    const prefix = busy && deps.reducedMotion !== true ? TERMINAL_TITLE_BUSY_FRAMES[frame % TERMINAL_TITLE_BUSY_FRAMES.length] : TERMINAL_TITLE_IDLE_PREFIX;
     const composed = `${prefix} ${title}`;
     if (composed === last) return;                          // `CVe`'s effect deps: re-emit on CHANGE only
     last = composed;
@@ -111,7 +115,9 @@ export function createTerminalTitle(deps: TerminalTitleDeps): TerminalTitle {
     setBusy(next): void {
       if (disabled || next === busy) return;
       busy = next;
-      if (next) { frame = 0; emit(); handle = arm(() => { frame++; emit(); }, TERMINAL_TITLE_FRAME_MS); }
+      // F8 T6: under reduced motion the busy prefix holds at the IDLE glyph and no timer is armed at all —
+      // `emit()` already resolves to the idle prefix above, so there is nothing for a timer to advance.
+      if (next && deps.reducedMotion !== true) { frame = 0; emit(); handle = arm(() => { frame++; emit(); }, TERMINAL_TITLE_FRAME_MS); }
       else { stop(); emit(); }                              // only the PREFIX reverts; `title` is untouched
     },
     clear(): void {
