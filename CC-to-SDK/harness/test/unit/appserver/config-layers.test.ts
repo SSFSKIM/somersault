@@ -219,8 +219,10 @@ describe("configLayers", () => {
       expect(() => settingsMerge(["a"], { length: v })).toThrow(SettingsMergeError);
     // UPSTREAM-EXACT for everything affordable — truncation, hole extension, and the setter's own coercion.
     expect(settingsMerge(["a", "b"], { length: 0 })).toEqual([]);
-    expect(settingsMerge(["a"], { length: 3 })).toEqual([undefined, undefined, undefined].fill("a", 0, 1));
-    expect((settingsMerge(["a"], { length: 3 }) as unknown[]).length).toBe(3);
+    // A hole-extension, which is what `JSON.stringify` renders as `null` — the same shape an in-range
+    // index key produces, and the reason this counts as the source SHOWING.
+    const held = settingsMerge(["a"], { length: 3 }) as unknown[];
+    expect([held.length, held[0], JSON.stringify(held)]).toEqual([3, "a", '["a",null,null]']);
     expect(settingsMerge(["a", "b", "c"], { length: "2" })).toEqual(["a", "b"]);
     // `null`, `true` and `[]` are lengths to the real setter (0, 1, 0), so they are lengths here too —
     // upstream-exactness is the rule, and only the shapes the setter itself refuses are refused.

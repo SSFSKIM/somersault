@@ -1779,6 +1779,31 @@ describe("config/value/write + config/batchWrite", () => {
     expect(reply(id).result.status).toBe("ok");
   });
 
+  /** FIX WAVE I, the extra item. Both handlers' last-resort catch replied with `e.message` verbatim, and
+   *  what falls through to it is the text NOBODY here composed — a node errno, which node builds as
+   *  `"EACCES: permission denied, mkdir '/Users/<operator>/.claude'"`. That is the operator's home
+   *  directory on the wire for any client that can reach these methods, and it is exactly the leak
+   *  `archiveDomain`'s `stripPaths` exists for; `thread/search` and `thread/list` already route through it
+   *  and these two new sites did not. `replyConfigError` catches only the two error types this repo
+   *  composes itself, so a filesystem errno goes straight past it. */
+  it.skipIf(!modeDenies)("an errno that reaches the internal reply is path-stripped, not passed through", async () => {
+    boot(deps());
+    rmSync(join(proj, ".claude"), { recursive: true, force: true });
+    chmodSync(proj, 0o500);                       // …so creating `.claude` inside it fails EACCES
+    try {
+      const id = await send("config/value/write", { keyPath: ["model"], value: "opus", mergeStrategy: "replace", target: "project", cwd: proj });
+      // The CONTROL: this really is the fall-through branch — an INTERNAL carrying node's own errno text,
+      // not one of the two typed refusals `replyConfigError` handles.
+      expect(reply(id).error.code).toBe(-32603);
+      expect(`errno reached the reply: ${/EACCES|EPERM/.test(reply(id).error.message as string)}`).toBe("errno reached the reply: true");
+      expect(reply(id).error.message).toContain("<path>");
+      // …and the thing that must not be there. `proj` is a temp directory here; in production it is the
+      // operator's own, which is the whole point.
+      expect(`the message names a real path: ${(reply(id).error.message as string).includes(realpathSync(proj))}`)
+        .toBe("the message names a real path: false");
+    } finally { chmodSync(proj, 0o700); }
+  });
+
   /** FIX WAVE I / SWEEP#1, at the wire — the SAME consequence through the key the row above could not
    *  reach. `length` is not an index, so G5's bound returned early on it and `bag["length"] = v` invoked
    *  the array's own setter: 100,000,000 slots and 500 MB of `JSON.stringify` output for a settings file

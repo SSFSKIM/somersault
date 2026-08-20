@@ -6,7 +6,7 @@
 // liveness is a LEASE carried in that same name, which the holder refreshes by renaming it. The block above `withFileLock` says why each is load-bearing.
 import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink, readdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { settingsMerge } from "./configLayers.js";
 
 // `ConfigLocked` is NOT a validation failure: the request was well-formed and the target real, another
@@ -182,6 +182,28 @@ export async function resolveRealTarget(filePath: string): Promise<string> {
   throw new ConfigError("ConfigValidationError", `settings path resolves through more than ${SYMLINK_HOPS} symlinks (or a symlink loop): ${filePath}`);
 }
 
+/** THE FOURTH DETECTOR (fix wave I / scalpel-1#2), and the only one that asks about the path the CLIENT
+ *  named rather than the one we resolved it to. `resolveRealTarget` runs before the lock; acquiring a
+ *  contended target then BLOCKS for up to `staleMs + 5s`. Re-pointing the nominal symlink inside that
+ *  window is invisible to all three of the others — the lock is on the resolved path and is still ours,
+ *  the resolved entry is still an ordinary file, and its bytes are still the ones we read — so the write
+ *  committed to the abandoned target and returned its version while the engine for that project read a
+ *  different file. `ok` for a change no engine serves.
+ *
+ *  `ConfigLocked` for the same reason `assertNotRelinked` uses it: the client's move is "re-read and
+ *  retry", and the retry re-resolves and locks the file the operator now points at. A resolution that
+ *  cannot be taken at all is treated as a move rather than raised here — the retry surfaces its real
+ *  refusal, with the whole request's error handling around it instead of half of one.
+ *
+ *  It is a NARROWING, not a proof, exactly as the third detector is. What it removes is the thirty-five
+ *  seconds of lock wait, which is not a race but an ordinary duration. */
+export async function assertStillResolves(nominal: string, resolved: string): Promise<void> {
+  const now = await resolveRealTarget(nominal).then((p) => p, () => null);
+  if (now === resolved) return;
+  throw new ConfigError("ConfigLocked",
+    "the settings path resolves somewhere else than when this write was prepared; nothing was written — re-read and retry");
+}
+
 /** TARGETED, never a blanket catch — wrapping the whole write in one would swallow genuine internal
  *  failures under a validation code. `mkdir(…, {recursive:true})` creates a missing parent and is the
  *  ordinary first-write path, but it cannot fix a parent that is ALREADY something: a `.claude` that is a
@@ -205,17 +227,29 @@ export async function assertWritableParent(filePath: string): Promise<void> {
 
 /** What a caller asserts about the bytes it is replacing, checked at the LAST instant before the rename.
  *  THREE independent detectors, because they fail independently and each answers about a different subject:
- *  `fence` asks the LOCK whether this process still holds it, `expectVersion` asks the FILE whether anyone
+ *  `commit` asks the LOCK whether this process still holds it, `expectVersion` asks the FILE whether anyone
  *  committed since the caller read it, and `assertNotRelinked` asks the PATH whether it still names the same
  *  kind of thing it named when it was resolved. The second holds even if the lock fails in a way the first
  *  cannot see, which is the property that matters — no arrangement of an advisory lock can be trusted to
  *  the point of skipping it — and the third holds even when both of the others are satisfied, because a
- *  path swapped for a symlink keeps the lock valid and can keep the bytes identical. */
+ *  path swapped for a symlink keeps the lock valid and can keep the bytes identical.
+ *
+ *  THE LOCK'S DETECTOR AND THE RENAME ARE ONE CALL, and that is the whole of fix wave I / sweep#2. The
+ *  first shape of this interface handed out a bare `fence()` and left the caller to rename afterwards —
+ *  and the caller then grew two awaited filesystem operations in between (the relink check, the version
+ *  read), each added by a repair of its own. The fence's promise is exactly that the margin after it
+ *  resolves is a full `staleMs`; work placed after it SPENDS that margin, and a holder that outlasts the
+ *  window has its lease broken, after which its own rename destroys the successor's committed bytes. The
+ *  repair is not a second check before the rename: the caller no longer receives a way to say "verify, then
+ *  do something, then commit" — it hands the lock a SOURCE PATH and the lock performs the ownership
+ *  assertion, the lease refresh and the rename with nothing awaited between them. The destination is the
+ *  path the lock is held for, so committing anywhere else is unspellable too. */
 export interface CommitGuard {
   /** the token the doc being replaced hashed to when this caller read it */
   expectVersion: string;
-  /** the lock's own liveness assertion; throws `ConfigLocked` if this process no longer owns the lock */
-  fence: () => Promise<void>;
+  /** the lock's own commit: assert ownership, refresh the lease, and rename `from` onto the locked path,
+   *  with nothing awaited in between. Throws `ConfigLocked` if this process no longer owns the lock. */
+  commit: (from: string) => Promise<void>;
 }
 
 /** THE THIRD DETECTOR (fix wave G / G2), and the one neither of the other two can see. `resolveRealTarget`
@@ -277,18 +311,25 @@ export async function writeTargetDoc(filePath: string, doc: Record<string, unkno
   try {
     await writeFile(tmp, bytes, { mode: mode ?? 0o600 });
     await chmod(tmp, mode ?? 0o600);
-    // The guard sits HERE — after the tmp is complete, one syscall before the rename — because that is
+    // The guards sit HERE — after the tmp is complete, immediately before the rename — because that is
     // the narrowest window a userspace writer can leave between "I am still the writer" and "these bytes
     // are the file". Checking earlier leaves the whole serialization of the write inside the window;
     // checking after the rename is not a check at all, it is a post-mortem on a destroyed update.
+    //   THE LOCK'S DETECTOR IS LAST, AND IT IS THE RENAME (fix wave I / sweep#2). The other two run before
+    // it, so the ownership assertion has nothing awaited between itself and the commit — this used to be
+    // `fence(); lstat; readFile; rename`, three operations inside a margin the fence promises is a full
+    // stale window. What that ordering costs is one syscall of extra reach for the version read, which is
+    // the SAME residual that read already carries and states: a byte written between it and the rename is
+    // undetectable from userspace either way. What it buys is that a lease broken between the assertion
+    // and the commit — the case where the evicted owner overwrites its successor — needs the rename's own
+    // issuance to be delayed, rather than two file operations' worth of margin to be spent.
     if (guard !== undefined) {
-      await guard.fence();
       await assertNotRelinked(filePath);
       const current = await readFile(filePath).then(versionToken, (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : null));
       if (current !== guard.expectVersion)
         throw new ConfigError("ConfigLocked", "the settings file changed while this write was being prepared; nothing was written — re-read and retry");
-    }
-    await rename(tmp, filePath);
+      await guard.commit(tmp);
+    } else await rename(tmp, filePath);
   } catch (e) { await unlink(tmp).catch(() => {}); throw e; }
   return { version: versionToken(bytes) };
 }
@@ -306,12 +347,38 @@ const errnoOf = (e: unknown): string | undefined => (e as NodeJS.ErrnoException)
  *  client's move is identical, so a second string would only be a second thing to match on. */
 const LOCK_BROKEN = "this writer's lock was broken while it was held; nothing was written";
 
+/** What `withFileLock` hands its body. TWO members and only one of them can move a byte, which is the whole
+ *  of fix wave I / sweep#2: `commit` is the ONLY way to install a file at the locked path, and it performs
+ *  the ownership assertion itself, immediately before the rename it guards. A caller may still ask the
+ *  question on its own — `assertHeld` — and may still do work afterwards; that is safe precisely because
+ *  the commit asks again. What is not expressible any more is asking the question and then renaming, which
+ *  is the sequence that let two awaited file operations grow inside a margin the lease had already promised
+ *  away. */
+export interface LockHandle {
+  /** assert ownership and refresh the lease; throws `ConfigLocked` if this process no longer holds it */
+  assertHeld: () => Promise<void>;
+  /** assert ownership, refresh the lease, and rename `from` onto the locked path — nothing in between */
+  commit: (from: string) => Promise<void>;
+}
+
 /** A marker is named `<owner nonce>.<lease>`: WHO holds the claim and WHEN they last said so, in the one
  *  thing `unlink` is conditional on (fix wave H / H1). The nonce is `<pid>-<base36>` and carries no `.`,
  *  so the split is unambiguous; a name with no parsable lease is a marker this format did not write. */
 const leaseSep = ".";
 const markerOwner = (name: string): string => (name.includes(leaseSep) ? name.slice(0, name.lastIndexOf(leaseSep)) : name);
 const markerLease = (name: string): number => (name.includes(leaseSep) ? Number(name.slice(name.lastIndexOf(leaseSep) + 1)) : NaN);
+
+/** A name THIS LOCK'S OWN FORMAT could have written — `<pid>-<suffix>`, optionally `.<lease>` — and the
+ *  reason the break path cannot delete a stranger's file (fix wave I / scalpel-1#1). `readdir` FOLLOWS a
+ *  symlink, so a `<file>.lock` that is a link to some other directory answered the break path with that
+ *  directory's children; it judged the first one by its mtime and unlinked it THROUGH the link, and since
+ *  `rmdir` of a symlink fails, the acquire loop retried and ate the next child, and the next. Screening the
+ *  NAME is what makes that unspellable: the delete can only name a string this lock could have produced, so
+ *  a stranger's file is not a thing it can ask for — the same move as the acquire path's "unlink cannot
+ *  remove a directory" and the break path's "the delete can only spell the lease it read", one level up.
+ *  The suffix is deliberately `[0-9a-z]*` rather than the hex the nonce now uses: a marker written by an
+ *  older build carries a `Math.random().toString(36)` tail and must still be breakable. */
+const MARKER_NAME = /^\d+-[0-9a-z]*(?:\.\d+)?$/;
 
 /** A lock is a NON-EMPTY DIRECTORY at `<file>.lock`, published by `rename`, holding exactly one marker
  *  file whose NAME is the owner's nonce (D-M5-24). Three properties fall out of that shape, and each one
@@ -357,10 +424,13 @@ const markerLease = (name: string): number => (name.includes(leaseSep) ? Number(
  *  honest answer to a genuinely slow peer rather than the theft it used to be. One number still sets both
  *  "when is a lease dead" and "how long do I wait" (M5 review I3); callers that surface this on a wire must
  *  say so — see configDomain.ts's `runConfigWrite`. */
-export async function withFileLock<T>(filePath: string, fn: (fence: () => Promise<void>) => Promise<T>, opts: { staleMs?: number } = {}): Promise<T> {
+export async function withFileLock<T>(filePath: string, fn: (lock: LockHandle) => Promise<T>, opts: { staleMs?: number } = {}): Promise<T> {
   const staleMs = opts.staleMs ?? 30_000;
   const lockPath = `${filePath}.lock`;
-  const nonce = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  // HEX, not `Math.random().toString(36)` (fix wave I / scalpel-1#1): the marker's name is now screened by
+  // a grammar before anything deletes it, and a nonce whose charset this file does not control is a nonce
+  // that grammar cannot promise to admit.
+  const nonce = `${process.pid}-${randomBytes(6).toString("hex")}`;
   const stagePath = `${lockPath}.stage-${nonce}`;
   const leaseName = (): string => `${nonce}${leaseSep}${Date.now()}`;
   let markerName = leaseName();
@@ -433,11 +503,21 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
     };
     const beat = setInterval(() => { void touch(); }, Math.max(50, Math.floor(staleMs / 3)));
     beat.unref?.();
-    /** Asserts, at the caller's chosen instant, that this process still owns the lock — and refreshes the
-     *  lease while it is there, so the margin AFTER a successful fence is a full `staleMs` rather than
-     *  whatever was left of it. That margin is what makes the check safe despite not being atomic with
-     *  the commit it guards: no other process may break a lease it has just seen refreshed. */
-    const fence = async (): Promise<void> => {
+    /** Asserts that this process still owns the lock — refreshing the lease while it is there — and THEN
+     *  performs the commit itself, `rename(from, filePath)`, with nothing awaited in between.
+     *
+     *  THE COMMIT IS PART OF THE CHECK, not a thing the caller does afterwards (fix wave I / sweep#2). The
+     *  margin a passing ownership check buys is a full `staleMs`, and it is spent by whatever the caller
+     *  puts after it — which is how `writeTargetDoc` came to sit an `lstat` and a whole file read inside
+     *  it, each added by an unrelated repair, until a holder that outlasted the window could be evicted
+     *  and still rename its bytes over the successor's commit. Handing back a bare `fence()` is what made
+     *  that expressible; handing back a commit that takes a SOURCE PATH does not. The destination is this
+     *  lock's own `filePath`, so a commit onto any other path is unspellable as well.
+     *
+     *  The residual is named rather than implied: `rename` is one syscall, but its ISSUANCE still rides
+     *  libuv's threadpool, so a pool saturated past the stale window can delay it — the same irreducible
+     *  gap the version read already documents, now the only one left on this path. */
+    const assertHeld = async (): Promise<void> => {
       // OWNERSHIP is the nonce; the lease beside it moves on every refresh, including one this process's
       // own timer may land between the `readdir` and this comparison. Matching the whole name would make
       // that a spurious eviction of ourselves.
@@ -457,7 +537,15 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
       await touch();
       if (lost) throw new ConfigError("ConfigLocked", LOCK_BROKEN);
     };
-    try { return await fn(fence); }
+    // ONE spelling of the assertion, and the rename ADJACENT to it: `assertHeld` is a single awaited call
+    // that resolves only when this process still owns a freshly refreshed lease, so there is nothing
+    // between it and the `rename` below — the property this shape exists for, expressed without a second
+    // copy of the check to drift from the first.
+    const commit = async (from: string): Promise<void> => {
+      await assertHeld();
+      await rename(from, filePath);
+    };
+    try { return await fn({ assertHeld, commit }); }
     finally {
       clearInterval(beat);
       // Release is ownership-scoped BY CONSTRUCTION, not by a read-then-check: the only marker we can
@@ -477,25 +565,38 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
  *  that is the only outcome allowed to skip the retry budget. It never removes a claim whose lease is
  *  alive, and it cannot remove a claim other than the one it inspected. */
 async function breakDeadLock(lockPath: string, staleMs: number): Promise<boolean> {
-  let names: string[];
-  try { names = await readdir(lockPath); }
-  catch (e) {
-    // ENOTDIR: something that is not a directory holds the path — a lock written by a build older than
-    // D-M5-24, or a file another tool left behind. It carries no lease, and reading its bytes is exactly
-    // what used to wedge under a hostile umask, so it is broken on AGE alone: the only guarantee the
-    // format it belongs to ever made. Leaving it would dead-end every future write to this target.
-    if (errnoOf(e) === "ENOTDIR") {
-      const st = await stat(lockPath).catch(() => null);
-      if (st === null || Date.now() - st.mtimeMs <= staleMs) return false;
-      return await unlink(lockPath).then(() => true, () => false);
-    }
-    return false; // ENOENT (it went away mid-inspection) or EACCES — the retried rename is the answer
+  // THE ENTRY IS IDENTIFIED, NEVER FOLLOWED (fix wave I / scalpel-1#1). `lstat` and not `stat`, because
+  // following the link is exactly the mistake: a `<file>.lock` that is a SYMLINK to a directory answered
+  // `readdir` with that directory's children, and the break path then judged a stranger's file by its
+  // mtime and deleted it through the link. Anything that is not a directory in its own right is not one of
+  // our locks, and it carries no lease — a link a dotfile manager left, a lock file written by a build
+  // older than D-M5-24, a file another tool dropped — so it is broken on AGE alone, which is the only
+  // guarantee any of those formats ever made. Leaving one would dead-end every future write to this target.
+  //   The DELETE is `unlink`, which never follows a symlink and cannot remove a directory (EPERM/EISDIR),
+  // so this branch is incapable of destroying a live lock even if the entry became one between the `lstat`
+  // and the call: the wrong action is refused by the syscall rather than by our being quick.
+  const self = await lstat(lockPath).catch(() => null);
+  if (self === null) return false;   // ENOENT (it went away mid-inspection) or EACCES — the retried rename is the answer
+  if (!self.isDirectory()) {
+    if (Date.now() - self.mtimeMs <= staleMs) return false;
+    return await unlink(lockPath).then(() => true, () => false);
   }
+  const names = await readdir(lockPath).catch(() => null);
+  if (names === null) return false;
   // An EMPTY lock directory is nobody's claim: a break or a release is mid-flight, or a process died
   // between the two halves of one. A claim is renamed in fully formed, so it is never empty, and `rmdir`
   // cannot touch one. (`rename` over an empty directory succeeds anyway; this is for the filesystems
   // where it does not, and it keeps an abandoned husk from outliving its owner.)
   if (names.length === 0) return await rmdir(lockPath).then(() => true, () => false);
+  // A CLAIM THIS LOCK COULD HAVE WRITTEN, or nothing is removed. Exactly one marker, whose name parses as
+  // this format's (`MARKER_NAME`) — both are properties of a claim assembled in the staging directory and
+  // renamed in whole, and `fence` already asserts the first of them from the owner's side. It is what
+  // closes the window the `lstat` above cannot: an entry swapped for a symlink between that call and this
+  // `readdir` yields a stranger's directory listing, and a stranger's filenames are not names this delete
+  // can spell. The cost is stated rather than hidden — a lock directory holding something unrecognisable
+  // is not broken, so writes to that target refuse `ConfigLocked` at the deadline until an operator clears
+  // it. That is a refusal; the alternative was deleting files this lock never wrote.
+  if (names.length !== 1 || !MARKER_NAME.test(names[0])) return false;
   // THE JUDGMENT AND THE DELETE NAME THE SAME STRING, and that is the whole of the repair (fix wave H /
   // H1). The lease is read off the NAME and the delete can only spell the name it was read from, so a
   // holder that refreshed in between — renaming its marker to a new lease — is not deleted by a judgment
@@ -512,7 +613,7 @@ async function breakDeadLock(lockPath: string, staleMs: number): Promise<boolean
     // refusing to break it would dead-end every future write to this target. The residual — racing a
     // holder still running that build, whose refresh does not move the name — is inherent to the format
     // and cannot be closed from this side.
-    const st = await stat(join(lockPath, name)).catch(() => null);
+    const st = await lstat(join(lockPath, name)).catch(() => null);
     if (st === null || Date.now() - st.mtimeMs <= staleMs) return false;
   }
   const unlinked = await unlink(join(lockPath, name)).then(() => true, () => false);

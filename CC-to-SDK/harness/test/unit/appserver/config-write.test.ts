@@ -1,7 +1,7 @@
 // test/unit/appserver/config-write.test.ts — M5 Task 3: the write primitives the Task 4 handlers run
 // inside. Everything here touches only its own `mkdtemp` directory.
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, rmdirSync, realpathSync, statSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, lstatSync, unlinkSync, rmdirSync, realpathSync, renameSync, statSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -20,16 +20,30 @@ const fsHook = vi.hoisted(() => ({
   denyUnlink: null as ((path: string) => boolean) | null,
   afterWriteFile: null as ((path: string) => void) | null,
   readlink: null as ((path: string) => Error | null) | null,
+  /** Every awaited fs call this module makes, in issue order (fix wave I / sweep#2). Null by default. */
+  trace: null as string[] | null,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs/promises")>();
+  // The TRACE wraps every call `configWrite.ts` can await, because the property it exists for is about
+  // what is NOT there: "nothing awaited between the ownership assertion and the rename" is only checkable
+  // against a complete record. A wrapper that covered the calls we thought of would be a record of them.
+  const traced = Object.fromEntries((["readdir", "rename", "lstat", "stat", "readFile", "chmod", "mkdir", "rmdir", "realpath"] as const).map((name) => [
+    name, async (path: unknown, ...rest: unknown[]) => {
+      fsHook.trace?.push(`${name} ${String(path).split("/").pop()}`);
+      return (real[name] as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
+    },
+  ]));
   return {
     ...real,
+    ...traced,
     unlink: async (path: unknown, ...rest: unknown[]) => {
+      fsHook.trace?.push(`unlink ${String(path).split("/").pop()}`);
       if (fsHook.denyUnlink?.(String(path))) throw Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" });
       return (real.unlink as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
     },
     writeFile: async (path: unknown, ...rest: unknown[]) => {
+      fsHook.trace?.push(`writeFile ${String(path).split("/").pop()}`);
       const out = await (real.writeFile as (...a: unknown[]) => Promise<unknown>)(path, ...rest);
       fsHook.afterWriteFile?.(String(path)); // the gap between the file existing and the next call
       return out;
@@ -42,13 +56,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const { applyEdit, versionToken, withFileLock, readTargetDoc, writeTargetDoc, resolveRealTarget, ConfigError } = await import("../../../src/appserver/configWrite.js");
+const { applyEdit, versionToken, withFileLock, readTargetDoc, writeTargetDoc, resolveRealTarget, assertStillResolves, ConfigError } = await import("../../../src/appserver/configWrite.js");
 
 /** `os.tmpdir()` is itself behind a symlink on macOS (`/var` → `/private/var`), so a temp path and its
  *  realpath differ before this file creates any link of its own. Resolving the root here keeps the
  *  symlink row below measuring the link it made, not the platform's. */
 const mkTemp = (prefix: string): string => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 const sleep = (ms: number, value: string) => new Promise<string>((r) => setTimeout(() => r(value), ms));
+/** A stand-in for the LOCK's commit (fix wave I / sweep#2), for the rows whose subject is one of the other
+ *  two detectors. `CommitGuard.commit` performs the rename itself now — the ownership assertion and the
+ *  commit are one call, so a caller cannot place work between them — and these rows are about the version
+ *  check and the relink check, both of which refuse before it is ever reached. It does the real rename so
+ *  a row that reaches it still lands its bytes. */
+const renameCommit = (to: string) => async (from: string): Promise<void> => { renameSync(from, to); };
 
 describe("applyEdit (D-M5-13 merge table)", () => {
   it("replace sets the leaf exactly; siblings survive", () => {
@@ -189,7 +209,7 @@ describe("token + doc IO", () => {
     expect(`same token for different bytes: ${ra.version === rb.version}`).toBe("same token for different bytes: false");
     // …and the COMMIT GUARD reads the same way, so a write conditioned on one file's token is not
     // admitted against the other's bytes. `expectVersion` is A's token; the file holds B's bytes.
-    await expect(writeTargetDoc(b, { k: "x" }, { expectVersion: ra.version, fence: async () => {} }))
+    await expect(writeTargetDoc(b, { k: "x" }, { expectVersion: ra.version, commit: renameCommit(b) }))
       .rejects.toMatchObject({ code: "ConfigLocked" });
     expect(readFileSync(b)).toEqual(bytes(0x81));
     // The reply's own token is the token of the bytes it just wrote — one Buffer, written and hashed.
@@ -340,7 +360,9 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     const dir = mkTemp("m5l-");
     const p = join(dir, "s.json");
     mkdirSync(p + ".lock");
-    writeFileSync(join(p + ".lock", "999-dead-owner"), "999-dead-owner\n");
+    // The name is one this lock's own format could have written — `<pid>-<suffix>` — because since fix
+    // wave I the break path deletes nothing else (see the stranger's-file row below).
+    writeFileSync(join(p + ".lock", "999-deadowner"), "999-deadowner\n");
     expect(await withFileLock(p, async () => "ran", { staleMs: 0 })).toBe("ran");
     expect(existsSync(p + ".lock")).toBe(false);
   });
@@ -355,6 +377,47 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     chmodSync(p + ".lock", 0o200);
     expect(await withFileLock(p, async () => "ran", { staleMs: 0 })).toBe("ran");
     expect(existsSync(p + ".lock")).toBe(false);
+  });
+  /** FIX WAVE I / SCALPEL-1#1 — `readdir` FOLLOWS a symlink, and the break path's delete followed it too.
+   *
+   *  MEASURED on the pre-fix module, with `<file>.lock` a link to a directory holding five ordinary files
+   *  stamped ten minutes old: ALL FIVE were deleted in 6.0 s and the call then refused `ConfigLocked`. The
+   *  loop is what makes it exhaustive rather than a single mistake — `rmdir` of a symlink fails, so the
+   *  break reports "I removed something", the acquire retries, and the next child goes.
+   *
+   *  TWO REPAIRS, and each closes a different half. The entry is identified with `lstat` and never followed,
+   *  so a link is broken on its own age with `unlink` — which cannot remove a directory, so this arm is
+   *  incapable of destroying a live lock even if the entry became one after the `lstat`. And the delete can
+   *  only ever spell a name THIS LOCK'S FORMAT could have written, which is what covers the window the
+   *  `lstat` cannot: an entry swapped for a link between that call and the `readdir` yields a stranger's
+   *  filenames, and a stranger's filename is not a string this delete can ask for. */
+  it("a `<file>.lock` that is a SYMLINK to a directory is broken as a link — its target's children are untouched", async () => {
+    const dir = mkTemp("m5sym-");
+    const victim = join(dir, "Documents");
+    mkdirSync(victim);
+    const old = new Date(Date.now() - 600_000);
+    for (const n of ["taxes.pdf", "notes.md", "keys.txt"]) { writeFileSync(join(victim, n), "x"); utimesSync(join(victim, n), old, old); }
+    const p = join(dir, "s.json");
+    writeFileSync(p, '{"n":0}\n');
+    symlinkSync(victim, p + ".lock");
+    expect(await withFileLock(p, async () => "ran", { staleMs: 0 })).toBe("ran");
+    // The CONTROL: the link really was in the way, so the call really did take the break path.
+    expect(readdirSync(victim).sort()).toEqual(["keys.txt", "notes.md", "taxes.pdf"]);
+    expect(existsSync(p + ".lock")).toBe(false);   // …and the link itself is gone, so the target is not wedged
+  });
+  it("a claim directory holding a name this lock never wrote is NOT broken — it refuses instead", async () => {
+    // The other side of the same rule, and the cost of it, stated as a row rather than left implied: what
+    // cannot be identified as one of our claims is not deleted, so a lock directory holding something
+    // unrecognisable refuses at the deadline until an operator clears it. A refusal is the safe direction;
+    // the alternative was the row above.
+    const dir = mkTemp("m5sym-");
+    const p = join(dir, "s.json");
+    mkdirSync(p + ".lock");
+    const old = new Date(Date.now() - 600_000);
+    writeFileSync(join(p + ".lock", "important.txt"), "x");
+    utimesSync(join(p + ".lock", "important.txt"), old, old);
+    await expect(withFileLock(p, async () => "ran", { staleMs: 0 })).rejects.toMatchObject({ code: "ConfigLocked" });
+    expect(readdirSync(p + ".lock")).toEqual(["important.txt"]);
   });
   it("an EMPTY claim directory is nobody's lock: reclaimed at once, not waited out", async () => {
     // A process died between `mkdir` and its marker, or a break is mid-flight. A claim is renamed in
@@ -439,18 +502,66 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     const p = join(dir, "s.json");
     const before = JSON.stringify({ model: "THE-EVICTOR-WROTE-THIS" }, null, 2) + "\n";
     writeFileSync(p, before);
-    const outcome = await withFileLock(p, async (fence) => {
-      await fence(); // still ours — this one passes
+    const outcome = await withFileLock(p, async ({ commit }) => {
       const lock = p + ".lock";
       for (const n of readdirSync(lock)) unlinkSync(join(lock, n)); // a breaker judged our lease dead
       writeFileSync(join(lock, "42-evictor"), "42-evictor\n"); // ...and took the path
-      return writeTargetDoc(p, { model: "THE-EVICTED-WRITER" }, { expectVersion: versionToken(Buffer.from(before, "utf8")), fence })
+      return writeTargetDoc(p, { model: "THE-EVICTED-WRITER" }, { expectVersion: versionToken(Buffer.from(before, "utf8")), commit })
         .then(() => "COMMITTED", (e: { code?: string; message: string }) => `${e.code}:${e.message}`);
     });
     expect(outcome).toBe("ConfigLocked:this writer's lock was broken while it was held; nothing was written");
     expect(readFileSync(p, "utf8")).toBe(before); // the evictor's bytes are still the file's bytes
     expect(readdirSync(dir).filter((f) => f.includes(".tmp-"))).toEqual([]);
     expect(readdirSync(p + ".lock")).toEqual(["42-evictor"]); // and the release left their claim alone
+  });
+  /** FIX WAVE I / SWEEP#2 — the property is about what is NOT between two calls, so it is measured as a
+   *  SEQUENCE rather than asserted as an outcome.
+   *
+   *  The lock's promise is that the margin after a passing ownership check is a full `staleMs`: "no other
+   *  process may break a lease it has just seen refreshed". Work placed after that check SPENDS the
+   *  margin, and `writeTargetDoc` had grown two awaited filesystem operations there — an `lstat` (wave G's
+   *  relink detector) and a whole file read (the version check) — each put there by a repair of its own,
+   *  under a comment claiming the guard sat "one syscall before the rename". Measured on two real
+   *  processes with the holder's loop blocked past the window: `FENCE_OK holder` and then the successor
+   *  ENTERING and COMMITTING inside that holder's critical section, 3 of 3 — the fence said "still yours"
+   *  about a claim that was about to be broken, which is the promise being false rather than merely tight.
+   *
+   *  So the interface changed rather than the ordering: `CommitGuard.commit` takes the SOURCE PATH and the
+   *  lock does the ownership assertion, the lease refresh and the rename itself. There is no longer a place
+   *  to put anything, which is why this row measures a sequence and not a race — the race it would have
+   *  measured cannot be constructed any more, and a row that could still stage it would be testing a seam
+   *  that no longer exists.
+   *
+   *  NOT STAGED, and said so rather than implied: the finding's own worst case — the version read's `open`
+   *  beating the successor's rename while its completion loses to it, so the stale bytes still match
+   *  `expectVersion` — needs the fs threadpool stalled across one read, and forcing it means faking the
+   *  storage layer, which is the substitution this milestone's own retrospective rules out. */
+  it("nothing is awaited between the lock's ownership check and the rename it guards", async () => {
+    const dir = mkTemp("m5seq-");
+    const p = join(dir, "s.json");
+    writeFileSync(p, '{"n":0}\n');
+    const trace: string[] = [];
+    fsHook.trace = trace;
+    try {
+      await withFileLock(p, async ({ commit }) => {
+        const { doc, version } = await readTargetDoc(p);
+        await writeTargetDoc(p, { ...doc, n: 1 }, { expectVersion: version, commit });
+      });
+    } finally { fsHook.trace = null; }
+    // The CONTROL first: without a real lock taken and a real commit made, the slice below is empty and
+    // every assertion about it is vacuous.
+    expect(`committed: ${readFileSync(p, "utf8").includes('"n": 1')}`).toBe("committed: true");
+    const commitAt = trace.findIndex((c) => c.startsWith("rename s.json.tmp-"));
+    const ownershipAt = trace.lastIndexOf("readdir s.json.lock", commitAt);
+    expect(`ownership check before the commit: ${ownershipAt >= 0 && ownershipAt < commitAt}`).toBe("ownership check before the commit: true");
+    // …and between them, ONLY the lease refresh — the second half of the same check (fix wave G / G1).
+    // Anything else is margin spent, and this row's job is that there is nothing else to spend it on.
+    const between = trace.slice(ownershipAt + 1, commitAt);
+    expect(`between the ownership check and the commit: ${JSON.stringify(between.map((c) => c.split(" ")[0]))}`)
+      .toBe(`between the ownership check and the commit: ${JSON.stringify(["rename"])}`);
+    // The two detectors that used to sit there still run — BEFORE the check, not after it.
+    expect(`relink check ran: ${trace.slice(0, ownershipAt).includes("lstat s.json")}`).toBe("relink check ran: true");
+    expect(`version read ran: ${trace.slice(0, ownershipAt).includes("readFile s.json")}`).toBe("version read ran: true");
   });
   it("the commit guard refuses a target that changed under it — before a single byte moves", async () => {
     // The fence asks the LOCK whether we still hold it; this asks the FILE whether anyone committed since
@@ -463,7 +574,7 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     writeFileSync(p, '{"model":"A"}\n');
     const stale = versionToken(Buffer.from('{"model":"A"}\n', "utf8"));
     writeFileSync(p, '{"model":"B-COMMITTED"}\n'); // another writer got there first
-    await expect(writeTargetDoc(p, { model: "C" }, { expectVersion: stale, fence: async () => {} }))
+    await expect(writeTargetDoc(p, { model: "C" }, { expectVersion: stale, commit: renameCommit(p) }))
       .rejects.toMatchObject({ code: "ConfigLocked" });
     expect(readFileSync(p, "utf8")).toBe('{"model":"B-COMMITTED"}\n');
     expect(readdirSync(dir)).toEqual(["s.json"]); // the tmp went with the refusal
@@ -485,16 +596,49 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     writeFileSync(managed, '{"n":0}\n');
     writeFileSync(nominal, '{"n":0}\n');                        // identical bytes: the CAS cannot see the swap
     const filePath = await resolveRealTarget(nominal);          // resolved BEFORE the lock, as production does
-    const outcome = await withFileLock(filePath, async (fence) => {
+    const outcome = await withFileLock(filePath, async ({ commit }) => {
       const { doc, version } = await readTargetDoc(filePath);
       unlinkSync(filePath); symlinkSync(managed, filePath);     // …and now the path is a link
-      return writeTargetDoc(filePath, { ...doc, added: true }, { expectVersion: version, fence })
+      return writeTargetDoc(filePath, { ...doc, added: true }, { expectVersion: version, commit })
         .then(() => "COMMITTED", (e: { code?: string; message: string }) => `${e.code}:${e.message}`);
     });
     expect(outcome).toBe("ConfigLocked:the settings path became a symlink while this write was being prepared; nothing was written — re-read and retry");
     expect(lstatSync(filePath).isSymbolicLink()).toBe(true);    // the link the operator placed is intact
     expect(readFileSync(managed, "utf8")).toBe('{"n":0}\n');    // and nothing was written through it
     expect(readdirSync(dir).filter((f) => f.includes(".tmp-"))).toEqual([]);
+  });
+  /** THE FOURTH DETECTOR (fix wave I / scalpel-1#2), and the only one that asks about the path the CLIENT
+   *  named. The other three all speak about the RESOLVED target: the lock is on it, the relink check
+   *  lstats it, the version check reads it. None of them can see the nominal symlink being re-pointed —
+   *  and the window for that is not a scheduling race, it is the LOCK WAIT: a contended target blocks for
+   *  `staleMs + 5s`, thirty-five seconds by default, with the resolution already taken. The write then
+   *  commits to the abandoned file and returns its version while the engine for that project opens the
+   *  new one: `ok` for a change no engine serves. */
+  it("a nominal path that resolves ELSEWHERE than when the write was prepared refuses — and an unchanged one proceeds", async () => {
+    const dir = mkTemp("m5nom-");
+    const a = join(dir, "a.json"), b = join(dir, "b.json"), nominal = join(dir, "settings.json");
+    writeFileSync(a, '{"n":0}\n');
+    writeFileSync(b, '{"n":0}\n');
+    symlinkSync(a, nominal);
+    const filePath = await resolveRealTarget(nominal);   // resolved BEFORE the lock, as production does
+    expect(filePath).toBe(a);
+    const outcome = await withFileLock(filePath, async () => {
+      // The CONTROL, inside the same critical section: nothing has moved, so the write proceeds.
+      const stillOk = await assertStillResolves(nominal, filePath).then(() => "PROCEEDED", (e: { code?: string }) => `refused ${e.code}`);
+      // …and now the operator's dotfile manager re-points the link, exactly as it may while a contended
+      // write waits out another writer's lease.
+      unlinkSync(nominal); symlinkSync(b, nominal);
+      const afterMove = await assertStillResolves(nominal, filePath).then(() => "PROCEEDED", (e: { code?: string; message: string }) => `${e.code}:${e.message}`);
+      return [stillOk, afterMove];
+    });
+    expect(outcome[0]).toBe("PROCEEDED");
+    expect(outcome[1]).toBe("ConfigLocked:the settings path resolves somewhere else than when this write was prepared; nothing was written — re-read and retry");
+    // Both files are byte-identical to what they were: the refusal happens before anything is written.
+    expect([readFileSync(a, "utf8"), readFileSync(b, "utf8")]).toEqual(['{"n":0}\n', '{"n":0}\n']);
+    // A nominal path that is NOT a link is its own resolution, so the ordinary case never refuses.
+    const plain = join(dir, "plain.json");
+    writeFileSync(plain, "{}\n");
+    await expect(assertStillResolves(plain, await resolveRealTarget(plain))).resolves.toBeUndefined();
   });
   it("…and on a FIRST write too, where a DANGLING link makes both sides of the CAS read `absent`", async () => {
     // The side the version check cannot reach even in principle: nothing was there, nothing is there, and
@@ -503,10 +647,10 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     const dir = mkTemp("m5sym-");
     const managed = join(dir, "managed.json"), nominal = join(dir, "settings.json");
     const filePath = await resolveRealTarget(nominal);
-    const outcome = await withFileLock(filePath, async (fence) => {
+    const outcome = await withFileLock(filePath, async ({ commit }) => {
       const { doc, version } = await readTargetDoc(filePath);
       symlinkSync(managed, filePath);
-      return writeTargetDoc(filePath, { ...doc, added: true }, { expectVersion: version, fence })
+      return writeTargetDoc(filePath, { ...doc, added: true }, { expectVersion: version, commit })
         .then(() => "COMMITTED", (e: { code?: string }) => String(e.code));
     });
     expect([outcome, lstatSync(filePath).isSymbolicLink(), existsSync(managed)]).toEqual(["ConfigLocked", true, false]);

@@ -7,8 +7,19 @@ import type { Handler } from "./server.js";
 import { claudeConfigDir } from "../config/claudeHome.js";
 import { layerPaths, readLayers, effectiveView, SettingsMergeError } from "./configLayers.js";
 import type { ConfigLayer, LayerName } from "./configLayers.js";
-import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, withFileLock, canonicalPath, assertWritableParent } from "./configWrite.js";
+import { ConfigError, versionToken, applyEdit, readTargetDoc, writeTargetDoc, resolveRealTarget, assertStillResolves, withFileLock, canonicalPath, assertWritableParent } from "./configWrite.js";
 import { configReadParams, configValueWriteParams, configBatchWriteParams } from "./schema/config.js";
+import { stripPaths } from "./archiveDomain.js";
+
+/** The last resort of both handlers, and the one message in this file nobody composed (fix wave I). Every
+ *  typed refusal above it — `ConfigError`, `SettingsMergeError` — carries text this repo wrote; what falls
+ *  through is whatever the filesystem said, and node composes an errno as
+ *  `"EACCES: permission denied, mkdir '/Users/<operator>/.claude'"`. That puts the operator's home
+ *  directory on the wire for any client that can reach these methods, which is the leak `archiveDomain`'s
+ *  `stripPaths` was written for and which `search.ts` and `thread/list` already route through. The strip
+ *  travels rather than being re-spelled: one regex, so the branch nobody thought of is covered by the same
+ *  rule as the one they did. */
+const internalRefusal = (e: unknown): string => stripPaths(e instanceof Error ? e.message : String(e));
 
 /** ConfigError → the wire. Codes are grouped by WHAT THE CLIENT SHOULD DO NEXT — the rule rpc.ts's own
  *  header states for `ATTACH_FAILED`: "One code for both because a client's move is the same." Lock
@@ -134,7 +145,7 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
     ctx.peer.reply(id, { config, origins, versions, incomplete: true, ...(parsed.data.includeLayers ? { layers: layers.map(wireLayer) } : {}) });
   } catch (e) {
     if (replyConfigError(ctx, id, e)) return;
-    ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    ctx.peer.replyError(id, ERR.INTERNAL, internalRefusal(e));
   }
 };
 
@@ -489,7 +500,7 @@ async function maskingAnalysis(srv: Parameters<Handler>[0], data: WriteData, cwd
   } catch (e) {
     return {
       verdict: { maskedEditIndexes: [], uncheckedEditIndexes: data.edits.map((_, i) => i) },
-      failure: `the write landed, but whether it is overridden could not be checked: the settings layers could not be merged (${e instanceof Error ? e.message : String(e)})`,
+      failure: `the write landed, but whether it is overridden could not be checked: the settings layers could not be merged (${internalRefusal(e)})`,
     };
   }
 }
@@ -530,7 +541,20 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     // but is not a usable directory (a dangling link, a symlink loop, a regular file where `.claude` should
     // be) used to surface as node's raw `mkdir` message under -32603, which a client can do nothing with.
     await assertWritableParent(filePath);
-    const written = await withFileLock(filePath, async (fence) => {
+    const written = await withFileLock(filePath, async ({ commit }) => {
+      // THE RESOLUTION IS RE-ASKED INSIDE THE CRITICAL SECTION (fix wave I / scalpel-1#2). `nominal` is
+      // the path the client actually named — `<userDir>/settings.json`, the file its engine will open —
+      // and `resolveRealTarget` follows it to the file we lock and write. That resolution is taken BEFORE
+      // the lock, and acquiring a contended target BLOCKS: up to `staleMs + 5s`, thirty-five seconds by
+      // default. `assertNotRelinked` cannot see this, because it asks about the RESOLVED entry and that
+      // entry is still an ordinary file; the lock cannot see it, because the lock is on the resolved path.
+      // So a symlink re-pointed while this request waited left the write landing on the abandoned target
+      // and returning its version, while the engine for that project read the new one — an `ok` for a
+      // change no engine is serving. Refusing here costs nothing: nothing has been written, and the retry
+      // re-resolves and takes the lock on the file the operator now points at. A NARROWING and not a
+      // proof, exactly as `assertNotRelinked` is: a link re-pointed after this line is undetectable from
+      // userspace. What it removes is the thirty-five-second window, which is the part that is not a race.
+      await assertStillResolves(nominal, filePath);
       // `"unreadable"` (Task 2 review I1) is refused as an ASSERTION, ahead of the compare: it is a
       // sentinel for the server's inability to read the file, not a state of its content, so a client
       // holding it never saw the bytes it would be asserting continuity of. Mechanically it can never
@@ -550,7 +574,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
       // "a reply of `ok` means the bytes survived" true rather than merely intended. It costs one small
       // re-read of a file this process read moments ago, and it refuses BEFORE any byte moves, so the
       // retry a `ConfigLocked` invites is safe even for the non-idempotent `upsert` of an array.
-      return writeTargetDoc(filePath, next, { expectVersion: version, fence });
+      return writeTargetDoc(filePath, next, { expectVersion: version, commit });
     });
     // PAST THE COMMIT. Everything below describes bytes already on disk, so nothing below may turn this
     // into a failure reply: a client told its write failed retries it, and an `upsert` of an array is not
@@ -580,7 +604,7 @@ async function runConfigWrite(srv: Parameters<Handler>[0], ctx: Parameters<Handl
     });
   } catch (e) {
     if (replyConfigError(ctx, id, e)) return;
-    ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    ctx.peer.replyError(id, ERR.INTERNAL, internalRefusal(e));
   }
 }
 

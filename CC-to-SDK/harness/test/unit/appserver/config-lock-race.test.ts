@@ -10,7 +10,7 @@
 // inside the critical section at once, every one of them losing an update, with zero refusals reported.
 //
 // So the children below are real `node` processes running the REAL compiled module through the REAL
-// composition `runConfigWrite` uses — `withFileLock(read → CAS → apply → fenced commit)` — over one
+// composition `runConfigWrite` uses — `withFileLock(read → CAS → apply → guarded commit)` — over one
 // settings file per trial. Under mutual exclusion the file's counter must equal the number of processes
 // that were told their write committed. Anything less is a lost update; a `maxDepth` above 1 is two
 // critical sections in flight at once. The run costs ~20s, which is the price of measuring the only
@@ -77,13 +77,13 @@ for (let i = 0; i < trials; i++) {
   const wait = startMs + i * step - Date.now();
   if (wait > 0) await sleep(wait);
   try {
-    await withFileLock(target, async (fence) => {
+    await withFileLock(target, async ({ commit }) => {
       appendFileSync(trace, "ENTER " + process.pid + "\\n");
       try {
         const { doc, version } = await readTargetDoc(target);
         await sleep(holdMs);                               // the read-modify-write window
         const n = typeof doc.n === "number" ? doc.n : 0;
-        await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, fence });
+        await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, commit });
       } finally { appendFileSync(trace, "EXIT " + process.pid + "\\n"); }
     }, { staleMs });
     appendFileSync(trace, "OK " + process.pid + "\\n");
@@ -94,11 +94,13 @@ for (let i = 0; i < trials; i++) {
 `;
 
 /** THE EVICTED HOLDER (fix wave G / G1). Its commit is the UNMODIFIED production composition —
- *  `writeTargetDoc(doc, {expectVersion, fence})` — and the only thing added is a wrapper around the fence
- *  the lock hands out: it forwards the call untouched and floods the libuv threadpool around it.
+ *  `writeTargetDoc(doc, {expectVersion, commit})` — and the only thing added is a wrapper around the
+ *  COMMIT the lock hands out: it forwards the call untouched and floods the libuv threadpool around it.
+ *  (Fix wave I / sweep#2 folded the ownership assertion and the rename into that one call, so what this
+ *  wrapper now forwards is both; the eviction it is about lands in exactly the same turn.)
  *
- *  WHY A FLOOD AND NOT A SLEEP. `fence` checks the lock directory and then refreshes the lease, and those
- *  are two syscalls with an event-loop turn between them. The finding is that an eviction landing in that
+ *  WHY A FLOOD AND NOT A SLEEP. The commit checks the lock directory and then refreshes the lease, and
+ *  those are two syscalls with an event-loop turn between them. The finding is that an eviction landing in that
  *  turn sets `lost` and yet lets the fence RESOLVE, so the caller reads its version and renames — an
  *  evicted owner committing beside its successor. The turn is normally microseconds wide. `UV_THREADPOOL_SIZE=1`
  *  plus a queue of `pbkdf2` jobs (which run on that same pool) stretches it to about a second, and the
@@ -107,10 +109,10 @@ for (let i = 0; i < trials; i++) {
  *  is likeliest to be entered.
  *
  *  `when` picks WHICH of the fence's two detectors the eviction has to be caught by, and both are run:
- *   - `"before"` floods before the fence is called, so its own `readdir` runs after the break and sees the
- *     successor's marker — the side that was already correct;
- *   - `"after"` floods between the fence's `readdir` and the `utimes` it submits when that resolves, so
- *     the directory check passes and only the REFRESH can see the loss — the side G1 names. */
+ *   - `"before"` floods before the commit is called, so its own `readdir` runs after the break and sees
+ *     the successor's marker — the side that was already correct;
+ *   - `"after"` floods between that `readdir` and the refresh submitted when it resolves, so the directory
+ *     check passes and only the REFRESH can see the loss — the side G1 names. */
 const EVICTED_SRC = `import { writeFileSync, appendFileSync } from "node:fs";
 import { pbkdf2 } from "node:crypto";
 const [mod, target, held, log, staleRaw, jobsRaw, when] = process.argv.slice(2);
@@ -119,20 +121,20 @@ const say = (s) => appendFileSync(log, s + "\\n");
 const block = () => new Promise((r) => pbkdf2("pw", "salt", 300000, 32, "sha512", () => r()));
 const blockers = [];
 const flood = () => { for (let i = 0; i < Number(jobsRaw); i++) blockers.push(block()); };
-await withFileLock(target, async (fence) => {
+await withFileLock(target, async ({ commit }) => {
   writeFileSync(held, String(Date.now()));            // the successor may start contending now
   let first = true;
-  const injected = async () => {
-    if (!first) return fence();
+  const injected = async (from) => {
+    if (!first) return commit(from);
     first = false;
     if (when === "before") flood();
-    const p = fence();                                 // submits its \`readdir\` synchronously
+    const p = commit(from);                            // submits its \`readdir\` synchronously
     if (when === "after") flood();
     try { await p; say("HOLDER_FENCE_RESOLVED"); } catch (e) { say("HOLDER_FENCE_REFUSED " + (e && e.code ? e.code : "?")); throw e; }
   };
   const { doc, version } = await readTargetDoc(target);
   try {
-    await writeTargetDoc(target, applyEdit(doc, ["n"], 1, "replace"), { expectVersion: version, fence: injected });
+    await writeTargetDoc(target, applyEdit(doc, ["n"], 1, "replace"), { expectVersion: version, commit: injected });
     say("HOLDER_COMMITTED");
   } catch (e) { say("HOLDER_COMMIT_REFUSED " + (e && e.code ? e.code : "?")); }
   await Promise.all(blockers);
@@ -150,11 +152,11 @@ const say = (s) => appendFileSync(log, s + "\\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 while (!existsSync(held)) await sleep(2);
 try {
-  await withFileLock(target, async (fence) => {
+  await withFileLock(target, async ({ commit }) => {
     say("SUCCESSOR_ENTER");
     const { doc, version } = await readTargetDoc(target);
     await sleep(Number(holdRaw));
-    await writeTargetDoc(target, applyEdit(doc, ["by"], "successor", "replace"), { expectVersion: version, fence });
+    await writeTargetDoc(target, applyEdit(doc, ["by"], "successor", "replace"), { expectVersion: version, commit });
     say("SUCCESSOR_COMMITTED");
   }, { staleMs: Number(staleRaw) });
 } catch (e) { say("SUCCESSOR_REFUSED " + (e && e.code ? e.code : "?")); }
@@ -163,12 +165,13 @@ say("SUCCESSOR_EXIT");
 
 /** THE STALLED HOLDER (fix wave H / H1). It takes the lock, blocks its own event loop past the stale
  *  window — so the lease-refresh timer cannot fire and the lease really does age out, which is the
- *  condition eviction exists for — and only then wakes, fences, and commits. `fence` is wrapped exactly
+ *  condition eviction exists for — and only then wakes and commits. The lock's `commit` is wrapped exactly
  *  as wave G's evicted holder wraps it: the call is forwarded untouched, and the wrapper's only job is to
  *  say when it resolved and to release the contender's delete AFTER the lease has been refreshed.
  *
- *  It fences ONCE MORE after committing, and that is the instrument this row turns on: it asks the lock
- *  whether the claim this process refreshed a moment ago is still its own. Both trees answer it with the
+ *  It asks the lock ONCE MORE after committing — `assertHeld`, the read-only half of the handle — and that
+ *  is the instrument this row turns on: whether the claim this process refreshed a moment ago is still its
+ *  own. Both trees answer it with the
  *  contender's delete already landed, because the holder waits for `deleted` first — so the answer is a
  *  fact about the break path, never a race between the two processes' next syscalls.
  *
@@ -179,24 +182,24 @@ const { withFileLock, readTargetDoc, writeTargetDoc, applyEdit } = await import(
 const say = (s) => appendFileSync(trace, s + " " + process.hrtime.bigint() + "\\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const spin = (ms) => { const end = Date.now() + ms; while (Date.now() < end) { /* the stall */ } };
-await withFileLock(target, async (fence) => {
+await withFileLock(target, async ({ assertHeld, commit }) => {
   say("ENTER holder");
   const { doc, version } = await readTargetDoc(target);
   writeFileSync(held, String(Date.now()));          // the contender may start contending now
   spin(Number(stallRaw));                            // …and the lease ages out while we cannot refresh it
   while (!existsSync(judged)) { /* still stalled: spin until the contender has judged this lease dead */ }
-  const injected = async () => {
-    await fence();                                   // the directory check AND the lease refresh
+  const injected = async (from) => {
+    await commit(from);                              // the directory check, the lease refresh AND the rename
     say("FENCE_OK holder");
     writeFileSync(refreshed, "");                    // release the contender's delete — after the refresh
   };
   const n = typeof doc.n === "number" ? doc.n : 0;
   try {
-    await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, fence: injected });
+    await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, commit: injected });
     say("COMMITTED holder");
   } catch (e) { say("REFUSED holder " + (e && e.code ? e.code : "?")); }
   while (!existsSync(deleted)) await sleep(1);       // the contender's delete has now been attempted
-  try { await fence(); say("STILLHELD holder"); } catch (e) { say("EVICTED holder " + (e && e.code ? e.code : "?")); }
+  try { await assertHeld(); say("STILLHELD holder"); } catch (e) { say("EVICTED holder " + (e && e.code ? e.code : "?")); }
   say("EXIT holder");
 }, { staleMs: Number(staleRaw) }).catch((e) => say("LOCKFAILED holder " + String(e && e.message).slice(0, 60)));
 `;
@@ -232,12 +235,12 @@ const say = (s) => appendFileSync(trace, s + " " + process.hrtime.bigint() + "\\
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 while (!existsSync(held)) await sleep(2);
 try {
-  await withFileLock(target, async (fence) => {
+  await withFileLock(target, async ({ commit }) => {
     say("ENTER succ");
     const { doc, version } = await readTargetDoc(target);
     await sleep(Number(holdRaw));
     const n = typeof doc.n === "number" ? doc.n : 0;
-    await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, fence });
+    await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, commit });
     say("COMMITTED succ");
   }, { staleMs: Number(staleRaw) });
 } catch (e) { say("REFUSED succ " + (e && e.code ? e.code : "?")); }
