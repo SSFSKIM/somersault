@@ -34,6 +34,11 @@ export function osc(terminator: OscTerminator, ...parts: (string | number)[]): s
  *  so it passes through bare — transcribed, not corrected. */
 export function passthrough(seq: string, env: NodeJS.ProcessEnv = process.env): string {
   if (env.TMUX) return `${ESC}Ptmux;${seq.replaceAll(ESC, ESC + ESC)}${ST}`;
+  // KNOWN CANON BUG, TRANSCRIBED NOT CORRECTED (F8 review Finding F — same call as the zellij note
+  // above): GNU screen's string machine already passes a single ESC through verbatim, so doubling it
+  // here corrupts the sequence inside screen. Canon doubles for both tmux and screen regardless.
+  // `desktopNotify.test.ts` now pins this exact doubled-ESC byte in three more places — do not "fix" it
+  // here without also correcting canon; that would just make ccx and canon disagree on the wire.
   if (env.STY) return `${ESC}P${seq.replaceAll(ESC, ESC + ESC)}${ST}`;
   return seq;
 }
