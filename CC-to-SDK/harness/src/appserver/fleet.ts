@@ -123,6 +123,22 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     if (ack) void ack.then(emit); else emit();
   };
 
+  /** The conversation under this thread just MOVED, because the terminal operator moved it — a /resume, a
+   *  /clear-and-resume, a rewind. Both host-side writers of `record.sessionId` (the `state` and `rewound`
+   *  arms below) funnel through here so the two cannot disagree.
+   *
+   *  It takes the newly-held conversation off the shelf (D-M5-21, M5 fix wave A). This is an admission in
+   *  substance while not being one in shape: nothing here requested it, this server only watched it happen —
+   *  but the end state is identical to `thread/attach`'s, and without the clear a LIVE thread sits on the
+   *  Archived shelf and is missing from the default listing, the one state D-M5-21 exists to make
+   *  unreachable. Nothing else would clear it either: a re-attach hits the `held` early return, which skips
+   *  the unarchive deliberately (and is pinned doing so), so the shelving is permanent.
+   *  `srv.autoUnarchive` and not a local re-spelling, for the reason that helper is exported at all — four
+   *  paths reaching one conversation-is-open decision is how the four drift apart.
+   *  NOT awaited: this is a host frame callback with nobody to report to, and the helper owns its own
+   *  failure (its warning goes server-scoped when, as here, there is no requesting connection). */
+  const adoptSessionId = (sessionId: string): void => { void srv.autoUnarchive(undefined, sessionId); };
+
   /** Every host-event subscription this layer takes, so the uninstaller can give all of them back. The
    *  frame subscription is NOT in here — it is re-taken on every swap (see `installFrames`), so only its
    *  current value can be released. */
@@ -247,7 +263,7 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
   track(engine.onTasksChanged((tasks) => { srv.broadcast(record.id, "task/changed", { threadId: record.id, tasks }); }));
 
   track(engine.onState((s) => {
-    if (s.sessionId && s.sessionId !== record.sessionId) record.sessionId = s.sessionId;
+    if (s.sessionId && s.sessionId !== record.sessionId) { record.sessionId = s.sessionId; adoptSessionId(s.sessionId); }
     // §1a-c: `model`/`thinkingTokens` are OMITTED until the host has one, so an absent field means
     // "unknown", never "cleared" — only a present-and-different value is a change worth announcing.
     const moved = (s.permissionMode !== undefined && s.permissionMode !== record.settings.permissionMode)
@@ -270,7 +286,12 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
     // invalidates every outstanding read cursor (subscribe.ts) — the rows those cursors addressed are not
     // the rows the same offsets address now.
     record.epoch += 1;
+    const held = record.sessionId;
     if (e.cleared) record.sessionId = undefined; else if (e.sessionId) record.sessionId = e.sessionId;
+    // Only a MOVE is an adoption: a rewind that stays inside the same conversation re-reports the id it
+    // already had, and running the shelf read on it would spend a directory listing per rewind to decide
+    // nothing. A `cleared` swap adopts nothing at all — the fresh conversation has no marker to clear.
+    if (record.sessionId && record.sessionId !== held) adoptSessionId(record.sessionId);
     // The per-turn replay window belongs to the conversation the host just discarded — the same reason
     // rewind.ts's `swapEngine` drops it on the inProcess origin, and the host's own swapEngine drops its
     // turn buffer: subscribe.ts replays `record.buffer` to every client that joins before the next turn
@@ -606,4 +627,15 @@ export const threadAttach: Handler = async (srv, ctx, id, params) => {
   // is what guarantees no replayed frame is lost to a missing listener or delivered ahead of
   // `thread/started`. The cast is safe by construction — `admitFleet` is the only writer of this field.
   (record.session as FleetEngineSession).activate();
+  // D-M5-21: adoption is admission, so it takes the conversation off the shelf too — server.ts's
+  // `autoUnarchive`, the same one `thread/resume` runs, never a second spelling of it. AFTER the
+  // activation above so nothing about the protocol's ordering moves for an unarchived attach (which is
+  // every attach in practice), and after the reply because a marker store that cannot be read must not
+  // turn a successful adoption into a refusal.
+  //   The `held` early return above deliberately does NOT run it: that path is a rejoin of a thread this
+  // server already holds, which its own attach already unshelved — "opening a conversation" happened
+  // once, and announcing a transition per rejoin would report one that did not occur.
+  //   Guarded on `sessionId` because a fleet record's is whatever the host and the roster could say
+  // (`admitFleet`), and a thread with no store id has no marker anyone could have written.
+  if (record.sessionId) await srv.autoUnarchive(ctx, record.sessionId);
 };

@@ -102,6 +102,10 @@
         },
         "cwd": {
           "type": "string"
+        },
+        "archived": {
+          "description": "false/omitted lists only unarchived sessions; true lists only archived ones",
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -1392,6 +1396,683 @@
       "required": [
         "threadId",
         "target"
+      ],
+      "additionalProperties": false
+    },
+    "config/read": {
+      "type": "object",
+      "properties": {
+        "includeLayers": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "config/value/write": {
+      "type": "object",
+      "properties": {
+        "keyPath": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "value": {},
+        "mergeStrategy": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "upsert"
+          ]
+        },
+        "target": {
+          "default": "user",
+          "type": "string",
+          "enum": [
+            "user",
+            "project",
+            "local"
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "keyPath",
+        "value",
+        "mergeStrategy"
+      ],
+      "additionalProperties": false
+    },
+    "config/batchWrite": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "keyPath": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "value": {},
+              "mergeStrategy": {
+                "type": "string",
+                "enum": [
+                  "replace",
+                  "upsert"
+                ]
+              }
+            },
+            "required": [
+              "keyPath",
+              "value",
+              "mergeStrategy"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "target": {
+          "default": "user",
+          "type": "string",
+          "enum": [
+            "user",
+            "project",
+            "local"
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "thread/search": {
+      "type": "object",
+      "properties": {
+        "searchTerm": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 256,
+          "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
+        },
+        "cursor": {
+          "description": "opaque keyset cursor from a previous reply's nextCursor; never client-composed. Bound to the query it was minted under and to the generation of the transcript it resumes inside: re-issue the SAME searchTerm/sortKey/sortDirection/archived/cwd, or start a fresh walk. Refuses -32602 otherwise",
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "description": "results per page, default 20; over 50 is clamped to 50 with a `warning` notification",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sortKey": {
+          "default": "created_at",
+          "description": "created_at is the only key stable across pages — updated_at/recency_at (both ≡ the store's lastModified) can move a session between requests, and keyset semantics then allow it to be re-encountered or skipped; use created_at for an exhaustive walk",
+          "type": "string",
+          "enum": [
+            "created_at",
+            "updated_at",
+            "recency_at"
+          ]
+        },
+        "sortDirection": {
+          "default": "desc",
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ]
+        },
+        "archived": {
+          "description": "false/omitted lists only unarchived sessions; true lists only archived ones",
+          "type": "boolean"
+        },
+        "cwd": {
+          "description": "scopes the store listing to one project directory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "searchTerm"
+      ],
+      "additionalProperties": false
+    },
+    "thread/searchOccurrences": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a `thr_…` registry id or a bare store sessionId; one the store does not know refuses -33004"
+        },
+        "searchTerm": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 256,
+          "description": "case-insensitive literal substring, 2–256 UTF-16 units; outside that range refuses -32602"
+        },
+        "cursor": {
+          "description": "opaque occurrence cursor from a previous reply's nextCursor; bound to the search term and to the transcript's generation (live or cold), and refused -32602 after a rewind or under a different term",
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "description": "occurrences per page, default 20; over 50 is clamped to 50 with a `warning` notification",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "threadId",
+        "searchTerm"
+      ],
+      "additionalProperties": false
+    },
+    "thread/archive": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "additionalProperties": false
+    },
+    "thread/unarchive": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "results": {
+    "thread/capabilities/read": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "models": {
+              "type": "array",
+              "items": {}
+            },
+            "commands": {
+              "type": "array",
+              "items": {}
+            },
+            "mcpServers": {
+              "type": "array",
+              "items": {}
+            },
+            "agents": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "models",
+            "commands",
+            "mcpServers",
+            "agents"
+          ],
+          "additionalProperties": false
+        },
+        "terminalSlashCommands": {
+          "description": "commands this session advertises as terminal-bound, latched from the engine's system/init frame. EVERY init frame is authoritative: the KEY IS ABSENT (never null) only while no init frame has arrived on this thread; an init frame that omits the field yields [], which is how the engine reports 'none' (the SDK sends the field only when non-empty, so a session with no tagged command and a CLI predating the field are indistinguishable and mean the same thing to a client deciding what to hide); an init frame carrying the field yields it verbatim, latest frame winning",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "config/read": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "origins": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "project",
+                  "local",
+                  "managed"
+                ]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "project",
+                    "local",
+                    "managed"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "versions": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "incomplete": {
+          "type": "boolean",
+          "const": true
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "project",
+                  "local",
+                  "managed"
+                ]
+              },
+              "filePath": {
+                "type": "string"
+              },
+              "config": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "raw": {
+                "type": "string"
+              },
+              "disabledReason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "filePath"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "config",
+        "origins",
+        "versions",
+        "incomplete"
+      ],
+      "additionalProperties": false
+    },
+    "config/value/write": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "okOverridden"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "filePath": {
+          "type": "string"
+        },
+        "overriddenMetadata": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "overridingLayer": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project",
+                "local",
+                "managed"
+              ]
+            },
+            "effectiveValue": {}
+          },
+          "required": [
+            "message",
+            "overridingLayer"
+          ],
+          "additionalProperties": false,
+          "description": "describes ONE masked edit: the first whose overridingLayer is a real layer ABOVE the request's target. A batch whose edits are masked by different layers reports only that one here; the full set is maskedEditIndexes. overridingLayer EQUAL TO the request's own target is the self-shadow case and means something else — the edit was undone from inside this same request by a later edit, so no other layer is involved and there is no other file to go and edit; it is reported only when every masked edit in the request is of that kind. Compare overridingLayer with the target you sent to tell the two apart without reading the message"
+        },
+        "maskedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "uncheckedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "version",
+        "filePath"
+      ],
+      "additionalProperties": false
+    },
+    "config/batchWrite": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "okOverridden"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "filePath": {
+          "type": "string"
+        },
+        "overriddenMetadata": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "overridingLayer": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project",
+                "local",
+                "managed"
+              ]
+            },
+            "effectiveValue": {}
+          },
+          "required": [
+            "message",
+            "overridingLayer"
+          ],
+          "additionalProperties": false,
+          "description": "describes ONE masked edit: the first whose overridingLayer is a real layer ABOVE the request's target. A batch whose edits are masked by different layers reports only that one here; the full set is maskedEditIndexes. overridingLayer EQUAL TO the request's own target is the self-shadow case and means something else — the edit was undone from inside this same request by a later edit, so no other layer is involved and there is no other file to go and edit; it is reported only when every masked edit in the request is of that kind. Compare overridingLayer with the target you sent to tell the two apart without reading the message"
+        },
+        "maskedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "uncheckedEditIndexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "version",
+        "filePath"
+      ],
+      "additionalProperties": false
+    },
+    "thread/search": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "thread": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "snippet": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "thread",
+              "snippet"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "thread/searchOccurrences": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rowOffset": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "uuid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "snippet": {
+                "type": "string"
+              },
+              "snippetMatchRange": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "end": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "start",
+                  "end"
+                ],
+                "additionalProperties": false
+              },
+              "readCursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "rowOffset",
+              "uuid",
+              "snippet",
+              "snippetMatchRange",
+              "readCursor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "thread/archive": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "thread/unarchive": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
       ],
       "additionalProperties": false
     }

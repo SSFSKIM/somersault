@@ -3,6 +3,10 @@ import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { emptyFlagPerms, threadBusyReason, type ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
+// Every `thread/list` reply below is awaited with `waitReply`, not with the bare `tick` the rest of this
+// file uses: since M5 Task 10 that handler reads the archive marker directory before replying, so its
+// reply lands a filesystem round-trip after the request rather than within one macrotask.
+import { waitReply } from "../../helpers/waitReply.js";
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1", ...overrides });
 // listSessions IS DI'd (Task 12): thread/list now merges in the store, and this machine's real
@@ -62,8 +66,7 @@ describe("AppServer dispatch", () => {
     expect(started.result.thread.id).toMatch(/^thr_[0-9a-f]{12}$/);
     expect(started.result.thread.origin).toBe("inProcess");
     send(c, { id: 3, method: "thread/list", params: {} });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(parsed(lines).find((f) => f.id === 3).result.data).toHaveLength(1);
+    expect((await waitReply(lines, 3)).result.data).toHaveLength(1);
   });
   it("thread/close disposes the session and removes it from the list", async () => {
     const { lines, c } = boot();
@@ -75,8 +78,7 @@ describe("AppServer dispatch", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(parsed(lines).find((f) => f.id === 3).result).toEqual({ ok: true });
     send(c, { id: 4, method: "thread/list", params: {} });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(parsed(lines).find((f) => f.id === 4).result.data).toHaveLength(0);
+    expect((await waitReply(lines, 4)).result.data).toHaveLength(0);
   });
   it("unknown method and threadNotFound have distinct codes", async () => {
     const { lines, c } = boot();
@@ -144,8 +146,7 @@ describe("AppServer dispatch", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(parsed(s.lines).find((f) => f.id === 3).error.code).toBe(ERR.INTERNAL);
     send(c, { id: 4, method: "thread/list", params: {} });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(parsed(s.lines).find((f) => f.id === 4).result.data).toHaveLength(0);
+    expect((await waitReply(s.lines, 4)).result.data).toHaveLength(0);
   });
   it("a successful initialize replies THEN emits an `initialized` notification; a second initialize on the same conn emits none", () => {
     const { lines, c } = boot();
@@ -314,15 +315,13 @@ describe("threadView (parent §5's 14-field Thread projection) + thread/list cur
     const t2 = threadIdOf({ lines }, 3);
 
     send(c, { id: 4, method: "thread/list", params: { limit: 1 } });
-    await new Promise((r) => setTimeout(r, 0));
-    const page1 = parsed(lines).find((f) => f.id === 4).result;
+    const page1 = (await waitReply(lines, 4)).result;
     expect(page1.data).toHaveLength(1);
     expect(page1.data[0].id).toBe(t1);
     expect(page1.nextCursor).toBe("1");
 
     send(c, { id: 5, method: "thread/list", params: { limit: 1, cursor: page1.nextCursor } });
-    await new Promise((r) => setTimeout(r, 0));
-    const page2 = parsed(lines).find((f) => f.id === 5).result;
+    const page2 = (await waitReply(lines, 5)).result;
     expect(page2.data).toHaveLength(1);
     expect(page2.data[0].id).toBe(t2);
     expect(page2.nextCursor).toBeNull();

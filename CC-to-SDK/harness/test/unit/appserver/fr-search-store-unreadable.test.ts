@@ -1,0 +1,276 @@
+// test/unit/appserver/fr-search-store-unreadable.test.ts — whole-branch review F1 / verifier cluster 4
+// (D-M5-25a): an unreadable session store must REFUSE, not answer "no matches".
+//
+// THE POINT OF THIS FILE IS THAT IT INJECTS NO SESSION-STORE READER. Every other search row hands the
+// handler `listSessions`/`getSessionMessages`/`getSessionInfo` fakes, and the rows that pinned D-M5-8
+// handed it fakes that THROW — which is exactly why the defect survived fifteen reviews. SDK 0.3.234's
+// real readers swallow every filesystem failure (`catch → []`, `undefined`), so a double that throws is
+// more honest than the dependency it stands in for, and proves nothing about it. Here the store is a real
+// directory tree under a temporary `CLAUDE_CONFIG_DIR`, broken with real `chmod`, and driven through a
+// real server on the real wire, with `ccxDir` the only dep set (the archive markers are not what these
+// rows are about, and this machine's real fleet root would otherwise colour the result).
+//
+// The injected-thrower rows in `search.test.ts` stay: they pin what the handler does GIVEN a failure.
+// These rows pin that a failure is what the production origin produces.
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { AppServer } from "../../../src/appserver/server.js";
+import { sessionStoreRoot } from "../../../src/sessions/index.js";
+import type { PeerSink } from "../../../src/appserver/peer.js";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const servers: AppServer[] = [];
+let root = "", cfg = "", work = "", projDir = "";
+let savedConfigDir: string | undefined;
+
+/** The SDK's own project-directory name for a cwd (`[^a-zA-Z0-9] → "-"`). Spelled HERE and nowhere in
+ *  `src/`: the fixture has to plant files where the reader will look, while the production audit walks
+ *  whatever directories exist and never derives one. */
+const projectDirFor = (dir: string) => dir.replace(/[^a-zA-Z0-9]/g, "-");
+
+const A = "11111111-1111-4111-8111-111111111111";
+const B = "22222222-2222-4222-8222-222222222222";
+
+const jsonl = (o: unknown) => JSON.stringify(o) + "\n";
+function plant(id: string, text: string): void {
+  const stamp = new Date().toISOString();
+  writeFileSync(join(projDir, `${id}.jsonl`),
+    jsonl({ type: "user", uuid: `${id}-u1`, parentUuid: null, sessionId: id, cwd: work, timestamp: stamp, message: { role: "user", content: [{ type: "text", text }] } }) +
+    jsonl({ type: "assistant", uuid: `${id}-a1`, parentUuid: `${id}-u1`, sessionId: id, cwd: work, timestamp: stamp, message: { role: "assistant", content: [{ type: "text", text: `answer about ${text}` }] } }));
+}
+
+beforeEach(() => {
+  // realpath because macOS's tmpdir is a symlink and the store's directory name is derived from the
+  // RESOLVED cwd — a fixture planted under the unresolved path is a store the reader never looks in.
+  root = realpathSync(mkdtempSync(join(tmpdir(), "m5search-")));
+  cfg = join(root, "cfgdir");
+  work = join(root, "work");
+  mkdirSync(work, { recursive: true });
+  projDir = join(cfg, "projects", projectDirFor(work));
+  mkdirSync(projDir, { recursive: true });
+  savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = cfg;
+  plant(A, "needle alpha");
+  plant(B, "needle beta");
+});
+afterEach(async () => {
+  if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
+  for (const s of servers.splice(0)) await s.shutdown().catch(() => {});
+  // Every break in this file is a `chmod`, so the tree has to be made removable again before `rm`.
+  for (const p of [join(cfg, "projects"), projDir]) { try { chmodSync(p, 0o700); } catch { /* never created */ } }
+  for (const id of [A, B]) { try { chmodSync(join(projDir, `${id}.jsonl`), 0o600); } catch { /* replaced or gone */ } }
+  rmSync(root, { recursive: true, force: true });
+});
+
+/** A server on PRODUCTION session-store defaults: no `listSessions`, no `getSessionMessages`, no
+ *  `getSessionInfo`. `over` is for the PARTIAL-injection rows only — a server that is production for some
+ *  readers and a double for others, which is the shape the audit's gate used to skip entirely. */
+function boot(over: Record<string, unknown> = {}): (method: string, params: unknown) => Promise<any> {
+  const srv = new AppServer({} as never, { ccxDir: join(root, "ccx"), ...over } as never);
+  servers.push(srv);
+  const lines: string[] = [];
+  const conn = srv.connect({ write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink);
+  conn.feed(JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "T" } } }) + "\n");
+  let nextId = 100;
+  return async (method, params) => {
+    const id = nextId++;
+    conn.feed(JSON.stringify({ id, method, params }) + "\n");
+    for (let i = 0; i < 400; i++) {
+      const hit = lines.map((l) => JSON.parse(l)).find((m: any) => m.id === id);
+      if (hit) return hit;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error(`no reply to ${method}`);
+  };
+}
+
+describe("thread/search on the PRODUCTION session store — an unreadable store refuses", () => {
+  it("baseline: the real readers, the real store — both methods find the planted needle", async () => {
+    // The control this whole file rests on. Without it a later row could pass because the store was
+    // never reachable at all, which is the same green as a store that was read and refused correctly.
+    expect(sessionStoreRoot()).toBe(join(cfg, "projects"));
+    const send = boot();
+    const r = await send("thread/search", { searchTerm: "needle" });
+    expect(r.error).toBeUndefined();
+    expect(new Set(r.result.data.map((d: any) => d.thread.sessionId))).toEqual(new Set([A, B]));
+    const o = await send("thread/searchOccurrences", { threadId: A, searchTerm: "needle" });
+    expect(o.error).toBeUndefined();
+    expect(o.result.data.length).toBeGreaterThan(0);
+  });
+
+  it("an unreadable TRANSCRIPT is an error on both methods — not a page missing that session, and not `Thread not found`", async () => {
+    chmodSync(join(projDir, `${A}.jsonl`), 0o000);
+    const send = boot();
+    const r = await send("thread/search", { searchTerm: "needle" });
+    // Measured before the fix: `{"data":[{…B…}],"nextCursor":null}` — session A silently gone, no
+    // `skipped`, no warning, and the terminal cursor claiming there is nothing more.
+    expect(r.result).toBeUndefined();
+    expect([r.error.code, r.error.message.startsWith("session store read failed: EACCES")]).toEqual([-32603, true]);
+    // The sharpest half: the SAME file made this method deny the thread EXISTS, because the store's
+    // existence oracle answers `undefined` for a file it cannot open.
+    const o = await send("thread/searchOccurrences", { threadId: A, searchTerm: "needle" });
+    expect(o.result).toBeUndefined();
+    expect(o.error.code).toBe(-32603);
+    expect(o.error.message).not.toBe("Thread not found");
+  });
+
+  it("an unreadable project directory, and an unreadable STORE ROOT, refuse — acceptance criterion 5's own words", async () => {
+    const send = boot();
+    chmodSync(projDir, 0o000);
+    const perDir = await send("thread/search", { searchTerm: "needle" });
+    expect(perDir.result).toBeUndefined();
+    expect(perDir.error.code).toBe(-32603);
+    chmodSync(projDir, 0o700);
+
+    chmodSync(join(cfg, "projects"), 0o000);
+    const perRoot = await send("thread/search", { searchTerm: "needle" });
+    // Before the fix this was literally `{"data":[],"nextCursor":null}` — the terminal "nothing here"
+    // answer for a store that was never read.
+    expect(perRoot.result).toBeUndefined();
+    expect(perRoot.error.code).toBe(-32603);
+    chmodSync(join(cfg, "projects"), 0o700);
+
+    // …and the refusal is not a latch: a store made readable again answers again.
+    const back = await send("thread/search", { searchTerm: "needle" });
+    expect(back.error).toBeUndefined();
+    expect(back.result.data.length).toBe(2);
+  });
+
+  it("a DIRECTORY where a transcript belongs refuses too — a store entry the reader can never open", async () => {
+    rmSync(join(projDir, `${A}.jsonl`));
+    mkdirSync(join(projDir, `${A}.jsonl`));
+    const send = boot();
+    const r = await send("thread/search", { searchTerm: "needle" });
+    expect(r.result).toBeUndefined();
+    expect([r.error.code, r.error.message.startsWith("session store read failed: EISDIR")]).toEqual([-32603, true]);
+  });
+
+  it("an absent store is an honest empty page, and a store with nothing matching is too", async () => {
+    // The other side of the contract, and the reason the audit distinguishes ENOENT from every other
+    // errno: a store that was never written must not refuse, or a first-run client can never search.
+    rmSync(join(cfg, "projects"), { recursive: true });
+    const send = boot();
+    const empty = await send("thread/search", { searchTerm: "needle" });
+    expect([empty.error, empty.result]).toEqual([undefined, { data: [], nextCursor: null }]);
+    mkdirSync(projDir, { recursive: true });
+    plant(A, "needle alpha");
+    const miss = await send("thread/search", { searchTerm: "haystack" });
+    expect([miss.error, miss.result]).toEqual([undefined, { data: [], nextCursor: null }]);
+  });
+
+  it("thread/list refuses the SAME unreadable store its sibling refuses — one instant, one answer, and no absolute path", async () => {
+    // The self-contradiction this closes was constructible: at one instant, over one broken store, the
+    // search box refused `-32603` while the thread picker answered `{"data":[],"nextCursor":null}` — and a
+    // picker showing no threads is the more likely of the two to be believed. `thread/list` reads the same
+    // swallowing `listSessions`, so absence and unreadability collapsed there exactly as D-M5-8 forbids.
+    chmodSync(join(cfg, "projects"), 0o000);
+    const send = boot();
+    const listed = await send("thread/list", {});
+    expect(listed.result).toBeUndefined();
+    expect([listed.error.code, listed.error.message.startsWith("session store read failed: EACCES")]).toEqual([-32603, true]);
+    // The half that had to be built before the audit could live there: the failure now has a refusal of
+    // its own, so it never reaches `dispatch`'s generic catch, which replies `e.message` for every handler
+    // — and node composes an fs errno with the operator's absolute home path.
+    expect([listed.error.message.includes(root), listed.error.message.includes("/")]).toEqual([false, false]);
+    expect(listed.error.message).toContain("<path>");
+    // …and the two methods agree, which is the property rather than the coincidence.
+    const searched = await send("thread/search", { searchTerm: "needle" });
+    expect(searched.error.code).toBe(listed.error.code);
+    chmodSync(join(cfg, "projects"), 0o700);
+    // Readable again: the picker answers again, and an absent store is still an honest empty rather than
+    // a refusal (the ENOENT rule, asked of this method too).
+    expect((await send("thread/list", {})).error).toBeUndefined();
+    rmSync(join(cfg, "projects"), { recursive: true });
+    const absent = await send("thread/list", {});
+    expect([absent.error, absent.result]).toEqual([undefined, { data: [], nextCursor: null }]);
+  });
+
+  it("a PARTIAL injection still audits — one real reader is enough, from either side", async () => {
+    // The gate was all-or-nothing: it returned when ANY one of the three readers was injected, while the
+    // other two still read this filesystem. So a server that doubled the listing and read real transcripts
+    // (or the reverse) skipped the audit and then swallowed the very errno it exists to raise — measured
+    // before the fix: a page came back, with no refusal, over a transcript at mode 000.
+    //   Two rows in one, because the gate has two sides and a fix that consulted only the reader it
+    // happened to think of would leave the other open. Neither double is enough on its own to make this
+    // request stop touching the real store.
+    chmodSync(join(projDir, `${A}.jsonl`), 0o000);
+    const info = { sessionId: A, cwd: work, lastModified: 5_000, createdAt: 1_000, summary: "planted" };
+    const listOnly = boot({ listSessions: async () => [info] });                       // real transcripts
+    const rList = await listOnly("thread/search", { searchTerm: "needle" });
+    expect(rList.result).toBeUndefined();
+    expect(rList.error.code).toBe(-32603);
+    const msgsOnly = boot({ getSessionMessages: async () => [] });                     // real listing
+    const rMsgs = await msgsOnly("thread/search", { searchTerm: "needle" });
+    expect(rMsgs.result).toBeUndefined();
+    expect(rMsgs.error.code).toBe(-32603);
+    // …and the control that keeps the gate a gate: with EVERY reader this handler uses injected, the store
+    // under test is the double's and this filesystem is not consulted, broken transcript and all.
+    const doubled = boot({ listSessions: async () => [], getSessionMessages: async () => [] });
+    const rDouble = await doubled("thread/search", { searchTerm: "needle" });
+    expect([rDouble.error, rDouble.result]).toEqual([undefined, { data: [], nextCursor: null }]);
+  });
+
+  /** FIX WAVE G / G3 — the audit did not observe the read that matters. It ran ONCE, before the listing,
+   *  and the reply claims something about the WALK. In between, the shipped reader answers `[]` for a
+   *  transcript it cannot open, and `[]` is indistinguishable from "this transcript is exhausted" — so a
+   *  transcript that became unreadable mid-scan dropped its session out of the page under a
+   *  `nextCursor: null` that says there is nothing more. Wave F declined a per-transcript re-check, and
+   *  rightly: this module refuses to reproduce the SDK's cwd→project mapping, so it cannot NAME the file
+   *  behind a session id, and re-verifying one costs the same whole-store walk as verifying all. Per
+   *  REQUEST that walk is affordable; per window it is not. So the audit is asked again at the end.
+   *
+   *  THE TRANSCRIPT READ AND THE AUDIT ARE BOTH REAL. Only `listSessions` is injected, and only as a
+   *  CLOCK — it returns the row the real listing would and breaks the file on its way out, which is the
+   *  one thing a test cannot ask a racing writer to do on cue. `getSessionMessages` is the shipped reader
+   *  against the real filesystem, and it is that reader's swallowed EACCES the row is about. The row above
+   *  ("a PARTIAL injection still audits") already pins that this shape audits at all. */
+  it("a transcript that becomes unreadable DURING the scan refuses — the reply's claim is about the walk", async () => {
+    // Measured before the closing audit: `{"data":[{…B…}],"nextCursor":null}` — session A silently absent,
+    // no `skipped`, no warning, and a terminal cursor for a store that had just stopped being readable.
+    let broke = false;
+    const rows = [
+      { sessionId: A, cwd: work, lastModified: 5_000, createdAt: 2_000, summary: "a" },
+      { sessionId: B, cwd: work, lastModified: 4_000, createdAt: 1_000, summary: "b" },
+    ];
+    const send = boot({
+      listSessions: async () => { broke = true; chmodSync(join(projDir, `${A}.jsonl`), 0o000); return rows; },
+    });
+    const r = await send("thread/search", { searchTerm: "needle" });
+    expect(broke).toBe(true);
+    expect(r.result).toBeUndefined();
+    expect([r.error.code, r.error.message.startsWith("session store read failed: EACCES")]).toEqual([-32603, true]);
+    // …and the control that keeps it a CLOSING audit rather than a new blanket refusal: with nothing broken
+    // the same partially-injected server answers both sessions, so the added walk costs correctness nothing.
+    chmodSync(join(projDir, `${A}.jsonl`), 0o600);
+    const ok = await boot({ listSessions: async () => rows })("thread/search", { searchTerm: "needle" });
+    expect(ok.error).toBeUndefined();
+    expect(new Set(ok.result.data.map((d: any) => d.thread.sessionId))).toEqual(new Set([A, B]));
+  });
+
+  it("…and the same for thread/searchOccurrences, whose one transcript is the whole of its page", async () => {
+    // The sibling pays the same whole-store walk (the M6 decline records why) and owes the same honesty:
+    // an occurrence page that reports "no more" about a transcript it stopped being able to read is the
+    // D-M5-8 lie in miniature, one thread wide.
+    const send = boot({ getSessionInfo: async (id: string) => { chmodSync(join(projDir, `${A}.jsonl`), 0o000); return { sessionId: id, summary: "a", lastModified: 5_000 }; } });
+    const o = await send("thread/searchOccurrences", { threadId: A, searchTerm: "needle" });
+    expect(o.result).toBeUndefined();
+    expect([o.error.code, o.error.message.startsWith("session store read failed: EACCES")]).toEqual([-32603, true]);
+  });
+
+  it("no refusal puts an absolute path on the wire — the strip the archive routes already had", async () => {
+    // The latent half of this finding, made live by the rows above: node composes an fs errno as
+    // `EACCES: permission denied, open '/Users/<operator>/…'`, and these two methods used to answer
+    // `e.message` verbatim where `thread/archive` stripped it.
+    chmodSync(join(projDir, `${A}.jsonl`), 0o000);
+    const send = boot();
+    for (const [method, params] of [
+      ["thread/search", { searchTerm: "needle" }],
+      ["thread/searchOccurrences", { threadId: A, searchTerm: "needle" }],
+    ] as const) {
+      const e = (await send(method, params)).error;
+      expect([method, e?.message.includes(root), e?.message.includes("/")]).toEqual([method, false, false]);
+      expect(e.message).toContain("<path>");
+    }
+  });
+});

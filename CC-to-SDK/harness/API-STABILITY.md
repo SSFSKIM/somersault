@@ -68,6 +68,13 @@ also reachable as `cc-harness/appserver/schema/{stable,experimental}.json` — t
 resolvable (`createRequire(import.meta.url).resolve(...)` + `fs`); importing them as JSON modules is a
 Node-version question this package does not answer.
 
+Each artifact carries **two** top-level maps keyed by method name: `methods` (the request params — every
+registered method has an entry) and `results` (the **response** shape, present only for the methods that
+publish one; M5 onward). A client joins them by name. Response schemas ride in their own map rather than
+inside the method entry so that every value under `methods` stays a standalone draft-7 schema a strict
+validator compiles as-is; a method missing from `results` means "response shape not published yet", never
+"no response". The map is additive per landing wave, so pin the artifact, not the set of keys in it.
+
 | Export | Tier |
 |---|---|
 | `AppServer` | advanced-seam |

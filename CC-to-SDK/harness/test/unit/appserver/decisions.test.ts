@@ -5,6 +5,7 @@ import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { ThreadDecisions, type DecisionEvent } from "../../../src/appserver/broker.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
+import { waitReply } from "../../helpers/waitReply.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const fakeSession = () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1" });
@@ -467,8 +468,9 @@ describe("appserver decisions (Task 7)", () => {
     expect(mintedId).toBeTruthy();
 
     send(c, { id: 3, method: "thread/list", params: {} });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(parsed(s.lines).find((f) => f.id === 3).result.data).toHaveLength(0); // registry: no orphan record
+    // `waitReply`, not a bare tick: since M5 Task 10 thread/list reads the archive marker directory before
+    // replying, so its reply lands a filesystem round-trip after the request rather than within one macrotask.
+    expect((await waitReply(s.lines, 3)).result.data).toHaveLength(0); // registry: no orphan record
 
     send(c, { id: 4, method: "decision/list", params: { threadId: mintedId } });
     await new Promise((r) => setTimeout(r, 0));

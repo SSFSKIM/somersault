@@ -180,6 +180,14 @@ export async function swapEngine(
   // attached client, so leaving it would hand the next client item events from a turn that no longer
   // exists in the transcript it is about to read.
   record.buffer = [];
+  // `record.terminalSlashCommands` is deliberately NOT reset here (fix wave I / sweep#3, declined with its
+  // reason). It is the one latched field whose SUBJECT survives the swap: the replacement is a fresh CLI
+  // process built from `record.config`, so the executable, its setting sources and therefore the commands
+  // it tags as terminal-only are the same ones the outgoing engine advertised — unlike `sessionId` and the
+  // turn buffer above, which describe the conversation that was just discarded. Clearing it would cost
+  // twice: the field would go absent until the replacement's next init frame, which for an idle thread is
+  // indefinitely (the gap scalpel-5#2 names on the fleet path), and the first init after the swap would
+  // then read as a CHANGE and put a `thread/capabilities/changed` on the wire for a value that never moved.
   installRouter(srv, record);
   await repushThreadState(srv, record);
 }

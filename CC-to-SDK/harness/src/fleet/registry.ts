@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { claudeConfigDir } from "../config/claudeHome.js";
 
 /** A row the ENGINE writes for itself at session start and unlinks on exit. We never write these —
  *  identity is steered via CLAUDE_CODE_SESSION_NAME / _KIND (probe 57). */
@@ -11,9 +11,11 @@ export interface RegistryRow {
 
 /** The registry follows CLAUDE_CONFIG_DIR (probe 61): a session spawned with a per-tenant config dir —
  *  which is exactly what tenantHarnessConfig does — writes its row to <CLAUDE_CONFIG_DIR>/sessions and
- *  NOT under HOME. Reading only HOME would hide every tenant-isolated session behind an empty list. */
+ *  NOT under HOME. Reading only HOME would hide every tenant-isolated session behind an empty list.
+ *  The resolution itself is `claudeConfigDir`'s, shared with the config domain's user layer — two
+ *  spellings of one rule is how the config domain came to ignore the variable for a whole milestone. */
 export function sessionsDir(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), ".claude"), "sessions");
+  return join(claudeConfigDir(env), "sessions");
 }
 
 export function readRegistry(env: NodeJS.ProcessEnv = process.env): RegistryRow[] {

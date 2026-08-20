@@ -1,5 +1,6 @@
 // test/unit/handlers.test.ts
 import { describe, it, expect } from "vitest";
+import { DEFAULTS } from "cc-harness";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -404,6 +405,9 @@ describe("thread/name/set and config/read", () => {
   it("config/read replies {config:{model: DEFAULTS.model}}", () => {
     const { out, server } = wireDirect(() => fakeSession());
     server.handleRequest("config/read", {}, 2);
-    expect(out.find((o) => o.id === 2)?.result).toEqual({ config: { model: "claude-opus-4-8" } });
+    // DEFAULTS.model itself, not a pinned literal: the handler replies whatever cc-harness ships as its
+    // default, and pinning the value here just goes stale every time the harness moves its default model
+    // (it read "claude-opus-4-8" until the 0.3.234 bump work first re-ran this package and found it red).
+    expect(out.find((o) => o.id === 2)?.result).toEqual({ config: { model: DEFAULTS.model } });
   });
 });

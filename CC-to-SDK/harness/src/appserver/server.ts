@@ -31,6 +31,10 @@ import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
 import { reviewStart } from "./review.js";
+import { configRead, configValueWrite, configBatchWrite } from "./configDomain.js";
+import { threadSearch, threadSearchOccurrences } from "./search.js";
+import { storeRefusal, threadArchive, threadUnarchive } from "./archiveDomain.js";
+import { listArchived, removeArchiveMarker } from "./archive.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
 import { threadStartParams, threadResumeParams } from "./schema/threads.js";
@@ -45,7 +49,10 @@ export interface AppServerDeps {
   // Task 13: `opts` pages the transcript by ROW window (offset/limit forwarded to src/sessions'
   // getSessionMessages, which forwards to the SDK) — subscribe.ts's threadRead is the only caller
   // that ever passes it; every other caller of this DI slot omits it entirely.
-  getSessionMessages?: (sessionId: string, opts?: { limit?: number; offset?: number }) => Promise<unknown[]>;
+  // `cwd` (M5 fix wave G / P2-2#1) is the SDK's project SCOPE, not a filter: `src/sessions`' wrapper maps
+  // it to the reader's `dir`, and a search that scoped its listing to one project while looking that
+  // project's transcripts up in the process-default one was answering about two stores in one reply.
+  getSessionMessages?: (sessionId: string, opts?: { limit?: number; offset?: number; cwd?: string }) => Promise<unknown[]>;
   // Task 12 (session library): DI-defaulted, at each call site, to the real src/sessions/index.js
   // exports — mirrors getSessionMessages above. `unknown[]`/void return shapes (rather than the real
   // wrappers' typed SDKSessionInfo[]/ForkSessionResult) keep this interface decoupled from the SDK's
@@ -75,6 +82,16 @@ export interface AppServerDeps {
   // one of its own: the production value must sit ABOVE the seam's inner 30 s SIGTERM attempt, so a suite
   // that served it honestly would spend 40 real seconds proving one branch.
   shellDeadlineMs?: number;
+  // M5: the config-files domain + archive markers. `configHome` is the base of the user layer
+  // (`<configHome>/.claude/settings.json`), defaulted to os.homedir() at each call site so tests point
+  // the whole domain at a temp dir; `managedSettingsPath` overrides the platform managed file (null =
+  // no managed layer, the win32 default); `ccxDir` is the server-state dir the archive markers live
+  // under, defaulting to `fleetRoot()` (src/fleet/paths.ts) so a `CCX_FLEET_ROOT` override moves them
+  // with the rest of the fleet state; `getSessionInfo` backs the D-M5-20 existence checks.
+  configHome?: string;
+  managedSettingsPath?: string | null;
+  ccxDir?: string;
+  getSessionInfo?: (id: string) => Promise<unknown | undefined>;
 }
 export interface ConnCtx {
   peer: Peer;
@@ -142,7 +159,36 @@ function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "pa
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
+/** Does this engine config RESUME a session, or merely READ its transcript into a new one? (D-M5-21b.)
+ *  `forkSession: true` beside `resume` is the SDK's own "fork to a new session ID rather than continuing
+ *  the previous session" (sdk.d.ts), and `src/session/index.ts`'s `rewindSession` uses exactly that pair
+ *  for a non-destructive branch. Measured against a real engine rather than read off the type: a live
+ *  probe (parent `d78907bb…`) resumed with the flag reported a DIFFERENT id at init (`9dd9e17c…`), left
+ *  the parent's transcript at the message count it had before, and carried that history into the fork's
+ *  own file; the same resume WITHOUT the flag reported the parent's id back.
+ *
+ *  So the parent is not admitted by such a request, and the two things admission does to an id are both
+ *  wrong for it: stamping `record.sessionId` names a session this thread does not hold — permanently,
+ *  since `routeInit`'s latch early-returns on a stamped record, so the id the engine actually opened is
+ *  never learned and every id-keyed method answers about the parent — and `autoUnarchive` would take a
+ *  conversation off the shelf that never went live. The fork's OWN id needs neither: nothing here can know
+ *  it before the engine's first init frame (the latch is exactly the mechanism for that), and a freshly
+ *  minted id has no marker to clear.
+ *
+ *  TRUTHY rather than `=== true`: `config` is a client passthrough, this predicate only ever REMOVES an
+ *  eager guess, and the CLI reads the flag the same way. Being wrong in this direction costs the stamp's
+ *  head start; being wrong in the other costs a permanently mis-identified thread. */
+const forksSession = (config: Record<string, unknown> | undefined): boolean => Boolean(config?.forkSession);
+
 const RESUME_LIVE_FLEET = "sessionId belongs to a running fleet session; use thread/attach";
+
+/** The refusal for a session held by a live ccx process ELSEWHERE on this machine — shared by
+ *  `thread/archive` (archiveDomain.ts) and `thread/delete` (sessionLib.ts), the two methods that refuse
+ *  rather than redirect. It lives HERE, beside `liveInFleet`, because the sentence and the probe are one
+ *  fact: "in this server — close it first" is false about a holder in another process and its advice is
+ *  unfollowable, so any guard that gains the roster arm needs this sentence with it. `thread/resume`
+ *  keeps its own (`RESUME_LIVE_FLEET`) because it has a remedy to name — attach instead. */
+export const LIVE_REFUSAL_FLEET = "Thread is live in another ccx process; close it there first";
 
 /** The synchronous half of `thread/resume`'s live-session guard (spec §1c). `thread/resume` is NOT
  *  origin-gated — it CREATES a thread, so there is no record to gate on — but the hazard it opens is real:
@@ -168,6 +214,40 @@ function fleetResumeCandidates(srv: AppServer, sessionId: string): "live" | Rost
   return listRoster().filter((r) => r.sessionId === sessionId && !TERMINAL.has(r.state));
 }
 
+/** The ASYNC half of the guard above — the pid probes the candidate rows still need. Split out so
+ *  `thread/resume` can take its reservation in the gap between the two halves (see `resumingSessions`)
+ *  while a caller with no such gap composes both through `liveInFleet` below. */
+async function anyRosterPidLive(rows: RosterRow[]): Promise<boolean> {
+  for (const row of rows) if (await isPidLive(row.pid, row.procStart)) return true;
+  return false;
+}
+
+/** "Does a FLEET ROSTER ROW or this server's own registry say someone holds this session?" — both halves
+ *  of `thread/resume`'s roster guard, for callers that have nothing to do between them.
+ *
+ *  THE QUESTION IS NARROWER THAN "is it live on this machine", and the difference is stated here rather
+ *  than left to be discovered (fix wave I / scalpel-3#1, declined as unfixable at this altitude). Two
+ *  holders are invisible to it, both by construction. A ccx HOST admitted after `listRoster()` took its
+ *  snapshot is not in that snapshot — a listing is a listing, and no arrangement of one is atomic with
+ *  another process's admission. And an IN-PROCESS thread of a SECOND app-server process is in no roster at
+ *  all: roster rows are written by `SessionHost`, and an app server's own `thread/start` mints no host. So
+ *  a `false` here means "nothing this process can see holds it", never "nobody does" — which is the same
+ *  scope the spec's criterion 7 states for the shelf ("no transition THIS SERVER mediates"), and it is why
+ *  markers are re-read per request rather than cached. Making it true across processes would mean every
+ *  app server publishing its in-process threads into shared state, which is an architecture with an owner
+ *  and not a corrective repair.
+ *
+ *  EXPORTED for `thread/archive` (archiveDomain.ts), which is the reason it exists at all: this server was
+ *  answering two different questions about one session, refusing to RESUME an id a running fleet session
+ *  still holds while cheerfully SHELVING that same id two lines away. D-M5-21's invariant is that a live
+ *  thread is never hidden from the default list across servers, not merely within one, and the archiving
+ *  server already has the roster data it needs to honour that. Sharing the probe rather than re-deriving
+ *  it is what keeps the two answers from drifting apart again. */
+export async function liveInFleet(srv: AppServer, sessionId: string): Promise<boolean> {
+  const candidates = fleetResumeCandidates(srv, sessionId);
+  return candidates === "live" || anyRosterPidLive(candidates);
+}
+
 /** Methods still answerable when the thread's engine is dead (dispatch's -33005 gate). The invariant is
  *  "answerable without live transport", not "is a read" — three families:
  *  close/read/subscribe/unsubscribe/decision-list, because closing and reading history are exactly what a
@@ -191,6 +271,16 @@ const ENGINE_GONE_EXEMPT = new Set([
   // refuse the recovery in exactly the state it exists for, and the alive-engine refusal it owes (-32602)
   // is the handler's, after the exemption (rewind.ts).
   "thread/reopen",
+  // M5 (§search) Task 8: `thread/searchOccurrences` is exempt for the ORIGINAL reason — it answers off disk,
+  // like `thread/read` two lines above, reading the persisted transcript and never the transport. Without the
+  // exemption the same session would be searchable by its bare store id (no record, no gate) and refused by
+  // its own registry id, which is a difference in the answer produced by how the client spelled the thread.
+  "thread/searchOccurrences",
+  // M5: disk/sidecar reads that must answer for a thread whose engine died (spec rev 3). The archive pair
+  // joins `thread/searchOccurrences` above for the same reason it is there — the subject is a file on
+  // disk, never the transport — and with one of its own: shelving a conversation is precisely the cleanup
+  // a client reaches for once a thread has died, which is `thread/delete`'s argument two lines up.
+  "thread/archive", "thread/unarchive",
 ]);
 
 export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Record<string, unknown>) => void | Promise<void>;
@@ -243,9 +333,29 @@ export class AppServer {
       if (srv.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
       const parsed = threadStartParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+      // The THIRD admission surface (spec D-M5-21 names all three: thread/resume, resume-carrying
+      // thread/start, thread/attach). `config` is a parsed record, not an opaque blob — the server
+      // spreads it into the engine config — so the resume target is readable here, and it is the same
+      // value `startThread` uses for its own eager stamp.
+      // …EXCEPT when `forkSession` rides beside it (D-M5-21b): that pair READS the named transcript into a
+      // NEW session id rather than admitting it, so this request admits no existing id at all and neither
+      // the stamp nor the shelf read below has a subject. ONE predicate decides both, because the two must
+      // agree — a stamp without its unarchive, or the reverse, is the half-shipped shape this milestone
+      // keeps paying for.
+      const cfg = parsed.data.config;
+      const resuming = typeof cfg?.resume === "string" && !forksSession(cfg) ? cfg.resume : undefined;
       const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
+      // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
+      // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
+      // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
+      // client's first turn — a window, lasting whole requests rather than a tick, in which thread/archive
+      // and thread/delete both judge a live conversation to be cold.
+      if (resuming && !record.sessionId) record.sessionId = resuming;
       ctx.peer.reply(id, { thread: threadView(srv, record) });
       srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
+      // LAST, once admission has fully succeeded — same placement and same guarded helper as the other
+      // two admission surfaces, so this one cannot drift from them (D-M5-21).
+      if (resuming) await srv.autoUnarchive(ctx, resuming);
     },
     "thread/resume": async (srv, ctx, id, params) => {
       const parsed = threadResumeParams.safeParse(params);
@@ -262,24 +372,31 @@ export class AppServer {
       // No roster candidate to probe (the overwhelmingly common case): fall straight through to
       // startThread in this same dispatch tick — no await, so no window for a delete to race (see
       // fleetResumeCandidates), and `startThread`'s own deletingSessions check still fences an in-flight one.
-      if (candidates.length === 0) { srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }); return; }
+      if (candidates.length === 0) { await srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }); return; }
       // R13: the probe below AWAITS. Reserve the resume synchronously HERE, before that yield, and refuse if
       // a delete is already in flight — the two arrival-time checks that make admission and deletion
       // mutually exclusive even when a concurrent delete completes inside the probe (see resumingSessions
       // and sessionLib.ts's delete). Released in a `finally` — a refused probe must not reserve forever.
       if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
       srv.resumingSessions.set(sessionId, (srv.resumingSessions.get(sessionId) ?? 0) + 1);
+      let admitted: Promise<void> | undefined;
       try {
-        for (const row of candidates) {
-          if (await isPidLive(row.pid, row.procStart)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
-        }
-        srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
+        if (await anyRosterPidLive(candidates)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
+        // CAPTURED, not awaited, INSIDE the reservation (M5 Task 9). `startThread` registers the record
+        // synchronously and only then awaits (its D-M5-21 shelf read), and this reservation's whole job is
+        // to fence the window BEFORE that registration — after it, `findLiveBySessionId` sees the thread
+        // and `thread/delete`'s own live-guard covers the rest. Holding it across the shelf read would be
+        // incidental rather than principled, and it would make the release stop coinciding with the
+        // admission it is fencing. Awaited below the `finally` so the request is still not reported
+        // finished before its admission is.
+        admitted = srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
       } finally {
         // MY hold, not the reservation (PF2): a sibling resume may still be inside its own probe, and the
         // entry is gone only when the last of us leaves.
         const held = (srv.resumingSessions.get(sessionId) ?? 1) - 1;
         if (held > 0) srv.resumingSessions.set(sessionId, held); else srv.resumingSessions.delete(sessionId);
       }
+      await admitted;
     },
     "thread/list": threadList,
     "thread/fork": threadFork,
@@ -477,6 +594,36 @@ export class AppServer {
     // everything a client can name on it, thread/shellCommand's precedent), while the origin gate never
     // fires because a fleet thread's cwd is as reviewable as an inProcess one's.
     "review/start": reviewStart,
+    // M5 (§config): the settings-files domain's read half. SERVER-scoped like `fs/read` — it names no
+    // thread, so neither dispatch gate can fire — and it reads the files a client is about to write
+    // through, which is why the reply carries the CAS `versions` its first conditional write needs.
+    "config/read": configRead,
+    // ...and its write half. SERVER-scoped exactly like the read — no thread is named, so neither dispatch
+    // gate can fire — and mutual exclusion is the handler's own (`withFileLock` around read→CAS→write),
+    // not the dispatch table's: the contended resource is a FILE on this machine, which a second server
+    // process can hold too, and no per-connection or per-thread serialization could ever see that.
+    "config/value/write": configValueWrite,
+    "config/batchWrite": configBatchWrite,
+    // M5 (§search): the store, searched. SERVER-scoped like the config trio above — it names no thread, so
+    // neither dispatch gate can fire — and it reaches sessions this server has never opened, which is the
+    // point: the corpus is every transcript on this machine, not this process's registry. Mutual exclusion
+    // is the handler's own (`runScanExclusive`), for the same reason the config writes' is: the contended
+    // resource is this process's disk read rate, which no per-thread chain could ever see.
+    "thread/search": threadSearch,
+    // …and its per-thread sibling, which DOES name a thread and therefore does meet both dispatch gates. It
+    // is `ENGINE_GONE_EXEMPT` above for the reason `thread/read` is: the subject is the persisted transcript
+    // on disk, so a thread whose engine died must still answer — otherwise the same session is searchable by
+    // its bare store id and refused by its own registry id. Mutual exclusion is again the handler's own, and
+    // it is the SAME chain the store-wide search uses: one content scan at a time per server.
+    "thread/searchOccurrences": threadSearchOccurrences,
+    // M5 (§archive): the shelf pair (archiveDomain.ts). They NAME A THREAD — either spelling, a registry
+    // id or a bare store sessionId — so both meet the dispatch gates, and both are `ENGINE_GONE_EXEMPT`
+    // above: the subject is a marker file, not a live conversation. Mutual exclusion is not the dispatch
+    // table's here either, and for a stronger reason than the searches': the marker store needs none. One
+    // atomic create and one unlink per transition means no read-modify-write exists for two requests — or
+    // two SERVER PROCESSES, which no in-process chain could ever see — to lose each other's update in.
+    "thread/archive": threadArchive,
+    "thread/unarchive": threadUnarchive,
   };
 
   private readonly token: string;
@@ -522,8 +669,21 @@ export class AppServer {
    *  closure — mirroring what the real src/session/index.ts resumeSession already does internally
    *  (`openSession({...config, resume: id})`) one level up, so a DI'd `sessionFactory` (every test in this
    *  suite overrides it) can observe `resume` on the config it receives, exactly like any other flag,
-   *  instead of it being invisible to anything but the real default factory. */
-  startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): void {
+   *  instead of it being invisible to anything but the real default factory.
+   *
+   *  ASYNC as of M5 Task 9, and the async part is deliberately ALL of it and NONE of it: everything
+   *  through registration, the reply and `thread/started` still runs in the caller's own dispatch tick
+   *  (an async function body runs synchronously up to its first `await`, and the first one here is the
+   *  last line), which is exactly the property the delete/resume reservation race is decided by. The
+   *  returned promise is worth awaiting rather than dropping: it is what makes "this request is finished"
+   *  true at the dispatch seam, and it is what keeps a failure raised after the reply — the shelf read's
+   *  own disclosure path throwing, say — reportable on the wire instead of escaping as an unhandled
+   *  rejection. It does NOT hold `thread/resume`'s reservation across the shelf read: that release sits in
+   *  the handler's `finally`, whose body is synchronous and therefore runs BEFORE the `await` below it.
+   *  That is the intended shape, and the capture-site comment in the resume handler is the argument for
+   *  it — the reservation fences the window before REGISTRATION, and `findLiveBySessionId` covers the
+   *  rest. */
+  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
     // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
@@ -541,14 +701,71 @@ export class AppServer {
     // undefined on a real engine anyway). The live-guard in sessionLib.ts is what needs it — a resume
     // admitted this tick must already be findable by sessionId, or a concurrent thread/delete deletes the
     // history out from under it.
+    // …unless the caller's config FORKS (`admits` — D-M5-21b, and the same carve-out `thread/start` makes
+    // above): then the engine opens a different id, the registry legitimately knows nothing, and the latch
+    // is the only honest source. `deletingSessions` above still fences the parent for both shapes — a fork
+    // READS that transcript to replay it, so erasing it mid-admission breaks the session being opened.
     // `config` is the FULL object the factory received (broker and `resume` included) — M2b's rewind swap
     // rebuilds the replacement engine from it, so anything dropped here is silently dropped by every later
     // swap too (registry.ts's field doc).
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: opts.resume, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    const admits = !forksSession(opts.config);
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
     this.registry.add(record);
-    installRouter(this, record); // no-op on the init route in practice — resume already knows the id — but keeps one rule for both entry points
+    installRouter(this, record); // a no-op init route for an ordinary resume (the id is already stamped) and the ONLY id source for a fork — one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
     this.broadcastServer("thread/started", { thread: threadView(this, record) });
+    // LAST, once admission has fully succeeded and no step after it can fail: unarchiving a session whose
+    // admission then threw would take a conversation off the shelf that never opened — which is also why a
+    // FORK skips it (`admits`): the id it names never goes live here at all.
+    //   AFTER THE REPLY, and that ordering is not free (fix wave I / scalpel-3#2, declined with its reason).
+    // Between the reply and this line the thread is live AND still carries its marker, so a `thread/list`
+    // dispatched in that window puts a live thread in the archived half — which criterion 7's "no transition
+    // this server mediates" does not cover, and the spec now says so. It cannot be closed by moving this
+    // line up: the reply and `thread/started` MUST leave in the caller's own dispatch tick, because the
+    // delete/resume reservation race is decided by which of the two admits first, and an `await` before
+    // them hands every same-tick delete the win. The window is two filesystem calls wide and self-clearing,
+    // which is the D-M5-21c boot-window class; the reservation race is a lost transcript.
+    //   The other half of that finding — a concurrent `thread/archive` writing a marker this call then
+    // removes — is not a defect: `registry.add` above runs BEFORE the reply, so archive's own second
+    // live-guard sees the record, takes its marker back out and refuses BUSY. Whichever order the two
+    // arrive in, the session ends up live and unshelved, which is what D-M5-21 asks for.
+    if (admits) await this.autoUnarchive(ctx, opts.resume);
+  }
+
+  /** D-M5-21: opening a conversation takes it off the shelf — and it is what keeps "a live thread is never
+   *  hidden from the default list" true ACROSS servers, since markers are re-read per request and another
+   *  server's archive is otherwise invisible to this one until someone lists. Called from every path that
+   *  puts an existing session id under a live thread: the three the spec enumerates — `startThread` above
+   *  (thread/resume, thread/fork), resume-carrying `thread/start`, `thread/attach` (fleet.ts) — plus the
+   *  one it did not, a fleet host swapping its own conversation under a thread already attached here
+   *  (fleet.ts's `adoptSessionId`, M5 fix wave A). That fourth is an admission in substance and not in
+   *  shape: no request of ours performs it, we only observe it, and the shelved-and-live state it produced
+   *  is exactly the one this decision exists to make unreachable. A FORK-carrying resume is NOT in the set
+   *  and both of its request-side callers skip this (`forksSession`, D-M5-21b): it reads a transcript into
+   *  a new id rather than admitting the one it names, so clearing that id's marker would take a
+   *  conversation off the shelf that never opened.
+   *
+   *  GUARDED, because it runs after the reply is already on the wire: a state directory that cannot be read
+   *  is not a reason to report a successful admission as failed, and the request id is spent, so an escaping
+   *  rejection would reach dispatch's catch and put a SECOND frame on the wire for one request. The client
+   *  is told instead — silence would leave a live thread hidden from the default list with nothing to say
+   *  so, and the message goes through the handlers' own `storeRefusal` so this path cannot be the one that
+   *  puts the operator's home directory on the wire.
+   *
+   *  `ctx` is UNDEFINED for the observed transition, because no connection asked for it. The warning then
+   *  goes where that call's success notification goes — server-scoped, to the watchers — rather than to a
+   *  requester who does not exist; the alternative, staying silent on the one path where nobody is holding
+   *  a reply open, would make the failure invisible precisely when no client can correlate it. */
+  async autoUnarchive(ctx: ConnCtx | undefined, sessionId: string): Promise<void> {
+    try {
+      if (!(await listArchived({ ccxDir: this.deps.ccxDir })).has(sessionId)) return;
+      await removeArchiveMarker(sessionId, { ccxDir: this.deps.ccxDir });
+      this.broadcastServer("thread/unarchived", { sessionId });
+    } catch (e) {
+      const message = `thread is live but its archive marker could not be removed — ${storeRefusal(e).message}`;
+      if (ctx) this.warn(ctx.peer, "unarchiveFailed", message);
+      else this.broadcastServer("warning", { code: "unarchiveFailed", message });
+    }
   }
 
   /** M3 Task 7: admit a FLEET record (fleet.ts) — the register-half of the admission `thread/start` does

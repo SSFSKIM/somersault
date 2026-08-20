@@ -1,7 +1,7 @@
 // appserver/schema/index.ts — the method→schema registry. Wave 4's generator and drift gate walk THIS
 // record: a shipped method missing here is a build failure, so wire and artifact cannot drift (spec §9).
 import type { z } from "zod/v4";
-import { threadIdParams, initializeParams, serverStatusParams } from "./core.js";
+import { threadIdParams, initializeParams, okResult, serverStatusParams } from "./core.js";
 import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams } from "./turns.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
@@ -13,13 +13,20 @@ import { settingsReadParams, directoryListParams, directoryPathParams, permissio
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
 import { reviewStartParams } from "./review.js";
+import { configReadParams, configReadResult, configValueWriteParams, configBatchWriteParams, configWriteResult } from "./config.js";
+import { threadSearchParams, threadSearchResult, threadSearchOccurrencesParams, threadSearchOccurrencesResult } from "./search.js";
+import { capabilitiesReadResult } from "./introspect.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
  *  which generated artifact a method lands in (`schema/emit.ts`: stable file XOR experimental file), so
  *  flipping the marker is how a method graduates — there is no second list to keep in step. Absent, not
  *  `false`, on a stable method: the marker is an exception, and an entry that says nothing says "stable". */
-export interface MethodSchema { params: z.ZodType; experimental?: true }
+/** `result` (M5, spec D-M5-19): the method's RESPONSE shape, published beside its params. Optional and
+ *  incremental on purpose — the 59 methods that predate M5 declare none, and the spec rejected
+ *  retrofitting them in this milestone, so an entry without it means "response shape not yet published",
+ *  never "no response". `schema/emit.ts` emits every declared one into the artifact's `results` map. */
+export interface MethodSchema { params: z.ZodType; result?: z.ZodType; experimental?: true }
 export const methodSchemas: Record<string, MethodSchema> = {
   "initialize": { params: initializeParams },
   "server/status": { params: serverStatusParams },
@@ -38,7 +45,13 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/permissionMode/set": { params: permissionModeSetParams },
   "thread/thinking/set": { params: thinkingSetParams },
   "thread/settings/apply": { params: settingsApplyParams },
-  "thread/capabilities/read": { params: threadIdParams },
+  // M5 Task 13 (D-M5-22) gives this read a second, OPTIONAL field — `terminalSlashCommands` — so it is the
+  // one pre-M5 method that declares a `result`. That is not the retrofit D-M5-19 deferred: the slot is
+  // filled here because the new field's ABSENCE carries meaning ("no init frame has arrived"), which is a
+  // contract no params schema and no field name can state, and a client that cannot tell an absent key
+  // from `[]` has been mis-told. The other four introspection reads still publish none — they relay
+  // SDK-owned payloads verbatim, so the shape to validate against is the SDK's.
+  "thread/capabilities/read": { params: threadIdParams, result: capabilitiesReadResult },
   "thread/contextUsage/read": { params: threadIdParams },
   "thread/usage/read": { params: threadIdParams },
   "thread/init/read": { params: threadIdParams },
@@ -107,4 +120,43 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // under it is an ordinary turn on a thread this server creates, not an unproven SDK seam. The `target`
   // union rides out with it, so the generated artifact carries the four variants a client must choose from.
   "review/start": { params: reviewStartParams },
+  // M5 (§config): the settings-files domain's read half, and the FIRST entry to declare a `result` —
+  // D-M5-19's slot exists because a client cannot act on `versions` (the CAS token its next write must
+  // carry) from a params schema alone. SERVER-scoped like `fs/read`: the subject is this machine's
+  // settings files, not a thread. STABLE — the mechanism is node's own fs plus upstream's merge.
+  "config/read": { params: configReadParams, result: configReadResult },
+  // M5 (§config) Task 4: the write half, the pair that closes the domain's round trip — a client reads
+  // `versions`, edits, and writes the token back. Both share `configWriteResult` because they share their
+  // spine (`runConfigWrite`): one edit is the degenerate batch, and publishing two shapes for one reply
+  // would let them drift. STABLE for the same reason `config/read` is — node's own fs plus upstream's
+  // merge — and SERVER-scoped: the subject is a settings FILE, and no thread owns one.
+  "config/value/write": { params: configValueWriteParams, result: configWriteResult },
+  "config/batchWrite": { params: configBatchWriteParams, result: configWriteResult },
+  // M5 (§search) Task 7: the store, searched. SERVER-scoped like the config trio — it names no thread; the
+  // subject is every session on this machine, and the ones it finds are mostly threads this server never
+  // opened. STABLE: the mechanism is the session store's own `listSessions`/`getSessionMessages` readers
+  // plus our row classifier, none of it an unproven seam. Publishes a `result` (D-M5-19) because two of the
+  // reply's three fields carry contracts a params schema cannot state — `nextCursor` may be non-null over
+  // an EMPTY page (caps bound work, never coverage) and `skipped` is the disclosure that makes "no matches"
+  // an honest claim — and a client that guesses either one wrong stops paging early or over-trusts the page.
+  "thread/search": { params: threadSearchParams, result: threadSearchResult },
+  // M5 (§search) Task 8: the store-wide search's sibling — ONE thread, EVERY hit in a row. THREAD-scoped
+  // where its sibling is server-scoped, and that is the whole difference in kind: it names a thread, so both
+  // dispatch gates can fire on it, and it is `ENGINE_GONE_EXEMPT` (server.ts) precisely because its subject
+  // is disk rather than the engine — without the exemption the same session would be searchable by its bare
+  // store id and refused by its own registry id. STABLE for its sibling's reasons (the store's own readers
+  // plus our row classifier). Publishes a `result` (D-M5-19) carrying three contracts a params schema cannot
+  // state: `snippetMatchRange` indexes into the occurrence's OWN snippet rather than into the row (two hits
+  // in one row are two different windows), `readCursor` is `null` on a cold session rather than absent, and
+  // `nextCursor` may again be non-null over an empty page.
+  "thread/searchOccurrences": { params: threadSearchOccurrencesParams, result: threadSearchOccurrencesResult },
+  // M5 (§archive) Task 9: the shelf pair. THREAD-scoped like the occurrence search above and
+  // `ENGINE_GONE_EXEMPT` for the same reason — the subject is a marker FILE, so a thread whose engine died
+  // must still be shelvable — and taking `threadIdParams` means either spelling of a thread works, a
+  // registry id or a bare store sessionId, which is what lets a client archive a session this server has
+  // never opened. STABLE: the mechanism is one atomic file create and one unlink, nothing SDK-shaped.
+  // Both publish `okResult` (D-M5-19) and both publish the SAME one: the two methods are mirror images and
+  // a client that reads one reply reads the other, so two spellings could only ever drift.
+  "thread/archive": { params: threadIdParams, result: okResult },
+  "thread/unarchive": { params: threadIdParams, result: okResult },
 };

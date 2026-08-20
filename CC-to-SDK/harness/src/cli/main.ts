@@ -260,7 +260,12 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
         // `unknown`/`pending`/`live` all FAIL rather than dropping into a fresh session: silently opening
         // an empty one when the user asked for a specific conversation is the failure W-S6 exists to remove.
         if (r.kind === "unknown") return fail(`No conversation found with session ID: ${r.arg}`, 1);
-        if (r.kind === "pending") return fail(`Session ${r.short} has not started a conversation yet — nothing to resume`, 1);
+        // An absent roster `sessionId` no longer means only "not minted yet". A1 made the field a LIVENESS
+        // claim — a host that `/clear`s discards its conversation and the row is re-stamped empty — so a
+        // cleared session reached this line and was told it had never started, which is not true of it.
+        // The refusal is right either way (before A1 this resumed the DISCARDED conversation); the sentence
+        // names both states rather than guessing between two the roster cannot tell apart.
+        if (r.kind === "pending") return fail(`Session ${r.short} holds no conversation to resume — it has not started one, or /clear discarded the one it had`, 1);
         if (r.kind === "live") return fail(`Session ${r.short} is still running — attach to it instead: ccx attach ${r.short}`, 1);
         // The fleet row exists — `ccx agents` lists it — but its transcript is under another project, and the
         // resumed REPL reads only this one. Naming the directory is the whole point of the outcome: it turns
