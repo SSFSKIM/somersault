@@ -73,6 +73,24 @@ describe("TaskList", () => {
     ]);
   });
 
+  // F8 T5 review, Finding B: canon's TaskUpdate schema admits a fourth status, `"deleted"`, and its tool
+  // description tells the model to use it "to permanently remove a task". Before this, a deleted task just
+  // stayed a stale row; now the spinner titles itself off the first non-pending/non-completed task, so an
+  // un-validated `"deleted"` would title the spinner for the rest of the turn off a task the model explicitly
+  // removed. This must be caught at ingest, not the selector (`spinner.ts`'s `activeSpinnerTask` keeps
+  // canon's faithful double-negative and is not the fix).
+  it("removes a task on status: deleted, and ignores an update whose status matches neither model", () => {
+    const tl = new TaskList();
+    for (const m of create("1", "build the parser")) tl.ingest(m);
+    for (const m of create("2", "write tests")) tl.ingest(m);
+    tl.ingest(update("1", "deleted"));
+    expect(tl.snapshot()).toEqual([{ id: "2", subject: "write tests", status: "pending" }]);
+    // canon's `safeParse` fails on a status outside its enum, discarding the WHOLE update — so a `subject`
+    // riding along with an unmodelled status must not land either.
+    tl.ingest({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tuBad", name: "TaskUpdate", input: { taskId: "2", status: "blocked", subject: "should not land" } }] } });
+    expect(tl.snapshot()).toEqual([{ id: "2", subject: "write tests", status: "pending" }]);
+  });
+
   it("ignores an update for an unknown id and resets", () => {
     const tl = new TaskList();
     tl.ingest(update("9", "completed"));         // no such task → no-op

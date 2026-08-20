@@ -62,9 +62,17 @@ const composerLine = (f: () => string | undefined) => {
  *  `activeForm` as its own `…`-terminated line: a whole-frame `not.toContain` could never tell "the spinner
  *  refused the subagent's task" from "the panel never drew it", and would pass either way. The LAST such
  *  line, since `render.ts`'s collapsed-thinking placeholder (`✻ Thinking…`) can sit above it in the
- *  transcript; the spinner is below everything the transcript owns. */
-const spinnerLine = (f: () => string | undefined) =>
-  stripAnsiAll(frame(f)).split("\n").filter((l) => /^\s*[·✢✳✶✻✽] \S/.test(l)).pop() ?? "";
+ *  transcript; the spinner is below everything the transcript owns. Matches only the spinner's FIRST physical
+ *  line: at the pinned width in this suite the row cannot wrap, but a long task subject at a narrow width
+ *  would, and a needle spanning the break would silently miss it. Only ever called when the spinner is
+ *  expected to be up — it throws rather than returning "" so a caller who forgot to wait for that fails loud
+ *  instead of a negative assertion passing vacuously against an empty string. */
+const spinnerLine = (f: () => string | undefined) => {
+  const rows = stripAnsiAll(frame(f)).split("\n").filter((l) => /^\s*[·✢✳✶✻✽] \S/.test(l));
+  const last = rows.pop();
+  if (last === undefined) throw new Error("spinnerLine: no spinner row in the current frame");
+  return last;
+};
 async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
@@ -584,6 +592,15 @@ describe("<ChatApp>", () => {
     await waitFor(() => /◼\s+Write the docs/.test(stripAnsiAll(frame(lastFrame))));
     expect(spinnerLine(lastFrame)).toContain("Fix the parser…");     // canon takes the FIRST match, not the last
     expect(spinnerLine(lastFrame)).not.toContain("Write the docs");
+
+    // Finding A (F8 T5 review): every assertion above lands on the SUBJECT rung. `spinnerMessage`'s
+    // `activeForm` rung — the ladder's headline behavior — was proven only as a pure function, never through
+    // this component: give the active main-agent task (id 2) an `activeForm` and confirm the spinner's own
+    // line flips to the present-continuous form instead of staying on the subject.
+    deliver({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "up2form", name: "TaskUpdate", input: { taskId: "2", activeForm: "Fixing the parser" } }] } });
+    await waitFor(() => spinnerLine(lastFrame).includes("Fixing the parser…"));
+    expect(spinnerLine(lastFrame)).toContain("Fixing the parser…");   // the activeForm rung, live
+    expect(spinnerLine(lastFrame)).not.toContain("Fix the parser…");
   });
 
   it("initialPrompt submits once on mount", async () => {

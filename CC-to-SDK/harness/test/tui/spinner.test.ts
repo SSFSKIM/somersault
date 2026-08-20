@@ -345,10 +345,13 @@ describe("activeSpinnerTask", () => {
   });
   // Canon spells the selector as a DOUBLE NEGATIVE, not `=== "in_progress"`, because its own TaskUpdate
   // schema admits a fourth status (`"deleted"`) that our `TaskStatus` union does not. This pins the faithful
-  // transplant. It also exhibits the latent hazard the transplant inherits: `taskList.ts` casts the wire's
-  // status straight to `TaskStatus` without validating, so a `"deleted"` update reaches this selector looking
-  // active. The fix belongs at the INGEST boundary, not here — see the F8 T5 report.
-  it("keeps canon's negative form, so an unmodelled status still counts as active", () => {
+  // transplant against a `TaskItem` synthesized directly (bypassing ingest, hence the cast) — the selector's
+  // own contract is unchanged: ANY status that isn't `"pending"`/`"completed"` reads as active, unmodelled
+  // values included. What changed at F8 T5 review is that such a value can no longer reach this selector
+  // through the real path: `taskList.ts`'s `ingest` now validates `status` at the wire boundary and either
+  // deletes the task (`"deleted"`) or discards the whole update (anything else unmodelled) before a `TaskItem`
+  // is ever touched — see `taskList.test.ts`.
+  it("keeps canon's negative form, so an unmodelled status still counts as active if one ever reaches it", () => {
     expect(activeSpinnerTask([t("gone", "deleted" as TaskStatus)])!.subject).toBe("gone");
   });
 });

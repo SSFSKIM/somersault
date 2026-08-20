@@ -22,6 +22,13 @@
 // kills the false positive outright, while a real spinner that drew `Thinking` still counts on five of its
 // six glyphs — where dropping the verb entirely would have made every such spinner (1 in 186
 // mounts) invisible to a `waitFor` that has no other way to see it.
+//
+// As of F8 T5 the row does NOT always carry a gerund from `SPINNER_VERBS`: with an active main-agent task,
+// `spinnerMessage`'s ladder titles the row from that task's `activeForm`/`subject` instead, so `spinnerUp()`
+// returns false and `spinnerRows()` counts 0 for a turn that is genuinely live. No test here seeds a task
+// into a busy turn, so today's suite is unaffected — but a future `waitFor(() => spinnerUp(...))` during a
+// task-bearing turn will hang with nothing pointing at why; use `spinnerLine`/`SPINNER_ROW` awareness of the
+// task ladder for that case instead.
 import { SPINNER_VERBS } from "../../../src/tui/spinner.js";
 
 const GERUND = SPINNER_VERBS.filter((v) => v !== "Thinking").join("|");

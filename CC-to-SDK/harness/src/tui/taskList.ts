@@ -35,6 +35,12 @@ const str = (v: unknown): string | undefined => (typeof v === "string" && v !== 
 /** `addBlockedBy` is `S.array(S.string())`, but ids reach us as whatever the model sent — numbers included. */
 const ids = (v: unknown): string[] => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
 
+/** Canon's TaskUpdate schema admits a FOURTH status, `"deleted"` — its tool description tells the model to
+ *  "Use `deleted` to permanently remove a task" — that our `TaskStatus` union does not model. Validate at
+ *  THIS boundary rather than widen the union: an unmodelled value must never reach a `TaskItem`, which is
+ *  what `activeSpinnerTask` (spinner.ts) relies on to keep a deleted task from titling the spinner forever. */
+const KNOWN_STATUSES = new Set<string>(["pending", "in_progress", "completed", "deleted"]);
+
 export class TaskList {
   private tasks = new Map<string, TaskItem>();      // id → item
   private pending = new Map<string, { subject: string; activeForm?: string; subagent?: true }>();   // TaskCreate tool_use_id → what it said (awaiting result id)
@@ -53,7 +59,15 @@ export class TaskList {
         else if (b.name === "TaskUpdate") {
           const id = String(b.input?.taskId ?? ""), t = this.tasks.get(id);
           if (!t) continue;
-          if (b.input?.status) t.status = b.input.status as TaskStatus;
+          const status = b.input?.status;
+          // Canon: `n = sPS().safeParse(...)`, then `if (!n.success) return !1` (bundle L235620-235622) — a
+          // status outside the schema's enum fails the WHOLE parse, so the entire update is discarded, not
+          // just the bad field. `undefined` (the field omitted) parses fine, since `status` is optional.
+          if (status !== undefined && !KNOWN_STATUSES.has(status)) continue;
+          // `if (i === "deleted") return e.tasks.delete(o)` (L235625) — deleted wins outright; nothing else
+          // carried in the same call (subject/activeForm/…) is applied.
+          if (status === "deleted") { this.tasks.delete(id); continue; }
+          if (status) t.status = status as TaskStatus;
           if (str(b.input?.subject)) t.subject = str(b.input.subject)!;
           if (str(b.input?.activeForm)) t.activeForm = str(b.input.activeForm)!;
           if (str(b.input?.owner)) t.owner = str(b.input.owner)!;
