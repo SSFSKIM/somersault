@@ -761,8 +761,8 @@ it("an in-progress task retitles the spinner; a subagent's does not (F8 A4/A4b)"
   deliver({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu3", content: "Task #2 created successfully: Nested chore" }] } });
   deliver({ type: "assistant", parent_tool_use_id: "agent_1", message: { content: [{ type: "tool_use", id: "tu4", name: "TaskUpdate", input: { taskId: "2", status: "in_progress" } }] } });
   await waitFor(() => frame(lastFrame).includes("Nested chore"));      // it DID reach the panel
-  expect(frame(lastFrame)).toContain("Fix the parser…");               // and the spinner did not move
-  expect(frame(lastFrame)).not.toContain("Doing a nested chore…");
+  expect(spinnerLine(lastFrame)).toContain("Fix the parser…");         // and the spinner did not move
+  expect(spinnerLine(lastFrame)).not.toContain("Doing a nested chore");
 });
 ```
 
@@ -779,6 +779,14 @@ const deliver = (m: unknown) => { onMessage(m); fake.pushEvent({ kind: "message"
 `onMessage` alone feeds the transcript but never the task store, so a test written against it would sit on
 an empty panel and prove nothing about the ladder. Hold a reference to `onMessage` so the nested trio can be
 delivered the same way after the first `waitFor` observes the subject rung.
+
+**The negatives MUST be scoped to the spinner's own line, not the whole frame.** `TaskPanel.tsx:57` draws
+an in-progress task's `activeForm` followed by the same ellipsis (`{activity}{ELLIPSIS}`), so the nested
+task's label appears in the frame no matter what the spinner does — a whole-frame `not.toContain` would fail
+against CORRECT code and read as a ladder defect. Scoping is also what makes the test non-vacuous in both
+directions at once: the panel showing the nested task proves it reached the store, while the spinner's line
+proves the ladder refused it. Add a helper that isolates the spinner row by its glyph and take the LAST match
+(`render.ts`'s collapsed-thinking placeholder can sit above it in the transcript).
 
 - [ ] **Step 3: Run both and watch them fail**
 
