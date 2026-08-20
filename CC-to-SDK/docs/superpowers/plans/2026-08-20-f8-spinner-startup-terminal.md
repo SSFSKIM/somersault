@@ -1711,12 +1711,19 @@ git commit -m "f5(f8): T10 — per-emulator notifications that survive tmux; the
 
 **Two seams, both already in this file, and neither is where the first draft of this plan pointed.**
 
-- **Permission** is `pushPending(entry)` (`useChat.ts:1801`) — a single FIFO carrying **every** decision
+- **Permission** is `pushPending(entry)` (`useChat.ts:1810`) — a single FIFO carrying **every** decision
   kind (`PendingEntry.kind: DecisionKind` covers permission, question, plan and elicitation). Notifying
   unconditionally there would announce a plan approval as a permission prompt.
-- **Idle** is the settle path (`useChat.ts:1557`), gated on `queueRef.current.length === 0` — the same
-  ref `drainNext` (`useChat.ts:2752`) reads, and the file's discipline is that the ref is written beside
-  the state precisely because the state is a commit behind.
+- **Idle** is the settle path, `useChat.ts:1566` — the line reading
+  `setStreaming([]); setBusy(false); clearRetry(); clearCompacting(); disarmStall(); … drainNext();`.
+  **There is NO queue gate there today — you are adding one.** An earlier draft of this plan said the
+  settle was "gated on `queueRef.current.length === 0`"; it is not, and nothing in the file is. The
+  emptiness test lives inside `drainNext` (`useChat.ts:2769`), which returns early on an empty queue —
+  so the settle calls it unconditionally and learns nothing. Read `queueRef.current` directly at 1566 and
+  notify only when it is empty. That ref is the right one to read: this file's standing discipline is that
+  the ref is written beside the state (`useChat.ts:655`, and again inside `drainNext` at 2781) precisely
+  because the state is a commit behind — `drainNext`'s own comment explains why depending on React's flush
+  timing for this is what the discipline exists to avoid.
 
 - [ ] **Step 1: Write the failing tests**
 
