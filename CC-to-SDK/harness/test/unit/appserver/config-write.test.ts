@@ -436,6 +436,49 @@ describe("withFileLock (D-M5-14 rev 3; lock D-M5-24)", () => {
     expect(readFileSync(p, "utf8")).toBe('{"model":"B-COMMITTED"}\n');
     expect(readdirSync(dir)).toEqual(["s.json"]); // the tmp went with the refusal
   });
+  /** THE THIRD DETECTOR (fix wave G / G2). `resolveRealTarget` runs BEFORE the lock (configDomain.ts) and
+   *  everything after it names the path it returned: the lock, the doc read, the version read, the rename.
+   *  A symlink planted at that path in the meantime is invisible to both existing detectors — the lock is a
+   *  SIBLING path and is still ours, and the reads follow the link, so they describe the link's target while
+   *  `rename` replaces the LINK.
+   *
+   *  TWO SIDES, one row each, because the CAS happens to cover neither the same way: with a file already
+   *  there the link's target only has to hold the same bytes, and with nothing there yet the link only has
+   *  to DANGLE — "absent" on both sides of the compare. Both were measured committing before the fix. */
+  it("a symlink planted at the resolved target REFUSES — a write may not detach a link it did not resolve", async () => {
+    // Measured pre-fix: `COMMITTED`; the entry became a regular file (the link destroyed) and the file it
+    // pointed at was left untouched — the operator's managed settings silently disconnected, reported `ok`.
+    const dir = mkTemp("m5sym-");
+    const managed = join(dir, "managed.json"), nominal = join(dir, "settings.json");
+    writeFileSync(managed, '{"n":0}\n');
+    writeFileSync(nominal, '{"n":0}\n');                        // identical bytes: the CAS cannot see the swap
+    const filePath = await resolveRealTarget(nominal);          // resolved BEFORE the lock, as production does
+    const outcome = await withFileLock(filePath, async (fence) => {
+      const { doc, version } = await readTargetDoc(filePath);
+      unlinkSync(filePath); symlinkSync(managed, filePath);     // …and now the path is a link
+      return writeTargetDoc(filePath, { ...doc, added: true }, { expectVersion: version, fence })
+        .then(() => "COMMITTED", (e: { code?: string; message: string }) => `${e.code}:${e.message}`);
+    });
+    expect(outcome).toBe("ConfigLocked:the settings path became a symlink while this write was being prepared; nothing was written — re-read and retry");
+    expect(lstatSync(filePath).isSymbolicLink()).toBe(true);    // the link the operator placed is intact
+    expect(readFileSync(managed, "utf8")).toBe('{"n":0}\n');    // and nothing was written through it
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp-"))).toEqual([]);
+  });
+  it("…and on a FIRST write too, where a DANGLING link makes both sides of the CAS read `absent`", async () => {
+    // The side the version check cannot reach even in principle: nothing was there, nothing is there, and
+    // the token is "absent" before and after. Measured pre-fix: `COMMITTED`, the link replaced by a regular
+    // file, and the target it named never created — review I3's detachment, re-entered after the lock.
+    const dir = mkTemp("m5sym-");
+    const managed = join(dir, "managed.json"), nominal = join(dir, "settings.json");
+    const filePath = await resolveRealTarget(nominal);
+    const outcome = await withFileLock(filePath, async (fence) => {
+      const { doc, version } = await readTargetDoc(filePath);
+      symlinkSync(managed, filePath);
+      return writeTargetDoc(filePath, { ...doc, added: true }, { expectVersion: version, fence })
+        .then(() => "COMMITTED", (e: { code?: string }) => String(e.code));
+    });
+    expect([outcome, lstatSync(filePath).isSymbolicLink(), existsSync(managed)]).toEqual(["ConfigLocked", true, false]);
+  });
   it("a umask masking the owner bits changes neither the created file's 0600 nor the lock's usability", async () => {
     // Measured, not hypothesised: `writeFile({mode:0600})` landed 0400 under `umask 0277` and 0200 under
     // `umask 0477` — and 0200 is a settings file this API can never read back, so the layer reported

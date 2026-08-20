@@ -55,6 +55,8 @@ function compileConfigWriteToJs(): string {
   }
   writeFileSync(join(out, "package.json"), JSON.stringify({ type: "module" }));
   writeFileSync(join(out, "child.mjs"), CHILD_SRC);
+  writeFileSync(join(out, "evicted.mjs"), EVICTED_SRC);
+  writeFileSync(join(out, "successor.mjs"), SUCCESSOR_SRC);
   return out;
 }
 
@@ -89,6 +91,74 @@ for (let i = 0; i < trials; i++) {
     appendFileSync(trace, "REFUSED " + process.pid + " " + (e && e.code ? e.code : "?") + " " + String(e && e.message).slice(0, 90) + "\\n");
   }
 }
+`;
+
+/** THE EVICTED HOLDER (fix wave G / G1). Its commit is the UNMODIFIED production composition —
+ *  `writeTargetDoc(doc, {expectVersion, fence})` — and the only thing added is a wrapper around the fence
+ *  the lock hands out: it forwards the call untouched and floods the libuv threadpool around it.
+ *
+ *  WHY A FLOOD AND NOT A SLEEP. `fence` checks the lock directory and then refreshes the lease, and those
+ *  are two syscalls with an event-loop turn between them. The finding is that an eviction landing in that
+ *  turn sets `lost` and yet lets the fence RESOLVE, so the caller reads its version and renames — an
+ *  evicted owner committing beside its successor. The turn is normally microseconds wide. `UV_THREADPOOL_SIZE=1`
+ *  plus a queue of `pbkdf2` jobs (which run on that same pool) stretches it to about a second, and the
+ *  stretch is not a contrivance: eviction happens to a holder that has stopped refreshing, and a holder
+ *  stops refreshing precisely because its loop or its pool is stalled. The window is widest exactly when it
+ *  is likeliest to be entered.
+ *
+ *  `when` picks WHICH of the fence's two detectors the eviction has to be caught by, and both are run:
+ *   - `"before"` floods before the fence is called, so its own `readdir` runs after the break and sees the
+ *     successor's marker — the side that was already correct;
+ *   - `"after"` floods between the fence's `readdir` and the `utimes` it submits when that resolves, so
+ *     the directory check passes and only the REFRESH can see the loss — the side G1 names. */
+const EVICTED_SRC = `import { writeFileSync, appendFileSync } from "node:fs";
+import { pbkdf2 } from "node:crypto";
+const [mod, target, held, log, staleRaw, jobsRaw, when] = process.argv.slice(2);
+const { withFileLock, readTargetDoc, writeTargetDoc, applyEdit } = await import(mod);
+const say = (s) => appendFileSync(log, s + "\\n");
+const block = () => new Promise((r) => pbkdf2("pw", "salt", 300000, 32, "sha512", () => r()));
+const blockers = [];
+const flood = () => { for (let i = 0; i < Number(jobsRaw); i++) blockers.push(block()); };
+await withFileLock(target, async (fence) => {
+  writeFileSync(held, String(Date.now()));            // the successor may start contending now
+  let first = true;
+  const injected = async () => {
+    if (!first) return fence();
+    first = false;
+    if (when === "before") flood();
+    const p = fence();                                 // submits its \`readdir\` synchronously
+    if (when === "after") flood();
+    try { await p; say("HOLDER_FENCE_RESOLVED"); } catch (e) { say("HOLDER_FENCE_REFUSED " + (e && e.code ? e.code : "?")); throw e; }
+  };
+  const { doc, version } = await readTargetDoc(target);
+  try {
+    await writeTargetDoc(target, applyEdit(doc, ["n"], 1, "replace"), { expectVersion: version, fence: injected });
+    say("HOLDER_COMMITTED");
+  } catch (e) { say("HOLDER_COMMIT_REFUSED " + (e && e.code ? e.code : "?")); }
+  await Promise.all(blockers);
+}, { staleMs: Number(staleRaw) }).catch((e) => say("HOLDER_LOCK_FAILED " + String(e && e.message).slice(0, 60)));
+`;
+
+/** The SUCCESSOR: an ordinary contender on the real lock. It waits out the stale window, breaks the lease
+ *  of a holder that has stopped refreshing (exactly what `withFileLock` does for a crashed writer), and
+ *  then HOLDS — so the evicted holder's commit, if it happens at all, lands inside this critical section
+ *  where a trace can see it. */
+const SUCCESSOR_SRC = `import { existsSync, appendFileSync } from "node:fs";
+const [mod, target, held, log, staleRaw, holdRaw] = process.argv.slice(2);
+const { withFileLock, readTargetDoc, writeTargetDoc, applyEdit } = await import(mod);
+const say = (s) => appendFileSync(log, s + "\\n");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+while (!existsSync(held)) await sleep(2);
+try {
+  await withFileLock(target, async (fence) => {
+    say("SUCCESSOR_ENTER");
+    const { doc, version } = await readTargetDoc(target);
+    await sleep(Number(holdRaw));
+    await writeTargetDoc(target, applyEdit(doc, ["by"], "successor", "replace"), { expectVersion: version, fence });
+    say("SUCCESSOR_COMMITTED");
+  }, { staleMs: Number(staleRaw) });
+} catch (e) { say("SUCCESSOR_REFUSED " + (e && e.code ? e.code : "?")); }
+say("SUCCESSOR_EXIT");
 `;
 
 type Outcome = { parked: string[]; trials: { counter: number; committed: number; maxDepth: number; refusals: string[] }[] };
@@ -192,5 +262,52 @@ describe("withFileLock across real processes (D-M5-24)", () => {
     // waiter that judged the holder dead by clock age would enter — showing up as an overlap — and the
     // evicted holder's fence would then refuse, showing up as a refusal. Neither is allowed.
     assertExclusive("outlives the stale window", OUTLIVE, await contend(compileConfigWriteToJs(), () => {}, OUTLIVE));
+  }, 180_000);
+
+  /** One eviction, two real processes, and the trace of who was inside the critical section when.
+   *  `holdMs` outlasts the flood, so the evicted holder's commit — if the fence lets it through — is
+   *  recorded strictly between the successor's ENTER and its EXIT. */
+  async function evict(mod: string, when: "before" | "after"): Promise<{ lines: string[]; doc: { n?: number; by?: string } }> {
+    const dir = mkTmp("m5evict-");
+    const target = join(dir, "settings.json"), held = join(dir, "held"), log = join(dir, "log");
+    writeFileSync(target, '{"n":0}\n');
+    writeFileSync(log, "");
+    const kids = [
+      // UV_THREADPOOL_SIZE=1: the pool the fence's own `readdir`/`utimes` run on is the pool the flood
+      // occupies, which is what makes the gap between them measurable rather than theoretical.
+      spawn(process.execPath, [join(mod, "evicted.mjs"), join(mod, "appserver", "configWrite.js"), target, held, log, "400", "16", when],
+        { stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, UV_THREADPOOL_SIZE: "1" } }),
+      spawn(process.execPath, [join(mod, "successor.mjs"), join(mod, "appserver", "configWrite.js"), target, held, log, "400", "2000"],
+        { stdio: ["ignore", "ignore", "inherit"] }),
+    ];
+    await Promise.all(kids.map((k) => new Promise<number>((r) => k.on("exit", (c) => r(c ?? -1)))));
+    return { lines: readFileSync(log, "utf8").split("\n").filter(Boolean), doc: JSON.parse(readFileSync(target, "utf8")) };
+  }
+
+  it("an EVICTED holder does not commit — the fence fails on the lease refresh, not only on the directory", async () => {
+    // MEASURED BEFORE THE FIX, 5 of 5 trials and again 3 of 3 at these settings:
+    //   ["SUCCESSOR_ENTER","HOLDER_FENCE_RESOLVED","HOLDER_COMMITTED","SUCCESSOR_REFUSED ConfigLocked",…]
+    // The evicted holder's fence said `ok`, its version check passed (the successor had read but not yet
+    // written), and it renamed its bytes over the file INSIDE the successor's critical section — after
+    // which the legitimate owner was refused for a conflict the evicted writer had caused. Two writers in
+    // one critical section, one of them told `ok`, is the whole of what this lock exists to prevent.
+    const mod = compileConfigWriteToJs();
+    for (const when of ["after", "before"] as const) {
+      const { lines, doc } = await evict(mod, when);
+      const enter = lines.indexOf("SUCCESSOR_ENTER"), exit = lines.indexOf("SUCCESSOR_EXIT");
+      const committed = lines.indexOf("HOLDER_COMMITTED");
+      // The control FIRST: a trial where nobody was evicted measures the scheduler, not the fence.
+      expect(`${when}: successor entered=${enter >= 0}`).toBe(`${when}: successor entered=true`);
+      expect(`${when}: evicted holder's fence: ${lines.find((l) => l.startsWith("HOLDER_FENCE_")) ?? "(never called)"}`)
+        .toBe(`${when}: evicted holder's fence: HOLDER_FENCE_REFUSED ConfigLocked`);
+      expect(`${when}: evicted holder committed inside the successor's section: ${committed > enter && (exit < 0 || committed < exit)}`)
+        .toBe(`${when}: evicted holder committed inside the successor's section: false`);
+      // …and the successor, which really does own the lock, must be able to finish. A fence that refused
+      // the RIGHT writer would satisfy every line above and still have destroyed the method.
+      expect(`${when}: successor: ${lines.find((l) => l.startsWith("SUCCESSOR_COMMITTED") || l.startsWith("SUCCESSOR_REFUSED")) ?? "(nothing)"}`)
+        .toBe(`${when}: successor: SUCCESSOR_COMMITTED`);
+      // The bytes are the last word: the owner's edit is on disk and the evicted writer's is not.
+      expect(`${when}: ${JSON.stringify(doc)}`).toBe(`${when}: ${JSON.stringify({ n: 0, by: "successor" })}`);
+    }
   }, 180_000);
 });

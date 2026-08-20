@@ -197,15 +197,52 @@ export async function assertWritableParent(filePath: string): Promise<void> {
 }
 
 /** What a caller asserts about the bytes it is replacing, checked at the LAST instant before the rename.
- *  Two independent detectors, because they fail independently: `fence` asks the lock whether this process
- *  still holds it, `expectVersion` asks the FILE whether anyone committed since the caller read it. The
- *  second holds even if the lock fails in a way the first cannot see, which is the property that matters —
- *  no arrangement of an advisory lock can be trusted to the point of skipping it. */
+ *  THREE independent detectors, because they fail independently and each answers about a different subject:
+ *  `fence` asks the LOCK whether this process still holds it, `expectVersion` asks the FILE whether anyone
+ *  committed since the caller read it, and `assertNotRelinked` asks the PATH whether it still names the same
+ *  kind of thing it named when it was resolved. The second holds even if the lock fails in a way the first
+ *  cannot see, which is the property that matters — no arrangement of an advisory lock can be trusted to
+ *  the point of skipping it — and the third holds even when both of the others are satisfied, because a
+ *  path swapped for a symlink keeps the lock valid and can keep the bytes identical. */
 export interface CommitGuard {
   /** the token the doc being replaced hashed to when this caller read it */
   expectVersion: string;
   /** the lock's own liveness assertion; throws `ConfigLocked` if this process no longer owns the lock */
   fence: () => Promise<void>;
+}
+
+/** THE THIRD DETECTOR (fix wave G / G2), and the one neither of the other two can see. `resolveRealTarget`
+ *  runs BEFORE the lock is taken (configDomain.ts) and its answer is the path everything after it names:
+ *  the lock identity, the doc read, the version read, the rename. If a symlink is planted at that resolved
+ *  path in the meantime, every READ follows it to some other file while `rename` replaces the LINK ENTRY —
+ *  so the write detaches a link the operator's dotfile manager put there and leaves the file it pointed at
+ *  untouched. Neither existing detector fires: the lock is still ours (the lock is a sibling path, not this
+ *  one) and the version still matches whenever the link's target holds the same bytes — or is not asserted
+ *  at all, since `expectedVersion` is optional on the wire.
+ *
+ *  So the IDENTITY of the path is re-asserted here, one syscall before the rename, exactly where the other
+ *  two are and for the same reason: it is the narrowest window a userspace writer can leave. `lstat` and not
+ *  `stat`, because following the link is precisely the mistake. THREE outcomes and only two may proceed —
+ *  a regular entry (the ordinary case) and no entry at all (the first write to a path that does not exist
+ *  yet, which `resolveRealTarget` answers for by design). A symlink refuses, and so does an `lstat` that
+ *  fails for any reason other than ENOENT: an identity we could not establish is not an identity we may
+ *  overwrite.
+ *
+ *  `ConfigLocked`, not a validation error, because the client's move is the one `BUSY` already means:
+ *  re-read and retry. A retry re-runs `resolveRealTarget`, which follows the new link and takes the lock on
+ *  the file it names — the write then lands where the operator pointed it. It is a NARROWING, not a proof:
+ *  a link planted between this `lstat` and the `rename` is still undetectable from userspace, exactly as a
+ *  byte written between the version read and the `rename` is. */
+async function assertNotRelinked(filePath: string): Promise<void> {
+  const kind = await lstat(filePath).then(
+    (s) => (s.isSymbolicLink() ? "symlink" : "entry"),
+    (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : "unknown"),
+  );
+  if (kind === "entry" || kind === "absent") return;
+  throw new ConfigError("ConfigLocked",
+    kind === "symlink"
+      ? "the settings path became a symlink while this write was being prepared; nothing was written — re-read and retry"
+      : "the settings path could not be re-identified while this write was being prepared; nothing was written — re-read and retry");
 }
 
 /** 2-space JSON + trailing newline, installed by tmp+rename. The rename installs the TMP file's mode, so
@@ -237,6 +274,7 @@ export async function writeTargetDoc(filePath: string, doc: Record<string, unkno
     // checking after the rename is not a check at all, it is a post-mortem on a destroyed update.
     if (guard !== undefined) {
       await guard.fence();
+      await assertNotRelinked(filePath);
       const current = await readFile(filePath, "utf8").then(versionToken, (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : null));
       if (current !== guard.expectVersion)
         throw new ConfigError("ConfigLocked", "the settings file changed while this write was being prepared; nothing was written — re-read and retry");
@@ -253,6 +291,11 @@ const chains = new Map<string, Promise<unknown>>();
  *  not umask-masked, which is why every mode this file installs goes through one. */
 const LOCK_DIR_MODE = 0o700;
 const errnoOf = (e: unknown): string | undefined => (e as NodeJS.ErrnoException)?.code;
+
+/** ONE sentence for both halves of `fence`'s check. Ownership can be lost by the directory no longer naming
+ *  this writer OR by the refresh finding the marker gone, and those are two detections of ONE fact — the
+ *  client's move is identical, so a second string would only be a second thing to match on. */
+const LOCK_BROKEN = "this writer's lock was broken while it was held; nothing was written";
 
 /** A lock is a NON-EMPTY DIRECTORY at `<file>.lock`, published by `rename`, holding exactly one marker
  *  file whose NAME is the owner's nonce (D-M5-24). Three properties fall out of that shape, and each one
@@ -358,11 +401,20 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
      *  the commit it guards: no other process may break a lease it has just seen refreshed. */
     const fence = async (): Promise<void> => {
       const names = lost ? null : await readdir(lockPath).catch(() => null);
-      if (names === null || names.length !== 1 || names[0] !== nonce) {
-        lost = true;
-        throw new ConfigError("ConfigLocked", "this writer's lock was broken while it was held; nothing was written");
-      }
+      if (names === null || names.length !== 1 || names[0] !== nonce) { lost = true; throw new ConfigError("ConfigLocked", LOCK_BROKEN); }
+      // THE REFRESH IS THE SECOND HALF OF THE CHECK, not a courtesy after it (fix wave G / G1). `touch`
+      // reports eviction by SETTING `lost` and RESOLVING — it must, because a transient `utimes` failure has
+      // to be survivable — so a fence that ignored its outcome had a hole exactly one syscall wide: the
+      // `readdir` above sees this writer's own marker, a stale-lock breaker unlinks it before the `utimes`
+      // lands, `lost` becomes true, and the fence returns `ok` anyway. The caller then read its version and
+      // renamed, which is an EVICTED owner and its successor committing from the same version — the
+      // lost-update class this whole lock exists to eliminate, re-entered through its own guard.
+      //   Note what makes the window real rather than theoretical: eviction is what happens to a holder that
+      // cannot refresh, and a holder that cannot refresh is one whose event loop or fs threadpool is stalled
+      // — which is also what stretches this window from microseconds to hundreds of milliseconds. The two
+      // are the SAME condition, so the gap is widest exactly when it is likeliest to be entered.
       await touch();
+      if (lost) throw new ConfigError("ConfigLocked", LOCK_BROKEN);
     };
     try { return await fn(fence); }
     finally {
