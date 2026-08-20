@@ -392,9 +392,15 @@ describe("useAnimationClock", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("arms one timer, none when null, and exactly one across a change", () => {
+  // ASYNC, AND THE FAKED TIMER SET IS NAMED. React commits passive effects on its own task, so a
+  // synchronous `getTimerCount()` reads one mount behind and the first assertion fails 0-vs-1; and
+  // vitest's DEFAULT fake set includes `setImmediate`, which strands those effects entirely. Flush after
+  // every render, and fake only what this test is about.
+  it("arms one timer, none when null, and exactly one across a change", async () => {
+    const flush = () => new Promise((r) => setImmediate(r));
     const now = () => 1000;
     const { rerender, unmount } = render(<Probe interval={50} startedAt={1000} now={now} />);
+    await flush();
     expect(vi.getTimerCount()).toBe(1);
     rerender(<Probe interval={100} startedAt={1000} now={now} />);
     expect(vi.getTimerCount()).toBe(1);
@@ -492,6 +498,12 @@ export function useAnimationClock(intervalMs: number | null, startedAt: number, 
   // A non-positive stamp reads as "just started" — `useChat` sets busy and the start stamp in two
   // setStates that do not commit together, so one painted frame can hold busy=true and startedAt=0, and
   // `now() - 0` rendered as "(29758130m 59s)" in a real binary (pty acceptance, w3.9).
+  // THE HIGH-WATER IS SCOPED TO ONE TURN. Canon clamps an absolute clock that only ever rises, so it
+  // never needs resetting; ours clamps ELAPSED time, which restarts at zero every turn. Without the
+  // reset, a component handed a fresh `startedAt` would sit frozen on the previous turn's maximum for
+  // the whole of the next one — a sixty-second turn would leave the next spinner motionless.
+  const startRef = useRef(startedAt);
+  if (startRef.current !== startedAt) { startRef.current = startedAt; highWater.current = 0; }
   const elapsed = startedAt > 0 ? Math.max(0, now() - startedAt) : 0;
   const quantized = intervalMs === null ? elapsed : Math.floor(elapsed / intervalMs) * intervalMs;
   if (quantized > highWater.current) highWater.current = quantized;
@@ -515,7 +527,7 @@ export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80,
   const kindRef = useRef<SpinnerPhase["kind"]>("none");
 
   const animMs = useAnimationClock(spinnerInterval(meter.mode, reducedMotion), startedAt, now);
-  // Under reduced motion the eased count SNAPS to its target (canon L507775: `if (t) ie.current = B`).
+  // Under reduced motion the eased count SNAPS to its target (canon L507780: `if (t) ie.current = B`).
   // There is no animation to ease, and easing against a clock nobody advances would freeze the number.
   if (reducedMotion) animRef.current = { chars: meter.chars, at: animMs };
   else {
