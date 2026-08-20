@@ -853,6 +853,16 @@ integer, the two agree on every id that actually occurs, and ccx additionally so
 as a latent fidelity gap rather than a defect: if canon ever emits a non-numeric id, ccx drops the task
 entirely and the sort would go to `NaN`.
 
+**S-F8-z — an unmodelled task status would title the spinner, and the fix belongs at ingest.** `taskList.ts`
+casts the wire's `status` straight to our three-value `TaskStatus` union without validating it. Canon's own
+TaskUpdate schema (`sPS`, L235685) admits a FOURTH value, `"deleted"`. Canon's selector — which F8 transplants
+faithfully as a double negative, `!== "pending" && !== "completed"` — therefore treats a deleted task as
+active, and it would title the spinner for the rest of the turn. Task 5 pinned the current behavior in a unit
+test naming the hazard rather than fixing it, on the implementer's reasoning that narrowing the SELECTOR to
+`=== "in_progress"` would hide one symptom while the panel, the row counts and the ordering all keep reading
+the same unmodelled value. The honest fix is validation at the ingest boundary, and it is not F8's to make.
+Left open deliberately: recorded here so a later reader does not "simplify" the faithful transplant away.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.
