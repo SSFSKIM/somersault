@@ -63,6 +63,15 @@ describe("the OSC 0 escape itself (`Mv` + `Bb.SET_TITLE_AND_ICON`, bundle L14817
     }
   });
 
+  it("keeps BEL under kitty — the title does NOT follow canon's ST rule (Wave C's recorded skip)", () => {
+    // F8 T2 characterization. The recorded skip lives in prose two files away (terminalEscapes.ts's
+    // terminator-is-a-parameter note); this pins it in bytes, so recomposing the write onto the shared
+    // builder cannot quietly acquire canon's kitty rule along with it.
+    const h = harness({ TERM: "xterm-kitty" });
+    h.title.setTitle("work");
+    expect(h.writes.at(-1)).toBe("\x1b]0;✳ work\x07");
+  });
+
   it("clears to the empty title on exit (`a0u`, L148428)", () => {
     const h = harness();
     h.title.setTitle("ccx");

@@ -29,14 +29,17 @@
 // — this is a different program and the tab must say so. The rung above it is `--name` (upstream's `mk`, the
 // `--agent` type) rather than an agent type, because that is the launch-time identity ccx actually has.
 //
-// FOLLOW-UP, RECORDED AND NOT THIS MODULE'S JOB: a SIGTERM kills the process without running the mount site's
-// teardown, so the title is left set — alongside raw mode, the cursor and a parked decision. A single
-// whole-process SIGTERM restore is the fix, and it belongs wherever those other three are already owned.
+// THE SIGTERM FOLLOW-UP THIS FILE USED TO CARRY IS DONE, and was already done when it was written down.
+// `cli/main.ts:424` registers one handler each for SIGHUP/SIGTERM/SIGINT and drains `createChatTeardown`,
+// whose third step is `clearTitle()` (chatMain.tsx:866). Nothing about titles needs a signal handler, and
+// adding one would double-register against an owner deliberately built to be singular.
 //
 // The animation timer is injected (plan constraint 15) and the frame index resets to 0 at the start of every
 // busy stretch. Upstream's `IxL` comes from a process-wide animation counter, so its first busy frame is
 // whatever the counter happened to be on; a per-turn reset is deterministic and observationally identical
 // (the two frames differ only in which braille dot is lit).
+
+import { osc, OSC_TITLE } from "./terminalEscapes.js";
 
 /** `phi` (L549523) — U+2733, the idle prefix. */
 export const TERMINAL_TITLE_IDLE_PREFIX = "✳";
@@ -45,7 +48,7 @@ export const TERMINAL_TITLE_BUSY_FRAMES = ["⠂", "⠐"] as const;
 /** `abm` (L549863) — the frame flip interval, ms. */
 export const TERMINAL_TITLE_FRAME_MS = 960;
 /** `a0u` (L148428) — OSC 0 with an empty payload; clears the title on exit. */
-export const TERMINAL_TITLE_CLEAR = "\x1b]0;\x07";
+export const TERMINAL_TITLE_CLEAR = osc("bel", OSC_TITLE, "");
 /** ccx's literal, standing in for upstream's `"Claude Code"` (L547730). */
 export const TERMINAL_TITLE_FALLBACK = "ccx";
 
@@ -94,7 +97,7 @@ export function createTerminalTitle(deps: TerminalTitleDeps): TerminalTitle {
     const composed = `${prefix} ${title}`;
     if (composed === last) return;                          // `CVe`'s effect deps: re-emit on CHANGE only
     last = composed;
-    deps.write(`\x1b]0;${composed}\x07`);
+    deps.write(osc("bel", OSC_TITLE, composed));
   };
   const stop = (): void => { if (handle !== undefined) { disarm(handle); handle = undefined; } };
 
