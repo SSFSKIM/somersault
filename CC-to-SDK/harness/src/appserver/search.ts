@@ -318,10 +318,16 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         // epoch 0, so the captured object's epoch never moves while the windows after it come from a
         // different generation. `generationOf` already names the record's own id beside its epoch for
         // exactly that reason at page boundaries; asking it per window closes the same hole inside a page.
-        // The store half stays fixed at the listing's row — recomputing it would be a full transcript read
-        // per window on this reader (D-M5-25b measured it), and a COLD session's stamp is constant, so a
-        // cold scan is unaffected while a cold→live or live→cold transition is caught by the change of
-        // authority the stamp encodes.
+        // The store half stays fixed at the listing this page started from, and the reason is a COST, not
+        // an immutability the store actually has (corrected, fix wave I / scalpel-2#1 — the earlier
+        // sentence here said "a COLD session's stamp is constant", which is true of a store nobody else is
+        // writing and false the moment one is). This module refuses to reproduce the SDK's cwd-to-project
+        // mapping (D-M5-25a), so it cannot NAME the file behind a session id: re-deriving one cold stamp
+        // costs the same whole-store walk as deriving all of them, times eight windows a page, times every
+        // session in it. So what is NOT covered is a FOREIGN process rewriting a cold transcript between two
+        // windows of one page — invisible here, and named in the spec rather than implied. What IS covered
+        // is a change of AUTHORITY: cold→live and live→cold both move the stamp, and the live half is
+        // re-derived per window below.
         const genHere = generationOf(findLiveBySessionId(srv, info.sessionId), info);
         read: for (;;) {
           // The window is the smaller of one window and what is left of the page's row budget, so the cap

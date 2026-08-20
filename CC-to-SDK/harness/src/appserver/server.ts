@@ -222,8 +222,20 @@ async function anyRosterPidLive(rows: RosterRow[]): Promise<boolean> {
   return false;
 }
 
-/** "Is this session live in a ccx process on this machine?" — both halves of `thread/resume`'s roster
- *  guard, for callers that have nothing to do between them.
+/** "Does a FLEET ROSTER ROW or this server's own registry say someone holds this session?" — both halves
+ *  of `thread/resume`'s roster guard, for callers that have nothing to do between them.
+ *
+ *  THE QUESTION IS NARROWER THAN "is it live on this machine", and the difference is stated here rather
+ *  than left to be discovered (fix wave I / scalpel-3#1, declined as unfixable at this altitude). Two
+ *  holders are invisible to it, both by construction. A ccx HOST admitted after `listRoster()` took its
+ *  snapshot is not in that snapshot — a listing is a listing, and no arrangement of one is atomic with
+ *  another process's admission. And an IN-PROCESS thread of a SECOND app-server process is in no roster at
+ *  all: roster rows are written by `SessionHost`, and an app server's own `thread/start` mints no host. So
+ *  a `false` here means "nothing this process can see holds it", never "nobody does" — which is the same
+ *  scope the spec's criterion 7 states for the shelf ("no transition THIS SERVER mediates"), and it is why
+ *  markers are re-read per request rather than cached. Making it true across processes would mean every
+ *  app server publishing its in-process threads into shared state, which is an architecture with an owner
+ *  and not a corrective repair.
  *
  *  EXPORTED for `thread/archive` (archiveDomain.ts), which is the reason it exists at all: this server was
  *  answering two different questions about one session, refusing to RESUME an id a running fleet session
@@ -705,6 +717,18 @@ export class AppServer {
     // LAST, once admission has fully succeeded and no step after it can fail: unarchiving a session whose
     // admission then threw would take a conversation off the shelf that never opened — which is also why a
     // FORK skips it (`admits`): the id it names never goes live here at all.
+    //   AFTER THE REPLY, and that ordering is not free (fix wave I / scalpel-3#2, declined with its reason).
+    // Between the reply and this line the thread is live AND still carries its marker, so a `thread/list`
+    // dispatched in that window puts a live thread in the archived half — which criterion 7's "no transition
+    // this server mediates" does not cover, and the spec now says so. It cannot be closed by moving this
+    // line up: the reply and `thread/started` MUST leave in the caller's own dispatch tick, because the
+    // delete/resume reservation race is decided by which of the two admits first, and an `await` before
+    // them hands every same-tick delete the win. The window is two filesystem calls wide and self-clearing,
+    // which is the D-M5-21c boot-window class; the reservation race is a lost transcript.
+    //   The other half of that finding — a concurrent `thread/archive` writing a marker this call then
+    // removes — is not a defect: `registry.add` above runs BEFORE the reply, so archive's own second
+    // live-guard sees the record, takes its marker back out and refuses BUSY. Whichever order the two
+    // arrive in, the session ends up live and unshelved, which is what D-M5-21 asks for.
     if (admits) await this.autoUnarchive(ctx, opts.resume);
   }
 

@@ -334,6 +334,15 @@ flips the `full-potential.md` rows and ships nothing.
    here does place that thread in the archived half — a transient, self-correcting state that the next
    unarchive or admission clears (D-M5-10 rev 3, D-M5-21), not one this server prevents. Two processes
    archiving different sessions both stick (marker files).
+   **Amended rev 15 (D-M5-30g), because "no transition this server mediates" was too strong by two
+   filesystem calls:** an ADMISSION of an archived session replies and broadcasts `thread/started` in its
+   own dispatch tick and clears the marker immediately afterwards, so a `thread/list` dispatched inside
+   that window sees a live thread in the archived half. The ordering is load-bearing and stays — the
+   delete/resume reservation race is decided by which of the two admits first, and awaiting the shelf read
+   before replying hands every same-tick delete the win, which costs a transcript rather than a listing.
+   The window is the D-M5-21c boot-window class: bounded, self-clearing, and named rather than claimed
+   away. **A HOST admitting a conversation is now in the rule too** (D-M5-30e) — it was outside it, and
+   the state it left was not self-clearing at all.
 8. **The absorb probes decide.** Probe results for `context_usage` and `terminal_slash_commands` are
    recorded; alive surfaces ship wired with tests, dead ones flip their rows.
 
@@ -1322,10 +1331,15 @@ flips the `full-potential.md` rows and ships nothing.
   all reaches it, and D-M5-14c's rule is that this family groups by what the caller does next — here,
   "search again". It is THROWN, so the outer catch discards the rows already gathered, which is D-M5-8's
   rule that a scan unable to answer honestly answers with an error rather than with part of a page.
-  The check covers the LIVE authority only: recomputing the store half per window is a whole-transcript
-  read on this reader (D-M5-25b measured it), and between two windows of one page the store-immutability
-  assumption stands — what was wrong was trusting it at page BOUNDARIES after it had been broken, which
-  is exactly where `g` now checks it.
+  The check covers the LIVE authority only, and that is a COST decision rather than an immutability the
+  store has (corrected rev 15, D-M5-30g — the sentence here used to say "between two windows of one page
+  the store-immutability assumption stands", which is true of a store nobody else is writing and false the
+  moment one is). Re-deriving the store half means naming the file behind a session id, which this module
+  refuses to do (D-M5-25a), so ONE cold stamp costs the same whole-store walk as all of them, times eight
+  windows a page, times every session in it. What is therefore NOT covered is a foreign process rewriting
+  a cold transcript between two windows of one page. What IS covered is the authority CHANGING — cold to
+  live and back both move the stamp — and the page BOUNDARY, where `g` checks it after it had been broken
+  there.
   **26e (fix wave F, rev 12) — `epoch` was never a generation, and the "by construction" claim above was
   false for one path.** 26b's live stamp was `L<epoch>`, and an epoch is a per-record counter: it starts
   at 0, only ever increments IN PLACE, and `thread/close` deletes the record outright — so a later
@@ -1627,6 +1641,138 @@ flips the `full-potential.md` rows and ships nothing.
   whole file BINARY to `grep`, so every agent and every developer searching `configDomain.ts` got
   nothing. That is the hazard `searchScan.ts` had already written down for its own sentinels; one more
   raw NUL, in a test's junk-cursor list, was escaped with it.
+
+- **D-M5-30 (fix wave I, rev 15) — the first COMPLETE six-lane sweep of this tree, and what its eleven
+  confirmed findings turned out to be.** Every earlier panel round ran with lanes dead; this one returned
+  `ok` on all six finders, so "nothing else is there" is a claim it can actually support. Seven were fixed
+  and four declined, each with its reason recorded — and two of the four declines cost more than the fixes
+  did, because the sentence describing the accepted limit had stopped being true.
+
+  **30a — the array bound weighed the KEY when the quantity it is about is the ASSIGNMENT (P1, fixed).**
+  D-M5-28's `MAX_MERGE_ARRAY_LENGTH` recognised an index and returned for everything else — which is every
+  key except the ONE other key that moves an array's length, `length` itself. `{"length": 100000000}` is
+  the exact shape 28 refuses, spelled a way it could not read: measured on the shipped module at
+  100,000,000 slots and 500,000,000 bytes of `JSON.stringify` output in 4.7 s, while `{"100000000": "x"}`
+  was refused in the same run; and `{"length": {}}` escaped as an uncaught `RangeError: Invalid array
+  length` for a shape a client can send. The bound now asks *what length is this array left with once
+  `key = value` has been assigned*, so there is no key the branch can write that it has not weighed.
+  Upstream-exactness is kept for everything affordable — truncation, hole extension, and the real setter's
+  own coercion of `"2"`, `true`, `null` and `[]`. **The attribution half came with it and is the reachable
+  wire defect:** `origins` is the map `maskingVerdict` decides a write's verdict from BY MEMBERSHIP, and a
+  `length` key is neither an element nor an index, so a layer that emptied an array was not named for the
+  `[]` it produced while the layer whose values were all gone was — measured, `{"length":0}` in local over
+  `["a","b"]` in project served `[]` and attributed it to `project` alone.
+
+  **30b — the lock's ownership check promised a margin the caller then spent (P1, fixed).** `fence()`
+  guarantees that the margin after it resolves is a full `staleMs` — "no other process may break a lease it
+  has just seen refreshed" — and `writeTargetDoc` had grown two awaited filesystem operations between it
+  and the rename: an `lstat` (D-M5-28b's relink detector) and a whole file read (the version check), each
+  put there by a repair of its own, under a comment claiming the guard sat "one syscall before the rename".
+  Measured on two real processes with the holder's loop blocked past the window: `FENCE_OK`, and then the
+  successor ENTERING and COMMITTING inside that holder's critical section. **Fixed by construction, not by
+  ordering:** the caller no longer receives a way to say verify-then-work-then-commit. `withFileLock` hands
+  out `{assertHeld, commit}`; `commit` takes a SOURCE PATH and performs the ownership assertion, the lease
+  refresh and the rename itself, and its destination is the locked path — so committing elsewhere, and
+  committing at a distance from the check, are both unspellable. `assertHeld` stays available for a caller
+  that only wants to ask, which is safe precisely because the commit asks again. *Not staged, and said so
+  rather than implied:* the finding's own worst case — the version read's `open` beating the successor's
+  rename while its completion loses to it, so stale bytes still match `expectVersion` — needs the fs
+  threadpool stalled across one read, and forcing it means faking the storage layer.
+
+  **30c — `readdir` follows a symlink, and so did the break path's delete (P1, fixed).** A `<file>.lock`
+  that is a LINK to a directory answered `breakDeadLock` with that directory's children; it judged the
+  first by its mtime and unlinked it THROUGH the link, and because `rmdir` of a link fails, the acquire
+  loop reported progress and came back for the next one. Measured on the pre-fix module: **five ordinary
+  files deleted in 6.0 s**, then `ConfigLocked`. Two repairs, one per half. The entry is identified with
+  `lstat` and never followed, and anything that is not a directory in its own right is broken on AGE with
+  `unlink` — which never follows a link and cannot remove a directory, so that arm cannot destroy a live
+  lock even if the entry became one after the `lstat`. And the delete can only ever spell a name THIS
+  LOCK'S FORMAT could have written (`<pid>-<suffix>[.<lease>]`, exactly one marker), which covers the
+  window the `lstat` cannot. The cost is stated rather than hidden: a lock directory holding something
+  unrecognisable is not broken, so writes to that target refuse at the deadline until an operator clears
+  it — a refusal, against deleting files this lock never wrote.
+
+  **30d — the resolution was taken before a wait that can last thirty-five seconds (P2, fixed).**
+  `resolveRealTarget` runs before the lock and everything after names its answer; acquiring a contended
+  target BLOCKS for `staleMs + 5s`. A nominal symlink re-pointed inside that window is invisible to all
+  three existing detectors — the lock is on the resolved path and still ours, the resolved entry is still
+  an ordinary file, its bytes are still the ones we read — so the write committed to the abandoned target
+  and returned its version while the engine for that project opened the new one. A fourth detector re-asks
+  the resolution at the top of the critical section, before anything is written. A NARROWING, exactly as
+  28b is; what it removes is not a race but an ordinary duration.
+
+  **30e — a host opening a conversation did not take it off the shelf (P2, fixed).** D-M5-21's rule is
+  MACHINE-wide: the markers live under `~/.claude/ccx`, every server re-reads them per request, and the
+  invariant they serve is stated across processes. The app server honours it on the three admission
+  surfaces the spec names plus the fourth it observes (D-M5-21d's A2). A HOST admitting a conversation is a
+  fifth and honoured it nowhere, so an unattached `ccx --resume <archived id>` — the shape an operator
+  reaches for when they return to a conversation they shelved — left it live in front of them and hidden
+  from every client's default list for the host's whole life. **It is not the transient criterion 7
+  accepts:** that one is cleared by "the next unarchive or admission", and this admission was not one of
+  them. The transition rides `writeSessionId`, already the one place every path names what this host holds
+  (D-M5-21d), plus the launch, which composes its row directly; a forking launch is carved out exactly as
+  it already is for the roster.
+
+  **30f — the replay could not carry an init the buffer had evicted (P2, fixed).** D-M5-27 made the fleet
+  router accept a REPLAYED init frame because `terminal_slash_commands` has no other source. What it could
+  not reach is a replay that no longer HAS one: the host's turn buffer is reset per turn and trims from the
+  HEAD, which is where `system/init` sits, so any turn past 500 non-stream frames or 1 MiB evicts it and an
+  attach to an idle host learned nothing although that host had the classification. The last init is
+  retained beside the buffer push, off the SAME feed (two feeds would make "does the buffer already carry
+  one?" compare different streams), and replayed only when the buffer no longer carries one. A swap
+  discards it with the buffer: it describes an engine that is gone, and it carries that conversation's
+  `session_id` and model beside the classification.
+
+  **30g — the four declines, and the two prose corrections that were the real work.**
+  - *Fence lifecycle commits against cross-process admission (P1).* **Declined.** Correct as an observation
+    and unfixable at this altitude: `liveInFleet` misses a host admitted after its `listRoster()` snapshot
+    (a listing is never atomic with another process's admission) and misses a SECOND app server's
+    in-process threads entirely (roster rows are written by `SessionHost`; an app server's own
+    `thread/start` mints no host). Making it true across processes means every app server publishing its
+    in-process threads into shared state — an architecture with an owner. **What was wrong was the
+    sentence:** `liveInFleet`'s doc asked "is this session live in a ccx process on this machine?", which
+    is not the question it answers. Corrected to name both blind spots.
+  - *Recheck cold transcript generations after each window (P2).* **Declined**, on D-M5-26d's ground —
+    this module refuses to reproduce the SDK's cwd-to-project mapping (D-M5-25a), so re-deriving ONE cold
+    stamp costs the same whole-store walk as deriving all of them, times eight windows a page, times every
+    session in it. **The sentence was wrong again:** both 26d and the code said the store-immutability
+    assumption "stands" between two windows of one page, which is true of a store nobody else is writing
+    and false the moment one is. It is a COST decision, not an immutability, and both now say so; what is
+    not covered is a foreign process rewriting a cold transcript mid-page.
+  - *Finish unarchiving before exposing admission success (P2).* **Declined.** The reply and
+    `thread/started` must leave in the caller's own dispatch tick — the delete/resume reservation race is
+    decided by which of the two admits first, and an `await` before them hands every same-tick delete the
+    win, which costs a transcript. The window is two filesystem calls wide and self-clearing, which is the
+    D-M5-21c boot-window class; **criterion 7 is amended for it** rather than left claiming otherwise. The
+    finding's other half is not a defect at all: `registry.add` runs before the reply, so a concurrent
+    `thread/archive`'s own second live-guard sees the record, removes the marker it just created and
+    refuses BUSY.
+  - *Preserve unknown state for pre-field CLIs (P2).* **Declined**, on D-M5-22's own ground, re-derived
+    rather than inherited. The objection is real — a pre-field executable that does advertise terminal-only
+    built-ins is told `[]` — and the alternative offered is to resolve it from `claude_code_version`, which
+    would mean this server maintaining a version-to-feature table for a field whose introduction version is
+    documented nowhere it can read, being wrong in a direction no test here can catch, and replacing one
+    published semantic with another on a shipped surface. The CLI this repo ships sends the field on every
+    init frame (3/3, acceptance leg 6), so the branch is unreachable on it.
+  - *Invalidate terminal commands when replacing the engine (P2).* **Declined**, and the reasoning is
+    written into `swapEngine` where the next reader will be. `terminalSlashCommands` is the one latched
+    field whose SUBJECT survives a swap: the replacement is a fresh CLI process built from `record.config`,
+    so the executable, its setting sources and therefore the commands it tags as terminal-only are the same
+    ones the outgoing engine advertised — unlike `sessionId` and the turn buffer, which describe the
+    conversation just discarded. Clearing it would cost twice: the field would go absent until the
+    replacement's next init frame, which for an idle thread is indefinitely (30f's gap, re-created), and
+    the first init after the swap would then read as a CHANGE and put a `thread/capabilities/changed` on
+    the wire for a value that never moved.
+
+  **30h — and the operator's home directory on two new wire paths.** Not from the panel. Both config
+  handlers' last-resort reply passed `e.message` through verbatim, and what falls through to it is text
+  nobody here composed: node builds an errno as `"EACCES: permission denied, mkdir
+  '/Users/<operator>/.claude'"`. `replyConfigError` catches only the two error types this repo composes
+  itself, so a filesystem errno goes straight past it. Routed through the same `stripPaths` the sibling
+  domains already use — the strip travels rather than being re-spelled, so the branch nobody thought of is
+  covered by the same rule as the one they did. Reproduced at the wire before the repair, with a project
+  directory the process cannot write. The pre-existing sites in `sessionLib.ts` and elsewhere are a
+  server-wide contract question with its own owner and were deliberately not touched.
 
 ## Surprises & Discoveries
 
@@ -2105,8 +2251,25 @@ than complied. **A process that only catches the workers' errors is half a proce
     CLIENT, one resume code path), so A1's `start()` seed never fires and the row is stamped by the resume
     path after the transcript read. Both are the boot-window class D-M5-21c already accepts; wave A's
     commit message overstated the foreground case as fixed from the launch, and it is fixed from mount.
+- **Declined or accepted as residual by fix wave I (rev 15), each with its reason.** Four of the panel's
+  eleven went the other way and two repairs left something named. **Cross-process liveness is a question
+  `liveInFleet` cannot answer** — it misses a host admitted after its roster snapshot and misses a second
+  app server's in-process threads entirely, and closing that means every app server publishing its threads
+  into shared state. **The cold half of a search's generation stamp is not refreshed per window**, because
+  this module cannot name the file behind a session id (D-M5-25a) and one refresh costs a whole-store walk;
+  a foreign process rewriting a cold transcript mid-page is invisible. **An admission's shelf read lands
+  after its reply**, leaving a two-syscall window in which a live thread is in the archived half —
+  criterion 7 is amended for it. **A key-less init frame still writes `[]`**, and the version-derived
+  alternative is refused with its cost stated. **`terminalSlashCommands` deliberately survives an engine
+  swap**, because the replacement is built from the same config and clearing it would trade a correct value
+  for an absent one plus a false change notification. Two repairs are narrowings rather than proofs, in the
+  same sense D-M5-28b already is: the lock's commit still leaves the `rename`'s own threadpool issuance
+  unguarded, and the nominal path can still be re-pointed after the fourth detector has looked. And the
+  lock now REFUSES rather than breaks a claim directory holding a name its own format could not have
+  written — the deliberate cost of making the break path unable to delete a stranger's file.
 - **Cross-process archive state is transient by construction, not prevented** — criterion 7 was
-  amended (rev 5) to say so rather than keep a claim the design had already narrowed away.
+  amended (rev 5) to say so rather than keep a claim the design had already narrowed away, and again
+  (rev 15, D-M5-30g) for the admission window this server's own reply-first ordering opens.
 - **Domain 10 held at ~76%.** Two optional fields on messages this table has consumed since M1 are
   real capability and still do not reach a percentage point. That is the honest reading, not a
   rounding dodge, and it is written into the cell that way.
@@ -2188,6 +2351,20 @@ reachability proof (a bring-your-own store adapter that passes our own conforman
 directory changing a permission dialog's offered rule row, not the known flake.
 
 ## Revision Notes
+
+- 2026-08-20 rev 15 — **D-M5-30, fix wave I: the first complete six-lane sweep, seven fixed and four
+  declined.** Three P1s repaired by construction rather than by another check — the array bound now weighs
+  the ASSIGNMENT rather than the shape of the key (`length` was the one key that moves an array's length
+  and could not be read as an index), the lock hands out a `commit` that performs its own ownership
+  assertion and rename with nothing between (so "verify, then work, then commit" is unspellable), and the
+  break path identifies its entry with `lstat` and can only delete a name its own format could have
+  written (a symlinked lock directory had cost five ordinary files in 6.0 s). Two P2 repairs closed a
+  thirty-five-second resolution window and taught the HOST that opening a conversation takes it off the
+  shelf; one restored a fleet attach's classification after a long turn evicts the init frame. Four
+  declines are recorded with their reasons, and two of them required correcting a published sentence that
+  measurement contradicted — `liveInFleet`'s "is this live on this machine" and D-M5-26d's
+  "store-immutability assumption stands". Criterion 7 amended for the admission window; both config
+  handlers' errno replies now strip paths.
 
 - 2026-08-18 rev 1: initial design. Grounded by direct reads of Codex v2 `config.rs`/`thread.rs`
   (in-repo), the 0.3.234 bump + full-text sdk.d.ts diff, `SDKSessionInfo` (no archived field), the

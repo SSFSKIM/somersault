@@ -64,6 +64,15 @@ function routeInit(srv: AppServer, record: ThreadRecord, frame: { type?: string;
  *  saying "nothing tagged" are the same instruction for the client class this field exists for (a remote UI
  *  deciding what to hide), and collapsing them is honest rather than lossy. The one state left to absence
  *  is the one the server genuinely does not know: no init frame has arrived on this thread at all.
+ *    RE-EXAMINED AND KEPT (fix wave I / scalpel-5#1, declined with its reason). The objection that remains
+ *  is that a PRE-FIELD executable which really does advertise terminal-only built-ins is told `[]` — a
+ *  known-empty answer for a state the engine never reported. True, and the alternative on offer is to
+ *  resolve it from the init frame's `claude_code_version`, which would mean this server maintaining a
+ *  version→feature table for a field whose introduction version is documented nowhere it can read, being
+ *  wrong in a direction no test here can catch, and replacing one published semantic with another on a
+ *  shipped surface. Against that: the CLI this repo ships sends the field on every init frame (measured
+ *  3/3 over 3 turns, acceptance leg 6), so the branch is unreachable on it, and a client that needs
+ *  certainty already has `capabilities.commands` beside this list to compare against.
  *
  *  A MALFORMED VALUE IS STILL IGNORED, and that is a different case from an omitted one: an array with a
  *  non-string in it (or any non-array) is a frame this server does not understand, not a frame saying
