@@ -949,6 +949,39 @@ marker attributed to it. This machine's shell carries none of them, so the survi
 values. What was measured is the transport — whether tmux forwards them at all — not the claim that iTerm2
 sets `LC_TERMINAL`.
 
+**S-F8-r — tmux discards the passthrough by default, so the emulator sniff SUCCEEDING is the silent case.**
+Task 10's reviewer found what S-F8-s missed, and I measured it: `allow-passthrough` is **off** on tmux 3.7b
+with a null config, has defaulted off since tmux 3.3, and this machine's `~/.tmux.conf` does not set it.
+The consequence inverts which half of the tmux problem the design was solving. When the marker sniff FAILS
+we fall back to a bell and the user hears something; when it SUCCEEDS — a fresh server, markers present —
+`auto` resolves to a real emulator, the module emits DCS-wrapped bytes, and tmux drops them. Silence, in
+the case the design treated as working. Fixed in Task 10's fix wave: a detected multiplexer also emits a
+bare unwrapped BEL alongside the wrapped sequence (skipped when the channel already carries one), so
+passthrough-on gives the rich notification plus a bell and passthrough-off gives at least a bell. This is
+canon's own `iterm2_with_bell` idea applied to the multiplexer case.
+
+**S-F8-q — two canon bugs transcribed deliberately, now recorded so nobody "fixes" them.** Task 10's
+reviewer checked the escape bytes against the terminals' own sources rather than against the brief that
+specified them — the one check no test inside the task could perform — and found two divergences from the
+documented protocols, both faithful to canon 2.1.236:
+· **kitty**: the body chunk omits `d`, which kitty documents as defaulting to 1, so the notification
+  completes and displays at chunk 2 and the third chunk is a separate command kitty discards. Benign
+  (`a=focus` is kitty's default anyway). Our test actively rejects the protocol-correct form.
+· **GNU screen**: `passthrough` doubles ESC for screen as well as tmux, but screen's string machine already
+  passes a single ESC verbatim, so doubling corrupts the sequence. `terminalEscapes.ts` already had the
+  precedent for this call ("transcribed, not corrected", about zellij); nobody had recorded it here, and
+  Task 10 pinned it with exact-byte equality in three more places.
+
+**S-F8-p — a faithful transcriber cannot audit the thing being transcribed.** Task 10 was the first task in
+the wave whose implementer reported NO defect in its brief, and the review established why: the brief was
+taken on faith. Thirteen of seventeen mutations survived its test file, and the brief's OWN binding
+constraints went unasserted — "settings read at call time" had no test, and the brief's headline design
+change (unidentifiable-in-a-multiplexer rings the bell) was pinned for tmux but not for screen, whose code
+arm sat three lines away. The generalizable lesson for this wave's method: a clean implementer report is
+weak evidence when the implementer's job was transcription, and the checks a task cannot perform on itself
+— here, verifying escape bytes against the terminals rather than against the brief — have to be assigned
+explicitly to the review.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.
