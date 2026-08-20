@@ -44,7 +44,7 @@ seventeen.
 | `CH24` | The startup header's branch ladder | one unconditional box | **BUILD, partial** (Unit 3) |
 | `CH25` | Tips as a completion checklist | three static strings | **BUILD** (Unit 3) |
 | `CH26` | One-line degradation under `rows < 30` | absent — the banner is 13 rows at any height | **BUILD** (Unit 3) |
-| `CH28` | OSC 0 terminal title | **shipped Wave C** (`terminalTitle.ts`), two recorded skips | done; moves onto the new seam (Unit 1) |
+| `CH28` | OSC 0 terminal title | **shipped Wave C** (`terminalTitle.ts`), two recorded skips | done; recomposed on the new builders, byte-identical (Unit 1) |
 | `CH30` | OSC 21337 tab status | absent | **DEFERRED** (§ 5) |
 | `CH31` | Desktop notifications per emulator | absent | **BUILD** (Unit 4) |
 | `CH34` | iTerm2 progress bar | absent | **DEFERRED**, writer slot reserved (§ 5) |
@@ -65,11 +65,18 @@ because canon's own ladder falls through to the task's `subject` when `activeFor
 whichever field arrives.
 
 **P93** — *"can we send OSC 11 / OSC 0 / OSC 21337 from inside a live Ink render without corrupting
-the frame, and does the OSC 11 reply parse?"* — is two questions wearing one number. The **write**
-half was answered by shipping: Wave C writes OSC 0 straight to stdout, bypassing Ink, and it was
-pty-verified in that wave's acceptance. The **read** half — parsing an OSC 11 reply back off the tty —
-is genuinely unanswered, and it is exactly the piece this wave defers (§ 5). Nothing in F8's built
-scope depends on it.
+the frame, and does the OSC 11 reply parse?"* — is two questions wearing one number, and only one of
+them is retired.
+
+The **read** half — parsing an OSC 11 reply back off the tty — is genuinely unanswered and is exactly
+what this wave defers (§ 5). Nothing in F8's built scope depends on it.
+
+The **write** half is *narrowed, not retired* (amended in v2). Wave C's shipped `OSC 0` writer proves
+a single short write from beside a live Ink render is frame-safe. It does not prove the same of what
+this wave adds: DCS-wrapped payloads, ST terminators, and kitty's **three consecutive** writes per
+notification. Byte-level builder tests cannot answer a frame-integrity question at all — they never
+render a frame. So the predicate survives as a live acceptance cell, **A10b**, rather than as a
+standalone probe: same question, answered inside the wave that raises it.
 
 ## 1. What canon does
 
@@ -228,48 +235,61 @@ return n <= 6 || n === 8 ? "dark" : "light";
 Four units. They are ordered by dependency: Unit 1 is the seam the others write through, Unit 2 owns
 the reduced-motion consumer that Unit 4 introduces the setting for.
 
-### 3.1 Unit 1 — the escape seam (`src/tui/terminalEscapes.ts`, new)
+### 3.1 Unit 1 — the escape builders (`src/tui/terminalEscapes.ts`, new)
 
-**What it is.** One module owning every byte ccx writes to the terminal outside Ink's frame. Canon
-has exactly this shape — a single write provider behind all five writers — and ccx is about to grow
-from one writer to five.
+**Corrected in v2.** This unit was specified as an escape *writer* that would also become the
+process's signal owner, on the strength of a follow-up note in `terminalTitle.ts`. Both halves were
+wrong, and § 8 records why. What survives is smaller, and better for being smaller.
 
-**Surface.**
+**What it is.** A **pure builder module** — no writes, no lifecycle, no signals. It owns the two
+string constructions every escape in this wave needs, plus the two sanitizers.
 
 ```ts
-export interface EscapeWriterDeps { write(s: string): void; env?: NodeJS.ProcessEnv }
-export interface EscapeWriter {
-  osc(...parts: (string | number)[]): string;   // canon's `tI` — ST under kitty, BEL otherwise
-  passthrough(seq: string): string;             // canon's `Fq` — tmux/screen DCS wrapping
-  emit(seq: string): void;                      // the one write path
-  onRestore(fn: () => void): void;              // registered teardown, run once, signal-safe
-}
-export function createEscapeWriter(deps: EscapeWriterDeps): EscapeWriter;
+export type OscTerminator = "bel" | "st";
+/** canon's `tI` — the terminator is a PARAMETER, never sniffed inside the builder */
+export function osc(terminator: OscTerminator, ...parts: (string | number)[]): string;
+/** canon's `Fq` — tmux/screen DCS wrapping. NOT applied to a bare BEL. */
+export function passthrough(seq: string, env?: NodeJS.ProcessEnv): string;
+/** the terminator a NOTIFICATION uses on this terminal — kitty takes ST, everything else BEL */
+export function notifyTerminator(env?: NodeJS.ProcessEnv): OscTerminator;
+/** canon's `s$n` — C0, DEL and C1 each become a SPACE */
+export function sanitizeNotificationText(s: string): string;
 ```
 
-`osc` and `passthrough` are **pure string builders** — that is what makes every escape in this wave
-assertable as bytes without a terminal, which is the backbone of the acceptance strategy. `emit` is
-the only impure member and takes its `write` from deps.
+Every function is pure and total, which is what makes each escape in this wave assertable as exact
+bytes with no terminal, no process and no clock. That is the whole backbone of the acceptance
+strategy, and it is the reason this unit is worth having even after its other half evaporated.
 
-**Terminator rule.** `osc` picks ST when the terminal is kitty and BEL otherwise, per `tI`. This is
-new capability: `terminalTitle.ts` recorded "BEL everywhere" as a deliberate skip because it had no
-kitty caller. It now has one — kitty's notification form — so the rule lands here, and the title
-keeps BEL by passing through the same builder with its own recorded exemption (D-F8-4).
+**The terminator is a parameter, not a sniff.** An `osc()` that decided ST-versus-BEL internally could
+not express the one exemption this codebase already relies on: the title keeps BEL on every terminal,
+including kitty, which is `terminalTitle.ts`'s recorded Wave C skip. A builder that sniffs would force
+an implementer either to change title bytes or to bypass the seam. So callers state their terminator,
+`notifyTerminator()` supplies canon's rule for the callers that want it, and the title passes `"bel"`
+unconditionally. Title bytes under kitty are pinned by their own test, independently of notification
+bytes.
 
-**Signal restore.** The writer keeps a restore list and installs one handler for `SIGTERM` and
-`SIGINT` that runs it exactly once, then re-raises with the default disposition so the exit code is
-honest. `terminalTitle.clear()` registers on it, as does the terminal-mode restore that
-`altScreen.ts` and the raw-mode owner already perform on the normal path. This closes the follow-up
-`terminalTitle.ts` recorded verbatim: *"a SIGTERM kills the process without running the mount site's
-teardown, so the title is left set… A single whole-process SIGTERM restore is the fix, and it belongs
-wherever those other three are already owned."* This module is that place.
+**Two sanitizers, because canon has two.** They are genuinely different functions and collapsing them
+would silently change shipped behavior:
 
-Scope boundary: the restore covers **terminal state only** — title, modes, cursor, alt-screen. The
-fourth item in that note, a parked permission decision, is session state and stays where it is.
+| | canon | what it does |
+|---|---|---|
+| notification | `s$n` (L202524) | replaces C0, DEL **and C1** with a **space** |
+| title | inside `CVe` | strips CSI, **deletes** C0/DEL, leaves C1, trims |
 
-**Migration.** `terminalTitle.ts` keeps its whole behavior and its tests; only its `write` dep is
-rebound to the seam's `emit`, and its `TERMINAL_TITLE_CLEAR` write becomes an `onRestore`
-registration. No title behavior changes in this wave.
+`terminalTitle.ts`'s existing sanitizer is the second and stays exactly where it is, untouched. The
+first is new and lives here. Every dynamic part of a notification — title and body both — goes through
+it before assembly, never after.
+
+**No writes, no signals.** Writing stays where it already is. `terminalTitle.ts` keeps its own `write`
+dep and its own behavior; it merely composes its bytes with `osc("bel", 0, composed)` instead of a
+local template. The notifier (§ 3.4) takes a `write` dep of its own in the same style.
+
+**Nothing registers a signal handler.** `cli/main.ts:424` registers exactly one handler each for
+`SIGHUP`, `SIGTERM` and `SIGINT` and drains `createChatTeardown` from it; `altScreen.ts:213` carries a
+`signalsOwned` flag precisely so the guard does not double-register against that owner. Any teardown
+this wave needs is registered as a dep of the **existing ordered teardown**, not as a new handler.
+As it happens, this wave needs none — a notification is fire-and-forget, and the title's clear is
+already `createChatTeardown`'s third step.
 
 ### 3.2 Unit 2 — spinner motion (`src/tui/spinner.ts`, `src/tui/TurnSpinner.tsx`)
 
@@ -305,12 +325,32 @@ const intervalMs = reducedMotion ? null : mode === "requesting" ? 50 : 100;
 component does no periodic work at all, which is both canon's behavior and the honest reading of the
 setting.
 
-**One trap, named because it is invisible until it is wrong.** `TurnSpinner` currently derives
-animation time as `tick * FRAME_MS`. That identity holds only while the interval is a constant, and
-this change makes it a variable — a turn that begins in `requesting` at 50 ms and settles to 100 ms
-would compute an animation clock that drifts from wall time, taking the eased token count and the
-glyph with it. The clock must become **elapsed-based** (`now() − startedAt`, quantized to the
-interval, as canon's `Cg` does) and the tick must become a repaint trigger carrying no arithmetic.
+**The clock must be monotonic, and naively it is not.** `TurnSpinner` currently derives animation
+time as `tick * FRAME_MS`. That identity holds only while the interval is constant, and this change
+makes it variable, so the clock becomes elapsed-based (`now() − startedAt`) and the tick becomes a
+bare repaint trigger carrying no arithmetic.
+
+Elapsed-and-quantized is still not enough. Quantizing by the *current* interval **runs backward across
+a cadence change**: at 150 ms elapsed, `floor(150/50)×50 = 150` while `floor(150/100)×100 = 100`. A
+turn leaving `requesting` would step the clock back 50 ms, reversing the cosine and handing `easeChars`
+a negative delta. Canon does not have this bug because `Cg` keeps a high-water ref (L204978):
+
+```js
+u.current = Math.max(u.current, Math.floor(t.now() / c) * c)
+```
+
+So the ported clock carries the same clamp: a ref holding the last value returned, and every read is
+`max(previous, quantized(now))`. Three further properties the implementation owes, each of them a
+thing that has already gone wrong once in this codebase or in canon:
+
+- **The first-frame guard survives.** `TurnSpinner`'s existing non-positive `startedAt` guard exists
+  because `useChat` sets busy and the start stamp in two commits, and one painted frame saw
+  `now() − 0` render as `(29758130m 59s)` in a real binary. The rewrite keeps it.
+- **The old interval handle is cleared when the interval changes.** A mode flip from `requesting` to
+  responding must leave exactly one timer armed, and a flip to reduced motion exactly zero.
+- **A mounted timer-lifecycle test covers the transitions**, asserting active timer counts of 1 → 1 →
+  0 → 0 across 50 ms → 100 ms → `null` → unmount, and a continuous, non-decreasing clock across the
+  first transition.
 
 This interacts with one shipped piece and the interaction is deliberate: `easeChars` advances the
 token estimate in 50 ms steps counted against the animation clock. Canon runs the identical
@@ -331,17 +371,41 @@ export interface SpinnerMessageInput {
 export function spinnerMessage(input: SpinnerMessageInput): string;   // canon L508022's `??` chain
 ```
 
-The caller selects `activeTask` as the first task whose status is neither `pending` nor `completed`,
-and passes `undefined` when the spinner belongs to a subagent — canon's `B` gate, expressed at the
-call site because that is where agent identity lives. The existing `rotateVerb` phase-transition
+The caller selects `activeTask` as the first task whose status is neither `pending` nor `completed`
+**and whose origin is the main agent**.
+
+That last clause needs a seam ccx does not have yet. Canon's `B` gate is not a filter over tasks — it
+asks whether *this spinner* is the main agent's, and canon can ask that because its spinner store is
+itself per-agent (`OCl(EDl.agentId)`, L507981). ccx has exactly one spinner, so transplanting the gate
+verbatim makes it a constant `true`; meanwhile `TaskList.ingest` accepts **any** assistant frame and
+never reads `parent_tool_use_id`, so a subagent's `TaskCreate` lands in the same store as the main
+agent's. Ported literally, the result is a spinner a subagent's todo list can retitle — which canon
+never does.
+
+So the provenance is retained instead: `TaskItem` gains an origin recorded at ingest from the frame's
+`parent_tool_use_id` (absent ⇒ main agent), and **only the spinner's active-task selection filters on
+it**. The task panel keeps showing every task, because that is what it does today and nothing in this
+wave argues it should change. The existing `rotateVerb` phase-transition
 re-pick continues to govern the `randomVerb` rung only; a task label must not flicker on a phase
 change.
 
-**Reduced-motion consumers.** Four animations honor the flag: this spinner (interval `null`, glyph
-pinned to index 0), `CompactionRow` and `RetryRow` (both `setInterval(…, 120)`), and
-`terminalTitle`'s 960 ms braille alternation, which holds the idle `✳` prefix instead. The flag
-reaches them the way every other cross-cutting preference does in this codebase — read once where the
-setting is read, passed down as a prop or dep, never re-read per component.
+**Reduced-motion consumers.** Four animations honor it: this spinner (interval `null`, glyph pinned
+to index 0), `CompactionRow` and `RetryRow` (both `setInterval(…, 120)`), and `terminalTitle`'s 960 ms
+braille alternation, which holds the idle `✳` prefix instead. It reaches them the way every other
+cross-cutting preference does here — resolved once where settings are read, passed down as a prop or
+dep, never re-read per component.
+
+**It is not the setting alone.** Canon's value is `hx(prefersReducedMotion) || hl()` (§ 1.1) — the
+persisted setting **or the screen-reader signal**. A design that threads only the setting leaves a
+screen-reader user with a spinning glyph, an animating retry row and a braille-alternating tab title,
+which is precisely the population the behavior exists for. One resolver produces the value:
+
+```ts
+export function reducedMotion(prefs: CcxPrefs, env?: NodeJS.ProcessEnv): boolean;
+//   prefs.prefersReducedMotion === true || screenReaderEnabled(env)
+```
+
+and every one of the four consumers takes that value, not the raw setting.
 
 ### 3.3 Unit 3 — startup geometry (`src/tui/banner.ts`, `src/cli/main.ts`)
 
@@ -407,14 +471,29 @@ export type NotifEvent = "permission_prompt" | "idle_prompt" | "agent_needs_inpu
 export interface NotifSettings { preferredNotifChannel: NotifChannel; enabledEvents: readonly NotifEvent[] }
 export function resolveChannel(configured: NotifChannel, env?: NodeJS.ProcessEnv): ResolvedChannel;
 export function createDesktopNotifier(deps: {
-  writer: EscapeWriter; settings: () => NotifSettings; env?: NodeJS.ProcessEnv;
+  write(s: string): void; settings: () => NotifSettings; env?: NodeJS.ProcessEnv;
 }): { notify(event: NotifEvent, message: string, title?: string): void };
 ```
 
-`resolveChannel` transcribes `u9T`'s sniff. The four emitters build their bytes through the seam's
-`osc`/`passthrough`, so kitty gets ST terminators and every form gets the tmux wrapping for free.
-Messages pass through the same control-character stripper `terminalTitle.ts` already owns, hoisted
-into the seam so both callers share one implementation.
+`resolveChannel` transcribes `u9T`'s sniff with one recorded divergence (below). Composition is
+**per channel**, not one rule for all four — the bell in particular is a bare byte:
+
+| channel | bytes |
+|---|---|
+| `iterm2` | `passthrough(osc(notifyTerminator(env), 9, sanitized("<title>: <body>")))` |
+| `kitty` | three writes, each `passthrough(osc("st", 99, "<key>", sanitized(part)))`, sharing one id |
+| `ghostty` | `passthrough(osc(notifyTerminator(env), 777, "notify", sanitized(title), sanitized(body)))` |
+| `terminal_bell` | `"\x07"` — **no OSC assembly and no DCS wrapping**; a bare BEL is not an escape sequence to pass through |
+| `iterm2_with_bell` | the `iterm2` bytes, then the bare BEL — the BEL half stays unwrapped |
+
+Every dynamic part goes through `sanitizeNotificationText` before assembly (§ 3.1), never the title
+sanitizer, which behaves differently on purpose.
+
+**Apple Terminal is a recorded divergence.** Canon's resolver is asynchronous there —
+`case "Apple_Terminal": return await p9T() ? "terminal_bell" : "no_method_available"` (L505907) —
+where `p9T` inspects the active Terminal profile. ccx resolves synchronously and always chooses
+`terminal_bell` for Apple Terminal. The cost is bounded and one-directional: a user whose profile has
+the bell disabled gets a byte their terminal ignores, rather than a missing notification (D-F8-11).
 
 **Policy.** Default channel `auto`, per canon. Default **event set narrowed to the blocking pair** —
 `permission_prompt` and `idle_prompt` fire; `agent_needs_input` and `agent_completed` ship complete
@@ -459,35 +538,69 @@ per standing project practice.
 - **A2 (cadence).** The repaint interval is 100 ms while responding and 50 ms while a request is in
   flight. Neither `TurnSpinner` nor `CompactionRow` retains a fixed 120 ms timer, and neither derives
   animation time by multiplying a tick count by an interval.
-- **A3 (reduced motion).** With `prefersReducedMotion: true`: the glyph is `·` and never changes; **no
-  spinner interval is armed at all**; the compaction bar and retry row stop animating; the terminal
-  title holds `✳` without alternating. The setting appears as `Reduce motion` in the settings dialog
-  and survives a relaunch.
+- **A3a (reduced motion, by setting).** With `prefersReducedMotion: true`: the glyph is `·` and never
+  changes; **no spinner interval is armed at all**; the compaction bar and retry row stop animating;
+  the terminal title holds `✳` without alternating. The setting appears as `Reduce motion` in the
+  settings dialog and survives a relaunch.
+- **A3b (reduced motion, by screen reader).** With `prefersReducedMotion` unset and
+  `CLAUDE_AX_SCREEN_READER=1`, **all four** of those animations are equally still. A build that
+  freezes only on the setting fails this cell.
+- **A3c (timer lifecycle).** Across `requesting` → responding → reduced-motion → unmount, the count of
+  armed spinner intervals is 1, 1, 0, 0, and the animation clock never decreases at the 50 ms → 100 ms
+  transition.
 - **A4 (message ladder).** An in-progress task carrying `activeForm: "Running tests"` makes the
   spinner read `Running tests…`. A task carrying only `subject: "Fix the parser"` makes it read
-  `Fix the parser…`. With no task in progress it reads a random verb. A task belonging to a
-  **subagent** changes nothing on the main spinner.
+  `Fix the parser…`. With no task in progress it reads a random verb.
+- **A4b (provenance).** A `TaskCreate` arriving on a frame that carries a `parent_tool_use_id` — a
+  subagent's task — leaves the main spinner's message **unchanged**, while still appearing in the task
+  panel. Driven through the real path: `TaskList` → `useChat` → `TurnSpinner`, on nested frames.
 - **A5 (startup degradation).** At 24 rows the banner is exactly one line — `✻ Welcome to Claude
   Code` plus a dim ` ccx v<version>` — with no box, no cwd/model line and no tips. At 30 rows and
   above the existing box renders unchanged. With the screen-reader ladder firing, the one-line form
-  renders at any height.
+  renders at any height. The leading `✻` is **not** canon's, which opens on the bare words; it is
+  carried from ccx's own box title so the two forms of the same banner agree (D-F8-12).
 - **A6 (tips checklist).** In a non-empty directory containing a `CLAUDE.md`, the tips block reads
   `✔ Run /init to create a CLAUDE.md file with instructions for Claude`. Without one, the same line
   renders unchecked. In an empty directory, the workspace tip renders instead and never carries a
   check. Launched from `$HOME`, the home-directory note is the last line.
-- **A7 (notification bytes).** With `TERM_PROGRAM=iTerm.app`, a permission prompt opening for Bash
-  writes exactly `ESC ] 9 ; ccx: ccx needs your permission to use Bash BEL`, DCS-wrapped when `$TMUX`
-  is set. Under kitty: three `OSC 99` writes with **ST** terminators, ids matching across the three.
-  Under ghostty: `ESC ] 777 ; notify ; ccx ; <message> BEL`. Under `Apple_Terminal`: a single `BEL`.
-  Under an unrecognized terminal: **nothing at all** is written.
+- **A7 (notification bytes — the full matrix).** Each channel is asserted **positively**, bare and
+  under both multiplexers, so no declared branch can be a silent no-op:
+
+  | channel | bare | under `$TMUX` / `$STY` |
+  |---|---|---|
+  | `iterm2` | `ESC ] 9 ; ccx: ccx needs your permission to use Bash BEL` | the same, DCS-wrapped, inner ESCs doubled |
+  | `kitty` | three `OSC 99` writes, **ST**-terminated, one shared id | the same three, each DCS-wrapped |
+  | `ghostty` | `ESC ] 777 ; notify ; ccx ; <body> BEL` | the same, DCS-wrapped |
+  | `terminal_bell` | a single `\x07` | a single `\x07` — **unwrapped**, identical to bare |
+  | `iterm2_with_bell` | iterm2 bytes then `\x07` | wrapped iterm2 bytes then a bare `\x07` |
+  | `auto`, unknown terminal | nothing at all | nothing at all |
 - **A8 (policy).** By default only `permission_prompt` and `idle_prompt` deliver; a subagent
-  completing writes zero bytes. `preferredNotifChannel: "notifications_disabled"` silences every
-  event. A message containing control bytes reaches the terminal with those bytes replaced by
-  spaces — never raw.
+  completing writes zero bytes. Enabling `agent_completed` makes the same event deliver — the opt-in
+  path is exercised, not merely declared. `preferredNotifChannel: "notifications_disabled"` silences
+  every event. A turn that ends with queued input waiting delivers **no** idle notification; the same
+  turn with an empty queue delivers one.
+- **A8b (sanitization, both dialects).** A notification body containing `ESC[31m`, `BEL`, `DEL` and a
+  C1 byte reaches the terminal with **each of those replaced by a space** — canon's notification rule.
+  The same string passed as a terminal *title* keeps the title's existing behavior (CSI stripped, C0
+  and DEL deleted, C1 left, trimmed). One helper satisfying both would fail this cell, which is the
+  point of it.
 - **A9 (auto theme).** `COLORFGBG` unset → dark. `15;0` → dark. `0;15` → light. `15;8` → dark.
   `0;banana` → dark (malformed falls back, never throws).
-- **A10 (signal restore).** `SIGTERM` to a running ccx leaves the pty with the title cleared and
-  terminal modes restored — asserted on the bytes written, not inferred from a clean exit.
+- **A10 (signal exit, a regression guard).** `SIGTERM` to a running ccx leaves the pty with the title
+  cleared — `ESC ] 0 ; BEL` on the wire — and exits 143. This asserts **existing** behavior
+  (`cli/main.ts`'s single handler draining `createChatTeardown`, whose third step is `clearTitle`)
+  and exists so this wave's changes to title composition cannot break it.
+
+  It deliberately makes **no claim about raw mode**. Restoring termios emits no bytes at all, so a
+  byte-level cell could pass while leaving the user's shell in raw mode; that property is owned by
+  `altScreen.ts` and was proved in the fullscreen wave, and this wave neither touches it nor re-asserts
+  it from the wrong instrument.
+- **A10b (frame integrity under out-of-band writes).** In a live pty, with the fullscreen renderer up
+  and a non-empty transcript, firing ten notifications in succession — including the kitty three-write
+  form and the DCS-wrapped form — leaves the visible frame's content and geometry unchanged. This is
+  the narrowed survivor of P93's write half: Wave C proved a single `OSC 0` write is frame-safe, and
+  this wave adds DCS passthrough, ST termination and consecutive writes, none of which that evidence
+  covered (§ 0.2, amended).
 - **A11 (manual pass, owner-verified).** In a real iTerm2 or Ghostty window: a permission prompt
   raises a system notification; the tab title reads `✳ …` at idle and alternates while busy; killing
   ccx with `SIGTERM` restores the tab title. Recorded in § Outcomes as owner-verified, with the date
@@ -515,11 +628,30 @@ All three enter `docs/parity/tui-ux.md`'s tail list at close, with this section 
   `renderTips` ordering and prefixes, sanitization. Every escape assertion is on exact bytes.
 - **TUI** (`test/tui`): the rendering cells — banner branch selection by rows and screen reader, the
   four reduced-motion consumers going still, spinner glyph sequence over a driven clock.
-- **Live/pty**: A1–A6, A9 and A10 under the tmux driver. A7's tmux-wrapped arm is genuinely
-  observable there, since notifications are DCS-wrapped and pass through.
+- **Live/pty**: A1, A2, A3a/A3b, A4b, A5, A6, A9, A10 and A10b under the tmux driver. A7's wrapped
+  column is genuinely observable there — notifications are DCS-wrapped and pass through — so only the
+  emulator's *reaction* is out of reach, not the bytes.
 - **Manual**: A11 only — the two behaviors that terminate inside an emulator we cannot drive.
 - **Gates at close**: `npm run typecheck`, `npm run test:unit`, `npm run test:tui`,
   `npm run test:resize-matrix`. Never bare `npm test`.
+
+**Landing stages.** The four units are a decomposition of the design, **not a unit of landing**. The
+dependency graph is shallow — only reduced motion crosses units (Unit 4 owns the setting, Unit 2 owns
+a consumer) — so the plan stages these as independently reviewable tasks in this order, and **no unit
+lands atomically**:
+
+1. the escape builders and their sanitizers (pure, no callers changed);
+2. `terminalTitle` recomposed onto them, byte-identical, its tests unchanged;
+3. the spinner's glyph, clock and monotonic ref;
+4. task provenance in `TaskList`, then the message ladder that consumes it;
+5. the reduced-motion resolver, its settings row, and its four consumers;
+6. the startup degraded branch, then the tips checklist;
+7. the `auto` theme's environment tier;
+8. the notifier and its trigger sites.
+
+Two files in the blast radius are already large — `useChat.ts` at 3,014 lines and `ChatApp.tsx` at
+1,748 — so additions there are threading only: a dep passed, a call made. Anything with logic in it
+belongs in one of the new modules, which is where every acceptance cell in § 4 points anyway.
 
 **Close-out is a deliverable, not an afterthought.** The wave ends by rescoring
 `docs/parity/tui-ux.md` (§3 and §6 are the sections this moves; the three deferred surfaces in § 5
@@ -545,11 +677,15 @@ this wave. Nothing in F8 touches it, and nothing in F8 needs to.
   divergence was held for test convenience, not judgment, and freezing under reduced motion is
   defined against canon's index. *Rejected: cosine on our 120 ms tick* — leaves the visible pacing
   wrong while paying the whole cost of the change.
-- **D-F8-4 — one escape seam, with a signal-safe restore.** *Rejected: seam without the signal fix* —
-  the bug is already recorded and its own note names this module as its home. *Rejected: add writers
-  alongside* — five independent paths writing escapes to one terminal. The kitty ST terminator lands
-  in the seam; the title keeps BEL as Wave C decided, now as an explicit exemption rather than an
-  absence.
+- **D-F8-4 — one seam of pure escape builders; signals stay where they are.** *(Amended v2.)* The
+  grill authorized "one seam, and fix the signal teardown". The seam stands; the signal half is
+  **withdrawn as already done** — `cli/main.ts:424` owns all three signals and drains
+  `createChatTeardown`, whose third step is `clearTitle`, so the bug `terminalTitle.ts` recorded is
+  fixed and its note is stale (§ 8). Adding a handler would have double-registered against an owner
+  built to be singular and would have dropped `SIGHUP`. *Rejected: add writers alongside the existing
+  title writer* — the builders are worth having on their own, because purity is what makes every byte
+  in § 4 assertable. The terminator is a parameter rather than a sniff, so the title's BEL-under-kitty
+  exemption is expressible instead of merely asserted.
 - **D-F8-5 — notifications default on, blocking events only.** *Rejected: canon exactly* — a
   notification on subagent completion is louder than any chrome this project has already demoted.
   *Rejected: off by default* — a feature nobody enables is close to a feature nobody has. The
@@ -567,12 +703,54 @@ this wave. Nothing in F8 touches it, and nothing in F8 needs to.
   precedence, and queued prompts already render inset beneath the spinner. Canon's specific `Next:`
   labelling is a copy difference on a built surface, not a missing surface; recorded rather than
   built, so it does not masquerade as new capability.
-- **D-F8-10 — P90 and P93 retired by evidence, not run.** Reasoning in § 0.2. The parent spec's
-  unschedulable rule is satisfied by answering the questions, not by executing the probes.
+- **D-F8-11 — Apple Terminal always gets the bell.** Canon gates it on an async profile probe
+  (`p9T`) and otherwise sends nothing. *Rejected: port the probe* — it reads the terminal's own
+  profile state, which is not portably reachable, and the wave has no other async resolution.
+  *Rejected: send nothing, matching the negative arm* — that trades a harmless ignored byte for a
+  silently missing notification. Recorded, one-directional, cheap.
+- **D-F8-12 — the degraded startup line keeps ccx's `✻`.** Canon's opens on the bare words. *Rejected:
+  drop the glyph for byte fidelity* — the full-size form is ccx's own box whose title line carries the
+  glyph, and a degraded form that drops it would make one banner disagree with itself. Recorded rather
+  than smuggled into an exact-byte acceptance cell.
+- **D-F8-10 — P90 retired by evidence; P93's write half narrowed to a live cell.** Reasoning in § 0.2. The parent spec's
+  unschedulable rule is satisfied by *answering* a question, and an answer may come from canon, from
+  shipped evidence, or from an acceptance cell — but never from silence. P93's write half turned out
+  to be answered only in part, so it survives as cell A10b rather than being waved through.
 
 ## 8. Surprises & Discoveries
 
-Seeded from the grounding pass; extended during implementation.
+Seeded from the grounding pass and the v1 adversarial review; extended during implementation.
+
+### From the adversarial review of v1 (2026-08-20)
+
+Eleven findings, ten adopted whole and one in part; **none rebutted**. The four that changed the
+design rather than the prose:
+
+- **The signal bug this wave was chartered to fix no longer exists.** `terminalTitle.ts` carries a
+  follow-up note saying a `SIGTERM` skips teardown and leaves the title set. That was true when Wave C
+  wrote it. The fullscreen wave then built exactly the ordered signal teardown it asked for:
+  `cli/main.ts:424` registers one handler each for `SIGHUP`/`SIGTERM`/`SIGINT` and drains
+  `createChatTeardown`, whose third step is `clearTitle()`. v1 proposed installing a second handler —
+  double-registering against an owner explicitly built to be singular (`altScreen.ts`'s `signalsOwned`
+  flag exists for exactly that reason) and silently dropping `SIGHUP`. **A stale follow-up note reads
+  as a live instruction until someone opens the file it points at**, and this one survived a grill, a
+  design presentation and an owner decision before a reviewer did.
+- **Canon has two sanitizers and they disagree on purpose.** The notification path replaces C0, DEL
+  *and C1* with spaces (`s$n`); the title path strips CSI, deletes C0/DEL, leaves C1, and trims. v1
+  proposed hoisting "the" sanitizer into the seam for both callers, which would have silently changed
+  shipped title behavior. Two functions now, and a cell (A8b) that fails if anyone re-merges them.
+- **An elapsed clock quantized by a varying interval runs backward.** At 150 ms elapsed, requantizing
+  from 50 ms to 100 ms steps the clock from 150 to 100 — reversing the cosine and handing the token
+  easing a negative delta. Canon avoids it with a high-water `Math.max` inside `Cg` that v1 read past.
+  The lesson generalizes beyond this wave: **turning a constant into a variable breaks every invariant
+  that was holding only because it was constant**, and monotonicity is the one that fails silently.
+- **Canon's `B` gate is not the filter it resembles.** It asks "is this the main agent's spinner?",
+  which canon can ask because its spinner store is per-agent. ccx has one spinner and one *global*
+  task store that never records `parent_tool_use_id`, so the same gate transplanted becomes a constant
+  `true`, and a subagent's todo list can retitle the main spinner. Porting a guard's code without its
+  surrounding structure ports nothing at all.
+
+### From the grounding pass
 
 - **F8's parent-spec text was stale in three places, and the audit is why.** Wave C shipped `CH17`
   and `CH18` outright; `CH14` was already correct; `CH36` shipped in Wave R. A wave planned from the
@@ -610,3 +788,16 @@ Pending — written at finish.
 - **v1 (2026-08-20)** — authored from the grounding pass against 2.1.236 and an eight-question grill.
   Born landed: every decision in § 7 was settled before writing, and § 0.1's audit replaces the
   parent spec's cell list as this wave's scope of record.
+- **v2 (2026-08-20, adversarial review — 3 high / 7 medium / 1 low; 10 adopted, 1 adopted in part,
+  0 rebutted).** Unit 1 rewritten: it is a **pure builder module**, it registers no signal handler,
+  and the signal half of its charter is withdrawn as already-done (§ 8). Two sanitizers instead of
+  one; the OSC terminator becomes a parameter so the title's BEL exemption is expressible; the bell is
+  exempt from DCS wrapping. The spinner clock gains canon's monotonic high-water clamp, keeps the
+  non-positive-`startedAt` guard, and owes a timer-lifecycle test (A3c). Reduced motion is derived
+  from the setting **or** the screen-reader signal, with its own acceptance arm (A3b) — the finding
+  with the clearest user cost. `TaskList` gains origin provenance so the message ladder cannot be
+  retitled by a subagent (A4b). Apple Terminal's async profile probe becomes a recorded divergence
+  (D-F8-11), and the degraded banner's `✻` likewise (D-F8-12). P93's write half is narrowed to a live
+  frame-integrity cell (A10b) rather than retired. A7 becomes a positive channel × multiplexer matrix
+  and A8 gains opt-in and queued-turn arms, so no declared branch can pass as a no-op. A10 drops its
+  raw-mode claim, which bytes cannot prove. § 6 gains explicit landing stages.
