@@ -37,7 +37,14 @@ export const threadSearchParams = z.object({
 
 /** `thread` is the SAME projection `thread/list` serves — a live row where this server holds the session,
  *  the store-only row otherwise — so a client renders a search hit with the code it already has. `snippet`
- *  is ≤ max(200, searchTerm.length) units centered on the match.
+ *  is a window centered on the match, at most `max(200, <the match's own length in the row>)` units — and
+ *  that second term is NOT `searchTerm.length` (fix wave G / P2-2#5), which is what this said and what a
+ *  256-unit term of `İ` disproved: it case-folds to 512 units, matches 512 units of an already-decomposed
+ *  row, and the snippet must hold all 512 or `snippetMatchRange` would describe text the excerpt does not
+ *  carry. Exactly one code point in Unicode lengthens under folding (U+0130, one unit to two — swept), so
+ *  the bound a client can compute without folding anything is `max(200, 2 × searchTerm.length)`. The claim
+ *  was corrected rather than the window narrowed: a snippet that cannot hold its own match would break the
+ *  stronger promise, which is that `snippet.slice(start, end)` IS the matched text in the row's real casing.
  *
  *  `nextCursor` non-null with an EMPTY `data` is a legitimate, expected reply (D-M5-16): the per-page caps
  *  bound work, never coverage, so a page that spent its budget without a hit reports bounded progress

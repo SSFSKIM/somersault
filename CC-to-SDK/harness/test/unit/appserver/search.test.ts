@@ -91,7 +91,7 @@ function shuffled<T>(xs: T[], seed = 0x5eed): T[] {
   return out;
 }
 
-interface Store { deps: AppServerDeps; calls: { id: string; offset?: number; limit?: number }[]; listCalls: { cwd?: string }[]; infoCalls: string[]; drop(id: string): void }
+interface Store { deps: AppServerDeps; calls: { id: string; offset?: number; limit?: number; cwd?: string }[]; listCalls: { cwd?: string }[]; infoCalls: string[]; drop(id: string): void }
 function store(fakes: Fake[], opts: { shuffle?: boolean } = {}): Store {
   const live = [...fakes];
   const calls: Store["calls"] = [];
@@ -108,7 +108,7 @@ function store(fakes: Fake[], opts: { shuffle?: boolean } = {}): Store {
       getSessionInfo: async (id) => { infoCalls.push(id); return live.find((f) => f.info.sessionId === id)?.info; },
       listSessions: async (o) => { listCalls.push({ cwd: o?.cwd }); const infos = live.map((f) => f.info); return opts.shuffle === false ? infos : shuffled(infos); },
       getSessionMessages: async (id, o) => {
-        calls.push({ id, offset: o?.offset, limit: o?.limit });
+        calls.push({ id, offset: o?.offset, limit: o?.limit, cwd: o?.cwd });
         const rows = live.find((f) => f.info.sessionId === id)?.rows ?? [];
         const from = o?.offset ?? 0;
         return rows.slice(from, o?.limit === undefined ? undefined : from + o.limit);
@@ -1365,5 +1365,56 @@ describe("thread/searchOccurrences", () => {
     expect("skipped" in plain.result).toBe(false);
     expect(plain.result.data[0].uuid).toBeNull();
     expect(validate(plain.result), JSON.stringify(validate.errors)).toBe(true);
+  });
+});
+
+describe("fix wave G — one store per request, one fold per comparison", () => {
+  it("thread/search forwards its cwd to the TRANSCRIPT reads, not only to the listing (P2-2#1)", async () => {
+    // `cwd` is the store's project SCOPE, mapped to the SDK reader's `dir` by `src/sessions`' wrapper — so
+    // a request that named one project had its metadata read from that project and its transcripts from the
+    // process-default one. Measured before the fix: `listCalls` carried `/proj/alpha` while every entry in
+    // `calls` carried `cwd: undefined`, which on the production reader is a different search space.
+    const st = store([sess("s1", { createdAt: 1_000 }, [assistant("a needle here")])]);
+    boot(st.deps);
+    const r = await search({ searchTerm: "needle", cwd: "/proj/alpha" });
+    expect(r.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s1"]);
+    expect(st.listCalls).toEqual([{ cwd: "/proj/alpha" }]);
+    expect(st.calls.map((c) => c.cwd)).toEqual(["/proj/alpha"]);
+    // THE OTHER SIDE, and it must stay absent rather than become `undefined`: with no cwd in the request
+    // the reader keeps its own "every project" default, which is what `thread/searchOccurrences` — a method
+    // with no cwd to give — depends on for a session it was handed by bare store id.
+    const st2 = store([sess("s2", { createdAt: 1_000 }, [assistant("a needle here")])]);
+    boot(st2.deps);
+    await search({ searchTerm: "needle" });
+    expect(st2.calls.every((c) => !("cwd" in c) || c.cwd === undefined)).toBe(true);
+    const st3 = store([sess("s3", { createdAt: 1_000 }, [assistant("a needle here")])]);
+    boot(st3.deps);
+    await occ({ threadId: "s3", searchTerm: "needle" });
+    expect(st3.calls.every((c) => c.cwd === undefined)).toBe(true);
+  });
+
+  it("a case-insensitive search finds the Greek final sigma, on both methods (P2-2#4)", async () => {
+    // `toLowerCase()` is context-dependent for exactly one code point in Unicode — Σ, which lowers to `ς`
+    // at a word end and `σ` elsewhere (the sweep is in search-scan.test.ts). So a term and a row that are
+    // case variants of each other folded to different letters and the promised match missed: measured
+    // before the fix, `{"data":[],"nextCursor":null}` — an affirmative "no matches" for a row that has one.
+    const st = store([
+      sess("s-final", { createdAt: 2_000 }, [assistant("the word ΟΔΟΣ appears here")]),
+      sess("s-mid", { createdAt: 1_000 }, [assistant("the word οσα appears here")]),
+    ]);
+    boot(st.deps);
+    // Term with a MEDIAL sigma against a row whose sigma is FINAL, and the mirror — one row per side.
+    const a = await search({ searchTerm: "οσ" });
+    expect(new Set(a.result.data.map((d: any) => d.thread.sessionId))).toEqual(new Set(["s-final", "s-mid"]));
+    const b = await search({ searchTerm: "ΟΔΟΣ" });
+    expect(b.result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-final"]);
+    // …and the snippet still carries the row's REAL casing, which is what the fold must not leak into.
+    expect(b.result.data[0].snippet).toContain("ΟΔΟΣ");
+    // The sibling publishes a RANGE off the same fold, so its excerpt and its range must still agree.
+    const o = await occ({ threadId: "s-final", searchTerm: "οσ" });
+    const hit = o.result.data[0];
+    expect(hit.snippet.slice(hit.snippetMatchRange.start, hit.snippetMatchRange.end)).toBe("ΟΣ");
+    // The control: folding must not start matching text that is not a case variant.
+    expect((await search({ searchTerm: "οξ" })).result.data).toEqual([]);
   });
 });

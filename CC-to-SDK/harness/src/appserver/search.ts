@@ -16,12 +16,12 @@ import { threadView, type AppServer, type Handler } from "./server.js";
 import { auditIfReal, fillFromStore, findLiveBySessionId, resolveThreadId, storeOnlyView, storeRead, storeRow } from "./sessionLib.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
 import { SessionStoreError, storeRefusal, stripPaths } from "./archiveDomain.js";
-import { SEARCH_CAPS, compareTuple, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, fingerprint, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
+import { SEARCH_CAPS, compareTuple, foldCase, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, fingerprint, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
 import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 
-type GetMessages = (sessionId: string, opts?: { limit?: number; offset?: number }) => Promise<unknown[]>;
+type GetMessages = (sessionId: string, opts?: { limit?: number; offset?: number; cwd?: string }) => Promise<unknown[]>;
 
 /** The refusal both handlers answer with. A tagged store failure goes through the archive domain's one
  *  `storeRefusal`, so the sentence and its path-stripping are shared with the two archive routes; anything
@@ -110,12 +110,44 @@ const REQUERIED = "cursor was minted for a different search; re-read from the st
  *  `runScanExclusive` (one scan per server) rather than by the caps. The trigger is transcript SIZE and
  *  nothing else — today's are small, and search answers correctly at any size. The loop stays in this shape
  *  because it is already the shape a ranged reader needs and passing `{offset, limit}` cannot be worse than
- *  withholding it; a store of giant transcripts wants that reader before it wants anything else here. */
-async function readWindow(getMessages: GetMessages, sessionId: string, row: number, rowsScanned: number): Promise<{ win: unknown[]; want: number } | null> {
+ *  withholding it; a store of giant transcripts wants that reader before it wants anything else here.
+ *
+ *  `cwd` RIDES ALONG (fix wave G / P2-2#1), because it is the store's project SCOPE and not a filter:
+ *  `src/sessions`' wrapper maps it to the SDK reader's `dir` (`reader.ts`), and `thread/search` forwarded
+ *  it to `listSessions` while withholding it here. So a project-scoped listing was paired with a transcript
+ *  lookup in the process-default project — a wrong transcript where the same session id exists in both, and
+ *  a terminal-empty page where it exists only in the named one, from a request that named exactly one
+ *  store. Omitted rather than passed as `undefined` so the reader keeps its own "search every project"
+ *  default, which is what `thread/searchOccurrences` — a method with no cwd to give — depends on. */
+async function readWindow(getMessages: GetMessages, sessionId: string, row: number, rowsScanned: number, cwd?: string): Promise<{ win: unknown[]; want: number } | null> {
   const want = Math.min(SEARCH_CAPS.windowRows, SEARCH_CAPS.maxRowsPerPage - rowsScanned);
   if (want <= 0) return null;
-  return { win: await storeRead(() => getMessages(sessionId, { offset: row, limit: want })), want };
+  return { win: await storeRead(() => getMessages(sessionId, { offset: row, limit: want, ...(cwd !== undefined ? { cwd } : {}) })), want };
 }
+
+/** THE CLOSING AUDIT (fix wave G / G3), and it is the same audit `auditIfReal` runs before the listing —
+ *  same predicate, same whole-store scope, same errno. What changes is only WHEN, and that is the whole
+ *  point: the opening audit establishes that the store was readable before the walk, and the reply claims
+ *  something about the walk ITSELF. Between the two, the shipped reader swallows every filesystem failure
+ *  as `[]`, and `[]` is indistinguishable from "this transcript is exhausted" — so a transcript that became
+ *  unreadable mid-scan (a `chmod` from a co-tenant, a directory swapped in, a mount going away) silently
+ *  dropped its session from the page, or truncated it, under a `nextCursor: null` that says there is
+ *  nothing more. That is D-M5-8's own prohibition, arriving after the audit rather than before it.
+ *
+ *  WHY NOT PER TRANSCRIPT. Wave F declined that and was right to: this module refuses to reproduce the
+ *  SDK's cwd→project-directory mapping (D-M5-25a), so it cannot NAME the file behind a session id — and
+ *  re-verifying one transcript therefore costs the same whole-store walk as verifying all of them. Per
+ *  window that is unaffordable (~125-160 ms per walk on a 4643-transcript store, times eight windows per
+ *  page, times every session in it). Per REQUEST it is one more walk beside the one already being paid,
+ *  against a `listSessions()` that costs ~1.9-2.25 s on the same store — the cheaper construction that
+ *  closes the gap that matters, which is what a reply is allowed to claim about its own completeness.
+ *
+ *  What it does NOT catch is a failure that heals before the reply, which needs a writer flipping
+ *  permissions twice inside one request, and a transcript DELETED mid-scan (ENOENT is absence, and absence
+ *  is the one honest empty — the same rule the opening audit applies). Both are named in the spec. */
+const auditAfterScan = async (srv: AppServer, readers: readonly ("listSessions" | "getSessionMessages" | "getSessionInfo")[]): Promise<void> => {
+  await auditIfReal(srv, readers);
+};
 
 /** ONE content scan at a time per server (D-M5-17), the same device `record.chain` is for a thread — a
  *  per-server promise chain, keyed on the server so nothing outlives it. A search is the only handler that
@@ -178,9 +210,9 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
     limit = SEARCH_CAPS.maxLimit;
     srv.warn(ctx.peer, "limitClamped", `thread/search limit clamped to ${SEARCH_CAPS.maxLimit}`);
   }
-  const termLc = searchTerm.toLowerCase();
+  const termLc = foldCase(searchTerm);
   const listFn = srv.deps.listSessions ?? ((o: { cwd?: string }) => realListSessions(o));
-  const getMessages = srv.deps.getSessionMessages ?? ((sid: string, o?: { limit?: number; offset?: number }) => realGetSessionMessages(sid, o));
+  const getMessages = srv.deps.getSessionMessages ?? ((sid: string, o?: { limit?: number; offset?: number; cwd?: string }) => realGetSessionMessages(sid, o));
 
   try {
     await runScanExclusive(srv, async () => {
@@ -254,7 +286,7 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
           let span: { at: number; len: number } | null = null;
           for (const field of [info.customTitle, info.summary, info.firstPrompt, info.tag]) {
             if (typeof field !== "string") continue;
-            const lc = field.toLowerCase();
+            const lc = foldCase(field);
             const i = lc.indexOf(termLc);
             // Lowered SPAN → ORIGINAL span: the match is located in `lc` but the snippet is cut from
             // `field` (the wire must carry the row's real casing), and searchScan.ts owns that mapping —
@@ -283,21 +315,26 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         filesScanned++;
         let row = startRow;
         let hitHere = false;
-        // The mid-scan half of D-M5-26, per session and for the LIVE authority only. `record.epoch` is one
-        // property read; recomputing the store half would be a full transcript read per window on this
-        // reader (D-M5-25b measured it), and between two windows of one page the store-immutability
-        // assumption stands — it is at page BOUNDARIES that it was being trusted after it had been broken,
-        // and that is where `g` now checks it.
-        const liveHere = findLiveBySessionId(srv, info.sessionId);
-        const epochHere = liveHere?.epoch;
+        // The mid-scan half of D-M5-26, per session. It is the SAME stamp the cursor carries and it is
+        // RE-DERIVED each window rather than compared against a captured record (fix wave G / P2-2#2): the
+        // old check held one `ThreadRecord` and watched its `epoch`, which cannot see the registry REPLACE
+        // that record — `thread/close` deletes it outright and a re-admission mints a fresh one back at
+        // epoch 0, so the captured object's epoch never moves while the windows after it come from a
+        // different generation. `generationOf` already names the record's own id beside its epoch for
+        // exactly that reason at page boundaries; asking it per window closes the same hole inside a page.
+        // The store half stays fixed at the listing's row — recomputing it would be a full transcript read
+        // per window on this reader (D-M5-25b measured it), and a COLD session's stamp is constant, so a
+        // cold scan is unaffected while a cold→live or live→cold transition is caught by the change of
+        // authority the stamp encodes.
+        const genHere = generationOf(findLiveBySessionId(srv, info.sessionId), info);
         read: for (;;) {
           // The window is the smaller of one window and what is left of the page's row budget, so the cap
           // is enforced AT THE STORAGE BOUNDARY rather than after the rows are already in memory
           // (`readWindow`, shared with `thread/searchOccurrences` below).
-          const w = await readWindow(getMessages, info.sessionId, row, rowsScanned);
+          const w = await readWindow(getMessages, info.sessionId, row, rowsScanned, cwd);
           // Checked AFTER the await and before the rows are read, which is the only placement that covers
           // the LAST window too: a check at the head of the loop never runs again after a short window.
-          if (liveHere && liveHere.epoch !== epochHere) throw new ScanRewound();
+          if (generationOf(findLiveBySessionId(srv, info.sessionId), info) !== genHere) throw new ScanRewound();
           if (!w) { nextCursor = mint(tup, row, info); break scan; }
           for (const message of w.win) {
             rowsScanned++; row++;
@@ -306,7 +343,7 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
             // Too big to search — DISCLOSED, never silently dropped: `skipped` is what keeps "no matches"
             // an honest claim about what was actually read (D-M5-8).
             if (text.length > SEARCH_CAPS.maxRowUnits) { skipped++; continue; }
-            const lc = text.toLowerCase();
+            const lc = foldCase(text);
             const i = lc.indexOf(termLc);
             if (i >= 0) {
               // Same mapping as the metadata corpus above, through the same primitive — one spelling of
@@ -324,6 +361,7 @@ export const threadSearch: Handler = async (srv, ctx, id, params) => {
         // condition the reader would otherwise have to re-derive; removing it would also strand `hitHere`.
         if (hitHere && data.length >= limit) { nextCursor = afterThis(); break scan; }
       }
+      await auditAfterScan(srv, ["listSessions", "getSessionMessages"]);
       ctx.peer.reply(id, { data, nextCursor, ...(skipped ? { skipped } : {}) });
     });
   } catch (e) {
@@ -414,8 +452,8 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
     limit = SEARCH_CAPS.maxLimit;
     srv.warn(ctx.peer, "limitClamped", `thread/searchOccurrences limit clamped to ${SEARCH_CAPS.maxLimit}`);
   }
-  const termLc = searchTerm.toLowerCase();
-  const getMessages = srv.deps.getSessionMessages ?? ((sid: string, o?: { limit?: number; offset?: number }) => realGetSessionMessages(sid, o));
+  const termLc = foldCase(searchTerm);
+  const getMessages = srv.deps.getSessionMessages ?? ((sid: string, o?: { limit?: number; offset?: number; cwd?: string }) => realGetSessionMessages(sid, o));
 
   try {
     // The SAME per-server chain `thread/search` queues on: the resource being rationed is this process's
@@ -471,7 +509,12 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
         // serialize: constructed, one page carried a row from generation 1 beside a row from generation 2,
         // at offsets computed against the first, and every `readCursor` it published was then refused.
         // Stamping the superseded generation makes the jumps fail safe; it does not stop the page.
-        if (live && live.epoch !== epoch) throw new ScanRewound();
+        //   RE-DERIVED from the registry each window, not read off the captured record (fix wave G /
+        // P2-2#2): a record REPLACED between two windows — `thread/close` deletes it and a re-admission
+        // mints a fresh one back at epoch 0 — leaves the captured object's epoch standing while the rows
+        // that follow come from another generation. `gen` already names the record's id for exactly that
+        // reason; comparing against it per window is the same rule, applied inside the page.
+        if (generationOf(findLiveBySessionId(srv, sessionId), row0) !== gen) throw new ScanRewound();
         // The page's row budget, spent before this window opened. A zero-occurrence page with a non-null
         // cursor is the honest report of bounded progress (D-M5-16), never a "no matches" claim.
         if (!w) { nextCursor = encodeOccCursor({ s: sessionId, r: row, c: 0, q, g: gen }); break scan; }
@@ -482,7 +525,7 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
           if (text === null) continue;
           // Too big to search — DISCLOSED, never silently dropped (D-M5-8's disclosure half).
           if (text.length > SEARCH_CAPS.maxRowUnits) { skipped++; continue; }
-          const lc = text.toLowerCase();
+          const lc = foldCase(text);
           // `c` is an offset into the LOWERED row (it is `indexOf`'s own return, plus one) and applies ONLY
           // to the row the cursor names; every later row starts at 0. Applying it to all of them would skip
           // the first `c` units of every subsequent row, losing a hit that sits at the head of one.
@@ -514,6 +557,7 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
         }
         if (w.win.length < w.want) break scan; // short window = this transcript is exhausted
       }
+      await auditAfterScan(srv, ["getSessionMessages", "getSessionInfo"]);
       ctx.peer.reply(id, { data, nextCursor, ...(skipped ? { skipped } : {}) });
     });
   } catch (e) {

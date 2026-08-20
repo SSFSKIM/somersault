@@ -211,6 +211,53 @@ describe("thread/search on the PRODUCTION session store — an unreadable store 
     expect([rDouble.error, rDouble.result]).toEqual([undefined, { data: [], nextCursor: null }]);
   });
 
+  /** FIX WAVE G / G3 — the audit did not observe the read that matters. It ran ONCE, before the listing,
+   *  and the reply claims something about the WALK. In between, the shipped reader answers `[]` for a
+   *  transcript it cannot open, and `[]` is indistinguishable from "this transcript is exhausted" — so a
+   *  transcript that became unreadable mid-scan dropped its session out of the page under a
+   *  `nextCursor: null` that says there is nothing more. Wave F declined a per-transcript re-check, and
+   *  rightly: this module refuses to reproduce the SDK's cwd→project mapping, so it cannot NAME the file
+   *  behind a session id, and re-verifying one costs the same whole-store walk as verifying all. Per
+   *  REQUEST that walk is affordable; per window it is not. So the audit is asked again at the end.
+   *
+   *  THE TRANSCRIPT READ AND THE AUDIT ARE BOTH REAL. Only `listSessions` is injected, and only as a
+   *  CLOCK — it returns the row the real listing would and breaks the file on its way out, which is the
+   *  one thing a test cannot ask a racing writer to do on cue. `getSessionMessages` is the shipped reader
+   *  against the real filesystem, and it is that reader's swallowed EACCES the row is about. The row above
+   *  ("a PARTIAL injection still audits") already pins that this shape audits at all. */
+  it("a transcript that becomes unreadable DURING the scan refuses — the reply's claim is about the walk", async () => {
+    // Measured before the closing audit: `{"data":[{…B…}],"nextCursor":null}` — session A silently absent,
+    // no `skipped`, no warning, and a terminal cursor for a store that had just stopped being readable.
+    let broke = false;
+    const rows = [
+      { sessionId: A, cwd: work, lastModified: 5_000, createdAt: 2_000, summary: "a" },
+      { sessionId: B, cwd: work, lastModified: 4_000, createdAt: 1_000, summary: "b" },
+    ];
+    const send = boot({
+      listSessions: async () => { broke = true; chmodSync(join(projDir, `${A}.jsonl`), 0o000); return rows; },
+    });
+    const r = await send("thread/search", { searchTerm: "needle" });
+    expect(broke).toBe(true);
+    expect(r.result).toBeUndefined();
+    expect([r.error.code, r.error.message.startsWith("session store read failed: EACCES")]).toEqual([-32603, true]);
+    // …and the control that keeps it a CLOSING audit rather than a new blanket refusal: with nothing broken
+    // the same partially-injected server answers both sessions, so the added walk costs correctness nothing.
+    chmodSync(join(projDir, `${A}.jsonl`), 0o600);
+    const ok = await boot({ listSessions: async () => rows })("thread/search", { searchTerm: "needle" });
+    expect(ok.error).toBeUndefined();
+    expect(new Set(ok.result.data.map((d: any) => d.thread.sessionId))).toEqual(new Set([A, B]));
+  });
+
+  it("…and the same for thread/searchOccurrences, whose one transcript is the whole of its page", async () => {
+    // The sibling pays the same whole-store walk (the M6 decline records why) and owes the same honesty:
+    // an occurrence page that reports "no more" about a transcript it stopped being able to read is the
+    // D-M5-8 lie in miniature, one thread wide.
+    const send = boot({ getSessionInfo: async (id: string) => { chmodSync(join(projDir, `${A}.jsonl`), 0o000); return { sessionId: id, summary: "a", lastModified: 5_000 }; } });
+    const o = await send("thread/searchOccurrences", { threadId: A, searchTerm: "needle" });
+    expect(o.result).toBeUndefined();
+    expect([o.error.code, o.error.message.startsWith("session store read failed: EACCES")]).toEqual([-32603, true]);
+  });
+
   it("no refusal puts an absolute path on the wire — the strip the archive routes already had", async () => {
     // The latent half of this finding, made live by the rows above: node composes an fs errno as
     // `EACCES: permission denied, open '/Users/<operator>/…'`, and these two methods used to answer

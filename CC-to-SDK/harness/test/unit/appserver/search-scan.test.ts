@@ -1,6 +1,6 @@
 // test/unit/appserver/search-scan.test.ts
 import { describe, it, expect } from "vitest";
-import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, fingerprint, rowSearchText, makeSnippet, originalSpan } from "../../../src/appserver/searchScan.js";
+import { SEARCH_CAPS, sortForSearch, sortValueOf, compareTuple, encodeSearchCursor, decodeSearchCursor, encodeOccCursor, decodeOccCursor, fingerprint, foldCase, rowSearchText, makeSnippet, originalSpan } from "../../../src/appserver/searchScan.js";
 
 describe("searchScan", () => {
   it("compareTuple: nulls last both directions; sessionId tiebreak asc", () => {
@@ -35,7 +35,7 @@ describe("searchScan", () => {
     expect(rowSearchText({ type: "user", message: { content: [{ type: "tool_result", content: "noise" }] } })).toBeNull();
     expect(rowSearchText({ type: "user", uuid: "u2", message: { content: "<command-name>/clear</command-name>" } })).toBeNull();
   });
-  it("makeSnippet: centered, capped at max(200, termLen), range indexes the snippet — a 256-unit term fits", () => {
+  it("makeSnippet: centered, capped at max(200, the MATCH own length), range indexes the snippet", () => {
     const long = "x".repeat(500) + "NEEDLE" + "y".repeat(500);
     const { snippet, snippetMatchRange } = makeSnippet(long, 500, 6);
     expect(snippet.length).toBeLessThanOrEqual(SEARCH_CAPS.snippetMax);
@@ -563,6 +563,58 @@ describe("searchScan — snippet windows", () => {
     expect(fingerprint(["ab", "c"])).not.toBe(fingerprint(["a", "bc"]));
     // …and equal inputs still agree, or the binding refuses every legitimate resume.
     expect(fingerprint(["t", "asc", true, undefined])).toBe(fingerprint(["t", "asc", true, undefined]));
+  });
+
+  /** FIX WAVE G / P2-2#4 — the fold has to be CONTEXT-INDEPENDENT, because the promise is. */
+  it("foldCase: the final sigma folds like every other sigma, and nothing else in Unicode moves", () => {
+    // Measured, not assumed, and the sweep is the row's own: over all of Unicode against twelve contexts
+    // (empty / letter / combining mark / punctuation on each side), EXACTLY ONE code point folds
+    // differently alone than it does in context — U+03A3, which JavaScript lowers to `ς` at a word end and
+    // to `σ` elsewhere. The sweep is what licenses a one-character repair, so it lives in the test.
+    const contexts: [string, string][] = [["", ""], ["A", ""], ["", "A"], ["A", "A"], ["Ω", ""], ["", "Ω"], ["a", ""], ["", "a"], [".", ""], ["", "."], ["́", ""], ["", "́"]];
+    const contextual: string[] = [];
+    let lengthMoved = 0;
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const c = String.fromCodePoint(cp);
+      if (foldCase(c).length !== c.toLowerCase().length) lengthMoved++;   // the repair must not move any length
+      const alone = foldCase(c);
+      for (const [pre, post] of contexts) {
+        const whole = foldCase(pre + c + post);
+        if (whole.slice(foldCase(pre).length, whole.length - foldCase(post).length) !== alone) { contextual.push(c); break; }
+      }
+    }
+    expect(`${contextual.length} context-dependent code points; ${lengthMoved} lengths moved by the repair`)
+      .toBe("0 context-dependent code points; 0 lengths moved by the repair");
+    // …and the three matches the promise implied and `toLowerCase()` alone missed, measured at -1 before.
+    for (const [term, row, at] of [["Σ", "ΟΣ", 1], ["ΟΣ", "οσ", 0], ["ΣΣ", "οΣΣο", 1]] as const)
+      expect(`${term} in ${row}: ${foldCase(row).indexOf(foldCase(term))}`).toBe(`${term} in ${row}: ${at}`);
+    // The other side: folding must not start matching things that are not case variants of each other.
+    expect(foldCase("ß").indexOf(foldCase("SS"))).toBe(-1);
+    expect(foldCase("İ")).toBe("i̇");   // D-M5-17a's one expander, unchanged by the repair
+  });
+
+  /** FIX WAVE G / P2-2#5 — the published snippet bound was stated off the TERM, and the window is cut to
+   *  hold the MATCH. The two differ exactly when a fold changes length, which is what D-M5-17a measured. */
+  it("makeSnippet is bounded by the match's own length in the row, not by the term's", () => {
+    const term = "İ".repeat(SEARCH_CAPS.maxTerm);          // 256 units, the maximum a client may send
+    const termLc = foldCase(term);                          // …which folds to 512
+    const row = "x".repeat(50) + termLc + "y".repeat(50);   // an already-decomposed row: it IS its own fold
+    const lc = foldCase(row);
+    const span = originalSpan(row, lc, lc.indexOf(termLc), termLc.length);
+    const { snippet, snippetMatchRange } = makeSnippet(row, span.at, span.len);
+    expect([term.length, termLc.length, span.len]).toEqual([256, 512, 512]);
+    // The excerpt holds its whole match — the promise `snippetMatchRange` rests on, and the reason the
+    // window is NOT narrowed to the old published number (which this exceeds, and always would).
+    expect(snippet.length).toBe(512);
+    expect(snippet.slice(snippetMatchRange.start, snippetMatchRange.end)).toBe(termLc);
+    expect(snippet.length).toBeGreaterThan(Math.max(SEARCH_CAPS.snippetMax, term.length));
+    // …and the bound that IS true, in both the exact form and the one a client can compute without folding.
+    expect(snippet.length).toBeLessThanOrEqual(Math.max(SEARCH_CAPS.snippetMax, termLc.length));
+    expect(snippet.length).toBeLessThanOrEqual(Math.max(SEARCH_CAPS.snippetMax, 2 * term.length));
+    // The ordinary side, unchanged: a term with no length-changing fold still gets the 200-unit window.
+    const plain = makeSnippet("z".repeat(500) + "needle" + "z".repeat(500), 500, 6);
+    expect(plain.snippet.length).toBe(SEARCH_CAPS.snippetMax);
   });
 
   it("SEARCH_CAPS carries D-M5-17's numbers exactly", () => {

@@ -1,6 +1,7 @@
 // src/appserver/searchScan.ts — pure search primitives (spec D-M5-15/16/17 rev 3). ONE tuple ordering
 // shared by the sort and the cursor resume — the rev-1 plan let them diverge and the review caught a
 // session locator masquerading as a keyset (F8). Two cursor codecs live beside it for the same reason.
+import { createHash } from "node:crypto";
 import { rowKind, promptText } from "../sessions/index.js";
 
 export const SEARCH_CAPS = { maxFilesPerPage: 40, maxRowsPerPage: 4000, maxRowUnits: 1_048_576, maxLimit: 50, defaultLimit: 20, minTerm: 2, maxTerm: 256, snippetMax: 200, windowRows: 500 } as const;
@@ -56,12 +57,22 @@ const offset = (x: unknown): x is number => typeof x === "number" && Number.isSa
  *  index, so it is screened where the row index already was. */
 const finiteOrNull = (x: unknown): x is number | null => x === null || (typeof x === "number" && Number.isFinite(x));
 
-/** FNV-1a over NUL-joined parts, base36. Not a security hash — the cursor is not a capability and this is
- *  not a signature (a client that forges one reaches only its own sessions, which the token already
- *  entitles it to). It answers ONE question: is the walk this cursor was minted for the walk being
- *  resumed. The NUL join is what stops `("ab","c")` and `("a","bc")` from fingerprinting alike, and
+/** SHA-256 over NUL-joined parts, base64url-truncated to 128 bits. Still not a SIGNATURE — the cursor is
+ *  not a capability, and a client that forges one reaches only its own sessions, which the token already
+ *  entitles it to. It answers ONE question: is the walk this cursor was minted for the walk being resumed.
+ *  The NUL join is what stops `("ab","c")` and `("a","bc")` from fingerprinting alike, and
  *  `undefined`/`null` are distinguished from `""` because "no `cwd`" and "`cwd` is empty" are different
  *  requests.
+ *
+ *  IT WAS 32-BIT FNV-1a, AND THAT IS TOO NARROW FOR WHAT IT DECIDES (fix wave G / P2-2#3). `q` is the sole
+ *  query-equality check, so two walks that fingerprint alike share a cursor — and the walks that collide
+ *  are not exotic: sweeping the DEFAULT `created_at`/`desc`/no-cwd request over both `archived` values,
+ *  the first collision arrived after 212,532 fingerprints (5 collisions in that sweep, every one of them
+ *  crossing the archive partition, e.g. `9pw457` for both `("t38481", archived:false)` and
+ *  `("t86137", archived:true)`). A cursor that crosses the partition resumes at a tuple computed for a
+ *  different set of sessions and skips whatever sorts before it — silently, under a reply that looks
+ *  ordinary. 32 bits puts that at the birthday bound of ~2^16 walks, which one client can reach; 128 puts
+ *  it out of reach of anything, and costs one hash per REQUEST (never per row).
  *
  *  The two sentinels carry a U+0001 PREFIX, and it is load-bearing rather than decorative: without it a
  *  `cwd` of `"u"` fingerprints exactly like `cwd: undefined`, which is two different walks sharing one
@@ -70,14 +81,14 @@ const finiteOrNull = (x: unknown): x is number | null => x === null || (typeof x
  *  control bytes in the source, invisible in every editor and every diff, so the line READ as `"u"`/`"n"`
  *  while meaning something else — and any tool that normalised control characters would have silently
  *  deleted the injectivity this paragraph exists to protect. */
+const FINGERPRINT_CHARS = 22; // 22 base64url chars — 132 bits of sha256, truncated
 export function fingerprint(parts: readonly (string | number | boolean | null | undefined)[]): string {
-  let h = 0x811c9dc5;
+  const h = createHash("sha256");
   for (const raw of parts) {
-    const part = raw === undefined ? "\u0001u" : raw === null ? "\u0001n" : String(raw);
-    for (let i = 0; i < part.length; i++) { h ^= part.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-    h ^= 0; h = Math.imul(h, 0x01000193) >>> 0; // the NUL separator, folded in without allocating a joined string
+    h.update(raw === undefined ? "\u0001u" : raw === null ? "\u0001n" : String(raw), "utf8");
+    h.update("\0", "utf8"); // the separator, fed in rather than joined — nothing depends on one whole string
   }
-  return h.toString(36);
+  return h.digest("base64url").slice(0, FINGERPRINT_CHARS);
 }
 
 /** BOTH cursors carry the walk's own bindings beside its position (D-M5-26): `q`, a fingerprint of the
@@ -107,6 +118,27 @@ export function decodeOccCursor(s: string): OccCursor | null {
   if (typeof p.q !== "string" || typeof p.g !== "string" || "v" in p) return null;
   return { s: p.s, r: p.r, c: p.c, q: p.q, g: p.g };
 }
+
+/** THE ONE FOLD, for the term and for every corpus string it is matched against (fix wave G / P2-2#4).
+ *
+ *  `toLowerCase()` alone is CONTEXT-DEPENDENT, and the promise this method makes — a case-insensitive
+ *  literal substring search — is not. Swept over all of Unicode against twelve contexts (empty, letter,
+ *  combining mark and punctuation on each side): EXACTLY ONE code point folds differently alone than it
+ *  does in context — U+03A3 Σ, which JavaScript lowers to `ς` at the end of a word and to `σ` elsewhere.
+ *  So `"ΟΣ"` lowers to `"ος"` while a standalone `"Σ"` lowers to `"σ"`, and the promised match missed:
+ *  term `Σ` in row `ΟΣ` was -1, and so were `ΟΣ` in `οσ` and `ΣΣ` in `οΣΣο`. Mapping the final sigma onto
+ *  the ordinary one afterwards is Unicode's own common case fold (`CaseFolding.txt`: `03C2; C; 03C3;`),
+ *  and it makes all three match at the right offsets.
+ *
+ *  IT DOES NOT DISTURB D-M5-17a, and that was measured rather than argued: swept over all of Unicode, the
+ *  repair changes the folded LENGTH of zero code points, so `originalSpan`'s equal-length fast path, its
+ *  U+0130 correction and its outward-edge convention are all untouched — the sigma folds 1→1 like every
+ *  other length-preserving context-sensitive fold that decision already named. What it changes is only
+ *  WHICH ROWS MATCH, in exactly one direction: the sigma matches the promise already implied. That is why
+ *  it is not the `RegExp`-with-`i` route D-M5-17a rejected — that one changed which rows are hits across
+ *  the board (İ/i, K/k and ẞ/ß all stop matching), where this adds one letter's missing folds and nothing
+ *  else. Applied to BOTH sides or to neither: a fold on the term alone is a different asymmetry. */
+export const foldCase = (s: string): string => s.toLowerCase().replace(/ς/g, "σ");
 
 /** The corpus (spec: Codex's "visible user messages and final assistant messages", via OUR classifier
  *  so search and replay cannot drift): user rows rows.ts classifies `prompt`, and assistant rows' text
@@ -198,7 +230,11 @@ export function originalSpan(text: string, lowered: string, atLowered: number, l
 export function makeSnippet(text: string, start: number, len: number): { snippet: string; snippetMatchRange: { start: number; end: number } } {
   const at = clampIndex(start, text.length);
   const n = clampIndex(len, text.length - at);
-  const max = Math.max(SEARCH_CAPS.snippetMax, n); // a term longer than 200 units still fits its own snippet
+  // `n` is the match's length IN THIS ROW, not the term's: a snippet must be able to hold its own match, or
+  // `snippetMatchRange` describes text the excerpt does not carry. The two differ whenever a fold changes
+  // length — a 256-unit term of `İ` folds to 512 and matches 512 units of a decomposed row — which is why
+  // the published bound is stated off this number and not off `searchTerm.length` (schema/search.ts).
+  const max = Math.max(SEARCH_CAPS.snippetMax, n);
   const pad = Math.max(0, Math.floor((max - n) / 2));
   let from = Math.max(0, at - pad);
   let to = Math.min(text.length, from + max);

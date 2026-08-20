@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServer, type AppServerDeps } from "../../../src/appserver/server.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
-import { SEARCH_CAPS, decodeSearchCursor, decodeOccCursor } from "../../../src/appserver/searchScan.js";
+import { SEARCH_CAPS, decodeSearchCursor, decodeOccCursor, fingerprint } from "../../../src/appserver/searchScan.js";
 import { writeRoster } from "../../../src/fleet/roster.js";
 
 const mkSink = () => { const ls: string[] = []; return { lines: ls, sink: { write: (l: string) => void ls.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -399,4 +399,75 @@ describe("D-M5-26 — a rewind landing INSIDE one page refuses the page", () => 
     const retry = await search({ searchTerm: "needle" });
     expect(retry.error).toBeUndefined(); // retryable, which is what BUSY promises
   });
+
+  it("thread/search: a record REPLACED inside one page refuses too — the epoch alone cannot see it", async () => {
+    // FIX WAVE G / P2-2#2. The mid-scan check held one `ThreadRecord` and watched its `epoch`. A
+    // `thread/close` DELETES the record and a re-admission mints a fresh one back at epoch 0, so the
+    // captured object's epoch never moves while the windows after it come from a different generation —
+    // measured before the fix: the page came back `ok`, carrying the SECOND generation's rows at offsets
+    // computed against the first. `generationOf` already names the record's own id for exactly this reason
+    // at page boundaries (the close-and-reopen rows above); this asks the same question per window.
+    const rows = (tag: string) => [...Array(SEARCH_CAPS.windowRows + 200)].map((_, i) => assistant(i === SEARCH_CAPS.windowRows + 100 ? `a ${tag} needle` : `filler ${i}`));
+    const st = store([sess("s-live", { createdAt: 1_000 }, rows("first"))]);
+    let swap = false;
+    let threadId = "";
+    let srv!: AppServer;
+    srv = boot({
+      ...st.deps,
+      getSessionMessages: async (sid: string, o?: { offset?: number; limit?: number }) => {
+        if (swap && o?.offset === SEARCH_CAPS.windowRows) {
+          // close-and-readmit, in the registry's own terms: a NEW record, a new id, epoch back at 0.
+          const old = srv.registry.get(threadId)!;
+          srv.registry.delete(threadId);
+          srv.registry.add({ ...old, id: srv.registry.mint(), epoch: 0 });
+          st.replace("s-live", rows("second"));
+        }
+        return st.deps.getSessionMessages!(sid, o);
+      },
+      sessionFactory: () => engine("s-live"),
+    });
+    await send("thread/start", {});
+    threadId = parse(lines).find((l) => l.result?.thread)!.result.thread.id;
+    expect(srv.registry.get(threadId)!.epoch).toBe(0);
+
+    // Control first: with no swap the same page answers, so the refusal below is a change of answer.
+    expect((await search({ searchTerm: "needle" })).result.data.map((d: any) => d.thread.sessionId)).toEqual(["s-live"]);
+
+    swap = true;
+    const r = await search({ searchTerm: "needle" });
+    // The replacement kept the epoch at 0 — which is precisely why watching the epoch could not see it.
+    expect(srv.registry.list().map((x) => x.epoch)).toEqual([0]);
+    expect(r.result).toBeUndefined();
+    expect([r.error?.code, r.error?.message]).toEqual([-33001, "the conversation was rewound during this scan; search again"]);
+
+    swap = false;
+    expect((await search({ searchTerm: "needle" })).error).toBeUndefined();   // retryable, as BUSY promises
+  });
+});
+
+describe("D-M5-26 — the query fingerprint is wide enough to be a binding (fix wave G / P2-2#3)", () => {
+  it("the walk shape that collided at 32 bits produces no collision at all", async () => {
+    // `q` is the SOLE query-equality check, so two walks that fingerprint alike SHARE a cursor — and the
+    // shape that collides is the DEFAULT request. Measured on the 32-bit FNV-1a this replaces, sweeping
+    // `created_at`/`desc`/no-cwd over both `archived` values: the first collision arrived at 212,532
+    // fingerprints, and all five in that sweep crossed the archive partition (e.g. `9pw457` for both
+    // `("t38481", archived:false)` and `("t86137", archived:true)`) — a cursor resuming a walk over the
+    // OTHER half of the store, at a tuple computed for a different set of sessions, skipping whatever
+    // sorts before it, under a reply that looks ordinary. The same sweep, past the same point, now.
+    const seen = new Set<string>();
+    let collisions = 0;
+    for (let n = 0; n < 220_000; n++)
+      for (const archived of [false, true]) {
+        const q = fingerprint([`t${n}`, "created_at", "desc", archived, undefined]);
+        if (seen.has(q)) collisions++; else seen.add(q);
+      }
+    expect(`${collisions} collisions in ${seen.size + collisions} fingerprints`).toBe(`0 collisions in 440000 fingerprints`);
+    // …and the two things a fingerprint must still be, which width alone does not give it: INJECTIVE over
+    // the sentinels (a `cwd` of "u" is not `cwd: undefined`) and separated by the NUL join.
+    expect(fingerprint(["u"])).not.toBe(fingerprint([undefined]));
+    expect(fingerprint(["n"])).not.toBe(fingerprint([null]));
+    expect(fingerprint(["ab", "c"])).not.toBe(fingerprint(["a", "bc"]));
+    // …and stable, because a cursor minted by one request is resumed by the next.
+    expect(fingerprint(["needle", "created_at", "desc", false, undefined])).toBe(fingerprint(["needle", "created_at", "desc", false, undefined]));
+  }, 60_000);
 });

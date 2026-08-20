@@ -49,7 +49,10 @@ export interface AppServerDeps {
   // Task 13: `opts` pages the transcript by ROW window (offset/limit forwarded to src/sessions'
   // getSessionMessages, which forwards to the SDK) — subscribe.ts's threadRead is the only caller
   // that ever passes it; every other caller of this DI slot omits it entirely.
-  getSessionMessages?: (sessionId: string, opts?: { limit?: number; offset?: number }) => Promise<unknown[]>;
+  // `cwd` (M5 fix wave G / P2-2#1) is the SDK's project SCOPE, not a filter: `src/sessions`' wrapper maps
+  // it to the reader's `dir`, and a search that scoped its listing to one project while looking that
+  // project's transcripts up in the process-default one was answering about two stores in one reply.
+  getSessionMessages?: (sessionId: string, opts?: { limit?: number; offset?: number; cwd?: string }) => Promise<unknown[]>;
   // Task 12 (session library): DI-defaulted, at each call site, to the real src/sessions/index.js
   // exports — mirrors getSessionMessages above. `unknown[]`/void return shapes (rather than the real
   // wrappers' typed SDKSessionInfo[]/ForkSessionResult) keep this interface decoupled from the SDK's
