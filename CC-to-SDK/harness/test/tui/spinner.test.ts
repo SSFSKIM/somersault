@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  SPINNER_VERBS, SPINNER_FRAMES, glyphFrame, pickVerb, spinnerStatus,
+  SPINNER_VERBS, SPINNER_BASE, SPINNER_BASE_GHOSTTY, spinnerBase, raisedCosine, glyphIndex, glyphFor,
+  spinnerInterval, pickVerb, spinnerStatus,
   thinkingWord, modeArrow, easeChars, estimateTokens, EASE_STEP_MS, QUIET_MS,
   initPhaseState, advancePhase, phaseFor, phaseLabel, thinkingStatusOf, rotateVerb,
   type PhaseInput,
@@ -24,12 +25,47 @@ describe("spinner verbs", () => {
 });
 
 describe("spinner glyph", () => {
-  it("pulses out then back through the asterisk frames", () => {
-    expect(SPINNER_FRAMES).toEqual(["·", "✢", "✳", "✶", "✻", "✽", "✽", "✻", "✶", "✳", "✢", "·"]);
-    expect(glyphFrame(0)).toBe("·");
-    expect(glyphFrame(4)).toBe("✻");
-    expect(glyphFrame(SPINNER_FRAMES.length)).toBe("·");  // wraps
-    expect(glyphFrame(-1)).toBe("·");                     // negative-safe (last frame)
+  it("has canon's SIX base glyphs, with the ghostty variant repeating the fifth", () => {
+    expect(SPINNER_BASE).toEqual(["·", "✢", "✳", "✶", "✻", "✽"]);
+    expect(SPINNER_BASE_GHOSTTY).toEqual(["·", "✢", "✳", "✶", "✻", "✻"]);
+    expect(spinnerBase({ TERM: "xterm-ghostty" } as NodeJS.ProcessEnv)).toEqual(SPINNER_BASE_GHOSTTY);
+    expect(spinnerBase({ TERM: "xterm-256color" } as NodeJS.ProcessEnv)).toEqual(SPINNER_BASE);
+  });
+
+  it("raisedCosine is canon's (1 - cos(2*PI*t/period))/2", () => {
+    expect(raisedCosine(0, 2000)).toBeCloseTo(0, 10);
+    expect(raisedCosine(1000, 2000)).toBeCloseTo(1, 10);
+    expect(raisedCosine(2000, 2000)).toBeCloseTo(0, 10);
+    expect(raisedCosine(500, 2000)).toBeCloseTo(0.5, 10);
+  });
+
+  it("glyphIndex walks out and back across one period, eased at the ends", () => {
+    const at = (ms: number) => glyphIndex(ms, 6);
+    expect([at(0), at(1000), at(2000), at(3000)]).toEqual([0, 5, 0, 5]);
+    expect(at(100)).toBe(at(0));            // dwells at the bottom
+    expect(at(900)).toBe(at(1000));         // and at the top
+    const firstHalf = [0, 200, 400, 600, 800, 1000].map(at);
+    expect(firstHalf).toEqual([...firstHalf].sort((a, b) => a - b));
+  });
+
+  it("glyphIndex is negative-safe and never leaves the array", () => {
+    for (const ms of [-1, -10_000, 0, 1, 12_345_678]) {
+      const i = glyphIndex(ms, 6);
+      expect(Number.isInteger(i) && i >= 0 && i < 6).toBe(true);
+    }
+  });
+
+  it("glyphFor picks from the env's table", () => {
+    expect(glyphFor(0, {} as NodeJS.ProcessEnv)).toBe("·");
+    expect(glyphFor(1000, {} as NodeJS.ProcessEnv)).toBe("✽");
+    expect(glyphFor(1000, { TERM: "xterm-ghostty" } as NodeJS.ProcessEnv)).toBe("✻");
+  });
+
+  it("spinnerInterval is 50 requesting, 100 otherwise, and null under reduced motion", () => {
+    expect(spinnerInterval("requesting", false)).toBe(50);
+    expect(spinnerInterval("responding", false)).toBe(100);
+    expect(spinnerInterval(undefined, false)).toBe(100);
+    expect(spinnerInterval("requesting", true)).toBeNull();
   });
 });
 

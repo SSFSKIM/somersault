@@ -72,7 +72,7 @@ const secs = (v: string) => { const m = /^(?:(\d+)m )?(\d+)s$/.exec(v); if (!m) 
  *  this level and this deliberately does not add one: `TurnSpinner`'s `now` prop IS injectable, but ChatApp
  *  never passes it (ChatApp.tsx's `<TurnSpinner startedAt tokens />`), and threading one through production
  *  code for a test's convenience is not worth it. The real clock is enough — the spinner re-renders itself
- *  every 120 ms (TurnSpinner.tsx's `setInterval`), so this polls rather than sleeping a fixed second, and
+ *  every 100 ms (TurnSpinner.tsx's `useAnimationClock`), so this polls rather than sleeping a fixed second, and
  *  returns as soon as the reading ticks over (≤ ~1 s). */
 async function elapsedMoves(f: () => string | undefined) {
   const before = elapsedValues(f);

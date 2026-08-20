@@ -28,14 +28,38 @@
 import stringWidth from "string-width";
 import { formatCompactNumber, formatDuration } from "./format.js";
 
-/** The darwin asterisk-pulse base chars; the live cycle pulses out then back (CC: [...chars, ...reversed]). */
+/** The darwin asterisk-pulse base chars (`MSt`, L495134-495137). SIX entries, not a ping-pong of twelve:
+ *  canon walks them with an eased index, and the out-and-back falls out of the cosine. */
 export const SPINNER_BASE = ["·", "✢", "✳", "✶", "✻", "✽"] as const;
-export const SPINNER_FRAMES: readonly string[] = [...SPINNER_BASE, ...[...SPINNER_BASE].reverse()];
+/** The `TERM === "xterm-ghostty"` variant (L495135) — the sixth slot repeats the fifth. */
+export const SPINNER_BASE_GHOSTTY = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
+export function spinnerBase(env: NodeJS.ProcessEnv = process.env): readonly string[] {
+  return env.TERM === "xterm-ghostty" ? SPINNER_BASE_GHOSTTY : SPINNER_BASE;
+}
 
-/** Frame for an animation tick (wraps; negative-safe). */
-export function glyphFrame(tick: number): string {
-  const n = SPINNER_FRAMES.length;
-  return SPINNER_FRAMES[(((tick % n) + n) % n)];
+/** `c8T` (L507933) — the glyph cycle's period. */
+export const SPINNER_PERIOD_MS = 2000;
+/** `Ero` (L495099) — a raised cosine on [0,1]. */
+export const raisedCosine = (ms: number, periodMs: number): number => (1 - Math.cos((2 * Math.PI * ms) / periodMs)) / 2;
+
+/** `y8T` (L507743). The cosine is what makes the walk EASED: the glyph dwells at both ends of the pulse
+ *  and moves fastest through the middle, where a linear ping-pong stepped evenly. Negative-safe, because
+ *  `raisedCosine` is even and periodic. */
+export function glyphIndex(elapsedMs: number, frameCount: number): number {
+  return Math.round(raisedCosine(elapsedMs, SPINNER_PERIOD_MS) * (frameCount - 1));
+}
+
+export function glyphFor(elapsedMs: number, env: NodeJS.ProcessEnv = process.env): string {
+  const table = spinnerBase(env);
+  return table[glyphIndex(elapsedMs, table.length)]!;
+}
+
+/** `Cg(t ? null : e === "requesting" ? 50 : 100)` (L507766). Note what these are NOT: the 200 in
+ *  `U = e === "requesting" ? 50 : 200` on the very next line steps the SHIMMER position, a different
+ *  clock in the same expression. */
+export const SPINNER_INTERVAL_MS = 100, SPINNER_REQUESTING_INTERVAL_MS = 50;
+export function spinnerInterval(mode: SpinnerMode | undefined, reducedMotion: boolean): number | null {
+  return reducedMotion ? null : mode === "requesting" ? SPINNER_REQUESTING_INTERVAL_MS : SPINNER_INTERVAL_MS;
 }
 
 /** The 186 CC thinking verbs, verbatim from `$ta` (L406847) — count included. */

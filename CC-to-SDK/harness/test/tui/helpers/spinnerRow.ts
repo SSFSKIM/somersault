@@ -19,8 +19,8 @@
 //
 // So the needle drops that ONE combination rather than the verb: `Thinking…` is matched behind any glyph
 // EXCEPT `✻`. The placeholder's glyph is a frozen literal (`render.ts`'s `THINKING_PLACEHOLDER`), so this
-// kills the false positive outright, while a real spinner that drew `Thinking` still counts on ten of its
-// twelve animation frames — where dropping the verb entirely would have made every such spinner (1 in 186
+// kills the false positive outright, while a real spinner that drew `Thinking` still counts on five of its
+// six glyphs — where dropping the verb entirely would have made every such spinner (1 in 186
 // mounts) invisible to a `waitFor` that has no other way to see it.
 import { SPINNER_VERBS } from "../../../src/tui/spinner.js";
 

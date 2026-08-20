@@ -12,25 +12,24 @@
 //     QA-6 reported as a bug in our fixed-per-turn version.
 // All three read from `spinner.ts`, which owns the arithmetic and is unit-tested there; this file is the
 // clock and the refs. Mutating refs during render is upstream's own shape (`D.current = m0p(D.current, P)`).
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef } from "react";
 import { Text } from "ink";
 import { ACCENT } from "./banner.js";
 import {
-  glyphFrame, pickVerb, spinnerStatus, easeChars, estimateTokens, EASE_STEP_MS,
+  glyphFor, spinnerBase, spinnerInterval, pickVerb, spinnerStatus, easeChars, estimateTokens, EASE_STEP_MS,
   initPhaseState, advancePhase, phaseFor, thinkingStatusOf, rotateVerb, type SpinnerPhase,
 } from "./spinner.js";
+import { useAnimationClock } from "./animationClock.js";
 import { IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import stringWidth from "string-width";
 
-/** The glyph tick. Upstream animates at 100 ms (50 while requesting) off a raised cosine; ccx's twelve-frame
- *  ping-pong at 120 ms predates Wave C and is pinned by its own tests, so it stays — it is also the clock
- *  the character easing counts its 50 ms steps against. */
-const FRAME_MS = 120;
-
-export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80, verbose = false, now = Date.now, pick = pickVerb }: {
-  startedAt: number; verb?: string; meter?: SpinnerMeter; columns?: number; verbose?: boolean; now?: () => number; pick?: () => string;
+/** F8 TASK 3 replaced the twelve-frame ping-pong at 120 ms with canon's own animation: SIX glyphs walked by
+ *  a raised cosine (`spinner.ts`'s `glyphFor`) off `useAnimationClock`, which repaints at 100 ms — 50 while
+ *  requesting — and is the same clock the character easing counts its 50 ms steps against. */
+export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80, verbose = false, reducedMotion = false, env = process.env, now = Date.now, pick = pickVerb }: {
+  startedAt: number; verb?: string; meter?: SpinnerMeter; columns?: number; verbose?: boolean;
+  reducedMotion?: boolean; env?: NodeJS.ProcessEnv; now?: () => number; pick?: () => string;
 }) {
-  const [tick, setTick] = useState(0);
   // LAZY, not `useRef(verb ?? pick())`: an argument is evaluated on every render, so the eager form drew a
   // fresh verb from `pick` each frame and threw it away — invisible with `Math.random`, and an off-by-N
   // walk through an injected list in a test.
@@ -39,11 +38,15 @@ export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80,
   const animRef = useRef({ chars: 0, at: 0 });                 // eased char count + the animation ms it was last advanced to
   const phaseRef = useRef(initPhaseState());
   const kindRef = useRef<SpinnerPhase["kind"]>("none");
-  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), FRAME_MS); return () => clearInterval(t); }, []);
 
-  const animMs = tick * FRAME_MS;
-  const steps = Math.floor((animMs - animRef.current.at) / EASE_STEP_MS);
-  if (steps > 0) { animRef.current = { chars: easeChars(animRef.current.chars, meter.chars, steps), at: animRef.current.at + steps * EASE_STEP_MS }; }
+  const animMs = useAnimationClock(spinnerInterval(meter.mode, reducedMotion), startedAt, now);
+  // Under reduced motion the eased count SNAPS to its target (canon L507779: `if (t) ie.current = B`).
+  // There is no animation to ease, and easing against a clock nobody advances would freeze the number.
+  if (reducedMotion) animRef.current = { chars: meter.chars, at: animMs };
+  else {
+    const steps = Math.floor((animMs - animRef.current.at) / EASE_STEP_MS);
+    if (steps > 0) animRef.current = { chars: easeChars(animRef.current.chars, meter.chars, steps), at: animRef.current.at + steps * EASE_STEP_MS };
+  }
 
   // startedAt can be 0 for ONE frame: useChat sets busy and the start stamp in two setState calls that do
   // not commit together here, so the first painted frame has busy=true and startedAt=0 — and `now() - 0` is
@@ -74,7 +77,7 @@ export function TurnSpinner({ startedAt, verb, meter = IDLE_METER, columns = 80,
   });
   return (
     <Text>
-      <Text color={ACCENT}>{glyphFrame(tick)}</Text>
+      <Text color={ACCENT}>{reducedMotion ? spinnerBase(env)[0]! : glyphFor(animMs, env)}</Text>
       <Text>{` ${gerund}`}</Text>
       {status ? <Text dimColor>{` ${status}`}</Text> : null}
     </Text>

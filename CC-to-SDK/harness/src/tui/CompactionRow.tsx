@@ -16,30 +16,35 @@
 // fill `ACCENT` — the house colour every other live-turn glyph in this REPL already uses (TurnSpinner's
 // pulse, the banner), so a default-foreground fill would read as the odd one out here. Geometry is canon;
 // this one colour is ours.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef } from "react";
 import { Box, Text } from "ink";
 import { ACCENT } from "./banner.js";
-import { glyphFrame } from "./spinner.js";
+import { SPINNER_INTERVAL_MS, spinnerBase, glyphFor } from "./spinner.js";
+import { useAnimationClock } from "./animationClock.js";
 import { COMPACTING_VERB, BAR_MARGIN_LEFT, barCells, barWidth, compactionRatio } from "./compactionBar.js";
 
 /** `now` is injectable exactly as TurnSpinner's and RetryRow's are — and here it MUST be fed the same clock
  *  `startedAt` was stamped from (useChat stamps it with the injected `deps.now`, ChatApp threads that same
  *  function in), because an elapsed computed across two clocks is the "(29758130m 59s)" bug in bar form. */
-export function CompactionRow({ startedAt, now = Date.now, columns }: { startedAt: number; now?: () => number; columns: number }) {
-  const [tick, setTick] = useState(0);
+export function CompactionRow({ startedAt, now = Date.now, columns, reducedMotion = false, env = process.env }: { startedAt: number; now?: () => number; columns: number; reducedMotion?: boolean; env?: NodeJS.ProcessEnv }) {
   const ratioRef = useRef(0);                                  // monotonic: the bar may never walk backwards
-  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 120); return () => clearInterval(t); }, []);
+  const animMs = useAnimationClock(reducedMotion ? null : SPINNER_INTERVAL_MS, startedAt, now);
+  // The BAR freezes with the glyph. Its ratio is a function of wall-clock elapsed, so left reading `now()`
+  // it would keep advancing on any unrelated parent rerender while the glyph stood still — a half-stopped
+  // animation, which is worse than either state. Under reduced motion it reads the frozen clock instead,
+  // and `ratioRef`'s monotonic floor keeps it from ever walking back.
+  //
   // A non-positive stamp reads as "just started". NOT TurnSpinner's race — that one exists because `busy` and
   // `turnStartedAt` are two separate setStates, so a frame can legally have busy=true and startedAt=0; here
   // the flag and the stamp are ONE object written in ONE setState, so a mounted row always has a real stamp.
   // The guard is kept only as a cheap floor against a caller passing 0 directly (the pure tests do).
-  const ratio = ratioRef.current = compactionRatio(startedAt > 0 ? now() - startedAt : 0, ratioRef.current);
+  const ratio = ratioRef.current = compactionRatio(reducedMotion ? animMs : (startedAt > 0 ? now() - startedAt : 0), ratioRef.current);
   const width = barWidth(columns);
   const { fill, empty } = barCells(ratio, width);
   return (
     <Box flexDirection="column">
       <Text>
-        <Text color={ACCENT}>{glyphFrame(tick)}</Text>
+        <Text color={ACCENT}>{reducedMotion ? spinnerBase(env)[0]! : glyphFor(animMs, env)}</Text>
         <Text>{" " + COMPACTING_VERB + "…"}</Text>
       </Text>
       {width > 0 ? (

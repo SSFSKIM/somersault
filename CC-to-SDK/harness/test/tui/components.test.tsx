@@ -202,16 +202,26 @@ describe("TurnSpinner", () => {
       meter={meter({ mode: "thinking", isThinking: true, lastBurst: { startedAt: 4000 } })} />).lastFrame() ?? "";
     expect(f).toContain("(3s · thinking)");
   });
-  it("eases the token estimate up to the meter's character target instead of stepping to it", async () => {
+  it("eases the token estimate up to the meter's character target instead of stepping to it", () => {
     // The count starts at zero and walks: upstream animates `responseLength` toward the real figure and
     // divides by four, so the first painted frame of a 4000-char message reads no tokens at all.
-    const { lastFrame } = render(<TurnSpinner startedAt={1000} verb="Cogitating" meter={meter({ mode: "responding", chars: 4000 })} />);
+    //
+    // F8 TASK 3 rewrote how this is asserted, because the easing's clock changed under it. It used to count
+    // 50 ms steps off a free-running FRAME COUNTER, so leaving `now` at its default and waiting on a real
+    // interval was the only way to watch it climb. It counts them off ELAPSED time now, which means the
+    // walk is a function of the injected clock and can simply be driven: three hundred milliseconds in,
+    // six steps of the +50 rate have run, so the count is 300 chars — 75 tokens, still far short of 4000/4.
+    // Written the old way this case now passes vacuously (a default `now` against a 1970-ish `startedAt` is
+    // ~20685 days of elapsed, which snaps the easing straight to its target on the first frame).
+    let clock = 1000;
+    const spinner = () => <TurnSpinner startedAt={1000} verb="Cogitating" now={() => clock} meter={meter({ mode: "responding", chars: 4000 })} />;
+    const { lastFrame, rerender } = render(spinner());
     expect(lastFrame() ?? "").not.toContain("tokens");
-    await waitFor(() => (lastFrame() ?? "").includes("tokens"));
+    clock = 1300; rerender(spinner());
     const f = stripAnsi(lastFrame() ?? "");
     expect(f).toMatch(/↓ \d+ tokens/);                       // the arrow rides the token segment
     const shown = Number(/↓ (\d+) tokens/.exec(f)![1]);
-    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBe(75);                                  // six +50 steps, eased — not the 1000 a snap gives
     expect(shown).toBeLessThan(1000);                        // still climbing toward 4000/4
   });
   it("re-picks the gerund on a phase transition and holds it inside one phase", () => {
