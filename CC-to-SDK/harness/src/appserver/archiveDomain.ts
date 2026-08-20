@@ -22,7 +22,7 @@
 // never the refusal built on it.
 import { ERR, type RpcError } from "./rpc.js";
 import { liveInFleet, LIVE_REFUSAL_FLEET, type AppServer, type Handler } from "./server.js";
-import { findLiveBySessionId, resolveThreadId, storeKnows } from "./sessionLib.js";
+import { auditIfReal, findLiveBySessionId, resolveThreadId, storeKnows } from "./sessionLib.js";
 import { MarkerIdError, createArchiveMarker, listArchived, removeArchiveMarker } from "./archive.js";
 import { threadIdParams } from "./schema/core.js";
 
@@ -59,8 +59,19 @@ const LIVE_REFUSAL = "Thread is live in this server — close it first";
  *  a second time once the marker exists (see `threadArchive`) — and why BOTH checks read their message
  *  from here rather than naming one: the re-check is the side that gets forgotten. */
 const liveRefusal = async (srv: AppServer, sessionId: string): Promise<string | undefined> => {
-  if (findLiveBySessionId(srv, sessionId) !== undefined || srv.resumingSessions.has(sessionId)) return LIVE_REFUSAL;
-  return (await liveInFleet(srv, sessionId)) ? LIVE_REFUSAL_FLEET : undefined;
+  const localHold = (): boolean => findLiveBySessionId(srv, sessionId) !== undefined || srv.resumingSessions.has(sessionId);
+  if (localHold()) return LIVE_REFUSAL;
+  const inFleet = await liveInFleet(srv, sessionId);
+  // …AND AGAIN AFTER THE PROBE (fix wave G / P2-5#2). The roster arm is real I/O — a dead row's PID probe
+  // can yield for as long as `ps` takes — and this function's whole contract is that it answers about the
+  // instant it returns, not about the instant it started. A `thread/resume` admitted inside that window
+  // registers its reservation and auto-unarchives, and the stale `undefined` from before the probe then
+  // let `thread/archive` reply `{ok:true}` for a session that had just been opened. The in-process arms
+  // are re-read rather than the fleet one because they are the ones that MOVE during the await (they are
+  // this process's own state, mutated synchronously by the admission) and because their sentence is the
+  // one a client can act on. Cheap: two synchronous lookups, no second probe.
+  if (localHold()) return LIVE_REFUSAL;
+  return inFleet ? LIVE_REFUSAL_FLEET : undefined;
 };
 
 /** The SESSION store's failure, tagged at the ONE call site that can raise it. Both handlers read two
@@ -76,7 +87,19 @@ const liveRefusal = async (srv: AppServer, sessionId: string): Promise<string | 
 export class SessionStoreError extends Error {
   constructor(readonly reason: unknown) { super("session store read failed"); }
 }
+/** THE AUDIT COMES FIRST (fix wave G / P2-5#3), for the reason `thread/searchOccurrences` already audits
+ *  ahead of its own existence check (D-M5-25a): the production `getSessionInfo` converts every filesystem
+ *  failure to `undefined`, so "the store could not be read" and "the store does not know this id" arrive
+ *  here as one value. Both handlers then answered THREAD_NOT_FOUND — `thread/archive` at its existence
+ *  check, `thread/unarchive` at its marker-miss fallback — reporting an unreadable store as a client typo,
+ *  which is D-M5-8's prohibition on the two methods that do not page. The `catch` stays wrapped around
+ *  `storeKnows` ALONE: `auditIfReal` already tags its own failure through `storeRead`, and wrapping it a
+ *  second time would compose the sentence twice.
+ *
+ *  It costs a whole-store walk (~125-160 ms on a 4643-transcript store) on a request that reaches the
+ *  existence check — a single user action, not a paged walk, and the alternative is a wrong answer. */
 const knows = async (srv: AppServer, sessionId: string): Promise<boolean> => {
+  await auditIfReal(srv, ["getSessionInfo"]);
   try { return await storeKnows(srv, sessionId); }
   catch (e) { throw new SessionStoreError(e); }
 };
@@ -154,6 +177,39 @@ export function storeRefusal(e: unknown): RpcError {
 }
 const textOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** ONE SHELF TRANSITION AT A TIME PER SESSION, in this server (fix wave G / sweep#3) — the same per-key
+ *  promise-chain device `withFileLock`'s in-process queue and `record.chain` already are, applied to the
+ *  pair of handlers that mutate one marker.
+ *
+ *  Without it the two interleave inside `thread/archive`'s own second live-guard: the marker is created,
+ *  the guard AWAITS (it probes the roster), and a `thread/unarchive` dispatched in that window observes the
+ *  marker, removes it, replies `{ok:true}` and broadcasts `thread/unarchived` — after which archive, which
+ *  never re-reads the marker it created, replies `{ok:true}` and broadcasts `thread/archived`. Both
+ *  receipts are true of the moment they were composed and the LAST notification a client receives is the
+ *  one that contradicts the final state, so a shelf view built on the push stream is wrong until something
+ *  else makes it re-read. Serializing is the whole repair: each handler's guard, mutation and announcement
+ *  now sit inside one turn, so the broadcast order IS the transition order.
+ *
+ *  IT IS PER SERVER, AND THAT IS THE HONEST SCOPE. Another ccx process writing a marker for this session
+ *  is not ordered by this chain and never could be — which is exactly why markers are re-read per request
+ *  (D-M5-3) rather than cached, and why the push freshness this protects is documented as per-server.
+ *  Keyed on the SESSION so two different sessions never wait on each other, and rooted in a WeakMap on the
+ *  server so nothing outlives it. `prev.catch()` before `.then()`: a failed transition must not poison the
+ *  queue behind it, and the STORED link swallows rejections the caller's own try/catch already settles. */
+const shelfChains = new WeakMap<AppServer, Map<string, Promise<unknown>>>();
+function shelfTurn<T>(srv: AppServer, sessionId: string, fn: () => Promise<T>): Promise<T> {
+  let chains = shelfChains.get(srv);
+  if (!chains) { chains = new Map(); shelfChains.set(srv, chains); }
+  const prev = chains.get(sessionId) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(fn);
+  const stored = run.catch(() => {});
+  chains.set(sessionId, stored);
+  // The map would otherwise grow one entry per distinct session a long-lived server ever shelved, so a
+  // chain that is still the tail when it settles removes itself — `withFileLock`'s own bookkeeping.
+  stored.then(() => { if (chains.get(sessionId) === stored) chains.delete(sessionId); }).catch(() => {});
+  return run;
+}
+
 /** `thread/archive` — put a cold session on the shelf.
  *
  *  The live-guard is checked TWICE, and the second check is the whole of D-M5-10's convergence claim (plan
@@ -186,29 +242,37 @@ export const threadArchive: Handler = async (srv, ctx, id, params) => {
   const resolved = resolveThreadId(srv, parsed.data.threadId);
   if (!resolved.ok) { ctx.peer.replyError(id, resolved.code, resolved.message); return; }
   const sessionId = resolved.sessionId;
+  // The ENTRY guard stays OUTSIDE the shelf turn, and deliberately: its two in-process arms are evaluated
+  // before this function's first await, which is what lets it see a thread admitted in the caller's own
+  // dispatch tick (see `liveRefusal`). Queueing first would spend that tick and lose the property.
+  //
   // FIRST, ahead of the existence read, and not merely for cheapness: a thread admitted this tick has no
   // persisted row yet, so asking the store about it would answer THREAD_NOT_FOUND for a session the client
   // is demonstrably holding. "It is live" is the truer refusal, and it is the one the client can act on.
   const heldAtEntry = await liveRefusal(srv, sessionId);
   if (heldAtEntry) { ctx.peer.replyError(id, ERR.BUSY, heldAtEntry); return; }
   const deps = { ccxDir: srv.deps.ccxDir };
-  try {
-    if (!(await knows(srv, sessionId))) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-    await createArchiveMarker(sessionId, deps);
-    const heldAfterMarker = await liveRefusal(srv, sessionId);
-    if (heldAfterMarker) {
-      await removeArchiveMarker(sessionId, deps);
-      ctx.peer.replyError(id, ERR.BUSY, heldAfterMarker); return;
-    }
-  } catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
-  ctx.peer.reply(id, { ok: true });
-  // Announced on every SUCCESSFUL call, including an idempotent repeat. The store cannot tell a fresh
-  // transition from a repeat — an `EEXIST` and a created marker leave byte-identical results, which is
-  // exactly why the marker is a marker — so a handler that announced only "real" transitions would be
-  // claiming knowledge it does not have. `sessionId`, not `threadId`: thread/delete's precedent, and the
-  // only identity a cold session has. Push freshness is per-server by design (D-M5-3): another server's
-  // clients learn from the marker on their next request, not from this line.
-  srv.broadcastServer("thread/archived", { sessionId });
+  await shelfTurn(srv, sessionId, async () => {
+    try {
+      if (!(await knows(srv, sessionId))) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+      await createArchiveMarker(sessionId, deps);
+      const heldAfterMarker = await liveRefusal(srv, sessionId);
+      if (heldAfterMarker) {
+        await removeArchiveMarker(sessionId, deps);
+        ctx.peer.replyError(id, ERR.BUSY, heldAfterMarker); return;
+      }
+    } catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
+    ctx.peer.reply(id, { ok: true });
+    // Announced on every SUCCESSFUL call, including an idempotent repeat. The store cannot tell a fresh
+    // transition from a repeat — an `EEXIST` and a created marker leave byte-identical results, which is
+    // exactly why the marker is a marker — so a handler that announced only "real" transitions would be
+    // claiming knowledge it does not have. `sessionId`, not `threadId`: thread/delete's precedent, and the
+    // only identity a cold session has. Push freshness is per-server by design (D-M5-3): another server's
+    // clients learn from the marker on their next request, not from this line.
+    //   INSIDE the turn (fix wave G / sweep#3), which is the whole of the serialization: the announcement
+    // is what a client's shelf view follows, so it has to be ordered with the transition it describes.
+    srv.broadcastServer("thread/archived", { sessionId });
+  });
 };
 
 /** `thread/unarchive` — take it back off. Deliberately NOT live-guarded, which is the one place the two
@@ -221,15 +285,19 @@ export const threadUnarchive: Handler = async (srv, ctx, id, params) => {
   if (!resolved.ok) { ctx.peer.replyError(id, resolved.code, resolved.message); return; }
   const sessionId = resolved.sessionId;
   const deps = { ccxDir: srv.deps.ccxDir };
-  try {
-    // MARKER first, store second, and the short-circuit is the point rather than an optimization: a
-    // session the store has since deleted can still have a marker, and unarchiving is the only way to
-    // clear one. Refusing there would leave permanent state no client could reach.
-    if (!(await listArchived(deps)).has(sessionId) && !(await knows(srv, sessionId))) {
-      ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return;
-    }
-    await removeArchiveMarker(sessionId, deps);
-  } catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
-  ctx.peer.reply(id, { ok: true });
-  srv.broadcastServer("thread/unarchived", { sessionId });
+  // The SAME per-session turn `thread/archive` takes (fix wave G / sweep#3) — these two are the pair that
+  // mutate one marker, and interleaving them left the last notification contradicting the final state.
+  await shelfTurn(srv, sessionId, async () => {
+    try {
+      // MARKER first, store second, and the short-circuit is the point rather than an optimization: a
+      // session the store has since deleted can still have a marker, and unarchiving is the only way to
+      // clear one. Refusing there would leave permanent state no client could reach.
+      if (!(await listArchived(deps)).has(sessionId) && !(await knows(srv, sessionId))) {
+        ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return;
+      }
+      await removeArchiveMarker(sessionId, deps);
+    } catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
+    ctx.peer.reply(id, { ok: true });
+    srv.broadcastServer("thread/unarchived", { sessionId });
+  });
 };

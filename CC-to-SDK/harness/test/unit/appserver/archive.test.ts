@@ -4,7 +4,7 @@
 // `afterAll` takes it back. The one row that exercises the DEFAULT location (no `ccxDir`) drives
 // `CCX_FLEET_ROOT`/`HOME`, because the real default is a developer's live `~/.claude`.
 import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
-import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -1251,5 +1251,176 @@ describe("thread/list {archived} — the archived partition (Task 10)", () => {
     // failure had a refusal of its own; an fs errno there would have shipped the operator's home path.
     expect([e?.code, e?.message]).toEqual([-32603, "session store read failed: session store exploded"]);
     expect(e?.message).not.toContain("marker store");
+  });
+});
+
+describe("fix wave G — the shelf's two handlers, and the stores under them", () => {
+  it("an unarchive arriving while archive is inside its post-marker guard is SERIALIZED — the last notification describes the final state (sweep#3)", async () => {
+    // The interleave: `thread/archive` creates the marker, then AWAITS its second live-guard (a roster
+    // probe). A `thread/unarchive` dispatched in that window observes the marker, removes it, replies ok
+    // and broadcasts `thread/unarchived` — and archive, which never re-reads the marker it created, then
+    // replies ok and broadcasts `thread/archived`. Measured before the serialization: both replies
+    // `{ok:true}`, nothing on the shelf, and the announcements ending on `thread/archived` — the LAST thing
+    // a client hears contradicting the state it would read.
+    //
+    // The unarchive is dispatched by WATCHING for the marker rather than by `feedBoth`: same-tick dispatch
+    // puts the unarchive ahead of the marker's creation, which is not this window. The marker exists only
+    // between `createArchiveMarker` and the handler's next decision, so watching for it lands the request
+    // inside the probe by construction. A real, non-terminal roster row for this session is what makes that
+    // probe spend a `ps` and therefore be enterable at all.
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;
+    let watcher: ReturnType<typeof setInterval> | undefined;
+    try {
+      const st = fakeStore(["shelfy"]);
+      boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+      writeRoster({ short: "deadbee2", pid: 999_999, procStart: "1970-01-01T00:00:00Z", cwd: "/w", kind: "interactive", name: "dead", state: "working", startedAt: Date.now(), sessionId: "shelfy" } as never);
+      const marker = join(ccxDir, "archived", "shelfy");
+      let unarchiveId = -1;
+      const archiveId = feed("thread/archive", { threadId: "shelfy" });
+      watcher = setInterval(() => {
+        if (unarchiveId >= 0 || !existsSync(marker)) return;
+        unarchiveId = feed("thread/unarchive", { threadId: "shelfy" });
+        clearInterval(watcher!); watcher = undefined;
+      }, 1);
+      const arch = await reply(archiveId, "thread/archive");
+      await vi.waitFor(() => expect(unarchiveId).toBeGreaterThan(0));
+      const unarch = await reply(unarchiveId, "thread/unarchive");
+      expect([arch.result, unarch.result]).toEqual([{ ok: true }, { ok: true }]);
+      const order = parse(lines).filter((l) => l.method === "thread/archived" || l.method === "thread/unarchived");
+      const onShelf = existsSync(marker);
+      // The two really did both run, so the row is not vacuous…
+      expect(`${order.length} announcements`).toBe("2 announcements");
+      // …and THE CLAIM: the last announcement and the state on disk agree.
+      expect(`last=${order[order.length - 1]?.method} onShelf=${onShelf}`)
+        .toBe(`last=${onShelf ? "thread/archived" : "thread/unarchived"} onShelf=${onShelf}`);
+      expect(onShelf).toBe(false);   // …and it is the UNARCHIVE that won, because it ran second
+    } finally {
+      if (watcher) clearInterval(watcher);
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  }, 20_000);
+
+  it("…and the ordinary sequence is unchanged: two shelf transitions announce in the order they happened", async () => {
+    // The control the chain must not break. A serialization that deadlocked, dropped a turn or reordered
+    // the pair would satisfy nothing here, and every assertion above is about one interleaved pair only.
+    const ccxDir = mkTmp("m5ccx-");
+    const st = fakeStore(["plain"]);
+    boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+    expect((await send("thread/archive", { threadId: "plain" })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "plain"))).toBe(true);
+    expect((await send("thread/unarchive", { threadId: "plain" })).result).toEqual({ ok: true });
+    expect(existsSync(join(ccxDir, "archived", "plain"))).toBe(false);
+    expect(parse(lines).filter((l) => l.method?.startsWith("thread/")).map((l) => l.method))
+      .toEqual(["thread/archived", "thread/unarchived"]);
+    // Two DIFFERENT sessions never wait on each other — the chain is keyed on the session, not the server.
+    const st2 = fakeStore(["one", "two"]);
+    boot({ ccxDir, getSessionInfo: st2.getSessionInfo });
+    const [a, b] = feedBoth({ method: "thread/archive", params: { threadId: "one" } }, { method: "thread/archive", params: { threadId: "two" } });
+    expect([(await reply(a, "one")).result, (await reply(b, "two")).result]).toEqual([{ ok: true }, { ok: true }]);
+  });
+
+  it("an admission landing inside the POST-MARKER roster probe is caught: liveRefusal answers about the instant it returns (P2-5#2)", async () => {
+    // `liveRefusal` read the registry and `resumingSessions` only BEFORE awaiting the fleet probe, and that
+    // probe is real I/O — a dead roster row's PID check spends a `ps` fork. The window that matters is the
+    // SECOND call, after the marker exists: the entry guard's own window is already closed by that second
+    // call (the "resume landing INSIDE the existence read" row above), but nothing was watching the second
+    // call's own await. A `thread/resume` admitted there registers its reservation AND auto-unarchives, so
+    // the stale `undefined` from before the probe let archive reply `{ok:true}` and broadcast
+    // `thread/archived` for a session that was live and no longer on the shelf — D-M5-10's convergence
+    // claim inverted, with a receipt for a shelving that did not happen.
+    //
+    // The admission is landed by watching for the marker rather than by a timer: it exists only between
+    // `createArchiveMarker` and the handler's next decision, which IS the probe, so this is the window by
+    // construction rather than by a guessed delay.
+    const ccxDir = mkTmp("m5ccx-");
+    const root = mkTmp("m5fleet-");
+    const prev = process.env.CCX_FLEET_ROOT;
+    process.env.CCX_FLEET_ROOT = root;                      // its own roster, so no sibling case's row shows
+    let watcher: ReturnType<typeof setInterval> | undefined;
+    try {
+      const st = fakeStore(["probed"]);
+      const srv = boot({ ccxDir, getSessionInfo: st.getSessionInfo });
+      // A REAL, non-terminal roster row for this session whose pid is genuinely gone, so `liveInFleet`
+      // really spends an `isPidLive` on it and really answers false — the "dead-roster probe" of the finding.
+      writeRoster({ short: "deadbeef", pid: 999_999, procStart: "1970-01-01T00:00:00Z", cwd: "/w", kind: "interactive", name: "dead", state: "working", startedAt: Date.now(), sessionId: "probed" } as never);
+      const marker = join(ccxDir, "archived", "probed");
+      watcher = setInterval(() => {
+        if (!existsSync(marker)) return;
+        srv.resumingSessions.set("probed", 1);              // the resume's reservation…
+        rmSync(marker);                                     // …and its auto-unarchive
+        clearInterval(watcher!); watcher = undefined;
+      }, 1);
+      const r = await send("thread/archive", { threadId: "probed" });
+      // Measured before the fix: `{ok:true}`, a `thread/archived` broadcast, and nothing on the shelf.
+      expect([r.error?.code, r.error?.message]).toEqual([-33001, "Thread is live in this server — close it first"]);
+      expect(existsSync(marker)).toBe(false);
+      expect(notifs("thread/archived").map((n) => n.params)).toEqual([]);
+      // The control: with nothing landing in the window the same request is admitted, so the refusal above
+      // is the re-check's and not a probe that refuses everything.
+      srv.resumingSessions.delete("probed");
+      expect((await send("thread/archive", { threadId: "probed" })).result).toEqual({ ok: true });
+    } finally {
+      if (watcher) clearInterval(watcher);
+      if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
+    }
+  }, 20_000);
+
+  it("an UNREADABLE session store refuses on both methods rather than answering `Thread not found` (P2-5#3)", async () => {
+    // The production `getSessionInfo` converts every filesystem failure to `undefined`, so "unreadable"
+    // and "unknown id" arrive as one value — and both handlers answered THREAD_NOT_FOUND, reporting an
+    // operator's broken store as a client typo. `thread/searchOccurrences` already audits ahead of its own
+    // existence check for exactly this (D-M5-25a); these two now do too.
+    const ccxDir = mkTmp("m5ccx-");
+    const cfg = mkTmp("m5cfg-");
+    const projects = join(cfg, "projects");
+    mkdirSync(projects, { recursive: true });
+    const saved = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = cfg;
+    try {
+      // No `getSessionInfo` dep: the production reader, so the audit gate opens (an injected reader is a
+      // different store and is the injector's to break).
+      boot({ ccxDir });
+      chmodSync(projects, 0o000);
+      for (const method of ["thread/archive", "thread/unarchive"]) {
+        const e = (await send(method, { threadId: "11111111-1111-4111-8111-111111111111" })).error;
+        expect([method, e?.code, e?.message?.startsWith("session store read failed: EACCES")]).toEqual([method, -32603, true]);
+        expect([method, e?.message?.includes(cfg)]).toEqual([method, false]);   // and no operator path on the wire
+      }
+      // The control: readable again, and the honest answer comes back — an id this store does not hold is
+      // still THREAD_NOT_FOUND, which is the answer the refusal above must not have replaced.
+      chmodSync(projects, 0o700);
+      expect((await send("thread/archive", { threadId: "11111111-1111-4111-8111-111111111111" })).error?.code).toBe(-33004);
+    } finally {
+      chmodSync(projects, 0o700);
+      if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved;
+    }
+  });
+
+  it("the marker directory is usable under a umask that would have narrowed it (P2-5#4)", async () => {
+    // `mkdir`'s mode is umask-masked and `chmod` is not — configWrite's own rule, which this path did not
+    // follow. Measured before the fix under `umask 0200`: the directory landed 0500 and the marker write
+    // failed EACCES for a store this process had just created. Both the leaf and the recursively created
+    // PARENTS are repaired, because under a mask that narrows the parent the failure lands there first.
+    const root = mkTmp("m5umask-");
+    const ccxDir = join(root, "deep", "ccx");                 // parents created by the same recursive mkdir
+    const saved = process.umask(0o200);
+    try {
+      await createArchiveMarker("umasked", { ccxDir });
+      expect(existsSync(join(ccxDir, "archived", "umasked"))).toBe(true);
+      for (const d of [join(root, "deep"), ccxDir, join(ccxDir, "archived")])
+        expect(`${d}: ${(statSync(d).mode & 0o777).toString(8)}`).toBe(`${d}: 700`);
+      // …and the store stays usable afterwards, which is what the mode is FOR.
+      expect([...(await listArchived({ ccxDir }))]).toEqual(["umasked"]);
+    } finally { process.umask(saved); }
+    // THE OTHER SIDE: a directory that already existed keeps the mode its operator gave it — `mkdir`
+    // reports nothing created, so nothing is repaired, and a blanket chmod would have overwritten it.
+    const kept = mkTmp("m5keep-");
+    mkdirSync(join(kept, "archived"), { recursive: true, mode: 0o755 });
+    chmodSync(join(kept, "archived"), 0o755);
+    await createArchiveMarker("kept", { ccxDir: kept });
+    expect((statSync(join(kept, "archived")).mode & 0o777).toString(8)).toBe("755");
   });
 });

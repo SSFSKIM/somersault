@@ -3,8 +3,8 @@
 // race, and cross-process STATE is correct because list/search re-read the directory per request.
 // Push freshness stays per-server (broadcasts reach the emitting server's own clients) — documented.
 // The handlers land in Task 9; this task is the store the search stage consumes.
-import { mkdir, readdir, writeFile, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, writeFile, unlink, chmod, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
 
 export interface ArchiveDeps { ccxDir?: string }
@@ -53,13 +53,42 @@ export async function listArchived(deps: ArchiveDeps): Promise<Set<string>> {
 export const inArchivedPartition = (archived: Set<string>, sessionId: string | undefined, wantArchived: boolean): boolean =>
   sessionId === undefined ? !wantArchived : archived.has(sessionId) === wantArchived;
 
+/** `mkdir`'s `mode` is UMASK-MASKED and `chmod` is not — the rule `configWrite.ts` states for every mode it
+ *  installs, applied here because this path had the same hole (fix wave G / P2-5#4). Under `umask 0200` a
+ *  directory asked for 0700 lands 0500, and the marker write one line down then fails EACCES for a store
+ *  this process itself just created.
+ *
+ *  THE REPAIR HAS TO HAPPEN DURING THE WALK, not after it, and that was measured rather than assumed: a
+ *  single `mkdir(…, {recursive:true})` under that mask creates the first missing PARENT at 0500 and then
+ *  fails EACCES creating its child inside it, so there is no "afterwards" to repair from. Hence the chain
+ *  is built one level at a time and each level is chmod'ed the moment it exists.
+ *
+ *  ONLY what this call creates. A level that already existed is left exactly as its operator set it —
+ *  which a blanket `chmod` would silently overwrite — and an `EEXIST` from a concurrent creator means the
+ *  level is not ours either. When nothing is missing the recursive `mkdir` still runs, so a path that is a
+ *  FILE rather than a directory keeps raising the errno it always did instead of failing later and vaguer. */
+async function mkdirOwnerOnly(dir: string): Promise<void> {
+  const missing: string[] = [];
+  for (let cur = dir; ; cur = dirname(cur)) {
+    if (await stat(cur).then(() => true, () => false)) break;
+    missing.unshift(cur);
+    if (dirname(cur) === cur) break;                     // the root: nothing above it to climb to
+  }
+  if (missing.length === 0) { await mkdir(dir, { recursive: true }); return; }
+  for (const p of missing) {
+    try { await mkdir(p, { mode: 0o700 }); }
+    catch (e) { if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e; continue; }
+    await chmod(p, 0o700);
+  }
+}
+
 export async function createArchiveMarker(sessionId: string, deps: ArchiveDeps): Promise<void> {
   checkId(sessionId);
   // 0700 like the root's two other creators (cli/serveMain.ts's runDir, fleet/roster.ts): `mkdir` applies a
   // mode only to directories it actually CREATES, so whichever writer arrives first sets it permanently —
   // and an embedder using the published `./appserver` export arrives here first, where `ccx serve` would
   // not. Without it a co-tenant on a shared host can enumerate the operator's archived session ids.
-  await mkdir(dirOf(deps), { recursive: true, mode: 0o700 });
+  await mkdirOwnerOnly(dirOf(deps));
   // `wx` is O_CREAT|O_EXCL: EEXIST is the idempotent re-archive, and no state this store itself produces
   // can tell it from a plain `w` (the marker is empty, so a truncating create leaves identical bytes). The
   // exclusivity is still load-bearing for states it does NOT produce: O_EXCL refuses to FOLLOW a symlink at
