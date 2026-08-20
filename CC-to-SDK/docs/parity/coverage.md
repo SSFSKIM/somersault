@@ -384,6 +384,16 @@
 >   anything geometry-dependent has to arrive through an injected seam, and a test that reads them
 >   directly is measuring nothing.
 
+> - **SDK 0.3.237 bump + probe-pin alignment (2026-08-21)** — harness `^0.3.227` → `^0.3.237` and the
+>   probes workspace pin `0.3.220` → `0.3.237`, so probe evidence runs on the same SDK the product ships
+>   against. **Zero drift at name level**: `scripts/drift-check.mjs` reports optionsFields / queryMethods
+>   / sdkMessageMembers / exportedNames all clean, installed IS npm HEAD, and the appserver scorecard
+>   gate holds (59 registered methods, every walked token rowed, zero schema-less methods). Gates:
+>   typecheck clean · unit 2902 · tui 3872 in 152 files (one first-run failure was the tracked `/copy`
+>   under-load flake; two clean full passes followed) · one-turn keyed health check (haiku, `success`,
+>   1 turn) per the post-auth-incident ritual · `test/live/context-tool.test.ts` green keyed. No domain
+>   score moves — a version bump realizes no new envelope; it keeps the evidence honest.
+
 > - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36
 >   re-verified REACHABLE on 0.3.211; after an auth interruption (the old subscription OAuth token was
