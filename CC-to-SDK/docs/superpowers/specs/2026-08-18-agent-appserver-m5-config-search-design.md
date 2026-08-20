@@ -123,9 +123,10 @@ are visible only in the engine's view; `config/read` serves the file-backed chai
   queue holds a cross-process lock at `<file>.lock` across read → validate `expectedVersion` → write
   tmp → rename. That lock is a **claim directory** (rev 9): it is published by `rename`, which fails
   against any non-empty claim; the owner is the NAME of the single marker file inside it, so every
-  delete is scoped to its own owner and no lock's bytes are ever read; and the marker's mtime is a
-  **lease the holder refreshes**, so a slow-but-live holder is not evicted and a dead one's claim
-  expires (30s). A holder that is evicted anyway **fences** before committing, and the commit
+  delete is scoped to its own owner and no lock's bytes are ever read; and the marker's NAME also carries
+  a **lease the holder refreshes** (by renaming it — D-M5-29a, rev 14; it was the mtime until then), so a
+  slow-but-live holder is not evicted, a dead one's claim expires (30s), and a break can only ever delete
+  the exact lease it judged. A holder that is evicted anyway **fences** before committing, and the commit
   re-checks the file's own token one syscall before the rename — the two ways a reply of `ok` is kept
   true when mutual exclusion fails. (Rev 3's `O_EXCL` file lock with a read-back nonce is what this
   replaces: it evicted live holders by clock age and its check-then-delete break was not atomic.)
@@ -1123,14 +1124,16 @@ flips the `full-potential.md` rows and ships nothing.
   `unlink` cannot remove a directory at all, so a fresh claim is immune BY TYPE to the pathname-only
   delete that used to destroy it. This also makes the rev-3 release rule structural rather than a
   read-then-check: an overrun owner cannot delete its successor's lock even in principle. *Staleness
-  becomes a lease*: the holder refreshes its marker's mtime on a timer, so the common stall — a critical
-  section waiting on slow I/O — keeps its lock, and a foreign holder that keeps its lease is **waited for
+  becomes a lease, and the lease is part of the name* (rev 14): the holder republishes its marker under a
+  fresh lease on a timer, so the common stall — a critical section waiting on slow I/O — keeps its lock, and a foreign holder that keeps its lease is **waited for
   and then refused `ConfigLocked`**, never evicted. That refusal is a deliberate behaviour change and it
   is the D-M5-14c answer, not a new one: contention is reported, and the caller's move is still "retry
   shortly". A holder whose event loop cannot run (SIGSTOP, a blocked loop, a clock jump) can still be
   evicted, so it also **fences**: it re-asserts ownership one syscall before the rename, and refreshes
   the lease while it is there, so the margin after a passing fence is a full stale window rather than the
-  microseconds the check itself takes. Beside it the commit re-reads the target's own token and refuses
+  microseconds the check itself takes — a margin the BREAK path can only honour because the lease it
+  judges and the marker it deletes are one string (D-M5-29a: with the lease in the mtime, a claim
+  refreshed inside that gap was deleted by a judgment made before the refresh). Beside it the commit re-reads the target's own token and refuses
   if anything committed since the caller read it — an independent detector at the STORAGE layer, because
   no advisory lock deserves the trust of being the only one. Both refuse before a byte moves, so the
   retry they invite is safe for the non-idempotent `upsert` of an array.
@@ -1526,6 +1529,104 @@ flips the `full-potential.md` rows and ships nothing.
     checkouts already hold. What it earns is a note for the next milestone — a slice boundary is worth
     choosing while the work is being planned, and this spec's own roadmap section is where that belongs.
     Nothing in the code changed for it, and nothing should have.
+
+- **D-M5-29 (fix wave H, rev 14) — a decision made from a value is only safe if the act it authorizes
+  names that same value.** The panel re-ran after wave G and returned six verifier-confirmed findings
+  (one P1, three P2, two P3) from a partial fleet — four of six finder lanes died on the provider's usage
+  limits, but the verifier lane completed, so these six are confirmed rather than candidates. All six are
+  fixed. Five of them are one shape in five places: **something was judged by one spelling of a thing and
+  then acted on through another** — a lease judged by its mtime and deleted by its name, a directory
+  judged missing and then trusted as complete, a file identified by its decoded text and hashed as
+  bytes, two walks distinguished by a delimiter a value can contain, two leaf paths deduped the same way.
+
+  **29a — the break path decided on a clock and acted on a name (P1).** `breakDeadLock` read a marker's
+  mtime, judged the lease dead, and then unlinked the marker WITHOUT re-reading it. In between, the
+  holder's `fence` can verify its nonce and refresh the lease — and the contender then deleted that
+  refreshed, live claim, because `unlink` is conditional on a NAME and the name had not changed. This is
+  the class D-M5-28a closed one function away, and the class D-M5-24 redesigned the acquire path to make
+  impossible.
+  **Repaired by construction, not by a second check: the LEASE MOVED INTO THE NAME.** A marker is
+  `<nonce>.<lease>`, a refresh is a `rename` to a new lease, and the break path reads the lease off the
+  very name it will delete. A claim refreshed after it was judged is then *unspellable* by that judgment
+  — the `unlink` misses, the breaker reports it removed nothing, and its retry re-reads a claim it can
+  now see is alive. Ownership stays the nonce (the fence compares the owner half only, because this
+  process's own timer may rename the marker between the fence's `readdir` and its comparison); the
+  refresh is serialized and the release waits for it, since a rename landing after the release's `unlink`
+  would leave the lock standing under a name nothing could remove.
+  **What is NOT closed, and is stated rather than swept:** a marker whose name carries no lease belongs
+  to a build older than this format and is broken on its mtime alone. That is the same answer — and the
+  same residual — the ENOTDIR arm already gives a foreign lock: age is the only guarantee the older
+  format ever made, and refusing to break it would dead-end every future write to that target. Racing a
+  holder still running that build cannot be closed from this side, because nothing can make another
+  format's holder announce its refreshes.
+  Measured with two real processes and the contender's real `unlink` held at a barrier — the same
+  scheduling delay a stalled loop or a saturated fs threadpool produces, aimed instead of blind, because
+  the window is inside `breakDeadLock` and there is no seam to wrap. Pre-fix, 3 of 3: `EVICTED holder
+  ConfigLocked`, one commit after that holder's own fence had said the claim was its own and refreshed
+  it. Post-fix: `STILLHELD holder`, with the contender taking the lock the moment it is released.
+
+  **29b — a directory a peer is still building was treated as complete (P2).** `mkdirOwnerOnly` read a
+  concurrent `EEXIST` as "someone else's, leave it" and skipped its `chmod`. Under `umask 0200` the
+  winner's level is 0500 until the winner's own `chmod` lands one syscall later, and in that gap the
+  loser cannot create the next level inside it, let alone write a marker into it. Not a narrow race:
+  four real processes, 25 trials per shape, **75 of 100 concurrent `createArchiveMarker` calls failed
+  EACCES on a 40-deep chain, 16 of 100 on the two-level `<ccx>/archived` shape production actually has,
+  and 1 of 100 with only `archived` missing** — the winner's mkdir-to-chmod gap alone. After the repair,
+  300 of 300 succeeded. Every level this call found MISSING is now chmod'ed by THIS call before it
+  descends, whoever won the race to create it; the mode asked for is the one every creator of this tree
+  asks for, so a peer's level is never given a mode its own creator did not want, and a level that
+  already existed at the survey is still left exactly as its operator set it (D-M5-28o's other half,
+  which stands). The `EEXIST` is re-asserted with a recursive `mkdir` first — a no-op on a directory, a
+  re-raise on a FILE — so the type question is answered by a syscall rather than by a check that could go
+  stale between asking and acting.
+
+  **29c — the version token hashed the decode, not the file (P2).** D-M5-18 *defines* the token as the
+  sha256 of the file's raw bytes, and every reader reached it through `readFile(…, "utf8")`. The two are
+  different functions: 0x80 and 0x81 inside an otherwise valid JSON string are two different files that
+  both decode to U+FFFD, so both were minted one token — and neither token was the hash of the file it
+  described. **Two reviewers disagreed about this one, and the disagreement is worth recording.** An
+  earlier adversarial verifier REFUTED it, reasoning that colliding files are indistinguishable to every
+  reader, so no lost update is constructible; the panel's verifier CONFIRMED it as a CAS bypass. The
+  refutation's reasoning about exploitability is sound as far as it goes. **The repair does not depend on
+  settling that**: the implementation contradicted its own published definition, which is this
+  milestone's signature defect (a shipped claim that measurement contradicts), and correcting it costs
+  one type. `versionToken` takes a `Buffer`, which makes the decoded string *unhashable* here rather than
+  merely unhashed, and both mints move together — the write side's read and commit guard, and
+  `config/read`'s layer walk — so a client's `expectedVersion`, taken from a read reply, still means the
+  same thing in the write that consumes it. `layers[].raw` stays TEXT on the wire, decoded at the reply:
+  it is there for a human to read the file they must go fix, and the byte-exact identity is
+  `versions[name]`.
+
+  **29d — the enforced bounds were not the published ones (P2).** Both search methods took `searchTerm`
+  as an unconstrained `z.string()` and refused anything outside 2–256 in the handler, so the generated
+  stable schema carried neither `minLength` nor `maxLength` and a conforming validator accepted requests
+  the methods refuse. The shape was inherited deliberately (the sibling copied `thread/search` verbatim
+  per its brief) and an earlier review filed it as a note. It is a finding, because **a zod refinement in
+  `schema/` is not a private guard — it emits into the vendored, client-facing artifact, which is the
+  only thing a client can validate against.** The bounds are published from `SEARCH_CAPS`, so there is
+  one number and not two, and the handlers' now-unreachable copies are gone with them: zod answers first,
+  and a second spelling could only ever be dead code that drifts. The artifact moved and was regenerated.
+
+  **29e — two sentinels and two delimiters a value can spell (P3, both fixed).** The cursor's query
+  fingerprint framed its parts with a NUL separator and spelled `undefined`/`null` with a U+0001 prefix,
+  both of which a part can simply BE: a `cwd` of U+0001 `u` fingerprinted identically to no `cwd` at all,
+  the same for `null`, and one part carrying the separator matched the two parts it splits into. A POSIX
+  path may hold any byte but `/` and NUL, so the first is a `cwd` a client can send, and two walks that
+  fingerprint alike share a cursor. Each part is now written as `<tag><byte-length>:<body>`, so the
+  stream parses back to exactly one sequence of parts whatever the bodies contain. Nothing is left to
+  escape — **an escape is a rule every future caller has to keep, and a length is not.**
+
+  **29f — the same delimiter mistake in the masking pass (P3, fixed).** Leaf paths were deduped by
+  joining their segments on a NUL, and a settings key may CONTAIN a NUL: it comes out of `JSON.parse`,
+  and the keyPath screen refuses `.` and the three prototype names, not control characters. Two leaves
+  differing only in where that NUL falls collapsed onto one `Map` key, the entry written last won, and
+  the dropped leaf was never looked up — so a write that really landed came back `okOverridden` naming a
+  layer that overrides nothing of it (the D-M5-28n failure, by a different route). The key is now
+  `JSON.stringify` of the segments: no delimiter for a segment to impersonate. **The delimiter was also a
+  RAW control byte in the source** — invisible in every editor and every diff, and enough to make the
+  whole file BINARY to `grep`, so every agent and every developer searching `configDomain.ts` got
+  nothing. That is the hazard `searchScan.ts` had already written down for its own sentinels; one more
+  raw NUL, in a test's junk-cursor list, was escaped with it.
 
 ## Surprises & Discoveries
 
@@ -2266,3 +2367,34 @@ directory changing a permission dialog's offered rule row, not the known flake.
   offset LENGTHS and this one is about MATCHING, and a fresh full-domain sweep showed the repair moves zero
   folded lengths anywhere in Unicode. **A finding that looks like it contradicts a measurement is answered
   by a measurement, not by the earlier decision's authority.**
+- **rev 14 (2026-08-20) — D-M5-29: six confirmed findings from a half-dead panel, and the one shape five
+  of them share.** The Codex panel re-ran after wave G with four of its six finder lanes killed by the
+  provider's usage limits; the verifier lane survived, so what came back was six confirmed findings
+  rather than six candidates. All six fixed. **Five are one mistake in five places: a decision made from
+  one spelling of a thing, acted on through another.** A lease judged by its mtime and deleted by its
+  name. A directory judged missing and then trusted as complete. A file identified by its decoded text
+  and defined as its bytes. Two walks distinguished by a delimiter a value can contain. Two leaf paths
+  deduped by that same delimiter. The generalizable form: **an act is only as safe as the identity it
+  names — if the judgment and the act name different things, the gap between them is where the value
+  moves.**
+  **A structural repair beats another check, and it is usually available.** The P1 was the third
+  appearance of check-then-act in this lock, and the first two were closed by making the unsafe act
+  inexpressible (`unlink` cannot remove a directory; `rmdir` requires emptiness). The third is closed the
+  same way — the lease moved INTO the marker's name, so a delete can only spell the claim it read, and a
+  claim refreshed after it was judged is unspellable by that judgment. No second check was added.
+  **A published validator IS a published contract.** A zod refinement in `schema/` emits into the
+  vendored client-facing artifact, so a bound enforced only in a handler is a bound the contract does not
+  have — and a conforming client will send requests the server refuses. The corollary that cost the most
+  to learn: when the check moves into the schema, the handler's copy becomes unreachable and must GO, or
+  it is dead code whose drift nothing can catch.
+  **Two reviewers disagreed about the version token, and the fix did not need the disagreement settled.**
+  An earlier adversarial verifier refuted it on exploitability (colliding files are indistinguishable to
+  every reader, so no lost update is constructible); the panel's verifier confirmed it as a CAS bypass.
+  Both can be right about their own question. What is not in dispute is that the implementation
+  contradicted its own published definition, which is this milestone's signature defect and is cheap to
+  correct — so it was corrected on those grounds, and the exploitability question is now moot rather than
+  unresolved. **When a finding is disputed, look for the ground that does not depend on the dispute.**
+  **A raw control byte in source is a defect with a measurable cost.** The NUL delimiter in
+  `configDomain.ts` was invisible in every editor and diff — and it made the file BINARY to `grep`, so
+  every search of the config domain's 583 lines silently returned nothing. The behavioural bug it caused
+  was real too, but the invisibility is what let it ship.
