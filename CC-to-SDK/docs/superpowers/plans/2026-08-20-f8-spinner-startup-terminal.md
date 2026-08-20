@@ -1732,8 +1732,9 @@ In `useChat.ts`, at the turn-settled line (~1557), after `setBusy(false)`:
         if (queueRef.current.length === 0) deps.notifier?.notify("idle_prompt", "ccx is waiting for your input");
 ```
 
-(read the queue through whatever accessor this file already uses at that point; do not add a second
-source of truth for queue depth). At the consult-dialog seam, where a permission decision is parked:
+`queueRef.current` is the right source and the only one: `drainNext` (`useChat.ts:2752`) reads it for
+exactly this question, and the file's standing discipline is that the ref is written beside the state
+precisely because the state is a commit behind. Do not read the queue's React state here. At the consult-dialog seam, where a permission decision is parked:
 
 ```ts
         deps.notifier?.notify("permission_prompt", `ccx needs your permission to use ${toolName}`);
@@ -1828,8 +1829,12 @@ at both call sites. `TaskItem.subagent?: true` is written in T5 and read only in
 ellipses where the turn-completion driver belonged. It now transcribes the real `fakeRemote` +
 `pushEvent` pattern the queue tests in that file already use.
 
-**Two steps deliberately read surrounding code rather than transcribe it**, and both say so at the point
-of use: T13 Step 5 reads the queue through whatever accessor is already in scope at `useChat.ts:1557`
-(adding a second source of truth for queue depth would be worse than naming the first), and T8 Step 4
-reuses `RetryRow`'s existing countdown arithmetic while swapping only its animation source. Neither is a
-gap in the requirements — both are instructions to not duplicate.
+**One step deliberately reuses rather than transcribes**, and says so at the point of use: T8 Step 4
+keeps `RetryRow`'s existing countdown arithmetic and swaps only its animation source. That is an
+instruction not to duplicate, not a gap in the requirements.
+
+**Two interfaces verified against the real files before this plan was committed**, because both are
+load-bearing and neither is obvious: `ChatApp` already exposes `deps?: Parameters<typeof useChat>[2]`
+(`ChatApp.tsx:214`), so adding `notifier` to `useChat`'s deps makes it passable from a test with no new
+prop; and `queueRef.current` (`useChat.ts:2752`) is the authoritative queue depth, which is what makes
+T13's idle gate a one-line condition rather than a new mechanism.
