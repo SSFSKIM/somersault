@@ -17,24 +17,39 @@ describe("exact bytes, every channel × bare/TMUX/STY", () => {
   const iterm = "\x1b]9;ccx: hi\x07";
   it("iterm2", () => {
     expect(fire(E({ TERM_PROGRAM: "iTerm.app" }), "iterm2")).toEqual([iterm]);
-    // Inside a multiplexer, tmux's `allow-passthrough` defaults OFF (measured, see desktopNotify.ts's
-    // header comment), so the wrapped sequence alone may never reach the real terminal. A bare BEL
-    // follows it so at least a signal survives regardless of that setting (F8 review Finding A).
-    expect(fire(E({ TERM_PROGRAM: "iTerm.app", ...TMUX }), "iterm2")).toEqual([wrapT(iterm), BEL]);
-    expect(fire(E({ TERM_PROGRAM: "iTerm.app", ...STY }), "iterm2")).toEqual([wrapS(iterm), BEL]);
+    // An EXPLICIT channel names its own delivery intent — `iterm2_with_bell` exists as the separate
+    // channel for "wrap it AND ring a bell" — so naming `iterm2` outright gets no fallback bell even
+    // inside a mux (F8 review Finding B): a machine with `allow-passthrough on` delivers the rich
+    // notification fine, and overriding that silently would defeat the user's explicit choice.
+    expect(fire(E({ TERM_PROGRAM: "iTerm.app", ...TMUX }), "iterm2")).toEqual([wrapT(iterm)]);
+    expect(fire(E({ TERM_PROGRAM: "iTerm.app", ...STY }), "iterm2")).toEqual([wrapS(iterm)]);
+    // Reached via `auto`: ccx guessed at the emulator from a surviving marker and cannot confirm the
+    // wrapped sequence was actually delivered (tmux's `allow-passthrough` defaults OFF, measured — see
+    // desktopNotify.ts's header comment), so the fallback bell stays for the uncertain case.
+    expect(fire(E({ TERM_PROGRAM: "iTerm.app", ...TMUX, LC_TERMINAL: "iTerm2" }), "auto")).toEqual([wrapT(iterm), BEL]);
+    expect(fire(E({ TERM_PROGRAM: "iTerm.app", ...STY, LC_TERMINAL: "iTerm2" }), "auto")).toEqual([wrapS(iterm), BEL]);
   });
   it("ghostty", () => {
     const g = "\x1b]777;notify;ccx;hi\x07";
     expect(fire(E({ TERM: "xterm-ghostty" }), "ghostty")).toEqual([g]);
-    expect(fire(E({ TERM: "xterm-ghostty", ...TMUX }), "ghostty")).toEqual([wrapT(g), BEL]);
-    expect(fire(E({ TERM: "xterm-ghostty", ...STY }), "ghostty")).toEqual([wrapS(g), BEL]);
+    // Explicit channel: no fallback bell inside a mux (F8 review Finding B) — see the iterm2 case above.
+    expect(fire(E({ TERM: "xterm-ghostty", ...TMUX }), "ghostty")).toEqual([wrapT(g)]);
+    expect(fire(E({ TERM: "xterm-ghostty", ...STY }), "ghostty")).toEqual([wrapS(g)]);
+    // Reached via `auto`: the bell stays, since `auto` cannot confirm delivery.
+    expect(fire(E({ TERM: "xterm-ghostty", ...TMUX, GHOSTTY_RESOURCES_DIR: "/x" }), "auto")).toEqual([wrapT(g), BEL]);
   });
-  it("kitty writes three ST-terminated parts sharing one id, wrapped in both muxes, plus a trailing bell when muxed", () => {
+  it("kitty writes three ST-terminated parts sharing one id, wrapped in both muxes", () => {
     const bare = fire(E({ TERM: "xterm-kitty" }), "kitty");
     const id = bare[0]!.match(/i=([^:]+):/)![1]!;
     const parts = [`\x1b]99;i=${id}:d=0:p=title;ccx\x1b\\`, `\x1b]99;i=${id}:p=body;hi\x1b\\`, `\x1b]99;i=${id}:d=1:a=focus;\x1b\\`];
     expect(bare).toEqual(parts);
+    // Explicit channel: no fallback bell inside a mux (F8 review Finding B).
     const muxed = fire(E({ TERM: "xterm-kitty", ...TMUX }), "kitty");
+    const mid = muxed[0]!.match(/i=([^:]+):/)![1]!;
+    expect(muxed).toEqual([`\x1b]99;i=${mid}:d=0:p=title;ccx\x1b\\`, `\x1b]99;i=${mid}:p=body;hi\x1b\\`, `\x1b]99;i=${mid}:d=1:a=focus;\x1b\\`].map(wrapT));
+  });
+  it("kitty via auto keeps the fallback bell inside a mux, since auto cannot confirm delivery", () => {
+    const muxed = fire(E({ TERM_PROGRAM: "tmux", ...TMUX, KITTY_WINDOW_ID: "1" }), "auto");
     const mid = muxed[0]!.match(/i=([^:]+):/)![1]!;
     expect(muxed).toEqual([`\x1b]99;i=${mid}:d=0:p=title;ccx\x1b\\`, `\x1b]99;i=${mid}:p=body;hi\x1b\\`, `\x1b]99;i=${mid}:d=1:a=focus;\x1b\\`].map(wrapT).concat(BEL));
   });
@@ -51,6 +66,9 @@ describe("exact bytes, every channel × bare/TMUX/STY", () => {
   it("an invalid preferredNotifChannel — a hand-edited config bypassing the type system — rings the bell instead of writing nothing", () => {
     const bogus = "not_a_real_channel" as unknown as NotifChannel;
     expect(fire(E({ TERM_PROGRAM: "iTerm.app" }), bogus)).toEqual([BEL]);
+    // F8 review Finding D: the `default` arm's bell must stay a SINGLE bell under TMUX too — it `return`s
+    // before the mux-fallback bell at the bottom of `notify`, so a bogus channel never doubles up.
+    expect(fire(E({ TERM_PROGRAM: "iTerm.app", ...TMUX }), bogus)).toEqual([BEL]);
   });
   it("strips a semicolon from a ghostty title so OSC 777's field parser can't truncate it", () => {
     const writes: string[] = [];
@@ -75,6 +93,24 @@ describe("auto resolution survives a multiplexer", () => {
     // Measured: a pane inherits the SERVER's env, so on a pre-existing server no marker is present at
     // all. That must degrade to a bell, never to silence — see Step 1's table.
     expect(resolveChannel("auto", E({ TERM_PROGRAM: "tmux", ...TMUX }))).toBe("terminal_bell");
+  });
+  // F8 review Finding A: each of these isolates ONE `underlyingTerminal` OR-arm — every other marker for
+  // the emulator it resolves to is absent, so deleting that arm's `|| env.X !== undefined` makes exactly
+  // this assertion (and no other in this suite) fail, resolving to "terminal_bell" or "none" instead.
+  it("resolves kitty inside a mux via KITTY_PID alone, with no KITTY_WINDOW_ID present (arm U1)", () => {
+    expect(resolveChannel("auto", E({ ...TMUX, KITTY_PID: "1" }))).toBe("kitty");
+  });
+  it("resolves ghostty inside a mux via GHOSTTY_RESOURCES_DIR alone (arm U2)", () => {
+    expect(resolveChannel("auto", E({ ...TMUX, GHOSTTY_RESOURCES_DIR: "/x" }))).toBe("ghostty");
+  });
+  it("resolves ghostty outside a mux via GHOSTTY_RESOURCES_DIR alone, with TERM not xterm-ghostty (arm U3)", () => {
+    expect(resolveChannel("auto", E({ GHOSTTY_RESOURCES_DIR: "/x" }))).toBe("ghostty");
+  });
+  it("resolves kitty outside a mux via KITTY_WINDOW_ID alone, with TERM not mentioning kitty (arm U4)", () => {
+    expect(resolveChannel("auto", E({ KITTY_WINDOW_ID: "1" }))).toBe("kitty");
+  });
+  it("resolves kitty outside a mux via TERM including \"kitty\" alone, with no KITTY_WINDOW_ID (arm U5)", () => {
+    expect(resolveChannel("auto", E({ TERM: "xterm-kitty" }))).toBe("kitty");
   });
   it("outside a multiplexer TERM_PROGRAM is trustworthy", () => {
     expect(resolveChannel("auto", E({ TERM_PROGRAM: "iTerm.app" }))).toBe("iterm2");

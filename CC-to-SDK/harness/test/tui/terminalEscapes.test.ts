@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { osc, passthrough, notifyTerminator, sanitizeNotificationText, BELL, OSC_ITERM2, OSC_KITTY, OSC_GHOSTTY, OSC_TITLE } from "../../src/tui/terminalEscapes.js";
+import { osc, passthrough, isMuxed, notifyTerminator, sanitizeNotificationText, BELL, OSC_ITERM2, OSC_KITTY, OSC_GHOSTTY, OSC_TITLE } from "../../src/tui/terminalEscapes.js";
 
 describe("osc", () => {
   it("joins parts with ';' and terminates with BEL or ST", () => {
@@ -28,6 +28,20 @@ describe("passthrough", () => {
   it("passes through bare, and passes zellij through bare too (canon's Fq has no zellij arm)", () => {
     expect(passthrough(seq, {} as NodeJS.ProcessEnv)).toBe(seq);
     expect(passthrough(seq, { ZELLIJ: "0" } as NodeJS.ProcessEnv)).toBe(seq);
+  });
+});
+
+describe("isMuxed", () => {
+  it("is truthy-gated, not `!== undefined` — the exact divergence F8 review Finding C found between "
+    + "this module's passthrough check and desktopNotify's old bell check", () => {
+    expect(isMuxed({ TMUX: "/tmp/s,1,0" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isMuxed({ STY: "1.pts" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isMuxed({} as NodeJS.ProcessEnv)).toBe(false);
+    // TMUX="" is SET (`!== undefined`) but not truthy: `passthrough` never wraps for it, so the shared
+    // predicate must answer false here too, or desktopNotify's bell would fire for a sequence that was
+    // never wrapped.
+    expect(isMuxed({ TMUX: "" } as NodeJS.ProcessEnv)).toBe(false);
+    expect(isMuxed({ STY: "" } as NodeJS.ProcessEnv)).toBe(false);
   });
 });
 

@@ -31,7 +31,7 @@
 //
 // Canon: channels `Mie` (L45315), default `"auto"` (L100411), auto-resolution `u9T` (L505906), the four
 // emitters in `are()` (L202527-202566), copy at L678604 / L686789.
-import { BELL, OSC_GHOSTTY, OSC_ITERM2, OSC_KITTY, notifyTerminator, osc, passthrough, sanitizeNotificationText } from "./terminalEscapes.js";
+import { BELL, OSC_GHOSTTY, OSC_ITERM2, OSC_KITTY, isMuxed, notifyTerminator, osc, passthrough, sanitizeNotificationText } from "./terminalEscapes.js";
 
 /** `Mie` (L45315), verbatim. */
 export type NotifChannel = "auto" | "iterm2" | "terminal_bell" | "iterm2_with_bell" | "kitty" | "ghostty" | "notifications_disabled";
@@ -170,7 +170,16 @@ export function createDesktopNotifier(deps: DesktopNotifierDeps): DesktopNotifie
       // comment). A bare BEL reaches tmux's own bell handling regardless of that setting, so: passthrough
       // on → rich notification plus a bell; passthrough off → at least a bell. `terminal_bell` and
       // `iterm2_with_bell` already `return` above before reaching here, so this never doubles their bell.
-      if (env.TMUX !== undefined || env.STY !== undefined) deps.write(BELL);
+      //
+      // NARROWED TO `auto` (F8 review Finding B, design decision): `iterm2`/`kitty`/`ghostty` are also
+      // reachable by the user naming them outright via `preferredNotifChannel`, and `iterm2` vs
+      // `iterm2_with_bell` exist as two separately selectable channels for exactly this: whether a bell
+      // also rings. Firing the fallback bell for an explicit channel would silently override that choice
+      // to compensate for a condition — undeliverable passthrough — we cannot detect, even on a machine
+      // with `allow-passthrough on` where the rich notification arrives fine. The bell compensates for
+      // `auto`'s uncertainty (ccx guessed at the emulator and can't confirm delivery), not for being
+      // inside a multiplexer per se — so only fire it when `auto` is what chose this channel.
+      if (settings.preferredNotifChannel === "auto" && isMuxed(env)) deps.write(BELL);
     },
   };
 }

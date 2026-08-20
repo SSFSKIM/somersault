@@ -29,18 +29,28 @@ export function osc(terminator: OscTerminator, ...parts: (string | number)[]): s
   return OSC_INTRO + parts.join(";") + (terminator === "st" ? ST : BELL);
 }
 
+/** Whether the process is running inside a terminal multiplexer `passthrough` needs to wrap for. The
+ *  single predicate `passthrough` and desktopNotify's mux-fallback bell must agree on (F8 review Finding
+ *  C): before this export they were two separately-maintained checks that could drift, and one pair
+ *  already had — `TMUX=""` is `!== undefined` but not truthy, so the old bell check fired for a case
+ *  `passthrough` never wraps. Truthy, not `!== undefined`, matching what `passthrough` below has always
+ *  tested. */
+export function isMuxed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.TMUX) || Boolean(env.STY);
+}
+
 /** canon's `Fq` (L188461): the DCS passthrough a multiplexer needs to forward an escape to the real
  *  emulator. Note what canon does NOT wrap: zellij is a recognised mux in `eUr` but has no arm in `Fq`,
  *  so it passes through bare — transcribed, not corrected. */
 export function passthrough(seq: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (!isMuxed(env)) return seq;
   if (env.TMUX) return `${ESC}Ptmux;${seq.replaceAll(ESC, ESC + ESC)}${ST}`;
   // KNOWN CANON BUG, TRANSCRIBED NOT CORRECTED (F8 review Finding F — same call as the zellij note
   // above): GNU screen's string machine already passes a single ESC through verbatim, so doubling it
   // here corrupts the sequence inside screen. Canon doubles for both tmux and screen regardless.
   // `desktopNotify.test.ts` now pins this exact doubled-ESC byte in three more places — do not "fix" it
   // here without also correcting canon; that would just make ccx and canon disagree on the wire.
-  if (env.STY) return `${ESC}P${seq.replaceAll(ESC, ESC + ESC)}${ST}`;
-  return seq;
+  return `${ESC}P${seq.replaceAll(ESC, ESC + ESC)}${ST}`;
 }
 
 /** canon's `cTp() === "kitty"` test, read straight off the environment — NOT off
