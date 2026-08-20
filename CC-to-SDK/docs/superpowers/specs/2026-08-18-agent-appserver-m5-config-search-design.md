@@ -1376,6 +1376,157 @@ flips the `full-potential.md` rows and ships nothing.
   replayed frame (it reintroduces exactly the historical-mirror-write M3 Task 7 removed); and a
   once-per-thread latch (it would freeze a stale list across the per-turn re-emission).
 
+- **D-M5-28 (fix wave G, rev 13) — the guard has to be true at the instant it returns, and the claim has
+  to be true of what it names.** An independent Codex review panel with a working verifier lane returned
+  eighteen confirmed findings, six of them P1, and **three of those six were in code the earlier fix waves
+  themselves added** — which is the whole reason the repairs were reviewed. The six are not six mistakes;
+  they are two, made in six places.
+
+  **The first shape: a check that answers about the moment it STARTED.**
+  **28a — the lock fence lost ownership silently.** `fence` reads the lock directory, then refreshes the
+  lease, and `touch` reports eviction by SETTING `lost` and RESOLVING — it must, because a transient
+  `utimes` failure has to be survivable. So a fence whose refresh ENOENTed returned `ok` anyway and the
+  caller read its version and renamed. Measured with two real processes on a real filesystem, 5 of 5
+  trials and again 3 of 3 at suite settings: the evicted holder committed INSIDE the successor's critical
+  section, and the successor — which really did own the lock — was then refused for the conflict the
+  evicted writer caused. Two writers in one critical section, one of them told `ok`, is the whole of what
+  D-M5-24 exists to prevent, re-entered through its own guard. The window is one event-loop turn wide and
+  it is widest exactly when it is likeliest to be entered: eviction happens to a holder that has stopped
+  refreshing, and a holder stops refreshing because its loop or its fs threadpool is stalled — which is
+  also what stretches the turn from microseconds to a second. The row reproduces it that way
+  (`UV_THREADPOOL_SIZE=1` plus a `pbkdf2` flood on the same pool), one side per detector.
+  **28b — `liveRefusal` answered about the moment before its probe.** The roster arm forks a `ps`, and the
+  window that matters is `thread/archive`'s SECOND call, after the marker exists: a `thread/resume`
+  admitted there takes its reservation AND auto-unarchives, so the stale `undefined` let archive reply
+  `{ok:true}` and broadcast `thread/archived` for a session that was live and no longer on the shelf. The
+  in-process arms are re-read after the await. The ENTRY guard's own window needed no change and a row
+  constructed there does not discriminate — the second call already closes it.
+  **28c — archive and unarchive were not ordered against each other.** Same await, other consequence: an
+  unarchive dispatched inside archive's post-marker guard removed the marker, replied `ok` and broadcast
+  `thread/unarchived`, after which archive broadcast `thread/archived` — the LAST thing a client hears
+  contradicting the state it would read. The pair now takes a per-session turn (the promise-chain device
+  `withFileLock`'s in-process queue and `record.chain` already are) with the reply AND the announcement
+  inside it. **Per server, and that is the honest scope**: another ccx process is not ordered by this chain
+  and never could be, which is exactly why markers are re-read per request (D-M5-3).
+  **28d — the store audit did not observe the read that matters.** It ran once, before the listing, and the
+  reply claims something about the SCAN. In between, the shipped reader answers `[]` for a transcript it
+  cannot open, and `[]` is indistinguishable from "this transcript is exhausted", so a transcript that
+  became unreadable mid-scan dropped its session out of the page under a `nextCursor: null`. **Wave F's
+  decline was re-derived and it stands where it was aimed**: this module refuses to reproduce the SDK's
+  cwd-to-project mapping (D-M5-25a), so it cannot NAME the file behind a session id, and re-verifying ONE
+  transcript costs the same whole-store walk as verifying all of them — per window that is unaffordable.
+  Per REQUEST it is one more walk (~125-160 ms on a 4643-transcript store) beside a `listSessions()`
+  costing ~1.9-2.25 s on that store. So the audit is asked again at the end of the scan, on both methods.
+  Its own residuals are named rather than swept: a failure that heals before the reply (needs a writer
+  flipping permissions twice inside one request) and a transcript DELETED mid-scan (ENOENT is absence, and
+  absence is the one honest empty — the rule the opening audit already applies).
+  **28e — the search's mid-scan generation check watched an epoch instead of a generation.** It held one
+  `ThreadRecord`; `thread/close` DELETES the record and a re-admission mints a fresh one back at epoch 0,
+  so the captured object's epoch never moves while the windows after it come from another generation.
+  D-M5-26e had already named the record's id in `generationOf` for exactly this reason at page BOUNDARIES;
+  the same question is now asked per window, on both methods.
+
+  **The second shape: a name, a scope or a bound that is not the thing it claims to be.**
+  **28f — a resolved path is only resolved until someone moves it.** `resolveRealTarget` runs before the
+  lock and everything after it names the path it returned — the lock, the doc read, the version read, the
+  rename. A symlink planted at that path is invisible to both existing detectors: the lock is a SIBLING
+  path and is still ours, and the reads follow the link while `rename` replaces the link ENTRY. Measured
+  committing on both sides — an existing file whose planted link points at identical bytes (the CAS cannot
+  see it) and a first write whose planted link DANGLES (the CAS reads "absent" on both sides). A third
+  detector, one `lstat` before the version read, refuses `ConfigLocked`: the retry re-resolves and takes
+  the lock on the file the operator pointed at. A narrowing, not a proof — a link planted between the
+  `lstat` and the `rename` is still undetectable from userspace, exactly as a byte written between the
+  version read and the rename is.
+  **28g — a forking swap published the conversation it only READ.** `start()` withholds `resumedFrom` for a
+  forking launch (D-M5-21b) and `engineConfig` spreads `forkSession` into every later swap, but
+  `swapEngine` stamped `extra.resume` unconditionally — so a forking host's `/resume` or rewind published
+  the SOURCE on its `state` frame and its roster row before the fork reported any id, and the app server's
+  fleet layer adopts what that frame names: the parent was auto-unarchived, reserved as live by a host
+  that only reads it, and made undeletable. The predicate is the EFFECTIVE config's. **Left alone
+  deliberately:** `engineConfig` still carries `forkSession` into swaps, so a `/resume` on a `--bg
+  --resume` host forks rather than resuming. Whether a launch-time fork decision should survive an
+  explicit later resume is a product question, not a corrective repair; its consequence is that the roster
+  is unnamed until the fork's first turn, which is D-M5-21c's already-accepted boot window.
+  **28h — an empty config root is a relative path, and it was never resolved.** `claudeConfigDir` keeps an
+  exported-but-empty `CLAUDE_CONFIG_DIR` as a value because the engine does — it resolves `''` and reads
+  `./settings.json` relative to ITS cwd. Both handlers derived the user layer from that root without
+  resolving it, so `canonicalPath` anchored the tail on the APP SERVER's cwd: `config/read` described, and
+  `config/value/write` created, a `settings.json` no engine for the request's project would open. Resolved
+  against the request cwd now; with no cwd in the request `process.cwd()` is the honest answer and is what
+  an engine started there would resolve too.
+  **28i — an index key is not a bounded input.** An object merged over an array patches BY INDEX and an
+  index past the end extends with holes — upstream lodash, reproduced deliberately (D-M5-1). What upstream
+  never has to survive is the result being SERIALIZED onto a wire. Measured: one key of `"100000000"` makes
+  the array 100,000,001 slots and `JSON.stringify` emits 500,000,004 bytes in 5,183 ms of blocked event
+  loop; `"30000000"` costs 1,472 ms and 150 MB; at the 32-bit ceiling `"4294967294"` `JSON.stringify`
+  throws `RangeError: Invalid string length`, which reaches the client as an internal error for a shape it
+  supplied. All of it lands before `Peer` can weigh a buffered byte, so the pressure gate built for exactly
+  this cannot fire. An index may now PATCH any element for free and EXTEND only within 65536 — this branch
+  ALONE, so array-over-array concatenation is untouched and a legitimately long list still merges. Both
+  origins reach the refusal and both should: a client's `upsert` (a bad parameter) and a settings file
+  already on disk (a file to go fix, the answer `readTargetDoc` already gives unparseable bytes).
+  **28j — the walk's own scope stopped at the listing.** `cwd` is the store's project SCOPE, mapped to the
+  reader's `dir`; `thread/search` forwarded it to `listSessions` and withheld it from the transcript reads,
+  so one request read metadata from one project and content from the process-default one. It now rides
+  `readWindow`, omitted rather than passed as `undefined` so the reader keeps its "every project" default
+  for the sibling that has no cwd to give.
+  **28k — the cursor's query binding was 32 bits wide.** `q` is the SOLE query-equality check, so two walks
+  that fingerprint alike share a cursor. Sweeping the DEFAULT `created_at`/`desc`/no-cwd request over both
+  `archived` values, the first collision arrived at 212,532 fingerprints and all five in that sweep crossed
+  the archive partition — a cursor resuming a walk over the other half of the store, at a tuple computed
+  for a different set of sessions, skipping whatever sorts before it, under a reply that looks ordinary.
+  32 bits puts that at the birthday bound of ~2^16 walks, which one client can reach. sha256 truncated to
+  132 bits: one hash per REQUEST, never per row.
+  **28l — the fold was context-dependent and the promise is not.** Swept over all of Unicode against twelve
+  contexts: **exactly one code point folds differently alone than it does in context** — U+03A3, which
+  JavaScript lowers to `ς` at a word end and `σ` elsewhere. So term `Σ` in row `ΟΣ` was -1, and so were
+  `ΟΣ` in `οσ` and `ΣΣ` in `οΣΣο`: misses under a promise of case-insensitive matching. Unicode's own
+  common fold (`03C2 → 03C3`) is applied to both sides. **It does not disturb D-M5-17a**, and that was
+  measured rather than argued: swept, the repair changes the folded length of ZERO code points, so
+  `originalSpan`'s equal-length fast path, its U+0130 correction and its outward-edge convention are all
+  untouched. Nor is it the `RegExp`-with-`i` route D-M5-17a rejected — that changed which rows are hits
+  across the board (İ/i, K/k and ẞ/ß all stop matching); this adds one letter's missing folds and nothing
+  else.
+  **28m — the published snippet bound was stated off the wrong number.** `max(200, searchTerm.length)` is
+  false: a 256-unit term of `İ` folds to 512 units, matches 512 units of an already-decomposed row, and the
+  snippet must hold all 512 or `snippetMatchRange` describes text the excerpt does not carry. **The claim
+  was corrected, not the window narrowed** — a snippet that cannot hold its own match breaks the stronger
+  promise that `snippet.slice(start, end)` IS the matched text. The bound is `max(200, the match's own
+  length in the row)`, and since exactly one code point lengthens under folding, never more than
+  `max(200, 2 × searchTerm.length)`. The scorecard sentence was corrected with it.
+  **28n — the write side and the read side addressed one contribution at two depths.** `introducedLeaves`
+  walks the written VALUE, so an upsert of `{"0": …}` at `permissions.allow` reported the leaf
+  `permissions.allow.0`, while `effectiveView` never keys `origins` below an array (an object merged over
+  an array is an ARRAY contributor claimed at the array's own path). The lookup missed, and with nothing
+  above the target to name, the reply told the client its write was dead and named the very layer it had
+  just written — for an element `config/read` was already serving from that layer. Leaves are truncated to
+  the array they address; the NON-index keys of the same object truncate to the same path and stay masked,
+  which is also right, and one mapping decides both.
+  **28o — a directory mode asked for is not a directory mode had.** `mkdir`'s mode is umask-masked and
+  `chmod` is not — the rule `configWrite.ts` already states for every mode it installs. Under `umask 0200`
+  the archive marker directory landed 0500 and the write failed EACCES for a store this process had just
+  created. **The first repair was wrong and its own row caught it**: a single recursive `mkdir` under that
+  mask creates the first missing PARENT at 0500 and then fails EACCES creating its child inside it, so
+  there is no "afterwards" to repair from. The chain is built one level at a time and each level chmod'ed
+  as it appears — and only levels this call creates, so an operator's mode on an existing directory is
+  never overwritten.
+
+  **Declined, each with its reason, because every finding gets a decision.**
+  - *Bound the actual transcript read* (the scan reads whole transcripts per window). Already decided and
+    already written down: D-M5-25b measured the shipped reader (a 6.1 MB / 4000-row transcript costs
+    ~11-13 ms whether the request asks for 1 row, 500 rows or all of them, so the eight windows of a full
+    page are a ~7.8x cost MULTIPLIER rather than a bound) and the header now says so instead of claiming
+    otherwise. The bound's owner is the STORAGE reader, which this repo does not own; the loop already
+    passes `{offset, limit}`, which cannot be worse than withholding it, and concurrency is held to one by
+    `runScanExclusive`. A store of giant transcripts wants a ranged reader before it wants anything else
+    here, and that is a dependency change with an owner, not a corrective repair.
+  - *Split this change into reviewable stages.* This is a process complaint about the pinned diff, not a
+    property of the code, and it is judged as one. It is also correct about the diff and unactionable as a
+    repair: the milestone is merged and its stages cannot be recovered by rewriting history that other
+    checkouts already hold. What it earns is a note for the next milestone — a slice boundary is worth
+    choosing while the work is being planned, and this spec's own roadmap section is where that belongs.
+    Nothing in the code changed for it, and nothing should have.
+
 ## Surprises & Discoveries
 
 - **The external review overturned five rev-1 mechanisms before a line was written** — origins
@@ -1807,14 +1958,25 @@ than complied. **A process that only catches the workers' errors is half a proce
   keyset (D-M5-16), now reachable because archiving is a first-party mutator between pages, and
   closing it is a wire change to a shipped method; intra-batch shadowing is only half-reported, and
   `overriddenMetadata` describes one masked edit rather than all of them.
+- **Declined or accepted as residual by fix wave G (rev 13), each with its reason.** Two findings went the
+  other way and two repairs left something named. **Bounding the actual transcript read** is declined: the
+  bound's owner is the storage reader this repo does not own, the loop already passes `{offset, limit}`,
+  and D-M5-25b's measurement is already in the header (a ~7.8x cost multiplier, not a bound). **Splitting
+  the change into reviewable stages** is a process complaint rather than a code defect — correct about the
+  pinned diff, unactionable on a merged milestone, and carried forward as a planning note. The closing
+  audit (28d) leaves a failure that heals before the reply and a transcript deleted mid-scan. And
+  `engineConfig` still carries `forkSession` into every swap (28g), so a `/resume` on a `--bg --resume`
+  host forks rather than resuming — a product question with an owner, whose consequence is the
+  already-accepted D-M5-21c boot window.
 - **Declined by fix wave F (rev 12), each with its reason — the review's minors that were NOT fixed.**
   Every confirmed finding got a decision; these are the ones that went the other way, recorded here so a
   reader finds a decision rather than an omission.
-  - *The store audit's mid-request TOCTOU* (the code residual behind the corrected scorecard sentence):
-    the audit runs once at the top of the exclusive section, so a transcript failing between it and
-    `getSessionMessages` is swallowed on the production origin. Re-verifying per transcript costs a
-    whole-store walk per window on this reader (D-M5-25b measured the reader); the window needs a writer
-    racing this reader and self-heals on the next request. Corrected in the claim, not in the code.
+  - *The store audit's mid-request TOCTOU* — **superseded by fix wave G / D-M5-28d, which fixed it.** The
+    decline's cost argument was sound where it was aimed (per transcript, per window) and did not reach
+    the construction that closes the gap the reply actually claims: one more whole-store walk per REQUEST,
+    at the point the scan asserts its own completeness. What remains after that repair is narrower and is
+    named there — a failure that heals before the reply, and a transcript deleted mid-scan (ENOENT is
+    absence, the one honest empty).
   - *The audit is whole-store, runs per PAGE as well as per request, and one unreadable transcript refuses
     search for every thread.* Both are consequences of refusing to reproduce the SDK's cwd-to-project
     mapping (25a), which is the safer side of an internal we cannot watch change. Caching the audit across
@@ -2071,3 +2233,36 @@ directory changing a permission dialog's offered rule row, not the known flake.
   the wrong reason. The pass also closed four minors wave D and wave B had deferred behind blockers that
   turned out to be overstated (`thread/list`'s audit, the per-reader gate, `stripPaths`' space, the
   empty-string `CLAUDE_CONFIG_DIR`), and recorded a decision for every minor it declined.
+- **rev 13 (2026-08-20) — D-M5-28: an independent panel with a working verifier lane, and what eighteen
+  confirmed findings turned out to be.** Six P1 and twelve P2, every one of them decided (sixteen fixed,
+  two declined with their reasons above). **Three of the six P1s were in code the earlier fix waves
+  themselves added**, which is the whole argument for reviewing repairs rather than trusting them. Four
+  shapes are worth carrying forward.
+  **A guard answers about the instant it RETURNS, not the instant it started.** Four separate findings were
+  that one mistake: the lock fence ignored the outcome of the refresh it performed, `liveRefusal` read its
+  in-process arms only before its `ps` fork, `thread/archive` and `thread/unarchive` were never ordered
+  against each other across that same fork, and the search's mid-scan check watched a mutable field on a
+  record the registry can REPLACE. Each is a check whose subject moved during its own await. The
+  generalizable form: **wherever a guard awaits, the thing it guards may move, so the guard's last act
+  must be the check and not the I/O.**
+  **The widest window is also the likeliest.** The lock fence's gap is one event-loop turn — and eviction
+  happens to a holder that has stopped refreshing, which is a holder whose loop or fs threadpool is
+  stalled, which is the same condition that stretches the turn. A window sized by the healthy case is
+  sized wrong.
+  **A decline is re-derived, not inherited.** Wave F declined per-transcript re-verification on cost. The
+  panel re-filed it P1 anyway, and re-deriving it produced a THIRD answer that neither had: the cost
+  argument holds where wave F aimed it (per window) and does not reach the construction that closes the
+  gap (per request, at the point the reply makes its claim). The residual was real, the decline's reason
+  was sound, and the repair was cheaper than either party had priced.
+  **The first repair to a measured defect can be wrong in the same way the defect was.** The archive
+  directory's umask fix chmod'ed after a recursive `mkdir` — and a recursive `mkdir` under that mask never
+  gets to the leaf, because it creates the first parent at 0500 and then fails inside it. Its own row
+  caught it within a minute of being written, which is the argument for writing the row against the
+  measured failure rather than against the intended fix.
+  Two smaller notes, both about claims rather than code. The published snippet bound was arithmetically
+  false and the honest repair was to correct the CLAIM (a snippet must be able to hold its own match, so
+  narrowing the window would have broken a stronger promise). And the Unicode case-fold item arrived as a
+  contradiction of a measured decision (D-M5-17a) and turned out not to be one: that sweep was about
+  offset LENGTHS and this one is about MATCHING, and a fresh full-domain sweep showed the repair moves zero
+  folded lengths anywhere in Unicode. **A finding that looks like it contradicts a measurement is answered
+  by a measurement, not by the earlier decision's authority.**
