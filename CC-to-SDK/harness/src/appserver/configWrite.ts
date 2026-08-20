@@ -3,8 +3,8 @@
 // read→validate→apply→commit inside `withFileLock`, which stacks an in-process per-path chain (two
 // requests in this server) under a `<file>.lock` DIRECTORY (two servers on this machine). Ownership is
 // the NAME of the marker inside that directory and never its bytes; the claim is published by `rename`;
-// liveness is a LEASE the holder refreshes. The block above `withFileLock` says why each is load-bearing.
-import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink, readdir, rmdir, utimes } from "node:fs/promises";
+// liveness is a LEASE carried in that same name, which the holder refreshes by renaming it. The block above `withFileLock` says why each is load-bearing.
+import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink, readdir, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { settingsMerge } from "./configLayers.js";
@@ -306,6 +306,13 @@ const errnoOf = (e: unknown): string | undefined => (e as NodeJS.ErrnoException)
  *  client's move is identical, so a second string would only be a second thing to match on. */
 const LOCK_BROKEN = "this writer's lock was broken while it was held; nothing was written";
 
+/** A marker is named `<owner nonce>.<lease>`: WHO holds the claim and WHEN they last said so, in the one
+ *  thing `unlink` is conditional on (fix wave H / H1). The nonce is `<pid>-<base36>` and carries no `.`,
+ *  so the split is unambiguous; a name with no parsable lease is a marker this format did not write. */
+const leaseSep = ".";
+const markerOwner = (name: string): string => (name.includes(leaseSep) ? name.slice(0, name.lastIndexOf(leaseSep)) : name);
+const markerLease = (name: string): number => (name.includes(leaseSep) ? Number(name.slice(name.lastIndexOf(leaseSep) + 1)) : NaN);
+
 /** A lock is a NON-EMPTY DIRECTORY at `<file>.lock`, published by `rename`, holding exactly one marker
  *  file whose NAME is the owner's nonce (D-M5-24). Three properties fall out of that shape, and each one
  *  closes a defect measured on the `open(wx)` + `unlink` lock it replaces:
@@ -323,12 +330,21 @@ const LOCK_BROKEN = "this writer's lock was broken while it was held; nothing wa
  *     the pathname-only delete that used to destroy it: with one abandoned lock and four contenders,
  *     43 of 250 trials on one machine and 32 of 250 on another put two or more processes inside the
  *     critical section at once, every one of them losing an update, with zero refusals reported.
- *  3. **Staleness is a LEASE, not an age.** The holder refreshes its marker's mtime on a timer, so a
- *     slow-but-live holder is no longer indistinguishable from a dead one. At production settings a
- *     writer stalled 45s had its lock broken at exactly 30s; the evictor then passed its version check,
- *     committed, and was told `ok` — and the evicted writer's own rename destroyed those bytes 15s later.
- *     A holder that cannot refresh (SIGSTOP, a blocked event loop, a clock jump) can still be evicted, so
- *     it must also FENCE before it commits: see `fence` below and `CommitGuard`.
+ *  3. **Staleness is a LEASE, and the lease is part of the NAME.** The holder republishes its marker
+ *     under a fresh lease on a timer, so a slow-but-live holder is no longer indistinguishable from a
+ *     dead one. At production settings a writer stalled 45s had its lock broken at exactly 30s; the
+ *     evictor then passed its version check, committed, and was told `ok` — and the evicted writer's own
+ *     rename destroyed those bytes 15s later. A holder that cannot refresh (SIGSTOP, a blocked event
+ *     loop, a clock jump) can still be evicted, so it must also FENCE before it commits: see `fence`
+ *     below and `CommitGuard`.
+ *       The lease rides the NAME rather than the mtime because that is what makes the break path's delete
+ *     content-conditional too (fix wave H / H1). With the lease in the mtime, a breaker read the age and
+ *     then deleted a marker whose name had not changed — so a holder that verified its nonce and
+ *     refreshed the lease INSIDE that window had its live claim deleted by a judgment made before the
+ *     refresh, which is precisely what `fence`'s margin promises cannot happen. A refresh is now a
+ *     `rename` to a new name, so the breaker can only ever name the marker it read, and a claim refreshed
+ *     after it was judged is unspellable by that judgment. Measured: `EVICTED holder ConfigLocked` one
+ *     commit after the holder's own fence had said the claim was its own and refreshed it, 3 of 3.
  *
  *  Nothing here ever reads the lock's bytes. That is what unwedges a lock created under a umask masking
  *  the owner-read bit: the old release read its own nonce back to prove ownership, could not, and left
@@ -346,7 +362,8 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
   const lockPath = `${filePath}.lock`;
   const nonce = `${process.pid}-${Math.random().toString(36).slice(2)}`;
   const stagePath = `${lockPath}.stage-${nonce}`;
-  const markerPath = join(lockPath, nonce);
+  const leaseName = (): string => `${nonce}${leaseSep}${Date.now()}`;
+  let markerName = leaseName();
   const prev = chains.get(filePath) ?? Promise.resolve();
   const run = prev.catch(() => {}).then(async () => {
     await mkdir(dirname(lockPath), { recursive: true });
@@ -359,17 +376,17 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
     await chmod(stagePath, LOCK_DIR_MODE);
     // The marker's CONTENT is a human reading it with `cat` during an incident; the mode it lands at is
     // whatever the umask allows, and nothing depends on reading it, because ownership rides the name.
-    await writeFile(join(stagePath, nonce), `${nonce}\n${new Date().toISOString()}\n`, { mode: 0o600 });
+    await writeFile(join(stagePath, markerName), `${nonce}\n${new Date().toISOString()}\n`, { mode: 0o600 });
     const deadline = Date.now() + staleMs + 5_000;
     try {
       for (;;) {
         // The lease starts when the claim LANDS, not when it was assembled. Without this a writer that
         // waited out another's critical section acquired a claim already older than the stale window and
         // was broken by the next contender within milliseconds — measured at 5 of 5 trials, three
-        // processes, sections outliving a 400ms window. One `utimes` per attempt keeps the marker's age
+        // processes, sections outliving a 400ms window. One rename per attempt keeps the marker's lease
         // bounded by a single syscall at the instant the `rename` publishes it.
-        const born = new Date();
-        await utimes(join(stagePath, nonce), born, born).catch(() => {});
+        const born = leaseName();
+        await rename(join(stagePath, markerName), join(stagePath, born)).then(() => { markerName = born; }, () => {});
         try { await rename(stagePath, lockPath); break; }
         catch (e) {
           const code = errnoOf(e);
@@ -388,7 +405,7 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
         }
       }
     } catch (e) {
-      await unlink(join(stagePath, nonce)).catch(() => {});
+      await unlink(join(stagePath, markerName)).catch(() => {});
       await rmdir(stagePath).catch(() => {});
       throw e;
     }
@@ -396,11 +413,23 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
     // I/O — keeps the lock without the holder doing anything. `unref` so a lock never keeps a process
     // alive past its work; while real work is in flight the loop is alive and the timer fires.
     let lost = false;
-    const touch = async (): Promise<void> => {
-      const now = new Date();
-      // Only a marker that is GONE means eviction. A transient utimes failure just skips one refresh —
-      // treating it as eviction would fail a write for a hiccup, which is the opposite of the point.
-      await utimes(markerPath, now, now).catch((e) => { if (errnoOf(e) === "ENOENT") lost = true; });
+    // SERIALIZED, and the release waits for it: a refresh is now a `rename`, so one landing after the
+    // release's `unlink` would republish the marker under a name the release has no way to remove and
+    // leave the lock standing until it went stale. Two refreshes never overlap, and the last one is
+    // always finished before the claim is torn down.
+    let refreshing: Promise<void> = Promise.resolve();
+    const touch = (): Promise<void> => {
+      refreshing = refreshing.then(async () => {
+        if (lost) return;
+        const next = leaseName();
+        // Only a marker that is GONE means eviction. A transient rename failure just skips one refresh —
+        // treating it as eviction would fail a write for a hiccup, which is the opposite of the point.
+        // Same-millisecond refreshes rename a name onto itself, which POSIX defines as a successful
+        // no-op — and still ENOENTs if the claim has been taken, so the detection survives them.
+        try { await rename(join(lockPath, markerName), join(lockPath, next)); markerName = next; }
+        catch (e) { if (errnoOf(e) === "ENOENT") lost = true; }
+      });
+      return refreshing;
     };
     const beat = setInterval(() => { void touch(); }, Math.max(50, Math.floor(staleMs / 3)));
     beat.unref?.();
@@ -409,12 +438,15 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
      *  whatever was left of it. That margin is what makes the check safe despite not being atomic with
      *  the commit it guards: no other process may break a lease it has just seen refreshed. */
     const fence = async (): Promise<void> => {
+      // OWNERSHIP is the nonce; the lease beside it moves on every refresh, including one this process's
+      // own timer may land between the `readdir` and this comparison. Matching the whole name would make
+      // that a spurious eviction of ourselves.
       const names = lost ? null : await readdir(lockPath).catch(() => null);
-      if (names === null || names.length !== 1 || names[0] !== nonce) { lost = true; throw new ConfigError("ConfigLocked", LOCK_BROKEN); }
+      if (names === null || names.length !== 1 || markerOwner(names[0]) !== nonce) { lost = true; throw new ConfigError("ConfigLocked", LOCK_BROKEN); }
       // THE REFRESH IS THE SECOND HALF OF THE CHECK, not a courtesy after it (fix wave G / G1). `touch`
-      // reports eviction by SETTING `lost` and RESOLVING — it must, because a transient `utimes` failure has
+      // reports eviction by SETTING `lost` and RESOLVING — it must, because a transient refresh failure has
       // to be survivable — so a fence that ignored its outcome had a hole exactly one syscall wide: the
-      // `readdir` above sees this writer's own marker, a stale-lock breaker unlinks it before the `utimes`
+      // `readdir` above sees this writer's own marker, a stale-lock breaker unlinks it before the refresh
       // lands, `lost` becomes true, and the fence returns `ok` anyway. The caller then read its version and
       // renamed, which is an EVICTED owner and its successor committing from the same version — the
       // lost-update class this whole lock exists to eliminate, re-entered through its own guard.
@@ -431,7 +463,8 @@ export async function withFileLock<T>(filePath: string, fn: (fence: () => Promis
       // Release is ownership-scoped BY CONSTRUCTION, not by a read-then-check: the only marker we can
       // name is our own, and `rmdir` refuses the moment a successor has claimed the directory. An
       // overrun owner therefore cannot delete its successor's lock even in principle.
-      await unlink(markerPath).catch(() => {});
+      await refreshing.catch(() => {});
+      await unlink(join(lockPath, markerName)).catch(() => {});
       await rmdir(lockPath).catch(() => {});
     }
   });
@@ -463,9 +496,26 @@ async function breakDeadLock(lockPath: string, staleMs: number): Promise<boolean
   // cannot touch one. (`rename` over an empty directory succeeds anyway; this is for the filesystems
   // where it does not, and it keeps an abandoned husk from outliving its owner.)
   if (names.length === 0) return await rmdir(lockPath).then(() => true, () => false);
-  const st = await stat(join(lockPath, names[0])).catch(() => null);
-  if (st === null || Date.now() - st.mtimeMs <= staleMs) return false; // the lease is alive: a LIVE holder
-  const unlinked = await unlink(join(lockPath, names[0])).then(() => true, () => false);
+  // THE JUDGMENT AND THE DELETE NAME THE SAME STRING, and that is the whole of the repair (fix wave H /
+  // H1). The lease is read off the NAME and the delete can only spell the name it was read from, so a
+  // holder that refreshed in between — renaming its marker to a new lease — is not deleted by a judgment
+  // made before that refresh: the `unlink` simply misses, this call reports that it removed nothing, and
+  // the retry re-reads a claim it can now see is alive. It was an mtime read followed by a name-only
+  // delete, which is the same check-then-act the acquire path was redesigned to make inexpressible.
+  const name = names[0];
+  const lease = markerLease(name);
+  if (Number.isFinite(lease)) {
+    if (Date.now() - lease <= staleMs) return false;                    // the lease is alive: a LIVE holder
+  } else {
+    // A name carrying no lease belongs to a build older than this format. It is broken on AGE alone, for
+    // the same reason the ENOTDIR arm above is: age is the only guarantee that format ever made, and
+    // refusing to break it would dead-end every future write to this target. The residual — racing a
+    // holder still running that build, whose refresh does not move the name — is inherent to the format
+    // and cannot be closed from this side.
+    const st = await stat(join(lockPath, name)).catch(() => null);
+    if (st === null || Date.now() - st.mtimeMs <= staleMs) return false;
+  }
+  const unlinked = await unlink(join(lockPath, name)).then(() => true, () => false);
   const removed = await rmdir(lockPath).then(() => true, () => false);
   return unlinked || removed;
 }

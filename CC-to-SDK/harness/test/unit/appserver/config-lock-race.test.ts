@@ -161,6 +161,89 @@ try {
 say("SUCCESSOR_EXIT");
 `;
 
+/** THE STALLED HOLDER (fix wave H / H1). It takes the lock, blocks its own event loop past the stale
+ *  window — so the lease-refresh timer cannot fire and the lease really does age out, which is the
+ *  condition eviction exists for — and only then wakes, fences, and commits. `fence` is wrapped exactly
+ *  as wave G's evicted holder wraps it: the call is forwarded untouched, and the wrapper's only job is to
+ *  say when it resolved and to release the contender's delete AFTER the lease has been refreshed.
+ *
+ *  It fences ONCE MORE after committing, and that is the instrument this row turns on: it asks the lock
+ *  whether the claim this process refreshed a moment ago is still its own. Both trees answer it with the
+ *  contender's delete already landed, because the holder waits for `deleted` first — so the answer is a
+ *  fact about the break path, never a race between the two processes' next syscalls.
+ *
+ *  Every trace line is `<what> <who> [detail] <hrtime>`, so the sequence reads without the clock. */
+const H1_HOLDER_SRC = `import { writeFileSync, appendFileSync, existsSync } from "node:fs";
+const [mod, target, held, trace, staleRaw, stallRaw, judged, refreshed, deleted] = process.argv.slice(2);
+const { withFileLock, readTargetDoc, writeTargetDoc, applyEdit } = await import(mod);
+const say = (s) => appendFileSync(trace, s + " " + process.hrtime.bigint() + "\\n");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const spin = (ms) => { const end = Date.now() + ms; while (Date.now() < end) { /* the stall */ } };
+await withFileLock(target, async (fence) => {
+  say("ENTER holder");
+  const { doc, version } = await readTargetDoc(target);
+  writeFileSync(held, String(Date.now()));          // the contender may start contending now
+  spin(Number(stallRaw));                            // …and the lease ages out while we cannot refresh it
+  while (!existsSync(judged)) { /* still stalled: spin until the contender has judged this lease dead */ }
+  const injected = async () => {
+    await fence();                                   // the directory check AND the lease refresh
+    say("FENCE_OK holder");
+    writeFileSync(refreshed, "");                    // release the contender's delete — after the refresh
+  };
+  const n = typeof doc.n === "number" ? doc.n : 0;
+  try {
+    await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, fence: injected });
+    say("COMMITTED holder");
+  } catch (e) { say("REFUSED holder " + (e && e.code ? e.code : "?")); }
+  while (!existsSync(deleted)) await sleep(1);       // the contender's delete has now been attempted
+  try { await fence(); say("STILLHELD holder"); } catch (e) { say("EVICTED holder " + (e && e.code ? e.code : "?")); }
+  say("EXIT holder");
+}, { staleMs: Number(staleRaw) }).catch((e) => say("LOCKFAILED holder " + String(e && e.message).slice(0, 60)));
+`;
+
+/** THE CONTENDER, with its DELETE held at a barrier. Nothing about the filesystem is faked: the real
+ *  `unlink` runs, on the real path the real `breakDeadLock` chose, against the real lock. What is added is
+ *  a DELAY between the moment this process decided the lease was dead and the moment its delete lands —
+ *  which is what a stalled event loop or a saturated fs threadpool does to it in production, and which
+ *  wave G's `pbkdf2` flood produced blindly for the fence's own gap. Aimed rather than blind, because the
+ *  window is inside `breakDeadLock` and there is no seam to wrap.
+ *
+ *  It is armed for ONE delete and only for a marker INSIDE a lock directory, so this process's own release
+ *  and its staging cleanup (`<file>.lock.stage-<nonce>/…`, which carries no `.lock/`) run untouched.
+ *  `deleted` is written whatever the delete ANSWERS — success on a tree where the name still resolves,
+ *  `ENOENT` on one where the refresh has moved it — so the holder's closing question is asked at the same
+ *  point in both. */
+const H1_BREAKER_SRC = `import { createRequire } from "node:module";
+import { existsSync, writeFileSync, appendFileSync } from "node:fs";
+import { sep } from "node:path";
+const [mod, target, held, trace, staleRaw, holdRaw, judged, refreshed, deleted] = process.argv.slice(2);
+const fsp = createRequire(import.meta.url)("node:fs/promises");
+const realUnlink = fsp.unlink;
+let armed = true;
+fsp.unlink = async (p, ...rest) => {
+  if (!armed || !String(p).includes(".lock" + sep)) return realUnlink(p, ...rest);
+  armed = false;
+  writeFileSync(judged, "");                         // "I have decided this lease is dead"
+  while (!existsSync(refreshed)) await new Promise((r) => setTimeout(r, 1));
+  try { return await realUnlink(p, ...rest); } finally { writeFileSync(deleted, ""); }
+};
+const { withFileLock, readTargetDoc, writeTargetDoc, applyEdit } = await import(mod);
+const say = (s) => appendFileSync(trace, s + " " + process.hrtime.bigint() + "\\n");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+while (!existsSync(held)) await sleep(2);
+try {
+  await withFileLock(target, async (fence) => {
+    say("ENTER succ");
+    const { doc, version } = await readTargetDoc(target);
+    await sleep(Number(holdRaw));
+    const n = typeof doc.n === "number" ? doc.n : 0;
+    await writeTargetDoc(target, applyEdit(doc, ["n"], n + 1, "replace"), { expectVersion: version, fence });
+    say("COMMITTED succ");
+  }, { staleMs: Number(staleRaw) });
+} catch (e) { say("REFUSED succ " + (e && e.code ? e.code : "?")); }
+say("EXIT succ");
+`;
+
 type Outcome = { parked: string[]; trials: { counter: number; committed: number; maxDepth: number; refusals: string[] }[] };
 
 /** One contended run: `trials` independent settings files, `racers` processes, every process taking every
@@ -224,7 +307,7 @@ function assertExclusive(name: string, R: Run, { parked, trials }: Outcome): voi
 }
 
 describe("withFileLock across real processes (D-M5-24)", () => {
-  it("four OS processes, four kinds of leftover: no overlap, no lost update, no silent success", async () => {
+  it("four OS processes, five kinds of leftover: no overlap, no lost update, no silent success", async () => {
     const mod = compileConfigWriteToJs();
     const stale = new Date(Date.now() - 600_000);
     const variants: [string, (dir: string) => void][] = [
@@ -234,10 +317,20 @@ describe("withFileLock across real processes (D-M5-24)", () => {
       //     path on its first pass, which is precisely where two waiters used to delete each other's fresh
       //     lock — the break is now `unlink` of a name only its owner can have, then an emptiness-checked
       //     `rmdir`, and `unlink` cannot remove a directory at all.
-      ["abandoned claim", (dir) => {
+      //     The marker's name carries no lease, so it is a claim from a build older than fix wave H's
+      //     format — broken on its mtime, which is the only guarantee that format ever made.
+      ["abandoned claim, pre-lease-name format", (dir) => {
         mkdirSync(join(dir, "settings.json.lock"));
         writeFileSync(join(dir, "settings.json.lock", "99999-deadwriter"), "99999-deadwriter\n");
         utimesSync(join(dir, "settings.json.lock", "99999-deadwriter"), stale, stale);
+      }],
+      // (b2) THE SAME LEFTOVER IN THE CURRENT FORMAT — one row per side, because the two are judged by
+      //      different things entirely: this one's lease is ten minutes old IN ITS NAME, and its mtime is
+      //      deliberately left at NOW so that a break decided on the mtime would refuse it forever and a
+      //      break decided on the name breaks it on the first pass, exactly as the leftover above.
+      ["abandoned claim, lease in the name", (dir) => {
+        mkdirSync(join(dir, "settings.json.lock"));
+        writeFileSync(join(dir, "settings.json.lock", `99999-deadwriter.${stale.getTime()}`), "99999-deadwriter\n");
       }],
       // (c) a lock file written by a build older than D-M5-24 — the exact leftover the pre-fix
       //     measurement used, where 32 of 250 trials lost an update.
@@ -283,6 +376,69 @@ describe("withFileLock across real processes (D-M5-24)", () => {
     await Promise.all(kids.map((k) => new Promise<number>((r) => k.on("exit", (c) => r(c ?? -1)))));
     return { lines: readFileSync(log, "utf8").split("\n").filter(Boolean), doc: JSON.parse(readFileSync(target, "utf8")) };
   }
+
+  /** FIX WAVE H / H1 — the BREAK path's own check-then-act, one function away from the one wave G closed.
+   *
+   *  `breakDeadLock` decided a lease was dead and then deleted the marker it had judged. Between those two
+   *  operations the holder can verify its nonce and refresh the lease — the fence's whole promise is that
+   *  the margin after it resolves is a full `staleMs`, "no other process may break a lease it has just
+   *  seen refreshed" — and the contender then deleted that refreshed, live claim anyway, because `unlink`
+   *  is conditional on a NAME and the name had not changed.
+   *
+   *  So the LEASE MOVED INTO THE NAME. A marker is `<nonce>.<lease>`, a refresh is a `rename` to a new
+   *  lease, and the contender can only ever name the marker it read. A claim refreshed after it was judged
+   *  therefore cannot be deleted by that judgment — not because a second check catches it, but because the
+   *  delete has no way to spell it. That is the shape wave C gave the acquire path, where `unlink` cannot
+   *  remove a directory and `rmdir` requires emptiness, applied to the one path still deciding on a clock.
+   *
+   *  TWO REAL PROCESSES, because the claim is about two writers and one filesystem. The contender's DELETE
+   *  is held at a barrier: the real `unlink` runs on the real path `breakDeadLock` chose, and only its
+   *  ISSUANCE is delayed — which is what a stalled loop or a saturated fs threadpool does to it in
+   *  production, and what wave G's `pbkdf2` flood produced blindly for the fence's own gap.
+   *
+   *  MEASURED BEFORE THE REPAIR, 3 of 3: `EVICTED holder ConfigLocked` — the holder asked the lock, one
+   *  commit after its own fence had said the claim was its own and refreshed it, and the claim was gone.
+   *
+   *  The observable is that answer and NOT a clock margin, which is worth saying because the margin is the
+   *  natural thing to reach for and it does not discriminate: a successor that waits for the holder to
+   *  RELEASE may legitimately enter at any moment after that, so `ENTER succ` lands tens of milliseconds
+   *  after the fence on a healthy tree too (27 ms here, against a 400 ms window). What separates the two
+   *  trees is whether the claim survived the contender's delete, and that is what the holder asks. */
+  it("a lease REFRESHED after it was judged cannot be broken by that judgment", async () => {
+    const mod = compileConfigWriteToJs();
+    writeFileSync(join(mod, "h1holder.mjs"), H1_HOLDER_SRC);
+    writeFileSync(join(mod, "h1breaker.mjs"), H1_BREAKER_SRC);
+    const STALE = 400, STALL = 700, HOLD = 300;
+    const dir = mkTmp("m5h1-");
+    const target = join(dir, "settings.json");
+    const trace = join(dir, "trace"), held = join(dir, "held");
+    const judged = join(dir, "judged"), refreshed = join(dir, "refreshed"), deleted = join(dir, "deleted");
+    writeFileSync(target, '{"n":0}\n');
+    writeFileSync(trace, "");
+    const modPath = join(mod, "appserver", "configWrite.js");
+    const argv = [modPath, target, held, trace, String(STALE)];
+    const kids = [
+      spawn(process.execPath, [join(mod, "h1holder.mjs"), ...argv, String(STALL), judged, refreshed, deleted], { stdio: ["ignore", "ignore", "inherit"] }),
+      spawn(process.execPath, [join(mod, "h1breaker.mjs"), ...argv, String(HOLD), judged, refreshed, deleted], { stdio: ["ignore", "ignore", "inherit"] }),
+    ];
+    expect(await Promise.all(kids.map((k) => new Promise<number>((r) => k.on("exit", (c) => r(c ?? -1)))))).toEqual([0, 0]);
+
+    const lines = readFileSync(trace, "utf8").split("\n").filter(Boolean);
+    // THE CONTROL FIRST. Without a holder whose lease really expired and a contender that really judged it
+    // dead and really issued the delete, this trial measures the scheduler and nothing else — and every
+    // assertion below would pass on a run where the two processes simply took turns.
+    expect(`lease judged: ${existsSync(judged)}, delete issued: ${existsSync(deleted)}`)
+      .toBe("lease judged: true, delete issued: true");
+    // THE DEFECT ITSELF, in `STILLHELD`: the holder asks the lock, with the contender's delete already
+    // landed, whether the claim its fence verified and refreshed one commit ago is still its own. The rest
+    // of the sequence is the other half — the contender is not STARVED for the privilege, it takes the
+    // lock the moment the holder lets go, and a repair that simply refused it would satisfy `STILLHELD`.
+    expect(lines.map((l) => l.split(" ").slice(0, 2).join(" ")))
+      .toEqual(["ENTER holder", "FENCE_OK holder", "COMMITTED holder", "STILLHELD holder", "EXIT holder", "ENTER succ", "COMMITTED succ", "EXIT succ"]);
+    // The bytes are the last word: two writers, two increments, no lost update — and no leftover lock.
+    expect(JSON.parse(readFileSync(target, "utf8"))).toEqual({ n: 2 });
+    expect(readdirSync(dir).filter((f) => f.includes(".lock") || f.includes(".tmp-"))).toEqual([]);
+  }, 180_000);
 
   it("an EVICTED holder does not commit — the fence fails on the lease refresh, not only on the directory", async () => {
     // MEASURED BEFORE THE FIX, 5 of 5 trials and again 3 of 3 at these settings:
