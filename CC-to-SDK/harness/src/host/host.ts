@@ -1,7 +1,8 @@
 import { HostServer } from "./server.js";
 import type { ControlOp, HostStatus } from "./ops.js";
-import { hostSocketPath } from "../fleet/paths.js";
+import { fleetRoot, hostSocketPath } from "../fleet/paths.js";
 import { TERMINAL, finalizeRoster, readRoster, writeRoster } from "../fleet/roster.js";
+import { removeArchiveMarker } from "../appserver/archive.js";
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
@@ -35,6 +36,14 @@ export interface SessionHostOpts {
  *  enough that the normal path always completes inside it, short enough that a wedged turn does not
  *  keep a detached process alive for the rest of the day. */
 const DISPOSE_GRACE_MS = 5_000;
+
+/** The engine's own description of the session, emitted once per turn. ONE spelling, used by the retention
+ *  and by the replay's "does the buffer already hold one" test, so the two cannot disagree about what they
+ *  are talking about (fix wave I / scalpel-5#2). */
+const isInitFrame = (m: unknown): boolean => {
+  const f = m as { type?: unknown; subtype?: unknown } | null;
+  return f?.type === "system" && f.subtype === "init";
+};
 
 /** The members a host drives on its session — the 3 core ones plus the 10 optional A2b control members
  *  below — structural, not `any`, so a signature drift in `Session` fails THIS build instead of failing
@@ -159,6 +168,11 @@ export class SessionHost {
   // session's onFrame delivered (probe 39: never merge). Read by the `tasks` op and replayed to a
   // follower that joins after the frame already fired.
   private bgTasks: BackgroundTaskInfo[] = [];
+  // The last `system/init` frame this host's CURRENT engine sent, kept outside the turn buffer because the
+  // buffer trims from the head and that is where init sits (fix wave I / scalpel-5#2 — see `follow`).
+  // Cleared by `swapEngine`, with the turn buffer and for the same reason: it describes an engine that no
+  // longer exists, and its `session_id` and `model` are as stale as the turn it belonged to.
+  private lastInit?: unknown;
   // Unsubscribe from the CURRENT session's onFrame — re-pointed at the fresh session on resumeSession
   // (see there for why: the swap replaces `this.session` with a subscriber set of zero).
   private offFrame?: () => void;
@@ -249,6 +263,9 @@ export class SessionHost {
       ...(this.currentSessionId() ? { sessionId: this.currentSessionId() } : {}),
     };
     writeRoster(row, this.env);                        // the id is here only if the LAUNCH named one
+    // …and a LAUNCH resume is an admission too (fix wave I / scalpel-3#3): `writeSessionId` is not on this
+    // path, because the row is composed here in full, so the shelf transition is asked for beside it.
+    this.takeOffShelf();
     // Seed the mode truth from the SAME config the engine is about to be opened with — before opening
     // it, so a fresh client's status bar never shows a placeholder (spec §mode-sync).
     this.mode = resolvedPermissionMode(this.opts.config);
@@ -342,6 +359,11 @@ export class SessionHost {
       // the truncation banner. A late follower cannot use a partial anyway — its LiveTurn missed the
       // deltas before the join, and the completed message supersedes them all.
       if ((m as { type?: unknown } | null)?.type !== "stream_event") this.turnBuffer.push(m);
+      // Retained BESIDE the buffer push, off the SAME feed (fix wave I / scalpel-5#2): `follow` decides
+      // whether to replay this by asking whether the buffer already carries an init, and two feeds would
+      // make that question compare different streams. LAST-WINS — init recurs once per turn, and the
+      // newest is the one that describes this engine now.
+      if (isInitFrame(m)) this.lastInit = m;
       this.emit({ kind: "message", data: m });
     };
     // A bg worker's success IS the terminal event — `done`. An interactive host stays LIVE across
@@ -520,6 +542,7 @@ export class SessionHost {
     // (resume, clear, both rewind arms) go through.
     this.writeSessionId();
     this.turnBuffer.reset(); this.settledBy.clear();
+    this.lastInit = undefined;                        // …and the discarded engine's own description with it
     this.parentOf.clear(); this.subagentOf.clear();   // the old session's attribution is gone with it
     // Plan-review I1: the swap replaces `this.session` with a fresh Session whose subscriber set is
     // empty — without re-pointing onFrame here, mode sync, the tasks panel, and attribution all
@@ -643,6 +666,15 @@ export class SessionHost {
     // the client or it is a promise we do not keep — a follower shown a partial turn with no marker
     // reads it as the whole turn — so a truncated idle replay keeps the old bare start frame.
     else if (snap.truncated) this.deliver(cb, { kind: "turn", phase: "start", truncated: true });
+    // THE LAST INIT FRAME, when the turn buffer no longer holds one (M5 fix wave I / scalpel-5#2). The
+    // buffer is reset per turn and trims from the HEAD, which is exactly where `system/init` sits, so any
+    // turn past 500 non-stream frames or 1 MiB evicts it — and `terminal_slash_commands` rides ONLY that
+    // frame. The app server's router accepts a replayed init for that one field precisely because it has no
+    // other source (D-M5-27), and an evicted one left the field absent on every attach to an idle host,
+    // indefinitely, although this host had received the classification turns ago. Retained separately for
+    // the same reason `bgTasks` is: a joiner that arrives after the frame fired must still learn what it
+    // said. Skipped when the buffer already carries one, so the ordinary mid-turn attach is unchanged.
+    if (this.lastInit !== undefined && !snap.messages.some(isInitFrame)) this.deliver(cb, { kind: "message", data: this.lastInit, replay: true });
     // MARKED as replay: every one of these is buffered history, and a joiner that stamped them with its own
     // arrival clock would fabricate durations for work that finished before it connected (wire.ts's note).
     for (const m of snap.messages) this.deliver(cb, { kind: "message", data: m, replay: true });
@@ -1050,11 +1082,42 @@ export class SessionHost {
    *  makes that conversation permanently undeletable by a guard that believes this host holds it. Absence
    *  means "this host holds no persisted conversation", never "not known yet". */
   private writeSessionId(): void {
+    this.takeOffShelf();
     const r = readRoster(this.opts.short, this.env);
     if (!r) return;
     const sid = this.currentSessionId();
     const { sessionId: _dropped, ...rest } = r;
     writeRoster(sid ? { ...rest, sessionId: sid } : rest, this.env);
+  }
+
+  /** D-M5-21 ON THIS SIDE OF THE FLEET (fix wave I / scalpel-3#3). "Opening a conversation takes it off the
+   *  shelf" is a MACHINE-wide rule and not an app-server one: the markers live under `~/.claude/ccx`, every
+   *  server re-reads them per request, and the invariant they serve — a live thread is never hidden from the
+   *  default listing — is stated across processes rather than within one. The app server honours it on the
+   *  three admission surfaces the spec names plus the fourth it merely observes (`autoUnarchive`). A HOST
+   *  taking a conversation under itself is a fifth, and it was not honoured at all: an unattached
+   *  `ccx --resume <archived id>`, or a terminal-side `/resume` onto one, left that conversation live in
+   *  front of an operator and hidden from every client's default list for the host's whole life. It is NOT
+   *  the transient the spec accepts — that one is cleared by "the next unarchive or admission", and this
+   *  admission was not one of them.
+   *
+   *  It rides `writeSessionId`, because that is already the ONE place every path names what this host holds
+   *  (fix wave A / D-M5-21d): the launch, all four swap callers, and the first turn's init frame. A second
+   *  funnel is precisely how the roster's answer and this one would drift apart.
+   *
+   *  DEDUPED on the id, so an idle host does not spend a syscall per turn, and FIRE-AND-FORGET: a marker
+   *  store that cannot be reached is not a reason to fail a resume the operator is already looking at, and
+   *  there is no reply here to carry the failure on. The import reaches into `appserver/` deliberately —
+   *  `archive.ts` is the marker STORE and is protocol-free by construction — because a private spelling of
+   *  that directory is the failure its own header warns about: a readdir of the wrong path just answers
+   *  "nothing is archived". `fleetRoot(this.env)` and not the store's own default, so the host's injected
+   *  env stays authoritative here exactly as it is for the roster. */
+  private shelfCleared?: string;
+  private takeOffShelf(): void {
+    const sid = this.currentSessionId();
+    if (sid === undefined || sid === this.shelfCleared) return;
+    this.shelfCleared = sid;
+    void removeArchiveMarker(sid, { ccxDir: fleetRoot(this.env) }).catch(() => {});
   }
 
   /** The session id lands here, not at start(): the engine only reports one once its first turn's
