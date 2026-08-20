@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { methodSchemas } from "../../../src/appserver/schema/index.js";
 import { SEARCH_CAPS } from "../../../src/appserver/searchScan.js";
+import { threadSearchParams, threadSearchOccurrencesParams } from "../../../src/appserver/schema/search.js";
 
 const harness = fileURLToPath(new URL("../../../", import.meta.url));
 const script = "scripts/emit-appserver-schema.mjs";
@@ -72,6 +73,16 @@ describe("emit-appserver-schema", () => {
    *  than "a conforming client refuses what the server refuses". */
   it("both search methods publish the term bounds they enforce — a conforming validator refuses what they refuse", () => {
     const doc = vendored("stable");
+    // The SOURCE side first: the artifact's keywords are only true because the params schema carries the
+    // checks that emitted them. Asserted here rather than left to the byte-pin row above, so that dropping
+    // the refinement fails THIS row — the one that names the property — and not only the pin.
+    for (const [name, schema] of [["thread/search", threadSearchParams], ["thread/searchOccurrences", threadSearchOccurrencesParams]] as const) {
+      const of = (term: string) => (name === "thread/search" ? { searchTerm: term } : { threadId: "t", searchTerm: term });
+      expect(`${name} parses 1 unit: ${schema.safeParse(of("a")).success}`).toBe(`${name} parses 1 unit: false`);
+      expect(`${name} parses ${SEARCH_CAPS.maxTerm + 1} units: ${schema.safeParse(of("x".repeat(SEARCH_CAPS.maxTerm + 1))).success}`)
+        .toBe(`${name} parses ${SEARCH_CAPS.maxTerm + 1} units: false`);
+      expect(`${name} parses 2 units: ${schema.safeParse(of("ab")).success}`).toBe(`${name} parses 2 units: true`);
+    }
     for (const method of ["thread/search", "thread/searchOccurrences"]) {
       const schema = doc.methods[method] as { properties: { searchTerm: Record<string, unknown> } };
       expect(`${method} minLength=${schema.properties.searchTerm.minLength}`).toBe(`${method} minLength=${SEARCH_CAPS.minTerm}`);
