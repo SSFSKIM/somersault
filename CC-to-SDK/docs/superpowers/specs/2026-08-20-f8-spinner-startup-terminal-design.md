@@ -853,15 +853,24 @@ integer, the two agree on every id that actually occurs, and ccx additionally so
 as a latent fidelity gap rather than a defect: if canon ever emits a non-numeric id, ccx drops the task
 entirely and the sort would go to `NaN`.
 
-**S-F8-z — an unmodelled task status would title the spinner, and the fix belongs at ingest.** `taskList.ts`
-casts the wire's `status` straight to our three-value `TaskStatus` union without validating it. Canon's own
-TaskUpdate schema (`sPS`, L235685) admits a FOURTH value, `"deleted"`. Canon's selector — which F8 transplants
-faithfully as a double negative, `!== "pending" && !== "completed"` — therefore treats a deleted task as
-active, and it would title the spinner for the rest of the turn. Task 5 pinned the current behavior in a unit
-test naming the hazard rather than fixing it, on the implementer's reasoning that narrowing the SELECTOR to
-`=== "in_progress"` would hide one symptom while the panel, the row counts and the ordering all keep reading
-the same unmodelled value. The honest fix is validation at the ingest boundary, and it is not F8's to make.
-Left open deliberately: recorded here so a later reader does not "simplify" the faithful transplant away.
+**S-F8-z — a DELETED task titles the spinner, and F8 is what made it visible.** `taskList.ts` casts the
+wire's `status` straight into our three-value `TaskStatus` union without validating it. Canon's TaskUpdate
+schema (`sPS`, L235685) admits a fourth value, `"deleted"`, and canon handles it at the INGEST boundary:
+`safeParse` first, `return !1` on failure, then `if (i === "deleted") return e.tasks.delete(o)` (L235620-5).
+Its tool description does not merely permit the value — it instructs the model to send it ("Use `deleted` to
+permanently remove a task", L340107) and ships the worked example `{"taskId":"1","status":"deleted"}`
+(L340127). So this is reachable on every real run, not a hypothetical wire shape.
+
+Before F8 the consequence in ccx was a stale panel row with an undefined glyph. Task 5's ladder made it
+user-visible and worse: `activeSpinnerTask` takes the FIRST non-pending, non-completed task and a deleted
+task keeps its position in the id sort, so the spinner is titled by a task the model explicitly removed, for
+the rest of the turn. Task 5's implementer was right that the fix belongs at ingest rather than in the
+selector — narrowing the selector to `=== "in_progress"` would hide one symptom while the panel, the row
+counts and the ordering all keep reading the same unmodelled value — and right to leave canon's double
+negative in the selector as the faithful transplant. **Decided against the original deferral and folded into
+Task 5's fix wave:** a wave that makes a latent defect user-visible owns it. Two behaviors transplanted —
+`"deleted"` removes the task, and a status in neither union discards the whole update including any
+`subject`/`activeForm` carried with it, which is what canon's `safeParse` rejection does.
 
 ## 9. Outcomes & Retrospective
 
