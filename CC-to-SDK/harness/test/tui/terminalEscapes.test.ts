@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { osc, passthrough, notifyTerminator, sanitizeNotificationText, BELL, OSC_ITERM2, OSC_KITTY, OSC_GHOSTTY, OSC_TITLE } from "../../src/tui/terminalEscapes.js";
 
 describe("osc", () => {
@@ -6,9 +6,14 @@ describe("osc", () => {
     expect(osc("bel", OSC_TITLE, "✳ ccx")).toBe("\x1b]0;✳ ccx\x07");
     expect(osc("st", OSC_KITTY, "i=1:d=0:p=title", "ccx")).toBe("\x1b]99;i=1:d=0:p=title;ccx\x1b\\");
   });
-  it("takes the terminator as a parameter, never sniffing", () => {
-    // the title keeps BEL on EVERY terminal, kitty included (terminalTitle.ts's Wave C skip)
-    expect(osc("bel", OSC_TITLE, "x").endsWith("\x07")).toBe(true);
+  it("takes the terminator as a parameter, never sniffing — even standing ON kitty", () => {
+    // the title keeps BEL on EVERY terminal, kitty included (terminalTitle.ts's Wave C skip), so make
+    // the env hostile: a sniffing builder would flip to ST here, and only here can this assertion fail.
+    vi.stubEnv("TERM", "xterm-kitty"); vi.stubEnv("KITTY_WINDOW_ID", "1");
+    try {
+      expect(osc("bel", OSC_TITLE, "x").endsWith("\x07")).toBe(true);
+      expect(osc("st", OSC_TITLE, "x").endsWith("\x1b\\")).toBe(true);
+    } finally { vi.unstubAllEnvs(); }
   });
 });
 
@@ -32,6 +37,10 @@ describe("notifyTerminator", () => {
     expect(notifyTerminator({ TERM_PROGRAM: "iTerm.app" } as NodeJS.ProcessEnv)).toBe("bel");
     expect(notifyTerminator({} as NodeJS.ProcessEnv)).toBe("bel");
   });
+  it("recognises kitty by EACH of its three markers, not just TERM", () => {
+    expect(notifyTerminator({ KITTY_WINDOW_ID: "1" } as NodeJS.ProcessEnv)).toBe("st");
+    expect(notifyTerminator({ TERM_PROGRAM: "kitty" } as NodeJS.ProcessEnv)).toBe("st");
+  });
 });
 
 describe("sanitizeNotificationText", () => {
@@ -45,5 +54,12 @@ describe("sanitizeNotificationText", () => {
   it("never shortens the string", () => {
     const s = "\x00\x01\x02abc\x7f";
     expect(sanitizeNotificationText(s)).toHaveLength(s.length);
+  });
+  it("leaves every character above the C1 range alone", () => {
+    // pins the UPPER bound: a `c >= 127` implementation with no ceiling passes every assertion above
+    // and still mangles accents, the spinner glyphs, and every box-drawing rule we paint.
+    expect(sanitizeNotificationText("a é✳b")).toBe("a é✳b");
+    expect(sanitizeNotificationText("\x9f")).toBe(" ");               // last C1 byte, still replaced
+    expect(sanitizeNotificationText("\xa0")).toBe("\xa0");            // first byte past it, preserved
   });
 });

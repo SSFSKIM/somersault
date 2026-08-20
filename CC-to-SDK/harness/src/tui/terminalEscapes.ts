@@ -38,8 +38,11 @@ export function passthrough(seq: string, env: NodeJS.ProcessEnv = process.env): 
   return seq;
 }
 
-/** canon's `cTp() === "kitty"` test, over the terminal identity `altScreen.resolveTerminalName` already
- *  computes. Kept as a local env read rather than an import so this module stays a leaf. */
+/** canon's `cTp() === "kitty"` test, read straight off the environment — NOT off
+ *  `altScreen.resolveTerminalName`, and deliberately not in its precedence. That function consults
+ *  `TERM_PROGRAM` before its kitty markers, so the two disagree only when a non-kitty `TERM_PROGRAM` sits
+ *  beside a kitty marker; there this one answers ST, which every terminal that honours OSC at all accepts.
+ *  Reading the env here rather than importing is what keeps this module a leaf (no imports). */
 export function notifyTerminator(env: NodeJS.ProcessEnv = process.env): OscTerminator {
   const kitty = env.TERM?.includes("kitty") === true || env.TERM_PROGRAM === "kitty" || env.KITTY_WINDOW_ID !== undefined;
   return kitty ? "st" : "bel";
