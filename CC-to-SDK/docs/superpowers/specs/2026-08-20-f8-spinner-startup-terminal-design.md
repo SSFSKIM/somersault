@@ -906,6 +906,22 @@ matching the rule this file already applies to the account-info billing label: c
 user their launch. The fallback is `emptyWorkspace: false`, which shows the `/init` tip rather than the
 empty-workspace one — the right way round, since a directory we could not read is not evidence of emptiness.
 
+**S-F8-t — the tips checklist needs a visibility gate, or its own success becomes a permanent wart.**
+Task 8's reviewer found that canon's tip inventory carries a third field the plan omitted, `isCompletable`,
+and that the field exists to drive a gate the plan never mentioned. Verified at L384140 / L384155-6:
+`show = !inventory.filter(t => t.isCompletable && t.isEnabled).every(t => t.isComplete)`. Without it, every
+repository that already has a `CLAUDE.md` — most of them, this one included — prints `✔ Run /init to create
+a CLAUDE.md file` on every launch forever. That is the mechanism's natural terminal state, and it is worse
+than the three static tips F8 deleted. Folded into Task 8's fix wave as a pure predicate: the whole block,
+header included, hides once every applicable entry is complete. Same reasoning as S-F8-z's reversal — a wave
+that introduces a surface owns its end state.
+
+**DEFERRED, deliberately:** canon's other two hide rungs are a persisted `hasCompletedProjectOnboarding`
+flag and `projectOnboardingSeenCount >= 4` (stop showing tips after four launches even when incomplete).
+Both need new persisted preference state, which F8 is not adding. Consequence of deferring: a user sitting
+in a genuinely empty directory sees the workspace tip on every launch, since that entry can never complete.
+Canon's counter is what stops that, and ccx will not until the counter lands.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.
