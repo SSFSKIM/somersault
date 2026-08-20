@@ -234,6 +234,20 @@ await m[op](sessionId, { ccxDir });
 writeFileSync(report, t0 + " " + process.hrtime.bigint());
 `;
 
+/** The H2 racer: the REAL `createArchiveMarker`, under the umask that makes a `mkdir` mode narrower than
+ *  the one it asks for. It reports its own outcome rather than throwing, because a racer that died would
+ *  take the trial's other three outcomes with it. `parked` is sampled BEFORE the spin, for the same reason
+ *  it is above: it answers "was this child waiting when the barrier opened?". */
+const UMASK_CHILD_SRC = `import { existsSync, writeFileSync } from "node:fs";
+const [mod, ccxDir, sessionId, ready, go, report] = process.argv.slice(2);
+const m = await import(mod);
+process.umask(0o200);
+writeFileSync(ready, existsSync(go) ? "late" : "parked");
+while (!existsSync(go)) { /* park until every sibling is parked too */ }
+try { await m.createArchiveMarker(sessionId, { ccxDir }); writeFileSync(report, "OK"); }
+catch (e) { writeFileSync(report, (e && e.code ? e.code : "?") + " " + String(e && e.message).slice(0, 120)); }
+`;
+
 async function race(
   outDir: string,
   ccxDir: string,
@@ -1398,6 +1412,60 @@ describe("fix wave G — the shelf's two handlers, and the stores under them", (
       if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved;
     }
   });
+
+  /** FIX WAVE H / H2 — the OTHER creator's half-made directory. P2-5#4 (the row above) fixed the mode for
+   *  a level THIS call creates; a level a PEER creates in the same instant reaches `mkdirOwnerOnly` as an
+   *  `EEXIST`, which it read as "complete, and not mine to touch" and skipped its chmod for. Under
+   *  `umask 0200` the peer's level is 0500 until the peer's own chmod lands one syscall later, and in that
+   *  gap the loser cannot create the next level inside it, let alone write a marker into it.
+   *
+   *  FOUR REAL PROCESSES, because this is a claim about two writers and a real filesystem and nothing
+   *  smaller can make it: an injected `mkdir` would be a title for the storage layer. Measured before the
+   *  repair with this exact child, 25 trials per shape: 75 of 100 calls failed EACCES on a 40-deep chain,
+   *  16 of 100 on the two-level `<ccx>/archived` shape production has, and 1 of 100 with only `archived`
+   *  missing. After it, 300 of 300 succeeded across all three shapes.
+   *
+   *  The deep chain is not scenery — it is what turns a microsecond window into a wide one by giving the
+   *  racers forty chances at it, so six trials suffice where the shallow shape would need hundreds. */
+  it("four processes creating the marker store at once: none is defeated by another's half-made directory", async () => {
+    const mod = compileArchiveToJs();
+    writeFileSync(join(mod, "umaskChild.mjs"), UMASK_CHILD_SRC);
+    const RACERS = 4, TRIALS = 6, DEPTH = 40;
+    const outcomes: string[] = [];
+    const parked: string[] = [];
+    for (let t = 0; t < TRIALS; t++) {
+      const root = mkTmp("m5h2-");
+      const ccxDir = join(root, ...Array.from({ length: DEPTH }, (_, i) => `d${i}`));
+      const bar = mkTmp("m5h2bar-");
+      const go = join(bar, "go");
+      const exits = Array.from({ length: RACERS }, (_, k) => {
+        const kid = spawn(process.execPath, [
+          join(mod, "umaskChild.mjs"), join(mod, "appserver", "archive.js"), ccxDir, `sess-${k}`,
+          join(bar, `r${k}`), go, join(bar, `o${k}`),
+        ], { stdio: ["ignore", "ignore", "inherit"] });
+        return new Promise<number>((res) => kid.on("exit", (c) => res(c ?? -1)));
+      });
+      const deadline = Date.now() + 60_000;
+      while (Array.from({ length: RACERS }, (_, k) => k).some((k) => !existsSync(join(bar, `r${k}`))) && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 2));
+      for (let k = 0; k < RACERS; k++) parked.push(readFileSync(join(bar, `r${k}`), "utf8"));
+      writeFileSync(go, "");
+      expect(await Promise.all(exits)).toEqual(Array.from({ length: RACERS }, () => 0));
+      for (let k = 0; k < RACERS; k++) {
+        const o = readFileSync(join(bar, `o${k}`), "utf8");
+        if (o !== "OK") outcomes.push(o.split(" ")[0]);
+      }
+      // The store is the last word: every racer's marker is there, and the directory holding them is
+      // usable — a run where all four merely FAILED IDENTICALLY would satisfy an outcome count alone.
+      expect(readdirSync(join(ccxDir, "archived")).sort()).toEqual(Array.from({ length: RACERS }, (_, k) => `sess-${k}`));
+      expect((statSync(join(ccxDir, "archived")).mode & 0o777).toString(8)).toBe("700");
+    }
+    // The premise, asserted before the conclusion: every racer really was waiting when the barrier opened,
+    // so the trial measured contention rather than four processes taking turns.
+    expect(parked).toEqual(Array.from({ length: RACERS * TRIALS }, () => "parked"));
+    expect(`failures across ${RACERS * TRIALS} concurrent creations: ${outcomes.join(",") || "none"}`)
+      .toBe(`failures across ${RACERS * TRIALS} concurrent creations: none`);
+  }, 180_000);
 
   it("the marker directory is usable under a umask that would have narrowed it (P2-5#4)", async () => {
     // `mkdir`'s mode is umask-masked and `chmod` is not — configWrite's own rule, which this path did not

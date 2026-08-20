@@ -63,10 +63,25 @@ export const inArchivedPartition = (archived: Set<string>, sessionId: string | u
  *  fails EACCES creating its child inside it, so there is no "afterwards" to repair from. Hence the chain
  *  is built one level at a time and each level is chmod'ed the moment it exists.
  *
- *  ONLY what this call creates. A level that already existed is left exactly as its operator set it —
- *  which a blanket `chmod` would silently overwrite — and an `EEXIST` from a concurrent creator means the
- *  level is not ours either. When nothing is missing the recursive `mkdir` still runs, so a path that is a
- *  FILE rather than a directory keeps raising the errno it always did instead of failing later and vaguer. */
+ *  ONLY what this call found MISSING. A level that already existed at the survey is left exactly as its
+ *  operator set it, which a blanket `chmod` would silently overwrite.
+ *
+ *  A CONCURRENT `EEXIST` IS NOT "someone else's, leave it" — it is "not yet usable, and only my own chmod
+ *  is ordered before my own write" (fix wave H / H2). Skipping the chmod there was the same defect one
+ *  branch over: under `umask 0200` the winner creates a level 0500 and repairs it a syscall later, and in
+ *  that gap a loser that treats `EEXIST` as complete walks straight into it — `EACCES` creating the next
+ *  level inside it, or writing the marker into it. Measured on four real processes over 25 trials per
+ *  shape: 75 of 100 calls failed on a 40-deep chain, 16 of 100 on the two-level `<ccx>/archived` shape
+ *  production actually has, and 1 of 100 with only `archived` missing — the winner's mkdir-to-chmod gap
+ *  alone. So every level this call had to create is chmod'ed by THIS call before it descends, whoever won
+ *  the race to create it; the mode asked for is the same one every creator of this tree asks for, so a
+ *  peer's level is never given a mode its own creator did not want.
+ *
+ *  The `EEXIST` is re-asserted with a recursive `mkdir` first, which no-ops on a directory and re-raises
+ *  on a FILE — so a path that is a file rather than a directory keeps raising the errno it always did
+ *  (instead of being chmod'ed and then failing later and vaguer), and the type question is answered by a
+ *  syscall rather than by a check that could go stale between asking and acting. When nothing is missing
+ *  at all, that same recursive `mkdir` still runs, exactly as before. */
 async function mkdirOwnerOnly(dir: string): Promise<void> {
   const missing: string[] = [];
   for (let cur = dir; ; cur = dirname(cur)) {
@@ -77,7 +92,10 @@ async function mkdirOwnerOnly(dir: string): Promise<void> {
   if (missing.length === 0) { await mkdir(dir, { recursive: true }); return; }
   for (const p of missing) {
     try { await mkdir(p, { mode: 0o700 }); }
-    catch (e) { if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e; continue; }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
+      await mkdir(p, { recursive: true }); // no-op on a directory; re-raises EEXIST on a file
+    }
     await chmod(p, 0o700);
   }
 }
