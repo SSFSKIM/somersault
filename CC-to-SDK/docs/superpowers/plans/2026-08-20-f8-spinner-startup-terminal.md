@@ -350,8 +350,9 @@ In `test/tui/spinner.test.ts`, replace the existing 12-frame ping-pong block wit
     expect([at(0), at(1000), at(2000), at(3000)]).toEqual([0, 5, 0, 5]);
     expect(at(100)).toBe(at(0));            // dwells at the bottom
     expect(at(900)).toBe(at(1000));         // and at the top
-    const firstHalf = [0, 200, 400, 600, 800, 1000].map(at);
-    expect(firstHalf).toEqual([...firstHalf].sort((a, b) => a - b));
+    // EXACT, not merely ascending: a LINEAR walk is also ascending and would pass a sorted-check.
+    // The eased sequence dwells at both ends — [0,0,2,3,5,5] where linear gives [0,1,2,3,4,5].
+    expect([0, 200, 400, 600, 800, 1000].map(at)).toEqual([0, 0, 2, 3, 5, 5]);
   });
 
   it("glyphIndex is negative-safe and never leaves the array", () => {
@@ -504,8 +505,15 @@ export function useAnimationClock(intervalMs: number | null, startedAt: number, 
   // the whole of the next one — a sixty-second turn would leave the next spinner motionless.
   const startRef = useRef(startedAt);
   if (startRef.current !== startedAt) { startRef.current = startedAt; highWater.current = 0; }
+  // `null` MEANS FROZEN, not merely un-self-triggered. If the disarmed arm kept recomputing elapsed
+  // time, every parent rerender would advance it — and a caller that derives an animation from this
+  // value would keep animating while believing it had stopped. That is not hypothetical: with a live
+  // disarmed clock, `CompactionRow`'s reduced-motion branch is a PROVABLE no-op, because
+  // `compactionRatio` is monotone with its own floor, so `ratio(max(elapsed))` equals
+  // `max(prev, ratio(elapsed))`. The glyph would freeze and the bar would creep on.
+  if (intervalMs === null) return highWater.current;
   const elapsed = startedAt > 0 ? Math.max(0, now() - startedAt) : 0;
-  const quantized = intervalMs === null ? elapsed : Math.floor(elapsed / intervalMs) * intervalMs;
+  const quantized = Math.floor(elapsed / intervalMs) * intervalMs;
   if (quantized > highWater.current) highWater.current = quantized;
   return highWater.current;
 }
@@ -578,8 +586,9 @@ export function CompactionRow({ startedAt, now = Date.now, columns, reducedMotio
   const animMs = useAnimationClock(reducedMotion ? null : SPINNER_INTERVAL_MS, startedAt, now);
   // The BAR freezes with the glyph. Its ratio is a function of wall-clock elapsed, so left reading
   // `now()` it would keep advancing on any unrelated parent rerender while the glyph stood still — a
-  // half-stopped animation, which is worse than either state. Under reduced motion it reads the frozen
-  // clock instead, and `ratioRef`'s monotonic floor keeps it from ever walking back.
+  // half-stopped animation, worse than either state. Under reduced motion it reads the clock instead,
+  // which `useAnimationClock` holds frozen on its disarmed arm — and that freeze is what makes this
+  // branch do anything at all. `ratioRef`'s monotonic floor keeps it from ever walking back.
   const ratio = ratioRef.current = compactionRatio(reducedMotion ? animMs : (startedAt > 0 ? now() - startedAt : 0), ratioRef.current);
 ```
 
