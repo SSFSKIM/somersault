@@ -102,7 +102,7 @@ def safe_key(raw: str) -> str
 MAX_OUTPUT_CLAMP = 50_000
 @dataclass class Config: yield_s: float; max_output_chars: int; idle_hours: float;
     max_concurrency: int; max_depth: int; depth: int; session: str | None; cwd: str | None
-    @classmethod def from_env(cls, env=os.environ) -> "Config"
+    @classmethod def from_env(cls, env=None) -> "Config"  # env: dict-like, defaults to os.environ internally
 
 # ownership.py
 def proc_start_time(pid: int) -> str | None
