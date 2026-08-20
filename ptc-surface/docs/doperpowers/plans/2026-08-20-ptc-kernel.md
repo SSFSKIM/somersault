@@ -1658,7 +1658,7 @@ git commit -m "f5(ptc): T5 — in-kernel bootstrap (tee, terminal records, watch
 
 **Interfaces:**
 - Consumes: T5 `cells.*`, T3 `submit_lock`, T4 `kernel_alive`.
-- Produces (final `KernelClient` API, used by T8/T9): `exec_cell(code, timeout_s, config) -> Completed | Running | Busy` (now with the atomic busy check), `wait_cell(cell_id, timeout_s, since=-1) -> Completed | Running` (Running here also covers `ORPHANED`: if the kernel is dead with no record, returns `Completed` with a synthetic record `status="error", error={"ename":"KernelDied",...}`), `interrupt() -> None`, `is_busy() -> int | None`.
+- Produces (final `KernelClient` API, used by T8/T9): `exec_cell(code, timeout_s, config) -> Completed | Running | Busy` (now with the atomic busy check), `wait_cell(cell_id, timeout_s, since=-1) -> Completed | Running` (Running here also covers `ORPHANED`: if the kernel is dead with no record, returns `Completed` with a synthetic record `status="error", error={"ename":"KernelDied",...}`), `interrupt() -> None`, `is_busy() -> Busy | None` (T6 review fix: returns the full `Busy(cell_id, reason)` — reasons: "running", "pending-unconfirmed", "lock-held"; downstream reads `.cell_id`/`.reason`).
 
 - [ ] **Step 1: Write the failing tests**
 
