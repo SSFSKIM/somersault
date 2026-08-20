@@ -161,4 +161,40 @@ describe("thread/delete vs a conversation a live host holds but has not run a tu
     expect(rosterIds()).toEqual(["sess-forked"]);
     expect((await del("sess-forked")).error?.code).toBe(ERR.BUSY);
   });
+
+  it("…and the SAME is true of that host's later /resume — the swap path D-M5-21b's carve-out did not cover", async () => {
+    // M5 fix wave G / G4. `start()` withholds the stamp for a forking launch (the row above), but
+    // `engineConfig` spreads `forkSession` into every later swap while `swapEngine` stamped `extra.resume`
+    // unconditionally. Measured before the fix: after `/resume sess-other` the roster read
+    // ["sess-other"] — a conversation this host only READS — so `thread/delete` refused it BUSY, and the
+    // app server's fleet layer, which adopts whatever the host's `state` frame names, auto-unarchived the
+    // parent and reserved it as live. The inversion D-M5-21b exists to prevent, one path over.
+    const h = await startHost("eeeeeeee", { resume: "sess-parent", forkSession: true },
+      (resume) => (resume === "sess-other" ? "sess-forked-again" : "sess-forked"));
+    expect(rosterIds()).toEqual([undefined]);
+    await h.resumeSession("sess-other");
+    expect(rosterIds()).toEqual([undefined]);
+
+    const { deleted, del } = boot();
+    expect((await del("sess-other")).result).toEqual({ ok: true });
+    expect(deleted).toEqual(["sess-other"]);
+    // …and the fork's OWN id is what the row names once the engine reports one, so the protection lands on
+    // the conversation this host really holds. Without this half a stamp that never fires would pass.
+    await h.runTask("hello");
+    expect(rosterIds()).toEqual(["sess-forked-again"]);
+    expect((await del("sess-forked-again")).error?.code).toBe(ERR.BUSY);
+  });
+
+  it("a NON-forking host's /resume still stamps: the carve-out is the fork flag, not the swap", async () => {
+    // The other side of the same predicate, and the one that must not regress — this is the row two above
+    // in miniature, re-asserted beside the fork carve-out so a fix that simply stopped stamping on swaps
+    // (which would satisfy every line of the fork rows) has to argue with a test.
+    const h = await startHost("ffffffff", { resume: "sess-launch" }, () => undefined);
+    expect(rosterIds()).toEqual(["sess-launch"]);
+    await h.resumeSession("sess-walked-to");
+    expect(rosterIds()).toEqual(["sess-walked-to"]);
+    const { del } = boot();
+    expect((await del("sess-walked-to")).error?.code).toBe(ERR.BUSY);
+    expect((await del("sess-launch")).result).toEqual({ ok: true });
+  });
 });

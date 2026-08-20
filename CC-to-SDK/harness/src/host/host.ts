@@ -471,7 +471,17 @@ export class SessionHost {
     // first-message restore — must CLEAR it, not leave the previous value standing: publishing a discarded
     // conversation's id is how /export comes to write the transcript the user just threw away (the trap
     // chatAdapter's own clearSession comment records).
-    this.resumedFrom = extra.resume;
+    //   …UNLESS THE NEW ENGINE FORKS (M5 fix wave G / G4). `start()` already withholds the stamp for a
+    // forking launch (D-M5-21b: a forking resume names the SOURCE conversation rather than the id this
+    // host will hold), and `engineConfig` spreads the launch config's `forkSession` into every swap — so
+    // the carve-out has to hold here too, and it did not. A forking host that resumed or rewound published
+    // the SOURCE on its `state` frame and on its roster row before the fork had reported any id, and the
+    // app server's fleet layer adopts what that frame names: the PARENT conversation was auto-unarchived,
+    // reserved as live by a host that only reads it, and made undeletable — the exact inversion D-M5-21b
+    // was written to prevent, on the one path it did not cover. The predicate is the effective config's,
+    // not the launch config's, so it stays true of whatever the caller overrides.
+    const forks = Boolean(extra.forkSession ?? this.opts.config.forkSession);
+    this.resumedFrom = forks ? undefined : extra.resume;
     // Open the resumed engine at the CURRENT runtime mode (`this.mode`), not the launch config's. `this.mode`
     // is the one field every writer (status-frame intercept, set_permission_mode, plan-upgrade) keeps
     // truthful for exactly this purpose — a Tab-laddered or plan-earned mode is live user intent, and
