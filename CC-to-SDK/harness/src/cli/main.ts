@@ -68,6 +68,11 @@ export interface MainDeps {
    *  banner's account race has a DEADLINE, and a test that could not drive it would either sleep for real or
    *  pin nothing. One caller today (`ACCOUNT_LABEL_BUDGET_MS`). */
   delay: (ms: number) => Promise<void>;
+  /** F8 T7 review finding — the banner's row-count reader. `process.stdout.rows` is `undefined` in every
+   *  vitest worker (the default forks pool gives stdout a pipe, not a pty), so a bare global read here is
+   *  invisible to any test this suite can contain: deleting the wire at the call site left 118/118 green.
+   *  Same idiom as `useChat.ts`'s `rowsFn`, one directory over. */
+  rows: () => number | undefined;
 }
 const defaults: MainDeps = {
   runHostMain: realRunHostMain, collectFleet: realCollectFleet, spawnDetached: realSpawnDetached,
@@ -103,6 +108,7 @@ const defaults: MainDeps = {
   // `unref` so a race the OTHER arm already won cannot keep the event loop alive for the rest of the budget:
   // this timer exists to bound a wedge, never to delay an exit.
   delay: (ms) => new Promise<void>((r) => { setTimeout(r, ms).unref?.(); }),
+  rows: () => process.stdout.rows,
 };
 
 const msg = (e: unknown): string => (e as Error)?.message ?? String(e);
@@ -477,7 +483,7 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
         // F8 T7: rows/screenReader ride along too — the same launch-truth rule as everything else on this
         // line. `process.stdout.rows` is undefined off a TTY, which welcomeBanner treats as "unknown" (the
         // FULL box), not "degrade" — the same honesty the account race above already has to observe.
-        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}), rows: process.stdout.rows, screenReader: screenReaderEnabled(process.env) }) } }] }),
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}), rows: deps.rows(), screenReader: screenReaderEnabled(process.env) }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has

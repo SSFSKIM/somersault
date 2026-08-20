@@ -61,6 +61,10 @@ function deps(over: Partial<MainDeps> = {}): MainDeps {
     // on no real timer at all, and every test that does not care about the account race gets the arm where
     // `accountInfo()` (or its absence) decides. A test that wants the deadline injects `fakeClock().delay`.
     delay: () => new Promise<void>(() => {}),
+    // F8 T7 review finding — the seam that replaces the bare `process.stdout.rows` read the vitest worker
+    // can never supply (it is `undefined` under every pool, pipe or pty alike). `undefined` is also the
+    // suite's actual truth, so every existing banner test stays on the full-box arm exactly as before.
+    rows: () => undefined,
     ...over,
   };
 }
@@ -507,6 +511,22 @@ describe("main — run: foreground (Task 7)", () => {
         isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
       })));
     } finally { vi.unstubAllEnvs(); }
+    const lines = clientCalls[0].initialEntries[0].event.lines as { text: string; segments?: unknown }[];
+    expect(lines).toHaveLength(1);                       // the full box is many lines; this proves collapse
+    expect(lines[0]!.segments).toBeTruthy();              // the two-span shape, not a plain text degrade
+    expect(bannerText(clientCalls[0])).not.toContain("Tips for getting started");
+  });
+  // F8 T7 review finding — the OTHER degraded arm, driven through the `deps.rows()` seam instead of an env
+  // var. `process.stdout.rows` is `undefined` in every vitest worker, so this is the only way to prove the
+  // call site actually reads the injected height rather than a bare global (sabotage-verified: deleting
+  // `rows: deps.rows()` at the call site turns this test red).
+  it("a short-terminal launch (deps.rows() below BANNER_MIN_ROWS) reaches the call site and collapses the banner", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+      rows: () => 24,
+    })));
     const lines = clientCalls[0].initialEntries[0].event.lines as { text: string; segments?: unknown }[];
     expect(lines).toHaveLength(1);                       // the full box is many lines; this proves collapse
     expect(lines[0]!.segments).toBeTruthy();              // the two-span shape, not a plain text degrade

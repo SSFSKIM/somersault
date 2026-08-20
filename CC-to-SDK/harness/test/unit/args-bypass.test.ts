@@ -52,6 +52,9 @@ function gateDeps(over: Partial<MainDeps> & { prefs?: CcxPrefs } = {}): MainDeps
     // W-C T13's launch clock. Never fires: these launches carry no `accountInfo`, so the banner's account
     // race settles on the absent-method arm and no timer of any kind may run in this file.
     delay: () => new Promise<void>(() => {}),
+    // F8 T7 review finding — this helper builds a complete MainDeps literal rather than reusing cli-main's,
+    // so it needs its own stub. `undefined` matches the vitest worker's actual `process.stdout.rows`.
+    rows: () => undefined,
     ...rest, shown,
   };
 }
