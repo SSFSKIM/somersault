@@ -118,8 +118,9 @@ are spawned *from inside* the kernel — nothing authoritative lives in the adap
 
 - Python **3.12** (`uv python install 3.12; uv venv ~/.ptc/venv --python 3.12`).
 - Packages: `ipykernel`, `jupyter_client`, `nest_asyncio`, `claude-agent-sdk`, `httpx`,
-  `markdownify`, `pydantic`, `pyyaml`, `pandas`, `numpy`, plus the local `ptc` package
-  (editable when run from a checkout).
+  `markdownify`, `pydantic`, plus the local `ptc` package (editable when run from a
+  checkout) and convenience extras `pyyaml`, `pandas`, `numpy`, `matplotlib` (matplotlib so
+  the inline backend publishes figures through the display shim).
 - A `~/.ptc/venv/.ptc-version` stamp (package version + python version + dependency-set hash);
   mismatch triggers re-provision. A lock directory guards concurrent provisioning.
 
@@ -152,10 +153,12 @@ A kernel is spawned on first `exec` for a session key:
   `meta.json`, never the kernel key, so an alias-keyed kernel (fallbacks 3–5 below) degrades
   those two features explicitly (`RuntimeError("no claude_session_id known for this kernel")`)
   instead of resuming a wrong or nonexistent session.
-- A bootstrap cell (executed by whichever client spawned the kernel, at
-  `SNAPSHOT`-style raised output cap) binds the runtime API into the namespace, applies
-  `nest_asyncio`, installs the per-cell output tee and the idle watchdog, and sets
-  `NO_COLOR=1` / uncolored IPython.
+- A bootstrap cell (executed by the client that spawned the kernel while the key lock is
+  held; `ready` is written only after it succeeds, so `ready` means *bootstrapped*) binds
+  the runtime API into the namespace, installs the per-cell output tee, the terminal-record
+  hooks, the display shim, and the idle watchdog, and sets `NO_COLOR=1` / uncolored IPython.
+  `nest_asyncio` is applied only if spike S1 proves it necessary — ipykernel supports
+  top-level `await` natively and the runtime API never nests `run_until_complete`.
 
 **Session-key resolution**, in order (first hit wins):
 
@@ -196,7 +199,9 @@ kernel with the namespace intact.
   Streams alone cannot reconstruct a finished cell for a client that subscribed late (iopub is
   broadcast-only); the record makes completion, result, error, and duration recoverable by a
   **fresh adapter** — a cell is "running" iff its log exists and its record does not and the
-  kernel process is live. Display-data images are captured kernel-side (a display-publisher
+  kernel process is live. On each kernel (re)spawn the previous epoch's `cells/` directory is
+  rotated to `cells-prev-<ts>/` so execution counts never collide across kernel processes;
+  `wait` on a rotated cell reports that it belongs to a previous kernel epoch. Display-data images are captured kernel-side (a display-publisher
   shim saves PNGs to `cells/<n>-<k>.png` and lists them in the record).
 - **Audit log**: every mutation made through the runtime API appends a JSON line to
   `~/.ptc/kernels/<key>/audit.jsonl`:
@@ -231,10 +236,10 @@ loaded. Five tools:
 
 ```
 [cell 14 · ok · 1.8s]
-<stdout>
-<stderr, prefixed "stderr:" per line when both present>
-<result repr, if the cell's last expression produced one>
-<on error: ename+evalue and a trimmed traceback (frames inside ptc internals elided)>
+<stream output — stdout and stderr interleaved in arrival order, as the kernel-side tee
+ captured them (one merged log per cell; IPython's own tracebacks appear here)>
+<→ result: repr, if the cell's last expression produced one>
+<on error: ename+evalue appended when the traceback text is not already in the stream>
 edited src/a.py (+3/−1) · wrote notes/out.md · ran: npm test · spawned agent "api-reviewer"
 ```
 
@@ -368,7 +373,7 @@ agent.resume(session_id, **options) -> AgentHandle
 ### Sub-LM calls
 
 ```python
-await llm(prompt, *, model="haiku", system=None, max_tokens=4096, json_schema=None,
+await llm(prompt, *, model="haiku", system=None, json_schema=None,
           timeout=300) -> str | dict
 ```
 
@@ -822,3 +827,11 @@ Pending — written at finish.
   launcher, two-tier testing with a non-skippable keyless gate, M0 spike gate, Windows
   non-goal. Rejections and the live counter-evidence are recorded in the Decision Log and
   Surprises & Discoveries.
+- 2026-08-20 (planning pass): five drifts found while writing the execution plan and fixed
+  here — `nest_asyncio` is now conditional on spike S1 (ipykernel awaits natively);
+  the shaped result body is the kernel-side merged stream log (stdout/stderr interleaved in
+  arrival order), replacing the per-line "stderr:" prefix which a single tee cannot produce;
+  `llm()` loses its `max_tokens` parameter (the Agent SDK exposes no such knob); the venv
+  extras gain `matplotlib` (the display shim needs the inline backend to see figures); and
+  `cells/` rotates to `cells-prev-<ts>/` on every kernel respawn so execution counts never
+  collide across kernel processes. Plan: `docs/doperpowers/plans/2026-08-20-ptc-kernel.md`.
