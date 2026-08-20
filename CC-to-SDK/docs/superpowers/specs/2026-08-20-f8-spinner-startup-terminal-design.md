@@ -896,6 +896,16 @@ Fixed by seaming it through `MainDeps`, the idiom `useChat.ts:239` already uses.
 trap waits for anything that reads terminal geometry at a call site — and because the seam must keep
 returning `number | undefined` rather than defaulting, or every unknown silently becomes a measurement.
 
+**S-F8-u — the startup checklist reads the filesystem, and the plan's version would have killed the
+launch.** Task 8's facts (`emptyWorkspace`, `hasClaudeMd`) come from real `readdirSync`/`existsSync` calls
+at the launch site. The plan specified them unguarded. `cwd` is NOT guaranteed to exist on disk there —
+`args-bypass.test.ts`'s consent-gate test fakes `ensureWorktree` and `makeHost` so the directory is never
+created — and the throw propagates out of banner construction and takes down the whole program. A crash at
+startup, caused by a decorative tip. Guarded with a helper returning safe defaults on any read failure,
+matching the rule this file already applies to the account-info billing label: chrome must never cost the
+user their launch. The fallback is `emptyWorkspace: false`, which shows the `/init` tip rather than the
+empty-workspace one — the right way round, since a directory we could not read is not evidence of emptiness.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.

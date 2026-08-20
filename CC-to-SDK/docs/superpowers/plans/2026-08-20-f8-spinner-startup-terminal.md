@@ -1267,9 +1267,23 @@ adding `emptyWorkspace?: boolean; hasClaudeMd?: boolean; inHomeDir?: boolean;` t
 
 In `src/cli/main.ts`, beside Task 7's additions:
 
+**Guard the filesystem reads — a bare `readdirSync` here kills the launch.** `cwd` is not guaranteed to
+exist on disk at this point: `args-bypass.test.ts`'s consent-gate test fakes `ensureWorktree`/`makeHost` and
+never creates the directory, so an unguarded read throws `ENOENT` and takes down the whole program over a
+decorative tip. Same rule this file already applies to the account-info billing label a few lines above:
+chrome must never cost the user their launch.
+
 ```ts
-              emptyWorkspace: readdirSync(cwd).filter((n) => !n.startsWith(".")).length === 0,
-              hasClaudeMd: existsSync(join(cwd, "CLAUDE.md")),
+function checklistFsFacts(cwd: string): { emptyWorkspace: boolean; hasClaudeMd: boolean } {
+  try { return { emptyWorkspace: readdirSync(cwd).filter((n) => !n.startsWith(".")).length === 0, hasClaudeMd: existsSync(join(cwd, "CLAUDE.md")) }; }
+  catch { return { emptyWorkspace: false, hasClaudeMd: false }; }
+}
+```
+
+then at the call site:
+
+```ts
+              ...checklistFsFacts(cwd),
               inHomeDir: cwd === homedir(),
 ```
 
