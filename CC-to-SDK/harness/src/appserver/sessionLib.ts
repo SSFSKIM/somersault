@@ -17,12 +17,15 @@
 // live session (the store write is safe to make regardless; this handler just also keeps the in-memory
 // mirror in sync so a live thread's next view already reflects it). "Live" includes a session admitted
 // while the delete is mid-flight, which no single check can see: thread/delete pairs the check with a
-// reservation (server.ts's `deletingSessions`) so admission and deletion cannot both win.
+// reservation (server.ts's `deletingSessions`) so admission and deletion cannot both win. And it is not
+// only live-HERE: a session a running ccx process elsewhere on this machine holds is refused too
+// (D-M5-21c, server.ts's `liveInFleet` — the probe thread/resume and thread/archive already answer on).
 import { ERR } from "./rpc.js";
 import type { ThreadRecord } from "./registry.js";
-import { threadView, type AppServer, type Handler } from "./server.js";
+import { threadView, liveInFleet, LIVE_REFUSAL_FLEET, type AppServer, type Handler } from "./server.js";
 import {
   listSessions as realListSessions,
+  getSessionInfo as realGetSessionInfo,
   forkSession as realForkSession,
   renameSession as realRenameSession,
   tagSession as realTagSession,
@@ -30,8 +33,48 @@ import {
 } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { threadListParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./schema/threads.js";
+import { inArchivedPartition, listArchived } from "./archive.js";
+import { SessionStoreError, storeRefusal } from "./archiveDomain.js";
+import { auditSessionStore } from "../sessions/index.js";
 
 const DEFAULT_LIST_LIMIT = 200; // same default as the pre-Task-12 registry-only thread/list (server.ts)
+
+/** Every SESSION-store read is tagged HERE, at its own call, and the `try` wraps that one call and
+ *  nothing else. Widening it would relabel one subsystem's failure as another's — the defect Task 10
+ *  already had to fix once, where a session-store throw was answered as the marker store's fault. The tag
+ *  is `archiveDomain.ts`'s, not a second spelling of it: every route into this store must describe its
+ *  failures identically, which is exactly what they did not do (an `EACCES` that `thread/archive`
+ *  stripped to `<path>` and `thread/search` shipped verbatim, D-M5-25a).
+ *
+ *  Lives HERE rather than in search.ts because `thread/list` reads the same store through the same
+ *  swallowing reader, and two spellings of one tag is how the two surfaces came to disagree in the first
+ *  place. */
+export const storeRead = async <T>(read: () => Promise<T>): Promise<T> => {
+  try { return await read(); } catch (e) { throw new SessionStoreError(e); }
+};
+
+/** The store's READABILITY, established rather than inferred (D-M5-25a) — run before the read whose
+ *  emptiness it qualifies, because it is disk work like every other read on the request.
+ *
+ *  Only on the PRODUCTION origin. An injected reader is a different store, and its failures are the
+ *  injector's to raise; auditing the local filesystem behind one would judge a store the request never
+ *  touched. That gate is also the finding restated: this contract was pinned for fifteen reviews against
+ *  doubles that throw, on a reader that never does, so the origin the doubles stand in for is precisely
+ *  the one that had to start checking itself.
+ *
+ *  PER READER, and per handler, which the first version was not: it returned when ANY one of the three
+ *  was injected while the other two still read the real filesystem, so a PARTIAL injection skipped the
+ *  audit and then swallowed the very errno it exists to raise (constructed: `listSessions` injected, a
+ *  real transcript at mode 000, a page returned and no refusal). The store the audit walks is the local
+ *  filesystem, so what the gate has to ask is whether this request reads THAT store — which is a question
+ *  about each reader the handler calls, not about the deps bag as a whole. The audit itself stays
+ *  whole-store: it cannot be narrowed to the readers named here, and one real reader is enough reason to
+ *  establish the store is readable. */
+type StoreReader = "listSessions" | "getSessionMessages" | "getSessionInfo";
+export const auditIfReal = async (srv: AppServer, readers: readonly StoreReader[]): Promise<void> => {
+  if (readers.every((r) => srv.deps[r] !== undefined)) return;
+  await storeRead(() => auditSessionStore());
+};
 
 type Resolved = { ok: true; sessionId: string } | { ok: false; code: number; message: string };
 
@@ -42,7 +85,7 @@ type Resolved = { ok: true; sessionId: string } | { ok: false; code: number; mes
  *  frame, so a thread started this same tick and never yet turned has no sessionId to resolve to).
  *  Anything else is treated as a bare store sessionId and passed straight through — no registry lookup at
  *  all — which is exactly what lets a client address a session this server never opened. */
-function resolveThreadId(srv: AppServer, threadId: string): Resolved {
+export function resolveThreadId(srv: AppServer, threadId: string): Resolved {
   if (!threadId.startsWith("thr_")) return { ok: true, sessionId: threadId };
   const record = srv.registry.get(threadId);
   if (!record) return { ok: false, code: ERR.THREAD_NOT_FOUND, message: "Thread not found" };
@@ -54,8 +97,52 @@ function resolveThreadId(srv: AppServer, threadId: string): Resolved {
  *  currently backed by this store sessionId — regardless of how the caller spelled `threadId` (a `thr_…`
  *  id resolves to the SAME record this finds; a bare sessionId that happens to match a live thread's
  *  engine must be caught here too). */
-function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRecord | undefined {
+export function findLiveBySessionId(srv: AppServer, sessionId: string): ThreadRecord | undefined {
   return srv.registry.list().find((r) => r.sessionId === sessionId);
+}
+
+/** The store-knows ATOM (M5, D-M5-20): "does the session store have a row for this id", DI default
+ *  included, spelled ONCE. Three admission rules stand on it and they are deliberately DIFFERENT
+ *  predicates — `thread/searchOccurrences` admits on `live record OR store row`, `thread/archive` on the
+ *  store row ALONE (a live thread is separately refused BUSY by its own live-guard, so admitting on a live
+ *  record here would admit exactly the case that method must reject), `thread/unarchive` on `marker OR
+ *  store row` — so what is shared is this lookup and nothing above it. Extracting the whole refusal would
+ *  flatten three rules into one and invert `archive`.
+ *
+ *  What must not drift is the `srv.deps` OVERRIDE. Every caller's tests inject through it, so a call site
+ *  that re-spells the binding and drops the override reads the real session store while its own tests stay
+ *  green — passing for the wrong reason, and passing hardest on the machine that has real sessions on
+ *  disk. One binding, one place to get it wrong. */
+export async function storeKnows(srv: AppServer, sessionId: string): Promise<boolean> {
+  return (await storeRow(srv, sessionId)) !== undefined;
+}
+
+/** The same lookup, ROW and all. `storeKnows` is a predicate over it and stays a predicate, because the
+ *  three admission rules above are about existence and nothing else; this is for the one caller that needs
+ *  the row itself — `thread/searchOccurrences`, whose cursor is stamped with the transcript's generation
+ *  and derives it from the store's own metadata when this server does not hold the session live (D-M5-26).
+ *  One binding, one `srv.deps` override, one place to get it wrong — which is the whole reason the atom
+ *  above exists, so the second caller shares it rather than re-spelling it. */
+export async function storeRow(srv: AppServer, sessionId: string): Promise<SDKSessionInfo | undefined> {
+  const getInfo = srv.deps.getSessionInfo ?? ((sid: string) => realGetSessionInfo(sid, {}));
+  // The dep is declared `Promise<unknown | undefined>` on purpose — a test double must be able to answer
+  // with the two or three fields its own case is about rather than build a whole `SDKSessionInfo` — so the
+  // narrowing happens once, here, where the real reader's type is known, instead of at each caller.
+  return (await getInfo(sessionId)) as SDKSessionInfo | undefined;
+}
+
+/** A LIVE row's `title`/`tags`, filled from the store row for the same session — the half of the merged
+ *  projection that is not in `threadView`, because the registry record only carries these once a
+ *  `thread/name/set` or `thread/tag/set` has patched them. A patched field always wins: the same call that
+ *  wrote it persisted it, so the record is at least as fresh as the store.
+ *
+ *  EXPORTED, and the reason is a defect (D-M5-25c): `thread/search` composed its live rows with
+ *  `threadView` alone, so a session found BY its stored title came back as a row that did not carry the
+ *  title — the search's own `snippet` showing text the row it sits beside did not have. Two methods claim
+ *  to serve one projection, so the projection is one function. */
+export function fillFromStore(view: Record<string, unknown>, match: SDKSessionInfo): void {
+  if (view.title === undefined) view.title = match.summary;
+  if (view.tags === undefined) view.tags = match.tag !== undefined ? [match.tag] : undefined;
 }
 
 /** Store-only rows project to the SAME 14-field shape threadView produces (parent §5) — a client must not
@@ -104,32 +191,68 @@ export function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
  *  them. A live record whose `sessionId` has not yet latched (engine-faithful: undefined until the first
  *  turn's init frame) cannot be looked up in the store map at all — it is included as its own unmatched
  *  row, exactly like a fresh thread/list did before this task, and the store row it might one day match is
- *  independently listed as store-only until that happens. Cursor pages the MERGED array (offset cursor,
- *  Task 7's convention) — the merge, not either input alone, is what gets paginated. */
+ *  independently listed as store-only until that happens. Cursor pages the merge (offset cursor, Task 7's
+ *  convention) — never either input alone — and since Task 10, the merge AFTER the archived partition is
+ *  cut from it: the offset indexes `filtered`, the half being walked, at both ends (see below).
+ *
+ *  M5 Task 10 adds `archived`, and it selects a PARTITION rather than filtering one: omitted or `false`
+ *  lists only unarchived sessions — which is what this method already did, so an existing client sees no
+ *  change — and `true` lists only archived ones. It is the same partition `thread/search` publishes, off
+ *  the same predicate and the same published spelling (archive.ts's `inArchivedPartition`, core.ts's
+ *  `archivedParam`), because the spec hands it to the two methods in one sentence. */
 export const threadList: Handler = async (srv, ctx, id, params) => {
   const parsed = threadListParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const listFn = srv.deps.listSessions ?? realListSessions;
-  const storeRows = (await listFn({ cwd: parsed.data.cwd })) as SDKSessionInfo[];
+  // The SESSION store's readability, established before the listing that would otherwise report its
+  // failure as absence (D-M5-25a rev 2). `thread/search` audited from the day the finding landed and this
+  // method did not, which left the two answering opposite things about one broken store at one instant:
+  // the search box refused `-32603` while the thread picker served `{"data":[],"nextCursor":null}` — and
+  // of the two, a picker showing no threads is the more likely to be believed. The reason it was deferred
+  // was that a failure here fell through to `dispatch`'s generic catch, which replies `e.message` for
+  // EVERY handler and would have put node's absolute path on the wire; that is what this `try` removes.
+  // It wraps the two SESSION-store steps ALONE — the marker read below has its own, for the reason stated
+  // there — and answers through the same `storeRefusal` the archive routes and the search do.
+  let storeRows: SDKSessionInfo[];
+  try {
+    await auditIfReal(srv, ["listSessions"]);
+    storeRows = (await storeRead(() => listFn({ cwd: parsed.data.cwd }))) as SDKSessionInfo[];
+  } catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
   const bySessionId = new Map(storeRows.map((r) => [r.sessionId, r]));
   const seen = new Set<string>();
   const liveViews = srv.registry.list().map((r) => {
     const match = r.sessionId ? bySessionId.get(r.sessionId) : undefined;
     const view = threadView(srv, r);
-    if (match) {
-      seen.add(r.sessionId!);
-      if (view.title === undefined) view.title = match.summary;
-      if (view.tags === undefined) view.tags = match.tag !== undefined ? [match.tag] : undefined;
-    }
+    if (match) { seen.add(r.sessionId!); fillFromStore(view, match); }
     return view;
   });
   const storeOnlyViews = storeRows.filter((r) => !seen.has(r.sessionId)).map(storeOnlyView);
   const merged = [...liveViews, ...storeOnlyViews];
+  // The archived PARTITION (M5 Task 10, D-M5-3), applied to the MERGE and before the page is cut. The
+  // marker directory is read HERE, per request, and never cached: archived-ness is state another ccx
+  // process can change with one file operation, and a set held across requests would answer for the
+  // moment this server last looked. A failed read propagates — dispatch answers -32603 — because
+  // swallowing it into an empty set is the failure that looks like success (D-M5-8): every shelved
+  // session back in the default list, and `archived:true` answering "none" where the truth is "unknown".
+  // The `try` wraps `listArchived` ALONE, and that is the whole of why it is written this way rather than
+  // around the body: `deps.listSessions` above is the OTHER store, and a catch spanning both would answer
+  // a session-store failure with "archive marker store failed" — the mislabelling `SessionStoreError`
+  // exists to prevent (D-M5-18a). `storeRefusal` is archiveDomain's, reused rather than re-spelled, so
+  // the readers of this store describe its failures exactly as its writers do — composed from
+  // `code`+`syscall`, never node's own message, which ends in the operator's absolute home path.
+  let archivedSet: Set<string>;
+  try { archivedSet = await listArchived({ ccxDir: srv.deps.ccxDir }); }
+  catch (e) { const r = storeRefusal(e); ctx.peer.replyError(id, r.code, r.message); return; }
+  const wantArchived = parsed.data.archived === true;
+  const filtered = merged.filter((v) => inArchivedPartition(archivedSet, v.sessionId as string | undefined, wantArchived));
   const limit = parsed.data.limit ?? DEFAULT_LIST_LIMIT;
   const offset = parsed.data.cursor ? Number(parsed.data.cursor) : 0;
-  const page = merged.slice(offset, offset + limit);
+  // Paging is over `filtered`, both ends: the offset indexes the partition a client is walking, and
+  // exhaustion is reported against ITS length — comparing against `merged` would mint a cursor for a page
+  // that does not exist and leave the client paging past the end.
+  const page = filtered.slice(offset, offset + limit);
   const consumed = offset + page.length;
-  ctx.peer.reply(id, { data: page, nextCursor: consumed < merged.length ? String(consumed) : null });
+  ctx.peer.reply(id, { data: page, nextCursor: consumed < filtered.length ? String(consumed) : null });
 };
 
 /** `thread/fork`: resolve the source id, ask the store to fork it (a pure store-level copy — the source
@@ -156,7 +279,7 @@ export const threadFork: Handler = async (srv, ctx, id, params) => {
       ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down");
       return;
     }
-    srv.startThread(ctx, id, { resume: result.sessionId, unattended: parsed.data.unattended });
+    await srv.startThread(ctx, id, { resume: result.sessionId, unattended: parsed.data.unattended });
   } catch (e) {
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
   }
@@ -188,6 +311,16 @@ export const threadDelete: Handler = async (srv, ctx, id, params) => {
     if (srv.resumingSessions.has(resolved.sessionId) || findLiveBySessionId(srv, resolved.sessionId)) {
       ctx.peer.replyError(id, ERR.BUSY, "Thread is live in this server — close it first"); return;
     }
+    // The THIRD holder, and the one this guard is worst-placed to ignore (D-M5-21c): a ccx session running
+    // in ANOTHER process, found through the roster probe `thread/resume` and `thread/archive` already
+    // refuse on (server.ts's `liveInFleet`). Deleting is the one op that cannot be undone by whoever finds
+    // out later — this server was refusing to RESUME such a session and refusing to SHELVE it, then
+    // erasing the transcript that process is still appending to. The two in-process arms above stay ahead
+    // of it and stay synchronous (the reservation race is decided in this dispatch tick); this arm is real
+    // I/O, and the window it opens is the same one archive's own roster arm has and for the same reason.
+    // Its sentence is not the one above: "live in this server" is false here, and "close it first" is
+    // advice no request to this server can carry out.
+    if (await liveInFleet(srv, resolved.sessionId)) { ctx.peer.replyError(id, ERR.BUSY, LIVE_REFUSAL_FLEET); return; }
     const deleteFn = srv.deps.deleteSession ?? realDeleteSession;
     await deleteFn(resolved.sessionId);
     ctx.peer.reply(id, { ok: true });

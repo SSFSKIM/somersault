@@ -37,6 +37,69 @@ function routeInit(srv: AppServer, record: ThreadRecord, frame: { type?: string;
   if (sid) record.sessionId = sid;
 }
 
+/** M5 Task 13 (spec D-M5-22): latch the init frame's `terminal_slash_commands` onto the record, which
+ *  `thread/capabilities/read` then serves as an optional field. Probe 112 measured `["doctor","color"]`
+ *  beside 98 slash commands on a headless init frame, on BOTH origins' feeds.
+ *
+ *  ITS OWN ROUTE, NOT A BRANCH INSIDE routeInit — and that is the whole design, not a style choice. The
+ *  route above early-returns on `record.sessionId`, and a FLEET thread latches that id from the host's
+ *  `state` event (fleet.ts) rather than from any init frame, so on that origin the guard is already
+ *  satisfied before the first init frame ever arrives. Folded into that body, this would have latched
+ *  perfectly in every in-process test and never once run on a fleet thread.
+ *
+ *  LAST FRAME WINS, deliberately: init is re-emitted every turn (probe 112 saw two turns produce two init
+ *  frames on both feeds), so a first-wins latch would freeze a stale answer across a `thread/reinitialize`
+ *  or a mid-session command change. The recurrence is also what makes the fleet origin work at all — an
+ *  attaching client's follow burst is replay-marked and dropped by `installRouter`, so a once-per-process
+ *  init would have been unreachable there.
+ *
+ *  EVERY INIT FRAME IS AUTHORITATIVE, INCLUDING ONE THAT OMITS THE KEY (M5 Task 13 review, F1). The SDK
+ *  declares the field "present only when non-empty; absent on CLIs that predate the field, and on sessions
+ *  where no advertised command carries the tag" (`sdk.d.ts`, `SDKSystemInitMessage`) — so the engine
+ *  reports "none" by OMISSION and never by `[]`. A route that only wrote on a present key would therefore
+ *  have three defects at once: `[]` unreachable, "the engine says none" indistinguishable from "no init
+ *  frame yet", and — because init recurs per turn — a non-empty list latched once and then served forever,
+ *  with a `thread/capabilities/changed` re-read handing the client fresh `capabilities.commands` beside a
+ *  stale list. So a key-less init frame writes `[]`: a pre-field CLI saying "nothing to hide" and a session
+ *  saying "nothing tagged" are the same instruction for the client class this field exists for (a remote UI
+ *  deciding what to hide), and collapsing them is honest rather than lossy. The one state left to absence
+ *  is the one the server genuinely does not know: no init frame has arrived on this thread at all.
+ *    RE-EXAMINED AND KEPT (fix wave I / scalpel-5#1, declined with its reason). The objection that remains
+ *  is that a PRE-FIELD executable which really does advertise terminal-only built-ins is told `[]` — a
+ *  known-empty answer for a state the engine never reported. True, and the alternative on offer is to
+ *  resolve it from the init frame's `claude_code_version`, which would mean this server maintaining a
+ *  version→feature table for a field whose introduction version is documented nowhere it can read, being
+ *  wrong in a direction no test here can catch, and replacing one published semantic with another on a
+ *  shipped surface. Against that: the CLI this repo ships sends the field on every init frame (measured
+ *  3/3 over 3 turns, acceptance leg 6), so the branch is unreachable on it, and a client that needs
+ *  certainty already has `capabilities.commands` beside this list to compare against.
+ *
+ *  A MALFORMED VALUE IS STILL IGNORED, and that is a different case from an omitted one: an array with a
+ *  non-string in it (or any non-array) is a frame this server does not understand, not a frame saying
+ *  "none". Publishing a filtered copy would silently drop entries a client needs, so the previous (or
+ *  absent) answer stands — the same discipline routeTodo uses for a malformed snapshot.
+ *
+ *  A CHANGE IS ANNOUNCED (fix wave E, D-M5-27). The field is served by `thread/capabilities/read`, and a
+ *  client reads capabilities once, at thread start — the natural moment, and before the first init frame on
+ *  every origin. Three transitions of the published value produced ZERO frames on the wire while the
+ *  neighbouring `commands_changed` route fired for its own, so a client was never told to look again and
+ *  its `terminalSlashCommands` stayed whatever it had been at the moment it asked. The announcement is the
+ *  push this surface already has — `thread/capabilities/changed`, a ping whose payload never carries the
+ *  list — so a client that handles the neighbouring route handles this one with no new code.
+ *  ON CHANGE, not on every init frame: init recurs once per turn, so announcing every one would put a
+ *  capability push on the wire per turn saying nothing changed. The first latch IS a change (the field goes
+ *  from absent to known), and that is the transition a fleet attach depends on. */
+function routeTerminalCommands(srv: AppServer, record: ThreadRecord, frame: { type?: string; subtype?: string; terminal_slash_commands?: unknown }): void {
+  if (frame?.type !== "system" || frame.subtype !== "init") return;
+  const list = frame.terminal_slash_commands;
+  const next = list === undefined ? [] : Array.isArray(list) && list.every((c) => typeof c === "string") ? (list as string[]) : undefined;
+  if (next === undefined) return; // malformed: not a frame saying "none", so the previous answer stands
+  const prev = record.terminalSlashCommands;
+  record.terminalSlashCommands = next;
+  if (prev !== undefined && prev.length === next.length && prev.every((c, i) => c === next[i])) return;
+  srv.broadcast(record.id, "thread/capabilities/changed", { threadId: record.id });
+}
+
 /** Absorbed from the deleted `armPlanUpgrade`'s own status-frame watcher (planUpgrade.ts, D-M2-6):
  *  `armPlanUpgrade` now only sets `record.planUpgradeMode` (the mode the approval GRANTED, Wave T t10);
  *  this route is what actually applies it, once, when the engine's own post-approval status frame is
@@ -220,38 +283,54 @@ function routeTodo(srv: AppServer, record: ThreadRecord, frame: { type?: string;
   }
 }
 
-const ROUTES: ((srv: AppServer, record: ThreadRecord, frame: any) => void)[] = [
-  routeInit,
-  routeStatus,
-  routeSettingsMirror,
-  routeTokenUsage,
-  routeLimits,
-  routeBackgroundTasks,
-  routeTaskNotification,
-  routeCapabilities,
-  routeTodo,
+/** A route, plus whether a REPLAYED frame is one of its inputs. The flag exists because the answer is not
+ *  the same for every route and was being given once for all of them — see `installRouter` below. */
+interface Route { run: (srv: AppServer, record: ThreadRecord, frame: any) => void; onReplay?: true }
+const ROUTES: Route[] = [
+  { run: routeInit },
+  // The ONE route a replayed frame feeds (fix wave E, D-M5-27). Every other route either mirrors state the
+  // attach already seeded from live truth or announces something that has happened; this one carries a
+  // DESCRIPTION of the session that has no other source at all, so dropping the replay left the field
+  // absent after every fleet attach until the host's next turn — for an idle host, indefinitely. The burst
+  // is ordered and the latch is last-wins, so the newest replayed init is what stands, and the host's next
+  // live init overwrites it.
+  { run: routeTerminalCommands, onReplay: true },
+  { run: routeStatus },
+  { run: routeSettingsMirror },
+  { run: routeTokenUsage },
+  { run: routeLimits },
+  { run: routeBackgroundTasks },
+  { run: routeTaskNotification },
+  { run: routeCapabilities },
+  { run: routeTodo },
 ];
 
 /** Installs the ONE per-thread frame router. The unsubscribe is stored on `record.routerOff`, called by
  *  `closeRecord` BEFORE the engine is disposed.
  *
- *  A REPLAYED frame runs NO route (M3 Task 7 review). Every route above either writes a mirror or
- *  announces news, and buffered history is neither: a fleet attach's follow burst carries whatever
- *  system/status frame the host's turn buffer happens to hold — the CLI's post-approval mode flip is
- *  routeStatus's own example — and routing it rewrites `record.settings` with a HISTORICAL value moments
+ *  A REPLAYED frame runs only the routes that DECLARE it as an input (M3 Task 7 review, narrowed by fix
+ *  wave E / D-M5-27). The default is still "no route", and the reason is unchanged: most routes either
+ *  write a mirror or announce news, and buffered history is neither — a fleet attach's follow burst carries
+ *  whatever system/status frame the host's turn buffer happens to hold (the CLI's post-approval mode flip
+ *  is routeStatus's own example), and routing it rewrites `record.settings` with a HISTORICAL value moments
  *  after the attach seeded the current one, then broadcasts that as an engine change. The whole burst's
  *  live truth arrives anyway: the host closes every follow replay with a `state` frame describing right
- *  now (host.ts:630), which is the fleet event layer's mirror seed, not this router's. Only the fleet
- *  engine ever sets the mark, so the in-process path is untouched by construction. Itemization is a
- *  SEPARATE subscription (fleet.ts) and deliberately keeps running on replayed frames: a replayed message
- *  inside a replayed turn window IS that turn's own item. */
+ *  now (host.ts:630), which is the fleet event layer's mirror seed, not this router's.
+ *  What that reasoning does not cover — and what a blanket drop therefore got wrong — is a route whose
+ *  subject has NO other source. `terminal_slash_commands` rides only the init frame, the attach seeds
+ *  nothing for it, and so the field was simply absent on every fleet thread until its host next took a
+ *  turn. Declaring the exception per route rather than per frame is what keeps the two answers from being
+ *  one answer again.
+ *  Only the fleet engine ever sets the mark, so the in-process path is untouched by construction.
+ *  Itemization is a SEPARATE subscription (fleet.ts) and deliberately keeps running on replayed frames: a
+ *  replayed message inside a replayed turn window IS that turn's own item. */
 export function installRouter(srv: AppServer, record: ThreadRecord): void {
   const epoch = record.epoch; // frames from an engine superseded by a rewind swap must never land
   record.routerOff = record.session.onFrame((frame: any, replay?: true) => {
-    if (replay) return;
     if (record.epoch !== epoch) return;
     for (const route of ROUTES) {
-      try { route(srv, record, frame); } catch { /* one route's failure is not another's — same frame */ }
+      if (replay && !route.onReplay) continue;
+      try { route.run(srv, record, frame); } catch { /* one route's failure is not another's — same frame */ }
     }
   });
 }

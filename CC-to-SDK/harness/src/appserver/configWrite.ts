@@ -1,0 +1,622 @@
+// src/appserver/configWrite.ts — write primitives (spec D-M5-13/14 rev 3, lock rev D-M5-24; plan
+// review F3/F4/F14/F20). The version check is ATOMIC WITH THE WRITE: callers run
+// read→validate→apply→commit inside `withFileLock`, which stacks an in-process per-path chain (two
+// requests in this server) under a `<file>.lock` DIRECTORY (two servers on this machine). Ownership is
+// the NAME of the marker inside that directory and never its bytes; the claim is published by `rename`;
+// liveness is a LEASE carried in that same name, which the holder refreshes by renaming it. The block above `withFileLock` says why each is load-bearing.
+import { readFile, writeFile, rename, unlink, stat, chmod, mkdir, realpath, lstat, readlink, readdir, rmdir } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { settingsMerge } from "./configLayers.js";
+
+// `ConfigLocked` is NOT a validation failure: the request was well-formed and the target real, another
+// writer simply holds it. configDomain maps it to a different wire code for exactly that reason.
+export class ConfigError extends Error {
+  constructor(public code: "ConfigVersionConflict" | "ConfigValidationError" | "ConfigLocked", message: string) { super(message); }
+}
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const FORBIDDEN = new Set(["__proto__", "constructor", "prototype"]);
+const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+
+/** The same three keys refused as keyPath SEGMENTS are refused anywhere inside a written VALUE (review
+ *  M4). Without this the rule disagreed with itself: a literal `__proto__` key inside an upsert value
+ *  reaches `settingsMerge`'s `out[k] = …`, which invokes `Object.prototype`'s `__proto__` SETTER — the
+ *  merged node's prototype is reassigned and the key vanishes from the written JSON, while the same key
+ *  under `replace` round-trips intact. A silent vanish is a worse answer than a refusal.
+ *
+ *  The walk is DEPTH-BOUNDED, and it is the first thing a written value meets, so the bound covers the
+ *  two recursions behind it (`settingsMerge`, `JSON.stringify`) too. A value nested past the engine's
+ *  stack survives `JSON.parse` but threw `RangeError` here, which configDomain maps to INTERNAL — a
+ *  client-supplied shape has to come back as a validation refusal. 64 is two orders of magnitude under
+ *  the depth that still walked fine (4000) and an order of magnitude over the deepest real settings
+ *  shape (a hook matcher nests about eight). */
+const MAX_VALUE_DEPTH = 64;
+function assertWritableValue(value: unknown, path: string[], depth = 0): void {
+  if (depth > MAX_VALUE_DEPTH) throw new ConfigError("ConfigValidationError", `value nests deeper than ${MAX_VALUE_DEPTH} levels (at value path "${path.join(".")}")`);
+  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) assertWritableValue(value[i], [...path, String(i)], depth + 1); return; }
+  if (!isPlainObject(value)) return;
+  for (const k of Object.keys(value)) {
+    if (FORBIDDEN.has(k)) throw new ConfigError("ConfigValidationError", `key "${k}" is not writable (at value path "${[...path, k].join(".")}")`);
+    assertWritableValue(value[k], [...path, k], depth + 1);
+  }
+}
+
+/** D-M5-13 exactly: replace sets (null deletes); upsert deep-merges with the READ side's customizer
+ *  (null refuses); parents created as objects; a non-object parent refuses with the doc untouched.
+ *  The three prototype segments refuse outright (D-M5-12 rev 3) — as a keyPath segment AND anywhere
+ *  inside the value — and every lookup is own-property: an opaque-segment contract must not be a
+ *  pollution channel. Pure — returns a new doc. */
+export function applyEdit(doc: Record<string, unknown>, keyPath: string[], value: unknown, strategy: "replace" | "upsert"): Record<string, unknown> {
+  if (keyPath.length === 0) throw new ConfigError("ConfigValidationError", "keyPath must not be empty");
+  for (const seg of keyPath) if (FORBIDDEN.has(seg)) throw new ConfigError("ConfigValidationError", `keyPath segment "${seg}" is not writable`);
+  assertWritableValue(value, keyPath);
+  const out = { ...doc };
+  let node = out;
+  for (let i = 0; i < keyPath.length - 1; i++) {
+    const seg = keyPath[i];
+    const cur = own(node, seg) ? node[seg] : undefined;
+    if (cur === undefined) { const next: Record<string, unknown> = {}; node[seg] = next; node = next; continue; }
+    if (!isPlainObject(cur)) throw new ConfigError("ConfigValidationError", `keyPath segment "${seg}" is not an object`);
+    const copy = { ...cur }; node[seg] = copy; node = copy;
+  }
+  const leaf = keyPath[keyPath.length - 1];
+  if (strategy === "replace") {
+    if (value === null) delete node[leaf]; else node[leaf] = value;
+    return out;
+  }
+  if (value === null) throw new ConfigError("ConfigValidationError", "upsert with null has no meaning; use replace to delete");
+  node[leaf] = own(node, leaf) ? settingsMerge(node[leaf], value) : value;
+  return out;
+}
+
+/** TWO cases only — BYTES in, token out. The wire's THIRD token, "unreadable" (a settings file that is
+ *  there but whose bytes never reached us), is minted by configDomain.ts's versions walk from LAYER
+ *  state; it is not a property of any bytes, so it cannot be minted here.
+ *
+ *  A `Buffer`, and the type is the point (fix wave H / H3). D-M5-18 defines the version token as the
+ *  sha256 of the file's RAW BYTES, and every caller used to reach it through `readFile(…, "utf8")` — so
+ *  what was hashed was the DECODED TEXT, and the published definition and the implementation disagreed.
+ *  They disagree observably: 0x80 and 0x81 inside an otherwise valid JSON string are two different files
+ *  that both decode to U+FFFD, so both were minted the same token while their sha256s differ. Taking a
+ *  `Buffer` is what makes the decoded string unhashable here rather than merely unhashed. */
+export function versionToken(bytes: Buffer | null): string {
+  return bytes === null ? "absent" : createHash("sha256").update(bytes).digest("hex");
+}
+
+export async function readTargetDoc(filePath: string): Promise<{ doc: Record<string, unknown>; version: string }> {
+  let bytes: Buffer;
+  try { bytes = await readFile(filePath); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return { doc: {}, version: "absent" };
+    // The write-side half of Task 2 review I1: a target that EXISTS but could not be read (EACCES on a
+    // write-only settings file, EISDIR on a directory at the path) is refused as a validation failure,
+    // not leaked as an internal error — never write bytes over bytes we were never able to see.
+    throw new ConfigError("ConfigValidationError", `target settings file could not be read: ${(e as Error).message ?? String(e)}`);
+  }
+  const body = bytes.toString("utf8").replace(/^﻿/, "");
+  // A blank (or BOM-only) file is an EMPTY doc, exactly as `readLayers` already treats it — upstream's
+  // loader does too (review I2). Sending it to JSON.parse instead made `config/read` report the file
+  // healthy while every write against it refused forever, with no way out through the API. The token is
+  // the hash of the real bytes, NOT "absent": the file exists, and a CAS check must be able to see it.
+  if (body.trim() === "") return { doc: {}, version: versionToken(bytes) };
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); }
+  catch { throw new ConfigError("ConfigValidationError", "target settings file is not valid JSON; fix it before writing through this API"); }
+  if (!isPlainObject(parsed)) throw new ConfigError("ConfigValidationError", "target settings file is not a JSON object");
+  return { doc: parsed, version: versionToken(bytes) };
+}
+
+/** ONE spelling per LOOKUP path (review I2): whatever a caller names, this answers with the same string
+ *  before and after that file's own creation. `realpath` answers only for a path that EXISTS, so a file
+ *  resolved before and after creation came back under two different names — the literal one first, the
+ *  canonical one after — and on macOS, where `/var` and `/tmp` are themselves symlinks, those two strings
+ *  genuinely differ. A client could then correlate neither its own two write replies nor a write reply
+ *  with a read reply, and the pre-creation spelling took a DIFFERENT `<file>.lock`.
+ *
+ *  So the deepest ANCESTOR that exists is canonicalized and the missing tail is rejoined onto it: the
+ *  answer no longer depends on whether the leaf — or its parent directory — has been created yet.
+ *
+ *  It canonicalizes the PARENT and keeps the leaf, which is what makes it the right answer for
+ *  `config/read`'s `layers[].filePath` — the read side reports WHERE A LAYER IS LOOKED UP. It is therefore
+ *  NOT always the same string as `resolveRealTarget`'s, which follows the leaf link to report the real file
+ *  a write landed in (and that file is the lock identity). The two diverge in exactly one shape — the
+ *  settings file itself is a symlink — and there each answer is the correct one for its own caller: a
+ *  project `settings.json` symlinked at the user file makes `config/read` name `<proj>/.claude/settings.json`
+ *  (the project layer really is looked up there) while the write reply names `<home>/.claude/settings.json`
+ *  (the bytes really landed there). Everywhere else — including every path whose leaf is a plain file or
+ *  does not exist yet — the two agree, which is the correlation the I2 fix was for. */
+export async function canonicalPath(filePath: string): Promise<string> {
+  const tail: string[] = [];
+  for (let cur = filePath; ;) {
+    const parent = dirname(cur);
+    tail.unshift(basename(cur));
+    try { return join(await realpath(parent), ...tail); } catch { /* the parent is missing too — climb */ }
+    // Belt and braces, and UNREACHABLE by measurement: `dirname` is its own fixed point only at the root,
+    // and `realpath("/")` has already answered by then, so the climb itself is what guarantees this
+    // function always answers. Kept anyway, because the alternative to a redundant exit here is a `for(;;)`
+    // with no exit at all if some host ever fails to resolve its own root.
+    if (parent === cur) return filePath;
+    cur = parent;
+  }
+}
+
+/** A symlinked settings file resolves so tmp+rename replaces the REAL file, never the link (plan review
+ *  F14 — silently detaching managed symlinks). `realpath` answers only for a link whose target EXISTS;
+ *  a link that dotfile managers and provisioning scripts laid down ahead of the first write dangles, and
+ *  returning the literal path for it was the one case that still destroyed the link — the rename replaced
+ *  it with a regular file and the intended target was never created (review I3). So a dangling link is
+ *  walked by hand, relative targets against the link's own directory, and the walk is BOUNDED: a symlink
+ *  loop must refuse, never become a second hang.
+ *
+ *  EVERY exit is canonicalized, not just the entry: the walk's exits are the ones that answer for a file
+ *  that does not exist yet, which is exactly where the two-spellings-per-file bug lived (review I2).
+ *
+ *  No `mkdir` here (review M3): `withFileLock` and `writeTargetDoc` each create the parent they need WHEN
+ *  IT CAN BE CREATED, and creating it during RESOLUTION meant a request refused between here and the write
+ *  had already made a directory in a client-named location. The shapes `mkdir` cannot fix — a parent that
+ *  is there but is not a usable directory — are the subject of `assertWritableParent` below. */
+const SYMLINK_HOPS = 8;
+export async function resolveRealTarget(filePath: string): Promise<string> {
+  try { return await realpath(filePath); } catch { /* target missing, dangling link, or a loop — walk it */ }
+  let cur = filePath;
+  for (let hop = 0; hop < SYMLINK_HOPS; hop++) {
+    try {
+      const st = await lstat(cur);
+      if (!st.isSymbolicLink()) return canonicalPath(cur); // nothing to follow: the path (it just does not exist yet)
+    } catch { return canonicalPath(cur); } // no entry at all — the plain "file does not exist" case
+    // A `readlink` failure used to fall into the same catch and answer with the LINK's own path, which
+    // sent tmp+rename at the link and destroyed it — I3's detachment, re-entered through the error path.
+    // Only ENOENT is benign: the link went away between the two calls, so there is nothing left to
+    // detach and the literal path is still the answer. Any other failure means a link IS there and we
+    // cannot resolve it, and writing would replace it — refuse.
+    let link: string;
+    try { link = await readlink(cur); }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return canonicalPath(cur);
+      throw new ConfigError("ConfigValidationError", `settings path is a symlink that could not be resolved (${cur}): ${(e as Error).message ?? String(e)}`);
+    }
+    cur = resolve(dirname(cur), link);
+  }
+  throw new ConfigError("ConfigValidationError", `settings path resolves through more than ${SYMLINK_HOPS} symlinks (or a symlink loop): ${filePath}`);
+}
+
+/** THE FOURTH DETECTOR (fix wave I / scalpel-1#2), and the only one that asks about the path the CLIENT
+ *  named rather than the one we resolved it to. `resolveRealTarget` runs before the lock; acquiring a
+ *  contended target then BLOCKS for up to `staleMs + 5s`. Re-pointing the nominal symlink inside that
+ *  window is invisible to all three of the others — the lock is on the resolved path and is still ours,
+ *  the resolved entry is still an ordinary file, and its bytes are still the ones we read — so the write
+ *  committed to the abandoned target and returned its version while the engine for that project read a
+ *  different file. `ok` for a change no engine serves.
+ *
+ *  `ConfigLocked` for the same reason `assertNotRelinked` uses it: the client's move is "re-read and
+ *  retry", and the retry re-resolves and locks the file the operator now points at. A resolution that
+ *  cannot be taken at all is treated as a move rather than raised here — the retry surfaces its real
+ *  refusal, with the whole request's error handling around it instead of half of one.
+ *
+ *  It is a NARROWING, not a proof, exactly as the third detector is. What it removes is the thirty-five
+ *  seconds of lock wait, which is not a race but an ordinary duration. */
+export async function assertStillResolves(nominal: string, resolved: string): Promise<void> {
+  const now = await resolveRealTarget(nominal).then((p) => p, () => null);
+  if (now === resolved) return;
+  throw new ConfigError("ConfigLocked",
+    "the settings path resolves somewhere else than when this write was prepared; nothing was written — re-read and retry");
+}
+
+/** TARGETED, never a blanket catch — wrapping the whole write in one would swallow genuine internal
+ *  failures under a validation code. `mkdir(…, {recursive:true})` creates a missing parent and is the
+ *  ordinary first-write path, but it cannot fix a parent that is ALREADY something: a `.claude` that is a
+ *  dangling symlink (ENOENT), a symlink loop (ELOOP), or a regular file (EEXIST) came back to the client as
+ *  -32603 carrying node's raw `mkdir` message — an internal error for a filesystem shape the client owns
+ *  and can repair. `stat` follows links, so the three shapes separate cleanly from "nothing there yet":
+ *  that one is the ONLY ENOENT with no `lstat` entry behind it, and it is the one case that must proceed. */
+export async function assertWritableParent(filePath: string): Promise<void> {
+  const parent = dirname(filePath);
+  let st;
+  try { st = await stat(parent); }
+  catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT" && !(await lstat(parent).then(() => true, () => false)))
+      return; // nothing there at all — `mkdir` creates it, which is the whole first-write path
+    if (code === "ENOENT") throw new ConfigError("ConfigValidationError", `settings directory is a symlink that does not resolve: ${parent}`);
+    throw new ConfigError("ConfigValidationError", `settings directory cannot be used (${code ?? "unknown error"}): ${parent}`);
+  }
+  if (!st.isDirectory()) throw new ConfigError("ConfigValidationError", `settings directory is not a directory: ${parent}`);
+}
+
+/** What a caller asserts about the bytes it is replacing, checked at the LAST instant before the rename.
+ *  THREE independent detectors, because they fail independently and each answers about a different subject:
+ *  `commit` asks the LOCK whether this process still holds it, `expectVersion` asks the FILE whether anyone
+ *  committed since the caller read it, and `assertNotRelinked` asks the PATH whether it still names the same
+ *  kind of thing it named when it was resolved. The second holds even if the lock fails in a way the first
+ *  cannot see, which is the property that matters — no arrangement of an advisory lock can be trusted to
+ *  the point of skipping it — and the third holds even when both of the others are satisfied, because a
+ *  path swapped for a symlink keeps the lock valid and can keep the bytes identical.
+ *
+ *  THE LOCK'S DETECTOR AND THE RENAME ARE ONE CALL, and that is the whole of fix wave I / sweep#2. The
+ *  first shape of this interface handed out a bare `fence()` and left the caller to rename afterwards —
+ *  and the caller then grew two awaited filesystem operations in between (the relink check, the version
+ *  read), each added by a repair of its own. The fence's promise is exactly that the margin after it
+ *  resolves is a full `staleMs`; work placed after it SPENDS that margin, and a holder that outlasts the
+ *  window has its lease broken, after which its own rename destroys the successor's committed bytes. The
+ *  repair is not a second check before the rename: the caller no longer receives a way to say "verify, then
+ *  do something, then commit" — it hands the lock a SOURCE PATH and the lock performs the ownership
+ *  assertion, the lease refresh and the rename with nothing awaited between them. The destination is the
+ *  path the lock is held for, so committing anywhere else is unspellable too. */
+export interface CommitGuard {
+  /** the token the doc being replaced hashed to when this caller read it */
+  expectVersion: string;
+  /** the lock's own commit: assert ownership, refresh the lease, and rename `from` onto the locked path,
+   *  with nothing awaited in between. Throws `ConfigLocked` if this process no longer owns the lock. */
+  commit: (from: string) => Promise<void>;
+}
+
+/** THE THIRD DETECTOR (fix wave G / G2), and the one neither of the other two can see. `resolveRealTarget`
+ *  runs BEFORE the lock is taken (configDomain.ts) and its answer is the path everything after it names:
+ *  the lock identity, the doc read, the version read, the rename. If a symlink is planted at that resolved
+ *  path in the meantime, every READ follows it to some other file while `rename` replaces the LINK ENTRY —
+ *  so the write detaches a link the operator's dotfile manager put there and leaves the file it pointed at
+ *  untouched. Neither existing detector fires: the lock is still ours (the lock is a sibling path, not this
+ *  one) and the version still matches whenever the link's target holds the same bytes — or is not asserted
+ *  at all, since `expectedVersion` is optional on the wire.
+ *
+ *  So the IDENTITY of the path is re-asserted here, one syscall before the rename, exactly where the other
+ *  two are and for the same reason: it is the narrowest window a userspace writer can leave. `lstat` and not
+ *  `stat`, because following the link is precisely the mistake. THREE outcomes and only two may proceed —
+ *  a regular entry (the ordinary case) and no entry at all (the first write to a path that does not exist
+ *  yet, which `resolveRealTarget` answers for by design). A symlink refuses, and so does an `lstat` that
+ *  fails for any reason other than ENOENT: an identity we could not establish is not an identity we may
+ *  overwrite.
+ *
+ *  `ConfigLocked`, not a validation error, because the client's move is the one `BUSY` already means:
+ *  re-read and retry. A retry re-runs `resolveRealTarget`, which follows the new link and takes the lock on
+ *  the file it names — the write then lands where the operator pointed it. It is a NARROWING, not a proof:
+ *  a link planted between this `lstat` and the `rename` is still undetectable from userspace, exactly as a
+ *  byte written between the version read and the `rename` is. */
+async function assertNotRelinked(filePath: string): Promise<void> {
+  const kind = await lstat(filePath).then(
+    (s) => (s.isSymbolicLink() ? "symlink" : "entry"),
+    (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : "unknown"),
+  );
+  if (kind === "entry" || kind === "absent") return;
+  throw new ConfigError("ConfigLocked",
+    kind === "symlink"
+      ? "the settings path became a symlink while this write was being prepared; nothing was written — re-read and retry"
+      : "the settings path could not be re-identified while this write was being prepared; nothing was written — re-read and retry");
+}
+
+/** 2-space JSON + trailing newline, installed by tmp+rename. The rename installs the TMP file's mode, so
+ *  an existing target's mode is carried over first — settings files legitimately hold `env` values and
+ *  `apiKeyHelper` paths, and without this the first write through this API turned a deliberate 0600 into
+ *  the umask default 0644 (review I1). The tmp is CREATED at that mode instead of being repaired into it
+ *  afterwards: the repair left the SAME private bytes sitting in the same directory at the umask default
+ *  for the length of the write (measured — a 0600 settings file's tmp observed at 644 mid-write). The
+ *  chmod stays, because `writeFile`'s `mode` is umask-masked and can only land NARROWER than asked, so
+ *  it is the chmod that actually installs the mode — and it is UNCONDITIONAL (fix wave C), because the
+ *  umask masks the fallback too: a FRESH file promised 0600 (D-M5-14b) landed at 0400 under `umask 0277`
+ *  and at 0200 under `umask 0477`, and 0200 is a file this API can then never read back, so `config/read`
+ *  reported the layer `unreadable` and every later write to it refused. `chmod` is not umask-masked, so
+ *  one call makes the promise true in both directions. A target that does not exist yet has no mode to
+ *  carry and is created 0600 — its bytes are the same class of secret, and there is no later step that
+ *  would narrow it. Anything that fails before the rename takes the tmp with it: nothing used to, so a
+ *  failed rename (EISDIR against a directory at the path) parked those bytes on disk for good. */
+export async function writeTargetDoc(filePath: string, doc: Record<string, unknown>, guard?: CommitGuard): Promise<{ version: string }> {
+  await mkdir(dirname(filePath), { recursive: true });
+  // ONE bytes value, built once: it is what `writeFile` puts on disk AND what the reply's token hashes,
+  // so the two cannot describe different things (fix wave H / H3).
+  const bytes = Buffer.from(`${JSON.stringify(doc, null, 2)}\n`, "utf8");
+  const tmp = `${filePath}.tmp-${process.pid}-${Math.floor(Math.random() * 1e9)}`;
+  const mode = await stat(filePath).then((s) => s.mode & 0o7777, () => null);
+  try {
+    await writeFile(tmp, bytes, { mode: mode ?? 0o600 });
+    await chmod(tmp, mode ?? 0o600);
+    // The guards sit HERE — after the tmp is complete, immediately before the rename — because that is
+    // the narrowest window a userspace writer can leave between "I am still the writer" and "these bytes
+    // are the file". Checking earlier leaves the whole serialization of the write inside the window;
+    // checking after the rename is not a check at all, it is a post-mortem on a destroyed update.
+    //   THE LOCK'S DETECTOR IS LAST, AND IT IS THE RENAME (fix wave I / sweep#2). The other two run before
+    // it, so the ownership assertion has nothing awaited between itself and the commit — this used to be
+    // `fence(); lstat; readFile; rename`, three operations inside a margin the fence promises is a full
+    // stale window. What that ordering costs is one syscall of extra reach for the version read, which is
+    // the SAME residual that read already carries and states: a byte written between it and the rename is
+    // undetectable from userspace either way. What it buys is that a lease broken between the assertion
+    // and the commit — the case where the evicted owner overwrites its successor — needs the rename's own
+    // issuance to be delayed, rather than two file operations' worth of margin to be spent.
+    if (guard !== undefined) {
+      await assertNotRelinked(filePath);
+      const current = await readFile(filePath).then(versionToken, (e) => ((e as NodeJS.ErrnoException)?.code === "ENOENT" ? "absent" : null));
+      if (current !== guard.expectVersion)
+        throw new ConfigError("ConfigLocked", "the settings file changed while this write was being prepared; nothing was written — re-read and retry");
+      await guard.commit(tmp);
+    } else await rename(tmp, filePath);
+  } catch (e) { await unlink(tmp).catch(() => {}); throw e; }
+  return { version: versionToken(bytes) };
+}
+
+const chains = new Map<string, Promise<unknown>>();
+
+/** `mkdir` is umask-masked and `readdir` needs r+x, so a lock created under a umask that masks the owner
+ *  bits would be a lock nobody can inspect — the shape that wedged the old lock permanently. `chmod` is
+ *  not umask-masked, which is why every mode this file installs goes through one. */
+const LOCK_DIR_MODE = 0o700;
+const errnoOf = (e: unknown): string | undefined => (e as NodeJS.ErrnoException)?.code;
+
+/** ONE sentence for both halves of `fence`'s check. Ownership can be lost by the directory no longer naming
+ *  this writer OR by the refresh finding the marker gone, and those are two detections of ONE fact — the
+ *  client's move is identical, so a second string would only be a second thing to match on. */
+const LOCK_BROKEN = "this writer's lock was broken while it was held; nothing was written";
+
+/** What `withFileLock` hands its body. TWO members and only one of them can move a byte, which is the whole
+ *  of fix wave I / sweep#2: `commit` is the ONLY way to install a file at the locked path, and it performs
+ *  the ownership assertion itself, immediately before the rename it guards. A caller may still ask the
+ *  question on its own — `assertHeld` — and may still do work afterwards; that is safe precisely because
+ *  the commit asks again. What is not expressible any more is asking the question and then renaming, which
+ *  is the sequence that let two awaited file operations grow inside a margin the lease had already promised
+ *  away. */
+export interface LockHandle {
+  /** assert ownership and refresh the lease; throws `ConfigLocked` if this process no longer holds it */
+  assertHeld: () => Promise<void>;
+  /** assert ownership, refresh the lease, and rename `from` onto the locked path — nothing in between */
+  commit: (from: string) => Promise<void>;
+}
+
+/** A marker is named `<owner nonce>.<lease>`: WHO holds the claim and WHEN they last said so, in the one
+ *  thing `unlink` is conditional on (fix wave H / H1). The nonce is `<pid>-<base36>` and carries no `.`,
+ *  so the split is unambiguous; a name with no parsable lease is a marker this format did not write. */
+const leaseSep = ".";
+const markerOwner = (name: string): string => (name.includes(leaseSep) ? name.slice(0, name.lastIndexOf(leaseSep)) : name);
+const markerLease = (name: string): number => (name.includes(leaseSep) ? Number(name.slice(name.lastIndexOf(leaseSep) + 1)) : NaN);
+
+/** A name THIS LOCK'S OWN FORMAT could have written — `<pid>-<suffix>`, optionally `.<lease>` — and the
+ *  reason the break path cannot delete a stranger's file (fix wave I / scalpel-1#1). `readdir` FOLLOWS a
+ *  symlink, so a `<file>.lock` that is a link to some other directory answered the break path with that
+ *  directory's children; it judged the first one by its mtime and unlinked it THROUGH the link, and since
+ *  `rmdir` of a symlink fails, the acquire loop retried and ate the next child, and the next. Screening the
+ *  NAME is what makes that unspellable: the delete can only name a string this lock could have produced, so
+ *  a stranger's file is not a thing it can ask for — the same move as the acquire path's "unlink cannot
+ *  remove a directory" and the break path's "the delete can only spell the lease it read", one level up.
+ *  The suffix is deliberately `[0-9a-z]*` rather than the hex the nonce now uses: a marker written by an
+ *  older build carries a `Math.random().toString(36)` tail and must still be breakable. */
+const MARKER_NAME = /^\d+-[0-9a-z]*(?:\.\d+)?$/;
+
+/** A lock is a NON-EMPTY DIRECTORY at `<file>.lock`, published by `rename`, holding exactly one marker
+ *  file whose NAME is the owner's nonce (D-M5-24). Three properties fall out of that shape, and each one
+ *  closes a defect measured on the `open(wx)` + `unlink` lock it replaces:
+ *
+ *  1. **Acquire is one atomic syscall against an already-complete claim.** The claim is assembled in a
+ *     staging directory beside the target and renamed into place; `rename` onto a NON-EMPTY directory
+ *     fails ENOTEMPTY, so a live claim cannot be clobbered, and there is no instant in which the lock
+ *     exists without naming its owner. The old lock had that instant and a contending process was caught
+ *     inside it, reading an empty owner off a lock mid-creation.
+ *  2. **Every delete is content-conditional — which POSIX gives no way to make an `unlink` be.** The
+ *     owner is the marker's NAME, so `unlink(<lock>/<nonce>)` can only ever destroy that one owner's
+ *     claim; a successor's marker has a different name and is untouched. Removing the directory
+ *     afterwards is `rmdir`, whose emptiness precondition IS the atomic "no successor has claimed it"
+ *     test. And `unlink` cannot remove a directory at all (EPERM), so a fresh claim is immune BY TYPE to
+ *     the pathname-only delete that used to destroy it: with one abandoned lock and four contenders,
+ *     43 of 250 trials on one machine and 32 of 250 on another put two or more processes inside the
+ *     critical section at once, every one of them losing an update, with zero refusals reported.
+ *  3. **Staleness is a LEASE, and the lease is part of the NAME.** The holder republishes its marker
+ *     under a fresh lease on a timer, so a slow-but-live holder is no longer indistinguishable from a
+ *     dead one. At production settings a writer stalled 45s had its lock broken at exactly 30s; the
+ *     evictor then passed its version check, committed, and was told `ok` — and the evicted writer's own
+ *     rename destroyed those bytes 15s later. A holder that cannot refresh (SIGSTOP, a blocked event
+ *     loop, a clock jump) can still be evicted, so it must also FENCE before it commits: see `fence`
+ *     below and `CommitGuard`.
+ *       The lease rides the NAME rather than the mtime because that is what makes the break path's delete
+ *     content-conditional too (fix wave H / H1). With the lease in the mtime, a breaker read the age and
+ *     then deleted a marker whose name had not changed — so a holder that verified its nonce and
+ *     refreshed the lease INSIDE that window had its live claim deleted by a judgment made before the
+ *     refresh, which is precisely what `fence`'s margin promises cannot happen. A refresh is now a
+ *     `rename` to a new name, so the breaker can only ever name the marker it read, and a claim refreshed
+ *     after it was judged is unspellable by that judgment. Measured: `EVICTED holder ConfigLocked` one
+ *     commit after the holder's own fence had said the claim was its own and refreshed it, 3 of 3.
+ *
+ *  Nothing here ever reads the lock's bytes. That is what unwedges a lock created under a umask masking
+ *  the owner-read bit: the old release read its own nonce back to prove ownership, could not, and left
+ *  the lock in place forever — every later write to that target blocked out the deadline and refused.
+ *
+ *  BLOCKS while a foreign lock is live, and the wait is a normal outcome. A DEAD writer's leftover is
+ *  breakable once its lease is older than `staleMs` (30s by default), so a call that meets one waits out
+ *  the remainder of that window, breaks it, and proceeds. `ConfigLocked` fires when the leftover cannot be
+ *  removed, or when a live holder keeps its lease past the deadline (`staleMs` + 5s) — which is now the
+ *  honest answer to a genuinely slow peer rather than the theft it used to be. One number still sets both
+ *  "when is a lease dead" and "how long do I wait" (M5 review I3); callers that surface this on a wire must
+ *  say so — see configDomain.ts's `runConfigWrite`. */
+export async function withFileLock<T>(filePath: string, fn: (lock: LockHandle) => Promise<T>, opts: { staleMs?: number } = {}): Promise<T> {
+  const staleMs = opts.staleMs ?? 30_000;
+  const lockPath = `${filePath}.lock`;
+  // HEX, not `Math.random().toString(36)` (fix wave I / scalpel-1#1): the marker's name is now screened by
+  // a grammar before anything deletes it, and a nonce whose charset this file does not control is a nonce
+  // that grammar cannot promise to admit.
+  const nonce = `${process.pid}-${randomBytes(6).toString("hex")}`;
+  const stagePath = `${lockPath}.stage-${nonce}`;
+  const leaseName = (): string => `${nonce}${leaseSep}${Date.now()}`;
+  let markerName = leaseName();
+  const prev = chains.get(filePath) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(async () => {
+    await mkdir(dirname(lockPath), { recursive: true });
+    // The staging directory is removed on every exit from the loop below, including the refusal — but a
+    // process KILLED while it waits leaves one behind, and nothing reclaims it. Accepted, and named here
+    // rather than swept: the same is already true of `writeTargetDoc`'s tmp file, the residue is inert
+    // (no reader of this directory looks at it, and it never blocks an acquisition), and a sweep by age
+    // would be a new way to destroy a live contender's claim-in-waiting.
+    await mkdir(stagePath);
+    await chmod(stagePath, LOCK_DIR_MODE);
+    // The marker's CONTENT is a human reading it with `cat` during an incident; the mode it lands at is
+    // whatever the umask allows, and nothing depends on reading it, because ownership rides the name.
+    await writeFile(join(stagePath, markerName), `${nonce}\n${new Date().toISOString()}\n`, { mode: 0o600 });
+    const deadline = Date.now() + staleMs + 5_000;
+    try {
+      for (;;) {
+        // The lease starts when the claim LANDS, not when it was assembled. Without this a writer that
+        // waited out another's critical section acquired a claim already older than the stale window and
+        // was broken by the next contender within milliseconds — measured at 5 of 5 trials, three
+        // processes, sections outliving a 400ms window. One rename per attempt keeps the marker's lease
+        // bounded by a single syscall at the instant the `rename` publishes it.
+        const born = leaseName();
+        await rename(join(stagePath, markerName), join(stagePath, born)).then(() => { markerName = born; }, () => {});
+        try { await rename(stagePath, lockPath); break; }
+        catch (e) {
+          const code = errnoOf(e);
+          // ENOTEMPTY/EEXIST: someone's claim is there. ENOTDIR/EISDIR: something that is not one of our
+          // directories is. Anything else is a real filesystem failure and is not ours to absorb.
+          if (code !== "ENOTEMPTY" && code !== "EEXIST" && code !== "ENOTDIR" && code !== "EISDIR") throw e;
+          // ONLY a successful break may skip the retry budget (D-M5-14a #1). Every other outcome — the
+          // unlink failed (an immutable lock, or a read-only directory: EPERM/EACCES), a successor
+          // claimed the path first, the lock vanished mid-inspection — falls through to the deadline and
+          // the sleep. `continue`ing on those instead was an unbounded HOT spin: no refusal ever fired,
+          // and because the spinning call sits inside the in-process chain, every later write to that
+          // path queued behind it forever with no cancellation path.
+          if (await breakDeadLock(lockPath, staleMs)) continue;
+          if (Date.now() > deadline) throw new ConfigError("ConfigLocked", "config target is locked by another writer");
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      }
+    } catch (e) {
+      await unlink(join(stagePath, markerName)).catch(() => {});
+      await rmdir(stagePath).catch(() => {});
+      throw e;
+    }
+    // Held. The lease is refreshed from a timer, so the common stall — a critical section waiting on slow
+    // I/O — keeps the lock without the holder doing anything. `unref` so a lock never keeps a process
+    // alive past its work; while real work is in flight the loop is alive and the timer fires.
+    let lost = false;
+    // SERIALIZED, and the release waits for it: a refresh is now a `rename`, so one landing after the
+    // release's `unlink` would republish the marker under a name the release has no way to remove and
+    // leave the lock standing until it went stale. Two refreshes never overlap, and the last one is
+    // always finished before the claim is torn down.
+    let refreshing: Promise<void> = Promise.resolve();
+    const touch = (): Promise<void> => {
+      refreshing = refreshing.then(async () => {
+        if (lost) return;
+        const next = leaseName();
+        // Only a marker that is GONE means eviction. A transient rename failure just skips one refresh —
+        // treating it as eviction would fail a write for a hiccup, which is the opposite of the point.
+        // Same-millisecond refreshes rename a name onto itself, which POSIX defines as a successful
+        // no-op — and still ENOENTs if the claim has been taken, so the detection survives them.
+        try { await rename(join(lockPath, markerName), join(lockPath, next)); markerName = next; }
+        catch (e) { if (errnoOf(e) === "ENOENT") lost = true; }
+      });
+      return refreshing;
+    };
+    const beat = setInterval(() => { void touch(); }, Math.max(50, Math.floor(staleMs / 3)));
+    beat.unref?.();
+    /** Asserts that this process still owns the lock — refreshing the lease while it is there — and THEN
+     *  performs the commit itself, `rename(from, filePath)`, with nothing awaited in between.
+     *
+     *  THE COMMIT IS PART OF THE CHECK, not a thing the caller does afterwards (fix wave I / sweep#2). The
+     *  margin a passing ownership check buys is a full `staleMs`, and it is spent by whatever the caller
+     *  puts after it — which is how `writeTargetDoc` came to sit an `lstat` and a whole file read inside
+     *  it, each added by an unrelated repair, until a holder that outlasted the window could be evicted
+     *  and still rename its bytes over the successor's commit. Handing back a bare `fence()` is what made
+     *  that expressible; handing back a commit that takes a SOURCE PATH does not. The destination is this
+     *  lock's own `filePath`, so a commit onto any other path is unspellable as well.
+     *
+     *  The residual is named rather than implied: `rename` is one syscall, but its ISSUANCE still rides
+     *  libuv's threadpool, so a pool saturated past the stale window can delay it — the same irreducible
+     *  gap the version read already documents, now the only one left on this path. */
+    const assertHeld = async (): Promise<void> => {
+      // OWNERSHIP is the nonce; the lease beside it moves on every refresh, including one this process's
+      // own timer may land between the `readdir` and this comparison. Matching the whole name would make
+      // that a spurious eviction of ourselves.
+      const names = lost ? null : await readdir(lockPath).catch(() => null);
+      if (names === null || names.length !== 1 || markerOwner(names[0]) !== nonce) { lost = true; throw new ConfigError("ConfigLocked", LOCK_BROKEN); }
+      // THE REFRESH IS THE SECOND HALF OF THE CHECK, not a courtesy after it (fix wave G / G1). `touch`
+      // reports eviction by SETTING `lost` and RESOLVING — it must, because a transient refresh failure has
+      // to be survivable — so a fence that ignored its outcome had a hole exactly one syscall wide: the
+      // `readdir` above sees this writer's own marker, a stale-lock breaker unlinks it before the refresh
+      // lands, `lost` becomes true, and the fence returns `ok` anyway. The caller then read its version and
+      // renamed, which is an EVICTED owner and its successor committing from the same version — the
+      // lost-update class this whole lock exists to eliminate, re-entered through its own guard.
+      //   Note what makes the window real rather than theoretical: eviction is what happens to a holder that
+      // cannot refresh, and a holder that cannot refresh is one whose event loop or fs threadpool is stalled
+      // — which is also what stretches this window from microseconds to hundreds of milliseconds. The two
+      // are the SAME condition, so the gap is widest exactly when it is likeliest to be entered.
+      await touch();
+      if (lost) throw new ConfigError("ConfigLocked", LOCK_BROKEN);
+    };
+    // ONE spelling of the assertion, and the rename ADJACENT to it: `assertHeld` is a single awaited call
+    // that resolves only when this process still owns a freshly refreshed lease, so there is nothing
+    // between it and the `rename` below — the property this shape exists for, expressed without a second
+    // copy of the check to drift from the first.
+    const commit = async (from: string): Promise<void> => {
+      await assertHeld();
+      await rename(from, filePath);
+    };
+    try { return await fn({ assertHeld, commit }); }
+    finally {
+      clearInterval(beat);
+      // Release is ownership-scoped BY CONSTRUCTION, not by a read-then-check: the only marker we can
+      // name is our own, and `rmdir` refuses the moment a successor has claimed the directory. An
+      // overrun owner therefore cannot delete its successor's lock even in principle.
+      await refreshing.catch(() => {});
+      await unlink(join(lockPath, markerName)).catch(() => {});
+      await rmdir(lockPath).catch(() => {});
+    }
+  });
+  chains.set(filePath, run);
+  run.finally(() => { if (chains.get(filePath) === run) chains.delete(filePath); }).catch(() => {});
+  return run as Promise<T>;
+}
+
+/** One inspection of a lock we could not take. Answers whether something was actually REMOVED, because
+ *  that is the only outcome allowed to skip the retry budget. It never removes a claim whose lease is
+ *  alive, and it cannot remove a claim other than the one it inspected. */
+async function breakDeadLock(lockPath: string, staleMs: number): Promise<boolean> {
+  // THE ENTRY IS IDENTIFIED, NEVER FOLLOWED (fix wave I / scalpel-1#1). `lstat` and not `stat`, because
+  // following the link is exactly the mistake: a `<file>.lock` that is a SYMLINK to a directory answered
+  // `readdir` with that directory's children, and the break path then judged a stranger's file by its
+  // mtime and deleted it through the link. Anything that is not a directory in its own right is not one of
+  // our locks, and it carries no lease — a link a dotfile manager left, a lock file written by a build
+  // older than D-M5-24, a file another tool dropped — so it is broken on AGE alone, which is the only
+  // guarantee any of those formats ever made. Leaving one would dead-end every future write to this target.
+  //   The DELETE is `unlink`, which never follows a symlink and cannot remove a directory (EPERM/EISDIR),
+  // so this branch is incapable of destroying a live lock even if the entry became one between the `lstat`
+  // and the call: the wrong action is refused by the syscall rather than by our being quick.
+  const self = await lstat(lockPath).catch(() => null);
+  if (self === null) return false;   // ENOENT (it went away mid-inspection) or EACCES — the retried rename is the answer
+  if (!self.isDirectory()) {
+    if (Date.now() - self.mtimeMs <= staleMs) return false;
+    return await unlink(lockPath).then(() => true, () => false);
+  }
+  const names = await readdir(lockPath).catch(() => null);
+  if (names === null) return false;
+  // An EMPTY lock directory is nobody's claim: a break or a release is mid-flight, or a process died
+  // between the two halves of one. A claim is renamed in fully formed, so it is never empty, and `rmdir`
+  // cannot touch one. (`rename` over an empty directory succeeds anyway; this is for the filesystems
+  // where it does not, and it keeps an abandoned husk from outliving its owner.)
+  if (names.length === 0) return await rmdir(lockPath).then(() => true, () => false);
+  // A CLAIM THIS LOCK COULD HAVE WRITTEN, or nothing is removed. Exactly one marker, whose name parses as
+  // this format's (`MARKER_NAME`) — both are properties of a claim assembled in the staging directory and
+  // renamed in whole, and `fence` already asserts the first of them from the owner's side. It is what
+  // closes the window the `lstat` above cannot: an entry swapped for a symlink between that call and this
+  // `readdir` yields a stranger's directory listing, and a stranger's filenames are not names this delete
+  // can spell. The cost is stated rather than hidden — a lock directory holding something unrecognisable
+  // is not broken, so writes to that target refuse `ConfigLocked` at the deadline until an operator clears
+  // it. That is a refusal; the alternative was deleting files this lock never wrote.
+  if (names.length !== 1 || !MARKER_NAME.test(names[0])) return false;
+  // THE JUDGMENT AND THE DELETE NAME THE SAME STRING, and that is the whole of the repair (fix wave H /
+  // H1). The lease is read off the NAME and the delete can only spell the name it was read from, so a
+  // holder that refreshed in between — renaming its marker to a new lease — is not deleted by a judgment
+  // made before that refresh: the `unlink` simply misses, this call reports that it removed nothing, and
+  // the retry re-reads a claim it can now see is alive. It was an mtime read followed by a name-only
+  // delete, which is the same check-then-act the acquire path was redesigned to make inexpressible.
+  const name = names[0];
+  const lease = markerLease(name);
+  if (Number.isFinite(lease)) {
+    if (Date.now() - lease <= staleMs) return false;                    // the lease is alive: a LIVE holder
+  } else {
+    // A name carrying no lease belongs to a build older than this format. It is broken on AGE alone, for
+    // the same reason the ENOTDIR arm above is: age is the only guarantee that format ever made, and
+    // refusing to break it would dead-end every future write to this target. The residual — racing a
+    // holder still running that build, whose refresh does not move the name — is inherent to the format
+    // and cannot be closed from this side.
+    const st = await lstat(join(lockPath, name)).catch(() => null);
+    if (st === null || Date.now() - st.mtimeMs <= staleMs) return false;
+  }
+  const unlinked = await unlink(join(lockPath, name)).then(() => true, () => false);
+  const removed = await rmdir(lockPath).then(() => true, () => false);
+  return unlinked || removed;
+}

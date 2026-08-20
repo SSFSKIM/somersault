@@ -69,7 +69,11 @@ describe("ws transport", () => {
     await close();
   });
 
-  it("two rapid requests over one connection get two distinct, correctly-ordered replies (frames not concatenated or split)", async () => {
+  it("two rapid requests over one connection are answered by id, each in its own intact frame (not concatenated or split)", async () => {
+    // The title says "by id" and not "in order" because ORDER IS NOT A PROPERTY THIS SERVER OFFERS: nothing
+    // in peer.ts or dispatch serialises replies, and several handlers await real disk (`thread/list`,
+    // `config/*`, `thread/search`). The body indexes the two replies by id for exactly that reason, and
+    // asserting arrival order here would pin a guarantee the transport does not make.
     // listSessions IS DI'd (Task 12): this test asserts thread/list's data is exactly [], and the real
     // store wrapper would otherwise hit this machine's actual ~/.claude/projects (thousands of real sessions).
     const srv = new AppServer({}, { sessionFactory: () => fakeSession(), listSessions: async () => [] });

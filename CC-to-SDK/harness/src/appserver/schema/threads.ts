@@ -1,6 +1,6 @@
 // appserver/schema/threads.ts — thread lifecycle params (M1 set; Waves 1-2 extend this file).
 import { z } from "zod/v4";
-import { cursorParam, epochCursorParam, threadIdParams } from "./core.js";
+import { archivedParam, cursorParam, epochCursorParam, threadIdParams } from "./core.js";
 export const threadStartParams = z.object({
   config: z.record(z.string(), z.unknown()).optional(),
   unattended: z.enum(["park", "deny"]).default("park"),
@@ -15,7 +15,11 @@ export const threadResumeParams = z.object({
 export const threadReadParams = threadIdParams.extend(epochCursorParam.shape);
 // Task 12: extends cursorParam's shape with `cwd` (rather than reusing the alias directly) — the merged
 // thread/list forwards `cwd` to deps.listSessions to scope the store side of the merge to one project.
-export const threadListParams = cursorParam.extend({ cwd: z.string().optional() });
+// M5 Task 10 adds `archived`, the ONLY change this milestone makes to an existing method and additive by
+// construction: the field is optional and its omitted reading is what this method already did. It is
+// `core.ts`'s shared `archivedParam`, the same object `thread/search` publishes — the spec gives the
+// partition to both methods in one sentence, so they publish one spelling of it.
+export const threadListParams = cursorParam.extend({ cwd: z.string().optional(), ...archivedParam.shape });
 // Task 11: both `{ threadId }`-only — named here (rather than inlining threadIdParams at the index.ts
 // registration site) so the method->schema table reads self-documenting, matching this file's other
 // thread-lifecycle params.

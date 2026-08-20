@@ -157,6 +157,61 @@ describe("SessionHost.follow", () => {
     s.finish(); await turn; await host.stop();
   });
 
+  /** FIX WAVE I / SCALPEL-5#2. `terminal_slash_commands` rides ONLY the `system/init` frame, and the app
+   *  server's router accepts a REPLAYED init for exactly that reason (D-M5-27) — it is the one field with
+   *  no other source, and dropping the replay left it absent after every fleet attach until the host's
+   *  next turn. What that repair could not reach is an init the replay no longer HAS: the turn buffer is
+   *  reset per turn and trims from the HEAD, which is where init sits, so any turn past 500 non-stream
+   *  frames or 1 MiB evicts it. An attach to an idle host after such a turn then learned nothing, although
+   *  this host had received the classification turns earlier — and for an idle host, indefinitely. */
+  it("replays the last init frame when the turn buffer has evicted it — and does not duplicate one it still holds", async () => {
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const turn = host.runTask("hi");
+    s.emit({ type: "system", subtype: "init", terminal_slash_commands: ["doctor", "color"] });
+    // The CONTROL, first: while the buffer still holds the init, a joiner gets exactly ONE — the retained
+    // copy must not double it, or every ordinary mid-turn attach gains a spurious frame.
+    const early: HostEvent[] = [];
+    host.follow((e) => early.push(e));
+    expect(early.filter((e) => e.kind === "message").map((e: any) => e.data.subtype)).toEqual(["init"]);
+    // …and now a turn long enough to trim the head, which is where the init is.
+    for (let i = 0; i < 600; i++) s.emit({ type: "assistant", n: i });
+    const late: HostEvent[] = [];
+    host.follow((e) => late.push(e));
+    const msgs = late.filter((e) => e.kind === "message") as { data: any; replay?: true }[];
+    // The buffer really did evict it — 601 frames pushed into a 500-message window, so the oldest 101 are
+    // gone and the first one the buffer still carries is `n === 100`. Without this the row would pass on a
+    // tree that never trimmed at all, and would be measuring nothing.
+    const fromBuffer = msgs.filter((m) => m.data?.type === "assistant");
+    expect(`the buffer trimmed its head: first buffered frame is n=${fromBuffer[0]!.data.n}`).toBe("the buffer trimmed its head: first buffered frame is n=100");
+    expect(msgs.filter((m) => m.data?.subtype === "init")).toHaveLength(1);
+    expect(msgs[0]!.data.terminal_slash_commands).toEqual(["doctor", "color"]);
+    expect(msgs[0]!.replay).toBe(true);                  // buffered history, stamped as such
+    // …and it is FIRST, ahead of the history it describes.
+    expect(msgs[1]!.data.type).toBe("assistant");
+    s.finish(); await turn; await host.stop();
+  });
+
+  it("a swap discards the retained init with the turn buffer — it described an engine that is gone", async () => {
+    const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
+    await host.start();
+    const turn = host.runTask("hi");
+    s.emit({ type: "system", subtype: "init", terminal_slash_commands: ["doctor"] });
+    s.finish(); await turn;
+    // The CONTROL: between turns the retained copy is what a joiner learns from.
+    const before: HostEvent[] = [];
+    host.follow((e) => before.push(e));
+    expect(before.filter((e) => e.kind === "message").map((e: any) => e.data.subtype)).toEqual(["init"]);
+    await host.clearSession();
+    const after: HostEvent[] = [];
+    host.follow((e) => after.push(e));
+    // Nothing at all: the frame belonged to the discarded conversation and carries its `session_id` and
+    // its model beside the classification. Absence is the state the wire reserves for "no init frame has
+    // arrived on this thread", which is the truth here.
+    expect(after.filter((e) => e.kind === "message")).toEqual([]);
+    await host.stop();
+  });
+
   it("unsubscribing stops delivery and does not disturb the others", async () => {
     const s = fakeSession(); const host = hostFor(s, { CCX_FLEET_ROOT: tmpFleet() });
     await host.start();

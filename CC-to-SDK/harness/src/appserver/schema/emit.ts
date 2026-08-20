@@ -18,8 +18,17 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { methodSchemas } from "./index.js";
 
+// RESPONSES ride in their own top-level map (M5, spec D-M5-19), not inside the method's entry. Every value
+// under `methods` IS a standalone draft-7 schema a client hands straight to a validator, and ajv in strict
+// mode — the mode this repo's own gate uses, and the one a careful client uses — THROWS on any keyword it
+// does not know. Measured: an entry carrying a sibling `result` fails to compile ("unknown keyword"), and so
+// does a `{params, result}` wrapper. Publishing the response shape therefore costs either a broken entry or
+// a re-nesting of all 59 pre-M5 entries — and D-M5-19 rejected disturbing those in this milestone ("the slot
+// makes it incremental"). `results[name]`, present only for the methods that declare one, buys the same
+// contract for the cost of one key: `methods` keeps its meaning and its bytes, and a client joins the two
+// maps by name.
 export const DRAFT_7 = "http://json-schema.org/draft-07/schema#";
-export interface SchemaArtifact { $schema: string; methods: Record<string, unknown> }
+export interface SchemaArtifact { $schema: string; methods: Record<string, unknown>; results: Record<string, unknown> }
 export type SchemaTier = "stable" | "experimental";
 
 /** A DEFAULTED param is optional to the client, required only to the server. zod converts in its `io:
@@ -48,8 +57,8 @@ function relaxDefaultedRequired(node: unknown): void {
 
 /** The per-method `$schema` zod emits is DROPPED: the document declares the dialect once at its root, and
  *  draft-7 says the keyword should not appear in subschemas. */
-function methodJsonSchema(params: z.ZodType): unknown {
-  const { $schema: _dialect, ...rest } = z.toJSONSchema(params, { target: "draft-7" }) as Record<string, unknown>;
+function methodJsonSchema(schema: z.ZodType): unknown {
+  const { $schema: _dialect, ...rest } = z.toJSONSchema(schema, { target: "draft-7" }) as Record<string, unknown>;
   relaxDefaultedRequired(rest);
   return rest;
 }
@@ -57,8 +66,14 @@ function methodJsonSchema(params: z.ZodType): unknown {
 /** Walks the registry in REGISTRATION order (both artifacts inherit it) — the generated file then reads in
  *  the same order as `schema/index.ts` and as the scorecard's prose, and a re-run never reshuffles a diff. */
 export function buildArtifacts(): Record<SchemaTier, SchemaArtifact> {
-  const artifacts: Record<SchemaTier, SchemaArtifact> = { stable: { $schema: DRAFT_7, methods: {} }, experimental: { $schema: DRAFT_7, methods: {} } };
-  for (const [name, entry] of Object.entries(methodSchemas)) artifacts[entry.experimental ? "experimental" : "stable"].methods[name] = methodJsonSchema(entry.params);
+  const artifacts: Record<SchemaTier, SchemaArtifact> = { stable: { $schema: DRAFT_7, methods: {}, results: {} }, experimental: { $schema: DRAFT_7, methods: {}, results: {} } };
+  for (const [name, entry] of Object.entries(methodSchemas)) {
+    // ONE conversion pipeline for both halves — a response schema is post-processed exactly like a request
+    // one, so a defaulted field in a result can never be described differently from a defaulted param.
+    const artifact = artifacts[entry.experimental ? "experimental" : "stable"];
+    artifact.methods[name] = methodJsonSchema(entry.params);
+    if (entry.result) artifact.results[name] = methodJsonSchema(entry.result);
+  }
   return artifacts;
 }
 

@@ -25,7 +25,23 @@ export interface ToolCallItem { type: "toolCall"; id: string; tool: string; view
 export interface ReviewItem { type: "review"; id: string; findings: ReviewFinding[]; unstructured: boolean; level?: string; prose?: string; aborted?: true }
 export type Item = UserMessageItem | AgentMessageItem | ReasoningItem | ToolCallItem | ReviewItem;
 export type ItemDeltaChannel = "text" | "thinking" | "arguments";
-export type ItemEvent = { kind: "started"; item: Item } | { kind: "delta"; itemId: string; channel: ItemDeltaChannel; delta: string } | { kind: "completed"; item: Item };
+/** `contextUsage` (M5 Task 13, spec D-M5-22): 0.3.234's structured twin of the `/context` report, carried
+ *  by the SDK as a WRAPPER-LEVEL sibling on the assistant frame that delivers the markdown table — probe
+ *  111 measured `message.context_usage` absent, and the result frame carrying nothing at all, which is the
+ *  measurement that decided this shape: result frames are resolved into the submit waiter and never
+ *  relayed to fleet followers, so a result-frame carrier would have been unreachable on that origin.
+ *
+ *  It rides the EVENT rather than the Item because it describes the FRAME, not any block inside it, and it
+ *  rides EVERY event that frame produced rather than only the completion: a frame whose only block is a
+ *  `tool_use` emits a `started` and no `completed` until its result lands, and stamping completions alone
+ *  would drop the twin for it. Relayed VERBATIM (`unknown`) — it is an SDK-owned payload, and this server
+ *  re-describing `SDKContextUsage` would be a second shape to keep in step with the first.
+ *
+ *  NO RETENTION: nothing on `ThreadRecord` holds it, and `thread/contextUsage/read` is untouched — that
+ *  route answers from `getContextUsage()`, which is richer and costs no turn, where the twin is obtainable
+ *  only by spending a `/context` turn. This is additive to the turn's own event stream, not a replacement
+ *  for that read. */
+export type ItemEvent = { kind: "started"; item: Item; contextUsage?: unknown } | { kind: "delta"; itemId: string; channel: ItemDeltaChannel; delta: string } | { kind: "completed"; item: Item; contextUsage?: unknown };
 
 export function toolView(name: string): ToolView {
   if (name.startsWith("mcp__")) return "mcp";

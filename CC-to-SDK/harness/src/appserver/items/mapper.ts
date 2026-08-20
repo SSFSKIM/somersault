@@ -15,6 +15,38 @@ export function userItem(text: string, uuid: string): UserMessageItem {
   return { type: "userMessage", id: uuid, text };
 }
 
+/** M5 Task 13 (spec D-M5-22): 0.3.234 delivers a `/context` turn's structured card as `context_usage`, a
+ *  WRAPPER-LEVEL sibling on the assistant frame — `frame.context_usage`, not `frame.message.context_usage`
+ *  (probe 111 measured the inner one absent, which is also why it is never replayed to the model). The
+ *  frame's markdown table stays on `message.content` and is still the canonical fallback, so the item
+ *  itself is unchanged; the twin rides beside it on the events this frame produced (`items/types.ts` says
+ *  why every event and not only the completion).
+ *
+ *  Read off the WRAPPER only. A reader that fell back to the inner key would be reading a place the engine
+ *  never writes, and would still pass any test that exercises only the real shape.
+ *
+ *  A frame that produced no events has nothing to stamp, so a twin riding one would be dropped. The one
+ *  such case is the reconcile frame of a message already itemized through `stream_event` partials
+ *  (`onAssistant`'s `streamedMsgIds` dedup). That bound was parked here as UNOBSERVED — probe 111's
+ *  `/context` frame list carried no `stream_event`, but it opened its session WITHOUT
+ *  `includePartialMessages`, under which the SDK emits no partials for ANY message, so the absence was a
+ *  property of the probe's options and said nothing about `/context` (review F4).
+ *
+ *  IT IS NO LONGER UNOBSERVED. The final review ran exactly the configuration that settles it, keyed: a
+ *  thread opened WITH `includePartialMessages: true` running a `/context` turn. The CLI-synthesized
+ *  assistant frame carrying `context_usage` produced NO `stream_event` partials (its id reached
+ *  `onAssistant` with previously-streamed false), and the real frames fed through this mapper produced two
+ *  events, both carrying `contextUsage`. So the dedup path cannot drop the twin on this CLI, and the
+ *  reconcile path stays unbuilt on a measurement rather than on a park. It remains a bound, not a
+ *  guarantee: it is one CLI build's behaviour, and a future `/context` that streams would put the twin on
+ *  a frame with no events again. `onAssistant`'s early return carries the other half of this note. */
+function stampContextUsage(events: ItemEvent[], frame: { context_usage?: unknown }): ItemEvent[] {
+  const usage = frame?.context_usage;
+  if (usage === undefined || usage === null) return events;
+  for (const ev of events) if (ev.kind !== "delta") ev.contextUsage = usage;
+  return events;
+}
+
 export class TurnMapper {
   private msgId?: string;                              // current message id (from message_start / full frame)
   private blockIndexToId = new Map<number, string>();   // in-flight message's block index -> item id (stream path)
@@ -102,7 +134,13 @@ export class TurnMapper {
 
   private onAssistant(mm: any): ItemEvent[] {
     const msgId = String(mm.message?.id ?? "");
-    if (msgId && this.streamedMsgIds.has(msgId)) return []; // already itemized via stream_event — no dup
+    // Already itemized via stream_event — no dup. This return is AHEAD of `stampContextUsage`, and that is
+    // a bounded consequence rather than an oversight (D-M5-22 residual, decided in fix wave E): those item
+    // events went out while the message was streaming, so a `context_usage` wrapper key arriving now has no
+    // event of its own to ride, and delivering it would mean a new notification carrying no item. The only
+    // producer we have measured — a `/context` turn under `includePartialMessages: true` — does not stream
+    // this frame, so the twin reaches both events by the normal path.
+    if (msgId && this.streamedMsgIds.has(msgId)) return [];
     const content: any[] = mm.message?.content ?? [];
     const out: ItemEvent[] = [];
     content.forEach((b, i) => {
@@ -119,7 +157,7 @@ export class TurnMapper {
         out.push({ kind: "started", item });
       }
     });
-    return out;
+    return stampContextUsage(out, mm);
   }
 
   private onUser(mm: any): ItemEvent[] {
