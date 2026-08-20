@@ -834,6 +834,12 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
 - Observation: The plan's own F4 remediation (spawn-transaction kill-on-failure) shipped with a narrower try than intended — `write_owner`/`write_meta`/`ready` sat outside the handler, so a failure there orphaned a live, ownerless kernel that `_clean_stale` can never reap (no owner record to find).
   Evidence: T4 execution live-reproduced it — a `NameError` at the `write_owner` call site (missing import in the plan's code) left 4 real orphaned ipykernel processes. Fixed in commit 03774f38ce (uniform kill-and-clean under `BaseException`, regression test `test_spawn_failure_leaks_no_process` proven RED against the stashed fix).
 
+- Observation: ipykernel never writes tracebacks to stdout/stderr — `ZMQInteractiveShell._showtraceback` publishes on the iopub `error` channel only, so the kernel-side tee alone leaves an error cell's log empty. The bootstrap now mirrors IPython's rendered traceback into the cell log by wrapping `_showtraceback` (the narrowest seam; preserves stdout-vs-traceback ordering and leaves the terminal record's `error` field unchanged).
+  Evidence: T5 RED run — fully populated error record, empty `cells/N.log`; fixed in commit 48a4c2413f.
+
+- Observation: "idle" for the watchdog must exclude in-flight cells — the spec's TTL as first implemented measured only time-since-last-cell-boundary, so a computation outrunning the TTL was os._exit'd mid-cell. Idleness is now (no cell in flight) AND (TTL exceeded). Accepted tradeoff: a permanently hung cell never idle-expires; the TTL is a bound on idle lifetime, not total lifetime. Known residual: a sub-millisecond window between a client's execute_request landing and `pre_run_cell` stamping the cell can theoretically still race the watchdog; if hit, the client sees an honest kernel-died abort, never silence.
+  Evidence: T5 review finding I1 + fix commit c055c28ae0 (`test_watchdog_spares_running_cell` overlaps a 14.4s cell against a 3.6s TTL).
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
