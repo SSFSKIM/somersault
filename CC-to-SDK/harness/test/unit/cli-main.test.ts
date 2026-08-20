@@ -494,6 +494,24 @@ describe("main — run: foreground (Task 7)", () => {
     // different question from what the banner is entitled to CLAIM about a model it has no catalog for.
     expect(clientCalls[0].hookOpts.initialEffort).toBe("xhigh");
   });
+  // F8 T7 — the degraded-branch WIRING. test/tui/banner.test.ts pins welcomeBanner's own branch by handing
+  // it rows/screenReader directly, which stays green even if the call site here never passes them at all
+  // (this wave's Global Constraint — the previous task shipped exactly that gap). This is the arm that can
+  // only pass by the launch actually reading `screenReaderEnabled(process.env)` and threading it through.
+  it("a screen-reader launch reaches the CALL SITE and collapses the banner to its degraded line", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    vi.stubEnv("CLAUDE_AX_SCREEN_READER", "1");
+    try {
+      await captureLog(() => main(["task"], deps({
+        isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+      })));
+    } finally { vi.unstubAllEnvs(); }
+    const lines = clientCalls[0].initialEntries[0].event.lines as { text: string; segments?: unknown }[];
+    expect(lines).toHaveLength(1);                       // the full box is many lines; this proves collapse
+    expect(lines[0]!.segments).toBeTruthy();              // the two-span shape, not a plain text degrade
+    expect(bannerText(clientCalls[0])).not.toContain("Tips for getting started");
+  });
   // The auth segment's four branches are pinned as a pure mapping in test/tui/banner.test.ts; what this
   // file owns is the WIRING — that the fetch happens where the banner seeds, pre-turn, and that a failing
   // fetch costs the banner nothing.

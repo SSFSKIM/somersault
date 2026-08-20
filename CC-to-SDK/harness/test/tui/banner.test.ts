@@ -43,6 +43,32 @@ describe("welcomeBanner", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
+// F8 TASK 7 — the degraded branch (canon `Gqe`'s L500758 `if (o7O || i7O < dKm)`): a screen reader,
+// or a terminal shorter than BANNER_MIN_ROWS, collapses the box to one two-span line.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+describe("welcomeBanner — the degraded (below-30-rows / screen-reader) branch", () => {
+  it("degrades to ONE two-span line below 30 rows", () => {
+    const lines = welcomeBanner({ cwd: "/tmp/x", model: "opus", rows: 24 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.text).toBe(`✻ Welcome to Claude Code ccx v${CCX_VERSION}`);
+    // A5: the title is accent, the version suffix is dim. A uniformly-accent line is the defect.
+    expect(lines[0]!.segments).toEqual([
+      { text: "✻ Welcome to Claude Code", color: ACCENT },
+      { text: ` ccx v${CCX_VERSION}`, dim: true },
+    ]);
+  });
+
+  it("degrades for a screen reader at any height", () => {
+    expect(welcomeBanner({ cwd: "/tmp/x", rows: 200, screenReader: true })).toHaveLength(1);
+  });
+
+  it("renders the full box at exactly 30 rows, and when rows is unknown", () => {
+    expect(welcomeBanner({ cwd: "/tmp/x", rows: 30 })[0]!.text.startsWith("╭")).toBe(true);
+    expect(welcomeBanner({ cwd: "/tmp/x" }).length).toBeGreaterThan(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
 // WAVE C TASK 13 (EP-C8) — the banner's HEADER (§C8.2) and its MODEL/AUTH line (§C8.3).
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 

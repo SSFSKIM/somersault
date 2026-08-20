@@ -13,6 +13,7 @@ import type { SessionHostOpts } from "../host/host.js";
 import { mintShortId, hostSocketPath } from "../fleet/paths.js";
 import { welcomeBanner } from "../tui/banner.js";
 import type { AccountFacts } from "../tui/banner.js";
+import { screenReaderEnabled } from "../tui/renderer.js";
 import { resolveModelAlias } from "../config/models.js";
 import { DEFAULTS } from "../config/types.js";
 import { resolvedPermissionMode } from "../config/resolveOptions.js";
@@ -473,7 +474,10 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
         // `capabilities()` round-trip nobody has made yet — but it can know whether the USER named a level,
         // and a level they named is a fact about the launch either way. `hookOpts.initialEffort` below keeps
         // the default: naming what the ENGINE runs is a different claim from asserting the model has the axis.
-        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}) }) } }] }),
+        // F8 T7: rows/screenReader ride along too — the same launch-truth rule as everything else on this
+        // line. `process.stdout.rows` is undefined off a TTY, which welcomeBanner treats as "unknown" (the
+        // FULL box), not "degrade" — the same honesty the account race above already has to observe.
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}), rows: process.stdout.rows, screenReader: screenReaderEnabled(process.env) }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has

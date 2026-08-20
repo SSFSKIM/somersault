@@ -21,6 +21,8 @@ export function shortCwd(cwd: string, home = process.env.HOME ?? ""): string {
 /** §C8.1 `I0r` (L452723): `>= 70` → `"horizontal"`, anything narrower → `"compact"`. The ONE number the
  *  header's two shapes hang off, so both live here rather than in two `if`s. */
 export const BANNER_COMPACT_COLUMNS = 70;
+/** canon `dKm` (L500971) — the row threshold canon's first branch (`Gqe`, L500758) collapses the box below. */
+export const BANNER_MIN_ROWS = 30;
 /** The terminal width the banner sizes itself against when the caller names none. Read at CALL time, not at
  *  module load: `main.ts` seeds the banner before the REPL mounts, and a module-load read would freeze
  *  whatever width the process happened to start with. */
@@ -83,10 +85,23 @@ export interface BannerInfo {
   /** Absent (or unmappable) = no billing segment; see `billingLabel`. */
   account?: AccountFacts;
   version?: string; columns?: number;
+  /** Terminal height at seed time. Absent = unknown, which renders the FULL form: a banner that hid itself
+   *  because nobody measured would be worse than one row too many. */
+  rows?: number;
+  /** `renderer.screenReaderEnabled(env)`, resolved by the caller so one verdict serves both consumers. */
+  screenReader?: boolean;
 }
 
 /** The launch splash: an accent box + cwd/model/mode snapshot + getting-started tips. */
 export function welcomeBanner(info: BannerInfo): RenderLine[] {
+  // canon `Gqe`'s first branch (L500758): `if (o7O || i7O < dKm)` — a screen reader, or a terminal too short
+  // for the box. TWO SPANS, as canon's is: the greeting coloured and the version dim. Ours carries ccx's own
+  // `✻` where canon opens on the bare words, so the degraded form and the full form (whose title line is
+  // `✻ Welcome to Claude Code`) agree with each other (spec D-F8-12).
+  if (info.screenReader === true || (info.rows !== undefined && info.rows < BANNER_MIN_ROWS)) {
+    const head = "✻ Welcome to Claude Code", tail = ` ccx v${info.version ?? CCX_VERSION}`;
+    return [{ text: head + tail, segments: [{ text: head, color: ACCENT }, { text: tail, dim: true }] }];
+  }
   const title = "✻ Welcome to Claude Code";
   const inner = Math.max(title.length, 47);                 // inner text width (between "│ " and "│")
   const bar = "─".repeat(inner + 2);
