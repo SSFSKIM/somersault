@@ -43,6 +43,14 @@ below is against that file.
   implementation, watch the test fail, restore it — and report that in the task report. A regression test
   nobody has seen fail is not yet a regression test. Where a test block below is weaker than this rule
   requires, strengthen it and say so; the blocks are a starting point, not a ceiling.
+- **A test that hand-sets a value proves nothing about who sets it.** Whenever a task adds WIRING — a prop
+  threaded to a mount site, a case arm, a value seeded at startup — at least one of its tests must reach
+  that value through the real chain, not by passing it in directly. The question to answer is not "does the
+  component behave correctly when told to" but "would anything fail if nobody ever told it". Answer it the
+  only way that settles it: delete the wiring, run the suite, and watch a test die. Two precedents in this
+  repo do exactly this and are the shapes to copy — `test/tui/duration-row.test.tsx` drives the real hook
+  and asserts the persisted patch, and `test/tui/compaction-row.test.tsx:144` pins a seam end to end through
+  `ChatApp` with a comment naming the sabotages it defeats.
 
 ## File Structure
 
