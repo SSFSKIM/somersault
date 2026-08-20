@@ -114,7 +114,7 @@ let te = t ? 0 : y8T(E)
 ```
 
 Reduced motion itself is `hx(settings.prefersReducedMotion)` **or** the screen-reader signal
-(L507999, in the parent component `EQm`): `E = hx(S.prefersReducedMotion) || hl()`. `hx` (L495142) is
+(L507998, in the parent component `EQm`): `E = hx(S.prefersReducedMotion) || hl()`. `hx` (L495142) is
 `e || (Qx() && flag("tengu_cedar_marsh", false))` — a settings boolean with a flag escape hatch, and
 **no operating-system query anywhere**. It surfaces in the settings dialog as
 `{ id: "reduceMotion", label: "Reduce motion", type: "boolean" }` (L383488).

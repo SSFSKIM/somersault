@@ -882,6 +882,12 @@ which is the closest existing analogue:
 | 6 | `SettingsDialog.tsx:320/330/372/421` | prop, prop type, ctx construction, apply branch |
 | 7 | `ChatApp.tsx:1477` | thread state + setter into `SettingsDialog` |
 | 8 | `chatMain.tsx` | seed `initialPrefersReducedMotion` from loaded prefs |
+| 9 | `useChat.ts` `ChatState` | publish it: the interface field AND the returned state object |
+
+Touch point 9 is easy to miss and the table used to omit it: `ChatApp` reads `state.prefersReducedMotion`,
+so the value has to leave `useChat` the way `showTurnDuration` does — declared on the `ChatState` interface
+and included in the object the hook returns. A `useState` that never reaches `ChatState` typechecks inside
+the hook and fails only at the call site.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -973,7 +979,7 @@ Create `src/tui/motion.ts`:
 ```ts
 // tui/src/motion.ts — F8 Task 6: one resolver for "should anything be animating right now".
 //
-// It is NOT the setting alone. Canon's value is `hx(S.prefersReducedMotion) || hl()` (L507999) — the
+// It is NOT the setting alone. Canon's value is `hx(S.prefersReducedMotion) || hl()` (L507998) — the
 // persisted preference OR the screen-reader signal. Threading only the preference leaves a screen-reader
 // user with a spinning glyph, an animating retry row and a braille-alternating tab title: precisely the
 // population the behaviour exists for. Canon performs no operating-system query anywhere, so neither do
