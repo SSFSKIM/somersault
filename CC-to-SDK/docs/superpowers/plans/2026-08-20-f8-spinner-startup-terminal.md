@@ -1119,7 +1119,7 @@ Add `export const BANNER_MIN_ROWS = 30;` beside `BANNER_COMPACT_COLUMNS`, and at
 `welcomeBanner`:
 
 ```ts
-  // canon `Gqe`'s first branch (L500761): `if (o7O || i7O < dKm)` — a screen reader, or a terminal too
+  // canon `Gqe`'s first branch (L500758): `if (o7O || i7O < dKm)` — a screen reader, or a terminal too
   // short for the box. TWO SPANS, as canon's is: the greeting coloured and the version dim. Ours carries
   // ccx's own `✻` where canon opens on the bare words, so the degraded form and the full form (whose
   // title line is `✻ Welcome to Claude Code`) agree with each other (spec D-F8-12).
