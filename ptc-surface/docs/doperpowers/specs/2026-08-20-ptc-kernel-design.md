@@ -497,7 +497,10 @@ harness):
 ### Installation modes
 
 - Dev: `claude --plugin-dir ptc-surface/ptc/plugin`.
-- Settings snippet (README): allow `mcp__ptc__*` in `permissions.allow` for prompt-free use.
+- Settings snippet (README): allow `mcp__plugin_ptc_ptc__*` in `permissions.allow` for
+  prompt-free use (plugin installs); a directly registered server is `mcp__ptc__*`.
+- First run: the launcher provisions `~/.ptc/venv` inside Claude Code's 30 s MCP startup
+  window (3.75 s measured, warm uv cache). On a cold cache run `ptc setup` once first.
 - Codex (documented only): `codex mcp add ptc -- <plugin>/bin/ptc-launch` — works because the
   adapter is plain stdio MCP; session keying degrades to explicit `session=`/`PTC_SESSION`.
 
@@ -547,6 +550,12 @@ are binding.
   with zero configuration in all three scenarios. *Fallback*: chain already includes
   `${CLAUDE_SESSION_ID}` (skill) and `CLAUDE_CODE_SESSION_ID` (CLI; live-verified present in
   this project's own session on 2.1.236).
+  *Verdict (T11, live on 2.1.238): PROMOTE.* Hook tree-walk pid and adapter-side walk agreed
+  in four scenarios — fresh, `--resume` (same key, same kernel pid, namespace intact), two
+  concurrent sessions in one cwd (distinct keys, no cross-talk), and a resumed session whose
+  kernel had to be respawned. `kernels()` showed the right key with zero configuration in
+  every one. The run-file path was verified by running T13's resolver algorithm against the
+  live adapter's ancestry; `CLAUDE_CODE_SESSION_ID` independently agreed in all four.
 - **S4 — headless codex approvals.** Exact `thread/start` params (`approvalPolicy`, `sandbox`)
   that produce zero server→client approval requests on current `codex app-server`
   (codex-cli 0.146.0). *Promote* when a trivial turn completes unattended. *Fallback*:
@@ -772,6 +781,10 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   accepted; none were rebutted.
   Date/Author: 2026-08-20 / independent plan review.
 
+- Decision: The shipped install mode is the PLUGIN (`--plugin-dir` / marketplace): long tool names `mcp__plugin_ptc_ptc__*`, SessionStart hook included (the hook IS the primary discovery channel). Direct MCP registration (`claude mcp add ptc`) is documented as secondary: short `mcp__ptc__*` names but NO hook, so keying falls to `CLAUDE_CODE_SESSION_ID`/explicit `session=`.
+  Rationale: T11's S3 spike proved the hook+run-file path is the only keying that cannot inherit a foreign session id; the naming cost of the plugin prefix is documentation-only.
+  Date/Author: 2026-08-21 / controller adjudication of T11 concern 1.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
@@ -884,6 +897,52 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   Evidence: `test/spikes/s1_sdk_in_kernel.py::ADDENDUM["settings_isolation"]` —
   `SETTINGS_INHERITED cost_usd 0.252102 hook_msgs 4 in 2 cache_read 1452 cache_write 12514` /
   `SETTINGS_ISOLATED cost_usd 0.053302999999999996 hook_msgs 0 in 2 cache_read 0 cache_write 5217`.
+
+- Observation: a plugin-provided MCP server's tools are named
+  `mcp__plugin_<plugin>_<server>__<tool>`, not `mcp__<server>__<tool>` — ptc's exec tool is
+  `mcp__plugin_ptc_ptc__exec`. Plugin servers are registered under the scoped name
+  `plugin:<plugin>:<server>` and every non-`[a-zA-Z0-9_-]` character is normalized to `_`.
+  Only a directly registered server (`claude mcp add ptc -- <plugin>/bin/ptc-launch`) gets
+  the short `mcp__ptc__*` form, so the README's `permissions.allow` snippet and any skill
+  text naming tools must carry both.
+  Evidence: live S3 runs on 2.1.238 — reproduced by the committed instrument (scenario-1 re-run captured `TOOL_USE_NAMES: ["ToolSearch", "mcp__plugin_ptc_ptc__exec", "mcp__plugin_ptc_ptc__kernels"]`; plugin MCP tools arrive DEFERRED behind ToolSearch, so the scoped long name is the string skills/README must print — it is what the model searches against);
+  `Claude Code Src/src/utils/plugins/mcpPluginIntegration.ts:350`;
+  `src/services/mcp/normalization.ts`.
+
+- Observation: `CLAUDE_CODE_SESSION_ID` is present in the **MCP adapter's** environment on
+  2.1.238 (not only in Bash-tool environments), and claude overwrites any inherited value
+  with its own session id — verified by launching a nested session with an outer session's
+  id in the environment and reading what the adapter saw. Keying fallback 4 is therefore
+  stronger than assumed and cannot be poisoned by an enclosing session. It stays *below*
+  the run-file: an adapter started with no `claude` ancestor at all (the documented Codex
+  registration path, `codex mcp add ptc -- .../ptc-launch`) does inherit whatever
+  `CLAUDE_CODE_SESSION_ID` its launcher had, which keys the kernel to a foreign session.
+  Evidence: spike S3 scenarios 1–4 (`env.CLAUDE_CODE_SESSION_ID` equals the nested
+  session's id in every case); a bare `ptc-launch` driven over stdio from a Bash tool came
+  up keyed to the enclosing session.
+
+- Observation: a kernel outlives the adapter that spawned it and is re-parented to `launchd`,
+  so a kernel's own ancestry is not a session-discovery channel — only the adapter's is.
+  Anything in-kernel that needs the session identity must read it from the environment or
+  `meta.json` written at spawn, never from `ps`.
+  Evidence: spike S3 scenario 2 (`adapter_pid: 1, adapter_comm: "/sbin/launchd"` on a
+  kernel adopted from the previous session).
+
+- Observation: Claude Code's MCP **startup** timeout is 30 s (`MCP_TIMEOUT`, default
+  30000) — unlike the ~27.8 h tool timeout. A first-ever `ptc-launch` must provision the
+  venv inside that window; measured 3.75 s cold with a warm `uv` cache, but a cold cache
+  (pandas/numpy/matplotlib wheels) can exceed it, and the failure mode is a plugin whose
+  server silently fails to connect on the very first session.
+  Evidence: `Claude Code Src/src/services/mcp/client.ts:457`; T11 timing of
+  `plugin/bin/ptc-launch` against an empty `~/.ptc`.
+
+- Observation: `uv venv` (0.11.27) refuses to create a virtual environment where one already
+  exists — the exact state every stamp-mismatch upgrade starts from — so the provisioning
+  call needs `--clear`. Both provisioner twins had this defect and neither's tests could see
+  it: the unit tests inject a fake `run` that always succeeds.
+  Evidence: `uv venv ~/.ptc/venv --python 3.12 --seed` → exit 2, "A virtual environment
+  already exists"; fixed in `plugin/bin/ptc-launch` and `src/ptc/venv.py`, regression-covered
+  by `test/integration/test_provision_upgrade.py`.
 
 ## Outcomes & Retrospective
 
