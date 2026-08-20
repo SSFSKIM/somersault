@@ -831,6 +831,9 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   Evidence: adversarial-review run of commit 20b6da563f (job log under
   `~/.claude/doperpowers/codex-companion`).
 
+- Observation: The plan's own F4 remediation (spawn-transaction kill-on-failure) shipped with a narrower try than intended — `write_owner`/`write_meta`/`ready` sat outside the handler, so a failure there orphaned a live, ownerless kernel that `_clean_stale` can never reap (no owner record to find).
+  Evidence: T4 execution live-reproduced it — a `NameError` at the `write_owner` call site (missing import in the plan's code) left 4 real orphaned ipykernel processes. Fixed in commit 03774f38ce (uniform kill-and-clean under `BaseException`, regression test `test_spawn_failure_leaks_no_process` proven RED against the stashed fix).
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
