@@ -6,9 +6,8 @@
 // to the installed product is the goal, and a role-plausible substitute is exactly the failure this table
 // exists to prevent. `auto` resolves live off COLORFGBG via `resolveThemeId`/`detectTerminalBackground`
 // (F8 Task 9) — it is no longer a static alias of `dark`, though `THEMES.auto`/`SUBAGENT_THEMES.auto`
-// stay wired to the dark tables as the `Record<ThemeId, …>` type still requires an entry and as the
-// fallback resolveThemeId falls back to when the terminal reports nothing; nothing reads those two
-// entries directly any more. The two ANSI-only themes stay out of scope.
+// stay wired to the dark tables purely to satisfy the `Record<ThemeId, …>` type's entry requirement;
+// nothing reads those two entries directly any more. The two ANSI-only themes stay out of scope.
 //
 // Token VALUES use upstream's own color grammar (TH2): `rgb(r,g,b)` / `#rgb` / `#rrggbb` / `ansi256(n)` /
 // `ansi:<name>`. Ink handles hex, `ansi256(n)` AND `rgb(r,g,b)` (`ink/build/colorize.js` matches an rgbRegex
@@ -188,7 +187,11 @@ export function currentTheme(): ThemeId { return current; }
  *  nowhere else). Consumers that read the theme per call need nothing from it; it exists for the ones that
  *  CACHE a render — toolRenderer's anchored-stream memo — which otherwise cannot see a repaint, because a
  *  setTheme() touches no document and so bumps no `TranscriptDocument.revision()`. Bumped unconditionally,
- *  including on a redundant re-select of the current id: an extra rebuild is cheap, a stale palette is not. */
+ *  including on a redundant re-select of the current id: an extra rebuild is cheap, a stale palette is not.
+ *  NOTE (F8 Task 9): `themeTokens()`/`subagentTokens()` now also depend on COLORFGBG when `current` is
+ *  "auto", and this counter does not observe that variable. Left alone deliberately — COLORFGBG is read
+ *  once at terminal launch and cannot change within a running process, so the memoized-render staleness
+ *  this counter guards against is unreachable for that input; there is nothing to invalidate. */
 export function themeGeneration(): number { return generation; }
 /** The full token set for the CURRENT theme. Consumers call this per render/projection rather than caching
  *  it, so a setTheme() mid-session — including the /theme picker's own live-preview navigation — is visible

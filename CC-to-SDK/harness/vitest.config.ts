@@ -23,6 +23,12 @@ export default defineConfig({
     setupFiles: ["./test/setup/fleetRoot.ts"],
     env: {
       FORCE_COLOR: "3",
+      // Pin a dark-reporting terminal (F8 Task 9): `auto` now resolves live off COLORFGBG
+      // (see src/tui/theme.ts resolveThemeId), so any suite asserting on literal color byte
+      // sequences under the default theme would otherwise flip colours on a light-reporting
+      // machine or CI runner. Same rationale as FORCE_COLOR above — pin the env, don't weaken
+      // the assertions.
+      COLORFGBG: "15;0",
       // Still set here as the pre-setup fallback: `setupFiles` runs after the env block is applied, and this
       // guarantees that nothing evaluated in between can reach the real ~/.claude/ccx.
       CCX_FLEET_ROOT: join(tmpdir(), "ccx-vitest-fleet-backstop"),

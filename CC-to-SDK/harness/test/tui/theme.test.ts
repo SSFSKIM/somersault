@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ACCENT, ANSI_COLOR_NAMES, SUBAGENT_THEMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, detectTerminalBackground, isLightTheme, isThemeColor, resolveThemeColor, resolveThemeId, setTheme, subagentTokens, themeGeneration, themeTokens } from "../../src/tui/theme.js";
+import { ACCENT, ANSI_COLOR_NAMES, THEMES, THEME_LABELS, THEME_TOKEN_NAMES, currentTheme, detectTerminalBackground, isLightTheme, isThemeColor, resolveThemeColor, resolveThemeId, setTheme, themeGeneration, themeTokens } from "../../src/tui/theme.js";
 import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
 import { resolveModelAlias } from "../../src/config/models.js";
 import { renderDiff } from "../../src/tui/diffRender.js";
@@ -156,15 +156,19 @@ describe("resolveThemeId", () => {
   });
 });
 
-describe("themeTokens()/subagentTokens()/isLightTheme() route \"auto\" through resolveThemeId", () => {
+describe("themeTokens()/isLightTheme() route \"auto\" through resolveThemeId", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("themeTokens() and subagentTokens() flip to light under a light-reporting terminal", () => {
-    // Both read `process.env` fresh through resolveThemeId's default parameter on every call — no
+  it("themeTokens() flips to light under a light-reporting terminal", () => {
+    // Reads `process.env` fresh through resolveThemeId's default parameter on every call — no
     // module-load snapshot, no re-import needed (contrast the ACCENT block below).
     vi.stubEnv("COLORFGBG", "0;15");
     expect(themeTokens()).toEqual(THEMES.light);
-    expect(subagentTokens()).toEqual(SUBAGENT_THEMES.light);
+    // subagentTokens() routes through resolveThemeId the same way, but there is no assertion that
+    // can prove it: SUB_LIGHT is declared as `{ ...SUB_DARK }` (theme.ts) — a deliberate byte-identical
+    // copy, since upstream never shipped a distinct light subagent palette — so SUBAGENT_THEMES.dark
+    // and SUBAGENT_THEMES.light are structurally equal. `subagentTokens()` returns the same value
+    // whether "auto" resolves to "dark" or "light", making the flip unobservable from here.
   });
 
   it("isLightTheme(\"auto\") reflects the detected background, not the literal id", () => {
