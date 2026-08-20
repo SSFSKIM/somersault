@@ -20,7 +20,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import type { TaskItem, TaskStatus } from "./taskList.js";
 import { truncateLabel } from "./select/selectModel.js";
-import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
+import { resolveThemeColor, themeTokens, TICK, type ThemeTokenName } from "./theme.js";
 import {
   activityWidth, blockedByLine, OWNER_TAG_WIDTH, openTaskIds, orderTasks, RECENT_COMPLETE_MS, showsOwnerTag,
   subjectWidth, todoCounts, todoOverflowLine, todoWindowSize,
@@ -31,9 +31,11 @@ const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 /** `Ge.tick` / `Ge.squareSmallFilled` / `Ge.squareSmall` (L104968) as `DCp` (L407196) picks them, with the
  *  ASCII fallbacks from the same table's `Lkg` block for a terminal that cannot draw them. */
 const UNICODE = process.env.TERM !== "linux";
+// `completed` is TICK() itself, not a literal — see theme.ts (F8 T8): the same glyph banner.ts's startup
+// checklist draws, so the two surfaces can't disagree on a TERM=linux terminal.
 export const TODO_GLYPH: Record<TaskStatus, string> = UNICODE
-  ? { completed: "✔", in_progress: "◼", pending: "◻" }
-  : { completed: "√", in_progress: "■", pending: "□" };
+  ? { completed: TICK(), in_progress: "◼", pending: "◻" }
+  : { completed: TICK(), in_progress: "■", pending: "□" };
 const GLYPH_COLOR: Record<TaskStatus, ThemeTokenName | undefined> = { completed: "success", in_progress: "claude", pending: undefined };
 /** `Ge.ellipsis` — the activity line's trailing character, always drawn (L407255). */
 const ELLIPSIS = "…";

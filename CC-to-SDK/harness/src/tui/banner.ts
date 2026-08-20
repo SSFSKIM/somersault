@@ -4,7 +4,7 @@
 // per RenderLine, so the box is uniformly accent-colored (CC's logo lines are colored too).
 // CC ref: components/LogoV2/WelcomeV2.tsx ("✻ Welcome to Claude Code") + feedConfigs "Tips for getting started".
 import type { RenderLine } from "./render.js";
-import { ACCENT } from "./theme.js";
+import { ACCENT, TICK } from "./theme.js";
 import { CCX_VERSION } from "./statusLine.js";
 import { effortTitle, type EffortLevel } from "./modelPickerModel.js";
 export { ACCENT };
@@ -75,8 +75,42 @@ export function billingLabel(account?: AccountFacts | null): string | undefined 
   return source ? "API Usage Billing" : undefined;      // any other credential source is metered
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// F8 TASK 8 — the getting-started checklist (spec D-F8-7). canon's tip inventory (L384137) is TWO entries,
+// mutually exclusive on whether this is a fresh workspace, and both completable — replacing ccx's former
+// three static tips (spec D-F8-7's only deliberate content deletion): a checklist whose entries can never
+// complete is a checklist in shape only, and the affordances they named stay reachable from `? for
+// shortcuts`.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+export interface Tip { key: string; text: string; isEnabled: boolean; isComplete: boolean }
+
+export function startupTips(facts: { emptyWorkspace: boolean; hasClaudeMd: boolean }): Tip[] {
+  return [
+    { key: "workspace", text: "Ask Claude to create a new app or clone a repository", isComplete: false, isEnabled: facts.emptyWorkspace },
+    { key: "claudemd", text: "Run /init to create a CLAUDE.md file with instructions for Claude", isComplete: facts.hasClaudeMd, isEnabled: !facts.emptyWorkspace },
+  ];
+}
+
+/** canon's `Enc` (L559388): enabled only, incomplete first, the shared `TICK()` glyph on the complete,
+ *  home-dir note last. The sort key is `Number(isComplete)` and `Array.prototype.sort` is stable, so two
+ *  tips sharing a completion state keep their inventory order. */
+export function renderTips(tips: readonly Tip[], inHomeDir: boolean): RenderLine[] {
+  const rows = tips.filter((t) => t.isEnabled).slice()
+    .sort((a, b) => Number(a.isComplete) - Number(b.isComplete))
+    .map((t) => ({ text: `  ${t.isComplete ? TICK() + " " : ""}${t.text}`, dim: true }));
+  if (inHomeDir) rows.push({ text: "  Note: You have launched ccx in your home directory. For the best experience, launch it in a project directory.", dim: true });
+  return rows;
+}
+
 export interface BannerInfo {
   cwd: string; model?: string; mode?: string;
+  /** Whether the launch cwd holds no visible entries, and whether it already has a `CLAUDE.md` — the two
+   *  facts `startupTips` branches on. Absent = both false, which reads as "not an empty workspace, no
+   *  CLAUDE.md yet" (the `claudemd` tip, uncompleted) — the safer default when the caller hasn't looked. */
+  emptyWorkspace?: boolean; hasClaudeMd?: boolean;
+  /** Whether the launch cwd IS the user's home directory — appends the checklist's trailing note. */
+  inHomeDir?: boolean;
   /** The effort the launch NAMED (§C8.3 `ait`) — `main.ts` passes `config.effort` and nothing else, NOT
    *  `?? DEFAULTS.effort` (t13 review finding 4): a defaulted launch has no business asserting an axis the
    *  model may not have (`--model haiku` has none), and at seed time there is no catalog to ask. Absent =
@@ -127,9 +161,7 @@ export function welcomeBanner(info: BannerInfo): RenderLine[] {
     { text: `  model  ${modelSeg}   ·   mode  ${info.mode ?? "default"}`, dim: true },
     { text: "" },
     { text: "  Tips for getting started" },
-    { text: "  • Ask Claude to edit files, run commands, or explain code", dim: true },
-    { text: "  • /help for commands · @ to reference files · ⇧Tab to change mode", dim: true },
-    { text: "  • Esc to interrupt a response", dim: true },
+    ...renderTips(startupTips({ emptyWorkspace: info.emptyWorkspace === true, hasClaudeMd: info.hasClaudeMd === true }), info.inHomeDir === true),
     { text: "" },
   ];
   return out;

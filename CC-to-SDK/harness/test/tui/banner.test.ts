@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { welcomeBanner, shortCwd, ACCENT, bannerHeader, billingLabel } from "../../src/tui/banner.js";
+import { welcomeBanner, shortCwd, ACCENT, bannerHeader, billingLabel, startupTips, renderTips } from "../../src/tui/banner.js";
 import { CCX_VERSION } from "../../src/tui/statusLine.js";
 
 describe("shortCwd", () => {
@@ -128,5 +128,56 @@ describe("welcomeBanner — the model/auth line (§C8.3 `ARa`)", () => {
     expect(text).toContain("model  claude-opus-5   ·   mode  default");
     expect(text).not.toContain("effort");
     expect(text).not.toContain("·   ·");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// F8 TASK 8 — the getting-started checklist (spec D-F8-7): canon's TWO-entry, mutually-exclusive,
+// completable tip inventory (L384137), replacing ccx's former three static (and never completable) tips.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+describe("startupTips", () => {
+  it("offers the workspace tip in an empty directory and the init tip otherwise", () => {
+    expect(startupTips({ emptyWorkspace: true, hasClaudeMd: false }).filter((t) => t.isEnabled).map((t) => t.key)).toEqual(["workspace"]);
+    expect(startupTips({ emptyWorkspace: false, hasClaudeMd: false }).filter((t) => t.isEnabled).map((t) => t.key)).toEqual(["claudemd"]);
+  });
+  it("completes the init tip once a CLAUDE.md exists, and never completes the workspace tip", () => {
+    expect(startupTips({ emptyWorkspace: false, hasClaudeMd: true }).find((t) => t.key === "claudemd")!.isComplete).toBe(true);
+    expect(startupTips({ emptyWorkspace: true, hasClaudeMd: true }).find((t) => t.key === "workspace")!.isComplete).toBe(false);
+  });
+});
+
+describe("renderTips", () => {
+  const tips = [
+    { key: "done", text: "Finished thing", isEnabled: true, isComplete: true },
+    { key: "todo", text: "Unfinished thing", isEnabled: true, isComplete: false },
+    { key: "off", text: "Hidden thing", isEnabled: false, isComplete: false },
+  ];
+  it("drops disabled tips, sorts incomplete first, ticks the complete", () => {
+    expect(renderTips(tips, false).map((l) => l.text)).toEqual(["  Unfinished thing", "  ✔ Finished thing"]);
+  });
+  it("appends the home-directory note last", () => {
+    expect(renderTips(tips, true).at(-1)!.text).toContain("home directory");
+  });
+});
+
+describe("welcomeBanner — the checklist wired end to end", () => {
+  it("shows the workspace tip in an empty directory, and the init tip (uncompleted) otherwise", () => {
+    const empty = welcomeBanner({ cwd: "/x", emptyWorkspace: true }).map((l) => l.text).join("\n");
+    expect(empty).toContain("Ask Claude to create a new app or clone a repository");
+    expect(empty).not.toContain("/init");
+    const notEmpty = welcomeBanner({ cwd: "/x", emptyWorkspace: false }).map((l) => l.text).join("\n");
+    expect(notEmpty).toContain("Run /init to create a CLAUDE.md file with instructions for Claude");
+    expect(notEmpty).not.toContain("✔");
+  });
+  it("ticks the init tip once hasClaudeMd is true", () => {
+    const text = welcomeBanner({ cwd: "/x", emptyWorkspace: false, hasClaudeMd: true }).map((l) => l.text).join("\n");
+    expect(text).toContain("✔ Run /init to create a CLAUDE.md file with instructions for Claude");
+  });
+  it("appends the home-directory note only when inHomeDir is true", () => {
+    const home = welcomeBanner({ cwd: "/home/me", inHomeDir: true }).map((l) => l.text).join("\n");
+    expect(home).toContain("launched ccx in your home directory");
+    const notHome = welcomeBanner({ cwd: "/x", inHomeDir: false }).map((l) => l.text).join("\n");
+    expect(notHome).not.toContain("home directory");
   });
 });

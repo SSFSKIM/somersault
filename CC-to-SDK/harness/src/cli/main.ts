@@ -30,6 +30,10 @@ import { hasAcceptedBypass } from "../tui/bypassAccepted.js";
 import { prepareAttach as realPrepareAttach } from "./attach.js";
 import { resolveResumeArg as realResolveResume } from "./resolveResume.js";
 import { socketAnswers as realSocketAnswers } from "../fleet/liveness.js";
+// F8 T8: the three facts startupTips branches on — same plain-fs/no-React safety as prefs.ts above.
+import { readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 // type-only: main.ts stays React-free. The ink import happens only inside the DEFAULT runChatClient,
 // via a dynamic import — an interactive path that never runs (e.g. every non-TTY/-p/--bg invocation)
 // never pulls ink/React into the process at all.
@@ -110,6 +114,16 @@ const defaults: MainDeps = {
   delay: (ms) => new Promise<void>((r) => { setTimeout(r, ms).unref?.(); }),
   rows: () => process.stdout.rows,
 };
+
+/** F8 T8's two fs-derived checklist facts. Guarded, deliberately deviating from the plan's literal bare
+ *  reads (found live: `args-bypass.test.ts`'s "consent gate runs BEFORE --worktree touches the disk" test
+ *  fakes `ensureWorktree`/`makeHost` without ever creating the directory on disk, and a bare `readdirSync`
+ *  threw ENOENT there, killing the whole launch over a checklist tip). Same rule the account race a few
+ *  lines below already lives by: this is chrome, and chrome must never cost the user their launch. */
+function checklistFsFacts(cwd: string): { emptyWorkspace: boolean; hasClaudeMd: boolean } {
+  try { return { emptyWorkspace: readdirSync(cwd).filter((n) => !n.startsWith(".")).length === 0, hasClaudeMd: existsSync(join(cwd, "CLAUDE.md")) }; }
+  catch { return { emptyWorkspace: false, hasClaudeMd: false }; }
+}
 
 const msg = (e: unknown): string => (e as Error)?.message ?? String(e);
 /** ONE stderr shape for the whole program — `ccx: <what went wrong>` — so a parse error, a refusal and a
@@ -483,7 +497,12 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
         // F8 T7: rows/screenReader ride along too — the same launch-truth rule as everything else on this
         // line. `process.stdout.rows` is undefined off a TTY, which welcomeBanner treats as "unknown" (the
         // FULL box), not "degrade" — the same honesty the account race above already has to observe.
-        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}), rows: deps.rows(), screenReader: screenReaderEnabled(process.env) }) } }] }),
+        // F8 T8: the checklist's three facts ride along the same way — emptyWorkspace/hasClaudeMd read the
+        // launch cwd (not process.cwd(): a --cwd launch or a worktree run must see ITS OWN directory, the
+        // same rule `cwd` above already exists to enforce), inHomeDir compares it against the real home.
+        : { initialEntries: [{ kind: "local" as const, identity: "welcome", event: { kind: "notice" as const, lines: welcomeBanner({ cwd, model: resolveModelAlias(model) ?? DEFAULTS.model, mode: resolvedPermissionMode(foregroundConfig), ...(foregroundConfig.effort ? { effort: foregroundConfig.effort } : {}), ...(account ? { account } : {}), rows: deps.rows(), screenReader: screenReaderEnabled(process.env),
+          ...checklistFsFacts(cwd),
+          inHomeDir: cwd === homedir() }) } }] }),
       // initialModel mirrors resolveOptions.ts's rule (alias first, then default) so the REPL knows what the
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has
