@@ -1366,7 +1366,7 @@ Run: `cd harness && npx vitest run test/tui/theme.test.ts`
 Above `let current: ThemeId = "auto";`:
 
 ```ts
-/** canon's `eTp` (L188328): the LAST `;`-separated field of COLORFGBG, an integer 0-15, where 0-6 and 8
+/** canon's `eTp` (L188327): the LAST `;`-separated field of COLORFGBG, an integer 0-15, where 0-6 and 8
  *  are dark. A pure env read — no terminal round trip, nothing to await, nothing to parse off the tty.
  *  (The OSC 11 query tier canon also has is deferred whole — spec § 5.) */
 export function detectTerminalBackground(env: NodeJS.ProcessEnv = process.env): "dark" | "light" | undefined {
