@@ -1429,19 +1429,31 @@ git commit -m "f5(f8): T9 — auto theme resolves from COLORFGBG instead of alia
 `TERM_PROGRAM=tmux`, so inside tmux it answers `"tmux"`, `auto` resolves to `none`, and no notification
 is ever delivered in the environment this project is used and tested in.
 
-Run, and paste the output into the task report:
+**ALREADY RUN — the controller measured this on tmux 3.7b before dispatch; do not re-run it.** Results,
+and they changed the design below:
 
-```bash
-env | grep -iE '^(TERM|TERM_PROGRAM|TERM_PROGRAM_VERSION|LC_TERMINAL|LC_TERMINAL_VERSION|KITTY_|GHOSTTY_|ITERM_|COLORTERM|TMUX|STY)' | sed 's/=.*/=<set>/' | sort
-tmux new-session -d -s f8probe 'env > /tmp/f8-tmux-env.txt; sleep 2' && sleep 3 && grep -iE '^(TERM|TERM_PROGRAM|LC_TERMINAL|KITTY_|GHOSTTY_)' /tmp/f8-tmux-env.txt | sed 's/=.*/=<set>/' | sort; tmux kill-session -t f8probe
-```
+| variable | outside tmux | inside a pane, FRESH server | inside a pane, PRE-EXISTING server |
+|---|---|---|---|
+| `TERM` | the emulator's | **`tmux-256color`** (overwritten) | **`tmux-256color`** (overwritten) |
+| `TERM_PROGRAM` | the emulator's | **`tmux`** (overwritten) | **`tmux`** (overwritten) |
+| `TERM_PROGRAM_VERSION` | the emulator's | `3.7b` (tmux's own) | `3.7b` (tmux's own) |
+| `TMUX` | unset | set | set |
+| `LC_TERMINAL`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR` | the emulator's | **survive** | **ABSENT** |
 
-Record which markers survive into the tmux pane and which do not. Write the marker table into the task
-report and into the spec's § 8. **Kill only the `f8probe` session by name — never `tmux kill-server`.**
+The first premise is confirmed: tmux OVERWRITES both `TERM` and `TERM_PROGRAM`, so neither can identify
+the emulator inside a pane, and reusing `resolveTerminalName` would resolve `auto` to `none` in every pane.
 
-The markers this resolver looks for, in order, are then written **against what was observed**. Where the
-observation is inconclusive for a terminal not installed on this machine, say so in the report and leave
-that terminal's marker to the owner's manual pass (acceptance A11), which exercises the real thing.
+The second result was not anticipated and is the important one. A tmux pane inherits the **server's**
+environment, not the client's. `tmux new-session` with markers set in the invoking shell delivered NONE of
+them into the pane when a server was already running, and ALL of them when the server was fresh (verified
+on a private `-L` socket). So the marker sniff works exactly when the server was started from the terminal
+you care about, and yields NOTHING whenever the server predates it — a long-running server, one started
+from a launch agent, or one started from a bare shell. That is a common state, not an exotic one.
+
+Consequence for the design: an unidentifiable emulator inside a multiplexer must NOT resolve to `none`.
+Silence is the one outcome the user cannot distinguish from a broken feature. It falls back to
+`terminal_bell` instead — one byte that an unconfigured terminal ignores, which is precisely the argument
+already recorded for the Apple Terminal arm (spec D-F8-11), applied to the same problem.
 
 - [ ] **Step 2: Write the failing test — an EXACT byte matrix across three environments**
 
@@ -1503,7 +1515,9 @@ describe("auto resolution survives a multiplexer", () => {
     // Using the marker recorded in Step 1, auto must still reach the real emulator.
     expect(resolveChannel("auto", E({ TERM_PROGRAM: "tmux", ...TMUX, LC_TERMINAL: "iTerm2" }))).toBe("iterm2");
     expect(resolveChannel("auto", E({ TERM_PROGRAM: "tmux", ...TMUX, KITTY_WINDOW_ID: "1" }))).toBe("kitty");
-    expect(resolveChannel("auto", E({ TERM_PROGRAM: "tmux", ...TMUX }))).toBe("none");
+    // Measured: a pane inherits the SERVER's env, so on a pre-existing server no marker is present at
+    // all. That must degrade to a bell, never to silence — see Step 1's table.
+    expect(resolveChannel("auto", E({ TERM_PROGRAM: "tmux", ...TMUX }))).toBe("terminal_bell");
   });
   it("outside a multiplexer TERM_PROGRAM is trustworthy", () => {
     expect(resolveChannel("auto", E({ TERM_PROGRAM: "iTerm.app" }))).toBe("iterm2");
@@ -1600,8 +1614,13 @@ function underlyingTerminal(env: NodeJS.ProcessEnv): string | undefined {
   if (env.GHOSTTY_RESOURCES_DIR !== undefined) return "ghostty";
   if (env.KITTY_WINDOW_ID !== undefined || env.KITTY_PID !== undefined) return "kitty";
   if (env.LC_TERMINAL === "iTerm2") return "iTerm.app";
-  return undefined;
+  // Measured (Step 1): a pane inherits the SERVER's environment, so when the server predates the
+  // terminal these markers are absent entirely — not stale, absent. `MUXED_UNKNOWN` keeps that case
+  // distinguishable from "no multiplexer and no idea", so `resolveChannel` can ring the bell rather
+  // than go silent.
+  return MUXED_UNKNOWN;
 }
+const MUXED_UNKNOWN = "\0muxed-unknown";
 
 /** canon's `u9T` (L505906), over the resolver above.
  *
@@ -1617,6 +1636,11 @@ export function resolveChannel(configured: NotifChannel, env: NodeJS.ProcessEnv 
     case "kitty": return "kitty";
     case "ghostty": return "ghostty";
     case "Apple_Terminal": return "terminal_bell";
+    // Inside a multiplexer we could not identify the emulator — measured to be the ORDINARY case on any
+    // pre-existing tmux server. Ring the bell rather than go silent: silence is the one outcome a user
+    // cannot tell apart from a broken feature, and a bell is one byte an unconfigured terminal ignores.
+    // `preferredNotifChannel` remains the way to name the emulator outright.
+    case MUXED_UNKNOWN: return "terminal_bell";
     default: return "none";
   }
 }

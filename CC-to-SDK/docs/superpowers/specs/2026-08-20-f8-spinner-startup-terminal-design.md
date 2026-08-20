@@ -922,6 +922,33 @@ Both need new persisted preference state, which F8 is not adding. Consequence of
 in a genuinely empty directory sees the workspace tip on every launch, since that entry can never complete.
 Canon's counter is what stops that, and ccx will not until the counter lands.
 
+**S-F8-s — a tmux pane inherits the SERVER's environment, which breaks emulator sniffing far more often
+than the design assumed.** Measured on tmux 3.7b before Task 10 was dispatched. Two findings.
+
+The premise the design was built on is confirmed: tmux OVERWRITES both `TERM` (to `tmux-256color`) and
+`TERM_PROGRAM` (to `tmux`) inside a pane, so neither identifies the emulator and reusing
+`resolveTerminalName` would have resolved `auto` to `none` in every pane — the wave's one new capability
+shipping dead in the environment the acceptance rig runs in.
+
+The finding that was NOT anticipated: `LC_TERMINAL`, `KITTY_WINDOW_ID` and `GHOSTTY_RESOURCES_DIR` were
+delivered into a pane when the tmux server was FRESH (verified on a private `-L` socket) and were ABSENT
+ENTIRELY when a server was already running — even though all three were set in the shell that ran
+`new-session`. A pane inherits the server's environment, not the client's. The plan had recorded this as a
+known limit phrased as staleness ("a server started from terminal A and attached from B keeps A's
+markers"); the measurement shows the common case is not a stale marker but no marker at all, on any
+long-running server, any server started from a launch agent, and any started from a bare shell.
+
+**Design changed on the evidence:** an unidentifiable emulator inside a multiplexer resolves to
+`terminal_bell`, not `none`. Silence is the one outcome a user cannot distinguish from a broken feature,
+and a bell is one byte an unconfigured terminal ignores — the identical argument already recorded in
+D-F8-11 for the Apple Terminal arm, applied to the same problem. `preferredNotifChannel` remains the
+override for naming the emulator outright.
+
+**Not measured, left to the owner's manual pass (A11):** whether each specific emulator really exports the
+marker attributed to it. This machine's shell carries none of them, so the survival test used synthetic
+values. What was measured is the transport — whether tmux forwards them at all — not the claim that iTerm2
+sets `LC_TERMINAL`.
+
 ## 9. Outcomes & Retrospective
 
 Pending — written at finish.
