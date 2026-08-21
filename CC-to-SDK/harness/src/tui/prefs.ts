@@ -53,7 +53,12 @@ import { NOTIF_CHANNELS, NOTIF_EVENTS, type NotifChannel, type NotifEvent } from
  *  emulator escape to emit (or `auto` to sniff) and which of the four `NotifEvent`s are enabled. Read at
  *  CALL time by the notifier's `settings()` closure (chatMain.tsx), never captured at boot — so this file
  *  stays the one seam a `/config` change flows through, like every other client-side setting here. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[] }
+/** `terminalProgressBarEnabled` is T-CH34's setting and canon's own key (bundle L46264 schema: `zt().optional()
+ *  .describe("Emit OSC 9;4 progress sequences during long operations")`) — DEFAULT TRUE, canon's own polarity
+ *  (`Vd("terminalProgressBarEnabled", !0)`, L563441). It rides `prefersReducedMotion`'s exact shape: a plain
+ *  boolean, no closed-set validation below (a hand-edited non-boolean is never indexed or `.trim()`-called
+ *  anywhere downstream, so it has no crash to guard against — same reasoning `outputStyle` gets). */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[]; terminalProgressBarEnabled?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 
