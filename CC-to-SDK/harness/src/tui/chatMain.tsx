@@ -39,7 +39,11 @@ export interface ChatClientOpts {
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
+  // `initialTokenSource` (T2, F9 T-AUTO §A2): `AccountFacts.tokenSource` from the SAME `accountInfo()` race
+  // main.ts already runs for the welcome banner's billing label — a second consumer of one fact, not a
+  // second round-trip. Absent on `ccx attach` and on a resume/continue launch (main.ts's `runChatClient`
+  // callers), which is the notice's unknown arm.
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;

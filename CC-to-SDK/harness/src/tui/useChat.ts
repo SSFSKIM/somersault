@@ -20,7 +20,7 @@ import type { RendererChoice } from "./renderer.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
 import { isInterruptSentinelFrame, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
 import { createSuggester as realCreateSuggester, formatTranscriptTail, markSuggestionAccepted, suggestionRenderStep, suggestionSuppression, EMPTY_SUGGESTION, TAIL_MESSAGE_CHARS, type PromptSuggestion, type Suggester, type TailMessage } from "./suggester.js";
-import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, shouldShowAutoModeNotice } from "./autoModeNotice.js";
+import { AUTO_MODE_NOTICE_DELAY_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "./autoModeNotice.js";
 import { hasAcceptedBypass } from "./bypassConsent.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
 import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
@@ -161,6 +161,14 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean;
+    /** T2 (F9 T-AUTO §A2): the launch's account token source (`AccountFacts.tokenSource`), threaded
+     *  unmodified from `main.ts`'s own `accountInfo()` race all the way through `ChatClientOpts.hookOpts` →
+     *  `ChatApp` props → here — the SAME field the welcome banner's billing label already reads, just handed
+     *  down a second path so the auto-mode notice can pick its variant without a second engine round-trip.
+     *  Absent on `ccx attach` (no launch config exists for an attach client) and on a resume/continue launch
+     *  (the banner race is skipped there too) — both fall into the notice's unknown arm, which keeps the
+     *  cost sentence. */
+    initialTokenSource?: string;
     /** W-C T12: the `promptSuggestionEnabled` pref, resolved by the caller (`chatMain.tsx`) exactly as
      *  `initialShowTurnDuration` is. DEFAULT FALSE — see `suggester.promptSuggestionEnabled` for the
      *  deliberate polarity flip away from upstream's absent-means-on. */
@@ -1822,7 +1830,10 @@ export function useChat(
       if (disposed.current) return;
       autoNoticeShown.current = true;
       if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) return;
-      notice(AUTO_MODE_DESCRIPTION);
+      // T2: oauth is true iff the launch's token source is LITERALLY the subscription one — false and
+      // unknown (attach, resume/continue) both fall through to the cost-sentence variant. See
+      // autoModeNotice.ts's header for the canon citation.
+      notice(autoModeNoticeText({ oauth: opts.initialTokenSource === "CLAUDE_CODE_OAUTH_TOKEN" }));
       // Best-effort, mirrors theme's/output-style's own silent persistence (:1094). savePrefs does a mkdir + a
       // file write, and THIS is a bare timer callback: no promise chain, no error boundary, and the tree
       // installs no uncaughtException handler — so on a read-only home or a full disk an unguarded throw here

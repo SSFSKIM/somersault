@@ -173,16 +173,27 @@ describe("hostOptsFrom — what the detached child derives from its own argv", (
     const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "task"]);
     expect(opts.config.thinking).toBeUndefined();
   });
-  // Wave T EP-T1. `--detachable` re-enters the binary as `--__kind interactive` and never passes through
-  // main.ts's foreground construction, while spawn.ts's configFlags forwards --permission-mode only when it
-  // was explicitly typed — so without the fix here the identical REPL launches in `auto` while plain `ccx`
-  // consults. Asserted on hostOptsFrom because runHostMain hands its result to deps.makeHost verbatim, and
-  // an interactive runHostMain does not resolve until `finished` does.
-  it("an interactive child launches MANUAL like the foreground REPL — and bg is untouched", () => {
+  // F9 T-AUTO A1. `--detachable` re-enters the binary as `--__kind interactive` and never passes through
+  // main.ts's foreground construction. Both constructors now run the SAME resolver (launchMode.ts) over
+  // the SAME effective model, so a bare launch (no forwarded --model, DEFAULTS.model is auto-capable)
+  // lands `auto` here exactly as it does in runForegroundImpl. Asserted on hostOptsFrom because
+  // runHostMain hands its result to deps.makeHost verbatim, and an interactive runHostMain does not
+  // resolve until `finished` does.
+  it("a bare interactive child launches auto like the foreground REPL — and bg is untouched", () => {
     const it_ = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive"]);
-    expect(it_.opts.config.permissionMode).toBe("default");
+    expect(it_.opts.config.permissionMode).toBe("auto");
     const bg = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "bg", "task"]);
     expect(bg.opts.config.permissionMode).toBeUndefined();   // left to DEFAULTS (`auto`): nobody to ask
+  });
+  // The model-gate side of the same resolver: spawn.ts's configFlags forwards --model only when the flag
+  // was explicitly typed OR (Task 1) main.ts materialized the effective flag-or-saved-pref model before
+  // spawning a --detachable child — either way it arrives here as inv.config.model, and a non-auto-capable
+  // one degrades this child to `default` with the model left untouched, the same no-silent-swap rule
+  // runForegroundImpl/resolveOptions.ts's explicit-auto gate follow.
+  it("an interactive child with a forwarded non-auto-capable --model launches default, model untouched", () => {
+    const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive", "--model", "claude-haiku-4-5-20251001"]);
+    expect(opts.config.permissionMode).toBe("default");
+    expect(opts.config.model).toBe("claude-haiku-4-5-20251001");
   });
   it("an explicitly forwarded --permission-mode still wins for an interactive child", () => {
     const { opts } = hostOptsFrom(["--__host", "0a1b2c3d", "--__kind", "interactive", "--permission-mode", "acceptEdits"]);
@@ -467,11 +478,12 @@ describe("main — run: foreground (Task 7)", () => {
     })));
     expect(clientCalls[0].hookOpts.initialEffort).toBe("xhigh");
   });
-  // Wave T EP-T1 (qa3-03/qa3-02). The REPL must launch MANUAL like upstream, and the three readers of the
-  // launch mode — the host's engine config, the welcome banner, and the client's hookOpts seed — must all
-  // report the SAME value. Splitting those apart is how the banner came to print one mode while the engine
-  // ran another, so they are asserted together in one test.
-  it("a bare foreground run launches in `default`, and host, banner and hookOpts all agree", async () => {
+  // F9 T-AUTO A1 (qa3-03 reversal; qa3-02 stays fixed). The REPL now launches AUTO by default — the
+  // benchmark qa3-03/EP-T1 was written against has moved (canon's own auto rollout, the owner's own
+  // settings.json) — and the three readers of the launch mode — the host's engine config, the welcome
+  // banner, and the client's hookOpts seed — must all still report the SAME value. Splitting those apart
+  // is how the banner came to print one mode while the engine ran another, so they are asserted together.
+  it("a bare foreground run launches in `auto`, and host, banner and hookOpts all agree", async () => {
     const hostCalls: any[] = [];
     const clientCalls: any[] = [];
     const fakeHost = { start: async () => {}, stop: async () => {} } as any;
@@ -480,12 +492,31 @@ describe("main — run: foreground (Task 7)", () => {
       makeHost: (o) => { hostCalls.push(o); return fakeHost; },
       runChatClient: async (o) => { clientCalls.push(o); },
     })));
-    expect(hostCalls[0].config.permissionMode).toBe("default");     // the ENGINE consults before rm/git init
-    expect(clientCalls[0].hookOpts.initialMode).toBe("default");    // …the status bar says so from turn 0…
+    expect(hostCalls[0].config.permissionMode).toBe("auto");        // DEFAULTS.model is auto-capable
+    expect(clientCalls[0].hookOpts.initialMode).toBe("auto");       // …the status bar says so from turn 0…
     const lines = (clientCalls[0].initialEntries[0].event.lines as { text: string }[]).map((l) => l.text).join("\n");
-    expect(lines).toContain("mode  default");                       // …and so does the welcome banner
+    expect(lines).toContain("mode  auto");                          // …and so does the welcome banner
   });
-  it("--permission-mode auto still reaches all three — an explicitly typed mode outranks the manual launch default", async () => {
+  // The no-silent-swap cell (R5 §5 item 3): a defaulted (non-explicit) auto is gated on the PREDICATE
+  // isAutoSupportedModel, never the transformer resolveAutoModel — so an explicit --model naming a
+  // non-auto-capable model degrades the launch to `default` instead of silently swapping the model.
+  it("--model claude-haiku-4-5-20251001 launches `default` everywhere, and the model is NEVER swapped", async () => {
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["--model", "claude-haiku-4-5-20251001", "task"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(hostCalls[0].config.permissionMode).toBe("default");
+    expect(hostCalls[0].config.model).toBe("claude-haiku-4-5-20251001");
+    expect(clientCalls[0].hookOpts.initialMode).toBe("default");
+    expect(clientCalls[0].hookOpts.initialModel).toBe("claude-haiku-4-5-20251001");
+    const lines = (clientCalls[0].initialEntries[0].event.lines as { text: string }[]).map((l) => l.text).join("\n");
+    expect(lines).toContain("mode  default");
+  });
+  it("--permission-mode auto still reaches all three — an explicit mode outranks the model-gated default", async () => {
     const hostCalls: any[] = [];
     const clientCalls: any[] = [];
     const fakeHost = { start: async () => {}, stop: async () => {} } as any;
@@ -498,6 +529,22 @@ describe("main — run: foreground (Task 7)", () => {
     expect(clientCalls[0].hookOpts.initialMode).toBe("auto");
     const lines = (clientCalls[0].initialEntries[0].event.lines as { text: string }[]).map((l) => l.text).join("\n");
     expect(lines).toContain("mode  auto");
+  });
+  // New sibling of the auto cell above (R5 §5): an explicit `--permission-mode default` must still pin
+  // Manual everywhere, even though the launch default is now auto — explicit always wins.
+  it("--permission-mode default still reaches all three, overriding the new auto launch default", async () => {
+    const hostCalls: any[] = [];
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["--permission-mode", "default", "task"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(hostCalls[0].config.permissionMode).toBe("default");
+    expect(clientCalls[0].hookOpts.initialMode).toBe("default");
+    const lines = (clientCalls[0].initialEntries[0].event.lines as { text: string }[]).map((l) => l.text).join("\n");
+    expect(lines).toContain("mode  default");
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1175,6 +1222,42 @@ describe("main — --detachable + --idle-timeout validation and auto-attach (Tas
     expect(value).toBe(0);
     expect(calls).toBe(2);                               // the auto-attach path DID retry past the race
     expect(clientCalls[0]).toMatchObject({ client: { kind: "attached", short: "12345678" } });
+  });
+  // F9 T-AUTO A1 (plan-review catch): hostMain.ts loads no prefs of its own, so a saved model preference
+  // has to be MATERIALIZED here, before the spawn, or the detachable child's launch-mode resolver would
+  // see no model, fall back to DEFAULTS.model (auto-capable) and launch `auto` while a foreground run on
+  // the SAME saved model launched `default` — the exact split-brain EP-T1 was written to prevent, now on
+  // the model axis instead of the mode axis. No --model flag is typed in either case below.
+  it("a saved unsupported model with no --model flag: --detachable forwards it, matching a foreground run", async () => {
+    const spawnCalls: any[] = [];
+    await captureLog(() => main(["--detachable", "task"], deps({
+      loadPrefs: () => ({ model: "claude-haiku-4-5-20251001" }),
+      spawnDetached: (inv) => { spawnCalls.push(inv); return { short: "12345678", banner: "backgrounded · 12345678" }; },
+      prepareAttach: async () => prep({ short: "12345678" }),
+      probeSocket: async () => {},
+      runChatClient: async () => {},
+    })));
+    expect(spawnCalls[0].config.model).toBe("claude-haiku-4-5-20251001");
+    const hostCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ model: "claude-haiku-4-5-20251001" }),
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async () => {},
+    })));
+    expect(hostCalls[0].config.permissionMode).toBe("default");     // both launch `default` with that model
+  });
+  it("a saved auto-capable model alias with no --model flag: --detachable forwards it too", async () => {
+    const spawnCalls: any[] = [];
+    await captureLog(() => main(["--detachable", "task"], deps({
+      loadPrefs: () => ({ model: "opus" }),
+      spawnDetached: (inv) => { spawnCalls.push(inv); return { short: "12345678", banner: "backgrounded · 12345678" }; },
+      prepareAttach: async () => prep({ short: "12345678" }),
+      probeSocket: async () => {},
+      runChatClient: async () => {},
+    })));
+    expect(spawnCalls[0].config.model).toBe("opus");                // forwarded as typed — the CHILD alias-resolves it
   });
 });
 

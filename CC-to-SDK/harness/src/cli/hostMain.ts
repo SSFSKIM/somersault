@@ -5,6 +5,7 @@ import { isShortId } from "../fleet/paths.js";
 import { parseCcx } from "./args.js";
 import type { CcxInvocation } from "./args.js";
 import { thinkingConfigFrom } from "../tui/thinkLevels.js";
+import { resolveLaunchPermissionMode } from "./launchMode.js";
 
 /** Read POSITIONALLY and validated, never by value. `argv[argv.indexOf("--__kind") + 1]` yields argv[0]
  *  when the marker is absent — a *defined* value, so a `?? "bg"` fallback never fires: kind lands as
@@ -44,11 +45,18 @@ export function hostOptsFrom(argv: string[]): { opts: SessionHostOpts; prompt?: 
   // the new uuid differs from the old — silently never fires, so superseded turns accumulate forever.
   // Forking is also what makes that purge safe: the child's transcript physically carries the parent's
   // conversation, so deleting the parent costs no history.
-  // Wave T EP-T1: --detachable's child re-enters here with --__kind interactive and never passes through
-  // main.ts's foreground construction, while spawn.ts's configFlags forwards --permission-mode only when
-  // it was explicitly typed. Without this line `ccx --detachable` presents the identical REPL in `auto`
-  // while plain `ccx` consults. A `bg` child keeps auto: it has nobody to ask.
-  const base = kind === "interactive" ? { ...inv.config, permissionMode: inv.config.permissionMode ?? "default" } : inv.config;
+  // F9 T-AUTO A1 (supersedes Wave T EP-T1): --detachable's child re-enters here with --__kind interactive
+  // and never passes through main.ts's foreground construction, so it runs the SAME launch-mode resolver
+  // runForegroundImpl does (launchMode.ts) rather than a hardcoded fallback — otherwise the two would
+  // split the moment their gating inputs (mode, model) differed. `inv.config.model` already carries the
+  // EFFECTIVE model here: spawn.ts's configFlags forwards --model only when the flag was typed, so
+  // main.ts's --detachable arm materializes the flag-or-saved-pref model into inv.config BEFORE spawning
+  // — without that, this child would see no model, fall back to DEFAULTS.model (auto-capable) and launch
+  // `auto` while a foreground run on the same saved model launched `default`. A `bg` child is untouched:
+  // it keeps DEFAULTS' `auto` unconditionally — it has nobody to ask.
+  const base = kind === "interactive"
+    ? { ...inv.config, permissionMode: resolveLaunchPermissionMode({ explicitMode: inv.config.permissionMode, effectiveModel: inv.config.model }).mode }
+    : inv.config;
   const config = kind === "bg" && inv.config.resume ? { ...base, forkSession: true } : base;
   // --think reaches a --__host child two ways: forwarded by spawnDetached for --bg/--detachable
   // (spawn.ts's configFlags), or typed directly at `ccx --__host …` (untested-by-a-human, but the same
