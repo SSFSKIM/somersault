@@ -256,8 +256,11 @@ edited src/a.py (+3/−1) · wrote notes/out.md · ran: npm test · spawned agen
   when mutations occurred.
 - **Images**: `display_data` with `image/png`/`image/jpeg` (matplotlib, PIL) becomes an MCP image
   content block after the text block, capped at 2 per cell and ~1.5 MB each; always also saved to
-  `cells/<id>-<k>.png` and named in the text. (Spike S5 verifies Claude Code renders the block;
-  the file path is the fallback.)
+  `cells/<id>-<k>.png` — the file is on disk and listed in the kernel dir, but the shaped text
+  does **not** name it. That saved-path line was designed and never implemented; T28 re-confirmed
+  it parked (recorded residual — see Surprises & Discoveries and the M3 close-out). (Spike S5
+  verifies Claude Code renders the block; per S5's verdict the saved file is the human-side half
+  of the same result, not a fallback for the block.)
 - **No `structuredContent` in v1.** Claude Code's handling of `structuredContent` can take
   precedence over the content array (stringifying it and discarding formatted text/image
   blocks), which would defeat the shaped result. The MCP reply is the content array alone; the
@@ -757,7 +760,10 @@ Two tiers, and the tiering is part of the contract:
 - **A9 history().** After ≥2 turns, `history().user()` contains the first user prompt verbatim
   (and still does after a `/compact`).
 - **A10 CLI shares the kernel.** From the session's Bash tool: `ptc exec 'print(x)'` → `42`
-  (same kernel as A1, keyed by `CLAUDE_CODE_SESSION_ID`).
+  (same kernel as A1). The CLI reaches that kernel through the session-discovery chain, whose
+  top rung is the hook run-file — it outranks the `CLAUDE_CODE_SESSION_ID` env rung precisely
+  because that variable goes stale across `--resume`, and the run-file is the rung that fired
+  in T28's live run.
 - **A11 Skill triggers.** `claude -p --plugin-dir ./plugin "analyze all python files under
   src/ for TODO density; keep intermediate data in variables"` → the transcript contains a
   `mcp__plugin_ptc_ptc__exec` call (the model chose the kernel unprompted).
@@ -793,9 +799,35 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
 **M3 closed 2026-08-22 (T28), and with it M0–M2.** The acceptance run recorded in Surprises &
 Discoveries executed A1–A15 as written — 15 pass, A13 in its documented S5 form — over a
 keyless tier of 209 passed / 0 skipped and a live tier of 8 passed / 0 skipped. Nothing is
-carried forward as failing; the two open residuals are recorded, not closed: the shaped text
-still does not name a saved PNG path (Images row), and `AgentHandle.interrupt()`'s no-session
-`result()` contract is still fake-only (its session-open contract is now live-verified).
+carried forward as failing.
+
+**Open residuals at close (the full ledger).** Six behaviors ship recorded-but-unclosed —
+each proven only against a fake, or not proven at all, and each written up in its own section
+above. None is an acceptance failure:
+
+1. **Images — the saved-path line.** The PNG is written to `cells/<id>-<k>.png`, but the shaped
+   text still does not name it. Designed, never implemented; T28 re-confirmed it parked.
+2. **`AgentHandle.interrupt()` — the no-session `result()` contract.** Still fake-only: the live
+   T28 run took the session-open branch (now live-verified), so the branch that raises
+   `RuntimeError` because nothing was draining has never run against a real SDK client.
+3. **Codex server→client replies.** No server→client reply has ever been field-proven; the eight
+   per-method replies are shape-tested against the strict fake only, and the one request kind
+   S4 showed that the `never` + `read-only` policy does *not* short-circuit — an MCP tool-call
+   approval — remains unexercised in production.
+4. **The web prose-scrape fallback.** Every live WebSearch response seen so far (S6 and A7)
+   carried a well-formed `Links:` payload, so the no-payload branch is pinned only by a
+   synthetic fixture.
+5. **The fork tight-race.** S2's flush-per-message model was read off record timestamps with a
+   ~7.5 s gap; a fork issued milliseconds after the preceding message completes is untested.
+6. **The TTL watchdog race window.** Explicitly labelled a known residual where it is recorded:
+   a sub-millisecond window between an `execute_request` landing and `pre_run_cell` stamping the
+   cell can theoretically still race the watchdog (worst case is an honest kernel-died abort,
+   never silence).
+
+Distinct from these, and not counted as residuals: the declared **Non-goals** (Codex-side
+installation testing, Windows, dill/state snapshots, Workflow-tool replication) and the
+**accepted limitations** logged with their own decisions — chiefly the `comm`-substring
+discovery gap for a wrapper-launched `claude`, deferred until a real wrapper case is observed.
 
 ## Decision Log
 
