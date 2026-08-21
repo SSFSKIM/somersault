@@ -644,6 +644,41 @@ describe("useChat", () => {
     await waitFor(() => !frame(lastFrame).includes("BUSY"));
   });
 
+  // F9 T-IMAGE Task 5 (I3b), the plan's required "queue: an image turn queued while busy drains and
+  // submits with its block intact" cell. The previous test proves the map survives the ROUND TRIP back
+  // to the composer (queue.ts's `joinQueuedForComposer`); this one proves the OTHER drain destination —
+  // `drainNext` → `dispatch` → `runTurn` → `session.submit` — which before this task pulled only
+  // `q[0].value` (the flattened text) and dropped `pastedContents` on the floor, so a queued image never
+  // reached the model at all even though `makeQueueEntry` had carried it this far.
+  it("a queued image turn drains and reaches session.submit with the image block intact, not just its label", async () => {
+    let release = () => {};
+    const submitted: unknown[] = [];
+    let fake!: FakeRemote;
+    fake = fakeRemote({ submit: async (p, onMessage) => {
+      submitted.push(p);
+      const seq = submitted.length;
+      fake.pushEvent({ kind: "turn", phase: "start", seq });
+      if (submitted.length === 1) await new Promise<void>((res) => { release = res; });   // hold turn 1 open so turn 2 queues
+      const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
+      onMessage(m); fake.pushEvent({ kind: "message", data: m });
+      fake.pushEvent({ kind: "turn", phase: "end", seq });
+      return { result: "done" };
+    } });
+    const api: { run?: (s: ComposerSubmission | string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("first turn"); await waitFor(() => frame(lastFrame).includes("BUSY"));
+    const imageEntry = { id: 1, type: "image" as const, content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } };
+    api.run!({ display: "look [Image #1]", submitText: "look [Image #1]", pastedContents: { 1: imageEntry } });   // queues while busy
+    release();                                              // turn 1 ends → the queued image turn drains
+    await waitFor(() => submitted.length === 2);
+    const second = submitted[1] as { type: string; text?: string; source?: { type: string; media_type: string; data: string } }[];
+    expect(Array.isArray(second)).toBe(true);               // NOT the flattened string the pre-task drain sent
+    expect(second[0]).toEqual({ type: "text", text: "look [Image #1]" });
+    expect(second[1]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: "QkFTRTY0" } });
+  });
+
   it("drains PAST a queued unknown command (no stall) to a following turn", async () => {
     let release = () => {}; let submits = 0;
     let fake!: FakeRemote;

@@ -17,7 +17,9 @@ const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }
   tasks: () => [], background: async () => true, stopTask: async () => {},
   rewindAnchors: async () => [], rewindDryRun: async () => ({ canRewind: false }), rewind: async () => {},
   getSettings: async () => ({}), listDirs: () => [], addDir: async () => {}, removeDir: async () => {},
-  setOutputStyle: async () => {}, addRule: async () => {}, removeRule: async () => {}, setEffort: async () => {} };
+  setOutputStyle: async () => {}, addRule: async () => {}, removeRule: async () => {}, setEffort: async () => {},
+  // F9 T-IMAGE Task 5 (I3b): this file exercises status/stop framing only, so a fixed stub reply is enough.
+  stageImage: () => ({ path: "/fake/staged/path" }) };
 
 const root = mkdtempSync(join(tmpdir(), "ccx-host-"));   // one temp root for the file, not one per test
 let nth = 0;

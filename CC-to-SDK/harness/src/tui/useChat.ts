@@ -68,7 +68,8 @@ import { DEFAULTS, summarizeUsage, listSessions as realListSessions, getSessionM
 import type { RawContextUsage, ListSessionsOpts } from "../index.js";
 import { type HistEntry, type HistoryScope } from "./historySearch.js";
 import { appendHistory, hydrateEntry, readHistory } from "./promptHistory.js";
-import { substituteChips } from "./pasteChips.js";
+import { substituteChips, assembleSubmission } from "./pasteChips.js";
+import { IMAGE_VERSION_SKEW_NOTICE } from "../client/chatAdapter.js";
 import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./queue.js";
 import { composerMode } from "./promptMode.js";
 import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRunStatusLine, STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS, type StatusLineConfig, type StatusLineDriver, type StatusLineDriverDeps, type StatusLineSnapshot, type StatusLineUsage } from "./statusLine.js";
@@ -2842,14 +2843,24 @@ export function useChat(
   // tasks/model/lines) comes from the event effect above, not from this call — a turn started by another
   // attached client renders identically (spec A2b acceptance 7). onMessage is a deliberate no-op: the
   // events, not the submit callback, own the render.
-  function runTurn(prompt: string) {
+  // F9 T-IMAGE Task 5 (I3b): `pastedContents` is what turns a plain prompt string into structural
+  // content — `assembleSubmission` (pasteChips.ts) resolves any `image-failed` label to its failure text
+  // in place and pulls every ready `image` entry into an appended block, or returns the bare string
+  // unchanged when the map is empty/absent, so a text-only turn pays nothing extra.
+  function runTurn(prompt: string, pastedContents?: PastedMap) {
     // THE live prompt echo. It shares `userEchoLines` with replay and the queued list so the band a prompt
     // wears cannot depend on which surface minted it. Baked at the width of the moment: a local entry's lines
     // project verbatim (`projectLocalEvent`), so an already-echoed prompt keeps its band across a resize.
     appendNewLocal({ kind: "user-echo", lines: userEchoLines(prompt, { width: columnsFn() }) });
     noteTail("user", prompt);        // W-C T12: the user half of the suggester's tail (the assistant half rides the message arm)
-    session.submit(prompt, () => {}).catch((e) => {
-      append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]);
+    const content = assembleSubmission(prompt, pastedContents ?? {});
+    session.submit(content, () => {}).catch((e) => {
+      const message = (e as Error).message;
+      // F9 T-IMAGE Task 5 (I3b): version skew is LOUD, not a turn failure — the adapter never sent a
+      // prompt frame at all (spec v3.1), so this reads as a capability notice (the same idiom
+      // clearSession's pre-upgrade degrade uses below), not an error line.
+      if (message === IMAGE_VERSION_SKEW_NOTICE) notice(message);
+      else append([{ text: `✗ ${message}`, color: role("error") }]);
       // Only reclaim busy/drain when no turn is event-owned (liveTurnRef null): a live turn — another
       // client's turn streaming, or our own turn that already started and whose end (incl. a synthetic
       // one on host death) the turn-end event arm will still deliver — owns busy/drain on its own; doing
@@ -2874,9 +2885,12 @@ export function useChat(
     // window is not observable from a test (a discriminating regression test was attempted three ways and
     // each passed with the write reverted — see the task-8 report's follow-up pass). Depending on that
     // flush timing for a correctness invariant is exactly what this file's ref discipline exists to avoid.
-    const next = q[0].value, rest = q.slice(1); queueRef.current = rest; setQueue(rest);
+    // F9 T-IMAGE Task 5 (I3b): `entry.pastedContents` rides along the SAME drain — before this task the
+    // drain pulled `.value` alone (the flattened text) and a queued image turn's bytes died right here,
+    // never reaching `dispatch`/`runTurn` even though `makeQueueEntry` had carried the map this far.
+    const entry = q[0], rest = q.slice(1); queueRef.current = rest; setQueue(rest);
     const gen = drainGen.current;
-    setTimeout(() => { if (disposed.current || drainGen.current !== gen) return; if (!dispatch(next)) drainNext(); }, 0);
+    setTimeout(() => { if (disposed.current || drainGen.current !== gen) return; if (!dispatch(entry.value, entry.pastedContents)) drainNext(); }, 0);
   }
   // ! bash mode — echo the command, run it locally in cwd, append its output (no model turn; CC's shell escape).
   async function runBashMode(command: string) {
@@ -2892,8 +2906,12 @@ export function useChat(
    *  CLAUDE.md (`memoryMode`, `src/tui/memory.ts`). Both are gone — the spec's owner-decision section removed
    *  the mode, upstream's resolver knows only `prompt | bash`, and a `#` line is now an ordinary prompt that
    *  reaches the model verbatim. The `## Memories` sections users already accumulated stay on disk untouched;
-   *  only the entry affordance went. */
-  function dispatch(prompt: string): boolean {
+   *  only the entry affordance went.
+   *
+   *  F9 T-IMAGE Task 5 (I3b): `pastedContents` is a new OPTIONAL trailing parameter — every existing
+   *  caller (bash, local commands, unknown commands) never had images to carry and stays unaffected; only
+   *  the catalog/plain-turn arms below, which actually reach `runTurn`, forward it. */
+  function dispatch(prompt: string, pastedContents?: PastedMap): boolean {
     if (prompt.startsWith("!")) { void runBashMode(prompt.slice(1).trim()); return false; }
     const cmd = parseCommand(prompt);
     if (cmd) {
@@ -2901,10 +2919,10 @@ export function useChat(
       // U1: a catalogued client-side control gets an honest message, never a prompt the model can't act
       // on. hasOwn, not `in`: a bare object's prototype chain would match "/toString" etc.
       if (Object.hasOwn(CLIENT_SIDE_NOTES, cmd.name)) { append([...userEchoLines(`/${cmd.name}${cmd.args ? " " + cmd.args : ""}`, { width: columnsFn() }), ...formatClientSide(cmd.name)]); return false; }
-      if (catalogNames.current.has(cmd.name)) { runTurn(prompt); return true; }   // catalog → run "/name …" as a turn (probe 31)
+      if (catalogNames.current.has(cmd.name)) { runTurn(prompt, pastedContents); return true; }   // catalog → run "/name …" as a turn (probe 31)
       void handleCommand(cmd); return false;                                       // unknown → formatUnknown (switch default)
     }
-    runTurn(prompt); return true;
+    runTurn(prompt, pastedContents); return true;
   }
   // While a turn runs, regular prompts + catalog commands QUEUE (drained FIFO on turn end); local commands and
   // `!` run immediately (control-channel / local — safe mid-turn). Type-ahead while Claude works (CC parity).
@@ -2927,10 +2945,13 @@ export function useChat(
     // suggestion was accepted, ignored or never shown. Here rather than in `runTurn` because upstream resets
     // at the SUBMIT, and a `/help` or a queued prompt is still the user answering the composer.
     setPromptSuggestion(EMPTY_SUGGESTION);
-    if (!busy) { dispatch(prompt); return; }
-    if (prompt.startsWith("!")) { dispatch(prompt); return; }
+    // F9 T-IMAGE Task 5 (I3b): `pastedContents` now rides the IMMEDIATE (not-busy) dispatch too — before
+    // this task only the QUEUE arm below carried it, so a not-busy image submit reached `dispatch` with
+    // its map already dropped and no image ever left the composer.
+    if (!busy) { dispatch(prompt, pastedContents); return; }
+    if (prompt.startsWith("!")) { dispatch(prompt, pastedContents); return; }
     const cmd = parseCommand(prompt);
-    if (cmd && LOCAL_NAMES.has(cmd.name)) { dispatch(prompt); return; }
+    if (cmd && LOCAL_NAMES.has(cmd.name)) { dispatch(prompt, pastedContents); return; }
     setQueue((q) => [...q, makeQueueEntry(prompt, pastedContents)]);            // turn while busy → enqueue
   }
   /** CM51. The mode is DERIVED from the text's own prefix, the one derivation `composerMode` owns for the

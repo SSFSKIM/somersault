@@ -11,6 +11,10 @@
 // time, so the cycle resolves in either import order. The alternative was a second copy of `insertText` living
 // here, which is the one thing guaranteed to drift away from the reducer it has to agree with.
 import { insertText, type EditorState, type PastedEntry, type PastedMap } from "./editor.js";
+// F9 T-IMAGE Task 5 (I3b): the session layer's structural content type + its text/image assembler.
+// Importing "downward" from tui/ into session/ is the normal direction (session is the core), so this is
+// not the layering inversion `session/turnInput.ts`'s own doc calls out for its own tui/ import.
+import { assembleUserContent, type UserTurnInput } from "../session/turnInput.js";
 
 /** `CMt`, bundle L153739: the character count above which a paste collapses regardless of how many lines it has. */
 export const CHIP_CHARS = 800;
@@ -181,6 +185,27 @@ export function substituteChips(text: string, map: PastedMap): string {
     out = out.slice(0, spans[i].start) + entry.content + out.slice(spans[i].end);
   }
   return out;
+}
+
+/** F9 T-IMAGE Task 5 (I3b): the client-side half of "an image-failed entry becomes its failure text
+ *  block" (spec v3.1 Transport) — it never had valid bytes to stage in the first place (Task 2's paste-
+ *  time ladder already exhausted itself before minting the `image-failed` entry), so its degrade happens
+ *  HERE, at submit-assembly, rather than at the host. A `ready` entry's literal `[Image #N]` label stays
+ *  in the text exactly where `substituteChips` (which only ever touches `type:"text"`) already leaves
+ *  it — canon keeps the label AND appends the real image block, so this function does the same: pull
+ *  every ready image out (in paste order) for `assembleUserContent`'s image list, and leave its label
+ *  alone. A `text`-only submit (no `image`/`image-failed` entries in the map at all) costs nothing extra
+ *  and returns the bare string — every plain-prompt caller stays on the cheap path. */
+export function assembleSubmission(text: string, pastedContents: PastedMap): UserTurnInput {
+  const images: { id: number; content: string; mediaType: string }[] = [];
+  let resolved = text;
+  for (const entry of Object.values(pastedContents)) {
+    if (entry.type === "image") images.push(entry);
+    else if (entry.type === "image-failed") resolved = resolved.split(imageChipLabel(entry.id)).join(`[Image could not be processed: ${entry.reason}]`);
+  }
+  if (images.length === 0) return resolved;
+  images.sort((a, b) => a.id - b.id);
+  return assembleUserContent(resolved, images.map((i) => ({ data: i.content, mediaType: i.mediaType })));
 }
 
 /** `lgr`, bundle L317645 = `1e5`. ONE upstream constant with TWO jobs, and the difference between them is

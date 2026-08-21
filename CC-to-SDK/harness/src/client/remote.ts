@@ -166,10 +166,20 @@ export class RemoteChatSession {
   backgroundOp() { return this.send<{ ok: boolean; error?: string; backgrounded?: boolean }>({ op: "background" }); }
   stopTaskOp(taskId: string) { return this.send<{ ok: boolean; error?: string }>({ op: "stop_task", taskId }); }
   /** `uuid` (M3 §1a-b) stamps the user item this turn starts from — a TRAILING OPTIONAL, so every existing
-   *  caller is unchanged. Omitted from the frame entirely when absent: the schema refuses an empty one, and
-   *  a key carrying `undefined` is not the same offer as no key. */
-  prompt(text: string, uuid?: string): Promise<{ ok: boolean; accepted?: boolean; seq?: number; error?: string }> {
-    return this.send({ op: "prompt", text, ...(uuid ? { uuid } : {}) });
+   *  caller is unchanged. `images` (F9 T-IMAGE Task 5/I3b), same discipline: every existing caller that
+   *  never stages an image omits it entirely, and an old host's schema — which does not know the key —
+   *  simply strips it, which is fine, because a client that reaches this method WITH images has already
+   *  proven the host understands `stageImage` (a separate op that fails LOUDLY on an old host, see
+   *  chatAdapter.ts) before ever getting here. Omitted keys, not `undefined` values: the schema refuses
+   *  an empty one, and a key carrying `undefined` is not the same offer as no key. */
+  prompt(text: string, uuid?: string, images?: { stagedId: string; sha256: string }[]): Promise<{ ok: boolean; accepted?: boolean; seq?: number; error?: string }> {
+    return this.send({ op: "prompt", text, ...(uuid ? { uuid } : {}), ...(images && images.length ? { images } : {}) });
+  }
+  /** F9 T-IMAGE Task 5 (I3b): mint a staging file for one image. An `error: "unknown op"` reply is the
+   *  LOUD version-skew signal (an old host's discriminated union does not recognize this literal at all,
+   *  server.ts's dispatch) — `chatAdapter.ts` is what turns that into the client-facing restart notice. */
+  stageImageOp(descriptor: { mediaType: string; dimensions: { width: number; height: number }; size: number; sha256: string }): Promise<{ ok: boolean; path?: string; error?: string }> {
+    return this.send({ op: "stageImage", ...descriptor });
   }
   interrupt(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "interrupt" }); }
   stopHost(): Promise<{ ok: boolean; error?: string }> { return this.send({ op: "stop" }); }
