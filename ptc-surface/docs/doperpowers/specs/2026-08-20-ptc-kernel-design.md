@@ -472,7 +472,9 @@ Transcript: .path, .messages (list[dict]), .user(), .assistant(), .tool_calls(na
 Resolves `~/.claude/projects/<munged-cwd>/<session>.jsonl` (munge: non-alphanumeric → `-`);
 falls back to globbing `~/.claude/projects/*/<session>.jsonl`. Default session = the kernel's
 `claude_session_id` from `meta.json` (explicit `RuntimeError` when the kernel is alias-keyed
-and none is known). This is the PRO-LONG-style lever: pre-compaction history stays queryable as
+and none is known); the cwd the munge is built from comes off that same `meta.json` dict, with
+the kernel process's own `PTC_CWD` as fallback — the bootstrap config carries no `cwd`, so
+sourcing it there would leave the direct-path tier dead in every real kernel. This is the PRO-LONG-style lever: pre-compaction history stays queryable as
 data.
 `AgentHandle.history()` returns the same type for children.
 
