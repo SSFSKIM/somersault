@@ -322,7 +322,8 @@ mechanics (first-line rule; each `%%bash` is a throw-away subshell; `%cd` + `os.
 await agent.run(task, *, provider="claude",           # "claude" | "codex"
                 model=None, system=None, allowed_tools=None,
                 permission_mode="bypassPermissions", cwd=None,
-                max_turns=None, effort=None, output_schema=None) -> AgentResult
+                max_turns=None, effort=None, output_schema=None,
+                timeout=None) -> AgentResult
 agent.spawn(task, *, name=None, **same_options) -> AgentHandle      # starts immediately, sync return
 await agent.fork(task, **same_options) -> AgentResult               # child inherits THIS conversation
 await agent.gather(*handles) -> list[AgentResult]
@@ -335,8 +336,10 @@ agent.resume(session_id, **options) -> AgentHandle
 - `AgentHandle`: `.name`, `.session_id`, `.status` (`running|done|error|interrupted`),
   `await .result()`, `await .send(msg)` (a follow-up turn on the same session — this is the
   SendMessage equivalent), `.messages()` (transcript so far), `.history()` (T25: the child's
-  own `Transcript`, resolved by session id via the same `history()` glob fallback — a child's
-  cwd is never tracked on the handle so the direct-path guess is skipped), `.interrupt()`,
+  own `Transcript`, resolved by the child's session id — the handle never tracked the child's
+  cwd, so it passes none, but `history()` still probes the KERNEL's `meta.json` cwd first and
+  that direct path hits whenever the child ran in the kernel's own directory, which is the
+  default; the glob covers a child spawned with a different `cwd=`), `.interrupt()`,
   `.close()`. **`.interrupt()` follows S1's terminal shape**: it signals the session and then
   *waits the drain out*, because an interrupted turn ends with a normal `ResultMessage`
   (`terminal_reason='aborted_streaming'`, no exception, 4–13 s). The handle therefore settles
@@ -434,8 +437,9 @@ RLM `llm_query` primitive for semantic map-reduce:
 
 ```python
 await web_fetch(url, *, prompt=None, timeout=30) -> FetchResult(url, status, title, text)
-await web_search(query, *, allowed_domains=None, blocked_domains=None, max_results=10,
-                 timeout=300) -> list[SearchResult(title, url, snippet)]   # .raw keeps the source blocks
+await web_search(query_text, *, allowed_domains=None, blocked_domains=None,
+                 max_results=10, timeout=300) -> list[SearchResult(title, url, snippet)]
+                 # .raw keeps the source block
 ```
 
 - `web_fetch`: `httpx` GET (redirects followed, 10 MB cap enforced *while streaming*) →
@@ -459,12 +463,18 @@ await web_search(query, *, allowed_domains=None, blocked_domains=None, max_resul
   re-applied to the returned urls**, so a caller that asked for a restriction gets one whether
   or not the hint was honored. Results are correlated back to a `WebSearch` `tool_use` id, so
   another tool's output can never be scraped for urls; with no correlation available the parse
-  widens to every tool result rather than returning nothing.
+  widens to every tool result rather than returning nothing. `max_results` is
+  **truncation-only**: the model decides how many hits the search tool turns up (S6 and A7 both
+  observed 8) and PTC slices the list to at most `max_results` — a caller asking for more than
+  the tool returned silently gets fewer, and there is no way to make the tool search harder.
+  The prose-scrape fallback has **never fired against real data**: every live response seen so
+  far carried a well-formed `Links:` line, so that branch is pinned only by a synthetic fixture
+  in `test/unit/test_web.py` (insurance against a shape change, not an evidenced path).
 
 ### History (lossless memory)
 
 ```python
-history(session: str | None = None) -> Transcript
+history(session: str | None = None, cwd: str | None = None) -> Transcript
 Transcript: .path, .messages (list[dict]), .user(), .assistant(), .tool_calls(name=None),
             .search(regex), .text()          # convenience projections over the raw JSONL
 ```
@@ -474,8 +484,8 @@ falls back to globbing `~/.claude/projects/*/<session>.jsonl`. Default session =
 `claude_session_id` from `meta.json` (explicit `RuntimeError` when the kernel is alias-keyed
 and none is known); the cwd the munge is built from comes off that same `meta.json` dict, with
 the kernel process's own `PTC_CWD` as fallback — the bootstrap config carries no `cwd`, so
-sourcing it there would leave the direct-path tier dead in every real kernel. This is the PRO-LONG-style lever: pre-compaction history stays queryable as
-data.
+sourcing it there would leave the direct-path tier dead in every real kernel. This is the
+PRO-LONG-style lever: pre-compaction history stays queryable as data.
 `AgentHandle.history()` returns the same type for children.
 
 ### Workflow helpers
@@ -540,8 +550,11 @@ ptc/
 
 Frontmatter `name: ptc`, description tuned to trigger on: bulk file analysis, many-step
 programmatic work, fan-out/aggregation, long-running loops, multi-agent orchestration, "keep this
-in a variable". Body teaches, in order (Prime's doctrine transposed, tightened for a hybrid
-harness):
+in a variable". T17 shipped a deliberately narrowed v0 description while `agent`/`llm`/web were
+still stubs; T27 restored the full scope once every runtime tool had landed, so the description
+now names orchestration and fan-out again — it must keep tracking what is actually bound.
+Body teaches, in **eleven** sections, in order (Prime's doctrine transposed, tightened for a
+hybrid harness — the count was ten until `workflow` shipped in T26 and earned §9):
 
 1. **What the kernel is** — persistent notebook; variables/imports/handles survive calls, turns,
    compaction, and `--resume`, until the kernel's idle TTL (default 24 h) or a restart. Session
@@ -558,18 +571,25 @@ harness):
    `%%bash` first-line rule + throw-away-subshell mechanics, `%cd`/`os.environ` persistence.
 5. **Agents** — the four forms with one-line use cases: `run` (blocking one-shot), `spawn`+
    `gather` (parallel fan-out), `fork` (child inherits this conversation — "ask about our
-   discussion"), `send` (follow-up on a persistent child); provider="codex" for a Codex worker;
-   depth and concurrency limits; children run under `bypassPermissions` — delegate only work
-   you'd run yourself.
+   discussion"), `send` (follow-up on a persistent child); `provider="codex"` for a Codex
+   worker, **with the per-provider option matrix stated** (T22: `allowed_tools`, `max_turns`
+   and a non-default `permission_mode` raise on codex; `system=` becomes
+   `developerInstructions`; `model`/`effort`/`output_schema`/`cwd`/`timeout` work on both;
+   `fork` is claude-only) — an option silently dropped is worse than one that raises, and the
+   skill must not let the model discover that at runtime; depth and concurrency limits;
+   children run under `bypassPermissions` — delegate only work you'd run yourself.
 6. **llm map-reduce** — chunk → `gather(llm(...))` → synthesize; `json_schema` for structured
-   labels.
+   labels; the ~5.2k prompt-token floor, so it is not a string op.
 7. **Web** — `web_fetch` keeps full text in the variable (filter in code); `web_search` returns
-   structured results.
+   structured results, with `.snippet` empty and `max_results` truncation-only.
 8. **History** — `history()` for anything pre-compaction; `handle.history()` for children.
-9. **Pitfalls** — do not invent wrappers that don't exist (verbatim Prime's negative
+9. **Workflow helpers** — `parallel`/`pipeline`/`phase` as *doctrine, not an engine*: a cell of
+   Python is the workflow; the bound and the in-order per-item error capture are what they add;
+   `spawn` handles belong in `agent.gather`, not `parallel`; `fork` is never a loop body.
+10. **Pitfalls** — do not invent wrappers that don't exist (verbatim Prime's negative
    instruction, adapted); the kernel is not the project's runtime; restart loses variables but
    not agent sessions.
-10. **Worked examples** — three short end-to-end cells: bulk audit; spawn-3-gather; fork-recall.
+11. **Worked examples** — short end-to-end cells: bulk audit; spawn-and-gather; fork-recall.
 
 ### Installation modes
 
