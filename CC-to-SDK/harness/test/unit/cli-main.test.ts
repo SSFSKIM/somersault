@@ -418,6 +418,55 @@ describe("main — run: foreground (Task 7)", () => {
     })));
     expect(hostCalls[0].config.model).toBeUndefined();
   });
+  // T-EFFORT — the model precedent's exact twin (`cli/main.ts`'s `persistedEffort`). WIRING TEST: this is
+  // the only place a seeded prefs effort reaches `hookOpts.initialEffort` through the REAL launch function,
+  // not a hand-built object — delete `persistedEffort` (or its `?? ` in the `hookOpts` line) and this test
+  // goes red, proving the seam is load-bearing rather than decorative.
+  it("a saved prefs effort becomes the launch effort when no --effort was typed", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ effort: "medium" }),
+      makeHost: () => fakeHost,
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(clientCalls[0].hookOpts.initialEffort).toBe("medium");
+  });
+  it("--effort WINS over the saved default — a flag typed for this run outranks a stored preference", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["--effort", "low", "task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ effort: "medium" }),
+      makeHost: () => fakeHost,
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(clientCalls[0].hookOpts.initialEffort).toBe("low");
+  });
+  // Canon's own read-back filter (`Qdt`), applied on the READ side too: a hand-edited "max" in prefs.json
+  // must not silently become every future session's default the way a `/effort max` write never could.
+  it("a hand-edited, non-persistable saved effort (max) is ignored and the harness default wins", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ effort: "max" }),
+      makeHost: () => fakeHost,
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(clientCalls[0].hookOpts.initialEffort).toBe("xhigh");   // DEFAULTS.effort, not "max"
+  });
+  it("with no saved default and no --effort, the harness default (xhigh) is used", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      makeHost: () => fakeHost,
+      runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    expect(clientCalls[0].hookOpts.initialEffort).toBe("xhigh");
+  });
   // Wave T EP-T1 (qa3-03/qa3-02). The REPL must launch MANUAL like upstream, and the three readers of the
   // launch mode — the host's engine config, the welcome banner, and the client's hookOpts seed — must all
   // report the SAME value. Splitting those apart is how the banner came to print one mode while the engine

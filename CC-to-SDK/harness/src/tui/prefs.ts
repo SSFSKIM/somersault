@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fleetRoot } from "../fleet/paths.js";
 import { THEMES, type ThemeId } from "./theme.js";
 import { NOTIF_CHANNELS, NOTIF_EVENTS, type NotifChannel, type NotifEvent } from "./desktopNotify.js";
+import { isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
 
 /** `queuedUpHintSessions` is upstream's `queuedCommandUpHintCount` (bundle L377294 default, L495114 gate, L495115 literal) — how many
  *  sessions have already shown `Press up to edit queued messages`; the hint stops at `QUEUED_UP_HINT_LIMIT`.
@@ -53,7 +54,15 @@ import { NOTIF_CHANNELS, NOTIF_EVENTS, type NotifChannel, type NotifEvent } from
  *  emulator escape to emit (or `auto` to sniff) and which of the four `NotifEvent`s are enabled. Read at
  *  CALL time by the notifier's `settings()` closure (chatMain.tsx), never captured at boot — so this file
  *  stays the one seam a `/config` change flows through, like every other client-side setting here. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[] }
+/** `effort` is T-EFFORT's default-level write: canon's `pOn` (106568-106578) writes `effortLevel` to
+ *  `~/.claude/settings.json`; ours goes here, the ccx-prefs seam every other client-side setting in this
+ *  file already uses (the SAME recorded divergence `model` above already carries). Written by
+ *  `applyEffort` (useChat.ts) — the one choke point EVERY level-setting surface (the dialog's Enter, a
+ *  typed `/effort <level>`, the `/model` picker's effort row) funnels through, canon's own `Z5t` shape
+ *  (T-EFFORT R2 §2.2). Read back at `cli/main.ts`'s `initialEffort` seed, re-filtered through the SAME
+ *  persistable-level gate (`isPersistableEffortLevel`) canon's read-back applies (`Qdt`, R2 §2.5) — a
+ *  hand-edited `"max"` here is exactly as inert as an attempted write of it would have been. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[]; effort?: EffortLevel }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 
@@ -93,6 +102,12 @@ export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
     // path that matters most. A malformed array is dropped whole rather than filtered, matching `theme`'s
     // drop-not-coerce rule elsewhere in this loader.
     if (prefs.notifEvents !== undefined && (!Array.isArray(prefs.notifEvents) || !prefs.notifEvents.every((e) => NOTIF_EVENTS.includes(e)))) delete prefs.notifEvents;
+    // T-EFFORT: `effort` is a CLOSED set like `theme`/`tui` — SHAPE validation only (any of the five
+    // `EffortLevel`s). The NARROWER persistable-subset filter (no `max`) is applied at the READ-BACK site
+    // (`cli/main.ts`), not here, matching canon's own two-step shape: `Qdt` re-filters on read exactly as
+    // it gates on write, but the settings FILE itself is only ever type-checked at this layer (see `model`'s
+    // comment above for the same split, one line up).
+    if (prefs.effort !== undefined && !isEffortLevel(prefs.effort)) delete prefs.effort;
     return prefs;
   } catch { return {}; }
 }

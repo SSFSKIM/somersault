@@ -29,7 +29,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { userEchoLines, type RenderLine } from "./render.js";
-import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES } from "./species.js";
+import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, LOCAL_OUTPUT_GUTTER } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
@@ -43,8 +43,8 @@ import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import type { DesktopNotifier } from "./desktopNotify.js";
-import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, isPersistableEffortLevel, type EffortLevel } from "./modelPickerModel.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -1986,16 +1986,24 @@ export function useChat(
             append(formatThink(parsed.level));
           } else append(formatThink(undefined, thinkLevel));
           break;
-        // W-C T11 (EP-C6). No arg = upstream's shape, the dialog (`local-jsx`, L447278). An arg is ccx's
-        // documented divergence (commands.ts's COMMANDS entry says why) and the only keyboard route to the
-        // domain gate — a dialog cannot produce an invalid level.
+        // W-C T11 (EP-C6). No arg = upstream's shape, the dialog (`local-jsx`, L423072). An arg is the only
+        // keyboard route to the domain gate — a dialog cannot produce an invalid level.
         // W2 T5 (fold s2qa4-10): the arg form now says what it did. The `⎿` row is the ARGUMENT form's
         // alone — the dialog's Enter has the row on screen as its own feedback, and the picker's commit
         // rides out with `formatModelSet`'s notice.
-        case "effort":
-          if (cmd.args) { const applied = applyEffort(cmd.args.trim()); if (applied) append(formatEffortSet(applied)); }
-          else openEffortDialog();
+        // T-EFFORT Arm 2 — canon's own branch ORDER (`T2w`, R2 §1.1): help → current/status → bare → level.
+        // ccx's old `if (cmd.args) … else …` inverted that (level-or-dialog, nothing else), which is why the
+        // two sub-verbs have to be tested INSIDE the non-empty-arg branch, ahead of `applyEffort` — a typed
+        // `help`/`current`/`status` must never reach the level parser and be refused as a bogus level.
+        case "effort": {
+          const arg = cmd.args;                 // parseCommand already trims (commands.ts's parseCommand)
+          if (arg === "help" || arg === "-h" || arg === "--help") { append(formatEffortHelp()); break; }
+          if (arg === "current" || arg === "status") { append(formatEffortCurrent(effort, DEFAULT_EFFORT)); break; }
+          if (!arg) { openEffortDialog(); break; }
+          const applied = applyEffort(arg);
+          if (applied) append(formatEffortSet(applied, isPersistableEffortLevel(applied)));
           break;
+        }
         case "mcp": {
           const action = parseMcpArgs(cmd.args);
           if (!action) { append(formatMcpUsage()); break; }
@@ -2423,18 +2431,32 @@ export function useChat(
    *
    *  W2 T5: RETURNS the level it applied, or `undefined` when it refused (or the hook is torn down). Only
    *  the `/effort <level>` arm reads it — that surface, and only that surface, prints a result row, and the
-   *  refusal below already prints its own. Reporting it back beats an `announce` flag because the domain
-   *  gate stays in one place and no caller can print a confirmation for a level that never applied. */
+   *  refusal below already prints its own (T-EFFORT: now `formatEffortInvalid`, canon's `Invalid argument:
+   *  … Valid options are: …` behind the `⎿` gutter, not a bare error-coloured line). Reporting it back
+   *  beats an `announce` flag because the domain gate stays in one place and no caller can print a
+   *  confirmation for a level that never applied.
+   *
+   *  T-EFFORT: THE SINGLE PERSISTENCE CHOKE POINT. Every surface that can set a level — the dialog's Enter
+   *  (`confirmEffort` below), a typed `/effort <level>` (the dispatch arm), and the `/model` picker's effort
+   *  row (`ChatApp`'s `onEffortChange={applyEffort}`) — already funnels through this one function, which is
+   *  canon's own shape (`Z5t`, R2 §2.2: one shared thunk under the dialog, the direct-set arm, AND the
+   *  picker's commit). So one write here covers all three call sites for free; nothing per-caller was added
+   *  to any of them. Persistence is unconditional on "is this interactive" (canon's real gate, R2 §2.2) —
+   *  ccx has no headless `/effort` twin, so every reachable caller already IS interactive. */
   function applyEffort(level: string): EffortLevel | undefined {
     if (disposed.current) return undefined;
     if (!isEffortLevel(level)) {
-      append([{ text: `effort: unknown effort level "${level}" · try low/medium/high/xhigh/max`, color: role("error") }]);
+      append(formatEffortInvalid(level));
       return undefined;
     }
     setEffortState(level);
     // Feature-tested like every other SettingsOps verb: a lib Session (whose config is fixed at construction)
     // has no flag layer to write, and the local state above is still the truthful thing to show.
     if (hasSettingsOps(session)) void session.setEffort(level).catch(() => {});
+    // Only low|medium|high|xhigh persist (`isPersistableEffortLevel`, canon's `Qdt`) — `max` is deliberately
+    // excluded and stays session-only; `formatEffortSet`'s suffix (the dispatch arm below) reads the SAME
+    // gate so the confirmation text and the file on disk can never disagree about what just happened.
+    if (isPersistableEffortLevel(level)) { try { savePrefsFn({ effort: level }, historyEnv); } catch { /* best-effort, like every other pref write here */ } }
     return level;
   }
   /** Snapshot at open time, exactly as `openModelPicker` does, so ChatApp reads state and nothing else. */
@@ -2447,6 +2469,12 @@ export function useChat(
     });
   }
   function closeEffortDialog(): void { if (!disposed.current) setEffortDialog({ open: false }); }
+  /** T-EFFORT Arm 3 — Esc's own path, canon's single word `Cancelled` (R2 §3.1) through the SAME `⎿` gutter
+   *  channel every other `/effort` arm uses. SPLIT from `closeEffortDialog` on purpose: `confirmEffort`
+   *  below ALSO calls `closeEffortDialog` on a successful Enter, and a naive append inside the shared close
+   *  would print `Cancelled` after every confirm too (the trap the brief names). Wiring THIS function to
+   *  `onCancel` — not `closeEffortDialog` — is what keeps Enter silent on this specific line. */
+  function cancelEffortDialog(): void { closeEffortDialog(); append([{ text: "Cancelled", gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } }]); }
   function confirmEffort(level: EffortLevel): void { closeEffortDialog(); applyEffort(level); }
 
   // W3 T3: /add-dir. `addDirValidate` is the ONE place that turns a typed path into a verdict — both the
@@ -3078,5 +3106,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

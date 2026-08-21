@@ -76,6 +76,37 @@ const EFFORT_SET = new Set<string>(EFFORT_LEVELS);
  *  object-literal domains `args.ts` has to use `Object.hasOwn` on. */
 export function isEffortLevel(v: unknown): v is EffortLevel { return typeof v === "string" && EFFORT_SET.has(v); }
 
+/** T-EFFORT: canon's `Qdt` (106479-106483) — the subset of levels a persistence write (or read-back) is
+ *  allowed to see. `max` is deliberately excluded: canon's own comment there reads as "don't let a user's
+ *  heaviest, priciest level become every future session's silent default." One gate, used on BOTH sides of
+ *  the file (`applyEffort`'s write, `cli/main.ts`'s read-back), so a hand-edited `"max"` in prefs.json is
+ *  ignored exactly like an attempted write of it would have been refused. */
+export type PersistableEffortLevel = "low" | "medium" | "high" | "xhigh";
+const PERSISTABLE_EFFORT_SET = new Set<string>(["low", "medium", "high", "xhigh"]);
+export function isPersistableEffortLevel(v: unknown): v is PersistableEffortLevel { return typeof v === "string" && PERSISTABLE_EFFORT_SET.has(v); }
+
+/** T-EFFORT: canon's `_lT` (423057), verbatim — the description table `/effort help`'s bullet list uses.
+ *  Used ONLY there: `/effort current`|`status` reads a DIFFERENT table, `EFFORT_STATUS_DESCRIPTIONS` below
+ *  (canon's `rCb`, 106608-106621) — the two tables' prose for the SAME level differs (compare `high`'s two
+ *  entries), so neither may stand in for the other. ccx has no org `maxEffortLevel` entitlement cap (R2
+ *  §1.3's `TYe`), so unlike canon all five levels always list, uncapped. */
+export const EFFORT_HELP_DESCRIPTIONS: Record<EffortLevel, string> = {
+  low: "Quick, straightforward implementation",
+  medium: "Balanced approach with standard testing",
+  high: "Comprehensive implementation with extensive testing",
+  xhigh: "Extended reasoning with thorough analysis (Fable 5, Opus 4.7+, Sonnet 5)",
+  max: "Maximum capability with deepest reasoning (Fable 5, Opus 4.6+, Sonnet 4.6+)",
+};
+/** T-EFFORT: canon's `rCb` (106608-106621), verbatim — `/effort current`|`status`'s parenthetical. See
+ *  `EFFORT_HELP_DESCRIPTIONS` above for why this is a SEPARATE table, not a second name for the same one. */
+export const EFFORT_STATUS_DESCRIPTIONS: Record<EffortLevel, string> = {
+  low: "Quick, straightforward implementation with minimal overhead",
+  medium: "Balanced approach with standard implementation and testing",
+  high: "Comprehensive implementation with extensive testing and documentation",
+  xhigh: "Deeper reasoning than high, just below maximum (Fable 5, Opus 4.7+, Sonnet 5)",
+  max: "Maximum capability with deepest reasoning. May use excessive tokens resulting in long response times or overthinking. Use sparingly for the hardest tasks.",
+};
+
 /** `F7o` (L440864). The default arm returns `ePi` (`●`), which is why an UNDEFINED level — the unsupported
  *  row's own case — still prints a glyph; only its COLOUR changes there (`subtle`, not `claude`). */
 export function effortGlyph(level?: EffortLevel): string {

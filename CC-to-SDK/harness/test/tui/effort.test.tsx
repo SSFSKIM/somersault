@@ -5,7 +5,7 @@
 // NO SDK-side validation — is probe 102 (`waveC-grounding-probes.md` §(f)), which is why the wire tests
 // below assert both that a valid level travels and that an out-of-domain one never reaches the wire at all.
 import React from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 // ChatApp and every dialog under it read stdin through `<KeymapProvider>`, never `useInput` (F2 task 6) —
 // rendered bare they have NO input path at all and `stdin.write` goes nowhere, silently.
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
@@ -15,11 +15,16 @@ import { EffortDialog } from "../../src/tui/EffortDialog.js";
 import { createNotificationStore } from "../../src/tui/notifications.js";
 import {
   EFFORT_ADJUST_HINT, EFFORT_DIALOG_FOOTER, EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS,
-  MAX_EFFORT_CAVEAT, MODEL_FOOTER, effortGlyph, effortHint, effortRowText, effortTitle, effortUnsupportedText,
-  isEffortLevel, stepEffort, type EffortLevel,
+  EFFORT_HELP_DESCRIPTIONS, EFFORT_STATUS_DESCRIPTIONS, MAX_EFFORT_CAVEAT, MODEL_FOOTER, effortGlyph,
+  effortHint, effortRowText, effortTitle, effortUnsupportedText, isEffortLevel, isPersistableEffortLevel,
+  stepEffort, type EffortLevel,
 } from "../../src/tui/modelPickerModel.js";
-import { formatStatus, formatEffortSet } from "../../src/tui/commands.js";
+import { formatStatus, formatEffortSet, formatEffortHelp, formatEffortCurrent } from "../../src/tui/commands.js";
 import { LOCAL_OUTPUT_GUTTER } from "../../src/tui/species.js";
+import { loadPrefs, savePrefs } from "../../src/tui/prefs.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 // The other two spellings of the same domain. `modelPickerModel.ts` says this file pins all three equal, so
 // this file has to actually SEE all three: the tui may not import config at runtime (that boundary is the
 // whole reason the literal is written out three times), but a test is not bound by it.
@@ -43,8 +48,11 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
  *  orders of magnitude of headroom and still costs a few milliseconds. */
 async function settle(turns = 20) { for (let i = 0; i < turns; i++) await new Promise((r) => setTimeout(r, 1)); }
 /** The fold's own sentence, written out here rather than imported, so the formatter cannot redefine what
- *  this file claims it prints. `formatEffortSet` is pinned against it in its own describe below. */
-const EFFORT_SET_TEXT = (level: string) => `Set effort level to ${level} (this session only)`;
+ *  this file claims it prints. `formatEffortSet` is pinned against it in its own describe below. T-EFFORT:
+ *  the suffix is now conditional on whether the level persists (`isPersistableEffortLevel`) — `persisted`
+ *  is a required param, not a default, so a test forgetting to pass it fails loudly instead of silently
+ *  asserting the wrong suffix. */
+const EFFORT_SET_TEXT = (level: string, persisted: boolean) => `Set effort level to ${level}${persisted ? " (saved as your default for new sessions)" : " (this session only)"}`;
 /** Type a slash command, WAIT for the composer to echo it, then submit — the same two-step every
  *  command-driving test in `chat.test.tsx` uses. One `write("/effort\r")` races the composer's own
  *  keystroke handling and the Return can land before the text does. */
@@ -248,18 +256,122 @@ describe("EffortDialog", () => {
 // `/status` (EP-C6's acceptance reads the field there)
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════
 
-// W2 T5 fold (s2qa4-10). Canon's row is `  ⎿  Set effort level to low (saved as your default for new
-// sessions): Quick, straightforward implementation with minimal overhead` (frames-s2qa4/08-cc-effort-args).
-// Ours keeps the gutter and the level and diverges on the two clauses it cannot honestly print: ccx's
-// `/effort` writes NO default (`EffortDialog`'s own subtitle says "This session only"), and ccx has no
-// per-level description table at all — the ones in the frame are 2.1.226 copy for a seven-level domain that
-// includes `ultracode`/`auto`, which ccx does not have (see the domain describe at the top of this file).
+// W2 T5 fold (s2qa4-10), T-EFFORT (2026-08-21). Canon's row is `  ⎿  Set effort level to low (saved as your
+// default for new sessions): Quick, straightforward implementation with minimal overhead`
+// (frames-s2qa4/08-cc-effort-args). T-EFFORT retired the SCOPE divergence this comment used to carry — the
+// suffix is no longer hardcoded, it reflects the SAME write `applyEffort` just made. The trailing `: <desc>`
+// clause stays cut by choice, not by missing data (`rCb` exists and IS ported — see `formatEffortCurrent`,
+// which owns it for `/effort current`|`status`); see `formatEffortSet`'s own doc comment in commands.ts.
 describe("formatEffortSet — the /effort <level> result row (s2qa4-10)", () => {
-  it("is one `⎿` local-output row naming the level and its scope", () => {
-    const [row] = formatEffortSet("low");
-    expect(row!.text).toBe("Set effort level to low (this session only)");
+  it("is one `⎿` local-output row naming the level, with the PERSISTED suffix when the level is persistable", () => {
+    const [row] = formatEffortSet("low", true);
+    expect(row!.text).toBe(EFFORT_SET_TEXT("low", true));
+    expect(row!.text).toBe("Set effort level to low (saved as your default for new sessions)");
     expect(row!.gutter).toEqual({ text: LOCAL_OUTPUT_GUTTER, dim: true });
-    expect(formatEffortSet("xhigh")[0]!.text).toBe(EFFORT_SET_TEXT("xhigh"));   // the RAW level, as the wire spells it
+    expect(formatEffortSet("xhigh", true)[0]!.text).toBe(EFFORT_SET_TEXT("xhigh", true));   // the RAW level, as the wire spells it
+  });
+  // `max` is the one level canon's persistable filter excludes (`Qdt`) — its confirmation keeps the OLD
+  // session-only suffix even though every other level now says it was saved.
+  it("keeps the SESSION-ONLY suffix when persisted is false — max's own case", () => {
+    expect(formatEffortSet("max", false)[0]!.text).toBe("Set effort level to max (this session only)");
+  });
+});
+
+// T-EFFORT: `prefs.ts`'s ACTUAL file loader (not the `deps.loadPrefs` mock every other test in this file
+// uses) — nothing else in the suite exercises its `effort` shape-validation branch, since `cli-main.test.ts`
+// injects `loadPrefs` entirely. An isolated `CCX_FLEET_ROOT` per test, `reduced-motion.test.tsx`'s pattern.
+describe("prefs.ts — the `effort` key's load/save round trip", () => {
+  const roots: string[] = [];
+  const tmpRoot = (): NodeJS.ProcessEnv => { const d = mkdtempSync(join(tmpdir(), "ccx-effort-prefs-")); roots.push(d); return { ...process.env, CCX_FLEET_ROOT: d }; };
+  afterEach(() => { for (const d of roots.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+  it("round-trips a valid level", () => {
+    const env = tmpRoot();
+    savePrefs({ effort: "xhigh" }, env);
+    expect(loadPrefs(env).effort).toBe("xhigh");
+  });
+  it("drops a hand-edited value outside the EffortLevel shape, like theme/tui's own closed-set guard", () => {
+    const env = tmpRoot();
+    savePrefs({ effort: "xhigh" }, env);
+    // Simulate hand-editing the file to something the domain never produces.
+    savePrefs({ effort: "ultracode" as never }, env);
+    expect(loadPrefs(env).effort).toBeUndefined();
+  });
+  it("a save does not disturb a neighbouring key — the shallow-merge contract every other pref relies on", () => {
+    const env = tmpRoot();
+    savePrefs({ theme: "dark" }, env);
+    savePrefs({ effort: "low" }, env);
+    const prefs = loadPrefs(env);
+    expect(prefs.effort).toBe("low");
+    expect(prefs.theme).toBe("dark");
+  });
+});
+
+describe("isPersistableEffortLevel — canon's `Qdt` (106479-106483)", () => {
+  it("admits low|medium|high|xhigh and excludes max", () => {
+    expect(isPersistableEffortLevel("low")).toBe(true);
+    expect(isPersistableEffortLevel("medium")).toBe(true);
+    expect(isPersistableEffortLevel("high")).toBe(true);
+    expect(isPersistableEffortLevel("xhigh")).toBe(true);
+    expect(isPersistableEffortLevel("max")).toBe(false);
+    expect(isPersistableEffortLevel("auto")).toBe(false);
+    expect(isPersistableEffortLevel(undefined)).toBe(false);
+  });
+});
+
+// T-EFFORT Arm 2. `k$i` (422910-422918): zero-indent bullets (the `⎿` gutter supplies ALL the visible
+// indent — see `withLocalOutputGutter`'s comment in commands.ts), one blank line between the usage line and
+// "Effort levels:", and `auto` listed last even though ccx's own parser refuses it (canon always lists it
+// absent an org cap; ccx has none).
+describe("formatEffortHelp — `/effort help` (canon's `k$i`, 422910-422918)", () => {
+  // `Line.tsx` renders each `RenderLine`'s `gutter` independently (no shared flex column across an array of
+  // lines — see `withLocalOutputGutter`'s comment), so continuation alignment has to be baked into the
+  // TEXT as literal padding, exactly like `render.ts`'s `withAssistantBullet`/`withThinkingGutter` already
+  // do for their own bullets. `unpad` strips that mechanism back off before comparing canon's actual words,
+  // so this test is about the CONTENT; the second test below is about the padding mechanism itself.
+  const pad = " ".repeat(LOCAL_OUTPUT_GUTTER.length);
+  const unpad = (t: string) => (t.startsWith(pad) ? t.slice(pad.length) : t);
+
+  it("is byte-exact for ccx's uncapped, ultracode-off domain", () => {
+    const lines = formatEffortHelp().map((l, i) => (i === 0 ? l.text : unpad(l.text)));
+    expect(lines[0]).toBe("Usage: /effort [low|medium|high|xhigh|max|auto]");
+    expect(lines[1]).toBe("");
+    expect(lines[2]).toBe("Effort levels:");
+    expect(lines[3]).toBe("- low: Quick, straightforward implementation");
+    expect(lines[4]).toBe("- medium: Balanced approach with standard testing");
+    expect(lines[5]).toBe("- high: Comprehensive implementation with extensive testing");
+    expect(lines[6]).toBe("- xhigh: Extended reasoning with thorough analysis (Fable 5, Opus 4.7+, Sonnet 5)");
+    expect(lines[7]).toBe("- max: Maximum capability with deepest reasoning (Fable 5, Opus 4.6+, Sonnet 4.6+)");
+    expect(lines[8]).toBe("- auto: Use the default effort level for your model");
+    expect(lines).toHaveLength(9);
+  });
+  it("carries the gutter ONLY on the first line, and pads every non-blank continuation to the gutter's width", () => {
+    const rows = formatEffortHelp();
+    expect(rows[0]!.gutter).toEqual({ text: LOCAL_OUTPUT_GUTTER, dim: true });
+    for (const row of rows.slice(1)) expect(row.gutter).toBeUndefined();
+    expect(rows[1]!.text).toBe("");                                            // the blank separator stays LITERALLY blank
+    expect(rows[3]!.text).toBe(`${pad}- low: Quick, straightforward implementation`);
+  });
+});
+
+// T-EFFORT Arm 2. `YXn` (422962-422973), minus canon's ultracode/CLI-pin branches. Pins ONE description
+// string from EACH table (`_lT` here via `formatEffortHelp`'s own test above, `rCb` here) so the two can
+// never silently collapse into one — `high`'s two sentences are close enough in shape that a copy-paste
+// mistake reusing `_lT` for this arm would still look plausible on a skim.
+describe("formatEffortCurrent — `/effort current`|`status` (canon's `YXn`, 422962-422973)", () => {
+  it("names the level and reads the rCb table — a DIFFERENT sentence from the help block's for the SAME level", () => {
+    const [row] = formatEffortCurrent("high", "xhigh");
+    expect(row!.text).toBe("Current effort level: high (Comprehensive implementation with extensive testing and documentation)");
+    expect(row!.gutter).toEqual({ text: LOCAL_OUTPUT_GUTTER, dim: true });
+    // The two tables' `high` entries differ (one is even a near-prefix of the other, so a substring check
+    // would pass by accident) — proof `formatEffortCurrent` is NOT reading `_lT`, by exact string identity.
+    expect(EFFORT_STATUS_DESCRIPTIONS.high).not.toBe(EFFORT_HELP_DESCRIPTIONS.high);
+    expect(row!.text).toBe(`Current effort level: high (${EFFORT_STATUS_DESCRIPTIONS.high})`);
+    expect(row!.text).not.toBe(`Current effort level: high (${EFFORT_HELP_DESCRIPTIONS.high})`);
+  });
+  it("falls back to the harness default when no level is known yet — ccx's own 'auto' state", () => {
+    const [row] = formatEffortCurrent(undefined, "xhigh");
+    expect(row!.text).toBe("Effort level: auto (currently xhigh)");
   });
 });
 
@@ -318,12 +430,17 @@ function mountApp(opts: { effortCalls: string[]; store?: ReturnType<typeof creat
   // `capsFail` makes the same call REJECT, which is the other half of the settled latch — a session whose
   // catalog never answers still gets its hint, because unknown-support is not the same as no-support.
   const fake = fakeEffortRemote(opts.effortCalls, { capabilities: async () => { await opts.capsGate; if (opts.capsFail) throw new Error("catalog unavailable"); return { models: EFFORT_CAPS, commands: [], mcpServers: [] }; } });
+  // T-EFFORT: `applyEffort` now persists on every successful set — WITHOUT this injected `savePrefs`, every
+  // `/effort`/picker/dialog test in this file would fall through to the REAL `savePrefs` and write to this
+  // machine's actual `~/.claude/ccx/prefs.json`. `saves` is returned so persistence-specific tests can
+  // assert on it; every other test gets a safe sink for free (`reduced-motion.test.tsx`'s exact pattern).
+  const saves: Record<string, unknown>[] = [];
   const r = renderWithKeymap(
     <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
       hookOpts={{ initialModel: opts.initialModel ?? "claude-opus-5", ...(opts.initialEffort ? { initialEffort: opts.initialEffort } : {}) }}
-      deps={{ ...(opts.store ? { notifications: opts.store } : {}) }} />,
+      deps={{ ...(opts.store ? { notifications: opts.store } : {}), savePrefs: (patch) => { saves.push(patch); } }} />,
   );
-  return { ...r, fake };
+  return { ...r, fake, saves };
 }
 
 describe("the decaying hint (§C6.2)", () => {
@@ -406,7 +523,7 @@ describe("/effort", () => {
     expect(frame(r.lastFrame)).not.toContain("effort maps to the thinking budget");
   });
 
-  it("confirming fires the `set_effort` wire op with the staged level", async () => {
+  it("confirming fires the `set_effort` wire op with the staged level, persists it, and prints NO 'Cancelled'", async () => {
     const calls: string[] = [];
     const r = mountApp({ effortCalls: calls, initialEffort: "high" });
     await waitFor(() => frame(r.lastFrame).includes("❯"));
@@ -417,9 +534,17 @@ describe("/effort", () => {
     r.stdin.write("\r");
     await waitFor(() => calls.length > 0);
     expect(calls).toEqual(["xhigh"]);
+    // T-EFFORT Arm 1: the dialog's OWN Enter persists too — `confirmEffort` funnels through the same
+    // `applyEffort` choke point a typed `/effort <level>` does (R2 §2.2's `Z5t`).
+    await waitFor(() => r.saves.length > 0);
+    expect(r.saves).toEqual([{ effort: "xhigh" }]);
+    // T-EFFORT Arm 3, the trap's OTHER half: `closeEffortDialog` (which `confirmEffort` calls to dismiss
+    // the dialog) must NOT print "Cancelled" — only the Esc path (`cancelEffortDialog`) may.
+    await settle();
+    expect(flat(r.lastFrame)).not.toContain("Cancelled");
   });
 
-  it("Esc fires NO wire op", async () => {
+  it("Esc fires NO wire op, persists nothing, and prints `⎿ Cancelled`", async () => {
     const calls: string[] = [];
     const r = mountApp({ effortCalls: calls, initialEffort: "high" });
     await waitFor(() => frame(r.lastFrame).includes("❯"));
@@ -429,6 +554,11 @@ describe("/effort", () => {
     r.stdin.write("\x1b");
     await waitFor(() => !frame(r.lastFrame).includes(EFFORT_DIALOG_FOOTER));
     expect(calls).toEqual([]);
+    // T-EFFORT Arm 3 — canon's single word (R2 §3.1), behind the SAME `⎿` gutter every other arm uses.
+    await waitFor(() => flat(r.lastFrame).includes("Cancelled"));
+    expect(flat(r.lastFrame)).toContain("⎿ Cancelled");
+    await settle();
+    expect(r.saves).toEqual([]);
   });
 
   it("`/effort <level>` applies a level in the domain WITHOUT opening the dialog", async () => {
@@ -441,28 +571,70 @@ describe("/effort", () => {
     expect(frame(r.lastFrame)).not.toContain(EFFORT_DIALOG_FOOTER);
   });
 
+  // T-EFFORT: the refusal copy is now canon's own `Invalid argument: … Valid options are: …` (`TlT`,
+  // R2 §1.5), behind the `⎿` gutter like every other `/effort` arm — replacing ccx's old plain,
+  // error-coloured "unknown effort level" line (which no longer exists anywhere in the source).
   it("an OUT-OF-DOMAIN level is refused client-side and NO wire op fires (probe 102: the SDK would take it silently)", async () => {
     const calls: string[] = [];
     const r = mountApp({ effortCalls: calls, initialEffort: "high" });
     await waitFor(() => frame(r.lastFrame).includes("❯"));
     await runCommand(r, "/effort bogus");
-    await waitFor(() => frame(r.lastFrame).includes("unknown effort level"));
+    await waitFor(() => flat(r.lastFrame).includes("Invalid argument"));
     expect(calls).toEqual([]);
-    expect(flat(r.lastFrame)).toContain("try low/medium/high/xhigh/max");
+    expect(flat(r.lastFrame)).toContain("Invalid argument: bogus. Valid options are: low, medium, high, xhigh, max, auto");
+    expect(flat(r.lastFrame)).toContain("⎿ Invalid argument");   // through the local-output gutter, not a bare error line
+    await settle();
+    expect(r.saves).toEqual([]);
+  });
+
+  // T-EFFORT Arm 2 guard: canon's branch order is help → current/status → bare → level (R2 §1.1), and
+  // ccx's dispatch had to be re-ordered to match — these three strings must never fall through to the
+  // level parser and be refused as bogus levels the way "bogus" itself correctly is above.
+  it("`help`/`current`/`status` are sub-verbs, never refused as out-of-domain levels", async () => {
+    const calls: string[] = [];
+    const r = mountApp({ effortCalls: calls, initialEffort: "high" });
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await runCommand(r, "/effort help");
+    await waitFor(() => flat(r.lastFrame).includes("Effort levels:"));
+    expect(flat(r.lastFrame)).not.toContain("Invalid argument");
+    await runCommand(r, "/effort current");
+    await waitFor(() => flat(r.lastFrame).includes("Current effort level"));
+    await runCommand(r, "/effort status");
+    await waitFor(() => (flat(r.lastFrame).match(/Current effort level/g)?.length ?? 0) >= 2);
+    expect(calls).toEqual([]);                     // none of the three ever reached applyEffort
   });
 
   // W2 T5 fold (s2qa4-10): the argument form applied SILENTLY — once the ten-second chip expired, the
   // transcript recorded that a command was typed and not what it did.
-  it("`/effort <level>` prints the ⎿ result row naming the level, and a REFUSED level prints none", async () => {
+  it("`/effort <level>` prints the ⎿ result row naming the level and its PERSISTED suffix, and a REFUSED level prints none", async () => {
     const calls: string[] = [];
     const r = mountApp({ effortCalls: calls, initialEffort: "high" });
     await waitFor(() => frame(r.lastFrame).includes("❯"));
     await runCommand(r, "/effort low");
-    await waitFor(() => flat(r.lastFrame).includes(EFFORT_SET_TEXT("low")));
-    expect(flat(r.lastFrame)).toContain(`⎿ ${EFFORT_SET_TEXT("low")}`);
+    await waitFor(() => flat(r.lastFrame).includes(EFFORT_SET_TEXT("low", true)));
+    expect(flat(r.lastFrame)).toContain(`⎿ ${EFFORT_SET_TEXT("low", true)}`);
+    await waitFor(() => r.saves.length > 0);
+    expect(r.saves).toEqual([{ effort: "low" }]);
     await runCommand(r, "/effort bogus");
-    await waitFor(() => frame(r.lastFrame).includes("unknown effort level"));
-    expect(flat(r.lastFrame)).not.toContain(EFFORT_SET_TEXT("bogus"));
+    await waitFor(() => flat(r.lastFrame).includes("Invalid argument"));
+    expect(flat(r.lastFrame)).not.toContain(EFFORT_SET_TEXT("bogus", true));
+    expect(flat(r.lastFrame)).not.toContain(EFFORT_SET_TEXT("bogus", false));
+    expect(r.saves).toEqual([{ effort: "low" }]);    // the refusal wrote nothing new
+  });
+
+  // T-EFFORT Arm 1: `max` is canon's own exclusion (`Qdt`) — it applies and confirms exactly like any other
+  // level, but is the one case that still says "(this session only)" and writes nothing to prefs.
+  it("`/effort max` applies and confirms, but does NOT persist — the one level `Qdt` excludes", async () => {
+    const calls: string[] = [];
+    const r = mountApp({ effortCalls: calls, initialEffort: "high" });
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await runCommand(r, "/effort max");
+    await waitFor(() => calls.length > 0);
+    expect(calls).toEqual(["max"]);
+    await waitFor(() => flat(r.lastFrame).includes(EFFORT_SET_TEXT("max", false)));
+    expect(flat(r.lastFrame)).toContain("Set effort level to max (this session only)");
+    await settle();
+    expect(r.saves).toEqual([]);
   });
 });
 
@@ -566,5 +738,25 @@ describe("/status on a model with no effort axis (review M2)", () => {
     await settle();
     await runCommand(r, "/status");
     await waitFor(() => flat(r.lastFrame).includes("effort high"));
+  });
+
+  // T-EFFORT's seeding hazard (R2 §4.7), VERIFIED rather than newly gated: `initialEffort` is now reachable
+  // from a persisted prefs default (`cli/main.ts`'s `persistedEffort`), applied before the catalog round-trip
+  // can confirm the model even HAS an effort axis (the same ordering problem canon itself has, and answers
+  // downstream at the reporting surfaces rather than at seed time — R2 §4.7's closing paragraph). Once a
+  // value reaches `opts.initialEffort` its origin (a `--effort` flag vs. a persisted default) is
+  // indistinguishable to useChat, so THIS is the seeded case: both existing gates — the hint's
+  // `effortCapsSettled` latch and `/status`'s `effortSupported !== false` check — must independently
+  // suppress it on a non-supporting model. No new gate was added for T-EFFORT; this test is the proof
+  // neither of the two pre-existing ones needed one.
+  it("a SEEDED effort default on a non-supporting model is suppressed at BOTH reporting surfaces", async () => {
+    const store = createNotificationStore();
+    const r = mountApp({ effortCalls: [], store, initialEffort: "high", initialModel: "haiku" });
+    await waitFor(() => frame(r.lastFrame).includes("❯"));
+    await settle();                                                     // let the catalog land
+    expect(store.state().current).toBeNull();                           // the hint latch suppressed it
+    await runCommand(r, "/status");
+    await waitFor(() => flat(r.lastFrame).includes("thinking"));
+    expect(flat(r.lastFrame)).not.toContain("effort");                  // the status gate suppressed it too
   });
 });
