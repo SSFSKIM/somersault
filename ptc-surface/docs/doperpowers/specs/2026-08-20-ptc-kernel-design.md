@@ -562,9 +562,11 @@ are binding.
   client-side auto-accept of approval requests.
 - **S5 — MCP image blocks.** Claude Code 2.1.236 renders an image content block returned by an
   MCP tool. *Promote* → plots visible inline. *Fallback*: text mentions the saved PNG path only.
-  *Verdict (T12, live on 2.1.238): PROMOTE.* The image block reaches the model as real pixels
-  (it described the plot's title and data points, which no text block carried); the terminal
-  transcript marks it `[Image]` in the ctrl+O detail view. `_content` keeps emitting
+  *Verdict (T12, live on 2.1.238): PROMOTE.* The image block survives the host intact: the
+  `tool_result` in `--output-format stream-json` carried a real base64 image block in the
+  Anthropic content form, after the text block, whose decoded bytes hash to the same sha256
+  as the PNG the display shim wrote. The terminal transcript marks it `[Image]` in the
+  ctrl+O detail view — a marker, not a rendered plot. `_content` keeps emitting
   `ImageContent`; the PNG on disk stays as the durable copy, and M1 adds its path to the
   shaped text so a human reader can reach the file. Runbook: `test/spikes/s5_image_block.md`.
 - **S6 — WebSearch tool_result shape.** The structured results block is reachable in the SDK
@@ -950,14 +952,21 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   by `test/integration/test_provision_upgrade.py`.
 
 - Observation: [S5 verdict — PROMOTE] Claude Code 2.1.238 accepts an MCP `ImageContent`
-  block and puts the actual pixels in front of the model. The host converts the MCP wire
-  form (`{type: "image", data, mimeType}`) into the Anthropic content form
+  block and carries it through to the model's transcript unaltered. The host converts the MCP
+  wire form (`{type: "image", data, mimeType}`) into the Anthropic content form
   (`{type: "image", source: {type: "base64", media_type, data}}`) and hands it to the model
-  *after* the text block, preserving `_content`'s order; the base64 is a byte-exact
-  round-trip of the file the display shim wrote (18 897-byte PNG → 25 196 base64 chars). The
-  model demonstrably saw the image rather than a placeholder — asked what the tool returned,
-  it described the plot's title and its four data points, neither of which appears in the
-  text block. `_content` stands as built in T8: image block first-class, PNG on disk as the
+  *after* the text block, preserving `_content`'s order; the base64 decodes to bytes that
+  hash identically to the file the display shim wrote (18 897 bytes, 25 196 base64 chars,
+  sha256 `f4deb1b0…927e46`) — byte identity, not an inference from length. That mechanical
+  wire evidence is what carries the verdict: correct Anthropic image form, correct position
+  after the text, byte-identical payload, `is_error` unset. The fallback branch exists for a
+  block the host drops or mangles, and none of those happened. The assistant's own sentence
+  about the plot is *consistent with* pixel reading but is not evidence for it — the title
+  and the four data points were both in the tool input the model wrote one turn earlier, so
+  the description is derivable without looking at the image at all. A future spike wanting to
+  prove pixel reading must ask something answerable only from the rendering (line colour,
+  y-axis tick values, gridline count) or plot data that never appears in the submitted code.
+  `_content` stands as built in T8: image block first-class, PNG on disk as the
   durable copy. Two limits worth knowing: in a terminal "inline" means an `[Image]` marker,
   not pixels — the collapsed transcript shows only `Called plugin:ptc:ptc`, and the ctrl+O
   detailed transcript shows the text block plus a second `⎿ [Image]` row — and the shaped
@@ -970,8 +979,12 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   `tool_result` content array was
   `[{"type":"text","text":"[cell 2 · ok · 0.3s]\nS5_PLOTTED"},
   {"type":"image","source":{"type":"base64","media_type":"image/png","data":<25196 chars>}}]`,
-  `is_error` unset; the assistant then wrote "the rendered line plot titled \"s5\" with
-  points 1, 4, 2, 8". Interactive (tmux, `claude --plugin-dir ./plugin`): detailed transcript
+  `is_error` unset; decoding that `data` yields 18 897 bytes, sha256
+  `f4deb1b01495f328098e8389cc652b7849c0cc2f876453d5c1c4da71fe927e46`, equal to the sha256 of
+  `~/.ptc/kernels/<key>/cells/2-0.png` in all three runs. The assistant then wrote "the
+  rendered line plot titled \"s5\" with points 1, 4, 2, 8" — recorded for completeness, and
+  non-probative, since both facts were in the tool input it submitted.
+  Interactive (tmux, `claude --plugin-dir ./plugin`): detailed transcript
   rows `⎿ [cell 2 · ok · 0.3s] / S5_PLOTTED` then `⎿ [Image]`. On-disk shim output present in
   all three runs (keyless CLI, headless, interactive): `~/.ptc/kernels/<key>/cells/2-0.png`,
   PNG 534×434 RGBA.
