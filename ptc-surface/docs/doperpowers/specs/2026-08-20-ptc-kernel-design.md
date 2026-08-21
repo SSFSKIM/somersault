@@ -1469,7 +1469,10 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   REMINDER included) is the fixture pinning the parse in `test/unit/test_web.py`. A7's engine
   ran live afterwards: 8 results, all 8 titled, every url absolute, first hit
   `https://support.claude.com/en/articles/12138966-release-notes`, one `web_search` audit
-  record written for the cell.
+  record written for the cell. The prose-fallback branch — the path that runs when no
+  `Links:` payload is present at all — has never fired against real data: every WebSearch
+  response observed so far, S6 and A7 alike, carried a well-formed `Links:` line, so that
+  branch is pinned only by a synthetic fixture in `test/unit/test_web.py`.
 
 - Observation: the shared concurrency pool cannot wrap `web_fetch` end to end. `web_fetch`'s
   optional `prompt=` summarization calls `llm()`, which takes a permit from the *same* pool, so
