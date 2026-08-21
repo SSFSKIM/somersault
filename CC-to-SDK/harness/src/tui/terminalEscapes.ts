@@ -22,6 +22,30 @@ export const BELL = "\x07";
 /** `wC` (L188790), the four codes this harness emits. TAB_STATUS (21337) is deferred — spec § 5. */
 export const OSC_TITLE = 0, OSC_ITERM2 = 9, OSC_KITTY = 99, OSC_GHOSTTY = 777;
 
+/** `Onr.PROGRESS` (L188791) — the iTerm2 `OSC 9` sub-code the progress bar rides, distinct from the plain
+ *  notification (`Onr.NOTIFY = 0`) that also uses `OSC_ITERM2`. `Dnr` (L188791), verbatim: canon's four
+ *  progress states. CH34 wires only CLEAR/INDETERMINATE (`progressBar.ts`'s driver) — SET/ERROR are built
+ *  here for fidelity (canon has them) and reached by nothing, per the brief's explicit "wire nothing" call. */
+export const ITERM2_PROGRESS = 4;
+export const PROGRESS_STATE = { CLEAR: 0, SET: 1, ERROR: 2, INDETERMINATE: 3 } as const;
+
+/** canon's `tI(wC.ITERM2, Onr.PROGRESS, state, value)` (L202541-202563) — the progress bar's OSC 9;4 form.
+ *  CLEAR and INDETERMINATE pass an EMPTY value (`value` defaults to `""`), and `osc`'s `join(";")` still
+ *  renders that as a trailing `;` before the terminator: `9;4;0;` / `9;4;3;`, never `9;4;0` / `9;4;3` —
+ *  `Koi` (L188791) hardcodes the same trailing `;`. SET/ERROR carry a percent; canon clamps it to 0-100
+ *  before this builder ever sees it (L202547), which is the caller's job (there is no live caller). */
+export function progressOsc(terminator: OscTerminator, state: number, value: number | "" = ""): string {
+  return osc(terminator, OSC_ITERM2, ITERM2_PROGRESS, state, value);
+}
+
+/** canon `Koi` (L188791) — the pre-built teardown CLEAR, written at BOTH of canon's teardown sites (`dsi()`
+ *  L202468, the remote-attach detach cleanup L553531) and by nothing else. Two asymmetries from the hook
+ *  path's `tI`-built emissions, both canon's own and both deliberate here: ALWAYS BEL, even on kitty (where
+ *  `tI` would pick ST) — and ALWAYS UNWRAPPED, never `Fq`/`passthrough`-wrapped even inside tmux/screen. It
+ *  is a debt to the terminal on the way out, not a feature: gated on CAPABILITY at every call site, never on
+ *  `terminalProgressBarEnabled`. */
+export const PROGRESS_TEARDOWN_CLEAR = osc("bel", OSC_ITERM2, ITERM2_PROGRESS, PROGRESS_STATE.CLEAR, "");
+
 export type OscTerminator = "bel" | "st";
 
 /** canon's `tI` (L188457): `ESC ] parts.join(";") <terminator>`. */

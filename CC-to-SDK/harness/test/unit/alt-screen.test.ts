@@ -504,6 +504,7 @@ describe("createChatTeardown", () => {
       offResizeListener: () => log.push("<resize listener off>"),
       stopResize: () => log.push("<resize.stop>"),
       clearTitle: () => log.push("<title.clear>"),
+      clearProgress: () => log.push("<progress.clear>"),
       parkedColumn: () => parkedColumn,
       stopSignalSafety: () => log.push("<signal safety off>"),
       guard, sessionId: () => sessionId, write: (t) => log.push(t),
@@ -518,6 +519,7 @@ describe("createChatTeardown", () => {
       "<resize listener off>",
       "<resize.stop>",
       "<title.clear>",
+      "<progress.clear>",                               // T-CH34 — beside clearTitle, both near-side of rmcup
       "\x1b[2K\x1b[G",                                  // the unpark — the write the trace caught landing late
       "<signal safety off>",
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
@@ -559,10 +561,62 @@ describe("createChatTeardown", () => {
       offResizeListener: () => log.push("<resize listener off>"),
       stopResize: () => log.push("<resize.stop>"),
       clearTitle: () => log.push("<title.clear>"),
+      clearProgress: () => log.push("<progress.clear>"),
       parkedColumn: () => 117,
       stopSignalSafety: () => log.push("<signal safety off>"),
       guard, sessionId: () => "quiet-1", write: (t) => log.push(t),
     })();
-    expect(log).toEqual(["<resize listener off>", "<resize.stop>", "<title.clear>", "\x1b[2K\x1b[G", "<signal safety off>"]);
+    expect(log).toEqual(["<resize listener off>", "<resize.stop>", "<title.clear>", "<progress.clear>", "\x1b[2K\x1b[G", "<signal safety off>"]);
+  });
+
+  // T-CH34 — the graceful-exit half of the two mandated teardown call sites (report §4d's `createChatTeardown`
+  // insertion point). Gated on CAPABILITY only, never on `terminalProgressBarEnabled` — a debt to the terminal,
+  // not a feature — so this dep is a plain callback the CALLER (chatMain.tsx) has already gated; this suite
+  // only proves the STEP is in the sequence, beside clearTitle, before rmcup.
+  it("runs clearProgress exactly once, beside clearTitle and strictly before rmcup", () => {
+    const { log, teardown } = harness();
+    teardown();
+    expect(log.filter((l) => l === "<progress.clear>")).toHaveLength(1);
+    expect(log.indexOf("<progress.clear>")).toBe(log.indexOf("<title.clear>") + 1);
+    expect(log.indexOf("<progress.clear>")).toBeLessThan(log.indexOf("\x1b[<u\x1b[?1049l\x1b[>4m"));
+  });
+});
+
+describe("installSignalSafety's process-'exit' limb — the un-armed-gated progress-bar CLEAR (T-CH34)", () => {
+  // "Un-armed-gated" is the brief's own word for the shape: this limb runs on EVERY process exit regardless
+  // of `armed` (a classic, non-fullscreen launch never calls `handBack`, so a limb living THERE would never
+  // fire for it — research report §4d's flagged gap), gated on CAPABILITY alone, matching canon's own `dsi()`
+  // (never on `terminalProgressBarEnabled`: a debt to the terminal, not a feature).
+  it("writes the unwrapped teardown constant on 'exit' even when the guard was NEVER armed", () => {
+    const s = sink();
+    const g = createAltScreenGuard({ writeSync: s.writeSync, progressBarCapability: true });
+    // deliberately no g.enter() — a classic launch
+    const stop = g.installSignalSafety();
+    s.writes.length = 0;
+    (process.listeners("exit").at(-1) as () => void)();
+    expect(s.writes).toEqual(["\x1b]9;4;0;\x07"]);   // PROGRESS_TEARDOWN_CLEAR, and NOTHING else — unarmed writes no other byte
+    stop();
+  });
+
+  it("writes it ALONGSIDE the armed teardown's own bytes when the guard WAS armed", () => {
+    const s = sink();
+    const g = createAltScreenGuard({ writeSync: s.writeSync, progressBarCapability: true });
+    g.enter();
+    const stop = g.installSignalSafety();
+    s.writes.length = 0;
+    (process.listeners("exit").at(-1) as () => void)();
+    expect(s.writes).toContain("\x1b]9;4;0;\x07");
+    expect(s.writes).toContain("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l");   // MOUSE_OFF still there too
+    stop();
+  });
+
+  it("writes NOTHING when capability is false/absent — the flag is the gate, not `armed`", () => {
+    const s = sink();
+    const g = createAltScreenGuard({ writeSync: s.writeSync });   // no progressBarCapability at all
+    const stop = g.installSignalSafety();
+    s.writes.length = 0;
+    (process.listeners("exit").at(-1) as () => void)();
+    expect(s.writes).toEqual([]);
+    stop();
   });
 });

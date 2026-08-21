@@ -98,6 +98,7 @@ import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 import { resolveTerminalTitle, type TerminalTitle } from "./terminalTitle.js";
+import type { ProgressBar } from "./progressBar.js";
 import { suggestionText } from "./suggester.js";
 import type { RenderItem } from "./toolRenderer.js";
 import type { RenderLine } from "./render.js";
@@ -190,7 +191,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -202,7 +203,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
    *  users already rely on. */
   initialTodosOpen?: boolean;
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -252,6 +253,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  listener) and merely DRIVEN here. Absent in component tests, and absent by construction in every
    *  non-REPL surface: a daemon/HOST session never renders this tree, so it can never emit a title. */
   terminalTitle?: TerminalTitle;
+  /** T-CH34 — the OSC 9;4 progress-bar driver, created by `chatMain` exactly as `terminalTitle` is (a
+   *  process-level concern, its capability gate resolved once at boot) and merely DRIVEN here: one effect
+   *  ANDs the `terminalProgressBarEnabled` setting with `state.busy` (the turn-lifecycle seam this file
+   *  already owns at `terminalTitle`'s `setBusy` effect below — one derivation, not a second busy tracker)
+   *  and lets the driver's own change-dedupe decide whether anything is written. Absent in component tests
+   *  and absent by construction for a daemon/HOST session, same as `terminalTitle`. */
+  progressBar?: ProgressBar;
   /** FSW TASK 9 — WHICH RENDERER THIS TREE IS PAINTING INTO. A PROP, and deliberately not a `hookOpts` field or
    *  a context: `/tui` (T15) flips it on a LIVE session, and the one thing that flip may not do is unmount this
    *  component — the transcript, the composer draft, every dialog's internal state and the keymap registry's
@@ -360,7 +368,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, closeEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -402,6 +410,10 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const titleText = resolveTerminalTitle({ renameTitle: state.renameTitle, aiTitle: state.aiTitle, name });
   useEffect(() => { terminalTitle?.setTitle(titleText); }, [terminalTitle, titleText]);
   useEffect(() => { terminalTitle?.setBusy(state.busy); }, [terminalTitle, state.busy]);
+  // T-CH34 — canon's driver effect (`m6h` + its `[ut, or, f, gt]` deps, research report §2), transcribed
+  // one line below the title's own busy effect: `active` is `state.busy` alone (ccx tracks no in-flight-tool
+  // set the way canon's `hasToolsInProgress` does — recorded omission, not an invented second signal).
+  useEffect(() => { progressBar?.update({ enabled: state.terminalProgressBarEnabled, active: state.busy }); }, [progressBar, state.terminalProgressBarEnabled, state.busy]);
   // BOTH STAY FUNCTION-VALUED. `ChatComposer` calls `columns()` per render on purpose (ChatComposer.tsx:252):
   // a plain number would be a prop identity that only changes when the parent re-renders for another reason.
   const terminalColumns = () => size.columns;
@@ -1484,6 +1496,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
                     showTurnDuration={state.showTurnDuration} setShowTurnDuration={setShowTurnDuration}
                     reduceMotion={state.prefersReducedMotion} setReduceMotion={setPrefersReducedMotion}
+                    progressBarEnabled={state.terminalProgressBarEnabled} setProgressBarEnabled={setTerminalProgressBarEnabled}
                     promptSuggestionEnabled={state.promptSuggestionEnabled} setPromptSuggestionEnabled={setPromptSuggestionEnabled}
                     onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
                     fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}

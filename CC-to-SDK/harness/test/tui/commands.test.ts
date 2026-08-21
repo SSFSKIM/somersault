@@ -219,7 +219,7 @@ describe("/detach (F0 KB5 — detach moved off Ctrl-Z)", () => {
 });
 
 describe("/config key=value (W3 T6)", () => {
-  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false };
+  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false, progressBar: true };
   const freshRows = () => buildRows(FRESH_CTX);
 
   it("no arg → open", () => {
@@ -278,6 +278,17 @@ describe("/config key=value (W3 T6)", () => {
     expect((r as any).value).toBe("true");
     const already = parseConfigArg("reduceMotion=false", freshRows());   // FRESH_CTX.reduceMotion is false
     expect(already).toEqual({ kind: "error", lines: [{ text: "reduceMotion is already off.", dim: true }] });
+  });
+
+  // T-CH34's row — reaches the SAME generic boolean arm through its own id, proving the row is wired into
+  // /config's validation rather than only into buildRows.
+  it("progressBar=false is a validated set, and repeating it against an off row is the 'already off' notice", () => {
+    const r = parseConfigArg("progressBar=false", freshRows());
+    expect(r.kind).toBe("set");
+    expect((r as any).id).toBe("progressBar");
+    expect((r as any).value).toBe("false");
+    const off = parseConfigArg("progressBar=false", buildRows({ ...FRESH_CTX, progressBar: false }));
+    expect(off).toEqual({ kind: "error", lines: [{ text: "progressBar is already off.", dim: true }] });
   });
 
   it("permissionMode (enum) rejects an out-of-domain value, listing the exact 4 options", () => {

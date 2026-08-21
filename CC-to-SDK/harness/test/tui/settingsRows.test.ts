@@ -4,12 +4,12 @@
 import { describe, it, expect } from "vitest";
 import { buildRows, filterRows, cycleEnum, summarizeChanges, THINKING_WARNING, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
 
-const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false };
+const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false, progressBar: true };
 
 describe("settingsRows.ts", () => {
-  it("buildRows returns the 8 rows in the pinned order, ending with showTurnDuration, reduceMotion, then promptSuggestionEnabled", () => {
+  it("buildRows returns the 9 rows in the pinned order, progressBar directly below reduceMotion and above promptSuggestionEnabled", () => {
     const rows = buildRows(BASE_CTX);
-    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration", "reduceMotion", "promptSuggestionEnabled"]);
+    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration", "reduceMotion", "progressBar", "promptSuggestionEnabled"]);
   });
 
   it("row labels + hints match the Global Constraints table (theme/model carry a hint, the rest don't)", () => {
@@ -67,6 +67,16 @@ describe("settingsRows.ts", () => {
     expect(buildRows(BASE_CTX).find((r) => r.id === "reduceMotion")!.type).toBe("boolean");
     expect(buildRows(BASE_CTX).find((r) => r.id === "reduceMotion")!.value).toBe("false");
     expect(buildRows({ ...BASE_CTX, reduceMotion: true }).find((r) => r.id === "reduceMotion")!.value).toBe("true");
+  });
+
+  // T-CH34. Canon's own id and label, character for character (bundle L383525-383526: `{ id: "progressBar",
+  // label: "Terminal progress bar", ... }`), riding `reduceMotion`'s exact shape one row below it — DEFAULT
+  // TRUE, canon's own polarity (`Vd("terminalProgressBarEnabled", !0)`, L563441).
+  it("progressBar is a boolean row echoing the pref, which defaults TRUE", () => {
+    expect(buildRows(BASE_CTX).find((r) => r.id === "progressBar")!.type).toBe("boolean");
+    expect(buildRows(BASE_CTX).find((r) => r.id === "progressBar")!.label).toBe("Terminal progress bar");
+    expect(buildRows(BASE_CTX).find((r) => r.id === "progressBar")!.value).toBe("true");
+    expect(buildRows({ ...BASE_CTX, progressBar: false }).find((r) => r.id === "progressBar")!.value).toBe("false");
   });
 
   // WAVE C TASK 12 (EP-C5). Upstream's own id and label (bundle L315485), label-only there and here — but

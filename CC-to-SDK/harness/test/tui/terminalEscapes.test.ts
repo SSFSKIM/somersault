@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { osc, passthrough, isMuxed, notifyTerminator, sanitizeNotificationText, BELL, OSC_ITERM2, OSC_KITTY, OSC_GHOSTTY, OSC_TITLE } from "../../src/tui/terminalEscapes.js";
+import { osc, passthrough, isMuxed, notifyTerminator, sanitizeNotificationText, BELL, OSC_ITERM2, OSC_KITTY, OSC_GHOSTTY, OSC_TITLE, ITERM2_PROGRESS, PROGRESS_STATE, progressOsc, PROGRESS_TEARDOWN_CLEAR } from "../../src/tui/terminalEscapes.js";
 
 describe("osc", () => {
   it("joins parts with ';' and terminates with BEL or ST", () => {
@@ -54,6 +54,47 @@ describe("notifyTerminator", () => {
   it("recognises kitty by EACH of its three markers, not just TERM", () => {
     expect(notifyTerminator({ KITTY_WINDOW_ID: "1" } as NodeJS.ProcessEnv)).toBe("st");
     expect(notifyTerminator({ TERM_PROGRAM: "kitty" } as NodeJS.ProcessEnv)).toBe("st");
+  });
+});
+
+describe("progressOsc — the OSC 9;4 progress bar wire form (research report §1)", () => {
+  it("CLEAR carries an empty value, which still renders as a TRAILING semicolon before the terminator", () => {
+    // `Koi` (L188791) hardcodes `9;4;0;` — not `9;4;0` — because `join(";")` on [9,4,0,""] keeps the
+    // fourth (empty) slot. A builder that dropped the trailing `;` for a falsy/empty value would pass
+    // every other assertion here and still disagree with canon on the wire.
+    expect(progressOsc("bel", PROGRESS_STATE.CLEAR)).toBe("\x1b]9;4;0;\x07");
+  });
+  it("INDETERMINATE — the only state ccx's driver ever wires — same trailing-semicolon shape", () => {
+    expect(progressOsc("bel", PROGRESS_STATE.INDETERMINATE)).toBe("\x1b]9;4;3;\x07");
+  });
+  it("SET and ERROR carry a percent and NO trailing semicolon — built for fidelity, reached by nothing", () => {
+    expect(progressOsc("bel", PROGRESS_STATE.SET, 42)).toBe("\x1b]9;4;1;42\x07");
+    expect(progressOsc("bel", PROGRESS_STATE.ERROR, 0)).toBe("\x1b]9;4;2;0\x07");
+  });
+  it("takes ST when the caller passes it, exactly like every other osc() caller — no internal sniff", () => {
+    expect(progressOsc("st", PROGRESS_STATE.INDETERMINATE)).toBe("\x1b]9;4;3;\x1b\\");
+  });
+  it("uses OSC_ITERM2 (9) and ITERM2_PROGRESS (4), the exact codes canon's Onr/wC pair names", () => {
+    expect(OSC_ITERM2).toBe(9);
+    expect(ITERM2_PROGRESS).toBe(4);
+    expect(PROGRESS_STATE).toEqual({ CLEAR: 0, SET: 1, ERROR: 2, INDETERMINATE: 3 });
+  });
+});
+
+describe("PROGRESS_TEARDOWN_CLEAR — canon's `Koi` (L188791), pre-built and asymmetric on purpose", () => {
+  it("is the CLEAR form, BEL-terminated, byte for byte", () => {
+    expect(PROGRESS_TEARDOWN_CLEAR).toBe("\x1b]9;4;0;\x07");
+  });
+  it("is NOT DCS-wrapped by itself — the unwrapped constant is what teardown call sites write directly, "
+    + "never through passthrough()", () => {
+    expect(PROGRESS_TEARDOWN_CLEAR.startsWith("\x1bPtmux;")).toBe(false);
+    expect(PROGRESS_TEARDOWN_CLEAR.startsWith("\x1bP")).toBe(false);
+  });
+  it("is a CONSTANT, always BEL, even where the hook-path builder would pick ST — the asymmetry is canon's "
+    + "own (Koi bypasses tI entirely), not a reading error", () => {
+    // The would-be hook-path equivalent under a kitty terminator picks ST; the pre-built constant never does.
+    expect(progressOsc(notifyTerminator({ TERM: "xterm-kitty" } as NodeJS.ProcessEnv), PROGRESS_STATE.CLEAR)).toBe("\x1b]9;4;0;\x1b\\");
+    expect(PROGRESS_TEARDOWN_CLEAR.endsWith(BELL)).toBe(true);
   });
 });
 

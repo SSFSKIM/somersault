@@ -23,6 +23,11 @@
 // the fullscreen renderer makes (T9). Unarmed, every method is inert — a classic launch must not emit so
 // much as an rmcup for a screen it never took.
 
+// T-CH34's ONE import breaks this file's prior leaf status (no imports, no lifecycle beyond its own) — the
+// pre-built teardown constant belongs in `terminalEscapes.ts` with its sibling `PROGRESS_STATE`/`progressOsc`
+// (one place that knows the OSC 9;4 wire form), and this module only needs the finished bytes.
+import { PROGRESS_TEARDOWN_CLEAR } from "./terminalEscapes.js";
+
 /** canon `pVe()` L177097, without the terminal-conditional tail — `enter()` appends `kittyUpgrade`. */
 export const ENTER_ALT = "\x1b[?1049h\x1b[2J\x1b[H";
 /** canon `nj()` L177100. Pop the kitty keyboard stack, rmcup, reset modifyOtherKeys. */
@@ -131,6 +136,11 @@ export interface AltScreenDeps {
   writeSync(s: string): void;
   /** The terminal's name for the upgrade gate — `resolveTerminalName(process.env)`, not a raw variable. */
   termProgram?: string;
+  /** T-CH34 — `progressBarCapability(process.env)` (`progressBar.ts`), resolved ONCE by the caller exactly
+   *  as `termProgram` is: the emulator does not change mid-session. Gates ONLY the `process.on("exit")` net
+   *  below (research report §4d) — never `armed`, and never `terminalProgressBarEnabled` (a debt to the
+   *  terminal, not a feature, matching canon's own `dsi()`). Absent/false writes nothing. */
+  progressBarCapability?: boolean;
   /** canon `zuy`'s `e.unmount()` (L181502): give the renderer its chance to come down before we hand-write
    *  the escape. It is allowed to throw — that is the case this module exists for. */
   unmount?: () => void;
@@ -219,7 +229,15 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
       // the one limb that does NOT attempt the renderer's unmount: Ink's `unmount()` runs `onRender`,
       // `log.done()` and React unmount effects through `stdout.write`, and while that stream is synchronous
       // on a POSIX tty, an exit handler is no place to depend on it. The bytes are the guarantee.
-      const onExit = () => { if (armed) { armed = false; handBack(/* renderer */ false); } };
+      // T-CH34 — THE UN-ARMED-GATED LIMB (research report §4d). Runs on EVERY process exit, fullscreen or
+      // not: `handBack` below is `armed`-gated and a classic launch never calls it, but canon's own `dsi()`
+      // clears the progress bar on the crash/forced-exit net regardless of alt-screen state — gated on
+      // CAPABILITY alone, exactly as `Wnr()` gates `Koi`'s two call sites in canon, never on `armed` and
+      // never on `terminalProgressBarEnabled`.
+      const onExit = () => {
+        if (deps.progressBarCapability) write(PROGRESS_TEARDOWN_CLEAR);
+        if (armed) { armed = false; handBack(/* renderer */ false); }
+      };
       process.on("exit", onExit); off.push(() => process.off("exit", onExit));
       return () => { for (const undo of off.splice(0)) undo(); };
     },
@@ -248,6 +266,10 @@ export interface ChatTeardownDeps {
   stopResize(): void;
   /** `a0u` (L148428) — hand the terminal back with an empty title. An OSC write, so: before rmcup. */
   clearTitle(): void;
+  /** T-CH34 — canon's `dsi()` progress limb (L202468): the CALLER (`chatMain.tsx`) has already gated this
+   *  on CAPABILITY, never on `terminalProgressBarEnabled` (a debt to the terminal, not a feature). Sits
+   *  beside `clearTitle` — same reason: an OSC write, so it must land before rmcup. */
+  clearProgress(): void;
   /** Where the cursor is parked between frames, or 0 (see `resizeRepaint.parkSequence`). */
   parkedColumn(): number;
   /** The guard's signal-handler disposer. Writes nothing; runs last so the handlers stay live until then. */
@@ -280,6 +302,7 @@ export function createChatTeardown(deps: ChatTeardownDeps): () => void {
     deps.offResizeListener();
     deps.stopResize();
     deps.clearTitle();
+    deps.clearProgress();
     // Unpark before the shell gets the terminal back, or its prompt draws from column 117 on a row of our
     // spaces. Still on the near side of rmcup: it is an erase of OUR row, not of the screen underneath.
     if (deps.parkedColumn() > 0) deps.write("\x1b[2K\x1b[G");

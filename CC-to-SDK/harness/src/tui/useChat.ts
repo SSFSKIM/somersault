@@ -123,7 +123,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean;
+  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean; /** T-CH34 — the `terminalProgressBarEnabled` setting; `ChatApp`'s progress-bar effect ANDs it with `busy` (canon's `m6h`). */ terminalProgressBarEnabled: boolean;
   /** W-C T12 (EP-C5): the follow-up suggestion's four-state slice (`suggester.ts`). It lives HERE and not in
    *  the composer for two reasons that are the same reason: the composer is unmounted behind every dialog,
    *  and Ctrl-C clears its buffer — a suggestion owned there would die of both, where upstream's survives
@@ -167,7 +167,11 @@ export function useChat(
     initialPromptSuggestionEnabled?: boolean;
     /** F8 T6: the `prefersReducedMotion` pref, resolved by the caller (`chatMain.tsx`) exactly as
      *  `initialShowTurnDuration` is — DEFAULT FALSE, canon's own polarity (bundle L507998). */
-    initialPrefersReducedMotion?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
+    initialPrefersReducedMotion?: boolean;
+    /** T-CH34: the `terminalProgressBarEnabled` pref, resolved by the caller (`chatMain.tsx`) exactly as
+     *  `initialShowTurnDuration` is — DEFAULT TRUE, canon's own polarity (`Vd("terminalProgressBarEnabled",
+     *  !0)`, L563441). */
+    initialTerminalProgressBarEnabled?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
     /** WAVE C TASK 10: the resolved `statusLine` setting, or undefined for "not configured". RESOLVED BY THE
      *  CALLER (`chatMain.tsx`, exactly as `initialOutputStyle` is seeded from `loadPrefs()`), and for a
      *  reason beyond symmetry: canon L154558 honours only the USER settings file, so resolving it here would
@@ -704,6 +708,11 @@ export function useChat(
   // and writes the file behind it, and `motion.ts`'s `reducedMotion()` OR's it against the screen-reader
   // env signal at every read site — this state carries only the setting half.
   const [prefersReducedMotion, setPrefersReducedMotionState] = useState<boolean>(opts.initialPrefersReducedMotion ?? false);
+  // ── T-CH34: the terminal progress bar's setting ─────────────────────────────────────────────────────
+  // `prefersReducedMotion`'s shape exactly, one polarity flipped: canon's own DEFAULT TRUE (`Vd(..., !0)`,
+  // L563441). Held in state from mount on: the /config row toggles this and writes the file behind it, and
+  // `ChatApp`'s progress-bar effect reads it live on every turn-lifecycle change — never captured once.
+  const [terminalProgressBarEnabled, setTerminalProgressBarEnabledState] = useState<boolean>(opts.initialTerminalProgressBarEnabled ?? true);
   const pickTurnVerb = deps.pickTurnVerb ?? realPickTurnVerb;
   // The turn's own wall clock, and its disqualifier. Both are REFS, not state: they are written and read
   // inside the `onSessionEvent` closure, which is created once per session — a state read there would be one
@@ -2165,6 +2174,7 @@ export function useChat(
             case "thinking": await setThink(result.value === "false" ? "off" : "default"); break;
             case "showTurnDuration": setShowTurnDuration(result.value !== "false"); break;
             case "reduceMotion": setPrefersReducedMotion(result.value !== "false"); break;
+            case "progressBar": setTerminalProgressBarEnabled(result.value !== "false"); break;
             case "promptSuggestionEnabled": setPromptSuggestionEnabled(result.value !== "false"); break;
           }
           if (!disposed.current) append(result.lines);
@@ -2473,7 +2483,7 @@ export function useChat(
   // never cache it) alongside whatever this hook's own state currently holds for model/outputStyle/mode/
   // thinkLevel, so both the open-time baseline and the close-time snapshot are always accurate regardless
   // of how many times the Model/Theme/Output-style sub-flows ran in between.
-  function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, reduceMotion: prefersReducedMotion, promptSuggestionEnabled }; }
+  function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, reduceMotion: prefersReducedMotion, progressBar: terminalProgressBarEnabled, promptSuggestionEnabled }; }
   function openSettings() {
     if (disposed.current) return;
     settingsBaselineRef.current = currentSettingsCtx();
@@ -2521,6 +2531,13 @@ export function useChat(
     if (disposed.current) return;
     setPrefersReducedMotionState(next);
     try { savePrefsFn({ prefersReducedMotion: next }, historyEnv); } catch { /* best-effort */ }
+  }
+  /** The `Terminal progress bar` row's toggle (T-CH34) — `setPrefersReducedMotion`'s shape exactly:
+   *  client-side, commit then persist, write swallowed. */
+  function setTerminalProgressBarEnabled(next: boolean): void {
+    if (disposed.current) return;
+    setTerminalProgressBarEnabledState(next);
+    try { savePrefsFn({ terminalProgressBarEnabled: next }, historyEnv); } catch { /* best-effort */ }
   }
   // ── W-C T12 (EP-C5): the suggestion's five operations ────────────────────────────────────────────────
   /** The `Prompt suggestions` row's toggle — `setShowTurnDuration`'s shape exactly (client-side, commit then
@@ -3052,5 +3069,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

@@ -9,10 +9,10 @@ import type { ThemeId } from "./theme.js";
 /** Everything a row's display value is computed from — a snapshot, not a live subscription. useChat takes
  *  one snapshot when /config opens (the baseline) and another when it closes (current), diffing the two
  *  `buildRows()` outputs row-by-row to decide what changed. */
-export interface SettingsRowCtx { theme: ThemeId; model?: string; outputStyle: string; mode: string; thinkLevel: string; showTurnDuration: boolean; reduceMotion: boolean; promptSuggestionEnabled: boolean }
+export interface SettingsRowCtx { theme: ThemeId; model?: string; outputStyle: string; mode: string; thinkLevel: string; showTurnDuration: boolean; reduceMotion: boolean; promptSuggestionEnabled: boolean; progressBar: boolean }
 
 export interface SettingsRow {
-  id: "theme" | "model" | "outputStyle" | "permissionMode" | "thinking" | "showTurnDuration" | "reduceMotion" | "promptSuggestionEnabled";
+  id: "theme" | "model" | "outputStyle" | "permissionMode" | "thinking" | "showTurnDuration" | "reduceMotion" | "promptSuggestionEnabled" | "progressBar";
   label: string;
   type: "boolean" | "enum" | "managedEnum";
   value: string;                       // display value ("Default (recommended)" for unset model, "true"/"false" for booleans)
@@ -43,7 +43,13 @@ export const THINKING_WARNING = "Changing thinking mode mid-conversation will in
  *
  *  `reduceMotion` is F8 T6's row, and canon's own id and label character for character (bundle L383488:
  *  `{ id: "reduceMotion", label: "Reduce motion", value: r?.prefersReducedMotion ?? !1, type: "boolean" }`).
- *  It rides `showTurnDuration`'s exact shape and sits directly below it. */
+ *  It rides `showTurnDuration`'s exact shape and sits directly below it.
+ *
+ *  `progressBar` is T-CH34's row, and canon's own id and label character for character (bundle L383525-383526:
+ *  `{ id: "progressBar", label: "Terminal progress bar", ... type: "boolean" }`) — note this id is DIFFERENT
+ *  from the pref key it drives (`terminalProgressBarEnabled`, `prefs.ts`), exactly as `reduceMotion`'s row id
+ *  differs from its own pref key (`prefersReducedMotion`); canon names its schema field and its `/config` row
+ *  independently too. It rides `reduceMotion`'s exact shape and sits directly below it. */
 export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
   return [
     { id: "theme", label: "Theme", type: "managedEnum", value: ctx.theme, hint: "For custom themes, use /theme." },
@@ -53,6 +59,7 @@ export function buildRows(ctx: SettingsRowCtx): SettingsRow[] {
     { id: "thinking", label: "Thinking mode", type: "boolean", value: String(ctx.thinkLevel !== "off") },
     { id: "showTurnDuration", label: "Show turn duration", type: "boolean", value: String(ctx.showTurnDuration) },
     { id: "reduceMotion", label: "Reduce motion", type: "boolean", value: String(ctx.reduceMotion) },
+    { id: "progressBar", label: "Terminal progress bar", type: "boolean", value: String(ctx.progressBar) },
     { id: "promptSuggestionEnabled", label: "Prompt suggestions", type: "boolean", value: String(ctx.promptSuggestionEnabled) },
   ];
 }
