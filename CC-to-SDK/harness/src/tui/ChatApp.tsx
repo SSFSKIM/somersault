@@ -63,7 +63,7 @@ import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
 import { indentRenderLine } from "./agentProgress.js";
 import { PaletteHost, PaletteSlot } from "./paletteSlot.js";
-import { ChatComposer, composerOwns, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
+import { ChatComposer, composerOwns, type ComposerCaret, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { pushHistory } from "./editorHistory.js";
 import { composerMode } from "./promptMode.js";
@@ -879,6 +879,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // cover it — so the row map underneath a dialog is CURRENT, not stale. The question is ownership, and this
   // is the whole of the answer to it.
   const hitmapRef = useRef<ViewportHitmap>(null);
+  // F9 T-MOUSE Task 4 — the composer's own click seam, on the same ref-channel family as `hitmapRef` and for
+  // the same reason (ComposerCaret's own doc: geometry current only for the render that produced it).
+  const composerRef = useRef<ComposerCaret>(null);
   const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
   const clickable = fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching;
   // F9 T-MOUSE Task 3 — the wheel already discards a pending tap (T10's own reasoning: the document moved
@@ -912,7 +915,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     if (e.action === "press") { tapAnchorRef.current = { col: e.col, row: e.row, anchor: hitmapRef.current?.anchorAt(e.col, e.row) }; return; }
     if (!at || at.col !== e.col || at.row !== e.row) return;
     const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
-    if (anchor !== undefined && anchor === at.anchor) toggleFold(anchor);
+    if (anchor !== undefined && anchor === at.anchor) { toggleFold(anchor); return; }
+    // F9 T-MOUSE Task 4 — click-to-caret, on the SAME press/release pairing as the fold toggle above rather
+    // than a second registration (the registry resolves only the innermost sink — `registry.ts:98-100` — so a
+    // second `useMouseSink` here would simply never fire). Falls through from the fold check above, which
+    // already proves press and release named the SAME cell; a fold anchor at that cell wins (the `return`
+    // above), and this is reached only when there was none. `caretAt` is its own complete gate: it answers
+    // `false` for any cell outside the composer's published, addressable buffer rows (above the transcript,
+    // past the last painted line, or the origin unpublished — off `fullscreen`, no dock grant yet), so a
+    // press+release pair that never touched the composer is a safe no-op here, exactly like `anchorAt`'s own
+    // `undefined` is above.
+    composerRef.current?.caretAt(e.col, e.row);
   });
   // Live-feedback fix (2026-08-06, ctrl+o flood): the pager box alone is `rows - 6` lines (rows-10 content
   // + border 2 + header + footer), so ANY other transient chrome mounted beside it — spinner, task panel,
@@ -1600,7 +1613,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // FSW T14 — D10 (hoist the palette out of here) and D11 (drop the notification block).
                       // Both are subtractions from what the composer paints; the destinations are the dock's
                       // `PaletteSlot` and the footer's right region, and both are above this element.
-                      fullscreen={fullscreen} />
+                      fullscreen={fullscreen} originRef={composerRef} />
   );
   const dock = (
     <>

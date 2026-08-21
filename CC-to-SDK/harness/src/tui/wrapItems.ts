@@ -48,8 +48,15 @@ import type { RenderItem } from "./toolRenderer.js";
 
 /** Ink's own wrap, verbatim (`wrapAnsi(text, width, { trim: false, hard: true })`, ink/build/wrap-text.js) —
  *  the same call `streamingItems`, `render.wrapRows`, `species.wrapBody` and `rowBudget.paintedRows` make.
- *  `hard` breaks an unbreakable token rather than letting it overflow the width we just promised. */
-const wrapRows = (text: string, width: number): string[] => text.split("\n").flatMap((line) => wrapAnsi(line, width, { trim: false, hard: true }).split("\n"));
+ *  `hard` breaks an unbreakable token rather than letting it overflow the width we just promised.
+ *
+ *  EXPORTED for F9 T-MOUSE Task 4's composer inverse map (`editor.ts`'s `offsetFromPosition` /
+ *  `caretFromLocalPosition`): `ChatComposer` paints each buffer line as its own `<Text>{line}</Text>`, relying
+ *  on Ink's implicit wrap — no explicit wrap call anywhere in that file — so the click math has nothing of its
+ *  own to diverge from EXCEPT this primitive, which is the one every other painted-row producer in this tree
+ *  already proves equal to Ink's own algorithm. Reusing the SAME function (not a second `wrapAnsi` call site
+ *  with the same arguments typed twice) is what keeps that guarantee transitive. */
+export const wrapRows = (text: string, width: number): string[] => text.split("\n").flatMap((line) => wrapAnsi(line, width, { trim: false, hard: true }).split("\n"));
 
 /** One line as the rows it PAINTS at `width`. Returns the input line itself — same object, `segments` and all
  *  — whenever it already fits, which is what keeps a settled frame byte-identical to the unwrapped one.
