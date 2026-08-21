@@ -28,6 +28,7 @@ import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
+import { osc8Open, OSC8_CLOSE } from "./osc8.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
 /** Five columns, and the FIFTH is U+00A0: upstream emits `["  ", "⎿ \xA0"]` so the cell after the connector is not a
@@ -125,8 +126,10 @@ const INTERRUPTED_TEXT = "Interrupted · What should Claude do instead?";
 const REJECTED_TEXT = "Tool use rejected";
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
-/** OSC-8 with the BEL terminator (what 2.1.220 emits, and what every terminal we target accepts). */
-export const osc8FileLink = (path: string, label: string) => `\x1b]8;;${pathToFileURL(path).href}\x07${label}\x1b]8;;\x07`;
+/** OSC-8 with the BEL terminator (what 2.1.220 emits, and what every terminal we target accepts). Built from
+ *  `./osc8.js`'s shared open/close pair — the same shape `sgrFoldRow.ts`'s fold-run writer uses — rather than
+ *  a local copy of the escape bytes. */
+export const osc8FileLink = (path: string, label: string) => osc8Open(pathToFileURL(path).href) + label + OSC8_CLOSE;
 /** T-PRLINK: `osc8FileLink`'s sibling for a url that is ALREADY a target — no `pathToFileURL` resolution,
  *  since a scraped PR url (`gitOps.ts`'s `GitPrOp.url`) is absolute already. Deliberately UNGATED, same as
  *  `osc8FileLink` at its one call site (169): canon's PR link passes `assumeSupport: !0` to the generic `Mi`
@@ -134,7 +137,7 @@ export const osc8FileLink = (path: string, label: string) => `\x1b]8;;${pathToFi
  *  off — the opposite default from `markdownInline.ts`'s gated `osc8`, whose `hyperlinksSupported()` allowlist
  *  says no on a plain `xterm-256color` TTY. Gating this on that allowlist would make the affordance vanish in
  *  exactly the terminals canon still shows it in (research report §2.3, "the helper"). */
-export const osc8WebLink = (url: string, label: string) => `\x1b]8;;${url}\x07${label}\x1b]8;;\x07`;
+export const osc8WebLink = (url: string, label: string) => osc8Open(url) + label + OSC8_CLOSE;
 /** Re-exported, not defined here, since Task 5c: `paths.ts` owns the rule so `toolFold.ts` can reach it
  *  without importing this module (which now imports the fold model). The public surface is unchanged. */
 export { displayPath };

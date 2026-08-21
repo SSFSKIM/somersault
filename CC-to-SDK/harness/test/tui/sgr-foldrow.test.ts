@@ -91,15 +91,24 @@ describe("composeFoldRun byte grammar", () => {
   // BEFORE the OSC-8 introducer and closes AFTER its terminator — never inside it — which is what lets the
   // `\x1b]8;;<url>\x07#12\x1b]8;;\x07` triple sit as one unbroken substring, exactly as the brief requires.
   const PR_URL = "https://x/o/r/pull/12";
-  it("wraps a linked PR span in OSC-8, with the literal `PR ` prefix OUTSIDE the link and bold surviving the crossing", () => {
+  it("wraps a linked PR span in OSC-8, with the literal `PR ` prefix OUTSIDE the link, un-dim, and bold surviving the crossing", () => {
+    // Review-round fix (§1.4's table): canon's `d3l` prefix (531105) paints `PR` plain — NOT bold, NOT dim —
+    // right next to the bold+linked `#N`. So the run closes the ambient dim (`OFF`) before "PR " and never
+    // re-opens it (this file's existing "no dim re-open" rule), rather than leaving "PR " inside the DIM
+    // this writer opens at the top. This cell fails against the pre-fix bytes, which had no `OFF` there.
     const run = composeFoldRun(full({ prs: [{ number: 12, url: PR_URL, action: "created" }] }), "active");
-    expect(run).toBe(`${DIM}Created PR ${BOLD}${UNDER}${osc8(PR_URL, "#12")}${UNDER_OFF}${OFF}${OFF}`);
+    expect(run).toBe(`${DIM}Created ${OFF}PR ${BOLD}${UNDER}${osc8(PR_URL, "#12")}${UNDER_OFF}${OFF}${OFF}`);
     // The exact triple the brief pins: escape → label → escape, nothing styling between them.
     expect(run).toContain(`\x1b]8;;${PR_URL}\x07#12\x1b]8;;\x07`);
-    // "PR " sits before the bold/link opens, and the run's OWN dim carries it — it is not itself bold.
-    expect(run.slice(run.indexOf(DIM) + DIM.length, run.indexOf(BOLD))).toBe("Created PR ");
+    // Byte-level dim-state pin: "Created " (the verb) stays inside the ambient DIM; "PR " sits strictly
+    // between the intensity-reset and the bold/link opener — plain, not dim, not bold.
+    expect(run.slice(run.indexOf(DIM) + DIM.length, run.indexOf(OFF))).toBe("Created ");
+    expect(run.slice(run.indexOf(OFF) + OFF.length, run.indexOf(BOLD))).toBe("PR ");
   });
   it("leaves a no-url PR clause exactly as before: the whole `PR #N` bold, no OSC-8 anywhere", () => {
+    // Review-round fix (§1.4's table): the no-url arm is table row 3, "whole string bold" — nothing there
+    // says "not dim" the way the linked arm's `PR` does, so this arm is UNCHANGED (the pre-existing
+    // dim+bold nesting other bold counts already use). Kept as the linked arm's byte-level pin's other half.
     const run = composeFoldRun(full({ prs: [{ number: 13, action: "commented" }] }), "active");
     expect(run).toBe(`${DIM}Commented on ${BOLD}PR #13${OFF}${OFF}`);
     expect(run).not.toContain("\x1b]8");

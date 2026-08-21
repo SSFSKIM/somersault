@@ -790,9 +790,13 @@ describe("TS fullscreen fold clauses (canon ZIl 518574–518626)", () => {
       { number: 12, url: "https://x/o/r/pull/12", action: "created" },
       { number: 13, action: "commented" },
     ] });
-    // "Created PR #12": bold + link cover ONLY "#12" (offsets 11–14) — "Created PR " stays plain, exactly
-    // as canon's `d3l` prefix (531105) and `p3l` label (531112) split it.
-    expect(linked).toEqual({ text: "Created PR #12", boldRanges: [[11, 14]], linkRanges: [[11, 14, "https://x/o/r/pull/12"]] });
+    // "Created PR #12": bold + link cover ONLY "#12" (offsets 11–14). "PR " (offsets 8–11) carries a
+    // `plainRanges` span of its own — review-round fix to §1.4's table: canon's `d3l` prefix (531105) and
+    // `p3l` label (531112) split into "PR" plain (NOT bold, NOT dim) and "#N" bold+underline+link; "PR "
+    // used to be left inside the clause's ambient dim, which this cell now catches.
+    expect(linked).toEqual({
+      text: "Created PR #12", boldRanges: [[11, 14]], linkRanges: [[11, 14, "https://x/o/r/pull/12"]], plainRanges: [[8, 11]],
+    });
     // "commented on PR #13": no url scraped ⇒ the WHOLE "PR #13" is bold (canon's 531626 `else` branch), and
     // there is no `linkRanges` key at all — a test asserting `linkRanges: []` would pass against an
     // implementation that always allocates the array, which is not the same contract as "no PR carried a url".
