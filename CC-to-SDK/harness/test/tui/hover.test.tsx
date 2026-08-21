@@ -92,6 +92,19 @@ const CLUSTER: readonly TranscriptBootstrapEntry[] = [
 ];
 const COLLAPSED = "Read 2 files";
 const MEMBER_BODY = "Read 1 line";
+// The review's own repro (task-3-report.md, Critical finding): two Bash calls whose head word (`cat`) is in
+// `toolFold.ts`'s `BASH_READ` set, so `classifyBashCommand` folds them into the SAME "read" cluster a pair of
+// `Read` calls would (`absorb`'s read arm increments `readOperationCount` when the call carries no
+// `file_path`, and `emit`'s `readCount` falls back to it) — the clause text is therefore byte-identical to
+// `COLLAPSED` above, a coincidence the fixture relies on rather than hides. The second call's EMPTY result is
+// what makes `toolSummaries.ts`'s `bashRows` emit a `dim: true` "(No output)" row unconditionally (its
+// flat-fallback empty-output arm), which is content an expanded Read member never has — this is the row the
+// Critical finding's live repro un-dimmed.
+const CLUSTER_BASH: readonly TranscriptBootstrapEntry[] = [
+  call("bash-1", "Bash", { command: "cat a.txt" }), result("bash-1", "line one"),
+  call("bash-2", "Bash", { command: "cat b.txt" }), result("bash-2", ""),
+];
+const NO_OUTPUT = "(No output)";
 const COL = 5;
 const PROMPT = "❯ ";
 
@@ -100,6 +113,10 @@ const release = (col: number, row: number) => `\x1b[<0;${col};${row}m`;
 // SGR motion (bit 32 + low bits 3, no button, no modifiers) — the exact byte shape `keys-provider.test.tsx`'s
 // own T2 cells decode, and canon's own `?1003h` any-motion report.
 const motion = (col: number, row: number) => `\x1b[<35;${col};${row}M`;
+// SGR wheel-up (button 64, no modifiers) — `fold-click.test.tsx` T10(d)'s own byte shape. The cell named in
+// the report is irrelevant to dispatch (`KeymapProvider` resolves it as a KEY, `scroll:lineUp`, off the
+// escape sequence alone, never the coordinates) so a fixed cell is honest rather than a shortcut.
+const WHEEL_UP = "\x1b[<64;5;5M";
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 async function waitFor(cond: () => boolean, timeout = 3000) {
   const start = Date.now();
@@ -214,6 +231,61 @@ describe("T3 (c): scroll mode — hover has no effect at all", () => {
     r.stdin.write(motion(COL, ruleRow));
     await settle();
     expect(rawLineIncluding(r.lastFrame(), "hidden)")).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("T3 (b, review Critical): a Bash cluster member's DIM body row is unaffected by hover once expanded", () => {
+  // task-3-report.md's own live repro: T3(b) above passed only because its `Read` fixture's expanded body
+  // (`MEMBER_BODY = "Read 1 line"`) happens to carry no dim/banded content to begin with — so the shipped
+  // suite could not tell "hover suppressed on an expanded member" from "this row was never dim". This
+  // fixture's second Bash call returns EMPTY output, which `toolSummaries.ts`'s `bashRows` renders as a
+  // genuinely dim `(No output)` row even under `detail-all` (the projection an opened cluster member uses) —
+  // real dim content on an expanded member, reproducing the review's exact scenario.
+  it("leaves the '(No output)' row's dim SGR intact — byte-identical — before and after a motion report over it", async () => {
+    const DOC = [prose("hello there", "a"), ...CLUSTER_BASH, prose("all done", "b")];
+    const r = await mount(DOC);
+    await tap(r, COL, rowOfIncluding(r.lastFrame(), COLLAPSED));               // open the cluster
+    const memberRow = rowOfIncluding(r.lastFrame(), NO_OUTPUT);
+    const before = rawLineIncluding(r.lastFrame(), NO_OUTPUT);
+    // The fixture's own premise: the row really is dim before any hover, so the assertion below can fail for
+    // the right reason (T3(a)'s own discipline).
+    expect(before).toContain("\x1b[2m");
+
+    r.stdin.write(motion(COL, memberRow));
+    await settle();
+    const after = rawLineIncluding(r.lastFrame(), NO_OUTPUT);
+    // Canon's provider is `hovered && !expanded` (bundle L562783) — an already-expanded cluster member gets
+    // NO hover effect at all, dim included. Byte-identical, not merely "still contains \x1b[2m", matching
+    // T3(b)'s own assertion shape above.
+    expect(after).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("T3 (review Important): a wheel tick clears an active hover", () => {
+  // Mutation (a) in the review removed `clearHover()` from `discardTap` and NOTHING failed — the wiring
+  // (`ChatApp.tsx`'s `discardTap`, wired to `FullscreenViewport`'s `onWheelTick`) was correct but unproven.
+  it("removes the hover paint from the currently-hovered row when the wheel turns", async () => {
+    const DOC = [prose("hello there", "a"), longUser("long"), prose("all done", "b")];
+    const r = await mount(DOC);
+    await scrollUntilVisible(r, "hidden)");
+    const ruleRow = rowOfIncluding(r.lastFrame(), "hidden)");
+
+    r.stdin.write(motion(COL, ruleRow));
+    await settle();
+    const hovered = rawLineIncluding(r.lastFrame(), "hidden)");
+    // Premise: the hover really landed, so the assertion below can fail for the right reason.
+    expect(hovered).toContain(HOVER_BAND);
+    expect(hovered).not.toContain("\x1b[2m");
+
+    // The wheel tick's cell is irrelevant (dispatched as a KEY, not resolved against the pointer's last
+    // position) — only that a wheel event reached `onWheelTick` while a row was hovered.
+    r.stdin.write(WHEEL_UP);
+    await settle();
+    const afterWheel = rawLineIncluding(r.lastFrame(), "hidden)");
+    expect(afterWheel).not.toContain(HOVER_BAND);
+    expect(afterWheel).toContain("\x1b[2m");
     r.unmount();
   });
 });

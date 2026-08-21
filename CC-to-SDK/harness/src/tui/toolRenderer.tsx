@@ -57,13 +57,20 @@ const HINT_MAX_LINES = 10;
  *  membership, so it changes every time the run absorbs another call AND every time settlement reorders it,
  *  while the anchor — the earliest-issued call — never moves.
  *  Absent on everything else, and absent is not a cluster. It must survive `wrapItems` (a hit test reads
- *  PAINTED rows, not projected items) — see `wrapOne`, where three of the four paths carried it for free. */
+ *  PAINTED rows, not projected items) — see `wrapOne`, where three of the four paths carried it for free.
+ *
+ *  `expanded` (F9 T-MOUSE Task 3, review Critical fix) is set true on every item `expandedMemberItems` below
+ *  produces — an OPENED cluster's own re-rendered members, as opposed to the single collapsed summary row
+ *  `groupItems` emits for the same `foldAnchor` while closed (the two never coexist for one anchor). Canon's
+ *  hover provider is `hovered && !expanded` (bundle L562783): an already-expanded member must not un-dim on
+ *  hover, and `foldAnchor` alone cannot say which case a row is in, since both wear it. Like `foldAnchor` it
+ *  must survive `wrapItems` — it does, for the same reason: every `wrapOne` arm spreads the source item. */
 export type RenderItem =
-  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string }
+  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean }
   // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
   // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
-  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string };
+  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
  *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
@@ -843,7 +850,7 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
     const items = normalized.status === "suppressed"
       ? suppressedHeaderItems(event, event.result === undefined ? "running" : event.result.isError ? "error" : "success", detail)
       : renderToolEvent(event, normalized, detail);
-    for (const item of reid(items, event.id, event.result ? event.result.resultSequence : "pending")) out.push({ ...item, foldAnchor: anchorId });
+    for (const item of reid(items, event.id, event.result ? event.result.resultSequence : "pending")) out.push({ ...item, foldAnchor: anchorId, expanded: true });
   }
   return out;
 }

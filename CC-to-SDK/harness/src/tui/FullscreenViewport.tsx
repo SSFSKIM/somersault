@@ -401,7 +401,11 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
       // just built from is per-SLICE (one `itemKey` per item, `hitRowsOf`), so the hovered flag is exactly as
       // granular as a slice already is — no finer test is possible without the layout tree canon has and ccx
       // does not (R1's structural premise).
-      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && sourceId(s.item.id) === hoveredKey}>
+      //   `!s.item.expanded` (review Critical fix): canon's own provider is `hovered && !expanded` (bundle
+      // L562783), not `hovered` alone — an already-expanded cluster member (`toolRenderer.tsx`'s
+      // `expandedMemberItems`, which tags every item it produces `expanded: true`) must do nothing on hover,
+      // dim included, whether or not THIS particular member happens to carry dim/banded content.
+      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && sourceId(s.item.id) === hoveredKey && s.item.expanded !== true}>
         <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />
       </HoverContext.Provider>
     ))}
