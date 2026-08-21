@@ -384,6 +384,28 @@
 >   anything geometry-dependent has to arrive through an injected seam, and a test that reads them
 >   directly is measuring nothing.
 
+> - **Backlog round bl2 (2026-08-21/22)** — six owner-approved tickets from the standing backlog, run as
+>   five parallel worktree tracks (research → source-verified briefs → sonnet implementers → per-task
+>   reviews → fix waves → sequential merges), all against the 2.1.236 bundle with every stale 2.1.220
+>   cite re-located. SHIPPED: **`/copy N`** (20-deep recent-assistant ring on both wire and disk paths,
+>   canon's three strings byte-exact); **`/effort` arms** (persistence with canon's interactive-vs-headless
+>   split + the persistable-level filter, `help`/`current`/`status` sub-verbs with their two distinct
+>   description tables, Esc → `Cancelled`, the set-confirmation's description clause — the last added
+>   after the review adjudicated the implementer's scope-cut as a real gap); **X4t** (the suggestion
+>   popup's matched-query highlight, 2.1.236's bold-no-recolor shape); **CH34** (the OSC 9;4 terminal
+>   progress bar, indeterminate-only exactly as canon behaves — its SET/ERROR arms are dead in the bundle
+>   too — with clear-on-every-exit as a debt to the terminal); **T-PRLINK** (the collapsed cluster's PR
+>   number is a real OSC-8 link, plus the two-character `PR ` copy fix and the `stripSgr` OSC-8 width
+>   leak plugged). PARKED with evidence: **T-CLUSTER** — canon's expanded running cluster shows exactly
+>   what ccx shows (member list + per-member blinking leaders, `N3l`'s verbose early-return L531523-543),
+>   so the recorded "gap" was parity all along; its measurement filed the real replacement ticket (an
+>   expanded cluster omits absorbed thinking/hook/memory blocks, L531537-542). Reviews: X4T, CH34 and
+>   T-COPY approved with zero findings; T-PRLINK's fix wave consolidated the OSC-8 byte shape into a leaf
+>   module and restored canon's non-dim `PR ` prefix; T-EFFORT's review overturned one scope cut. Gates on
+>   the assembled main: typecheck clean · tui 3949 in 157 files (+77 tests this round) · unit 3252.
+>   **No domain score moves — renderer-side and command-side work over frames and levers this table
+>   already claims.** Parity deltas live in `tui-ux.md` (CM30 → ✅ among them).
+
 > - **SDK 0.3.237 bump + probe-pin alignment (2026-08-21)** — harness `^0.3.227` → `^0.3.237` and the
 >   probes workspace pin `0.3.220` → `0.3.237`, so probe evidence runs on the same SDK the product ships
 >   against. **Zero drift at name level**: `scripts/drift-check.mjs` reports optionsFields / queryMethods
