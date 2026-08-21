@@ -4,9 +4,10 @@
 // isolation: no frame chrome, the tagged `PreviewLoad`'s three arms, and the footer verbatim (canon
 // `yvc`, bundle L583551).
 import React from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { ResumeTranscriptView } from "../../src/tui/ResumeTranscriptView.js";
+import { useKeyScope } from "../../src/tui/keys/KeymapProvider.js";
 import { PREVIEW_EMPTY, PREVIEW_FOOTER, PREVIEW_LOADING, PREVIEW_LOADING_HINT, type PreviewLoad } from "../../src/tui/sessionPickerModel.js";
 import type { SessionInfo } from "../../src/tui/useChat.js";
 
@@ -107,5 +108,57 @@ describe("ResumeTranscriptView — detail-all rendering and the fullscreen budge
     // The tail is anchored on the true last message; the fullscreen cap keeps this from ever reading past a
     // small budget's worth of rows (proof by absence — the very first reply cannot possibly still be on screen).
     expect(flat(frame(r.lastFrame))).not.toContain("reply number 0 ");
+  });
+});
+
+describe("ResumeTranscriptView — the image-only session (T-RESUME T3 cell 5, closes D-W9's image arm)", () => {
+  // Runs the same path imageRows.test.tsx (I4) proved for `projectCompact`, through THIS view's detail-all
+  // window instead — `transcriptItems` composes `projectDetail` + `projectPending` over `replayDocument`,
+  // and I4's ordinal fix lives in `projectMessageEntry`, the one place compact/detail/pending converge (see
+  // toolRenderer.tsx's comment at the `imageOrdinalAt` computation), so the image row is not compact-only.
+  const IMAGE_BLOCK = { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } };
+  const imageOnlySession = [
+    { type: "user", parent_tool_use_id: null, message: { role: "user", content: [IMAGE_BLOCK] } },
+  ];
+
+  it("previews with an [Image #1] row, not the (no messages) empty state", async () => {
+    const r = mountView({ state: "loaded", messages: imageOnlySession });
+    await waitFor(() => flat(frame(r.lastFrame)).includes("[Image #1]"));
+    expect(flat(frame(r.lastFrame))).not.toContain(PREVIEW_EMPTY);
+  });
+
+  it("the meta line counts it as 1 message — the pane and the count agree (qa4-07 ii, image arm)", async () => {
+    const r = mountView({ state: "loaded", messages: imageOnlySession });
+    await waitFor(() => flat(frame(r.lastFrame)).includes("[Image #1]"));
+    const lines = plain(frame(r.lastFrame)).split("\n");
+    const metaLine = lines.find((l) => l.includes("message"));
+    expect(metaLine).toContain("1 message");
+    expect(metaLine).not.toContain("1 messages");
+  });
+
+  it("y resumes with the loaded image-only payload (identity-checked)", async () => {
+    // `y`/`n` resolve through the "SessionPicker" context, pushed PREEMPTIVELY by `SessionPicker.tsx`
+    // (`useKeyScope("SessionPicker", {preemptive:true})`, see this component's own header comment) — this
+    // component mounts no scope of its own. Reproduce that one line of the real integration here so the
+    // key genuinely resolves, without pulling in the whole picker (session-picker.test.tsx owns that).
+    function WithSessionPickerScope({ children }: { children: React.ReactNode }) {
+      useKeyScope("SessionPicker", { preemptive: true });
+      return <>{children}</>;
+    }
+    const onResume = vi.fn();
+    const r = render(
+      <WithSessionPickerScope>
+        <ResumeTranscriptView
+          session={SESSION} load={{ state: "loaded", messages: imageOnlySession }}
+          columns={100} rows={40} fullscreen={false}
+          onResume={onResume} onExit={noop}
+        />
+      </WithSessionPickerScope>,
+    );
+    await waitFor(() => flat(frame(r.lastFrame)).includes("[Image #1]"));
+    r.stdin.write("y");
+    await waitFor(() => onResume.mock.calls.length > 0);
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(onResume).toHaveBeenCalledWith(imageOnlySession);
   });
 });
