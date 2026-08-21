@@ -1520,7 +1520,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                   ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
                   : state.picker.open
                   ? <SessionPicker sessions={state.picker.sessions} onPick={pickSession} onCancel={closePicker}
-                      loadMessages={previewSession} renameSession={renamePickedSession} reload={reloadSessions}
+                      // T-RESUME T1: `previewSession` itself now resolves the tagged `PreviewLoad`, not a
+                      // bare row array — this component still speaks the old `Promise<unknown[]>` contract
+                      // (T2 is where it swaps its preview stage to `ResumeTranscriptView` and reads the tag
+                      // directly). Unwrapped here so SessionPicker's own existing rejection handler keeps
+                      // doing exactly what it did before this task: a `failed` load rethrows and lands there
+                      // as an empty pane, byte-identical to today.
+                      loadMessages={(id, dir) => previewSession(id, dir).then((load) => {
+                        if (load.state === "failed") throw new Error(load.error);
+                        return load.state === "loaded" ? load.messages : [];
+                      })}
+                      renameSession={renamePickedSession} reload={reloadSessions}
                       hasWorktree={state.picker.hasWorktree} rows={overlayRows()} columns={terminalColumns()} />
                   // F6 TASK 5 (t5-fix) — THE COMPOSER'S SLOT IS EMPTY WHILE A DIALOG IS VISIBLE. `owner ===
                   // "decision"` is exactly upstream's `on === "visible"` (a decision is parked, no overlay is

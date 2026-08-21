@@ -18,7 +18,8 @@
 import { homedir } from "node:os";
 import { formatRelativeTime } from "./format.js";
 import { replayDocument } from "./replay.js";
-import { projectCompact, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { wrapItemsToWidth } from "./wrapItems.js";
 
 /** Structurally what `listSessions()` hands the REPL (`SDKSessionInfo`), narrowed to what a row reads. */
 export interface SessionRow {
@@ -138,9 +139,12 @@ export function previewMeta(s: SessionRow, count: number, now: Date = new Date()
   return `${when ? `${when} · ` : ""}${count} ${count === 1 ? "message" : "messages"}${s.gitBranch ? ` · ${s.gitBranch}` : ""}`;
 }
 
-/** How many of a previewed transcript's rows the pane shows. Upstream renders the WHOLE transcript through
- *  the real message renderer and lets the terminal scroll; ours is a fixed tail because the pane is a summary
- *  the cursor sits on, not a second transcript view (the pager and `/resume` itself both exist for that). */
+/** How many of a previewed transcript's rows the IN-PANE summary shows. STALE PREMISE CORRECTED (T-RESUME
+ *  T1): this used to say upstream renders the WHOLE transcript and lets the terminal scroll — it does not.
+ *  Canon's own windowing (L563246-563388) caps the full-screen `/resume` view at a tail-anchored ~200-item
+ *  budget, fed from at most twice that many raw messages (see `transcriptItems` below, D-W9). This constant
+ *  is a second, stricter cut layered under canon's: the in-frame pane is a glance the cursor sits on, not
+ *  the full-screen view canon's own cap describes. */
 export const PREVIEW_ROWS = 12;
 
 /** Upstream's countable-message predicate, `$$_` + `B$_` (L369021/L369035) as `Pqs` (L369043) applies them:
@@ -265,3 +269,65 @@ export function previewItems(messages: readonly unknown[], opts: { width: number
   const projected = [...projectCompact(document, context), ...projectPending(document, context, new Set())];
   return { ...previewTail(projected, opts.limit ?? PREVIEW_ROWS), windowTruncated };
 }
+
+// ── The full-screen view's window (T-RESUME T1, D-W9) ──────────────────────────────────────────────────
+// The IN-PANE pane above stays exactly as it was — a summary the cursor sits on. This is canon's OWN cap,
+// for the separate full-screen view Space/Ctrl+V opens (`yvc` L583551): the picker is replaced wholesale,
+// not embedded, and canon's arithmetic (L563246-563388) forces the DETAIL-ALL projection (verbose, every
+// tool body expanded) rather than the compact fold — that is the whole reason a resumed tool turn shows its
+// full output here where the in-pane summary above would have shown a folded "(ctrl+o to expand)" row.
+//
+// Canon has no scrollbar, no `↑ N more above` line and no in-view scroll in this view (spec non-goals) — so
+// unlike `PreviewPane` above, the return type carries no hidden/truncated count at all: there is nothing for
+// a caller to announce.
+//
+// WRAP FIRST, WINDOW SECOND (the wrapItems.ts / FSW T17 lesson, reused rather than re-derived a third time).
+// A raw `RenderItem`'s `kind: "line"` always measures ONE row regardless of whether its text actually fits
+// `width` — `itemRows` below is honest only once every item has already been cut into the rows it PAINTS.
+// Tail-anchoring on the unwrapped stream (the way the in-pane `previewTail` above still does, correctly, for
+// its OWN much smaller PREVIEW_ROWS budget where an overlong line is rare) would let one very long line push
+// the window past what the caller's `budget` rows can actually hold — exactly the bug class FSW T17 found in
+// the pager. So `wrapItemsToWidth` runs BEFORE the tail cut, not after.
+export interface TranscriptWindow { items: readonly RenderItem[] }
+/** A previewed session's persisted messages → canon's full-screen tail window. `budget` is rows, supplied by
+ *  the caller (classic mode: 200 flat; fullscreen: `min(200, overlayRows())` — that arithmetic is the VIEW's,
+ *  not this pure function's, so it is a plain number here). The raw message window is `2×budget` (canon's own
+ *  ratio): wide enough that a budget's worth of collapsed-canon-sized items almost never starves for raw rows
+ *  to project, without reading a whole multi-thousand-row session on every keystroke. */
+export function transcriptItems(messages: readonly unknown[], opts: { width: number; id?: string; cwd?: string; budget: number }): TranscriptWindow {
+  const rawWindow = 2 * opts.budget;
+  const window = messages.length > rawWindow ? messages.slice(-rawWindow) : messages;
+  const document = replayDocument(window, { width: opts.width, frame: false, ...(opts.id === undefined ? {} : { id: opts.id }) });
+  const context = previewProjection(opts.width, opts.cwd === undefined ? {} : { cwd: opts.cwd });
+  // Detail-all in place of the in-pane's compact fold (canon L563347/L563371 forces verbose + show-all), and
+  // the same "both regions" reasoning `previewItems` carries above: `projectDetail` alone withholds a still-
+  // growable trailing run exactly as `projectCompact` does, so a resumed session interrupted mid-tool-call
+  // would preview with that call silently missing without the pending region alongside it. `liveIds` is
+  // EMPTY for the same reason it is above: nothing is running in a transcript read off disk.
+  const projected = [
+    ...projectDetail(document, { ...context, projection: "detail-all" }),
+    ...projectPending(document, context, new Set()),
+  ];
+  const painted = wrapItemsToWidth(projected, opts.width);
+  // The same backward walk `previewTail` runs, over painted rows instead of logical ones. The final item
+  // always survives even if it alone overflows the budget, for the reason `previewTail` gives: a window that
+  // renders nothing is worse than one that renders a row too many.
+  let start = painted.length, rows = 0;
+  for (let i = painted.length - 1; i >= 0; i--) {
+    const height = itemRows(painted[i]!);
+    if (rows > 0 && rows + height > opts.budget) break;
+    rows += height; start = i;
+  }
+  return { items: painted.slice(start) };
+}
+
+/** The tagged shape a preview load is now in (T-RESUME T1, spec R-1). `loading`/`failed` have no upstream
+ *  twin here — canon's own `Loading session…` state and its confirm-context error copy are exactly this
+ *  split, just undocumented as a type in the bundle. The producer (`useChat.ts`'s `previewSession`) resolves
+ *  to `loaded`/`failed` only — `loading` is the CONSUMER's own local state before that promise settles, which
+ *  is why it has no payload here. A `loaded` session confirms with THESE messages (canon's `onSelect(Ccs ??
+ *  Gwt)`) — never a second, later read that could reject after a successful preview. */
+export type PreviewLoad =
+  | { state: "loading" }
+  | { state: "loaded"; messages: unknown[] }
+  | { state: "failed"; error: string };
