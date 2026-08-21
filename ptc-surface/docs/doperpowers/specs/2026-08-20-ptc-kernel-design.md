@@ -790,6 +790,13 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   helpers, skill final wording, README + trust model, full acceptance run incl. A7, A9, A11,
   A13.
 
+**M3 closed 2026-08-22 (T28), and with it M0–M2.** The acceptance run recorded in Surprises &
+Discoveries executed A1–A15 as written — 15 pass, A13 in its documented S5 form — over a
+keyless tier of 209 passed / 0 skipped and a live tier of 8 passed / 0 skipped. Nothing is
+carried forward as failing; the two open residuals are recorded, not closed: the shaped text
+still does not name a saved PNG path (Images row), and `AgentHandle.interrupt()`'s no-session
+`result()` contract is still fake-only (its session-open contract is now live-verified).
+
 ## Decision Log
 
 - Decision: Build PTC as an MCP server + CLI + skill *on top of* Claude Code, not a replacement
@@ -1195,9 +1202,17 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   shape — signal, then wait the drain out and let the driver's normal completion settle the
   handle, cancelling only past the drain budget. Proven against the fake (whose `interrupt()`
   now produces the aborted result after a delay, as the CLI does) and RED-proven against the
-  pre-empting order. **Not yet re-run live**: the one budgeted T20 live run predates the fix
-  and covered run/spawn/gather/list only — a live interrupt belongs to the next live budget
-  (T21's run or T28's acceptance).
+  pre-empting order. **Live-verified in T28** (2026-08-22, acceptance run), closing the
+  deferral: a real `agent.spawn` on haiku was interrupted 10 s into a 500-line counting turn,
+  and the session-open contract held exactly as designed — `PRE_STATUS: running`,
+  `POST_STATUS: interrupted drain_s: 0.6`, `RESULT_OK: len=1435 head='1\n2\n3\n…'`,
+  `REGISTRY: [('slow','interrupted')]`. So the drain ended normally and the driver's own
+  completion delivered the aborted turn's PARTIAL text through `result()` (the literal
+  `"(aborted)"` string is the fake's stand-in for that text, not a live wire value), and the
+  status/registry flip to `interrupted` landed after the drain rather than pre-empting it.
+  The no-session contract — `result()` raising `RuntimeError` because nothing was draining —
+  was not the path this run took and remains fake-only. One live datum on drain length: 0.6 s,
+  below the 4.0–13.0 s band S1 measured, so `_INTERRUPT_DRAIN_S` is generous, not tight.
 
 - Observation: `ClaudeAgentOptions(setting_sources=None)` — the default — means "load
   everything the CLI would": the user's `~/.claude/settings.json`, project settings, their
@@ -1522,6 +1537,42 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   deadline and the summarization runs under `llm()`'s own. Pinned by
   `test_web_fetch_summary_does_not_deadlock_against_llm`, which runs the whole path at
   `max_concurrency=1` under a wall-clock bound.
+
+- Observation: acceptance run 2026-08-22 (T28, Claude Code 2.1.238, codex-cli 0.146.0):
+  A1–A15 → **15 pass**, of which one (A13) passes in its documented S5 fallback-qualified
+  form and none failed or needed a code change. A13: the image content block reaches the
+  model on the wire (`['text','image']`, `is_error` unset, base64 25 196 chars decoding to
+  18 897 bytes, sha256 `f4deb1b0…927e46`, byte-identical to the kernel's own
+  `cells/9-0.png` and to T12's recorded hash) and the ctrl+O transcript shows a `⎿ [Image]`
+  row, while the collapsed view shows only `Called plugin:ptc:ptc` — a terminal renders no
+  pixels, so "visible" means the marker, and the shaped text still does not name the saved
+  PNG path (the Images-row residual, re-confirmed, still parked). Everything else was
+  observed first-hand: A1/A2 in one real `--plugin-dir` session (`x = 42`, the CLI process
+  exited, `--resume` re-entered session `2ea20cbd…` and `print(x)` → `42` on the same
+  kernel pid 81470); A3 live end to end including fresh-adapter recovery across two separate
+  `claude -p` processes (cell 12 yielded `running` in one adapter, a brand-new adapter's
+  `wait` still tracked it, `interrupt` settled the terminal record to
+  `status: "interrupted"` with `KeyboardInterrupt`, and the next `exec("1+1")` → `2`);
+  A4 fan-out/fan-in plus the post-`restart` half (namespace gone, registry still listing
+  t0/t1/t2 `done`, `agent.resume(<sid>).send()` → `RESUMED`); A5 `agent.fork` recalling
+  `ORCHID-42` from turn 1 of the parent conversation, three turns and one resume later;
+  A6 footer `edited /private/tmp/ptc-t28/repo/note.txt (+1/−1)` in the tool result the model
+  saw, with the matching `audit.jsonl` row; A9 across a REAL `/compact`
+  (`compact_boundary`, trigger `manual`, 45 821 → 4 378 tokens) with `history().user()`
+  still holding the first prompt verbatim afterwards; A10 the session's own Bash tool running
+  `~/.ptc/venv/bin/ptc exec 'print(x)'` → `42` on the same kernel and cell counter;
+  A12 in live phrasing — 12 137-char tool result carrying
+  `… [truncated 88001 chars — full output: …/cells/15.log]` over a 100 001-byte log;
+  A14 the child pasting back `agent depth limit reached (PTC_DEPTH=1, PTC_MAX_DEPTH=1)` from
+  its own kernel. A7/A8/A11/A15 are their live tests, run in the suite below.
+  Two mechanics worth keeping: `claude -p --resume <S>` preserves the session id, so A1/A2's
+  "quit and resume" is honestly scriptable without a terminal; and a child agent only gets
+  its own ptc MCP server when the kernel was spawned by the plugin launcher (which is what
+  exports `PTC_LAUNCHER`), so A14 driven from a bare `ptc exec` kernel finds no tool and must
+  run inside a real `--plugin-dir` session.
+  Evidence: keyless suite 209 passed 0 skipped (92.6 s); live suite 8 passed 0 skipped
+  (121.6 s, `PTC_LIVE=1`, subscription auth, no `ANTHROPIC_API_KEY` in the environment or in
+  the kernel's own env per A7's in-cell check); per-cell notes above.
 
 ## Outcomes & Retrospective
 
