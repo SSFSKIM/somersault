@@ -16,7 +16,7 @@ import type { RenderLine, Segment } from "./render.js";
 import { inlineSegments, type InlineEnv, type InlineStyle } from "./markdownInline.js";
 import { foldLine, lineAsSegment } from "./lineFold.js";
 import { renderTable } from "./mdTable.js";
-import { highlightCode, KNOWN_LANGS, UPSTREAM_LANGS } from "./highlight.js";
+import { highlightBlock, supportsLanguage } from "./highlight.js";
 
 /** `cwd` is the SESSION's working directory, threaded so a relative `file:` link normalises against the
  *  project the transcript is about rather than whatever directory this REPL process happens to sit in
@@ -85,24 +85,30 @@ function styled(ctx: Ctx, text: string, extra?: Partial<Segment>): Run { return 
  *  lang string sits above the block exactly when `lang` is non-empty and the FULL string is unrecognised.
  *  The test is on `u`, not the prefix `d` — so ```ts title=x is BOTH labelled `ts title=x` AND highlighted
  *  as ts, and a recognised bare ```ts gets no label at all.
- *  TWO DIFFERENT QUESTIONS, two different sets. `supportsLanguage` answers off hljs's WHOLE registry, so the
- *  label is decided by `UPSTREAM_LANGS` (383 names+aliases lifted from the bundle; see highlight.ts) —
- *  ```rust draws no label upstream even though nothing here can colour rust. What we can actually colour is
- *  `KNOWN_LANGS`, and that alone decides highlighted-vs-plain body. Both lookups take the LOWERCASED lang
- *  (`sre` L419379 opens with `e.toLowerCase()`), while the label TEXT stays the raw `u` upstream prints.
+ *  ONE SET now (F9 T2): `supportsLanguage` (this module's `highlight.ts`, itself the real hljs registry
+ *  behind `canonicalLanguage`) decides BOTH the label polarity and the highlighted-vs-plain body — the
+ *  `KNOWN_LANGS`(ten-language lexer)/`UPSTREAM_LANGS`(383-entry hand string) split is gone along with the
+ *  lexer that made it necessary; ```rust now both draws no label AND colours, because both questions read
+ *  the same registry. Both lookups take the LOWERCASED lang (`sre` L419379 opens with `e.toLowerCase()`),
+ *  while the label TEXT stays the raw `u` upstream prints.
+ *  WHOLE-BLOCK, ONE CALL (F9 T2): `highlightBlock` runs over the fence's full text once — not per line —
+ *  so a comment or template literal spanning lines colours correctly on every line it crosses; the per-line
+ *  split now happens INSIDE `highlight.ts`, not here.
  *  NOT PORTED (pack §5's correction): with highlighting globally off (`!s`) upstream labels EVERY tagged
  *  fence, because `s?.supportsLanguage` short-circuits to undefined. We ship no `syntaxHighlightingDisabled`
  *  setting, so that mode is unreachable here; recorded in the parity doc. */
 function codeRuns(t: Tokens.Code, ctx: Ctx, out: Run[]): void {
   const lang = t.lang ?? "", lower = lang.toLowerCase();
   const prefix = lower.match(/^[\w.+#-]+/)?.[0] ?? "";
-  const resolved = KNOWN_LANGS.has(lower) ? lower : KNOWN_LANGS.has(prefix) ? prefix : "";   // "" is upstream's "plaintext"
-  if (lang !== "" && !UPSTREAM_LANGS.has(lower)) { out.push(styled(ctx, lang, { dim: true })); out.push(styled(ctx, NL)); }
-  for (const line of t.text.split(NL)) {
-    if (resolved !== "") for (const s of highlightCode(line, resolved)) out.push({ ...ctx.style, ...s });
+  const resolved = supportsLanguage(lower) ? lower : supportsLanguage(prefix) ? prefix : "";   // "" is upstream's "plaintext"
+  if (lang !== "" && !supportsLanguage(lower)) { out.push(styled(ctx, lang, { dim: true })); out.push(styled(ctx, NL)); }
+  const lines = t.text.split(NL);
+  const highlighted = resolved !== "" ? highlightBlock(t.text, resolved) : undefined;
+  lines.forEach((line, index) => {
+    if (highlighted) { for (const s of highlighted[index] ?? []) out.push({ ...ctx.style, ...s }); }
     else out.push(styled(ctx, line));
     out.push(styled(ctx, NL));
-  }
+  });
 }
 
 /** `blockquote` (pack §3.1, L420593–420596 — and §3.2/§3.3, which give the top-level `Naa` path the SAME

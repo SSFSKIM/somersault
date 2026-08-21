@@ -1,76 +1,93 @@
-// test/unit/highlight.test.ts — zero-dep syntax highlighter (Task 9 brief): keywords/strings/comments/
-// numbers styled, unknown lang → single dim segment, indentation preserved, no double-styling of an
-// overlapping construct (keyword inside a string, // inside a string).
+// test/unit/highlight.test.ts — F9 T-SYNTAX Task 2. Replaces the zero-dep ten-language lexer's pins with
+// the real hljs singleton's: the full 36-scope canon table (`jsw` L523111, spec §T-SYNTAX/S2), the
+// suffix-trimming lookup (`zsw` L523068), whole-block highlighting (multi-line comments colour correctly —
+// a line-at-a-time lexer cannot even represent that), and the one `supportsLanguage` predicate that now
+// answers both "can we colour this" and "does upstream label this" (`KNOWN_LANGS`/`UPSTREAM_LANGS` both
+// gone). Keyless: real hljs, no network, no mocked loader — the same discipline `diff-highlight.test.ts`
+// already uses for the sibling scope maps.
 import { describe, it, expect } from "vitest";
-import { highlightCode } from "../../src/tui/highlight.js";
+import { highlightBlock, supportsLanguage, scopeStyle, SCOPE_STYLES } from "../../src/tui/highlight.js";
 
-// F4 Task 3 re-pinned the scope colours to upstream's hljs map `DhH` (constants pack §1.10, bundle
-// L420495): keyword `vt.blue`, string `vt.red`, number `vt.green`, comment `vt.green`. That map is built
-// from CHALK CONSTANTS, so it is theme-INDEPENDENT — these are bare ANSI names, not theme tokens, and they
-// do not move when /theme does (a recorded divergence, see the parity doc). The fix round finished the job:
-// `comment` is FLAT green (no `dim`, which `DhH` never had), and the last theme-token role — the dim
-// `inactive` unknown-language fallback — is gone, so this module imports no theme at all.
-const KEYWORD = "blue", STRING = "red", NUMBER = "green", COMMENT = "green";
-
-describe("highlightCode", () => {
-  it("colors a keyword `blue` (DhH `keyword: vt.blue`)", () => {
-    const out = highlightCode("const x = 1", "ts");
-    const kw = out.find((s) => s.text === "const");
-    expect(kw).toBeDefined();
-    expect(kw!.color).toBe(KEYWORD);
-  });
-  it("colors a number `green` (DhH `number: vt.green`), distinctly from a keyword", () => {
-    const out = highlightCode("const x = 1", "ts");
-    const num = out.find((s) => s.text === "1");
-    expect(num).toBeDefined();
-    expect(num!.color).toBe(NUMBER);
-    expect(num!.color).not.toBe(out.find((s) => s.text === "const")!.color);
-  });
-  it("string literals are `red` (DhH `string: vt.red`), whole literal in one segment", () => {
-    expect(highlightCode('"hi"', "ts")).toEqual([{ text: '"hi"', color: STRING }]);
-  });
-  it("a line comment is FLAT `green` (DhH `comment: vt.green` carries no dim) for its whole rest", () => {
-    expect(highlightCode("// note", "ts")).toEqual([{ text: "// note", color: COMMENT }]);
-  });
-  it("a python comment (# marker) takes the same flat `green` for its whole rest", () => {
-    expect(highlightCode("# note", "py")).toEqual([{ text: "# note", color: COMMENT }]);
-  });
-  it("unknown lang → one PLAIN segment (hljs's unscoped `plaintext`), no theme token anywhere", () => {
-    // The old dim `inactive` fallback was dead code: both call sites (markdown's `codeRuns`, toolSummaries'
-    // `previewRows`) gate on KNOWN_LANGS before calling. Dropping it sheds the `theme.js` import, so this
-    // module is now literally theme-independent, not merely theme-independent in its four scope colours.
-    expect(highlightCode("fn main() {}", "rust")).toEqual([{ text: "fn main() {}" }]);
-  });
-  it("leading indentation survives intact in the first segment", () => {
-    const out = highlightCode("  const x = 1;", "ts");
-    expect(out[0].text.startsWith("  ")).toBe(true);
-    expect(out.map((s) => s.text).join("")).toBe("  const x = 1;");
-  });
-  it("a keyword inside a string is NOT separately colored (outermost construct — the string — wins)", () => {
-    const out = highlightCode('const s = "return true"', "ts");
-    const str = out.find((s) => s.text === '"return true"');
-    expect(str).toBeDefined();
-    expect(str!.color).toBe(STRING);
-    // the whole string is ONE segment: no separate "return"/"true" keyword segment inside it
-    expect(out.some((s) => s.text === "return")).toBe(false);
-    expect(out.some((s) => s.text === "true")).toBe(false);
-  });
-  it("a // sequence inside a string is NOT treated as a comment", () => {
-    const out = highlightCode('const url = "http://example.com"', "ts");
-    const str = out.find((s) => s.text === '"http://example.com"');
-    expect(str).toBeDefined();
-    expect(str!.color).toBe(STRING);
-    // No comment segment anywhere. `dim` no longer marks one (the fix round dropped it), so the pin is on
-    // the comment COLOUR — safe here because the line holds no number, `green`'s only other source.
-    expect(out.some((s) => s.color === COMMENT)).toBe(false);
-  });
-  it("segments always reconstruct the original line exactly (no dropped/duplicated characters)", () => {
-    const cases: [string, string][] = [
-      ["const x = 1", "ts"],
-      ['const s = "a // b" // real comment', "ts"],
-      ["  def foo(x):", "py"],
-      ["# just a comment", "py"],
+describe("scope map (canon jsw, 36 scopes)", () => {
+  it("pins the COMPLETE map: exactly 36 entries, every key from the spec table", () => {
+    const CANON_KEYS = [
+      "keyword", "literal", "class", "title.class", "name",
+      "built_in", "attr",
+      "type",
+      "number", "comment", "doctag", "addition",
+      "regexp", "string", "deletion",
+      "function", "title.function",
+      "meta", "tag",
+      "emphasis", "strong", "link",
+      "subst", "symbol", "title", "params", "meta-keyword", "meta-string", "meta.keyword", "meta.string",
+      "section", "attribute", "variable", "bullet", "code", "quote",
     ];
-    for (const [l, lang] of cases) expect(highlightCode(l, lang).map((s) => s.text).join("")).toBe(l);
+    expect(CANON_KEYS).toHaveLength(36);
+    expect(Object.keys(SCOPE_STYLES).sort()).toEqual([...CANON_KEYS].sort());
+  });
+
+  it("highlightBlock itself resolves through suffix-trim + inheritance (not only scopeStyle)", () => {
+    // `title.function` reached through a real ts grammar — the yellow has to land on the emitted node's
+    // OWN text through walkEmitter's tree walk, not merely through a direct scopeStyle() call.
+    const fn = highlightBlock("function foo() { return 1; }", "ts").flat();
+    expect(fn.some((s) => s.color === "yellow" && s.text === "foo")).toBe(true);
+    // markdown's own inline scopes exercise the non-colour axes: `strong`/`emphasis` carry bold/italic
+    // THROUGH the walk, proving the resolver sets those fields rather than only ever setting `color`.
+    const md = highlightBlock("**bold** and _italic_", "markdown").flat();
+    expect(md.some((s) => s.bold === true && s.text.includes("bold"))).toBe(true);
+    expect(md.some((s) => s.italic === true && s.text.includes("italic"))).toBe(true);
+  });
+
+  it("maps the exact canon table", () => {
+    expect(scopeStyle("keyword")).toEqual({ color: "blue" });
+    expect(scopeStyle("built_in")).toEqual({ color: "cyan" });
+    expect(scopeStyle("type")).toEqual({ color: "cyan", dim: true });
+    expect(scopeStyle("comment")).toEqual({ color: "green" });
+    expect(scopeStyle("string")).toEqual({ color: "red" });
+    expect(scopeStyle("function")).toEqual({ color: "yellow" });
+    expect(scopeStyle("meta")).toEqual({ color: "grey" });
+    expect(scopeStyle("emphasis")).toEqual({ italic: true });
+    expect(scopeStyle("strong")).toEqual({ bold: true });
+    expect(scopeStyle("link")).toEqual({ underline: true });
+    expect(scopeStyle("subst")).toEqual({}); // reset row
+  });
+
+  it("suffix-trims after the LAST dot, repeatedly (canon zsw)", () => {
+    // title.class is its own entry (blue); title.class.inherited must fall back to it, not to `title`
+    expect(scopeStyle("title.class.inherited")).toEqual(scopeStyle("title.class"));
+    // title.function.x -> title.function (yellow)
+    expect(scopeStyle("title.function.x")).toEqual({ color: "yellow" });
+    // hljs- prefix stripped first
+    expect(scopeStyle("hljs-keyword")).toEqual({ color: "blue" });
+    expect(scopeStyle("nonsense")).toBeUndefined();
+  });
+});
+
+describe("highlightBlock", () => {
+  it("colours rust (previously outside the 10)", () => {
+    const lines = highlightBlock('fn main() { let x = "s"; }', "rust");
+    const flat = lines.flat();
+    expect(flat.some((s) => s.color === "blue" && s.text.includes("fn"))).toBe(true);
+    expect(flat.some((s) => s.color === "red" && s.text.includes('"s"'))).toBe(true);
+  });
+  it("colours a block comment across lines (whole-block proof)", () => {
+    const lines = highlightBlock("/*a\nb\nc*/", "c");
+    expect(lines).toHaveLength(3);
+    for (const line of lines) for (const seg of line) expect(seg.color).toBe("green");
+  });
+  it("unknown language returns plain lines", () => {
+    const lines = highlightBlock("x y", "notalang");
+    expect(lines).toEqual([[{ text: "x y" }]]);
+  });
+  it("segments rejoin to the input per line", () => {
+    const src = 'const a = `t${x}` // hi';
+    expect(highlightBlock(src, "ts")[0]!.map((s) => s.text).join("")).toBe(src);
+  });
+});
+
+describe("one language set", () => {
+  it("supportsLanguage replaces KNOWN_LANGS and UPSTREAM_LANGS", () => {
+    for (const t of ["rust", "go", "yml", "shellsession", "php8"]) expect(supportsLanguage(t)).toBe(true);
+    expect(supportsLanguage("notalang")).toBe(false);
   });
 });

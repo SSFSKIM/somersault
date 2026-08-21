@@ -31,16 +31,17 @@ import { ConsultFooter } from "./ConsultFooter.js";
 import { Select } from "../select/Select.js";
 import { legacyKeyDecision } from "./dialogKeys.js";
 import { Line } from "../Line.js";
-import { renderDiff } from "../diffRender.js";
+import { renderDiff, wrapSegments } from "../diffRender.js";
 import { resolvePatch } from "../diffSource.js";
-import { KNOWN_LANGS, highlightCode } from "../highlight.js";
+import { highlightBlock } from "../highlight.js";
+import { detectLanguage } from "../hljsRuntime.js";
 import { collapseOnFocusChange, escapeFeedbackMode, isAmendableRow, toggleFeedbackMode, NO_FEEDBACK, type FeedbackMode } from "./optionRows.js";
 import { bodyWindow, MoreRow, paintedRows } from "./rowBudget.js";
 import { useBindingLookup, useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
 import { formatBindingLower } from "../keys/hints.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
 import { DASHED_BORDER } from "../boxStyles.js";
-import type { RenderLine } from "../render.js";
+import type { RenderLine, Segment } from "../render.js";
 import type { PermissionDecision, PermissionUpdateLike } from "../../permissions/types.js";
 import type { SedEdit } from "./sedEdit.js";
 import {
@@ -65,7 +66,6 @@ export interface FilePermissionRequest {
 }
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
-const extensionOf = (path: string): string => { const name = basename(path), dot = name.lastIndexOf("."); return dot > 0 ? name.slice(dot + 1).toLowerCase() : ""; };
 
 // ── THE BUDGET INVERSION (FSW T13b) ───────────────────────────────────────────────────────────────────
 // This dialog is dock-pinned in the fullscreen renderer and the dock is a CAPPED band, so a body taller than
@@ -91,22 +91,30 @@ export function fileChromeRows({ subtitle, warning, options }: { subtitle: boole
 export { bodyWindow } from "./rowBudget.js";
 /** `EM` — a syntax-highlighted block of the whole file, NOT the transcript's ten-line preview: this is the
  *  content the human is being asked to approve, so nothing is elided — up to the row budget, which elides the
- *  tail and says so. Unknown extensions render plain (the `known` gate `toolSummaries.previewRows` uses, for
- *  its reason: dimming a `.md` file says "less important" about the only content on screen).
+ *  tail and says so. Unknown extensions render plain (the `lang === null` gate, `toolSummaries.previewRows`'s
+ *  reason: dimming a `.md` file says "less important" about the only content on screen).
+ *  WHOLE-BLOCK, ONE CALL (F9 T2): `highlightBlock` runs over `code` in its entirety — not per displayed
+ *  line — so a multi-line comment or template literal colours correctly across the file, and `detectLanguage`
+ *  (filename map + extension, both through the real hljs registry) replaces the old bare-extension lookup.
  *    UNDER A BUDGET THE LINES ARE WRAPPED TO `width` FIRST (review C1), so a row of the window is a row of the
- *  frame and the marker's count is truthful. Unbudgeted the block is handed to Ink whole and Ink does the
- *  wrap, exactly as it always did — the classic mount is untouched, including the highlighter's view of a
- *  line as one unbroken string. */
+ *  frame and the marker's count is truthful. `wrapSegments` (`diffRender.ts`) is that wrap made SEGMENT-aware:
+ *  run it per highlighted logical line and flatten, and the row count comes out identical to the OLD
+ *  `paintedRows(code, width)` line-for-line — same `wrap-ansi` call, same width, same underlying text (a
+ *  highlighted line's segments rejoin to that line's raw text exactly, `highlight.ts`'s own invariant) — so
+ *  neither the budget arithmetic nor the "same line count as before" contract moves, only the colour on each
+ *  row does. A blank logical line — `highlightBlock`'s `[]` for it — wraps to exactly one blank row the same
+ *  way `paintedRows` costs a blank source line exactly one row. Unbudgeted, the block is handed to Ink whole
+ *  line-for-line and Ink does the wrap itself, exactly as it always did. */
 function CodeBlock({ code, filePath, width, budget }: { code: string; filePath: string; width: number; budget?: number }) {
-  const lang = extensionOf(filePath), known = KNOWN_LANGS.has(lang);
-  const all = budget === undefined ? code.split("\n") : paintedRows(code, width);
-  const { keep, hidden } = bodyWindow(all.length, budget);
+  const lang = detectLanguage(filePath);
+  const highlighted: Segment[][] = lang === null ? code.split("\n").map((text) => [{ text }]) : highlightBlock(code, lang);
+  const rows = budget === undefined ? highlighted : highlighted.flatMap((line) => wrapSegments(line, width));
+  const { keep, hidden } = bodyWindow(rows.length, budget);
   return (
     <Box flexDirection="column">
-      {all.slice(0, keep).map((text, index) => {
-        const segments = known ? highlightCode(text, lang) : [];
-        return <Line key={index} l={segments.length > 0 ? { text, segments } : { text }} />;
-      })}
+      {rows.slice(0, keep).map((segments, index) => (
+        <Line key={index} l={segments.length > 0 ? { text: segments.map((s) => s.text).join(""), segments } : { text: "" }} />
+      ))}
       {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
     </Box>
   );

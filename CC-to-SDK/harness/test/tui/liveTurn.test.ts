@@ -392,7 +392,10 @@ describe("LiveTurn markdown width + streaming fence (F4 Task 5)", () => {
     stream(lt, "```ts\nconst x = 1");
     const line = lt.snapshot()[0]!;
     expect(line.text).toBe("const x = 1");
-    expect(line.segments?.map((s) => s.text)).toEqual(["const", " x = ", "1"]);
+    // F9 T2: real hljs replaces the ten-language regex lexer — `=` is its own (unstyled) operator node in
+    // the actual TypeScript grammar, so " x " and "= " are two segments rather than one " x = " span; same
+    // rendered text.
+    expect(line.segments?.map((s) => s.text)).toEqual(["const", " x ", "= ", "1"]);
     expect(line.segments?.filter((s) => s.color !== undefined).length).toBeGreaterThan(0);
   });
 });

@@ -107,17 +107,20 @@ describe("F4 markdown — block grammar (census §2.1, bundle f2 L420590–42071
     expect(texts("before\n\n> quoted\n\nafter")).toEqual(["before", "", "▎ quoted", "", "after"]);
   });
   // Task 3 moved fenced code to upstream's own form: FLUSH-LEFT, the label-polarity rule, a plain
-  // (not dim) body for an unresolved language, and the theme-independent DhH scope colours. The full
-  // matrix lives in `markdown-links-code.test.ts`; these three keep the block-grammar file honest.
-  it("fenced code is flush-left: recognized → highlighted+unlabelled, hljs-known-but-unhighlighted → plain+unlabelled, unknown → dim label + plain body", () => {
+  // (not dim) body for an unresolved language, and the theme-independent scope colours (F9 T2: the full
+  // 36-scope canon `jsw` table, through real hljs, not a four-colour hand lexer). The full matrix lives in
+  // `markdown-links-code.test.ts`; these three keep the block-grammar file honest.
+  it("fenced code is flush-left: recognized → highlighted+unlabelled, hljs-registered-and-now-highlighted → plain+unlabelled, unknown → dim label + plain body", () => {
     expect(lines("```ts\nconst x = 1;\n```")).toEqual([
-      { text: "const x = 1;", segments: [{ text: "const", color: "blue" }, { text: " x = " }, { text: "1", color: "green" }, { text: ";" }] },
+      { text: "const x = 1;", segments: [{ text: "const", color: "blue" }, { text: " x " }, { text: "= " }, { text: "1", color: "green" }, { text: ";" }] },
     ]);
     expect(lines("```\nplain text\n```")).toEqual([{ text: "plain text" }]);
-    // The fix round split the two questions apart: `rust` IS in hljs's registry (bundle L418473), so
-    // upstream's `supportsLanguage` says yes and NO label is drawn — our own KNOWN_LANGS still can't
-    // highlight it, so the body is plain. See markdown-links-code.test.ts for the whole matrix.
-    expect(lines("```rust\nfn main() {}\n```")).toEqual([{ text: "fn main() {}" }]);
+    // F9 T2: `rust` IS in hljs's registry (bundle L418473), so `supportsLanguage` draws NO label — and now
+    // that highlighting runs through the SAME registry (not the old ten-language lexer), the body colours
+    // too. See markdown-links-code.test.ts for the whole matrix.
+    expect(lines("```rust\nfn main() {}\n```")).toEqual([
+      { text: "fn main() {}", segments: [{ text: "fn", color: "blue" }, { text: " " }, { text: "main", color: "yellow" }, { text: "() {}" }] },
+    ]);
     expect(lines("```weirdlang\nfn main() {}\n```")).toEqual([{ text: "weirdlang", dim: true }, { text: "fn main() {}" }]);
   });
   it("a top-level table is the Task-4 box; a NESTED one keeps `f2`'s pipe form", () => {
