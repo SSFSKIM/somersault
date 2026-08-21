@@ -185,17 +185,17 @@ function withLocalOutputGutter(lines: readonly string[]): RenderLine[] {
  *  own answer is a local-command result row, `blT` (422960): `` `Set effort level to ${i}${p}: ${d}` `` where
  *  `p` is the persistence suffix (§2.3 below) and `d` is a per-level sentence from `rCb` (106608-106621).
  *
- *  ONE DECLARED DIVERGENCE remains, narrower than it used to be. T-EFFORT (2026-08-21) retired the SCOPE
- *  divergence this comment used to carry: `p` is no longer hardcoded to `(this session only)` — `persisted`
- *  below reflects the SAME write `applyEffort` (useChat.ts) just made, so the suffix and the file agree by
- *  construction. What stays cut is the trailing `: ${d}` clause — `rCb` exists and is ported (see
- *  `formatEffortCurrent`, which owns it for `/effort current`|`status`), but doubling it onto EVERY set
- *  confirmation was judged out of this round's scope; `/effort current` is one keystroke away for the
- *  reader who wants the sentence. The level is spelled RAW/lowercase, as `effortHint` spells it and as the
- *  wire takes it — `effortTitle` is the ROW's form, not this one. */
-export function formatEffortSet(level: string, persisted: boolean): RenderLine[] {
+ *  Both clauses are ported now. Backlog round 2 (r2-effort-research.md §1.5/§2.3) retired the previously
+ *  declared "trailing `: ${d}` clause stays cut" divergence — it was judged out of T-EFFORT's round by
+ *  mistake, not by missing data: `rCb` (`EFFORT_STATUS_DESCRIPTIONS`, the SAME table `formatEffortCurrent`
+ *  reads for `/effort current`|`status`) is present and canon appends it to EVERY set confirmation,
+ *  persisted or not — `max`'s `(this session only)` example is `Set effort level to max (this session
+ *  only): Maximum capability with deepest reasoning. May use excessive tokens resulting in long response
+ *  times or overthinking. Use sparingly for the hardest tasks.` (§2.3). The level is spelled RAW/lowercase,
+ *  as `effortHint` spells it and as the wire takes it — `effortTitle` is the ROW's form, not this one. */
+export function formatEffortSet(level: EffortLevel, persisted: boolean): RenderLine[] {
   const suffix = persisted ? " (saved as your default for new sessions)" : " (this session only)";
-  return [{ text: `Set effort level to ${level}${suffix}`, gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } }];
+  return [{ text: `Set effort level to ${level}${suffix}: ${EFFORT_STATUS_DESCRIPTIONS[level]}`, gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } }];
 }
 /** T-EFFORT Arm 2 — canon's `k$i` (422910-422918), byte-exact for ccx's uncapped, ultracode-off case (the
  *  only case ccx can ever be in — no org entitlement, no Workflows gate). Zero-indent bullets: the visible

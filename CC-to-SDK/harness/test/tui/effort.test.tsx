@@ -51,8 +51,13 @@ async function settle(turns = 20) { for (let i = 0; i < turns; i++) await new Pr
  *  this file claims it prints. `formatEffortSet` is pinned against it in its own describe below. T-EFFORT:
  *  the suffix is now conditional on whether the level persists (`isPersistableEffortLevel`) — `persisted`
  *  is a required param, not a default, so a test forgetting to pass it fails loudly instead of silently
- *  asserting the wrong suffix. */
-const EFFORT_SET_TEXT = (level: string, persisted: boolean) => `Set effort level to ${level}${persisted ? " (saved as your default for new sessions)" : " (this session only)"}`;
+ *  asserting the wrong suffix. Backlog round 2 (r2-effort-research.md §1.5/§2.3): the description clause
+ *  is no longer cut — canon appends `rCb`'s (`EFFORT_STATUS_DESCRIPTIONS`) per-level sentence to EVERY set
+ *  confirmation, persisted or not, so it belongs here too. `level` stays `string` (not `EffortLevel`)
+ *  because the refusal cells below feed this same helper a bogus level to build a string that must NOT
+ *  appear on screen — the `?? ""` covers that non-domain case without widening the real one. */
+const EFFORT_SET_TEXT = (level: string, persisted: boolean) =>
+  `Set effort level to ${level}${persisted ? " (saved as your default for new sessions)" : " (this session only)"}: ${(EFFORT_STATUS_DESCRIPTIONS as Record<string, string>)[level] ?? ""}`;
 /** Type a slash command, WAIT for the composer to echo it, then submit — the same two-step every
  *  command-driving test in `chat.test.tsx` uses. One `write("/effort\r")` races the composer's own
  *  keystroke handling and the Return can land before the text does. */
@@ -256,24 +261,28 @@ describe("EffortDialog", () => {
 // `/status` (EP-C6's acceptance reads the field there)
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════
 
-// W2 T5 fold (s2qa4-10), T-EFFORT (2026-08-21). Canon's row is `  ⎿  Set effort level to low (saved as your
-// default for new sessions): Quick, straightforward implementation with minimal overhead`
-// (frames-s2qa4/08-cc-effort-args). T-EFFORT retired the SCOPE divergence this comment used to carry — the
-// suffix is no longer hardcoded, it reflects the SAME write `applyEffort` just made. The trailing `: <desc>`
-// clause stays cut by choice, not by missing data (`rCb` exists and IS ported — see `formatEffortCurrent`,
-// which owns it for `/effort current`|`status`); see `formatEffortSet`'s own doc comment in commands.ts.
+// W2 T5 fold (s2qa4-10), T-EFFORT (2026-08-21), backlog round 2 (2026-08-22). Canon's row is `  ⎿  Set
+// effort level to low (saved as your default for new sessions): Quick, straightforward implementation with
+// minimal overhead` (frames-s2qa4/08-cc-effort-args; r2-effort-research.md §1.5/§2.3). T-EFFORT retired the
+// SCOPE divergence this comment used to carry — the suffix is no longer hardcoded, it reflects the SAME
+// write `applyEffort` just made. Backlog round 2 retired the remaining DESCRIPTION divergence: the trailing
+// `: <desc>` clause is no longer cut — `rCb` (`EFFORT_STATUS_DESCRIPTIONS`, the SAME table
+// `formatEffortCurrent` reads for `/effort current`|`status`) is appended to every set confirmation now,
+// exactly as canon does; see `formatEffortSet`'s own doc comment in commands.ts.
 describe("formatEffortSet — the /effort <level> result row (s2qa4-10)", () => {
-  it("is one `⎿` local-output row naming the level, with the PERSISTED suffix when the level is persistable", () => {
+  it("is one `⎿` local-output row naming the level, with the PERSISTED suffix and description clause when the level is persistable", () => {
     const [row] = formatEffortSet("low", true);
     expect(row!.text).toBe(EFFORT_SET_TEXT("low", true));
-    expect(row!.text).toBe("Set effort level to low (saved as your default for new sessions)");
+    expect(row!.text).toBe("Set effort level to low (saved as your default for new sessions): Quick, straightforward implementation with minimal overhead");
     expect(row!.gutter).toEqual({ text: LOCAL_OUTPUT_GUTTER, dim: true });
     expect(formatEffortSet("xhigh", true)[0]!.text).toBe(EFFORT_SET_TEXT("xhigh", true));   // the RAW level, as the wire spells it
   });
   // `max` is the one level canon's persistable filter excludes (`Qdt`) — its confirmation keeps the OLD
   // session-only suffix even though every other level now says it was saved.
   it("keeps the SESSION-ONLY suffix when persisted is false — max's own case", () => {
-    expect(formatEffortSet("max", false)[0]!.text).toBe("Set effort level to max (this session only)");
+    expect(formatEffortSet("max", false)[0]!.text).toBe(
+      "Set effort level to max (this session only): Maximum capability with deepest reasoning. May use excessive tokens resulting in long response times or overthinking. Use sparingly for the hardest tasks.",
+    );
   });
 });
 
@@ -632,7 +641,9 @@ describe("/effort", () => {
     await waitFor(() => calls.length > 0);
     expect(calls).toEqual(["max"]);
     await waitFor(() => flat(r.lastFrame).includes(EFFORT_SET_TEXT("max", false)));
-    expect(flat(r.lastFrame)).toContain("Set effort level to max (this session only)");
+    expect(flat(r.lastFrame)).toContain(
+      "Set effort level to max (this session only): Maximum capability with deepest reasoning. May use excessive tokens resulting in long response times or overthinking. Use sparingly for the hardest tasks.",
+    );
     await settle();
     expect(r.saves).toEqual([]);
   });
