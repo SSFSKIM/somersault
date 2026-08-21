@@ -300,18 +300,29 @@ describe("reencodeDarwin — sips ladder, resample then JPEG quality 80/60/40/20
     const bigPng = solidPng(200, 30, 40, 40);
     await withScratch(async (dir) => {
       const { writeFile, readFile } = await import("node:fs/promises");
+      // Data-flow pin: record the exact input path (the arg immediately before `--out`) each sips
+      // invocation was told to read, so we can assert the quality step consumes the RESAMPLE step's
+      // output path — not the original (potentially oversized) input path. A regression that silently
+      // reroutes the quality step to read `inPath` instead of `resampledPath` must fail this.
+      let resampleInPath: string | undefined;
+      let resampleOutPath: string | undefined;
+      const qualityInPaths: string[] = [];
       const deps: ClipboardDeps = {
         platform: "darwin",
         tmpdir: () => dir,
         exec: fakeExec(async (call) => {
           if (call.cmd === "sips" && call.args.includes("--resampleHeightWidthMax")) {
-            const outPath = call.args[call.args.indexOf("--out") + 1];
-            await writeFile(outPath, bigPng); // "resample" is a no-op copy for this test's fixture
+            const outIdx = call.args.indexOf("--out");
+            resampleInPath = call.args[outIdx - 1];
+            resampleOutPath = call.args[outIdx + 1]!;
+            await writeFile(resampleOutPath, bigPng); // "resample" is a no-op copy for this test's fixture
             return OK;
           }
           if (call.cmd === "sips" && call.args.includes("formatOptions")) {
+            const outIdx = call.args.indexOf("--out");
+            qualityInPaths.push(call.args[outIdx - 1]!);
             const quality = Number(call.args[call.args.indexOf("formatOptions") + 1]);
-            const outPath = call.args[call.args.indexOf("--out") + 1];
+            const outPath = call.args[outIdx + 1];
             // First quality tried (80) already fits — proves a single ladder rung is enough when the
             // source is already small; jpegDimensions re-measures from the ACTUAL bytes written.
             const jpeg = fakeJpeg(40, 40, quality === 80 ? 100 : 900_000);
@@ -326,6 +337,10 @@ describe("reencodeDarwin — sips ladder, resample then JPEG quality 80/60/40/20
       expect(result!.mediaType).toBe("image/jpeg"); // the FLIP — input was image/png
       expect(result!.dimensions).toEqual({ width: 40, height: 40 });
       expect(result!.data.length).toBeLessThanOrEqual(POST_PROCESS_BYTE_BUDGET);
+      // The quality step must read from what the resample step WROTE, never from the original input.
+      expect(qualityInPaths.length).toBeGreaterThan(0);
+      expect(qualityInPaths.every((p) => p === resampleOutPath)).toBe(true);
+      expect(qualityInPaths.every((p) => p !== resampleInPath)).toBe(true);
     });
   });
 
@@ -334,19 +349,28 @@ describe("reencodeDarwin — sips ladder, resample then JPEG quality 80/60/40/20
     await withScratch(async (dir) => {
       const { writeFile } = await import("node:fs/promises");
       const triedQualities: number[] = [];
+      // Same data-flow pin as the type-FLIP test above: every quality-step invocation's input path
+      // must be the resample step's output path, never the resample step's own input path.
+      let resampleInPath: string | undefined;
+      let resampleOutPath: string | undefined;
+      const qualityInPaths: string[] = [];
       const deps: ClipboardDeps = {
         platform: "darwin",
         tmpdir: () => dir,
         exec: fakeExec(async (call) => {
           if (call.cmd === "sips" && call.args.includes("--resampleHeightWidthMax")) {
-            const outPath = call.args[call.args.indexOf("--out") + 1];
-            await writeFile(outPath, src);
+            const outIdx = call.args.indexOf("--out");
+            resampleInPath = call.args[outIdx - 1];
+            resampleOutPath = call.args[outIdx + 1]!;
+            await writeFile(resampleOutPath, src);
             return OK;
           }
           if (call.cmd === "sips" && call.args.includes("formatOptions")) {
+            const outIdx = call.args.indexOf("--out");
+            qualityInPaths.push(call.args[outIdx - 1]!);
             const quality = Number(call.args[call.args.indexOf("formatOptions") + 1]);
             triedQualities.push(quality);
-            const outPath = call.args[call.args.indexOf("--out") + 1];
+            const outPath = call.args[outIdx + 1];
             // Every rung except the last (20) produces an oversized file; only quality 20 fits.
             const size = quality === 20 ? 400_000 : 600_000;
             await writeFile(outPath, fakeJpeg(20, 20, size));
@@ -359,6 +383,9 @@ describe("reencodeDarwin — sips ladder, resample then JPEG quality 80/60/40/20
       expect(triedQualities).toEqual([80, 60, 40, 20]);
       expect(result).not.toBeNull();
       expect(result!.data.length).toBe(400_000);
+      expect(qualityInPaths.length).toBe(4);
+      expect(qualityInPaths.every((p) => p === resampleOutPath)).toBe(true);
+      expect(qualityInPaths.every((p) => p !== resampleInPath)).toBe(true);
     });
   });
 
@@ -390,13 +417,22 @@ describe("reencodeDarwin — sips ladder, resample then JPEG quality 80/60/40/20
 
   it("resample step failing (sips exit nonzero) → null, no quality ladder attempted", async () => {
     await withScratch(async (dir) => {
+      // Record every exec call so we can assert the short-circuit actually happened: a fake `exec`
+      // that FAILs unconditionally can't otherwise distinguish "stopped after the resample failure"
+      // from "fell through into the quality loop, which also failed for the same reason" — both
+      // produce `result === null`. Pin it on the call log instead.
+      const calls: Call[] = [];
       const deps: ClipboardDeps = {
         platform: "darwin",
         tmpdir: () => dir,
-        exec: fakeExec(async () => FAIL),
+        exec: fakeExec(async (call) => { calls.push(call); return FAIL; }),
       };
       const result = await reencodeDarwin({ data: solidPng(1, 1, 1, 10), mediaType: "image/png" }, deps);
       expect(result).toBeNull();
+      // Exactly one exec call — the resample attempt — and no quality-step (formatOptions) call.
+      expect(calls.length).toBe(1);
+      expect(calls[0]!.args).toContain("--resampleHeightWidthMax");
+      expect(calls.some((c) => c.args.includes("formatOptions"))).toBe(false);
     });
   });
 });
