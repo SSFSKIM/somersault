@@ -182,7 +182,14 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
  *  markdown walker so a relative `file:` link in a reply resolves against the project the transcript is
  *  about. Under `ccx --cwd <dir>`, and under an `ccx attach` onto a session started elsewhere, the two are
  *  different directories and the ambient one opens the wrong file. */
-export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string; cwd?: string }
+/** `imageOrdinal` (F9 T-IMAGE I4): the caller's answer to "which image is this, in ITS message" — needed
+ *  because `projectMessageEntry` calls `renderMessage` once PER BLOCK (a single-element `content` array), so
+ *  a counter local to this function would see array length 1 on every call and print `#1` for every image in
+ *  a multi-image message. `projectMessageEntry` counts across the whole retained block array first and
+ *  threads the right ordinal back in per block; a caller that hands the WHOLE content array in one call (the
+ *  direct/live path, and every test below) gets a correct count for free from the fallback counter inside
+ *  the loop and never needs to set this. */
+export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string; cwd?: string; imageOrdinal?: number }
 
 /** Map one SDK message to renderable lines — the NON-TOOL species only. `tool_use`/`tool_result` blocks are
  *  deliberately absent since F1 Task 4: every tool row goes through `renderToolEvent` instead, so there is
@@ -232,7 +239,14 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
     const raw = m.message?.content;
     const blocks: any[] = typeof raw === "string" ? [{ type: "text", text: raw }] : Array.isArray(raw) ? raw : [];
     const out: RenderLine[] = [];
+    // F9 T-IMAGE I4: an `image` content block is a real prompt row too (canon L528790), not a silently
+    // dropped one — the resumed-session empty state and the pane/count mismatch both traced back to this
+    // loop skipping it outright (r3-resume-view.md §4 premise correction 2). `imageIndex` is this call's OWN
+    // count, used whenever the caller did not already hand one down via `opts.imageOrdinal` (see that
+    // field's doc) — a direct call with the whole message numbers correctly on its own.
+    let imageIndex = 0;
     for (const b of blocks) {
+      if (b?.type === "image") { out.push({ text: `[Image #${opts.imageOrdinal ?? ++imageIndex}]` }); continue; }
       if (b?.type !== "text" || typeof b.text !== "string") continue;
       out.push(...(speciesLines(classifyUserText(b.text), b.text, { width: opts.width, platform: opts.platform, projection: opts.projection, expandHint: opts.expandHint }) ?? []));
     }

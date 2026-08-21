@@ -78,6 +78,14 @@ should own; members are the other observations of the same root and should be cl
 - Note for the implementer: `qa3-03` observes ccx's auto classifier gating the harmless `touch` while
   allowing the destructive `rm`. Changing the launch default removes the exposure; it does not by itself
   explain the classifier's ordering, which is worth a look while in there.
+- **2026-08-22 — reversed by owner decision.** `qa3-03`/`qa3-01`'s fix (launch default back to
+  `default`/manual) is REVERSED: canon 2.1.236 is mid-rollout of auto-as-default
+  (`cli.pretty.js:106133-106139`), and the owner's own `~/.claude/settings.json` already sets
+  `permissions.defaultMode: "auto"`. The REPL now launches `auto` by default again, gated on the effective
+  model via `isAutoSupportedModel` — see the F9 spec's Decision Log
+  (`docs/superpowers/specs/2026-08-22-f9-wave-design.md` § Decision Log, Track T-AUTO). The original finding
+  and worklist entry above are left intact as the historical record of why the fix was made in the first
+  place; they are superseded, not deleted.
 
 ### C6 · The welcome banner is a static string that disagrees with live state
 - **Canonical: `qa4-02`** (P2) — the `/model` picker's `Default (recommended)` row advertises Sonnet 5 while

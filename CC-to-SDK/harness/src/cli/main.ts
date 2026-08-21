@@ -17,6 +17,7 @@ import { screenReaderEnabled } from "../tui/renderer.js";
 import { resolveModelAlias } from "../config/models.js";
 import { DEFAULTS } from "../config/types.js";
 import { resolvedPermissionMode } from "../config/resolveOptions.js";
+import { resolveLaunchPermissionMode } from "./launchMode.js";
 import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
 import { isPersistableEffortLevel } from "../tui/modelPickerModel.js";
 import { createPromptLatch } from "../hooks/promptLatch.js";
@@ -301,7 +302,13 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
       // (fully detached, kind:"interactive"), then attach to it ourselves — the prompt stays with US,
       // not the spawn line, because the client is the one that submits it (spec A2b §3).
       if (inv.detachable) {
-        const { short, banner } = deps.spawnDetached({ ...inv, prompt: undefined });
+        // F9 T-AUTO A1 (plan-review catch): hostMain.ts loads no prefs of its own, so the SAME effective
+        // model runForegroundImpl resolves (flag, else saved pref) is materialized into inv.config HERE,
+        // before the spawn — without it, a saved model would arrive at the child as undefined, fall back
+        // to DEFAULTS.model (auto-capable) and launch `auto` while a foreground run on the same saved
+        // model launched `default`: the split-brain EP-T1 was written to prevent, on the model axis.
+        const model = inv.config.model ?? deps.loadPrefs().model;
+        const { short, banner } = deps.spawnDetached({ ...inv, prompt: undefined, config: { ...inv.config, ...(model ? { model } : {}) } });
         console.log(banner);
         return await attachToImpl(short, { ...(inv.prompt ? { initialPrompt: inv.prompt } : {}), fromSpawn: true }, deps);
       }
@@ -323,14 +330,17 @@ export async function main(argv: string[], deps: MainDeps = defaults): Promise<n
 }
 
 /** Wave-T T15's gate condition, kept out of the dispatch switch because it is three separate questions.
- *  `resolvedPermissionMode` is the same reader the banner and hookOpts use, given the same `?? "default"`
- *  foreground rule (EP-T1), so the mode this asks about is the mode the engine will actually run. */
+ *  Runs the SAME launch-mode resolver runForegroundImpl uses (F9 T-AUTO A1), so the mode this asks about
+ *  is the mode the engine will actually run — bypassPermissions is only ever reached explicitly (neither
+ *  resolver arm produces it on its own), so this is unaffected by the auto/default default. */
 function needsBypassConsent(inv: CcxInvocation, deps: MainDeps): boolean {
   if (inv.bg || inv.print || !deps.isTTY()) return false;
-  if (resolvedPermissionMode({ ...inv.config, permissionMode: inv.config.permissionMode ?? "default" }) !== "bypassPermissions") return false;
+  const prefs = deps.loadPrefs();
+  const model = inv.config.model ?? prefs.model;
+  if (resolveLaunchPermissionMode({ explicitMode: inv.config.permissionMode, effectiveModel: model }).mode !== "bypassPermissions") return false;
   // `M8()` (bundle L43492): once accepted, never asked again. THE canon reader (bypassAccepted.ts), not a
   // second raw read of the same flag — this and the dialog's own gate must never disagree.
-  return !hasAcceptedBypass(deps.loadPrefs());
+  return !hasAcceptedBypass(prefs);
 }
 
 /** T15-fix's `--bg` refusal (upstream L451420-21) and, from the external review, its `--detachable` twin.
@@ -423,12 +433,21 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // exactly as inert here as an attempted write of it would have been. `DEFAULTS.effort` stays the final
   // rung when neither the flag nor a persisted default names a level.
   const persistedEffort = isPersistableEffortLevel(prefs.effort) ? prefs.effort : undefined;
-  // Wave T EP-T1: the REPL launches MANUAL like upstream (2.1.220 `gGl` L41536: `default` → "Manual").
-  // QA sprint 1 found `rm` and `git init` running unconsulted because DEFAULTS.permissionMode is "auto"
-  // (config/types.ts:161) and every surface resolves through it. Headless (-p/--bg) and the daemon KEEP
-  // auto deliberately — a background run has nobody to ask.
+  // F9 T-AUTO A1 (spec 2026-08-22-f9-wave-design.md "Track T-AUTO"; supersedes Wave T EP-T1): the REPL now
+  // launches AUTO by default, not MANUAL. EP-T1's Manual call was benchmarked against a `claude` that
+  // launched Manual; that benchmark has since moved — canon 2.1.236 is mid-rollout of auto-as-default
+  // (cli.pretty.js:106133-106139) and the owner's own ~/.claude/settings.json already sets
+  // permissions.defaultMode: "auto" — so this flip is TOWARD canon, not a regression of the qa3-03 finding
+  // it was written to fix. The reversal is recorded as a decision in docs/parity/qa-sprint-1-triage.md.
+  // The launch mode is GATED, not hardcoded: `resolveLaunchPermissionMode` (launchMode.ts) tests the
+  // EFFECTIVE model (`model`, above — flag or saved pref, alias-resolved) against the live-verified
+  // isAutoSupportedModel set. An unsupported model launches `default` with the model left untouched —
+  // never silently swapped, unlike resolveOptions.ts's explicit-auto gate would do if fed an unconditional
+  // "auto". Headless (-p/--bg) and the daemon KEEP auto unconditionally, as always — a background run has
+  // nobody to ask.
   // ONE object, three readers: the host, the banner and hookOpts. Reading `inv.config` for the banner
-  // instead would print "auto" (DEFAULTS) while the engine ran "default" — qa3-02 inverted.
+  // instead would print a mode the engine isn't actually running — qa3-02 inverted.
+  const launch = resolveLaunchPermissionMode({ explicitMode: inv.config.permissionMode, effectiveModel: model });
   // WAVE 2 TASK 6 (EP-D4): the statusLine payload's `transcript_path` / `prompt_id`. Both live only on hook
   // inputs, so the REPL can only learn them from an engine it is in-process with — which is exactly this
   // launch and not `ccx attach`. Registered on the host's config (it reaches the SDK through
@@ -437,7 +456,7 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // `config.hooks` keeps its own `UserPromptSubmit` entries.
   const promptLatch = createPromptLatch();
   const foregroundConfig = { ...hostConfig, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}),
-    permissionMode: inv.config.permissionMode ?? "default",
+    permissionMode: launch.mode,
     hooks: mergeHooks(hostConfig.hooks ?? {}, promptLatch.hooks()) };
   const host = deps.makeHost({
     short, name, cwd, kind: "interactive", detached: false,
@@ -541,7 +560,11 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // flag still wins, but a persisted default now outranks the harness default, the model precedent's
       // exact shape (`model` above). `ccx attach` (the other foreground path) passes none, and undefined
       // there means no hint, which is the honest answer for a client that never saw a launch config.
-      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), promptLatch },
+      // T2 (F9 T-AUTO §A2): the SAME `account` the banner's billing label reads two blocks up, handed down a
+      // second path so the auto-mode notice's variant selector sees it too. `account` is already undefined
+      // on a resume/continue launch (the banner race is skipped there), which lands the notice on its
+      // documented unknown arm exactly like `ccx attach` does below.
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), initialTokenSource: account?.tokenSource, promptLatch },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);

@@ -400,24 +400,42 @@ The ambient "Image in clipboard" polling hint is a recorded non-goal (v1).
   paste map already rides the submit event to `useChat.ts:3021`, which is the flatten point), the
   host `submit` seam (`host/host.ts:58`), and the public exports (`src/index.ts` types +
   `npm run build` declaration check).
-- **Transport (v3 — the v2 "in-process only" scope was vacuous: even the foreground REPL submits
-  over a loopback socket via `remoteChatSession`, whose prompt frame is string-only and byte-capped
-  at `host/server.ts` `MAX_FRAME`):** image bytes cross process boundaries by **file handoff over
-  the shared filesystem** (host and every client — loopback, detachable, attach — are same-machine
-  by construction). The submitting client writes each image entry to
-  `<fleetRoot>/<host>/img/<uuid>` (dir `0700`, file `0600`) and the `prompt` op carries a small
-  manifest `{ path, mediaType, dimensions, size, sha256 }` per image — well under any frame cap.
-  The host validates (size caps, hash), reads, base64s, assembles the `UserTurnInput` blocks
-  (text first), and deletes the handoff file once the turn message is built; a
-  missing/mismatched/oversized handoff degrades to the canonical failure text block, never a
-  dropped turn. This makes `ccx attach` image-capable too — the v2 wire-refusal scope-cut
-  dissolves. App-server peers and daemon accept the `UserTurnInput` union as plain JSON, bounded
-  by their existing `MAX_IN` frame cap (an oversized request fails with the peer's normal frame
-  error; no new refusal machinery).
+- **Transport (v3.1 — negotiated staging protocol; v3's bare manifest field had a silent-loss
+  hazard: the prompt op's Zod union strips unknown keys, so an old host would run a text-only turn
+  and never learn about the staged files):** a new host op **`stageImage`**. The client sends the
+  small descriptor `{ mediaType, dimensions, size, sha256 }`; the host mints and returns a `0600`
+  file path inside its own `img/` staging dir (`0700`); the client writes the bytes there and the
+  `prompt` op carries the staged ids `{ stagedId, sha256 }`. **Version skew is loud by
+  construction:** a pre-image host rejects `stageImage` as an unknown op → the client shows a
+  notice (restart the host to enable image paste) and does not submit a stripped turn.
+  **Ownership/GC:** the client owns a staged file until the host accepts the prompt (client
+  deletes on its own failure paths); the host deletes every claimed file in a `finally` around
+  assembly, and sweeps its staging dir for orphans older than a bounded age at start and
+  periodically (a client crash between write and submit cannot leave clipboard images forever).
+  **Turn correlation:** the prompt handler reserves and returns `turnSeq` synchronously BEFORE any
+  file I/O — delayed assembly must not desynchronize the client's end-event wait. Staging lives in
+  the **socket-owning client adapter** (`chatAdapter` — it knows the socket/host; `useChat` hands
+  it the structural submission), so loopback, detachable, and attach all use the identical path.
+  A missing/mismatched/oversized staged file degrades to the canonical failure text block, never a
+  dropped turn.
+- **The composer carrier (v3.1):** the editor stops flattening image chips — `submitTurn` returns
+  a structural submission `{ display, submitText, pastedContents }` (text chips keep their
+  existing `substituteChips` expansion; image entries ride the map), and `ChatComposer` →
+  `ChatApp` → `useChat.submit` → `QueueEntry` carry it structurally end to end. A real
+  Enter-keypress composer-to-adapter test gates this before the transport task builds on it.
+- **v3.1 scope cut (recorded follow-up):** `harness.run/stream`, app-server schemas
+  (`appserver/schema/turns.ts`, queue, turns), daemon types, and fleet relay stay **string-typed**
+  in this wave — no silent bypass is possible because arrays are rejected at the type/schema
+  level. The widened surfaces are the REPL clients (all three) and the library
+  `Session.submit`/`chatSession` path, where the authoritative normalizer lives.
 - **Authoritative validation lives at the Session message-builder boundary:** whatever path input
-  arrived by (REPL handoff, library call, app-server), the builder normalizes, enforces every cap
-  (per-block ceiling, per-turn aggregate), and degrades violations to the failure text block — the
-  `useChat` gate is a UX courtesy, not the enforcement point.
+  arrived by (REPL staging, library call), the builder normalizes and enforces **every** cap — it
+  decodes PNG/JPEG headers itself for the 2000×2000 dimension limit (the public block carries no
+  dimensions field, so a library caller cannot bypass paste-time checks), plus the 5 MiB base64
+  input cap, the 512,000-byte per-block ceiling, and the per-turn aggregate — degrading violations
+  to the failure text block. The `useChat` gate is a UX courtesy, not the enforcement point.
+  Boundary tests sit at exact values (1999/2000/2001 px, 5 MiB ± 1, 512,000 ± 1, aggregate ± one
+  block).
 - The chip flatten step (`useChat.ts` submit path) emits canon's wire shape: **text block first,
   image blocks appended** (canon L371395-371427). String callers stay source-compatible everywhere
   (plain prompts still pass as strings).
@@ -445,11 +463,15 @@ projection dropping image blocks, not a count/pane tension.
    blue image (text-then-image) on the same session — the run passes only if the control is
    healthy AND the two turns name their own distinct colours (a single red cell can pass on a
    colour-guessing model with a broken chain).
-6. Daemon/appserver string submits behave exactly as before (existing suites unchanged); an image
-   submit attempted across a wire-capped path (attach peer) is refused with the explicit notice,
-   not truncated.
-7. Image entries never appear in `history.jsonl`/stash bytes (asserted on the files); a queued
-   image turn survives the queue structurally and submits with its image block intact.
+6. (v3.1) App-server, daemon, fleet, and `harness.run/stream` submits remain **string-typed** —
+   arrays are rejected at the type/schema level, unchanged suites prove no behaviour drift; their
+   widening is a recorded follow-up. An image submit against a **pre-image host** fails LOUDLY at
+   the staging op (unknown op → client notice naming the host restart) — never a silent text-only
+   turn.
+7. (v3.1) Image payloads never appear in `history.jsonl` or the on-disk paste cache (recursive
+   byte scan of an isolated root); the volatile stash/undo/queue RETAIN image entries in memory; a
+   history line restored after restart submits its literal `[Image #N]` label; a queued image turn
+   survives the queue structurally and submits with its image block intact.
 
 ---
 
@@ -640,6 +662,15 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- v3.1 (2026-08-22): focused Codex re-review of the T-IMAGE plan (nine findings, all verified).
+  Transport became the negotiated `stageImage` op (loud version skew instead of Zod-strip silent
+  loss), with explicit file ownership/GC, synchronous turn-sequence reservation, and staging in
+  the socket-owning adapter. The composer carrier became structural
+  (`{display, submitText, pastedContents}` — the editor previously flattened chips to a string
+  before `onSubmit`). Normalizer decodes image headers for the dimension cap. Non-REPL surfaces
+  (harness.run/stream, app-server, daemon, fleet) descoped to string-only with type-level
+  rejection — recorded follow-up. Acceptance cells 6 and 7 rewritten (they still carried v2's
+  refusal/stash wording — reviewer catch).
 - v1 (2026-08-22): initial spec from the five R-reports + owner grill (four forks settled) + design
   approval.
 - v3 (2026-08-22): the Codex **plan** review surfaced that even the foreground REPL submits over a

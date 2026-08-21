@@ -672,9 +672,18 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
   const content = contentBlocks(message);
   const id = base ?? sdkEntryBase(entry, 0);
   const items: RenderItem[] = [];
+  // F9 T-IMAGE I4: `renderMessage` below is called once PER BLOCK (a single-element `content` array each
+  // time), so it cannot count "the Nth image in THIS message" itself — that counter is computed here, over
+  // the FULL retained block array, before the per-block loop, and handed back in via `imageOrdinal` (see
+  // `RenderMessageOptions`'s doc in render.ts) so `[Image #N]` numbers match source order on every surface
+  // this function feeds (compact/detail/pending alike — it is the one place all three converge). Keyed by
+  // POSITION, not object identity: two `image` blocks can be structurally (and in a test fixture, actually)
+  // the same object, and a `Map<block, N>` would collide the second occurrence onto the first's key.
+  let imageOrdinal = 0;
+  const imageOrdinalAt = content.map((block) => (isRecord(block) && block.type === "image" ? ++imageOrdinal : undefined));
   content.forEach((block, index) => {
     if (!isRecord(block) || block.type === "tool_use" || block.type === "tool_result") return;
-    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, renderOpts).entries())
+    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, { ...renderOpts, imageOrdinal: imageOrdinalAt[index] }).entries())
       // `block:<i>:<line>` rather than the bare `block:<i>`: one markdown block legitimately renders many
       // lines, and two items sharing an id would publish once and lose the rest.
       items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), line });
