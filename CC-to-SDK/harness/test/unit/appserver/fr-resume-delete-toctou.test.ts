@@ -88,3 +88,72 @@ describe("resume/delete TOCTOU across the PID probe (final review R13)", () => {
     expect(parsed(lines).find((f) => f.id === 2).result).toEqual({ ok: true });
   });
 });
+
+describe("a resume-carrying thread/start is thread/resume's PEER, not an unguarded third door (M6)", () => {
+  // Spec D-M5-21 already called these two of the three admission surfaces, but only one of them ran any
+  // admission guard. `thread/start` with a `resume` in its config registered a record stamped with that
+  // session id and asked nobody: two such calls left two records claiming one session — with
+  // `findLiveBySessionId` picking between them arbitrarily, so archive and delete could act on one while a
+  // live engine held the other — and no fence stopped a start landing mid-`thread/delete`. Both surfaces
+  // now run the same `admitResume`.
+  const startResuming = (sessionId: string, id: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ id, method: "thread/start", params: { config: { resume: sessionId, ...extra } } }) + "\n";
+
+  it("two starts naming one session leave ONE record — the second is refused and told which remedy applies", async () => {
+    const { srv, lines, c } = boot();
+    c.feed(startResuming("sess-dup", 2));
+    await tickN(2);
+    expect(parsed(lines).find((f) => f.id === 2).result.thread.sessionId).toBe("sess-dup");
+
+    c.feed(startResuming("sess-dup", 3));
+    await tickN(2);
+    const e = parsed(lines).find((f) => f.id === 3).error;
+    expect(e.code).toBe(ERR.INVALID_PARAMS);
+    // The remedy has to be followable: "use thread/attach" is the FLEET sentence and is unfollowable here.
+    expect(e.message).toMatch(/already holds a thread for that session/);
+    expect(e.message).toMatch(/thread\/reopen/);
+    expect(srv.registry.list().filter((r) => r.sessionId === "sess-dup")).toHaveLength(1);
+  });
+
+  it("a start arriving WHILE a delete is in flight is fenced, exactly as the resume peer is", async () => {
+    let releaseDelete!: () => void;
+    const { srv, lines, c } = boot({ deleteSession: async () => { await new Promise<void>((r) => { releaseDelete = r; }); } });
+
+    c.feed(JSON.stringify({ id: 2, method: "thread/delete", params: { threadId: "sess-z" } }) + "\n");
+    await tickN(2);   // parked inside deps.deleteSession, holding its reservation
+    c.feed(startResuming("sess-z", 3));
+    await tickN(2);
+
+    const e = parsed(lines).find((f) => f.id === 3).error;
+    expect(e.code).toBe(ERR.BUSY);
+    expect(e.message).toMatch(/being deleted/);
+    expect(srv.registry.list()).toHaveLength(0); // nothing admitted onto the session being erased
+
+    releaseDelete();
+    await tickN(2);
+  });
+
+  it("a FORK beside the resume is still admitted while a record holds the parent — it takes no identity from it", async () => {
+    // The scope split `admits` exists for: `forkSession` beside `resume` opens a NEW session id
+    // (D-M5-21b), so the live-holder refusal must not fire — two forks off one parent are legitimate — even
+    // though the delete fence still applies, because a fork READS that transcript to replay it.
+    const { srv, lines, c } = boot();
+    c.feed(startResuming("sess-parent", 2));
+    await tickN(2);
+    c.feed(startResuming("sess-parent", 3, { forkSession: true }));
+    await tickN(2);
+
+    expect(parsed(lines).find((f) => f.id === 3).error).toBeUndefined();
+    // The fork's record carries NO session id: nothing can know it before the engine's first init frame.
+    const fork = srv.registry.list().find((r) => r.id === parsed(lines).find((f) => f.id === 3).result.thread.id);
+    expect(fork!.sessionId).toBeUndefined();
+  });
+
+  it("a start with no resume at all is untouched by any of this", async () => {
+    const { srv, lines, c } = boot();
+    c.feed(JSON.stringify({ id: 2, method: "thread/start", params: {} }) + "\n");
+    await tickN(2);
+    expect(parsed(lines).find((f) => f.id === 2).result.thread).toBeTruthy();
+    expect(srv.registry.list()).toHaveLength(1);
+  });
+});
