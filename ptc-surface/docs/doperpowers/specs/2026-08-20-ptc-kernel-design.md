@@ -794,7 +794,8 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
 
 - Decision: `ptc/src/ptc/discovery.py`'s process-tree walk (in `resolve()`) is a second,
   independent copy of `find_claude_ancestor()` in `plugin/hooks/session_start.py`, not a
-  shared helper. A cross-reference comment sits in both files.
+  shared helper. A cross-reference comment sits in both files, pointing each file at the
+  other and naming the "keep the two predicates in sync" obligation.
   Rationale: the hook runs under system Python, before `~/.ptc/venv` exists and outside the
   `ptc` package's own import path, and must stay stdlib-only/single-file per T11's contract —
   it cannot `import ptc`. `discovery.py` is package-side and free to depend on `.paths`.
@@ -802,7 +803,12 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   pre-venv contract) or the package vendoring hook code as a subprocess call (adds a process
   spawn to every resolve() for no benefit) — both worse than two short, independently tested
   copies kept honest by the same predicate (see next entry).
-  Date/Author: 2026-08-21 / T13 executor.
+  Correction: the initial T13 cut only cross-referenced one-directionally
+  (`discovery.py`'s docstring named the hook; the hook said nothing back) — the task-13
+  review caught this as an Important finding against the "both ways" claim in the original
+  report. Fixed in the T13 review-fix pass by adding the comment to
+  `find_claude_ancestor()` in `session_start.py`; both files now name each other.
+  Date/Author: 2026-08-21 / T13 executor; correction 2026-08-21 / T13 review-fix.
 
 - Decision: Both walks match a candidate ancestor by **substring** — `"claude" in
   os.path.basename(comm)` — not exact equality. `discovery.resolve()`'s walk was written to
@@ -821,8 +827,13 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   whose `comm` is something unrelated (e.g. a `node` shim) is invisible to either substring or
   exact matching on `comm` alone — closing that gap needs `ps -o args=` (full argv), which
   risks false positives from any argv mentioning "claude" and is deferred until a real wrapper
-  case is observed.
-  Date/Author: 2026-08-21 / T13 executor.
+  case is observed. The converse risk is also accepted, not just the false-negative one: an
+  unrelated ancestor whose `comm` merely contains "claude" as a substring (e.g. a hypothetical
+  `claude-monitor` binary) would false-positive-match. This is accepted because both walks are
+  nearest-first (return on the first match walking from self outward), so a real `claude`
+  ancestor always wins over a more-distant decoy, and the behavior is inherited unchanged from
+  T11's already-shipped hook rather than newly introduced by T13.
+  Date/Author: 2026-08-21 / T13 executor; false-positive risk noted 2026-08-21 / T13 review-fix.
 
 ## Surprises & Discoveries
 
