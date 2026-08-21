@@ -127,6 +127,14 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 /** OSC-8 with the BEL terminator (what 2.1.220 emits, and what every terminal we target accepts). */
 export const osc8FileLink = (path: string, label: string) => `\x1b]8;;${pathToFileURL(path).href}\x07${label}\x1b]8;;\x07`;
+/** T-PRLINK: `osc8FileLink`'s sibling for a url that is ALREADY a target — no `pathToFileURL` resolution,
+ *  since a scraped PR url (`gitOps.ts`'s `GitPrOp.url`) is absolute already. Deliberately UNGATED, same as
+ *  `osc8FileLink` at its one call site (169): canon's PR link passes `assumeSupport: !0` to the generic `Mi`
+ *  component (204156–204172, `HLt() ?? !0`), so the hyperlink is ON unless something explicitly turns it
+ *  off — the opposite default from `markdownInline.ts`'s gated `osc8`, whose `hyperlinksSupported()` allowlist
+ *  says no on a plain `xterm-256color` TTY. Gating this on that allowlist would make the affordance vanish in
+ *  exactly the terminals canon still shows it in (research report §2.3, "the helper"). */
+export const osc8WebLink = (url: string, label: string) => `\x1b]8;;${url}\x07${label}\x1b]8;;\x07`;
 /** Re-exported, not defined here, since Task 5c: `paths.ts` owns the rule so `toolFold.ts` can reach it
  *  without importing this module (which now imports the fold model). The public surface is unchanged. */
 export { displayPath };

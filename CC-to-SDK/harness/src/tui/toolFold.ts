@@ -562,19 +562,27 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
 }
 
 /** One clause of the summary sentence. `boldRanges` are half-open `[start, end)` offsets into `text` — the count
- *  spans upstream wraps in `<Text bold>` (§3.4). Task 5c joins the clauses with the literal `", "`. */
-export type FoldClause = { text: string; boldRanges: readonly [number, number][] };
-type ClausePart = string | { bold: string };
+ *  spans upstream wraps in `<Text bold>` (§3.4). `linkRanges` is the T-PRLINK addition: a THIRD, independent
+ *  channel of half-open offsets carrying an OSC-8 target, `[start, end, href]`. It rides beside `boldRanges`
+ *  rather than replacing it — every span canon links is ALSO bold (`U9e` 531112) — and stays `undefined` (not
+ *  `[]`) when nothing in the clause carries a url, so a consumer can tell "no link" from "an allocated empty
+ *  array" without walking it. Task 5c joins the clauses with the literal `", "`. */
+export type FoldClause = { text: string; boldRanges: readonly [number, number][]; linkRanges?: readonly [number, number, string][] };
+type ClausePart = string | { bold: string; href?: string };
 /** Upstream's `we` helper (L427976–427981): the verb is capitalized only when it opens the sentence, and the object
- *  is always preceded by a single space. */
+ *  is always preceded by a single space. A part with both `bold` and `href` opens the SAME span on both channels
+ *  (T-PRLINK) — canon never links a span it doesn't also bold. */
 function clause(verb: string, first: boolean, parts: readonly ClausePart[]): FoldClause {
   let text = first ? verb[0]!.toUpperCase() + verb.slice(1) : verb;
   const boldRanges: [number, number][] = [];
+  const linkRanges: [number, number, string][] = [];
   for (const part of parts) {
     if (typeof part === "string") { text += part; continue; }
-    const start = text.length; text += part.bold; boldRanges.push([start, text.length]);
+    const start = text.length; text += part.bold; const end = text.length;
+    boldRanges.push([start, end]);
+    if (part.href !== undefined) linkRanges.push([start, end, part.href]);
   }
-  return { text, boldRanges };
+  return linkRanges.length > 0 ? { text, boldRanges, linkRanges } : { text, boldRanges };
 }
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
@@ -612,9 +620,17 @@ export function foldClauses(counts: GroupCounts, active: boolean, opts?: FoldPol
     if (branches.length > 0) out.push(clause("pushed to", out.length === 0, [" ", { bold: branches.join(", ") }]));
     for (const op of counts.branches ?? [])
       out.push(clause(op.action === "merged" ? "merged" : "rebased onto", out.length === 0, [" ", { bold: op.ref }]));
-    // 518595: a PR with a url renders as the bare `#N` link, one without it as the literal `PR #N`.
+    // T-PRLINK / 2.1.236 `N3l` 531624–531626 delegating to `U9e` 531080–531126, itself wrapping the GENERIC
+    // link component `Mi` 204156–204172: canon paints the visible characters `PR #N` in BOTH arms — a
+    // scraped url only adds styling and a target, it never drops the `PR ` prefix (the OLDER 2.1.234-era
+    // reading this comment used to cite, "a PR with a url renders as the bare `#N` link", is superseded; see
+    // r5-toolstream-research.md §1.4). `U9e`'s own no-op side-effect stub `sYi` (531059–531061) confirms the
+    // hyperlink is produced declaratively by `Mi`, not registered as a side effect. The literal `PR ` prefix
+    // sits OUTSIDE the bold+link span in both arms; only the `#N` tail is bold, and only it links.
     for (const pr of counts.prs ?? [])
-      out.push(clause(PR_VERB[pr.action], out.length === 0, [" ", { bold: pr.url === undefined ? `PR #${pr.number}` : `#${pr.number}` }]));
+      out.push(pr.url === undefined
+        ? clause(PR_VERB[pr.action], out.length === 0, [" ", { bold: `PR #${pr.number}` }])
+        : clause(PR_VERB[pr.action], out.length === 0, [" ", "PR ", { bold: `#${pr.number}`, href: pr.url }]));
   }
   if (counts.searchCount > 0)
     out.push(clause(active ? "searching for" : "searched for", out.length === 0, [" ", { bold: String(counts.searchCount) }, " ", plural(counts.searchCount, "pattern", "patterns")]));

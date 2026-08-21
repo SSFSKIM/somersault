@@ -17,10 +17,15 @@ import { foldClauses, type GroupCounts } from "../../src/tui/toolFold.js";
 import { setTheme } from "../../src/tui/theme.js";
 
 const DIM = "\x1b[2m", BOLD = "\x1b[1m", OFF = "\x1b[22m", GREY = "\x1b[38;2;153;153;153m", DEFAULT_FG = "\x1b[39m";
+const UNDER = "\x1b[4m", UNDER_OFF = "\x1b[24m";
+const osc8 = (href: string, label: string) => `\x1b]8;;${href}\x07${label}\x1b]8;;\x07`;
 const counts = (over: Partial<GroupCounts>): GroupCounts =>
   ({ readCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], ...over });
 const active = (over: Partial<GroupCounts>) => foldClauses(counts(over), true);
 const settled = (over: Partial<GroupCounts>) => foldClauses(counts(over), false);
+// T-PRLINK cases go through the fullscreen-only PR clause (`toolFold.ts` `foldClauses`'s `fullscreen` branch),
+// so they need the policy flag classic callers above never pass.
+const full = (over: Partial<GroupCounts>, isActive = false) => foldClauses(counts(over), isActive, { fullscreen: true });
 
 describe("composeFoldRun byte grammar", () => {
   it("wraps the active run in dim and emits the count as a real bold span", () => {
@@ -79,5 +84,34 @@ describe("composeFoldRun byte grammar", () => {
     expect(stripSgr(composeFoldRun(active({ readCount: 2, listCount: 3 }), "active", { ellipsis: true })))
       .toBe("Reading 2 files, listing 3 directories…");
     expect(stripSgr(composeFoldRun(settled({ readCount: 1 }), "settled"))).toBe("Read 1 file");
+  });
+
+  // T-PRLINK: `FoldClause.linkRanges` wraps the `#N` span in an OSC-8 hyperlink, canon's `Mi` component
+  // (204156–204172) as reached through the PR clause's `U9e` (531080–531126). The bold/underline SGR opens
+  // BEFORE the OSC-8 introducer and closes AFTER its terminator — never inside it — which is what lets the
+  // `\x1b]8;;<url>\x07#12\x1b]8;;\x07` triple sit as one unbroken substring, exactly as the brief requires.
+  const PR_URL = "https://x/o/r/pull/12";
+  it("wraps a linked PR span in OSC-8, with the literal `PR ` prefix OUTSIDE the link and bold surviving the crossing", () => {
+    const run = composeFoldRun(full({ prs: [{ number: 12, url: PR_URL, action: "created" }] }), "active");
+    expect(run).toBe(`${DIM}Created PR ${BOLD}${UNDER}${osc8(PR_URL, "#12")}${UNDER_OFF}${OFF}${OFF}`);
+    // The exact triple the brief pins: escape → label → escape, nothing styling between them.
+    expect(run).toContain(`\x1b]8;;${PR_URL}\x07#12\x1b]8;;\x07`);
+    // "PR " sits before the bold/link opens, and the run's OWN dim carries it — it is not itself bold.
+    expect(run.slice(run.indexOf(DIM) + DIM.length, run.indexOf(BOLD))).toBe("Created PR ");
+  });
+  it("leaves a no-url PR clause exactly as before: the whole `PR #N` bold, no OSC-8 anywhere", () => {
+    const run = composeFoldRun(full({ prs: [{ number: 13, action: "commented" }] }), "active");
+    expect(run).toBe(`${DIM}Commented on ${BOLD}PR #13${OFF}${OFF}`);
+    expect(run).not.toContain("\x1b]8");
+  });
+  it("the stripSgr LEAK a CSI-m-only strip would miss: OSC-8 bytes must go, the label must stay", () => {
+    const run = composeFoldRun(full({ prs: [{ number: 12, url: PR_URL, action: "created" }] }), "active");
+    const stripped = stripSgr(run);
+    expect(stripped).toBe("Created PR #12");
+    // The load-bearing assertion: a strip that only matches `/\x1b\[[0-9;]*m/g` (CSI-m) leaves the OSC-8
+    // introducer and terminator untouched, so `stripped` would still contain `\x1b]8` and the escapes would
+    // corrupt every width computation downstream (wrapItems' re-cut, the pager, plain-text assertions).
+    expect(stripped).not.toContain("\x1b]8");
+    expect(stripped).not.toContain("\x1b");
   });
 });

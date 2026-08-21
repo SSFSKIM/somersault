@@ -776,11 +776,28 @@ describe("TS fullscreen fold clauses (canon ZIl 518574–518626)", () => {
   it("gives merges and rebases one clause each (518587–518590)", () => {
     expect(texts(full({ branches: [{ ref: "feature", action: "merged" }, { ref: "main", action: "rebased" }] }))).toEqual(["Merged feature", "rebased onto main"]);
   });
-  it("gives each PR its own clause, with canon's ten-verb map and the url/no-url object (518593–518595)", () => {
+  it("gives each PR its own clause, with canon's ten-verb map and the url/no-url object (2.1.236 N3l 531624–531626, U9e 531080–531126)", () => {
+    // Canon paints `PR #N` in BOTH arms (§1.4 of the research report) — a scraped url only adds the link,
+    // it never drops the `PR ` prefix. A `#12`-only reading (2.1.234's bare-link reading, or the OLDER
+    // comment this test used to match) is the nearest wrong implementation this cell kills.
     expect(texts(full({ prs: [{ number: 12, url: "https://x/o/r/pull/12", action: "created" }, { number: 13, action: "commented" }, { number: 14, action: "auto-merge-enabled" }] })))
-      .toEqual(["Created #12", "commented on PR #13", "enabled auto-merge on PR #14"]);
+      .toEqual(["Created PR #12", "commented on PR #13", "enabled auto-merge on PR #14"]);
     expect(joined(full({ prs: [{ number: 1, action: "ready" }, { number: 2, action: "draft" }, { number: 3, action: "auto-merge-disabled" }] })))
       .toBe("Marked ready PR #1, marked draft PR #2, disabled auto-merge on PR #3");
+  });
+  it("carries a linkRange over exactly the `#N` span when a PR url was scraped, and none at all otherwise (T-PRLINK)", () => {
+    const [linked, unlinked] = full({ prs: [
+      { number: 12, url: "https://x/o/r/pull/12", action: "created" },
+      { number: 13, action: "commented" },
+    ] });
+    // "Created PR #12": bold + link cover ONLY "#12" (offsets 11–14) — "Created PR " stays plain, exactly
+    // as canon's `d3l` prefix (531105) and `p3l` label (531112) split it.
+    expect(linked).toEqual({ text: "Created PR #12", boldRanges: [[11, 14]], linkRanges: [[11, 14, "https://x/o/r/pull/12"]] });
+    // "commented on PR #13": no url scraped ⇒ the WHOLE "PR #13" is bold (canon's 531626 `else` branch), and
+    // there is no `linkRanges` key at all — a test asserting `linkRanges: []` would pass against an
+    // implementation that always allocates the array, which is not the same contract as "no PR carried a url".
+    expect(unlinked).toEqual({ text: "commented on PR #13", boldRanges: [[13, 19]] });
+    expect(unlinked.linkRanges).toBeUndefined();
   });
   it("orders the whole fullscreen sentence exactly as canon pushes its parts (518551–518626)", () => {
     expect(texts(full({
