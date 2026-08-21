@@ -355,10 +355,10 @@
 >   and a disable), wired to the permission-consult and turn-settle seams. Eleven implementation tasks,
 >   each reviewed, plus a verification pass. Spec
 >   `docs/superpowers/specs/2026-08-20-f8-spinner-startup-terminal-design.md`.
->   **Acceptance: 15 of 16 cells executed, 15 PASS / 0 FAIL / 1 owner-verified-pending** — twelve keyless
->   against the shipped modules and three (A5, A10, A10b) on a real pty under an isolated `HOME` on a
->   private tmux server. **A11 is the pending one and is not rounded up**: it terminates inside an emulator
->   no instrument here can drive, so it ships as a reproduction script for the owner. Two § 4 cells were
+>   **Acceptance: 16 of 16 — 15 executed at wave close, A11 owner-verified 2026-08-21** — twelve keyless
+>   against the shipped modules, three (A5, A10, A10b) on a real pty under an isolated `HOME` on a
+>   private tmux server, and A11 (a desktop notification observed arriving in a real emulator) confirmed
+>   by the owner off the reproduction script, closing Task 10's delegated marker-attribution unknown. Two § 4 cells were
 >   superseded by the spec's own later measurements and the implementation follows the evidence — recorded
 >   in that spec's § 8 (S-F8-s, S-F8-t) rather than silently re-written. Gates at close: typecheck clean,
 >   unit 2902, tui 3869 (9 live-skips), resize matrix 10/0.

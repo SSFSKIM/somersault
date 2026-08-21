@@ -1014,7 +1014,7 @@ landed atomically, and every commit typechecks.
 
 ### 9.2 What the acceptance run found
 
-**15 of 16 cells executed. 15 PASS, 0 FAIL, 1 owner-verified-pending (A11).** Gates at close:
+**16 of 16 cells now pass — 15 executed at wave close, and A11 owner-verified 2026-08-21.** Gates at close:
 `npm run typecheck` clean · `npm run test:unit` 2902 passed in 221 files · `npm run test:tui` 3869
 passed in 151 files, 9 live-skips · `npm run test:resize-matrix` 10 passed / 0 failed, with 2 keyed
 cells skipping for want of a credential.
@@ -1036,7 +1036,7 @@ cells skipping for want of a credential.
 | A9 auto theme | PASS | Keyless. unset → dark · `15;0` → dark · `0;15` → light · `15;8` → dark · `0;banana` → dark, no throw |
 | A10 signal exit | PASS | **Live pty.** `SIGTERM` put `ESC ] 0 ; BEL` on the wire (captured with `pipe-pane`) and the pane exited status 0. Asserts the title clear and a clean exit; **not** 143, and makes no raw-mode claim |
 | A10b frame integrity | PASS | **Live pty**, fullscreen renderer, 12 staged transcript rows. Ten notifications — 688 bytes, 41 ESCs, including both kitty three-write forms and four DCS-wrapped sequences — written straight to the pane's tty. The captured frame is **byte-identical** before and after, the alternate screen is still up, and the dock is still on row 39 of 100×40 |
-| A11 manual pass | **OWNER-VERIFIED-PENDING** | Cannot be automated; see 9.4 |
+| A11 manual pass | **PASS (owner-verified 2026-08-21)** | Could not be automated; see 9.4 |
 
 **Isolation held.** Live cells ran on a private tmux server (`tmux -L f8verify`) under an isolated
 `HOME` beneath `/tmp` with `CCX_FLEET_ROOT` set. Every session was `f8v-`-prefixed and killed by name;
@@ -1070,11 +1070,14 @@ has not been verified at all.
   toggle reaches the spinner, the compaction bar and the retry row on the next frame, and reaches the
   tab title only on the next launch. This is what holds `tui-ux.md`'s reduced-motion row at 🟡.
 
-### 9.4 A11 — owner-verified-pending
+### 9.4 A11 — PASSED (owner-verified)
 
-**Date verified: _______ · Terminal used: _______ · Result: _______**
+**Date verified: 2026-08-21 · Terminal used: owner's real emulator · Result: PASS — the owner confirmed a
+desktop notification reaching them.** This also closes Task 10 Step 1's delegated unknown in the field:
+the resolver's sniffed marker chain produced a notification the owner actually received.
 
-A11 terminates inside an emulator no instrument in this repo can drive, so it is not marked passed. It
+A11 terminates inside an emulator no instrument in this repo can drive, so it could not be marked passed
+until the owner ran it. It
 also closes **Task 10 Step 1's delegated unknown**: whether the environment marker the notification
 resolver sniffs for each terminal is the one that actually survives into that terminal's tmux panes.
 This machine's shell carries none of those markers, so the survival test used synthetic values — the
