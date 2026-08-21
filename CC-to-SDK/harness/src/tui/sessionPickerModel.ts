@@ -1,7 +1,12 @@
 // tui/src/sessionPickerModel.ts — the /resume picker's literals, filter and row projections (F6 T11),
 // transcribed from 2.1.220's `moi` (L476394-476628) with its row helpers `mKt` (L17882), `EGa`/`SGa`
-// (L476386/L476390) and `Nqr` (L107122). No React and no I/O of its own; `previewItems` (wave2 T8) reaches
-// the SHARED transcript projection, which is where the preview pane's rows now come from.
+// (L476386/L476390) and `Nqr` (L107122). No React and no I/O of its own.
+//
+// T-RESUME T2: the IN-PANE preview (`previewItems`/`previewTail`/`PREVIEW_ROWS`/`PREVIEW_MESSAGE_WINDOW`/
+// `previewWidth`) is GONE. Canon never had a pane inside the picker's own frame (`yvc`, L583551) — Space/
+// Ctrl+V swap the whole picker element for a separate full-screen view, which is what `transcriptItems`
+// below (T1) now feeds exclusively. `SessionPicker.tsx` no longer has a "preview stage that stays inside
+// its own frame" at all; see `ResumeTranscriptView.tsx`.
 //
 // WHAT IS HERE VERSUS WHAT UPSTREAM HAS. Upstream's picker filters over four fields (title, git branch, tag,
 // PR) and groups forked sessions into an expandable tree (`Vgb`/`bGa`). Our session store carries neither the
@@ -18,7 +23,8 @@
 import { homedir } from "node:os";
 import { formatRelativeTime } from "./format.js";
 import { replayDocument } from "./replay.js";
-import { projectCompact, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { wrapItemsToWidth } from "./wrapItems.js";
 
 /** Structurally what `listSessions()` hands the REPL (`SDKSessionInfo`), narrowed to what a row reads. */
 export interface SessionRow {
@@ -121,9 +127,14 @@ export const resumeFooter = (scope: ResumeScope, hasWorktree: boolean): string =
 export const RESUME_CANCELLED = "Resume cancelled";
 export const RENAME_FOOTER = "enter to save · esc to cancel";
 export const PREVIEW_FOOTER = "enter to resume · esc to cancel";
-/** `fGa`'s loading state (L476141). `PREVIEW_EMPTY` has no upstream twin — upstream's pane renders the real
- *  transcript component, which draws its own nothing; ours has to say why the pane is blank. */
+/** `fGa`'s loading state (L476141, canon L583604-583606): `Loading session…` plus a dim `esc to cancel`
+ *  hint, rendered with NO frame chrome at all (a bare padded column — `ResumeTranscriptView.tsx`).
+ *  `PREVIEW_EMPTY` RETIRED to the `failed` arm (T-RESUME T2, spec R-1): a `loaded`-but-empty session now
+ *  renders nothing above the footer (canon has no such string), so the only state left that needs one is a
+ *  read that genuinely failed — "(no messages)" is what ccx says when it could not read the transcript at
+ *  all, which has no canon twin either way (canon's own read cannot reject the way a store lookup can). */
 export const PREVIEW_LOADING = "Loading session…";
+export const PREVIEW_LOADING_HINT = "esc to cancel";
 export const PREVIEW_EMPTY = "(no messages)";
 
 /** Upstream `ut` (L476596): the available height minus the picker's own chrome, divided by the rows ONE
@@ -137,11 +148,6 @@ export function previewMeta(s: SessionRow, count: number, now: Date = new Date()
   const when = s.lastModified ? formatRelativeTime(new Date(s.lastModified), now) : "";
   return `${when ? `${when} · ` : ""}${count} ${count === 1 ? "message" : "messages"}${s.gitBranch ? ` · ${s.gitBranch}` : ""}`;
 }
-
-/** How many of a previewed transcript's rows the pane shows. Upstream renders the WHOLE transcript through
- *  the real message renderer and lets the terminal scroll; ours is a fixed tail because the pane is a summary
- *  the cursor sits on, not a second transcript view (the pager and `/resume` itself both exist for that). */
-export const PREVIEW_ROWS = 12;
 
 /** Upstream's countable-message predicate, `$$_` + `B$_` (L369021/L369035) as `Pqs` (L369043) applies them:
  *  a USER row carrying non-blank text or an image/document block, or an ASSISTANT row carrying at least one
@@ -183,40 +189,15 @@ export function isPreviewMessage(m: unknown): boolean {
 export const previewMessageCount = (messages: readonly unknown[]): number =>
   messages.reduce<number>((n, m) => n + (isPreviewMessage(m) ? 1 : 0), 0);
 
-// ── The pane itself (wave2 T8, s2qa4-13/14) ─────────────────────────────────────────────────────────────
-// It used to be a hand-rolled excerpt: one trimmed line per countable message, taken straight off
-// `message.content`. That is a SECOND renderer, and it drew what the store literally holds — so a slash
-// command previewed as `<command-name>/cost</command-name>` and its reply as `<local-command-stdout>…`, tags
-// and all, while a tool turn either vanished or arrived as raw text. Stripping the envelopes there would have
-// been a third spelling of a routing table `species.ts` already owns.
-//
-// So the pane stops rendering and starts PROJECTING: `replayDocument` into the retained document, then the
-// same projection the live transcript runs over it, which is what brings the species router, the tool folds,
-// the `⎿` gutters and the prompt band with it. The pane is now a strict superset of what the count admits —
-// tool traffic draws here and counts nowhere, exactly as upstream arranges it.
-//
-// IN-PANE AND TAIL-ANCHORED (D-W9, a recorded divergence). Upstream's preview REPLACES the picker with the
-// real transcript screen; ours keeps the pane inside the picker frame, so it shows the last `PREVIEW_ROWS`
-// rows of the projection with `moreAbove` counting what that cut. The full-screen takeover is backlog.
-
-/** The pane's own column budget: the picker frame's `paddingX={1}` on each side. Wrapping must be computed
- *  for the PANE — a projection sized to the terminal would wrap a band wider than the box it sits in. */
-export const previewWidth = (columns: number): number => Math.max(20, Math.floor(columns) - 2);
-/** How far back a preview reads. `replayDocument` + `projectCompact` walk every row they are given, and this
- *  runs on a keystroke against a session that may hold thousands; the tail window bounds that cost at the only
- *  place it can be bounded honestly, because the `hidden` count below is computed from the projection we
- *  actually built and never claims to know about rows we never read. When the window DID cut, the pane says
- *  so — `windowTruncated` turns the indicator's count into a floor rather than a flat number it knows is
- *  short (review M2). */
-export const PREVIEW_MESSAGE_WINDOW = 200;
-
-/** The picker's `ProjectionContext`. Three of its fields are INERT here and deliberately so:
- *   · `now` — the only clock reader here is the ACTIVE fold row's blink phase, and nothing in this pane can
- *     be active: `previewItems` passes an EMPTY live set, so every row it draws has already completed.
- *     Pinned at 0 so the pane is a pure function of its messages.
+/** The picker's `ProjectionContext`, shared by the (now sole) full-screen preview and by whatever else in
+ *  this file ever needs one. Three of its fields are INERT here and deliberately so:
+ *   · `now` — the only clock reader here is the ACTIVE fold row's blink phase, and nothing this projection
+ *     draws can be active: `transcriptItems` below passes an EMPTY live set, so every row it draws has
+ *     already completed. Pinned at 0 so the projection is a pure function of its messages.
  *   · `expandHint: ""` — the empty string is the resolver's "that chord is unbound" answer (keys/hints.ts),
- *     which is the truth here: ctrl+o opens nothing from a picker pane, and offering it would be the same
- *     dishonesty a stale chord is. Absent would print the `(ctrl+o to expand)` fallback instead.
+ *     which is the truth here: ctrl+o opens nothing from this view (there is no fold to expand — detail-all
+ *     is already fully expanded), and offering it would be the same dishonesty a stale chord is. Absent
+ *     would print the `(ctrl+o to expand)` fallback instead.
  *   · `pending`/`thoughtMs`/`agentMeta`/`bashHint` — all omitted: they are the LIVE turn's state (ratcheted
  *     counters, the locally-clocked thinking durations, the backgroundable-shell hint), and none of it exists
  *     for a session being read off disk.
@@ -229,39 +210,61 @@ export function previewProjection(width: number, env: { cwd?: string; home?: str
 
 /** How many terminal rows one projected item occupies: a line is one, a gutter block is its body. */
 const itemRows = (item: RenderItem): number => (item.kind === "line" ? 1 : Math.max(1, item.body.length));
-export interface PreviewTail { items: readonly RenderItem[]; hidden: number }
-/** The last `limit` ROWS of a projection, cut on item boundaries, plus the number of rows that cut dropped.
- *  The final item always survives even if it alone overflows the budget — a pane that renders nothing is
- *  worse than one that renders a row too many, and the alternative (slicing a gutter block's body) would put
- *  a second, silent truncation under the one the count reports. */
-export function previewTail(items: readonly RenderItem[], limit = PREVIEW_ROWS): PreviewTail {
-  let start = items.length, rows = 0;
-  for (let i = items.length - 1; i >= 0; i--) {
-    const height = itemRows(items[i]!);
-    if (rows > 0 && rows + height > limit) break;
-    rows += height; start = i;
-  }
-  return { items: items.slice(start), hidden: items.slice(0, start).reduce((n, item) => n + itemRows(item), 0) };
-}
 
-/** `previewTail` plus whether the message window (not the row budget) had already cut the input. The two
- *  truncations compose: `hidden` counts rows the budget dropped from a projection that may itself have been
- *  built over only the last `PREVIEW_MESSAGE_WINDOW` messages, so with `windowTruncated` set the number is a
- *  FLOOR and the indicator says so (`↑ 188+ more above`). */
-export interface PreviewPane extends PreviewTail { windowTruncated: boolean }
-/** A previewed session's persisted messages → the rows the pane draws, and what the row budget cut above
- *  them. `width` is the PANE's (see `previewWidth`); `limit` exists for tests and for a caller with a
- *  different budget. */
-export function previewItems(messages: readonly unknown[], opts: { width: number; id?: string; cwd?: string; limit?: number }): PreviewPane {
-  const windowTruncated = messages.length > PREVIEW_MESSAGE_WINDOW;
-  const window = windowTruncated ? messages.slice(-PREVIEW_MESSAGE_WINDOW) : messages;
+// ── The full-screen view's window (T-RESUME T1/T2, D-W9) ───────────────────────────────────────────────
+// This is canon's OWN cap, for the full-screen view Space/Ctrl+V opens (`yvc` L583551): the picker is
+// replaced wholesale, not embedded (there is no more in-frame pane to fall back to — T2 deleted it), and
+// canon's arithmetic (L563246-563388) forces the DETAIL-ALL projection (verbose, every tool body expanded)
+// rather than a compact fold.
+//
+// Canon has no scrollbar, no `↑ N more above` line and no in-view scroll in this view (spec non-goals) — so
+// the return type carries no hidden/truncated count at all: there is nothing for a caller to announce.
+//
+// WRAP FIRST, WINDOW SECOND (the wrapItems.ts / FSW T17 lesson, reused rather than re-derived a third time).
+// A raw `RenderItem`'s `kind: "line"` always measures ONE row regardless of whether its text actually fits
+// `width` — `itemRows` below is honest only once every item has already been cut into the rows it PAINTS.
+// Tail-anchoring on the unwrapped stream would let one very long line push the window past what the caller's
+// `budget` rows can actually hold — exactly the bug class FSW T17 found in the pager. So `wrapItemsToWidth`
+// runs BEFORE the tail cut, not after.
+export interface TranscriptWindow { items: readonly RenderItem[] }
+/** A previewed session's persisted messages → canon's full-screen tail window. `budget` is rows, supplied by
+ *  the caller (classic mode: 200 flat; fullscreen: `min(200, overlayRows())` — that arithmetic is the VIEW's,
+ *  not this pure function's, so it is a plain number here). The raw message window is `2×budget` (canon's own
+ *  ratio): wide enough that a budget's worth of collapsed-canon-sized items almost never starves for raw rows
+ *  to project, without reading a whole multi-thousand-row session on every keystroke. */
+export function transcriptItems(messages: readonly unknown[], opts: { width: number; id?: string; cwd?: string; budget: number }): TranscriptWindow {
+  const rawWindow = 2 * opts.budget;
+  const window = messages.length > rawWindow ? messages.slice(-rawWindow) : messages;
   const document = replayDocument(window, { width: opts.width, frame: false, ...(opts.id === undefined ? {} : { id: opts.id }) });
   const context = previewProjection(opts.width, opts.cwd === undefined ? {} : { cwd: opts.cwd });
-  // BOTH regions, exactly as the live transcript composes them (useChat: Static + the dynamic tail). The
-  // compact projection withholds the trailing fold run while it is still growable, so a session whose last
-  // act was a tool call would otherwise preview with that call missing. `liveIds` is EMPTY rather than
-  // absent: nothing is running in a transcript read off disk, and an empty set is what keeps a dangling
-  // `tool_use` from drawing a blinking row for work no process is doing.
-  const projected = [...projectCompact(document, context), ...projectPending(document, context, new Set())];
-  return { ...previewTail(projected, opts.limit ?? PREVIEW_ROWS), windowTruncated };
+  // Detail-all, forced by canon's own arithmetic (L563347/L563371: verbose + show-all). BOTH regions ride
+  // along, exactly as the live transcript composes them (useChat: Static + the dynamic tail): `projectDetail`
+  // alone withholds a still-growable trailing fold run, so a resumed session interrupted mid-tool-call would
+  // preview with that call silently missing without the pending region alongside it. `liveIds` is EMPTY:
+  // nothing is running in a transcript read off disk.
+  const projected = [
+    ...projectDetail(document, { ...context, projection: "detail-all" }),
+    ...projectPending(document, context, new Set()),
+  ];
+  const painted = wrapItemsToWidth(projected, opts.width);
+  // A backward walk over PAINTED rows (not logical items): the final item always survives even if it alone
+  // overflows the budget — a window that renders nothing is worse than one that renders a row too many.
+  let start = painted.length, rows = 0;
+  for (let i = painted.length - 1; i >= 0; i--) {
+    const height = itemRows(painted[i]!);
+    if (rows > 0 && rows + height > opts.budget) break;
+    rows += height; start = i;
+  }
+  return { items: painted.slice(start) };
 }
+
+/** The tagged shape a preview load is now in (T-RESUME T1, spec R-1). `loading`/`failed` have no upstream
+ *  twin here — canon's own `Loading session…` state and its confirm-context error copy are exactly this
+ *  split, just undocumented as a type in the bundle. The producer (`useChat.ts`'s `previewSession`) resolves
+ *  to `loaded`/`failed` only — `loading` is the CONSUMER's own local state before that promise settles, which
+ *  is why it has no payload here. A `loaded` session confirms with THESE messages (canon's `onSelect(Ccs ??
+ *  Gwt)`) — never a second, later read that could reject after a successful preview. */
+export type PreviewLoad =
+  | { state: "loading" }
+  | { state: "loaded"; messages: unknown[] }
+  | { state: "failed"; error: string };

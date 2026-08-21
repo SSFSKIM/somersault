@@ -456,7 +456,7 @@ const SESSIONS: SessionInfo[] = [
 ];
 pinsListNavigation(
   "the session picker (modeless search — the bound keys stay navigation)",
-  () => opened(<SessionPicker sessions={SESSIONS} onPick={() => {}} onCancel={() => {}} loadMessages={async () => []} renameSession={async () => {}} rows={40} columns={100} />, "fix the flaky test"),
+  () => opened(<SessionPicker sessions={SESSIONS} onPick={() => {}} onCancel={() => {}} loadMessages={async () => ({ state: "loaded", messages: [] })} renameSession={async () => {}} rows={40} columns={100} />, "fix the flaky test"),
   ["refactor the parser", "write the release notes", "fix the flaky test"],
 );
 

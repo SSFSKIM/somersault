@@ -388,6 +388,43 @@ describe("useChat", () => {
     expect(reads.at(-1)).toEqual(["old1234567890", "/elsewhere"]);     // …read through the row's project, not /repo
   });
 
+  // T-RESUME T1. `previewSession` used to be `.catch(() => [])` — a rejecting reader and a successfully-
+  // loaded empty session were indistinguishable at this seam, so `failed` could never reach the picker in
+  // production. It now resolves the tagged `PreviewLoad` and never itself rejects: `loaded` on success,
+  // `failed` (carrying the error's message, not the empty array) on rejection.
+  it("previewSession surfaces the tagged failed state when getSessionMessages rejects — not an empty preview", async () => {
+    const deps = {
+      hasWorktrees: async () => false, listSessions: async () => [],
+      getSessionMessages: async () => { throw new Error("ENOENT: no such file"); },
+    };
+    const api: { preview?: (id: string, dir?: string) => Promise<any> } = {};
+    function H() {
+      const c = useChat(() => fakeRemote(), { cwd: "/repo" }, deps);
+      api.preview = (c as any).previewSession;
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    const load = await api.preview!("gone1234567890", "/repo");
+    expect(load).toEqual({ state: "failed", error: "ENOENT: no such file" });
+  });
+
+  it("previewSession surfaces the tagged loaded state (with the real messages) on success", async () => {
+    const msgs = [{ type: "user", message: { content: [{ type: "text", text: "hi" }] } }];
+    const deps = {
+      hasWorktrees: async () => false, listSessions: async () => [],
+      getSessionMessages: async () => msgs,
+    };
+    const api: { preview?: (id: string, dir?: string) => Promise<any> } = {};
+    function H() {
+      const c = useChat(() => fakeRemote(), { cwd: "/repo" }, deps);
+      api.preview = (c as any).previewSession;
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    const load = await api.preview!("here1234567890", "/repo");
+    expect(load).toEqual({ state: "loaded", messages: msgs });
+  });
+
   // Wave S T10 (t10 review, finding 1). The picker's SCOPE has to become `ListSessionsOpts`, and the mapping
   // is the whole feature: `allProjects` DROPS the cwd key (it must be absent, not undefined — `toEqual` treats
   // an undefined-valued key as absent, so the key set is asserted separately) and `allWorktrees` lands on

@@ -1,27 +1,34 @@
 // tui/test/session-picker.test.tsx — the /resume picker rebuilt on `Select` (F6 T11, DG49-DG51). The
-// literals are transcriptions of 2.1.220's `moi` (L476394-476628) and its preview pane `fGa` (L476095); the
-// bundle line sits on the assertion it produced. The two deliberate divergences — modeless search, and
-// `hideIndexes` so digits reach the search field — are pinned here too, so a later "fix" back toward
-// upstream's mode machine fails a test instead of passing silently.
+// literals are transcriptions of 2.1.220's `moi` (L476394-476628); the bundle line sits on the assertion it
+// produced. The two deliberate divergences — modeless search, and `hideIndexes` so digits reach the search
+// field — are pinned here too, so a later "fix" back toward upstream's mode machine fails a test instead of
+// passing silently.
+//
+// T-RESUME T2 (D-W9): the preview stage's OWN render tests (loading/failed/loaded-empty copy, footer chrome,
+// the "no frame" shape) live in `resumeTranscriptView.test.tsx` — that component owns the preview body now.
+// What stays HERE is everything that only makes sense with the whole picker mounted: the two triggers
+// (Space/Ctrl+V) from list mode, the `y`/`n`/Enter/Esc confirm cycle, and the loaded-payload resume (both at
+// this component's boundary and, further down, through the full `ChatApp`/`useChat` assembly).
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { SessionPicker } from "../../src/tui/SessionPicker.js";
+import { ChatApp } from "../../src/tui/ChatApp.js";
+import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { SessionInfo } from "../../src/tui/useChat.js";
 import {
   filterSessions, isPreviewMessage, NARROWED_SCOPE, NO_CONVERSATIONS, NO_CONVERSATIONS_IN_PROJECT,
-  noConversations, noSessionsMatch, PREVIEW_MESSAGE_WINDOW, PREVIEW_ROWS, previewItems, previewMessageCount,
-  previewMeta, previewTail, previewWidth, RENAME_FALLBACK, renamePlaceholder, RESUME_CANCELLED, resumeFooter,
-  resumeHeader, resumeVisibleRows, sessionMeta, sessionTitle, widenHints,
+  noConversations, noSessionsMatch, PREVIEW_EMPTY, previewMessageCount, previewMeta, RENAME_FALLBACK,
+  renamePlaceholder, RESUME_CANCELLED, resumeFooter, resumeHeader, resumeVisibleRows, sessionMeta,
+  sessionTitle, transcriptItems, widenHints, type PreviewLoad,
 } from "../../src/tui/sessionPickerModel.js";
 import type { ResumeScope } from "../../src/tui/sessionPickerModel.js";
-import { moreAbove } from "../../src/tui/select/overflow.js";
-import { GROUP_HINT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import type { RenderItem } from "../../src/tui/toolRenderer.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const flat = (s: string) => plain(s).replace(/\s*\n\s*/g, " ");
-/** A projected pane read back as plain text — a line is itself, a gutter block is its body. */
+/** A projected window read back as plain text — a line is itself, a gutter block is its body. */
 const text = (r: { items: readonly RenderItem[] }) =>
   r.items.map((i) => (i.kind === "line" ? i.line.text : i.body.map((b) => b.text).join("\n"))).join("\n");
 async function waitFor(cond: () => boolean, timeout = 2000) {
@@ -35,23 +42,28 @@ const SESSIONS: SessionInfo[] = [
   { sessionId: "2222bbbb-0002", summary: "write the release notes", lastModified: NOW - 3600_000 },
   { sessionId: "3333cccc-0003", summary: "fix the flaky test", lastModified: NOW - 86_400_000 },
 ];
+/** The default loader: a `PreviewLoad` that loaded, empty — `loadMessages` speaks that tagged contract
+ *  directly now (T-RESUME T2), not a bare row array. */
+const loaded = (messages: unknown[] = []): Promise<PreviewLoad> => Promise.resolve({ state: "loaded", messages });
 
 function mount(props: Partial<React.ComponentProps<typeof SessionPicker>> = {}) {
   const picked: string[] = [];
+  const pickedMessages: (unknown[] | undefined)[] = [];
   const renamed: [string, string][] = [];
   let cancelled = false;
   const r = render(
     <SessionPicker
       sessions={props.sessions ?? SESSIONS}
-      onPick={(s) => picked.push(s.sessionId)}
+      onPick={(s, messages) => { picked.push(s.sessionId); pickedMessages.push(messages); }}
       onCancel={() => { cancelled = true; }}
-      loadMessages={props.loadMessages ?? (async () => [])}
+      loadMessages={props.loadMessages ?? (() => loaded())}
       renameSession={props.renameSession ?? (async (id, t) => { renamed.push([id, t]); })}
       {...(props.refreshing !== undefined ? { refreshing: props.refreshing } : {})}
+      {...(props.fullscreen !== undefined ? { fullscreen: props.fullscreen } : {})}
       rows={40} columns={100}
     />,
   );
-  return { ...r, picked, renamed, wasCancelled: () => cancelled };
+  return { ...r, picked, pickedMessages, renamed, wasCancelled: () => cancelled };
 }
 
 describe("sessionPickerModel — the pure half", () => {
@@ -85,50 +97,11 @@ describe("sessionPickerModel — the pure half", () => {
     expect(previewMeta({ sessionId: "x", lastModified: NOW }, 1, new Date(NOW))).toBe("0s ago · 1 message");
   });
 
-  // WAVE 2 T8 replaced this test's subject. It used to pin `previewLines` — one trimmed line per
-  // conversational message — which is the very excerpt that leaked `<command-name>` into the pane (s2qa4-13).
-  // What it pins now is the pane's real product: the SAME projection the live transcript and `/resume`'s own
-  // replay draw, tail-anchored to the row budget.
-  it("projects the transcript through the replay renderer, tail-anchored to the row budget", () => {
-    const msgs = [
-      { type: "user", uuid: "u1", message: { content: "hello there\nmore" } },
-      { type: "user", message: { content: [{ type: "tool_result", content: "x" }] } },
-      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "hi" }] } },
-      { type: "system", subtype: "init" },
-    ];
-    const { items, hidden } = previewItems(msgs, { width: 60 });
-    expect(hidden).toBe(0);
-    // The prompt band and the assistant bullet, in reading order — no replay frame dividers around them
-    // (`resumed: …` / `resumed here · live` are a RESUME's chrome, and this pane resumes nothing).
-    expect(items.map((i) => (i.kind === "line" ? i.line.text.trimEnd() : "")).filter(Boolean))
-      .toEqual(["❯ hello there", "  more", "hi"]);
-    expect(items.every((i) => !/resumed/.test(i.kind === "line" ? i.line.text : ""))).toBe(true);
-    // …and the budget cuts from the TOP, because the pane is tail-anchored.
-    const long = previewItems(Array.from({ length: 30 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `say ${i}` }] } })), { width: 60, limit: 3 });
-    expect(long.items).toHaveLength(3);
-    expect(long.hidden).toBe(27);
-    expect((long.items.at(-1) as { line: { text: string } }).line.text).toBe("say 29");
-  });
-
-  it("cuts the projection to the row budget from the tail, counting ROWS and never dropping the last item", () => {
-    const line = (id: string): RenderItem => ({ kind: "line", id, line: { text: id } });
-    const lines = Array.from({ length: 20 }, (_, i) => line(`l${i}`));
-    const tail = previewTail(lines, 5);
-    expect(tail.items.map((i) => i.id)).toEqual(["l15", "l16", "l17", "l18", "l19"]);
-    expect(tail.hidden).toBe(15);
-    // A gutter block costs its BODY's rows, not one — a row budget counted in items would overflow the pane.
-    const block: RenderItem = { kind: "gutter-block", id: "b", gutter: GROUP_HINT_GUTTER, body: [{ text: "a" }, { text: "b" }, { text: "c" }] };
-    expect(previewTail([line("x"), block], 3)).toEqual({ items: [block], hidden: 1 });
-    // One item taller than the whole budget still draws: a pane rendering nothing is worse than one overflowing.
-    expect(previewTail([line("x"), block], 2).items).toEqual([block]);
-    expect(previewTail([], 5)).toEqual({ items: [], hidden: 0 });
-  });
-
-  it("sizes the projection to the PANE, not the terminal (the frame's paddingX)", () => {
-    expect(previewWidth(100)).toBe(98);
-    const [banded] = previewItems([{ type: "user", uuid: "u1", message: { content: "hi" } }], { width: previewWidth(40) }).items;
-    expect((banded as { line: { text: string } }).line.text).toHaveLength(37);   // the band is `width - 1`
-  });
+  // WAVE 2 T8's pane-projection test RETIRED at T-RESUME T2: the in-frame pane it pinned (`previewItems`/
+  // `previewTail`/`previewWidth`) is gone — the picker's preview stage is `ResumeTranscriptView` now, and
+  // `transcriptItems` (T1, sessionPickerModel.test.ts) is the equivalent coverage for its projection, tail
+  // anchoring and painted-row budget. What THIS file still owns is the picker's OWN behaviour around it —
+  // the two triggers, the confirm/cancel keys and the loaded-payload resume — further down.
 });
 
 // ── Wave S Task 10 ─────────────────────────────────────────────────────────────────────────────────
@@ -207,61 +180,35 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
     expect(isPreviewMessage({ type: "progress" })).toBe(false);
   });
 
-  // WAVE 2 T8. The pane is no longer one trimmed line per counted message, so "the same predicate drives
-  // both" is no longer TRUE and pinning it would pin the excerpt back. What survives — and is the half that
-  // ever mattered (qa4-07 ii) — is that `isPreviewMessage` is the ONLY thing deciding the `N messages`
-  // number, and that nothing it counted goes missing from the pane. The pane is now a SUPERSET: it also
-  // draws the tool traffic the count excludes, which is exactly upstream's arrangement (it renders the whole
-  // transcript and counts through `Pqs`).
-  it("count and pane agree on the messages, with the pane drawing the tool traffic the count excludes", () => {
+  // WAVE 2 T8, RE-TARGETED at T-RESUME T2 onto `transcriptItems` (the picker's ONLY projection now — the
+  // in-frame pane and its `previewItems`/`PREVIEW_MESSAGE_WINDOW` windowing are gone). What survives — and is
+  // the half that ever mattered (qa4-07 ii) — is that `isPreviewMessage` is the ONLY thing deciding the
+  // `N messages` number, and that nothing it counted goes missing from the view. The view is a SUPERSET: it
+  // also draws the tool traffic the count excludes, which is exactly upstream's arrangement (it renders the
+  // whole transcript and counts through `Pqs`).
+  it("count and view agree on the messages, with the view drawing the tool traffic the count excludes", () => {
     // The COUNT is still `isPreviewMessage` and nothing else — the image row in, and (since probe 107 retired
     // the unreachable `isMeta` test) the meta row counted on its content like any other user turn.
     const disagree = [userPrompt("plain ask"), imageOnly(), metaText(), assistantText("reply")];
     expect(previewMessageCount(disagree)).toBe(4);
     expect(previewMessageCount(disagree)).toBe(disagree.filter(isPreviewMessage).length);
-    const drawn = text(previewItems(disagree, { width: 60 }));
+    const drawn = text(transcriptItems(disagree, { width: 60, budget: 200 }));
     expect(drawn).toContain("plain ask");
     expect(drawn).toContain("reply");
-    // The pane is a SUPERSET of the count: a tool turn contributes nothing to `N messages` and still draws.
-    // The pair must be MATCHED — an unanswered call is an open one, and the compact projection leaves those
-    // to the live pending region, which a static pane has no business drawing.
+    // The view is a SUPERSET of the count: a tool turn contributes nothing to `N messages` and still draws
+    // (detail-all, forced — a resumed tool call's own header renders, unlike the old compact fold).
     const tools = [userPrompt("go"),
       { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t9", name: "Read", input: { file_path: "/tmp/a.ts" } }] } },
       { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t9", content: "x" }] } }];
     expect(previewMessageCount(tools)).toBe(1);
-    expect(text(previewItems(tools, { width: 60 }))).toContain("Read");
-    // And the pane stays inside its row budget however long the transcript is, reporting what it cut.
+    expect(text(transcriptItems(tools, { width: 60, budget: 200 }))).toContain("Read");
+    // And the view stays inside a caller-supplied budget however long the transcript is (T1's own coverage
+    // of the exact painted-row arithmetic; this is the count/view-agreement half only).
     const rows = manyMixedRows(40);
     expect(previewMessageCount(rows)).toBe(rows.filter(isPreviewMessage).length);
-    expect(previewMessageCount(rows)).toBeGreaterThan(PREVIEW_ROWS);
-    const pane = previewItems(rows, { width: 60 });
-    expect(pane.items.length).toBeLessThanOrEqual(PREVIEW_ROWS);
-    expect(pane.hidden).toBeGreaterThan(0);
-  });
-
-  // THE SECOND TRUNCATION (review M2). `previewItems` windows its input before it projects, so on a long
-  // session `hidden` counts rows the BUDGET cut out of a projection the WINDOW had already shortened — a
-  // number the pane has evidence is too small. The window is what bounds a keystroke-time projection over a
-  // session holding thousands of rows, so it stays; what changes is that the pane stops printing the short
-  // number flat and prints it as a floor.
-  // The fixture's length is a LITERAL, deliberately: sized off `PREVIEW_MESSAGE_WINDOW` it would grow with any
-  // raise of the cap and stay green through the very edit it exists to catch.
-  it("windows the input at PREVIEW_MESSAGE_WINDOW and marks the cut count as a floor when it did", () => {
-    const long = Array.from({ length: 400 }, (_, i) => assistantText(`say ${i}`));
-    expect(long.length).toBeGreaterThan(PREVIEW_MESSAGE_WINDOW);
-    const pane = previewItems(long, { width: 60 });
-    expect(pane.windowTruncated).toBe(true);
-    // Counted over the WINDOW, not the transcript: 200 read, PREVIEW_ROWS drawn, the rest reported.
-    expect(pane.hidden).toBe(PREVIEW_MESSAGE_WINDOW - PREVIEW_ROWS);
-    expect(pane.hidden).toBeLessThan(long.length - PREVIEW_ROWS);              // …which is short of the truth
-    expect(text(pane)).toContain(`say ${long.length - 1}`);                    // still anchored on the real last row
-    expect(text(pane)).not.toContain(`say ${long.length - PREVIEW_MESSAGE_WINDOW - 1}`);   // …and blind before the window
-    expect(moreAbove(pane.hidden, pane.windowTruncated)).toBe(`↑ ${PREVIEW_MESSAGE_WINDOW - PREVIEW_ROWS}+ more above`);
-    // The `+` is earned, not decorative: a transcript the window did not touch reports a flat, exact count.
-    const short = previewItems(Array.from({ length: 30 }, (_, i) => assistantText(`say ${i}`)), { width: 60 });
-    expect(short.windowTruncated).toBe(false);
-    expect(moreAbove(short.hidden, short.windowTruncated)).toBe(`↑ ${30 - PREVIEW_ROWS} more above`);
-    expect(moreAbove(5)).toBe("↑ 5 more above");                               // every other caller is unchanged
+    expect(previewMessageCount(rows)).toBeGreaterThan(5);
+    const window = transcriptItems(rows, { width: 60, budget: 5 });
+    expect(window.items.length).toBeGreaterThan(0);
   });
 });
 
@@ -350,15 +297,14 @@ describe("SessionPicker — the list stage (L476609)", () => {
   });
 });
 
-describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () => {
-  it("loads the highlighted session, shows its tail and its meta, and resumes on Enter", async () => {
+describe("SessionPicker — Space/Ctrl+V open the full-screen view (T-RESUME T2, canon L584023/L584057-584059)", () => {
+  it("loads the highlighted session, shows the full-screen view (no header/title), and Enter resumes WITH the loaded messages (canon G8)", async () => {
     const calls: string[] = [];
-    const r = mount({
-      loadMessages: async (id) => { calls.push(id); return [
-        { type: "user", message: { content: "what does this do?" } },
-        { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "it resumes" }] } },
-      ]; },
-    });
+    const msgs = [
+      { type: "user", message: { content: "what does this do?" } },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "it resumes" }] } },
+    ];
+    const r = mount({ loadMessages: async (id) => { calls.push(id); return { state: "loaded", messages: msgs }; } });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
     r.stdin.write(" ");
     await waitFor(() => flat(frame(r.lastFrame)).includes("it resumes"));
@@ -367,24 +313,57 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(f).toContain("what does this do?");
     expect(f).toContain("2 messages");
     expect(f).toContain("enter to resume");
-    expect(f).not.toContain("write the release notes");                     // the pane REPLACES the list
+    expect(f).not.toContain("write the release notes");                     // the view REPLACES the list
+    expect(f).not.toContain("Resume session");                              // …and its title too — canon has no header (L583628)
     r.stdin.write("\r");
     await waitFor(() => r.picked.length > 0);
     expect(r.picked).toEqual(["1111aaaa-0001"]);
+    expect(r.pickedMessages[0]).toBe(msgs);                                 // IDENTITY — the loaded array, not a re-read
+  });
+
+  it("Ctrl+V ALSO opens the view, from list mode (canon G6, L584023)", async () => {
+    const r = mount({ loadMessages: async () => ({ state: "loaded", messages: [{ type: "user", message: { content: "hi there" } }] }) });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write("\x16");                                                  // ctrl+v
+    await waitFor(() => flat(frame(r.lastFrame)).includes("enter to resume"));
+    expect(flat(frame(r.lastFrame))).toContain("hi there");
+  });
+
+  it("y resumes with the loaded messages (identity-checked); n exits back to the intact list (canon G7)", async () => {
+    const msgs = [{ type: "user", message: { content: "hi" } }];
+    const r = mount({ loadMessages: async () => ({ state: "loaded", messages: msgs }) });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("enter to resume"));
+    r.stdin.write("y");
+    await waitFor(() => r.picked.length > 0);
+    expect(r.picked).toEqual(["1111aaaa-0001"]);
+    expect(r.pickedMessages[0]).toBe(msgs);
+  });
+
+  it("n exits back to the intact list without resuming (canon G7)", async () => {
+    const r = mount({ loadMessages: async () => ({ state: "loaded", messages: [{ type: "user", message: { content: "hi" } }] }) });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("enter to resume"));
+    r.stdin.write("n");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("space to preview"));
+    expect(r.picked).toEqual([]);
+    expect(r.wasCancelled()).toBe(false);
   });
 
   // The cost of a MODELESS search (upstream's is a mode that disables the list): space cannot be both the
   // preview key and a word separator, so it is the preview key only from an EMPTY query — the state the
   // footer advertises it in — and types once a query exists. Both arms pinned; recorded divergence (T15).
-  it("space TYPES into a live query instead of previewing, so a multi-word search is reachable", async () => {
+  it("space TYPES into a live query instead of opening the view, so a multi-word search is reachable", async () => {
     let loads = 0;
-    const r = mount({ loadMessages: async () => { loads++; return []; } });
+    const r = mount({ loadMessages: async () => { loads++; return { state: "loaded", messages: [] }; } });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
     for (const c of "the") r.stdin.write(c);
     await waitFor(() => flat(frame(r.lastFrame)).includes("⌕ the"));
     r.stdin.write(" "); r.stdin.write("p");
     await waitFor(() => flat(frame(r.lastFrame)).includes("⌕ the p"));
-    expect(loads).toBe(0);                                                  // no preview was opened
+    expect(loads).toBe(0);                                                  // no view was opened
     expect(flat(frame(r.lastFrame))).toContain("refactor the parser");      // "the p" still matches it
     expect(flat(frame(r.lastFrame))).not.toContain("fix the flaky test");
   });
@@ -400,8 +379,8 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(r.picked).toEqual(["3333cccc-0003"]);                            // NOT the first row of the old list
   });
 
-  it("Esc leaves the pane for the list without resuming anything", async () => {
-    const r = mount({ loadMessages: async () => [{ type: "user", message: { content: "hi" } }] });
+  it("Esc leaves the view for the list without resuming anything", async () => {
+    const r = mount({ loadMessages: async () => ({ state: "loaded", messages: [{ type: "user", message: { content: "hi" } }] }) });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
     r.stdin.write(" ");
     await waitFor(() => flat(frame(r.lastFrame)).includes("enter to resume"));
@@ -411,12 +390,48 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(r.wasCancelled()).toBe(false);                                   // …and did NOT close the picker
   });
 
-  // ── WAVE 2 T8 (s2qa4-13/14) ───────────────────────────────────────────────────────────────────────
-  // The pane used to be a hand-rolled excerpt — the first non-blank line of each countable message — which
-  // printed a slash command as the raw `<command-name>/cost</command-name>` the store holds and its reply as
-  // `<local-command-stdout>…`. The fix is not a second envelope stripper: it is to stop having a second
-  // renderer at all. The pane now draws `projectCompact(replayDocument(…))`, the SAME two primitives the live
-  // transcript and `/resume`'s own replay use, so every species router, fold and gutter arrives with them.
+  it("shows the bare loading state until the read settles, then the full footer (canon L583604-583606)", async () => {
+    let resolveLoad!: (load: PreviewLoad) => void;
+    const r = mount({ loadMessages: async () => new Promise<PreviewLoad>((res) => { resolveLoad = res; }) });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("Loading session"));
+    const loading = flat(frame(r.lastFrame));
+    expect(loading).toContain("esc to cancel");
+    expect(loading).not.toContain("enter to resume");                      // no footer chrome while loading
+    resolveLoad({ state: "loaded", messages: [{ type: "user", message: { content: "hi" } }] });
+    await waitFor(() => flat(frame(r.lastFrame)).includes("enter to resume"));
+  });
+
+  it("a rejecting loader lands on the failure copy, not a crash (defensive catch)", async () => {
+    const r = mount({ loadMessages: async () => { throw new Error("gone"); } });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes(PREVIEW_EMPTY));
+  });
+
+  it("a load that resolves `failed` shows the same failure copy (the normal production path)", async () => {
+    const r = mount({ loadMessages: async () => ({ state: "failed", error: "ENOENT" }) });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes(PREVIEW_EMPTY));
+  });
+
+  it("has no `more above` indicator in this view — canon has none here (spec non-goal)", async () => {
+    const long = Array.from({ length: 30 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `reply number ${i}` }] } }));
+    const r = mount({ loadMessages: async () => ({ state: "loaded", messages: long }) });
+    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
+    r.stdin.write(" ");
+    await waitFor(() => flat(frame(r.lastFrame)).includes("reply number 29"));
+    const f = flat(frame(r.lastFrame));
+    expect(f).toContain("reply number 0");                                 // well under the 200-item cap — nothing was cut
+    expect(f).not.toMatch(/more above/i);
+  });
+
+  // ── WAVE 2 T8 (s2qa4-13/14), RE-TARGETED at T-RESUME T2's detail-all takeover ────────────────────────
+  // The view draws `projectDetail(replayDocument(…), {projection:"detail-all"})` now — the SAME primitive
+  // family the live transcript and `/resume`'s own replay use, forced verbose (canon L563347/L563371), so
+  // every species router, fold and gutter arrives with it, EXPANDED rather than folded.
   const ENVELOPE = [
     { type: "user", uuid: "u1", message: { content: "what does this do?" } },
     { type: "user", uuid: "u2", message: { content: "<command-name>/cost</command-name>\n<command-message>cost</command-message>\n<command-args></command-args>" } },
@@ -426,8 +441,8 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "it resumes" }] } },
   ];
 
-  it("renders the slash-command pair through the species router — no envelope tag reaches the pane", async () => {
-    const r = mount({ loadMessages: async () => ENVELOPE });
+  it("renders the slash-command pair through the species router — no envelope tag reaches the view", async () => {
+    const r = mount({ loadMessages: async () => ({ state: "loaded", messages: ENVELOPE }) });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
     r.stdin.write(" ");
     await waitFor(() => flat(frame(r.lastFrame)).includes("it resumes"));
@@ -436,58 +451,21 @@ describe("SessionPicker — Space opens the preview pane (L476570/L476095)", () 
     expect(f).toContain("❯ /cost");                                       // the echo, as the transcript draws it
     expect(f).toContain("Total cost: $0.42");                             // its stdout, in the `⎿` gutter
     expect(f).toContain("⎿");
-    // …and the projection is sized to the PANE, not the terminal. `previewWidth` is pinned pure above, but
-    // only this asserts the component THREADS it: the frame spends one column of `paddingX` on each side of
-    // a 97-column band, so at columns={100} the band's line is exactly 98 wide. Handing the projection the
-    // raw terminal width makes it 99 — one column wider than the box it sits in, which is the wrap-inside-
-    // the-pane failure this whole design exists to prevent (review I1).
-    const band = plain(frame(r.lastFrame)).split("\n").find((l) => l.includes("what does this do?"))!;
-    expect(band.length).toBe(98);
   });
 
-  it("draws the tool turn in its projected form, not as raw input JSON", async () => {
-    const r = mount({ loadMessages: async () => ENVELOPE });
+  it("draws the tool turn EXPANDED — detail-all forced (canon L563347/L563371), not the collapsed fold", async () => {
+    const r = mount({ loadMessages: async () => ({ state: "loaded", messages: ENVELOPE }) });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
     r.stdin.write(" ");
     await waitFor(() => flat(frame(r.lastFrame)).includes("it resumes"));
     const f = flat(frame(r.lastFrame));
-    expect(f).toContain("Read 1 file");                                   // the fold row the transcript folds it to
+    expect(f).toContain("Read(");                                         // the call header — detail-all shows it, compact never did
+    expect(f).toContain("notes.ts");
+    expect(f).not.toContain("Read 1 file");                                // the OLD compact fold's summary line — gone
     expect(f).not.toContain("file_path");
     expect(f).not.toContain("tool_use");
-    // A STATIC pane offers no chord it cannot answer: ctrl+o does nothing here, so the expand hint is off.
-    expect(f).not.toContain("ctrl+o");
+    expect(f).not.toContain("ctrl+o");                                    // nothing here is foldable — no expand hint
     expect(f).toContain("4 messages");                                    // …and the count is untouched by any of it (a slash command is 2)
-  });
-
-  it("tail-anchors the projection at the row budget and says how many rows it cut", async () => {
-    const long = Array.from({ length: 30 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `reply number ${i}` }] } }));
-    const r = mount({ loadMessages: async () => long });
-    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
-    r.stdin.write(" ");
-    await waitFor(() => flat(frame(r.lastFrame)).includes("reply number 29"));
-    const f = flat(frame(r.lastFrame));
-    expect(f).toContain(moreAbove(30 - PREVIEW_ROWS));                    // the rows CUT from this projection
-    expect(f).not.toContain(`reply number ${29 - PREVIEW_ROWS}`);         // …which are the oldest ones
-    expect(f).toContain(`reply number ${30 - PREVIEW_ROWS}`);             // the tail starts exactly there
-    expect(f).not.toContain(`${30 - PREVIEW_ROWS}+ more above`);          // nothing was windowed, so no floor mark
-  });
-
-  it("spells the cut count as a floor once the message window has already shortened the transcript", async () => {
-    const long = Array.from({ length: 400 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `reply number ${i}` }] } }));
-    const r = mount({ loadMessages: async () => long });
-    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
-    r.stdin.write(" ");
-    await waitFor(() => flat(frame(r.lastFrame)).includes(`reply number ${long.length - 1}`));
-    // The number is what the pane actually projected — the window's 200 rows minus the budget's 12 — and the
-    // `+` is the pane admitting it never read the 200 rows before that.
-    expect(flat(frame(r.lastFrame))).toContain(moreAbove(PREVIEW_MESSAGE_WINDOW - PREVIEW_ROWS, true));
-  });
-
-  it("a preview that cannot be read is an empty pane, not a crash", async () => {
-    const r = mount({ loadMessages: async () => { throw new Error("gone"); } });
-    await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
-    r.stdin.write(" ");
-    await waitFor(() => flat(frame(r.lastFrame)).includes("(no messages)"));
   });
 });
 
@@ -547,14 +525,14 @@ describe("SessionPicker — Ctrl-R renames (L476568/L476609)", () => {
     expect(r.renamed).toEqual([]);
   });
 
-  it("counts the previewed transcript with the PANE's predicate, not its raw row count (qa4-07 ii)", async () => {
+  it("counts the previewed transcript with the view's predicate, not its raw row count (qa4-07 ii)", async () => {
     const r = mount({
-      loadMessages: async () => [
+      loadMessages: async () => ({ state: "loaded", messages: [
         { type: "user", message: { content: "what does this do?" } },
         { type: "user", message: { content: [{ type: "tool_result", content: "1000 lines" }] } },
         { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } },
         { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "it resumes" }] } },
-      ],
+      ] }),
     });
     await waitFor(() => frame(r.lastFrame).includes("refactor the parser"));
     r.stdin.write(" ");
@@ -652,7 +630,7 @@ describe("SessionPicker — the widen controls (Wave S T10, A12)", () => {
     const renames: [string, string, string | undefined][] = [];
     const r = render(
       <SessionPicker sessions={[foreign]} onPick={() => {}} onCancel={() => {}} rows={40} columns={100}
-                     loadMessages={async (id, dir) => { loads.push([id, dir]); return [{ type: "user", message: { content: "over there" } }]; }}
+                     loadMessages={async (id, dir) => { loads.push([id, dir]); return { state: "loaded", messages: [{ type: "user", message: { content: "over there" } }] }; }}
                      renameSession={async (id, t, dir) => { renames.push([id, t, dir]); }} />,
     );
     await waitFor(() => frame(r.lastFrame).includes("a session from another repo"));
@@ -666,5 +644,42 @@ describe("SessionPicker — the widen controls (Wave S T10, A12)", () => {
     r.stdin.write("renamed there\r");
     await waitFor(() => renames.length > 0);
     expect(renames).toEqual([["4444dddd-0004", "renamed there", "/elsewhere"]]);
+  });
+});
+
+// T-RESUME T2 — THE ASSEMBLED PATH (plan-review catch, brief cell b2). Every test above mounts
+// `SessionPicker` bare, which proves the COMPONENT'S contract but not the WIRING: `ChatApp.tsx` threads
+// `previewSession` into `loadMessages` and `pickSession` into `onPick`, and `useChat.ts`'s `resumeInto` is
+// what decides whether a confirm re-reads the file. This test goes through the real `ChatApp`/`useChat`
+// assembly with an INSTRUMENTED loader that fails on any call beyond the first, so a regression that
+// silently reintroduced a second read (the exact defect `resumeInto`'s old unconditional
+// `getSessionMessages` call was) fails LOUD here even though every unit above it would still pass green.
+describe("T-RESUME T2 — the assembled path: ChatApp/useChat, y resumes with zero further loader calls", () => {
+  it("previews once, then `y` resumes WITHOUT reading the session a second time", async () => {
+    let calls = 0;
+    const deps = {
+      hasWorktrees: async () => false,
+      listSessions: async () => SESSIONS,
+      getSessionMessages: async () => {
+        calls++;
+        if (calls > 1) throw new Error("resumeInto must not read the session a second time");
+        return [{ type: "user", message: { content: "hello from disk" } }];
+      },
+    };
+    const fake = fakeRemote();
+    const r = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={deps as never} />);
+    await waitFor(() => frame(r.lastFrame).includes("❯\u00a0"));      // composer mounted (chat.test.tsx's own marker — NBSP, not a plain space)
+    r.stdin.write("/resume");
+    await waitFor(() => frame(r.lastFrame).includes("/resume"));
+    r.stdin.write("\r");
+    await waitFor(() => frame(r.lastFrame).includes("Resume session"));
+    r.stdin.write(" ");                                                     // space: open the full-screen view
+    await waitFor(() => flat(frame(r.lastFrame)).includes("hello from disk"));
+    expect(calls).toBe(1);                                                  // the preview's ONE read
+    r.stdin.write("y");                                                     // confirm — must NOT read again
+    await waitFor(() => !flat(frame(r.lastFrame)).includes("Resume session"));
+    expect(calls).toBe(1);                                                  // still just one — the loaded payload resumed it
+    expect(flat(frame(r.lastFrame))).toContain("hello from disk");          // …and the resumed transcript is really on screen
+    r.unmount();
   });
 });

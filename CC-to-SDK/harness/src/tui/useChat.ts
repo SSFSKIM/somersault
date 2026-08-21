@@ -61,7 +61,7 @@ import { openInEditor } from "./externalEditor.js";
 import { STARTER_KEYBINDINGS, userBindingsPath } from "./keys/userBindings.js";
 import { useBindingLookup } from "./keys/KeymapProvider.js";
 import { backgroundHintText, expandHintText } from "./keys/hints.js";
-import { NARROWED_SCOPE, RESUME_CANCELLED, type ResumeScope } from "./sessionPickerModel.js";
+import { NARROWED_SCOPE, RESUME_CANCELLED, type PreviewLoad, type ResumeScope } from "./sessionPickerModel.js";
 import { hasWorktrees as realHasWorktrees } from "./worktrees.js";
 import { clearViewport } from "./clearViewport.js";
 import { DEFAULTS, summarizeUsage, listSessions as realListSessions, getSessionMessages as realGetSessionMessages, resolveAutoModel, resolveModelAlias, renameSession as realRenameSession, tagSession as realTagSession, getSessionInfo as realGetSessionInfo } from "../index.js";
@@ -2291,13 +2291,24 @@ export function useChat(
   // since busy is now cleared only by that event (no `.finally()` safety net post-refactor), busy would stay
   // stuck true forever and drainNext would never fire. We never auto-interrupt the old turn — that's the
   // human's call (Esc).
-  async function resumeInto(id: string, dir?: string) {
+  /** `messages`, when supplied (T-RESUME T2), is the picker's preview stage's ALREADY-LOADED payload — see
+   *  `pickSession` below. It bypasses BOTH the read and the empty-guard: a re-read would violate spec R-1
+   *  ("resume must not re-read the file and reject an empty result after a successful preview"), and a
+   *  loaded-but-genuinely-empty session is not the same failure the guard exists to catch (a rejecting
+   *  read) — it is a legitimate transcript the preview view already showed with nothing above its footer.
+   *  Every OTHER caller (`doContinue`, the initial `--resume`/`--continue` launch, a list-stage Enter with
+   *  no preview opened) passes no third argument and keeps the original read-and-guard behaviour unchanged. */
+  async function resumeInto(id: string, dir?: string, messages?: unknown[]) {
     if (disposed.current) return;
     if (busy) { notice("cannot resume mid-turn — wait for the turn to finish or press Esc to interrupt"); return; }
-    let msgs: any[] = [];
-    try { msgs = await getSessionMessages(id, dir); } catch { msgs = []; }
-    if (disposed.current) return;
-    if (!msgs.length) { append([{ text: `⚠ couldn't resume ${id.slice(0, 8)} — no history found`, dim: true }]); return; }
+    let msgs: any[];
+    if (messages !== undefined) {
+      msgs = messages as any[];
+    } else {
+      try { msgs = await getSessionMessages(id, dir); } catch { msgs = []; }
+      if (disposed.current) return;
+      if (!msgs.length) { append([{ text: `⚠ couldn't resume ${id.slice(0, 8)} — no history found`, dim: true }]); return; }
+    }
     const sameSession = session.sessionId === id;
     setSession(makeSession(id));                                   // [session] effect disposes the old
     clearLiveOpen();                                               // the old engine's in-flight calls died with it — nothing of ours is live now
@@ -2335,7 +2346,10 @@ export function useChat(
       await resumeInto(id);
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
-  function pickSession(info: SessionInfo) {
+  /** `messages` (T-RESUME T2): the picker's preview-stage confirm (`ResumeTranscriptView`'s Enter/`y`) hands
+   *  back the SAME array it rendered from — see `resumeInto`'s doc comment for why that bypasses the read. A
+   *  list-stage pick (Enter with no preview opened) still calls this with one argument, unchanged. */
+  function pickSession(info: SessionInfo, messages?: unknown[]) {
     if (disposed.current) return;
     setPicker({ open: false, sessions: [], hasWorktree: false });   // NOT closePicker: a pick is not a cancel
     // The row's OWN directory, not this REPL's: after Ctrl+A the list spans every project, and reading the
@@ -2343,15 +2357,26 @@ export function useChat(
     // finding 2). A narrowed row carries this very cwd, so the ordinary path is unchanged. What is NOT
     // changed is the engine: `makeSession` resumes in the host's own directory, so a cross-project resume
     // replays that transcript here rather than moving the working directory to it.
-    void resumeInto(info.sessionId, info.cwd);
+    void resumeInto(info.sessionId, info.cwd, messages);
   }
   // F6 T11: the resume picker's two extra verbs. They are the SAME two session calls `/resume` and `/rename`
   // already use — routed out to the picker rather than duplicated in it, so the reader stays the one in
-  // `deps` (a test swaps it once and both surfaces follow). A preview that cannot be read is an EMPTY
-  // transcript, never a throw: the pane's job is to show what is there. `dir` is the picker's row's own
-  // directory (finding 2 again) — the pane and the rename field must not act on a different project than
-  // the one the highlighted row names.
-  const previewSession = (id: string, dir?: string) => getSessionMessages(id, dir).catch(() => [] as any[]);
+  // `deps` (a test swaps it once and both surfaces follow). `dir` is the picker's row's own directory
+  // (finding 2 again) — the pane and the rename field must not act on a different project than the one the
+  // highlighted row names.
+  //
+  // T-RESUME T1: this used to be `.catch(() => [])`, which collapsed a genuine read failure into the exact
+  // same shape as a successfully-loaded EMPTY session — `failed` was unreachable in production, and the
+  // picker had no way to tell "nothing here" from "couldn't read this." The seam now resolves the tagged
+  // `PreviewLoad` (never rejects itself — a caller that wants to react to failure reads `.state`, it does
+  // not catch): `loaded` on success, `failed` with the error's message on rejection. `loading` has no arm
+  // here on purpose — it is the CONSUMER's own state before this promise settles, not something the reader
+  // ever produces.
+  const previewSession = (id: string, dir?: string): Promise<PreviewLoad> =>
+    getSessionMessages(id, dir).then(
+      (messages): PreviewLoad => ({ state: "loaded", messages }),
+      (e): PreviewLoad => ({ state: "failed", error: (e as Error).message }),
+    );
   // W-C T8 rides here too, and it is `id`-gated for the reason the picker exists: this verb renames ANY row
   // in the list, and renaming some other project's session must not retitle this terminal.
   const renamePickedSession = (id: string, title: string, dir?: string) =>
