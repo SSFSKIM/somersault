@@ -41,7 +41,7 @@
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { replyEngineThrow } from "./engineThrow.js";
-import { DECISION_PENDING, forwardSwapOp, replySwapThrow, swapEngine } from "./rewind.js";
+import { DECISION_PENDING, forwardSwapOp, replySwapThrow, swapBaseConfig, swapEngine } from "./rewind.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import { SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
@@ -315,7 +315,12 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
       // genuinely has no store id until its first init frame, and the router's init latch is what learns
       // it (router.ts's routeInit) — stamping the old id here would point every reader at a transcript
       // this thread no longer has.
-      await swapEngine(srv, record, () => factory({ ...(record.config ?? {}), resume: undefined, resumeAt: undefined }), undefined);
+      // Every session-identity knob dropped, not just the two this site used to name (`swapBaseConfig`):
+      // an inherited `sessionId` is honored by the engine, so the fresh conversation would be written back
+      // into the id this clear just dropped — the exact thing the `undefined` above is passed to avoid —
+      // and an inherited `continueSession` would reopen the most recent conversation in the cwd instead of
+      // starting one.
+      await swapEngine(srv, record, () => factory(swapBaseConfig(record.config)), undefined);
       record.updatedAt = nowSec();
       // A clear IS a rewind, as far as a client's transcript is concerned: the conversation it was
       // rendering is gone and every cursor into it is stale. So it rides the SAME notification rather

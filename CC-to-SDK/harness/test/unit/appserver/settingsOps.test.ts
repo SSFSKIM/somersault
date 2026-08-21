@@ -547,6 +547,34 @@ describe("appserver thread/clear (M2b Task 3b)", () => {
     expect(configs[1].resume).toBeUndefined();
   });
 
+  it("a clear drops EVERY session-identity knob, not just the two it used to name", async () => {
+    // The sibling half of the rewind fix. This site nulled `resume`/`resumeAt` only, so a thread started
+    // with a caller-chosen `sessionId` — which the engine honors (config/types.ts, probe 53) — wrote its
+    // fresh conversation straight back into the id the clear had just dropped, defeating the `undefined`
+    // post-swap id this method passes precisely so the init latch can learn a new one. `continueSession`
+    // is worse in kind: with no `resume` to be exclusive with, it reopens the most recent conversation in
+    // the cwd instead of starting one, which is the opposite of what a clear means.
+    const configs: Record<string, unknown>[] = [];
+    let n = 0;
+    const srv = new AppServer({}, { sessionFactory: (cfg: Record<string, unknown>) => { configs.push(cfg); return [mkEngine({ sessionId: "sess-old" }), mkEngine({})][Math.min(n++, 1)] as never; } });
+    const s = mkSink(); const c = srv.connect(s.sink);
+    init(c, 1);
+    send(c, { id: 2, method: "thread/start", params: { config: {
+      model: "claude-opus-4-8", resume: "sess-old", resumeAt: "a1", droppedTurnUuid: "d1",
+      forkSession: true, sessionId: "chosen-1", continueSession: true,
+    } } });
+    await tick();
+    const threadId = parsed(s.lines).find((f) => f.id === 2).result.thread.id;
+
+    send(c, { id: 3, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    for (const knob of ["resume", "resumeAt", "droppedTurnUuid", "forkSession", "sessionId", "continueSession"]) {
+      expect(configs[1][knob], `${knob} must not survive the clear`).toBeUndefined();
+    }
+    expect(configs[1].model).toBe("claude-opus-4-8"); // non-identity config still rides across
+  });
+
   it("broadcasts thread/rewound {cleared:true} to subscribers AND watchers, carrying an explicit null id", async () => {
     const { s, w, c, threadId } = await bootThread({ sessions: [mkEngine({ sessionId: "s1" }), mkEngine({})], watcher: true });
 

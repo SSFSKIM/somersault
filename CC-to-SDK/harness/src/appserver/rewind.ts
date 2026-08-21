@@ -87,6 +87,36 @@ async function dryRunRewind(session: EngineSession, uuid: string): Promise<DryRu
  *  of it, so three separately-typed copies of the string would be three ways for that match to rot. */
 export const DECISION_PENDING = "a decision is pending — answer it first";
 
+/** The swap family's shared starting point: `record.config` with EVERY session-identity knob written to
+ *  `undefined`, so each member states the one anchor it means and inherits none of the other five.
+ *
+ *  `record.config` is the client's VERBATIM `thread/start` passthrough (server.ts's `buildConfig`), so a
+ *  thread opened with a fork, a truncate, a caller-chosen id or a `continue` still carries those keys for
+ *  the rest of its life. A spread that merely OMITS a key leaves the original in force, which is why every
+ *  one is written explicitly — the same rule `thread/reopen` already stated for the three it nulled.
+ *
+ *  Nulling all six rather than the subset each site happened to think of, because they are one question
+ *  asked six ways (the vocabulary review.ts's `SESSION_IDENTITY` names for the same reason) and each site
+ *  had a different, quiet hole:
+ *   - `thread/rewind` set `resume`/`resumeAt`/`droppedTurnUuid` but inherited `forkSession`, so rewinding a
+ *     FORKED thread branched to a brand-new conversation while `swapEngine` re-stamped the old id — a
+ *     thread reporting an identity it no longer had. Its sibling `thread/reopen` guards exactly this and
+ *     says so in its header; the guard simply never reached here.
+ *   - `thread/clear` nulled `resume`/`resumeAt` only, so a cleared thread inherited `sessionId` — honored
+ *     by the engine (config/types.ts, probe 53) — and wrote its fresh conversation straight back into the
+ *     id it had just dropped, defeating the `undefined` post-swap id that method passes on purpose.
+ *   - `continueSession` is `resume`'s documented mutual exclusive ("excl. with resume", config/types.ts)
+ *     and nothing enforces that, so on the one member that wants a FRESH conversation it would reopen the
+ *     most recent one in the cwd instead.
+ *
+ *  Set to `undefined` rather than deleted: `resolveOptions` reads every one of these as "absent" when
+ *  undefined, and an explicit write is what survives a spread. */
+export const swapBaseConfig = (config: Record<string, unknown> | undefined): Record<string, unknown> => ({
+  ...(config ?? {}),
+  resume: undefined, resumeAt: undefined, droppedTurnUuid: undefined,
+  forkSession: undefined, sessionId: undefined, continueSession: undefined,
+});
+
 /** The swap family's one host-op sender (§1d) — shared with `thread/clear` (settingsOps.ts), which is the
  *  fourth member of the family and must not grow a second copy of this. `{ok:false, error}` is the shape
  *  a throwing host handler produces (host/server.ts wraps every dispatch), so it is raised here and both
@@ -461,7 +491,13 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
         // `uuid` is the turn the truncation DISCARDS (the resume anchor is `prevUuid`, the entry before
         // it), which is exactly what `resumeDropsTurn` names — the value is already in hand, so the guard
         // costs nothing and catches the one thing the client's anchor list cannot show it.
-        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, uuid, record.config ?? {}), sessionId);
+        // Through `swapBaseConfig`, not raw: a thread STARTED as a fork carries `forkSession` in its
+        // verbatim config forever, and the factory below spreads it beside the `resume` it sets — the pair
+        // the SDK reads as "branch to a new session id". The engine would then open a different
+        // conversation while the `sessionId` passed to `swapEngine` re-stamps the old one, so the thread
+        // would report an identity it no longer holds, permanently (routeInit's latch early-returns on a
+        // stamped record, so the real id is never learned).
+        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, uuid, swapBaseConfig(record.config)), sessionId);
       }
       record.updatedAt = nowSec(); // a rewind is a mutation like any other (registry.ts's updatedAt contract)
       // Both scopes at once: the thread's own subscribers, and every server-scoped watcher — a rewind
@@ -573,10 +609,11 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
   record.chain = record.chain.then(async () => {
     try {
       const factory = srv.deps.sessionFactory ?? defaultReopenFactory;
-      // The three siblings are nulled EXPLICITLY, not omitted: `record.config` is a verbatim client
-      // passthrough and this is a spread (see the header) — a leftover `resumeAt`/`droppedTurnUuid` would
-      // resume the recovery truncated at a stale anchor, and `forkSession` would silently mint a new id.
-      await swapEngine(srv, record, () => factory({ ...(record.config ?? {}), resume: sessionId, resumeAt: undefined, droppedTurnUuid: undefined, forkSession: undefined }), sessionId);
+      // The siblings are nulled EXPLICITLY, not omitted — `record.config` is a verbatim client passthrough
+      // and this is a spread (see the header). This method's own three (`resumeAt`/`droppedTurnUuid` would
+      // resume the recovery truncated at a stale anchor; `forkSession` would silently mint a new id) plus
+      // the two it used to miss, now that `swapBaseConfig` states all six in one place.
+      await swapEngine(srv, record, () => factory({ ...swapBaseConfig(record.config), resume: sessionId }), sessionId);
       record.updatedAt = nowSec();
       // Released HERE, ahead of the announcements rather than only in the finally, because everything below
       // describes the RECOVERED thread and would otherwise describe the swap that is finishing. Nothing can
