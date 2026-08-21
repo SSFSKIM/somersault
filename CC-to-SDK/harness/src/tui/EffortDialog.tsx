@@ -21,7 +21,11 @@ import { EffortRow } from "./EffortRow.js";
 import { EFFORT_DIALOG_FOOTER, EFFORT_LEVELS, stepEffort, type EffortLevel } from "./modelPickerModel.js";
 
 export const EFFORT_TITLE = "Set effort level";
-export const EFFORT_SUBTITLE = "How much reasoning effort Claude spends on each turn. This session only.";
+// T-EFFORT: was "…This session only." — false the moment persistence shipped (useChat.ts's `applyEffort` is
+// the one choke point EVERY level-setting surface funnels through, this dialog's Enter included, and it
+// persists low|medium|high|xhigh unconditionally). `max` is the one level that still stays session-only —
+// named here rather than let the subtitle overclaim in the other direction.
+export const EFFORT_SUBTITLE = "How much reasoning effort Claude spends on each turn. Saved as your default for new sessions (except max).";
 
 export function EffortDialog({ level, levels = EFFORT_LEVELS, defaultEffort, modelName, supported = true, onConfirm, onCancel }: {
   /** The level in force when the dialog opened — the staging cursor's starting point. */

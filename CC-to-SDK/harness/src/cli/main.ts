@@ -18,6 +18,7 @@ import { resolveModelAlias } from "../config/models.js";
 import { DEFAULTS } from "../config/types.js";
 import { resolvedPermissionMode } from "../config/resolveOptions.js";
 import { parseThinkArg, thinkingConfigFrom } from "../tui/thinkLevels.js";
+import { isPersistableEffortLevel } from "../tui/modelPickerModel.js";
 import { createPromptLatch } from "../hooks/promptLatch.js";
 import { mergeHooks } from "../hooks/merge.js";
 // Value import, and safe: prefs.ts is plain fs + the theme table, no React (main.ts stays React-free).
@@ -407,13 +408,21 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // Already the FULL id: main()'s run arm resolved it (and failed the launch outright if it named
   // nothing), for every path rather than this one, so what arrives here is a session that exists.
   const { resume, ...hostConfig } = inv.config;
-  // F6 T11-fix — THE READER for the /model picker's "set as default" write. The picker persists
-  // `prefs.model`; this is the one place a foreground launch decides what model the session starts on, so
-  // this is where the default belongs. `--model` still wins: a flag the user typed for THIS run outranks a
+  // F6 T11-fix — THE READER for the /model picker's "set as default" write, and (T-EFFORT) for `/effort`'s
+  // own. ONE read: both `model` and `effort` persist to the same ccx-prefs file, so this is the one place a
+  // foreground launch decides what a session starts on for either axis, matching the model precedent this
+  // comment already describes. `--model` still wins: a flag the user typed for THIS run outranks a
   // preference they set once. From here it flows into `resolveOptions` exactly as `--model` does — no
   // engine round-trip, no new code path. `ccx attach` cannot honour it (the host it joins already owns its
   // model), and `-p`/`--bg` deliberately do not: a headless run takes its model from its invocation.
-  const model = inv.config.model ?? deps.loadPrefs().model;
+  const prefs = deps.loadPrefs();
+  const model = inv.config.model ?? prefs.model;
+  // T-EFFORT — the model precedent's exact twin, one line down: `--effort` still wins over a saved default,
+  // and the saved default is re-filtered through the SAME persistable-level gate the write side uses
+  // (`isPersistableEffortLevel`, canon's `Qdt` on read, R2 §2.5) — a hand-edited `"max"` in prefs.json is
+  // exactly as inert here as an attempted write of it would have been. `DEFAULTS.effort` stays the final
+  // rung when neither the flag nor a persisted default names a level.
+  const persistedEffort = isPersistableEffortLevel(prefs.effort) ? prefs.effort : undefined;
   // Wave T EP-T1: the REPL launches MANUAL like upstream (2.1.220 `gGl` L41536: `default` → "Manual").
   // QA sprint 1 found `rm` and `git init` running unconsulted because DEFAULTS.permissionMode is "auto"
   // (config/types.ts:161) and every surface resolves through it. Headless (-p/--bg) and the daemon KEEP
@@ -526,12 +535,13 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // engine is actually running BEFORE the first turn ends. Without it the Tab ladder's `auto` rung reads
       // an undefined model and silently downgrades the session the user asked for. `ccx attach` (above) has
       // no launch config to pass, and useChat handles that unknown by declining to switch at all.
-      // W-C T11 (EP-C6): `initialEffort` mirrors `resolveOptions.ts:52`'s own rule (the flag, else the
-      // harness default) for the same reason `initialModel` mirrors its model rule — the §C6.2 hint has to
-      // be able to name the level the engine is ACTUALLY running at mount, before any turn or catalog fetch.
-      // `ccx attach` (the other foreground path) passes none, and undefined there means no hint, which is
-      // the honest answer for a client that never saw a launch config.
-      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), promptLatch },
+      // W-C T11 (EP-C6): `initialEffort` mirrors `resolveOptions.ts:52`'s own rule for the same reason
+      // `initialModel` mirrors its model rule — the §C6.2 hint has to be able to name the level the engine
+      // is ACTUALLY running at mount, before any turn or catalog fetch. T-EFFORT adds the middle rung: the
+      // flag still wins, but a persisted default now outranks the harness default, the model precedent's
+      // exact shape (`model` above). `ccx attach` (the other foreground path) passes none, and undefined
+      // there means no hint, which is the honest answer for a client that never saw a launch config.
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), promptLatch },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);

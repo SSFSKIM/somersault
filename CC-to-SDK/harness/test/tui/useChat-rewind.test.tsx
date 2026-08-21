@@ -154,8 +154,37 @@ describe("useChat: rewind flow", () => {
     api.confirmRewind!(ANCHOR, "both");
     await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
     (api as any).run!("/copy");
-    await waitFor(() => frame(lastFrame).includes("✓ copied"));
+    await waitFor(() => frame(lastFrame).includes("Copied to clipboard"));
     expect(copied).toBe("the parser is fixed");
+  });
+
+  // T-COPY: proves the DISK seed fills the WHOLE ring, not just slot 1 (today's gap — before this ticket
+  // `resumeInto`/rewind assigned a single string, so any N>1 silently fell back to "the newest" instead of
+  // erroring or reaching history). Two assistant replies survive the rewind; /copy 2 must reach the earlier
+  // one, which is only possible if `recentAssistantTexts(rows)` seeded the entire ring at the rewind site.
+  it("5c. after a rewind, /copy 2 reaches the second-newest replayed reply — the whole ring is seeded, not just slot 1", async () => {
+    const msgs = [
+      { type: "user", uuid: "u-fix1", message: { content: [{ type: "text", text: "fix the lexer" }] }, timestamp: "2026-07-28T07:00:00.000Z" },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the lexer is fixed" }] } },
+      { type: "user", uuid: "u-fix2", message: { content: [{ type: "text", text: "fix the parser" }] }, timestamp: "2026-07-28T08:00:00.000Z" },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the parser is fixed" }] } },
+    ];
+    const session = fakeRewindSession({ rewind: async () => {} });
+    let copied: string | undefined;
+    const deps = { getSessionMessages: async () => msgs, copyText: async (t: string) => { copied = t; } };
+    const api: Parameters<typeof RewindHost>[0]["api"] & { run?: (p: string) => void } = {};
+    function H() {
+      const c = useChat(() => session, {}, deps);
+      api.confirmRewind = (c as any).confirmRewind; (api as any).run = c.submit;
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.confirmRewind!(ANCHOR, "both");
+    await waitFor(() => frame(lastFrame).includes("⏪ rewound"));
+    (api as any).run!("/copy 2");
+    await waitFor(() => copied !== undefined);
+    expect(copied).toBe("the lexer is fixed");        // N=2 = second-newest, not the newest re-served
   });
 
   it("6. confirmRewind(anchor, 'code') rewinds but never fetches messages, notices 'code restored', and leaves the composer alone", async () => {

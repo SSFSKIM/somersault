@@ -63,15 +63,24 @@ function syntheticAssistant(m: any): boolean {
   return m?.is_api_error_message === true || m?.isApiErrorMessage === true || m?.message?.model === "<synthetic>";
 }
 
-/** The last assistant reply's text in a persisted transcript ("" if none). Lets a replayed view (resume,
- *  rewind) seed /copy with the reply that is actually ON SCREEN — the live message arm never saw it.
- *  Synthetic frames are skipped: /copy hands over what Claude said, never "API Error: 401 …". */
-export function lastAssistantText(messages: any[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
+/** Depth cap on the recent-assistant-text ring (canon's `sHw`, T-COPY R1 §1.6.1) — /copy N's addressable
+ *  range. The cap counts COLLECTED entries, not rows scanned: the walk keeps going past skipped rows. */
+export const RECENT_ASSISTANT_CAP = 20;
+
+/** The most recent assistant replies' text, NEWEST FIRST, capped at `cap` (T-COPY: generalized from the old
+ *  single-slot `lastAssistantText` so `/copy N` can index into history — N=1 is index 0, matching canon's
+ *  `o = N - 1`). Lets a replayed view (resume, rewind) seed /copy with what is actually ON SCREEN — the live
+ *  message arm never saw it. Synthetic frames are skipped entirely (not just at the head): /copy hands over
+ *  what Claude said, never "API Error: 401 …", at ANY N. Canon `tjh` (T-COPY R1 §1.6): backwards walk, text
+ *  blocks joined with "\n\n" (not a bare "\n" — decision 1), and a bare-truthiness non-empty gate on the
+ *  joined string (`if(i)`, not `.trim()` — decision 2, so a lone-whitespace-only reply still counts). */
+export function recentAssistantTexts(messages: any[], cap = RECENT_ASSISTANT_CAP): string[] {
+  const out: string[] = [];
+  for (let i = messages.length - 1; i >= 0 && out.length < cap; i--) {
     const m = messages[i] as any;
     if (m?.type !== "assistant" || syntheticAssistant(m)) continue;
-    const t = (m.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
-    if (t.trim()) return t;
+    const t = (m.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n\n");
+    if (t) out.push(t);
   }
-  return "";
+  return out;
 }

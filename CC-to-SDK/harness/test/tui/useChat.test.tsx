@@ -321,6 +321,39 @@ describe("useChat", () => {
     expect(calls).toBe(2);                    // initial makeSession() + resumeInto's makeSession(id)
   });
 
+  // T-COPY: `resumeInto` (useChat.ts) seeds the WHOLE ring from the disk read, not just slot 0 — the same
+  // seeding rule `recentAssistantTexts` gives rewind (useChat-rewind.test.tsx "5c."). Two assistant replies
+  // on disk; /copy 2 must reach the earlier one through the resumed transcript, proving the seed is a ring.
+  it("/resume seeds the whole ring from disk — /copy 2 reaches the second-newest replayed reply", async () => {
+    let copied: string | undefined;
+    const oldSession = fakeRemote();
+    const newSession = fakeRemote();
+    const makeSession = (resume?: string) => (resume ? newSession : oldSession);
+    const msgs = [
+      { type: "user", message: { content: [{ type: "text", text: "first prompt" }] }, timestamp: "2026-06-19T15:56:00.000Z" },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "first reply" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "second prompt" }] }, timestamp: "2026-06-19T15:57:00.000Z" },
+      { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "second reply" }] } },
+    ];
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "old1234567890", summary: "prior", lastModified: 1 }], getSessionMessages: async () => msgs, copyText: async (t: string) => { copied = t; } };
+    let pick: ((s: any) => void) | undefined;
+    function ResumeHost() {
+      const c = useChat(makeSession, {}, deps);
+      pick = (c as any).pickSession;
+      (ResumeHost as any).run = c.submit;
+      return <Text>{c.state.picker.open ? `PICKER:${c.state.picker.sessions.length}` : "NOPICK"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<ResumeHost />);
+    await waitFor(() => frame(lastFrame).includes("NOPICK"));
+    (ResumeHost as any).run("/resume");
+    await waitFor(() => frame(lastFrame).includes("PICKER:1"));
+    pick!({ sessionId: "old1234567890", summary: "prior", lastModified: 1 });
+    await waitFor(() => frame(lastFrame).includes("second reply"));
+    (ResumeHost as any).run("/copy 2");
+    await waitFor(() => copied !== undefined);
+    expect(copied).toBe("first reply");     // proves the SECOND ring slot was seeded, not just slot 0
+  });
+
   // EXTERNAL REVIEW, FINDING 2. Ctrl+A widened the LIST and nothing else: preview, resume and rename all
   // read through `opts.cwd`, so a row from another project previewed empty, refused to resume with "no
   // history found", and renamed under the wrong project. Each verb takes the ROW's own directory now
@@ -1392,7 +1425,7 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(frame(lastFrame).match(/LATE-COMPLETION/g)).toHaveLength(1);
     api.run!("/copy");
-    await waitFor(() => frame(lastFrame).includes("✓ copied"));
+    await waitFor(() => frame(lastFrame).includes("Copied to clipboard"));
     expect(copied).toBe("LATE-COMPLETION");
   });
 
@@ -1408,19 +1441,137 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     expect(calls).toBe(0);
   });
 
-  it("/copy after an assistant message calls the injected copy fn with THAT text and notices ✓ copied", async () => {
+  // T-COPY: canon's success line is `Copied to clipboard (N characters, M lines)` (R1 §1.8), byte-exact,
+  // replacing ccx's homegrown `✓ copied N chars`. "characters"/"lines" are always plural nouns in canon,
+  // regardless of count — there is no singular form here (unlike the out-of-range error below).
+  it("/copy after an assistant message calls the injected copy fn with THAT text and notices canon's byte-exact confirmation", async () => {
     let copied: string | undefined;
-    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "the answer is 42" }] } }] });
+    const TEXT = "the answer is 42";
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: TEXT }] } }] });
     const api: { run?: (s: string) => void } = {};
     function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("hi");
-    await waitFor(() => frame(lastFrame).includes("the answer is 42"));
+    await waitFor(() => frame(lastFrame).includes(TEXT));
     api.run!("/copy");
-    await waitFor(() => frame(lastFrame).includes("✓ copied"));
-    expect(copied).toBe("the answer is 42");                          // the fn received the actual text, not just a call
-    expect(frame(lastFrame)).toContain(`✓ copied ${"the answer is 42".length} chars`);
+    await waitFor(() => frame(lastFrame).includes("Copied to clipboard"));
+    expect(copied).toBe(TEXT);                          // the fn received the actual text, not just a call
+    expect(frame(lastFrame)).toContain(`Copied to clipboard (${TEXT.length} characters, 1 lines)`);
+  });
+
+  it("/copy 1 is equivalent to bare /copy — both name the newest reply", async () => {
+    let copied: string | undefined;
+    const TEXT = "the answer is 42";
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: TEXT }] } }] });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes(TEXT));
+    api.run!("/copy 1");
+    await waitFor(() => frame(lastFrame).includes("Copied to clipboard"));
+    expect(copied).toBe(TEXT);
+  });
+
+  // T-COPY wiring rule: the ring must be reached through the REAL delivery chain (turn start → message
+  // frames → turn end via `fake.pushEvent`, the same idiom every other live-path test above uses), not by
+  // hand-setting internal state — deleting the unshift-and-cap at the live assignment site kills this.
+  it("/copy 2 reaches the second-newest reply through the live ring, built by real frame delivery", async () => {
+    let copied: string | undefined;
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async (t: string) => { copied = t; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "first reply" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("first reply"));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "second reply" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+    await waitFor(() => frame(lastFrame).includes("second reply"));
+    api.run!("/copy 2");
+    await waitFor(() => copied !== undefined);
+    expect(copied).toBe("first reply");                 // N=2 is the SECOND-newest, not slot 0 overwritten
+    copied = undefined;
+    api.run!("/copy 1");
+    await waitFor(() => copied !== undefined);
+    expect(copied).toBe("second reply");                // N=1 is still the newest
+  });
+
+  // Canon's usage string (R1 §1.9), byte-exact including the REAL ellipsis character U+2026 — a naive
+  // three-dot "..." port would fail this assertion.
+  it("/copy <non-numeric> prints canon's usage string byte-exact, with the real ellipsis (U+2026)", async () => {
+    let calls = 0;
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "42" }] } }] });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async () => { calls++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("42"));
+    api.run!("/copy abc");
+    await waitFor(() => flat(lastFrame).includes("Usage: /copy"));
+    // flat(), not frame(): the notice line is long enough to hard-wrap at the test terminal's width, and
+    // frame() only folds the wrap's "\n" to a single space — flat() also collapses the resulting run of
+    // whitespace, matching how every other long-line assertion in this file compares wrapped text.
+    expect(flat(lastFrame)).toContain(`Usage: /copy [N] where N is 1 (latest), 2, 3, … Got: abc`);
+    expect(flat(lastFrame)).toContain("…");        // guards against a 3-dot "..." substitute
+    expect(calls).toBe(0);
+  });
+
+  it("/copy 0 and /copy -1 are also usage errors — canon's grammar is Number(arg), integer, >= 1", async () => {
+    let calls = 0;
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "42" }] } }] });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async () => { calls++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("42"));
+    api.run!("/copy 0");
+    await waitFor(() => flat(lastFrame).includes("Got: 0"));
+    api.run!("/copy -1");
+    await waitFor(() => flat(lastFrame).includes("Got: -1"));
+    expect(calls).toBe(0);
+  });
+
+  // Canon's out-of-range string (R1 §1.9) pluralizes "message(s)" on the COUNT, not on N.
+  it("/copy N past the ring's length: singular 'message' with exactly one available, plural otherwise", async () => {
+    let calls = 0;
+    const fake = fakeRemote({ submitMessages: [{ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "only reply" }] } }] });
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async () => { calls++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    api.run!("hi");
+    await waitFor(() => frame(lastFrame).includes("only reply"));
+    api.run!("/copy 2");
+    await waitFor(() => flat(lastFrame).includes("Only 1 assistant message available to copy"));
+    expect(calls).toBe(0);
+  });
+
+  it("/copy N past the ring's length with 2+ available uses the plural 'messages'", async () => {
+    let calls = 0;
+    const fake = fakeRemote();
+    const api: { run?: (s: string) => void } = {};
+    function H() { const c = useChat(() => fake, {}, { copyText: async () => { calls++; } }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "first reply" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("first reply"));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 2 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "second reply" }] } } });
+    fake.pushEvent({ kind: "turn", phase: "end", seq: 2 });
+    await waitFor(() => frame(lastFrame).includes("second reply"));
+    api.run!("/copy 5");
+    await waitFor(() => flat(lastFrame).includes("Only 2 assistant messages available to copy"));
+    expect(calls).toBe(0);
   });
 
   // The conversation boundary owns this ref like it owns every other measurement: the reply belonged to the
@@ -1484,7 +1635,7 @@ describe("useChat: compact divider + /copy (Task 9)", () => {
     await waitFor(() => frame(lastFrame).includes("API Error: 401"));
     fake.pushEvent({ kind: "turn", phase: "end", seq: 7 });
     api.run!("/copy");
-    await waitFor(() => frame(lastFrame).includes("✓ copied"));
+    await waitFor(() => frame(lastFrame).includes("Copied to clipboard"));
     expect(copied).toBe("the answer is 42");
   });
 });

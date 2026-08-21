@@ -8,6 +8,7 @@ import type { SettingsRow } from "./settingsRows.js";
 import type { RendererChoice } from "./renderer.js";   // type-only: renderer.ts is pure, but nothing here needs its code
 import { THEME_LABELS } from "./theme.js";   // leaf module, no React — safe to import into this pure file
 import { LOCAL_OUTPUT_GUTTER } from "./species.js";   // also React-free; the ONE `⎿` local-output string
+import { EFFORT_LEVELS, EFFORT_HELP_DESCRIPTIONS, EFFORT_STATUS_DESCRIPTIONS, type EffortLevel } from "./modelPickerModel.js";   // pure, no React — same tier as theme.js above
 
 export interface ParsedCommand { name: string; args: string }
 
@@ -41,27 +42,22 @@ export const COMMANDS: CommandRow[] = [
   { name: "continue", summary: "resume the most-recent session" },
   { name: "yolo", summary: "enable bypassPermissions (ungated tool access)" },
   { name: "think", summary: "<off|low|medium|high|xhigh|max|N> — set thinking budget (no arg shows current)" },
-  // The optional level argument is UPSTREAM'S OWN SHAPE, not a house invention — an earlier note here claimed
-  // upstream's `/effort` was a dialog and nothing else, and the 2.1.220 bundle says otherwise on four counts.
-  // The descriptor (L354232) is `local-jsx` with an `argumentHint` of `[low|medium|high|xhigh|max|ultracode
-  // |auto]` (built by `NZd`, L354228), and its entry point `t5H` (L447308-447319) is a four-way router:
+  // The optional level argument is UPSTREAM'S OWN SHAPE, not a house invention. The descriptor (2.1.236
+  // `ElT`, L423072-423076) is `local-jsx`, and its entry point `T2w` (L553008-553019) is a four-way router:
   // `help|-h|--help` prints the usage block, `current|status` prints the level in force, EMPTY opens the
   // slider dialog, and anything else is parsed as a level and applied without a dialog. There is a headless
-  // twin too (`Ojs`, L354237, `type:"local"`, `supportsNonInteractive`) reaching the same parser, `iD_`
-  // (L354205-354215). So ccx's `/effort [level]` matches upstream; what diverges is that ccx ships a SUBSET
-  // of it, and the three missing pieces are named here rather than left to look like parity:
-  //   * `auto` and `ultracode`. `Mjs` (L354079-354089) accepts `auto`/`unset` (clear the pin, fall back to
-  //     the model's own default) and `ultracode` (xhigh PLUS dynamic workflow orchestration, L354162). ccx
-  //     has neither: no per-model default table to fall back TO (see `modelPickerModel`'s DEFAULT_EFFORT),
-  //     and no workflow-orchestration flag to raise. The domain stays the five levels, in all three of its
-  //     spellings — `test/tui/effort.test.tsx` pins them equal.
-  //   * PERSISTENCE. Upstream's interactive arm SAVES: L354112 picks ` (saved as your default for new
-  //     sessions)` over ` (this session only)` whenever the level is settable and the session is local.
-  //     Every ccx `/effort` is session-only; the `s`-key session/default split the /model picker has was not
-  //     built for this axis.
-  //   * The `help` and `current|status` sub-verbs, with them the `Effort levels:` description block
-  //     (`I$o`, L354063-354071). ccx's non-level argument is an error line, not a usage print.
-  // All three are out of scope for T11 and none is blocked by the SDK; they are unbuilt, not unreachable.
+  // twin too (`wlT`, L423043-423056, `type:"local"`, `supportsNonInteractive`) reaching the same parser.
+  // T-EFFORT (2026-08-21) shipped TWO of upstream's three missing pieces — persistence and the `help`/
+  // `current`|`status` sub-verbs — leaving exactly one gap, named here rather than left to look like parity:
+  //   * `auto` and `ultracode`. `_ml` (L422923-422931) accepts `auto`/`unset` (clear the pin, fall back to
+  //     the model's own default) and `ultracode` (xhigh PLUS dynamic workflow orchestration). ccx has
+  //     neither: no per-model default table to fall back TO (see `modelPickerModel`'s DEFAULT_EFFORT), and
+  //     no workflow-orchestration flag to raise. The domain stays the five levels, in all three of its
+  //     spellings — `test/tui/effort.test.tsx` pins them equal. `/effort help`'s bullet list still NAMES
+  //     `auto` (canon prints it unconditionally, omitted only when an org entitlement caps it — ccx has no
+  //     such cap) but ccx's own level parser still refuses it — the help text describes upstream's full
+  //     domain, not a promise every word in it is settable here.
+  // This one gap is out of scope for T-EFFORT and is not blocked by the SDK; it is unbuilt, not unreachable.
   // Independently of upstream, the argument form is also what makes the client-side domain gate reachable
   // from a keyboard at all — the dialog can only ever produce a valid level, so nothing else could exercise
   // the guard probe 102 says has to exist (`applyFlagSettings` accepts a bogus level in silence).
@@ -172,21 +168,72 @@ export function formatModelSet(name: string, saveDefault: boolean, effort?: stri
 export function formatThink(next?: string, current?: string): RenderLine[] {
   return next ? [{ text: `thinking → ${next}` }] : [{ text: `thinking: ${current ?? "default"}`, dim: true }];
 }
+/** T-EFFORT — a multi-line `⎿` block: the gutter sits ONCE, beside the first line, and every continuation
+ *  line is padded to the gutter's own width instead of repeating the glyph. `render.ts`'s Line view renders
+ *  each `RenderLine`'s `gutter` independently, so an array where every entry carried one would draw a `⎿`
+ *  per line — wrong for a single canon payload that just happens to contain embedded newlines (`/effort
+ *  help`'s block). Same alignment rule `withAssistantBullet`/`withThinkingGutter` (render.ts) already use
+ *  for their own bullets, applied to THIS gutter's width instead of theirs. */
+function withLocalOutputGutter(lines: readonly string[]): RenderLine[] {
+  const pad = " ".repeat(LOCAL_OUTPUT_GUTTER.length);
+  // A blank continuation line (`/effort help`'s Usage/`Effort levels:` separator) stays LITERALLY empty —
+  // padding it would turn canon's blank line into a row of trailing spaces, which is not the same thing.
+  return lines.map((text, i) => (i === 0 ? { text, gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } } : { text: text === "" ? "" : pad + text }));
+}
 /** W2 T5, fold s2qa4-10 — `/effort <level>` used to apply SILENTLY: the only feedback was the ten-second
  *  chip, so once it decayed the transcript recorded that a command was typed and not what it did. Upstream's
- *  own answer is a local-command result row (`frames-s2qa4/08-cc-effort-args`):
- *  `  ⎿  Set effort level to low (saved as your default for new sessions): Quick, straightforward …`.
+ *  own answer is a local-command result row, `blT` (422960): `` `Set effort level to ${i}${p}: ${d}` `` where
+ *  `p` is the persistence suffix (§2.3 below) and `d` is a per-level sentence from `rCb` (106608-106621).
  *
- *  TWO DECLARED DIVERGENCES inside a verbatim frame. The gutter and the `Set effort level to <level>` head
- *  are upstream's; the two clauses after it are not printable here. (1) SCOPE: ccx's `/effort` writes no
- *  default — it is a live flag op and nothing else (`EffortDialog`'s subtitle already says "This session
- *  only"), so printing upstream's persistence sentence would be a claim about a file we never write.
- *  (2) DESCRIPTION: the per-level sentences in that frame are 2.1.226 copy for a SEVEN-level domain
- *  (`ultracode`/`auto`); ccx's domain is the 2.1.220 five, and inventing descriptions for them would be new
- *  copy wearing an upstream citation. The level is spelled RAW/lowercase, as `effortHint` spells it and as
- *  the wire takes it — `effortTitle` is the ROW's form, not this one. */
-export function formatEffortSet(level: string): RenderLine[] {
-  return [{ text: `Set effort level to ${level} (this session only)`, gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } }];
+ *  Both clauses are ported now. Backlog round 2 (r2-effort-research.md §1.5/§2.3) retired the previously
+ *  declared "trailing `: ${d}` clause stays cut" divergence — it was judged out of T-EFFORT's round by
+ *  mistake, not by missing data: `rCb` (`EFFORT_STATUS_DESCRIPTIONS`, the SAME table `formatEffortCurrent`
+ *  reads for `/effort current`|`status`) is present and canon appends it to EVERY set confirmation,
+ *  persisted or not — `max`'s `(this session only)` example is `Set effort level to max (this session
+ *  only): Maximum capability with deepest reasoning. May use excessive tokens resulting in long response
+ *  times or overthinking. Use sparingly for the hardest tasks.` (§2.3). The level is spelled RAW/lowercase,
+ *  as `effortHint` spells it and as the wire takes it — `effortTitle` is the ROW's form, not this one. */
+export function formatEffortSet(level: EffortLevel, persisted: boolean): RenderLine[] {
+  const suffix = persisted ? " (saved as your default for new sessions)" : " (this session only)";
+  return [{ text: `Set effort level to ${level}${suffix}: ${EFFORT_STATUS_DESCRIPTIONS[level]}`, gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } }];
+}
+/** T-EFFORT Arm 2 — canon's `k$i` (422910-422918), byte-exact for ccx's uncapped, ultracode-off case (the
+ *  only case ccx can ever be in — no org entitlement, no Workflows gate). Zero-indent bullets: the visible
+ *  indent on screen is the `⎿` gutter, not leading spaces in the string — `withLocalOutputGutter` supplies
+ *  it once, on the first line, and pads every continuation line to the SAME width instead of repeating the
+ *  glyph (`render.ts`'s `withAssistantBullet`/`withThinkingGutter` do the identical thing for their own
+ *  bullets). `auto` is listed (canon always lists it absent an org cap) even though ccx's own parser still
+ *  refuses it — see the catalog row's comment above for why that is not a contradiction. */
+export function formatEffortHelp(): RenderLine[] {
+  return withLocalOutputGutter([
+    "Usage: /effort [low|medium|high|xhigh|max|auto]",
+    "",
+    "Effort levels:",
+    ...EFFORT_LEVELS.map((l) => `- ${l}: ${EFFORT_HELP_DESCRIPTIONS[l]}`),
+    "- auto: Use the default effort level for your model",
+  ]);
+}
+/** T-EFFORT Arm 2 — canon's `YXn` (422962-422973), minus the two branches ccx has no equivalent for:
+ *  ultracode (parked) and the CLI-flag/launch-pin overrides (`o4e`/`ZDe`, R2 §1.4 — no env knob, no
+ *  per-model launch pin here). `effort === undefined` is ccx's OWN "nothing known yet" state (a bare `ccx
+ *  attach`, R2 §4.5) rather than canon's explicit `auto` pick, but it prints through the same "no level set"
+ *  shape — substituting the harness's own resolved default (`defaultEffort`, `DEFAULT_EFFORT` in useChat)
+ *  for canon's per-model `LK` resolution, since ccx has no per-model default table (same gap the catalog
+ *  row's comment already names for `auto`/`ultracode`). Reads `EFFORT_STATUS_DESCRIPTIONS` (`rCb`) — the
+ *  table `formatEffortSet` above does NOT use; see its comment for why the two must stay separate. */
+export function formatEffortCurrent(effort: EffortLevel | undefined, defaultEffort: EffortLevel): RenderLine[] {
+  if (effort === undefined) return withLocalOutputGutter([`Effort level: auto (currently ${defaultEffort})`]);
+  return withLocalOutputGutter([`Current effort level: ${effort} (${EFFORT_STATUS_DESCRIPTIONS[effort]})`]);
+}
+/** T-EFFORT — canon's invalid-argument line, `TlT` (423013-423014): `` `Invalid argument: ${e}. Valid
+ *  options are: ${C$i(Ui())}` ``. Replaces ccx's old plain (non-gutter, error-coloured) refusal line — this
+ *  one runs through the SAME `⎿` channel as every other `/effort` arm, unstyled, exactly like canon's does
+ *  (R2 §1.2: "help, current/status, the set confirmation, and Cancelled all render identically"). The
+ *  option list is fixed (not built from a live domain call like canon's `C$i`) because ccx's domain never
+ *  varies at runtime — no org cap, no ultracode gate — so canon's comma-joined output collapses to one
+ *  constant string for every ccx install. */
+export function formatEffortInvalid(arg: string): RenderLine[] {
+  return withLocalOutputGutter([`Invalid argument: ${arg}. Valid options are: low, medium, high, xhigh, max, auto`]);
 }
 /** The one surface here with NO verbatim upstream counterpart: upstream's post-compact notice (`Fl_`,
  *  L314674) prints the word `Compacted` plus hint clauses and no numbers at all, so this before→after pair

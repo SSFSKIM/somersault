@@ -29,7 +29,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import { userEchoLines, type RenderLine } from "./render.js";
-import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES } from "./species.js";
+import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, LOCAL_OUTPUT_GUTTER } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
 import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
@@ -43,8 +43,8 @@ import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import type { DesktopNotifier } from "./desktopNotify.js";
-import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, isPersistableEffortLevel, type EffortLevel } from "./modelPickerModel.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -52,7 +52,7 @@ import { tokenWarning, TOKEN_WARNING_KEY, TOKEN_WARNING_TIMEOUT_MS } from "./tok
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
-import { lastAssistantText } from "../sessions/rows.js";
+import { recentAssistantTexts, RECENT_ASSISTANT_CAP } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayDocument } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
@@ -805,7 +805,7 @@ export function useChat(
       () => {},
     );
   };
-  const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
+  const lastAssistant = useRef<string[]>([]);    // recent assistant replies' text, NEWEST FIRST, for /copy [N] (ring, cap RECENT_ASSISTANT_CAP)
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1251,11 +1251,11 @@ export function useChat(
     // would open an unrelated cluster on sight.
     expandedFoldsRef.current.clear();
     setCtxPct(undefined);               // W-S5, see above: measured against a conversation that is gone
-    // THE SAME BOUNDARY AND THE SAME CLASS for /copy's one source: the retained reply was measured against a
+    // THE SAME BOUNDARY AND THE SAME CLASS for /copy's ring: every entry in it was measured against a
     // conversation that is gone, so `/clear` followed by `/copy` was putting the wiped text on the system
     // clipboard. `resumeInto` and the rewind rebuild both assign this ref AFTER their swap, so they keep
     // their seed by construction and only `/clear` (and the empty-rewind arm) newly reset.
-    lastAssistant.current = "";
+    lastAssistant.current = [];
     // WAVE S T12, THE SAME BOUNDARY AND THE SAME CLASS AS W-S5/Task 8: the ack is a number measured against
     // a conversation that no longer exists. `/clear` swaps the ENGINE (host `clear` op), so `usage()`
     // restarts at zero — an ack of 500 carried across would sit above every count the new conversation
@@ -1529,14 +1529,19 @@ export function useChat(
         // — it was never true for a real reply, and /copy therefore never advanced. Every other nested-frame
         // reader in the tree (transcriptModel, toolRenderer, liveTurn, host, router) already tests this way.
         if (appended && data?.type === "assistant" && !data.parent_tool_use_id) {
-          const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
+          // T-COPY decision 1: blocks join with a BLANK LINE ("\n\n"), matching canon's `xd(o, "\n\n")`
+          // (tjh/xd, R1 §1.6.4) — both this live join and the disk-side `recentAssistantTexts` must agree.
+          const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n\n");
           // …and NOT an api_error frame. A failed turn's terminal message is `type:"assistant"` with
           // `parent_tool_use_id:null` and ordinary text — it differs from a reply only by
           // `is_api_error_message:true` (probe 96's terminal shape, pinned in useChat-error.test.tsx). Canon's
           // /copy rule is "the newest NON-ERROR assistant message", so it neither sources the clipboard nor
-          // displaces the last real reply. The suggester tail below is deliberately NOT filtered: it wants
+          // displaces the ring's head. The suggester tail below is deliberately NOT filtered: it wants
           // every turn the conversation actually had, failures included.
-          if (t.trim() && data.is_api_error_message !== true) lastAssistant.current = t;
+          // T-COPY decision 2: bare truthiness on `t` (canon's `if(i)`), not `.trim()` — a lone-whitespace
+          // reply still qualifies. T-COPY: unshift-and-cap turns the old single-slot overwrite into the
+          // NEWEST-FIRST ring `/copy N` indexes into (see `recentAssistantTexts`'s twin walk on the disk side).
+          if (t && data.is_api_error_message !== true) lastAssistant.current = [t, ...lastAssistant.current].slice(0, RECENT_ASSISTANT_CAP);
           // W-C T12: the same text, into the suggester's tail — behind the `appended` guard, so a redelivered
           // or replayed frame neither doubles the tail nor inflates the `early_conversation` count.
           noteTail("assistant", t);
@@ -1990,16 +1995,24 @@ export function useChat(
             append(formatThink(parsed.level));
           } else append(formatThink(undefined, thinkLevel));
           break;
-        // W-C T11 (EP-C6). No arg = upstream's shape, the dialog (`local-jsx`, L447278). An arg is ccx's
-        // documented divergence (commands.ts's COMMANDS entry says why) and the only keyboard route to the
-        // domain gate — a dialog cannot produce an invalid level.
+        // W-C T11 (EP-C6). No arg = upstream's shape, the dialog (`local-jsx`, L423072). An arg is the only
+        // keyboard route to the domain gate — a dialog cannot produce an invalid level.
         // W2 T5 (fold s2qa4-10): the arg form now says what it did. The `⎿` row is the ARGUMENT form's
         // alone — the dialog's Enter has the row on screen as its own feedback, and the picker's commit
         // rides out with `formatModelSet`'s notice.
-        case "effort":
-          if (cmd.args) { const applied = applyEffort(cmd.args.trim()); if (applied) append(formatEffortSet(applied)); }
-          else openEffortDialog();
+        // T-EFFORT Arm 2 — canon's own branch ORDER (`T2w`, R2 §1.1): help → current/status → bare → level.
+        // ccx's old `if (cmd.args) … else …` inverted that (level-or-dialog, nothing else), which is why the
+        // two sub-verbs have to be tested INSIDE the non-empty-arg branch, ahead of `applyEffort` — a typed
+        // `help`/`current`/`status` must never reach the level parser and be refused as a bogus level.
+        case "effort": {
+          const arg = cmd.args;                 // parseCommand already trims (commands.ts's parseCommand)
+          if (arg === "help" || arg === "-h" || arg === "--help") { append(formatEffortHelp()); break; }
+          if (arg === "current" || arg === "status") { append(formatEffortCurrent(effort, DEFAULT_EFFORT)); break; }
+          if (!arg) { openEffortDialog(); break; }
+          const applied = applyEffort(arg);
+          if (applied) append(formatEffortSet(applied, isPersistableEffortLevel(applied)));
           break;
+        }
         case "mcp": {
           const action = parseMcpArgs(cmd.args);
           if (!action) { append(formatMcpUsage()); break; }
@@ -2015,7 +2028,28 @@ export function useChat(
         // would be unreachable. See ChatApp's `app:toggleTranscript` neighbour for the full routing note.
         case "history": openHistorySearch(); break;
         case "rewind": void openRewind(); break;
-        case "copy": { const t = lastAssistant.current; if (!t) { notice("No assistant message to copy"); break; } await copyText(t); notice(`✓ copied ${t.length} chars`); break; }
+        // T-COPY: `/copy N` indexes the ring, N=1 (or bare /copy) = newest, matching canon's `lHw`
+        // (R1 §1.4) — validation is `Number(arg)`, integer, >= 1; anything else is the usage string.
+        // `cmd.args` arrives already trimmed (commands.ts parseCommand:19), matching canon's `r?.trim()`.
+        case "copy": {
+          const ring = lastAssistant.current;
+          if (ring.length === 0) { notice("No assistant message to copy"); break; }
+          let idx = 0;
+          const arg = cmd.args;
+          if (arg) {
+            const n = Number(arg);
+            if (!Number.isInteger(n) || n < 1) { notice(`Usage: /copy [N] where N is 1 (latest), 2, 3, … Got: ${arg}`); break; }
+            if (n > ring.length) { notice(`Only ${ring.length} assistant ${ring.length === 1 ? "message" : "messages"} available to copy`); break; }
+            idx = n - 1;
+          }
+          const t = ring[idx];
+          await copyText(t);
+          // Canon's `Sp(e,"\n")+1` (R1 §1.8): count of "\n" occurrences in the copied text, plus one — a
+          // line count, not a paragraph count, so the "\n\n" block separator counts double as it should.
+          const lines = (t.match(/\n/g)?.length ?? 0) + 1;
+          notice(`Copied to clipboard (${t.length} characters, ${lines} lines)`);
+          break;
+        }
         case "export": {
           const id = session.sessionId;
           if (!id) { notice("no conversation to export yet"); break; }
@@ -2261,7 +2295,7 @@ export function useChat(
     // command output from later Ctrl-O detail — a real session change is the only terminal boundary.
     if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); reconcile(); }
     else replaceDocument(replayDocument(msgs, { id, width: columnsFn() }));
-    lastAssistant.current = lastAssistantText(msgs);            // /copy follows what is ON SCREEN, not just live turns
+    lastAssistant.current = recentAssistantTexts(msgs);         // /copy [N] follows what is ON SCREEN, whole ring seeded, not just live turns
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     // The old session's bg tasks died with its engine — the old subscription is already detached, and no
@@ -2407,18 +2441,32 @@ export function useChat(
    *
    *  W2 T5: RETURNS the level it applied, or `undefined` when it refused (or the hook is torn down). Only
    *  the `/effort <level>` arm reads it — that surface, and only that surface, prints a result row, and the
-   *  refusal below already prints its own. Reporting it back beats an `announce` flag because the domain
-   *  gate stays in one place and no caller can print a confirmation for a level that never applied. */
+   *  refusal below already prints its own (T-EFFORT: now `formatEffortInvalid`, canon's `Invalid argument:
+   *  … Valid options are: …` behind the `⎿` gutter, not a bare error-coloured line). Reporting it back
+   *  beats an `announce` flag because the domain gate stays in one place and no caller can print a
+   *  confirmation for a level that never applied.
+   *
+   *  T-EFFORT: THE SINGLE PERSISTENCE CHOKE POINT. Every surface that can set a level — the dialog's Enter
+   *  (`confirmEffort` below), a typed `/effort <level>` (the dispatch arm), and the `/model` picker's effort
+   *  row (`ChatApp`'s `onEffortChange={applyEffort}`) — already funnels through this one function, which is
+   *  canon's own shape (`Z5t`, R2 §2.2: one shared thunk under the dialog, the direct-set arm, AND the
+   *  picker's commit). So one write here covers all three call sites for free; nothing per-caller was added
+   *  to any of them. Persistence is unconditional on "is this interactive" (canon's real gate, R2 §2.2) —
+   *  ccx has no headless `/effort` twin, so every reachable caller already IS interactive. */
   function applyEffort(level: string): EffortLevel | undefined {
     if (disposed.current) return undefined;
     if (!isEffortLevel(level)) {
-      append([{ text: `effort: unknown effort level "${level}" · try low/medium/high/xhigh/max`, color: role("error") }]);
+      append(formatEffortInvalid(level));
       return undefined;
     }
     setEffortState(level);
     // Feature-tested like every other SettingsOps verb: a lib Session (whose config is fixed at construction)
     // has no flag layer to write, and the local state above is still the truthful thing to show.
     if (hasSettingsOps(session)) void session.setEffort(level).catch(() => {});
+    // Only low|medium|high|xhigh persist (`isPersistableEffortLevel`, canon's `Qdt`) — `max` is deliberately
+    // excluded and stays session-only; `formatEffortSet`'s suffix (the dispatch arm below) reads the SAME
+    // gate so the confirmation text and the file on disk can never disagree about what just happened.
+    if (isPersistableEffortLevel(level)) { try { savePrefsFn({ effort: level }, historyEnv); } catch { /* best-effort, like every other pref write here */ } }
     return level;
   }
   /** Snapshot at open time, exactly as `openModelPicker` does, so ChatApp reads state and nothing else. */
@@ -2431,6 +2479,12 @@ export function useChat(
     });
   }
   function closeEffortDialog(): void { if (!disposed.current) setEffortDialog({ open: false }); }
+  /** T-EFFORT Arm 3 — Esc's own path, canon's single word `Cancelled` (R2 §3.1) through the SAME `⎿` gutter
+   *  channel every other `/effort` arm uses. SPLIT from `closeEffortDialog` on purpose: `confirmEffort`
+   *  below ALSO calls `closeEffortDialog` on a successful Enter, and a naive append inside the shared close
+   *  would print `Cancelled` after every confirm too (the trap the brief names). Wiring THIS function to
+   *  `onCancel` — not `closeEffortDialog` — is what keeps Enter silent on this specific line. */
+  function cancelEffortDialog(): void { closeEffortDialog(); append([{ text: "Cancelled", gutter: { text: LOCAL_OUTPUT_GUTTER, dim: true } }]); }
   function confirmEffort(level: EffortLevel): void { closeEffortDialog(); applyEffort(level); }
 
   // W3 T3: /add-dir. `addDirValidate` is the ONE place that turns a typed path into a verdict — both the
@@ -2744,7 +2798,7 @@ export function useChat(
     // messages. (Ctrl-O never uses this path.)
     if (rows.length) replaceDocument(replayDocument(rows, { id, label: "⏪ rewound", width: columnsFn() }));
     else { const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh); }
-    lastAssistant.current = lastAssistantText(rows);        // /copy follows what is on screen
+    lastAssistant.current = recentAssistantTexts(rows);     // /copy [N] follows what is on screen, whole ring seeded
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     if (opts.prefill !== undefined) setComposerPrefill({ text: opts.prefill, token: Date.now() });
@@ -3069,5 +3123,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }
