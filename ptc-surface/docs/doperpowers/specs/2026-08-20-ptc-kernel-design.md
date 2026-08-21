@@ -389,7 +389,12 @@ agent.resume(session_id, **options) -> AgentHandle
   Approvals of a command or a file change accept; anything asking for user data or consent
   declines rather than inventing an answer. The child is spawned with
   `--disable hooks --disable plugins` so the user's `~/.codex` hooks and plugins stay out of it
-  (T22 Decision Log). Spike S4 pins all of this live.
+  (T22 Decision Log), and with an environment BUILT from an allowlist rather than inherited —
+  Claude-side credentials do not cross into another vendor's binary, and PTC's own
+  `PTC_SESSION`/`PTC_DEPTH` are rewritten for the child exactly as they are for a claude one.
+  `AgentOpts.system` rides as `developerInstructions`; `allowed_tools`, `max_turns` and a
+  non-default `permission_mode` have no codex analogue and raise rather than being dropped.
+  Spike S4 pins all of this live.
 - **Fan-in semantics (deliberate divergence from Prime)**: results are awaited **in code** —
   `await h.result()` blocks the *cell*, not the model; the exec/wait yield keeps the model free.
   Handles persist in the namespace across turns, so "spawn now, gather next turn" works without
@@ -569,6 +574,7 @@ them anywhere durable: match by name (`KEY|TOKEN|BEARER|SECRET`) and by value pr
 | `PTC_YIELD_S` | `300` | default `exec`/`wait` timeout_s |
 | `PTC_MAX_OUTPUT_CHARS` | `12000` | default result cap |
 | `PTC_IDLE_HOURS` | `24` | kernel self-reap (the TTL qualifying all persistence promises) |
+| `PTC_CODEX_INHERIT` | unset | `1` restores the user's full Codex surface in `provider="codex"` children — PTC otherwise spawns `codex app-server --disable hooks --disable plugins`, which also removes plugin-provided skills. Credential stripping from the codex child's environment is unconditional and this knob does not affect it. |
 
 ## Delegated unknowns → spikes
 
@@ -967,6 +973,63 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   oversight; `AgentOpts.model` overrides the model per call.
   Date/Author: 2026-08-21 / T22.
 
+- Decision: `AgentOpts` is one option set for both providers, so `provider="codex"` either
+  **honours** a field or **refuses** it — never accepts and drops it. `system` maps to
+  `thread/start`/`thread/resume`'s `developerInstructions`; `allowed_tools`, `max_turns`
+  and a non-default `permission_mode` raise `TypeError` naming the option.
+  Rationale: T22 correctly refused to put `effort` on `thread/start` because 0.146.0 ignores
+  unknown params, making a misplaced field an invisible no-op — and then reproduced exactly
+  that failure at PTC's own API boundary, where four fields the spec advertises for both
+  providers were consumed by `agents._opts()` and dropped by the backend. `system` is
+  directly mappable, and the two candidate fields are not interchangeable: `base_instructions`
+  is an override of codex's own core prompt ("Base instructions override",
+  `codex-rs/core/src/config/mod.rs:677`) and would take the apply-patch and tool-use
+  instructions with it, while `developer_instructions` is "injected as a separate message"
+  (`:680`) — the second is what a caller-supplied system prompt means. Both
+  `ThreadStartParams` and `ThreadResumeParams` declare it as `["string","null"]` on 0.146.0.
+  The other three have no codex analogue: the app-server exposes no per-turn tool allowlist
+  and no turn cap, and the thread is pinned to `approvalPolicy: "never"` + `sandbox:
+  "read-only"` regardless of `permission_mode` — a deliberate binding, now stated rather than
+  silently applied. `permission_mode` carries a dataclass default every caller passes whether
+  they meant it or not, so only an explicit non-default value raises.
+  Date/Author: 2026-08-21 / T22 review-fix.
+
+- Decision: the `codex app-server` child's environment is **built from an allowlist**, not
+  inherited — the one place the codex backend deliberately diverges from `claude_backend`.
+  Rationale: the kernel inherits the MCP adapter's environment verbatim, credential-bearing
+  `CLAUDE_*` variables included (an `sk-ant-oat…` OAuth bearer among them, per the Trust
+  model). For a *claude* child that inheritance is what pays for subscription auth and must
+  stay; for another vendor's binary it is a cross-vendor credential leak that also reaches
+  every user MCP server that binary starts inside PTC's thread (`--disable plugins` removes
+  plugin-provided servers; the user's own `[mcp_servers]` entries are accepted residue).
+  Verbatim inheritance had a second cost: `PTC_SESSION` and `PTC_DEPTH` passed through
+  unrewritten, so a codex child reaching PTC's own MCP server (`codex mcp add ptc` is a
+  documented install path) would attach to the PARENT's kernel at the parent's depth and
+  defeat the depth brake — latent, since the live capture shows no `ptc` entry among the
+  inherited servers, but it is the exact scenario `claude_backend` guards. The forwarded set
+  is what codex needs and nothing more: `PATH`, `HOME`/`CODEX_HOME` (subscription auth lives
+  in `~/.codex/auth.json`), the `USER`/`SHELL`/`TMPDIR`/`TERM`/locale basics, proxy and CA
+  variables for egress, plus PTC's four own variables rewritten through the same helper both
+  backends now share (`agents.child_ptc_env`). `OPENAI_API_KEY` is deliberately **not**
+  forwarded: PTC's codex path is subscription auth, which an API key would shadow. Accepted
+  consequence: a user MCP server that expects some other inherited variable will not see it
+  inside a PTC codex child; widening the allowlist is the remedy, not re-inheriting.
+  `PTC_CODEX_INHERIT=1` restores the user's Codex *surface* (hooks, plugins) and does not
+  restore credential inheritance — the two are separate concerns.
+  Date/Author: 2026-08-21 / T22 review-fix.
+
+- Decision: `CodexProc.close()` settles every pending request and the in-flight turn before
+  it cancels the stdout reader.
+  Rationale: EOF from the child is what normally drives `_fail()`, and `close()` is the one
+  path that suppresses that EOF — it cancels the reader while the child is still alive. A
+  `close()` landing mid-turn therefore left `turn()` waiting on an event nothing would ever
+  set, for the full 1800 s `_TURN_S` budget, holding its `max_concurrency` permit the whole
+  time; eight of those wedge the agent namespace. `AgentHandle.close()` is public and
+  documented, so "call close() while result() is outstanding" is a caller's prerogative, not
+  a misuse. Two keyless regression tests pin it — one on the backend, one through
+  `_Agent` under `max_concurrency=1`, which only passes if the permit really came back.
+  Date/Author: 2026-08-21 / T22 review-fix.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
@@ -1345,6 +1408,14 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   (4) **A15 met**: `agent.spawn(..., provider="codex")` in a real kernel returned exactly
   `CODEX-DONE`, turn `status: completed`, **zero** server→client requests, zero hooks, a real
   thread id in `agents.json`, and 19,113 input tokens for 8 output.
+  The corollary of that zero, which reads as good news and is also a coverage gap: **no
+  server→client reply has ever been field-proven.** The eight per-method replies are
+  schema-correct and shape-tested against the strict fake only; the live turn never drew a
+  single request, so the one path S4 showed does *not* short-circuit on `never` +
+  `read-only` — an MCP tool-call approval — remains unexercised in production. The live
+  tier's free schema-drift test (`test_the_fakes_hand_transcribed_enums_still_match_the_
+  installed_schema`) narrows this to "the shapes are still the right shapes"; it cannot show
+  the server ever accepted one.
   Evidence: `test/live/test_codex_live.py` (one billed turn, subscription auth), the kernel's
   own cell log for that run, and `test/unit/test_codex_backend.py` (30 keyless tests against a
   fake that enforces the handshake, the sandbox enum, per-method reply shapes and the turn id).
