@@ -372,10 +372,16 @@ re-encoding, which we cut with `sharp`):**
 - **Per-turn aggregate cap (ccx-chosen guard, no canon twin, recorded):** total image base64 per
   turn ≤ 5 MiB; exceeding entries degrade to the failure text block. This bounds memory and request
   size where canon relies on practice.
-- **Persistence:** image entries are **never written** to `history.jsonl`, the stash, or any paste
-  cache — only the `[Image #N]` label text persists (a restored history line submits its literal
-  label; `pasteChips.ts` already documents that an image chip cannot be reconstructed from its
-  label, and base64 payloads must not land in plaintext files). Test cells pin this.
+- **Persistence (sharpened v3):** image payloads are never written to `history.jsonl` **or the
+  on-disk paste cache** (`pasteCache.ts` — the seam `promptHistory.ts` uses for large paste
+  bodies); only the `[Image #N]` label persists there, and a restored history line submits its
+  literal label. **Volatile in-memory state keeps image entries intact** — stash (Ctrl-S), undo,
+  and the queue deliberately retain `pastedContents` so a restore never submits a dead label;
+  stripping them there would reintroduce payload loss. The SDK's own transcript persistence of
+  submitted image turns is the engine's boundary, not ours — it is what makes resumed sessions
+  render `[Image #N]` rows, and we do not interfere. Test cells: a recursive scan of an isolated
+  fleet root + history/paste-cache files finds no base64 payload sentinel after an image paste;
+  stash-and-restore round-trips the image entry in memory.
 
 The ambient "Image in clipboard" polling hint is a recorded non-goal (v1).
 
@@ -387,17 +393,31 @@ The ambient "Image in clipboard" polling hint is a recorded non-goal (v1).
   excludes image *input*; the SDK's own `SDKUserMessage.message` is a `MessageParam`, and probe 113
   proved exactly this shape traverses it).
 - Widened layers: `session/session.ts:132` (and the message builder at `:27`),
-  `session/chatSession.ts:11`, `appserver/registry.ts:34`, `appserver/fleetEngine.ts:126`,
-  `daemon/supervisor.ts:144`, **plus the layers the v1 draft missed**: the composer queue
-  (`QueueEntry` must carry image entries structurally — a queued image turn must not flatten to its
-  label) and the host `submit` seam (`host/host.ts:58`).
-- **v1 transport scope (the honest boundary, recorded):** image submission is supported where the
-  submit call stays **in-process** — the foreground REPL, the `--detachable` host's own composer,
-  and the library API. Paths that cross a byte-capped wire frame (`ccx attach` clients over the
-  host socket — `host/server.ts` `MAX_FRAME`; app-server peers — `appserver/peer.ts` `MAX_IN`)
-  **refuse image entries with an explicit error/notice** rather than truncating or disconnecting;
-  a blob/file handoff for wire paths is a recorded follow-up. (Canon has no attach analog — its
-  REPL is single-process — so this boundary costs no canon fidelity.)
+  `session/chatSession.ts:11`, `harness.ts` (`run`/`stream`), `appserver/registry.ts:34`,
+  `appserver/fleetEngine.ts:126`, `daemon/supervisor.ts:144`, the composer queue (`QueueEntry`
+  carries image entries structurally — a queued image turn must not flatten to its label), the
+  editor/composer producer seams (`editor.ts` chip expansion, `ChatComposer` submit event — the
+  paste map already rides the submit event to `useChat.ts:3021`, which is the flatten point), the
+  host `submit` seam (`host/host.ts:58`), and the public exports (`src/index.ts` types +
+  `npm run build` declaration check).
+- **Transport (v3 — the v2 "in-process only" scope was vacuous: even the foreground REPL submits
+  over a loopback socket via `remoteChatSession`, whose prompt frame is string-only and byte-capped
+  at `host/server.ts` `MAX_FRAME`):** image bytes cross process boundaries by **file handoff over
+  the shared filesystem** (host and every client — loopback, detachable, attach — are same-machine
+  by construction). The submitting client writes each image entry to
+  `<fleetRoot>/<host>/img/<uuid>` (dir `0700`, file `0600`) and the `prompt` op carries a small
+  manifest `{ path, mediaType, dimensions, size, sha256 }` per image — well under any frame cap.
+  The host validates (size caps, hash), reads, base64s, assembles the `UserTurnInput` blocks
+  (text first), and deletes the handoff file once the turn message is built; a
+  missing/mismatched/oversized handoff degrades to the canonical failure text block, never a
+  dropped turn. This makes `ccx attach` image-capable too — the v2 wire-refusal scope-cut
+  dissolves. App-server peers and daemon accept the `UserTurnInput` union as plain JSON, bounded
+  by their existing `MAX_IN` frame cap (an oversized request fails with the peer's normal frame
+  error; no new refusal machinery).
+- **Authoritative validation lives at the Session message-builder boundary:** whatever path input
+  arrived by (REPL handoff, library call, app-server), the builder normalizes, enforces every cap
+  (per-block ceiling, per-turn aggregate), and degrades violations to the failure text block — the
+  `useChat` gate is a UX courtesy, not the enforcement point.
 - The chip flatten step (`useChat.ts` submit path) emits canon's wire shape: **text block first,
   image blocks appended** (canon L371395-371427). String callers stay source-compatible everywhere
   (plain prompts still pass as strings).
@@ -460,7 +480,11 @@ settings deny rules (`~/.ssh/**`, `~/.aws/**`, …) already load into ccx and re
   whether the mode was **explicit**: an explicit `--permission-mode auto` keeps today's behaviour
   (`resolveOptions.ts:88` forces an auto-capable model — the user asked for auto by name). Test
   cells cover tier aliases, saved model preferences, the detachable launch, and explicit-auto +
-  unsupported model.
+  unsupported model. **Both constructors must resolve from the same effective model (v3):**
+  `hostMain.ts` loads no prefs today, so a saved non-auto model would split foreground (`default`)
+  from detachable (`auto`) — the effective model (flag → saved pref) is materialized where the
+  detachable child is spawned (or the child loads prefs identically); test cells assert model AND
+  mode together across both constructors.
 - Banner/hookOpts truth is free (one `foregroundConfig` object, the qa3-02 fix — keep it).
 - Headless `-p`, `--bg`, daemon, library: already `auto`; untouched. `ccx attach` still inherits the
   host's mode.
@@ -473,7 +497,11 @@ settings deny rules (`~/.ssh/**`, `~/.aws/**`, …) already load into ccx and re
   reachable source in ccx): sessions authenticated by `CLAUDE_CODE_OAUTH_TOKEN`
   (`tokenSource === "CLAUDE_CODE_OAUTH_TOKEN"`) get the variant **without** "Sessions are slightly
   more expensive."; API-key sessions and unknown keep the cost sentence (canon's else arm).
-  Recorded fidelity divergence: token-source proxy instead of plan tier.
+  Recorded fidelity divergence: token-source proxy instead of plan tier. **Seam (v3):** no such
+  seam exists today — `accountInfo` is consumed only while building the welcome banner. The token
+  source is threaded `main.ts` → `ChatClientOpts` → `ChatApp` → `useChat`; the detachable child
+  reads its own `accountInfo` (it is the host process). Attach clients have no source and take the
+  unknown arm (recorded). Tested from a fake `accountInfo` result through the rendered notice.
 - Record the **qa3-03 reversal** in `docs/parity/qa-sprint-1-triage.md` (decision, not regression:
   benchmark moved — canon rollout + owner's own setting), and update the EP-T1 comment block in
   `main.ts` to tell the new truth.
@@ -614,6 +642,15 @@ Pending — written at finish.
 
 - v1 (2026-08-22): initial spec from the five R-reports + owner grill (four forks settled) + design
   approval.
+- v3 (2026-08-22): the Codex **plan** review surfaced that even the foreground REPL submits over a
+  loopback socket (`chatMain.tsx:713` → `remoteChatSession`), so v2's "in-process only" image
+  transport scope was vacuous. Replaced with the shared-filesystem file handoff (manifest in the
+  prompt op, host-side assembly + authoritative validation at the message builder), which also
+  makes attach image-capable. Persistence sharpened (paste cache excluded; volatile stash/queue
+  keep entries; SDK transcript boundary documented). Notice seam named explicitly
+  (main → ChatClientOpts → ChatApp → useChat; attach takes the unknown arm). Saved-model
+  preference materialized at the detachable spawn so both constructors resolve the same launch
+  mode.
 - v2 (2026-08-22): Codex adversarial review (gpt-5.6-sol, xhigh) returned ten findings; nine adopted
   (some adjusted), one countered with a simpler resolution (1-based coordinates over sentinel
   migration). Substantive changes: hit-map identity/grapheme contract (M1), discriminated mouse
