@@ -369,8 +369,12 @@ agent.resume(session_id, **options) -> AgentHandle
 - **Concurrency**: one semaphore (default 8, `PTC_MAX_CONCURRENCY`) across all SDK-spawning
   calls (`agent.*`, `llm`, `web_search`) bounds subprocess storms.
 - **Registry**: `~/.ptc/kernels/<key>/agents.json` — `{name, provider, session_id/thread_id,
-  task_head, status, created_at, last_turn_at}`; written on every state change; `agent.list()`
-  merges live handles with the file so a restarted kernel can still `agent.resume(...)`.
+  task_head, status, created_at, last_turn_at, parent_session_id}`; written on every state
+  change; `agent.list()` merges live handles with the file so a restarted kernel can still
+  `agent.resume(...)`. `parent_session_id` is populated only for `agent.fork` entries, from the
+  parent sid already known to the kernel (the `resume=` argument, sourced from `meta.json`) at
+  fork time — a forked child's own JSONL carries no back-pointer to its parent (S2 evidence),
+  so this is the only place the relation is recoverable from disk.
 
 ### Sub-LM calls
 
@@ -511,7 +515,13 @@ with your OS permissions, outside Claude Code's per-tool permission prompts and 
 children spawned from the kernel default to `bypassPermissions`. The audit footer and
 `audit.jsonl` give visibility, not enforcement. Use a worktree/container for untrusted work. The
 kernel env should not carry `ANTHROPIC_API_KEY` if you want subscription billing — the key
-shadows OAuth in the `claude` CLI and silently flips billing to metered API.
+shadows OAuth in the `claude` CLI and silently flips billing to metered API. The kernel inherits
+the adapter's process environment verbatim, which includes credential-bearing `CLAUDE_*`
+variables (a Claude Code tool environment carries an OAuth bearer token, `sk-ant-oat…`, among
+them — S2 evidence). Any PTC surface that logs or forwards environment (debug output, audit
+records, the T20/T21 child-env plumbing) must redact credential-bearing variables before writing
+them anywhere durable: match by name (`KEY|TOKEN|BEARER|SECRET`) and by value prefix
+(`sk-ant-`), not pass the environment through unfiltered.
 
 ## Configuration reference
 
@@ -840,6 +850,18 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   T11's already-shipped hook rather than newly introduced by T13.
   Date/Author: 2026-08-21 / T13 executor; false-positive risk noted 2026-08-21 / T13 review-fix.
 
+- Decision: T20/T21's `agent` child-env plumbing (and any other PTC surface that dumps or logs
+  the kernel's environment) must redact credential-bearing variables before the value leaves
+  the process — match by name (`KEY|TOKEN|BEARER|SECRET`) and by value prefix (`sk-ant-`).
+  Rejected: passing the inherited environment through unfiltered on the assumption that only
+  `ANTHROPIC_API_KEY` is sensitive.
+  Rationale: S2's live run recorded `CLAUDE_ROUTINE_BEARER`, an `sk-ant-oat…` OAuth token,
+  among the kernel's inherited `CLAUDE_*` variables; the PTC kernel inherits the adapter's
+  environment verbatim, so any env-dumping surface (debug output, `audit.jsonl`, child-env
+  plumbing) is a credential leak unless it redacts. The S2 probe itself implements this
+  pattern (`_secretish(name, value)`) and its artifact writer redacts accordingly.
+  Date/Author: 2026-08-21 / T18 review.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
@@ -1045,23 +1067,42 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   assistant text emitted seconds earlier in that same turn — only the tool_result of the
   still-running Bash call was missing (it cannot exist yet). "Partially flushed" is therefore
   one *message* back, not one turn back, and the useful framing for the skill is not "fork
-  between turns" but "a fork sees everything except the cell it is being called from".
+  between turns" but "a fork sees everything except the cell it is being called from". This
+  flush-per-message model is read off record *timestamps*, not measured write latency directly;
+  in this run the fork query was issued ~7.5s after the last flushed record, so a tight race —
+  a fork issued milliseconds after the preceding message completes — is untested. This does not
+  threaten the mechanism (the fork point is always inside a tool call, whose `tool_use` record
+  is written before the tool runs), but a future spike wanting write-latency evidence would need
+  to narrow that gap deliberately.
   Three mechanism facts M2 should build on. (1) **The dangling `tool_use` is elided.** The
   parent's last flushed record was an `assistant`/`tool_use:Bash` block with no matching
-  tool_result; the child's transcript copies the prefix *up to but not including* it. That
+  tool_result; the child's transcript copies the content-bearing prefix *up to but not
+  including* it (the session-scaffolding records — `queue-operation`, `last-prompt`,
+  `atis-latch` — are not among the copied ones; the child re-derives its own instead). That
   pruning is why a mid-turn fork is well-formed at all — nothing else resolves the orphaned
   call — and it means the child cannot see the arguments of the very tool call that forked it.
-  (2) **The copy is verbatim except for identity.** Copied records keep their original `uuid`s
-  and timestamps; only `sessionId` is rewritten to the child's. There is no fork-provenance
-  field anywhere in the child file, so `agent.fork` must record the child `session_id` from the
-  SDK `ResultMessage` itself if the registry is to link a child back to its parent.
+  (2) **The copied records keep their original `uuid`s and timestamps, but four fields are
+  rewritten to the child's own identity, not just `sessionId`**: `sessionId`, `entrypoint`
+  (the forking client's, e.g. `sdk-cli` → `sdk-py`), `version` (the forking client's CLI
+  version, not the version that actually produced the historical message), and `promptId`.
+  There is no fork-provenance field anywhere in the child file — none of those four rewritten
+  fields points back at the parent — so `agent.fork` must record the child `session_id` from
+  the SDK `ResultMessage` itself if the registry is to link a child back to its parent.
   (3) **A fork is not a cheap primitive, and `setting_sources=[]` does not make it one.** The
-  child paid a cold cache write of the whole inherited context — `cache_creation 15 321`,
-  `cache_read 0`, $0.308 — for a two-line answer against a parent transcript of only 14
-  records. `setting_sources=[]` stops the child loading *its own* config and hooks; it cannot
-  stop the parent's CLAUDE.md, skill listing, and hook-output attachments riding along inside
-  the resumed transcript, and a real mid-session parent is far larger than this one. Price
-  `agent.fork` in the skill as a deliberate one-shot, never a loop body.
+  child paid a cold cache write — `cache_creation 15 321`, `cache_read 0` — for a two-line
+  answer, at a cost of $0.308 on `claude-fable-5` pricing (cost scales with model tier; a
+  cheaper model would cost proportionally less for the same token count). Roughly half of
+  those 15,321 tokens is inherited parent context (the parent's at-fork payload — skill
+  listing, an agent-listing delta, two hook attachments, the user message — is on the order of
+  7–9k tokens by character count), not all of it; the rest is the child's own baseline (system
+  prompt) that any fresh session would also pay. `setting_sources=[]` stops the child loading
+  *its own* config and hooks, but does not stop the parent's skill listing and hook-output
+  attachments riding along inside the resumed transcript, and a real mid-session parent is far
+  larger than this 14-record one — so `agent.fork` cost grows with parent size *and* model
+  tier. The one number that *is* mechanism rather than extrapolation is `cache_read_input_
+  tokens: 0`: a fork never reuses the parent's prompt cache, so every fork pays a full cold
+  write regardless of how many prior forks touched the same parent. That is the real reason to
+  price `agent.fork` in the skill as a deliberate one-shot, never a loop body.
   Evidence: `test/spikes/s2_live_fork.py`, one live pass on 2.1.238 (parent `claude -p`,
   session `46422f60-…`, 25.4 s, rc=0). Snapshot taken inside the running Bash call —
   `FORK_SNAPSHOT records=14 bytes=39462`, last three records `user str[544]` (MARKER) /
