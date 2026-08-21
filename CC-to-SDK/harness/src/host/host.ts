@@ -252,7 +252,15 @@ export class SessionHost {
        *  needs a staged-file read that stays pending PAST the instant `turnSeq()` has already been read
        *  off this host (server.ts calls it synchronously, right after firing `prompt` and NOT awaiting
        *  it) — there is no way to force that timing against the real filesystem without this hook. */
-      readStagedImage?: (path: string) => Promise<Buffer> }
+      readStagedImage?: (path: string) => Promise<Buffer>;
+      /** F9 T-IMAGE Task 5 (I3b) fix-wave test seam: fires once per claim in `assembleStagedContent`'s
+       *  loop, immediately AFTER `readAndValidate` returns a success verdict. `readAndValidate` never
+       *  throws on its own (a missing/unreadable/corrupt file is a caught-internally `{ok:false}`
+       *  verdict, by design), so nothing in that loop can raise a genuine exception today — a review
+       *  found the "claimed files are deleted in a finally" test was vacuous against a removed `finally`
+       *  for exactly that reason. This hook is the injectable seam that lets a test force a real throw
+       *  PAST a successful validation, so the mutation actually discriminates. */
+      afterImageValidated?: (stagedId: string) => void }
       = { openSession: realOpenSession }) {
     this.short = opts.short;
     this.env = opts.env ?? process.env;
@@ -469,6 +477,7 @@ export class SessionHost {
         const claim = images[i];
         const verdict = await staging.readAndValidate(claim.stagedId, claim.sha256, POST_PROCESS_BYTE_BUDGET);
         if (!verdict.ok) { failures.push(`[Image could not be processed: ${verdict.reason}]`); continue; }
+        this.deps.afterImageValidated?.(claim.stagedId);
         ok.push({ data: verdict.data, mediaType: verdict.mediaType });
       }
     } finally {

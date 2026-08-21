@@ -67,11 +67,16 @@ function drivable(sessionId = "sid-transport") {
 
 async function startHost(session: HostSession = drivable(), opts: {
   readStagedImage?: (path: string) => Promise<Buffer>;
+  afterImageValidated?: (stagedId: string) => void;
 } = {}) {
   const env = { CCX_FLEET_ROOT: tmpFleet() } as NodeJS.ProcessEnv;
   const host = new SessionHost(
     { short: "1aa6e000", name: "imgtransport", cwd: process.cwd(), kind: "bg", detached: true, config: {} as never, env },
-    { openSession: () => session, procStartOf: async () => "start", ...(opts.readStagedImage ? { readStagedImage: opts.readStagedImage } : {}) });
+    {
+      openSession: () => session, procStartOf: async () => "start",
+      ...(opts.readStagedImage ? { readStagedImage: opts.readStagedImage } : {}),
+      ...(opts.afterImageValidated ? { afterImageValidated: opts.afterImageValidated } : {}),
+    });
   await host.start();
   return { host, session, env, path: hostSocketPath(process.pid, env), stagingDir: hostImageStagingDir(process.pid, env) };
 }
@@ -195,7 +200,46 @@ describe("F9 T-IMAGE Task 5 (I3b) — the negotiated stageImage transport, real 
     } finally { client.detach(); await stopQuietly(host); }
   });
 
-  it("claimed files are deleted in a finally even when the staged read throws unexpectedly", async () => {
+  it("MAX_IMAGES_PER_PROMPT: the 21st image claim in one prompt degrades to the count-limit text while the first 20 assemble as real images", async () => {
+    // Pins the count cap the review flagged as untested: nothing else in this suite ever stages more
+    // than a handful of claims, so this guard could regress silently. The bounds below are DELIBERATELY
+    // hardcoded literals, not `MAX_IMAGES_PER_PROMPT` itself — importing the constant would make this
+    // cell track any future change to the cap instead of pinning the CURRENT spec'd value of 20.
+    // Mutation check: bump MAX_IMAGES_PER_PROMPT to 21 in imageStaging.ts and this cell must FAIL (21
+    // images assemble, no count-limit text) — restored immediately after confirming.
+    const session = drivable();
+    const { host, path } = await startHost(session);
+    const client = await RemoteChatSession.connect(path);
+    try {
+      const claims: { stagedId: string; sha256: string }[] = [];
+      for (let i = 0; i < 21; i++) {
+        const png = fakePng(4, 4, 64);
+        const sha256 = createHash("sha256").update(png).digest("hex");
+        const staged = await client.stageImageOp({ mediaType: "image/png", dimensions: { width: 4, height: 4 }, size: png.length, sha256 });
+        expect(staged.ok && staged.path).toBeTruthy();
+        writeFileSync(staged.path!, png);
+        claims.push({ stagedId: staged.path!, sha256 });
+      }
+      const reply = await client.prompt("hi", undefined, claims);
+      expect(reply.ok).toBe(true);   // the TURN still submits — degrade the tail, never refuse the whole turn
+      await waitFor(() => session.submittedContents.length === 1);
+      const assembled = session.submittedContents[0] as UserContentBlock[];
+      const imageBlocks = assembled.filter((b) => b.type === "image");
+      const textBlocks = assembled.filter((b) => b.type === "text");
+      expect(imageBlocks).toHaveLength(20);
+      expect(textBlocks.some((b) => (b as { text: string }).text.includes("too many images"))).toBe(true);
+      // Every claimed file — including the ones that degraded on count alone — is released, not leaked.
+      for (const claim of claims) expect(existsSync(claim.stagedId)).toBe(false);
+      session.finish({ result: "ok" });
+    } finally { client.detach(); await stopQuietly(host); }
+  });
+
+  it("claimed files are deleted in a finally when the staged read fails (a failed-validation verdict, not a thrown exception — readAndValidate catches its own read failure internally)", async () => {
+    // NOTE on scope: this cell proves cleanup-on-failed-validation. It does NOT, by itself, prove the
+    // `finally` survives a genuine thrown exception — `ImageStaging.readAndValidate` catches this
+    // injected read failure internally and returns an `{ok:false}` verdict, so nothing here ever
+    // escapes the try block as an exception. Removing the `finally` leaves this cell passing unchanged
+    // (confirmed live). The next cell below is the one that forces a REAL throw and discriminates on it.
     const session = drivable();
     const readStagedImage = async (): Promise<Buffer> => { throw new Error("injected read failure"); };
     const { host, path } = await startHost(session, { readStagedImage });
@@ -216,6 +260,37 @@ describe("F9 T-IMAGE Task 5 (I3b) — the negotiated stageImage transport, real 
       // assembly, not the specific error branch, is what deletes it.
       expect(existsSync(staged.path!)).toBe(false);
       session.finish({ result: "ok" });
+    } finally { client.detach(); await stopQuietly(host); }
+  });
+
+  it("claimed files are STILL deleted in a finally when assembly throws a genuine exception AFTER validation succeeds", async () => {
+    // The prior cell's "injected read failure" never actually exercises the `finally` under a thrown
+    // exception: `ImageStaging.readAndValidate` catches its own read failure internally and returns an
+    // `{ok:false}` verdict, so the claim loop never throws at all — removing the `finally` left that
+    // cell passing unchanged (review's mutation (c)). This cell forces a REAL throw past a successful
+    // validation, via the `afterImageValidated` seam (host.ts), so removing the `finally` around the
+    // claim-release loop must fail THIS cell.
+    // Mutation check: remove the `finally` wrapping the loop in `assembleStagedContent` (host.ts) and
+    // this cell must FAIL (the file survives) — restored immediately after confirming.
+    const session = drivable();
+    const afterImageValidated = () => { throw new Error("injected assembly failure"); };
+    const { host, path } = await startHost(session, { afterImageValidated });
+    const client = await RemoteChatSession.connect(path);
+    try {
+      const png = fakePng(4, 4, 64);
+      const sha256 = createHash("sha256").update(png).digest("hex");
+      const staged = await client.stageImageOp({ mediaType: "image/png", dimensions: { width: 4, height: 4 }, size: png.length, sha256 });
+      writeFileSync(staged.path!, png);
+      expect(existsSync(staged.path!)).toBe(true);
+      // `prompt`'s reply is synchronous (seq reservation happens before any await, per the sequence-race
+      // cell above) — it resolves ok:true regardless of what happens later inside runTask. The injected
+      // throw surfaces as runTask's own rejection, which server.ts's dispatch deliberately fires-and-
+      // swallows (`void handlers.prompt(...).catch(() => {})`) rather than reflecting on the reply.
+      const reply = await client.prompt("hi", undefined, [{ stagedId: staged.path!, sha256 }]);
+      expect(reply.ok).toBe(true);
+      // The turn never reaches Session.submit at all — the throw happens before content is assembled.
+      await waitFor(() => !existsSync(staged.path!));
+      expect(session.submittedContents).toHaveLength(0);
     } finally { client.detach(); await stopQuietly(host); }
   });
 

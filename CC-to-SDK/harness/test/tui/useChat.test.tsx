@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendHistory } from "../../src/tui/promptHistory.js";
 import { savePrefs } from "../../src/tui/prefs.js";
+import { IMAGE_VERSION_SKEW_NOTICE } from "../../src/client/chatAdapter.js";
 
 // Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
 // boundary the reflow lands on — a boundary that shifts whenever earlier content in the SAME joined line
@@ -143,6 +144,21 @@ describe("useChat: the host event stream is the single rendering source", () => 
     await waitFor(() => frame(lastFrame).includes("connection lost"));
     expect(frame(lastFrame)).toContain("host connection closed");
     expect(frame(lastFrame)).toContain("IDLE");   // busy untouched — it was already false
+  });
+
+  // F9 T-IMAGE Task 5 (I3b) fix wave: the review's third finding — IMAGE_VERSION_SKEW_NOTICE →
+  // notice() rendering was untested at the useChat layer (only proven indirectly by the adapter-level
+  // integration test, which never reaches useChat.ts's own `runTurn` catch arm at all). Pins that a
+  // submit() rejection carrying exactly this message renders as a capability notice, not the generic
+  // "✗ <message>" error line runTurn uses for every other submit failure.
+  it("a submit() rejection carrying IMAGE_VERSION_SKEW_NOTICE renders via notice(), not the generic '✗' error line", async () => {
+    const fake = fakeRemote({ submit: async () => { throw new Error(IMAGE_VERSION_SKEW_NOTICE); } });
+    const { lastFrame } = render(<Host makeSession={() => fake} prompt="hi with an image" />);
+    // `flat`, not `frame`: Ink hard-wraps this notice line at a word boundary inside the message, and
+    // `flat` is the helper that collapses the resulting whitespace run back to single spaces.
+    await waitFor(() => flat(lastFrame).includes(IMAGE_VERSION_SKEW_NOTICE));
+    expect(flat(lastFrame)).not.toContain(`✗ ${IMAGE_VERSION_SKEW_NOTICE}`);
+    expect(frame(lastFrame)).toContain("IDLE");
   });
 });
 
