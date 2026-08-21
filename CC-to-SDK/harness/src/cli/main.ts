@@ -560,7 +560,11 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // flag still wins, but a persisted default now outranks the harness default, the model precedent's
       // exact shape (`model` above). `ccx attach` (the other foreground path) passes none, and undefined
       // there means no hint, which is the honest answer for a client that never saw a launch config.
-      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), promptLatch },
+      // T2 (F9 T-AUTO §A2): the SAME `account` the banner's billing label reads two blocks up, handed down a
+      // second path so the auto-mode notice's variant selector sees it too. `account` is already undefined
+      // on a resume/continue launch (the banner race is skipped there), which lands the notice on its
+      // documented unknown arm exactly like `ccx attach` does below.
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), initialTokenSource: account?.tokenSource, promptLatch },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);
