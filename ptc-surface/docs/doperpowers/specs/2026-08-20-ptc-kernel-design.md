@@ -285,6 +285,14 @@ ptc kill [-s KEY | --all]
 ptc doctor                      # venv state, versions, run-file visibility, claude/codex on PATH
 ```
 
+`--json` is accepted by **every** subcommand and honored by every one of them: `exec`/`wait`
+emit the result object above, and the rest emit one line of JSON describing what they did
+(`{"kernels": [...]}`, `{"venv": …}`, `{"key": …, "killed": …}`, `{"key": …, "interrupted":
+true}`, `{"key": …, "pid": …, "cwd": …, "namespace_lost": true}`; `doctor`'s report is its
+human output on one line). Human output stays the default and is unchanged. A flag a shared
+parser advertises on every command has to work on every command — advertised-and-ignored is
+a contract break for exactly the caller who read the help text (final review r4, finding 7).
+
 Default `-s`: `$PTC_SESSION`, else `$CLAUDE_CODE_SESSION_ID`, else the newest live kernel (with a
 notice). The CLI exists for humans debugging a kernel and for harnesses without MCP; the skill
 does not teach it.
