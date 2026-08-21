@@ -223,6 +223,85 @@ describe("CM30 rendering — SuggestPopup", () => {
   });
 });
 
+// ── T-X4T: query-substring highlight — `T_r`/`FIh`, bundle L536230–536285 (2.1.236, NOT 2.1.220's recolor) ─
+// Command rows only (`GeneralRow`); `FileRow` never receives a `query` and is untouched — see the file-ish
+// tests just above, which set no `query` and still pass unmodified after this feature ships.
+const strip = (s: string | undefined) => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+const BOLD = /\x1b\[1m([^\x1b]*)\x1b\[22m/g;
+/** every bold-wrapped run in `s`, in order — lets a test assert exactly which characters got the `\x1b[1m`
+ *  treatment without caring about the dim/color SGR around them. */
+const boldRuns = (s: string): string[] => [...s.matchAll(BOLD)].map((m) => m[1]!);
+
+describe("T-X4T query highlight — T_r/FIh (L536230–536285)", () => {
+  it("a contiguous hit on the NAME column bolds exactly the matched span, nothing else", () => {
+    const items: SuggestItem[] = [{ id: "cmd-review", displayText: "/review", description: "review a pull request", query: "revi" }];
+    const { lastFrame } = render(<SuggestPopup items={items} selected={-1} columns={80} rows={24} maxColumnWidth={12} />);
+    const raw = lastFrame() ?? "";
+    // the name column bolds "revi" (the leading "/" is not part of the query and stays unbolded, per canon's
+    // own offset note in the research report).
+    expect(boldRuns(raw)).toContain("revi");
+    expect(strip(raw)).toContain("/review");
+  });
+
+  it("the NAME column falls back to fuzzy subsequence matching when there is no contiguous hit", () => {
+    // "rvw" is not a substring of "review", so a contiguousOnly implementation would find nothing; the fuzzy
+    // walk finds r@0, v@3, w@5 as three separate one-character runs.
+    const items: SuggestItem[] = [{ id: "cmd-review", displayText: "/review", query: "rvw" }];
+    const { lastFrame } = render(<SuggestPopup items={items} selected={-1} columns={80} rows={24} maxColumnWidth={12} />);
+    const raw = lastFrame() ?? "";
+    expect(boldRuns(raw)).toEqual(["r", "v", "w"]);
+  });
+
+  it("the DESCRIPTION lanes are contiguousOnly — a query that only fuzzy-matches leaves the WHOLE row plain", () => {
+    // "rprq" is a subsequence of "review a pull request" (r@0, p@9, r@14, q@16 — the fuzzy walk WOULD find it)
+    // but not a contiguous substring, so contiguousOnly on the description must refuse it. It is also not a
+    // subsequence of the name "/review" at all (no "p"/"q" there), so the name lane is plain independently —
+    // this test's job is specifically the description's refusal, not the name's ordinary miss.
+    const items: SuggestItem[] = [{ id: "cmd-review", displayText: "/review", description: "review a pull request", query: "rprq" }];
+    const { lastFrame } = render(<SuggestPopup items={items} selected={-1} columns={80} rows={24} maxColumnWidth={12} />);
+    const raw = lastFrame() ?? "";
+    // name: no match at all ("rprq" is not a subsequence of "review") → plain.
+    // description: contiguousOnly refuses the fuzzy subsequence that WOULD have matched → plain too.
+    expect(boldRuns(raw)).toEqual([]);
+  });
+
+  it("a query that IS a contiguous substring of the description highlights there, contiguousOnly and all", () => {
+    const items: SuggestItem[] = [{ id: "cmd-review", displayText: "/review", description: "review a pull request", query: "pull" }];
+    const { lastFrame } = render(<SuggestPopup items={items} selected={-1} columns={80} rows={24} maxColumnWidth={12} />);
+    const raw = lastFrame() ?? "";
+    expect(boldRuns(raw)).toEqual(["pull"]);
+  });
+
+  it("ANY unmatched query character paints the WHOLE row plain — no partial highlight survives", () => {
+    // "z" appears nowhere in "/review" or its description: FIh returns [] for both lanes, so there must be
+    // ZERO bold SGR anywhere in the frame, not a partial highlight of the characters that did match before "z".
+    const items: SuggestItem[] = [{ id: "cmd-review", displayText: "/review", description: "review a pull request", query: "revz" }];
+    const { lastFrame } = render(<SuggestPopup items={items} selected={-1} columns={80} rows={24} maxColumnWidth={12} />);
+    expect(boldRuns(lastFrame() ?? "")).toEqual([]);
+  });
+
+  it("survives selection: the SELECTED row keeps its suggestion-colour SGR AND gains bold on the match — the L173 pin is unmodified by this feature", () => {
+    const items: SuggestItem[] = [{ id: "cmd-review", displayText: "/review", description: "review a pull request", query: "revi" }];
+    const { lastFrame } = render(<SuggestPopup items={items} selected={0} columns={80} rows={24} maxColumnWidth={12} />);
+    const raw = lastFrame() ?? "";
+    expect(raw).toMatch(/\x1b\[38;2;\d+;\d+;\d+m/);                  // the suggestion truecolor token, unchanged
+    expect(raw).not.toContain("\x1b[7m");                            // still no inverse
+    expect(boldRuns(raw)).toContain("revi");                         // …and the match is bold on top of it
+  });
+
+  it("no query on the item → identical output to before this feature (no bold anywhere)", () => {
+    const items: SuggestItem[] = [{ id: "cmd-review", displayText: "/review", description: "review a pull request" }];
+    const { lastFrame } = render(<SuggestPopup items={items} selected={-1} columns={80} rows={24} maxColumnWidth={12} />);
+    expect(boldRuns(lastFrame() ?? "")).toEqual([]);
+  });
+
+  it("a file-ish row ignores `query` entirely — canon's own gate (`vql`/`E_a`), not a case ccx invents", () => {
+    const files: SuggestItem[] = [{ id: "file-src/app.ts", displayText: "src/app.ts", query: "app" }];
+    const { lastFrame } = render(<SuggestPopup items={files} selected={-1} columns={80} rows={24} />);
+    expect(boldRuns(lastFrame() ?? "")).toEqual([]);
+  });
+});
+
 // ── DG55: the kind lane, COMMAND ROWS ONLY (`S_a` L432454, colours L432563) ─────────────────────────────
 describe("DG55 kind lane — S_a (L432454)", () => {
   it("S_a: undefined → NO lane; action → seven BLANK columns; info → 'config'; every other kind padded to 7", () => {
@@ -440,8 +519,11 @@ describe("through ChatComposer", () => {
     await tick();
     a.stdin.write("/revi");
     await tick();
-    expect(a.lastFrame()).toContain("/review");
-    expect(a.lastFrame()).toContain("review a pull request");
+    // T-X4T: the live query is now highlighted (`\x1b[1mrevi\x1b[22m` inside both the name and the
+    // description), so a RAW-frame `toContain` on the full un-split string would fail — strip SGR first, per
+    // the brief (fix the assert, don't weaken the feature).
+    expect(strip(a.lastFrame())).toContain("/review");
+    expect(strip(a.lastFrame())).toContain("review a pull request");
 
     const b = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
     await tick();
@@ -522,8 +604,26 @@ describe("through ChatComposer", () => {
     const before = lineCount(lastFrame());
     stdin.write("/revi");
     await tick();
-    expect(lastFrame()).toContain("/review");
+    // T-X4T: same SGR-stripping fix as the test above — the query highlight now splits "/review" into
+    // separate un-bold/bold/un-bold `<Text>` spans in the raw frame.
+    expect(strip(lastFrame())).toContain("/review");
     expect(lineCount(lastFrame())).toBeGreaterThan(before);
+  });
+
+  it("T-X4T wiring: `/revi` bolds the matched span through the REAL chain, and a CAPITALIZED query still matches (the lowercase trap)", async () => {
+    // Drives the real chain end to end — editor → completionTriggers → completions → ChatComposer's
+    // suggestProps → SuggestPopup — rather than mounting the popup with hand-built items. This is the test
+    // that would catch a regression at ANY of those seams, including the specific trap the brief calls out:
+    // `state.command.query` (`completionTriggers.ts` L60) is the RAW, un-lowered trigger text, so a
+    // suggestProps that forgot to lowercase it before handing it to `matchRanges` would silently produce zero
+    // highlights for this exact keystroke sequence.
+    const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={() => {}} cwd="/tmp" commandCatalog={CAT} />));
+    await tick();
+    stdin.write("/REVI");
+    await tick();
+    const raw = lastFrame() ?? "";
+    expect(strip(raw)).toContain("/review");                          // ranking is case-insensitive already
+    expect(raw).toContain("\x1b[1mrevi\x1b[22m");                     // …and now so is the highlight
   });
 
   // DG55: the lane only exists because the SLASH source feeds a kind (`VJa`, L490007), and `VJa` feeds one

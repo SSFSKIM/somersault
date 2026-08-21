@@ -2491,7 +2491,10 @@ describe("<ChatApp>", () => {
     stdin.write("queued-one"); await waitFor(() => frame(lastFrame).includes("queued-one"));
     stdin.write("\r"); await waitFor(() => isQueued(lastFrame, "queued-one"));
     stdin.write("/"); await waitFor(() => frame(lastFrame).includes("/"));
-    stdin.write("mod"); await waitFor(() => frame(lastFrame).includes("/model"));
+    // T-X4T: "/model" only appears via the POPUP row (the composer buffer itself reads "/mod", not "/model"),
+    // and the popup now bolds the matched "mod" span, which breaks the raw string into separate `<Text>`
+    // spans with an ANSI escape between "/" and "mod" — strip before matching, or this wait never resolves.
+    stdin.write("mod"); await waitFor(() => stripAnsiAll(frame(lastFrame)).includes("/model"));
     stdin.write("\x03");
     await waitFor(() => interrupted === 1 && !isQueued(lastFrame, "queued-one"));
     expect(frame(lastFrame)).toContain("queued-one");

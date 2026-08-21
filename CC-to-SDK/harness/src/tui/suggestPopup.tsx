@@ -29,8 +29,14 @@ const WS = /\s+/g;
 
 /** One row. `id` is load-bearing, not decoration: `E_a` (L432427) keys the whole FILE-ish rendering branch off
  *  its prefix — `file-`, `mcp-resource-`, `mcp-template`, `agent-` — and those rows are always one line and
- *  are drawn as one icon-prefixed run instead of the two-lane name/description layout. */
-export interface SuggestItem { id: string; displayText: string; description?: string; kind?: SuggestKind }
+ *  are drawn as one icon-prefixed run instead of the two-lane name/description layout.
+ *
+ *  `query` — T-X4T (2.1.236 `T_r`/`FIh`, L536230–536285): the live composer query this row was ranked
+ *  against, threaded onto command items ONLY (`ChatComposer`'s `suggestProps`, mirroring upstream's `ADc`
+ *  producer at L600899/L600908). It MUST already be lowercased — `FIh` lowercases the row TEXT and never
+ *  touches the query, so a capitalized query silently matches nothing (see queryHighlight.test.ts). File/
+ *  MCP/agent rows never receive one; `FileRow` ignores the field even if a caller mistakenly set it. */
+export interface SuggestItem { id: string; displayText: string; description?: string; kind?: SuggestKind; query?: string }
 
 /** `e.kind` — DG55. The popup is generic, but this field is not: the ONLY producer that sets it is the slash
  *  source (`VJa`, bundle L490007, `...t && { kind: p9f(e), sourceTag: nRb(e) }`), so the vocabulary is `p9f`'s
@@ -269,6 +275,86 @@ function FileRow({ item, columns, selected }: { item: SuggestItem; columns: numb
   return <Text color={selected ? suggestionColor() : undefined} dimColor={!selected} wrap="truncate">{text}</Text>;
 }
 
+/** T-X4T — `FIh`, bundle L536230–536252 (2.1.236; port this, NOT 2.1.220's `j7p`, which recolored the match
+ *  instead of bolding it — see the research report for why the two collide differently with selection). The
+ *  match-range finder for the query-substring highlight: contiguous `indexOf` tried first, and only on a miss
+ *  does it fall back to a greedy left-to-right SUBSEQUENCE walk over the query's characters, merging adjacent
+ *  hits into runs so a fuzzy match that happens to be contiguous still paints as one span. ANY unmatched query
+ *  character discards the WHOLE result (`[]`) — there is no partial highlight. `contiguousOnly` disables the
+ *  fallback but not the `indexOf` fast path (canon threads it `true` for description text, `false` for the
+ *  name column — see the three call sites in `GeneralRow` below).
+ *
+ *  Only the TEXT is lowercased here; the QUERY is not (canon's own asymmetry — `n = e.toLowerCase()` never
+ *  touches `t`). Callers own lowercasing the query before it reaches this function — `ChatComposer`'s
+ *  `suggestProps` does it once at the item-building site, mirroring upstream's producers at L600908/L600809.
+ *  Forgetting that at a NEW call site is the one trap this file cannot protect against by itself; it is
+ *  covered end-to-end by queryHighlight.test.ts's "lowercase trap" case and by the through-composer wiring
+ *  test below. The length guard drops the highlight when lowercasing changes the string's length (e.g. "İ"),
+ *  because the indices would stop lining up with the original text. */
+export function matchRanges(text: string, query: string, contiguousOnly = false): Array<[number, number]> {
+  const lower = text.toLowerCase();
+  if (lower.length !== text.length) return [];
+  const hit = lower.indexOf(query);
+  if (hit !== -1) return snapToGraphemes(text, [[hit, hit + query.length]]);
+  if (contiguousOnly) return [];
+  const ranges: Array<[number, number]> = [];
+  let cursor = 0;
+  for (const ch of query) {                                       // codepoint iteration, matching `for (let a of t)`
+    const at = lower.indexOf(ch, cursor);
+    if (at === -1) return [];
+    const end = at + ch.length;
+    const last = ranges[ranges.length - 1];
+    if (last && last[1] === at) last[1] = end;                    // adjacent to the previous hit → extend the run
+    else ranges.push([at, end]);
+    cursor = end;
+  }
+  return snapToGraphemes(text, ranges);
+}
+
+/** `BIh`, bundle L536337–536357 (NEW in 2.1.236, no 2.1.220 counterpart) — widens each range out to the
+ *  nearest grapheme-cluster boundary so a highlight can never cut a combining sequence or a multi-codepoint
+ *  emoji in half. `NON_LATIN1` mirrors upstream's `DSw` (`/[^ -˿]/`, L536524, i.e. anything outside
+ *  U+0020–U+02FF): text made entirely of that range is exactly what upstream trusts index === grapheme
+ *  boundary for, and the Intl.Segmenter pass is skipped outright — the common case (plain command names and
+ *  English descriptions) never pays for it. */
+const NON_LATIN1 = /[^ -˿]/;
+function snapToGraphemes(text: string, ranges: Array<[number, number]>): Array<[number, number]> {
+  if (ranges.length === 0 || !NON_LATIN1.test(text)) return ranges;
+  const boundaries = new Set<number>();
+  for (const { index } of new Intl.Segmenter().segment(text)) boundaries.add(index);
+  const snapped: Array<[number, number]> = [];
+  for (const [start, end] of ranges) {
+    let s = start; while (s > 0 && !boundaries.has(s)) s--;         // widen the start back to a cluster boundary
+    let e = end; while (e < text.length && !boundaries.has(e)) e++; // widen the end forward to a cluster boundary
+    const last = snapped[snapped.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);       // widening made two ranges touch → merge
+    else snapped.push([s, e]);
+  }
+  return snapped;
+}
+
+/** `T_r`, bundle L536253–536285 — the highlighting `<Text>`. Style is the 2.1.236 shape: a matched span is
+ *  BOLD and un-dimmed and takes NO colour of its own; `color`/`selected` are decided by the CALLER before
+ *  this ever runs (name/description already resolved their selection colour) and are threaded through
+ *  UNCHANGED on every span, matched or not. Selection and highlight are orthogonal axes, not competing ones —
+ *  on a selected row (never dim) bold is the only remaining highlight cue; on an unselected row (dim by
+ *  default) the match reads as bold+undimmed against dim text, a double cue. No-match is the exact same
+ *  single-`<Text>` shape this call site used before this feature existed, so a query that fails to match
+ *  changes nothing about the row. */
+function Highlighted({ text, query, contiguousOnly = false, color, selected }: { text: string; query: string | undefined; contiguousOnly?: boolean; color: string | undefined; selected: boolean }) {
+  const ranges = query ? matchRanges(text, query, contiguousOnly) : [];
+  if (ranges.length === 0) return <Text color={color} dimColor={!selected}>{text}</Text>;
+  const spans: React.ReactNode[] = [];
+  const push = (start: number, end: number, hit: boolean) => {
+    if (start >= end) return;
+    spans.push(<Text key={start} color={color} dimColor={!hit && !selected} bold={hit}>{text.slice(start, end)}</Text>);
+  };
+  let cursor = 0;
+  for (const [s, e] of ranges) { push(cursor, s, false); push(s, e, true); cursor = e; }
+  push(cursor, text.length, false);
+  return <>{spans}</>;
+}
+
 /** `q7p`'s general branch (bundle L432540–L432640). The row is a fixed run of lanes, in the bundle's own
  *  child order at L432606 — which is NOT the order the lanes are computed in, and not the order this task's
  *  brief predicted either:
@@ -279,8 +365,8 @@ function FileRow({ item, columns, selected }: { item: SuggestItem; columns: numb
  *  them after the name pad and before the description. Three of the seven are permanently absent for us and
  *  each has its own reason: the `emoji:` pointer (`$Tr`, only for emoji suggestions, which we do not produce)
  *  and the tag/source lanes (not derivable from `CommandEntry` — see `SuggestKind`). `X4t`'s query
- *  highlighting, which bolds the matched substring inside both the name and the description, is still skipped
- *  and is still a real fidelity gap rather than an N/A; it is its own CM.
+ *  highlighting (`T_r`/`FIh` above) bolds the matched substring inside the name and description lanes — CM30
+ *  is now the only remaining N/A-free gap on this row.
  *
  *  DG55 adds the kind lane, and the second line moves with it: upstream's continuation indent is
  *  `Nzo = RRe + y_a + H_a` (L432610) — name lane PLUS every metadata lane — so the wrapped remainder lines up
@@ -304,13 +390,24 @@ function GeneralRow({ item, columns, nameCol, selected, allowWrap }: { item: Sug
   // `qTr` (L432588): the lane is drawn only when `kindLaneText` is non-empty — which INCLUDES the seven blanks
   // an `action` row gets — and its colour is the role alone, never the selection colour.
   const kindNode = kindText ? <Text color={role ? roleColor(role) : undefined} dimColor={!role}>{kindText}</Text> : null;
-  const head = <Text wrap="truncate"><Text color={color} dimColor={!selected}>{name + pad}</Text>{kindNode}<Text color={color} dimColor={!selected}>{first}</Text></Text>;
+  // T-X4T: the name lane is `Highlighted` with `contiguousOnly` OFF (fuzzy allowed, L536465) and the pad is
+  // its OWN `<Text>` — upstream keeps the pad separate (L536470) precisely so `T_r` sees the name alone and
+  // never bolds trailing whitespace. The description lanes (`first`/`rest`) are `contiguousOnly` ON
+  // (L536488/L536508): substring-only, no fuzzy fallback.
+  const head = (
+    <Text wrap="truncate">
+      <Highlighted text={name} query={item.query} color={color} selected={selected} />
+      {pad ? <Text color={color} dimColor={!selected}>{pad}</Text> : null}
+      {kindNode}
+      <Highlighted text={first} query={item.query} contiguousOnly color={color} selected={selected} />
+    </Text>
+  );
   if (!rest) return head;
   const indent = nameW + kindW;                                   // `Nzo`
   return (
     <Box flexDirection="column">
       {head}
-      <Text wrap="truncate">{" ".repeat(indent)}<Text color={color} dimColor={!selected}>{truncEnd(rest, Math.max(0, columns - indent - 4))}</Text></Text>
+      <Text wrap="truncate">{" ".repeat(indent)}<Highlighted text={truncEnd(rest, Math.max(0, columns - indent - 4))} query={item.query} contiguousOnly color={color} selected={selected} /></Text>
     </Box>
   );
 }
