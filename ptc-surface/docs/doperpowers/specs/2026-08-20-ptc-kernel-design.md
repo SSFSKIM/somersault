@@ -792,6 +792,38 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   Rationale: T11's S3 spike proved the hook+run-file path is the only keying that cannot inherit a foreign session id; the naming cost of the plugin prefix is documentation-only.
   Date/Author: 2026-08-21 / controller adjudication of T11 concern 1.
 
+- Decision: `ptc/src/ptc/discovery.py`'s process-tree walk (in `resolve()`) is a second,
+  independent copy of `find_claude_ancestor()` in `plugin/hooks/session_start.py`, not a
+  shared helper. A cross-reference comment sits in both files.
+  Rationale: the hook runs under system Python, before `~/.ptc/venv` exists and outside the
+  `ptc` package's own import path, and must stay stdlib-only/single-file per T11's contract —
+  it cannot `import ptc`. `discovery.py` is package-side and free to depend on `.paths`.
+  Sharing would require either the hook importing the package (breaks the stdlib-only,
+  pre-venv contract) or the package vendoring hook code as a subprocess call (adds a process
+  spawn to every resolve() for no benefit) — both worse than two short, independently tested
+  copies kept honest by the same predicate (see next entry).
+  Date/Author: 2026-08-21 / T13 executor.
+
+- Decision: Both walks match a candidate ancestor by **substring** — `"claude" in
+  os.path.basename(comm)` — not exact equality. `discovery.resolve()`'s walk was written to
+  match this predicate exactly.
+  Rationale: the actually-shipped hook (`session_start.py:47`, from T11, verified unchanged
+  since) has always used the substring form, and `test/spikes/s3_probe.py`'s in-kernel model
+  of "T13's own walk" (`claude_ancestor_of`, written during T11) already assumes substring
+  too — so substring is the pre-existing, already-load-bearing contract, not a new choice.
+  T13's task brief carried a premise that the hook used exact `==` matching and asked T13 to
+  widen discovery to match it; that premise did not hold against the code (confirmed via
+  `git log -p` on `session_start.py`, which shows only the substring form since T11's first
+  commit) — aligning discovery to exact match would have made the two walks resolve
+  *different* ancestors on the same tree, exactly the failure item 4 sought to prevent. T13's
+  live S3 re-run (see task-13-report.md) confirms the substring walk resolves the real
+  session end-to-end. Named limitation carried forward from T11: a wrapper-launched `claude`
+  whose `comm` is something unrelated (e.g. a `node` shim) is invisible to either substring or
+  exact matching on `comm` alone — closing that gap needs `ps -o args=` (full argv), which
+  risks false positives from any argv mentioning "claude" and is deferred until a real wrapper
+  case is observed.
+  Date/Author: 2026-08-21 / T13 executor.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
