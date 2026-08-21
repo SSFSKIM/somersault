@@ -30,7 +30,8 @@ import { callSidecar, readVariant, textLines, type NormalizedToolResult } from "
 import { DIFF_BODY_INSET, diffHeader, renderDiff } from "./diffRender.js";
 import { resolvePatch } from "./diffSource.js";
 import { formatDuration, formatFileSize, plural } from "./format.js";
-import { highlightCode, KNOWN_LANGS } from "./highlight.js";
+import { highlightBlock } from "./highlight.js";
+import { detectLanguage } from "./hljsRuntime.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import type { ToolEvent } from "./transcriptModel.js";
 
@@ -116,24 +117,26 @@ function editRows(event: ToolEvent, options: ProjectionOptions): readonly Render
  *  the census that is the BARE `… +{N} lines`, with no `(ctrl+o to expand)` suffix. The census records no verbose
  *  variant of `jme` either (the three branches above it are the only `verbose` tests), so the cap holds in the
  *  detail projections too; that is the census's silence, not a verified expansion.
- *  Highlighting is keyed off the file extension. An extension `highlight.ts` does not know renders PLAIN — the
- *  `known` gate below is what keeps it plain rather than dim, and the F4 fix round made plain the fallback
- *  inside `highlightCode` too (its old dim `inactive` arm was dead once both callers gated on KNOWN_LANGS).
- *  Dimming a whole file because it is `.md` would say "less important" about the only content on screen. */
+ *  Highlighting is keyed off `detectLanguage` — the filename map (Dockerfile/Makefile/…) plus the extension,
+ *  both resolved through the real hljs registry (F9 T2), not the ten-language lexer's hand extension list. An
+ *  extension `detectLanguage` cannot resolve renders PLAIN — the `lang !== null` gate below is what keeps it
+ *  plain rather than dim. Dimming a whole file because it is `.md` would say "less important" about the only
+ *  content on screen.
+ *  Highlighted WHOLE, not per shown line (F9 T2): a comment opened before line 10 and closed after it would
+ *  otherwise show a wrongly-plain tail, so `written`'s FULL text goes through `highlightBlock` once and the
+ *  preview slices the already-highlighted lines — the same whole-block discipline `markdown.ts` uses. */
 const WRITE_PREVIEW_LINES = 10;
-const extensionOf = (path: string | undefined): string => {
-  const name = path === undefined ? "" : basename(path), dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
-};
 function previewRows(written: string, filePath: string | undefined): readonly RenderLine[] {
-  const lines = textLines(written), lang = extensionOf(filePath), known = KNOWN_LANGS.has(lang);
-  const shown = lines.slice(0, WRITE_PREVIEW_LINES).map((line): RenderLine => {
+  const lines = textLines(written);
+  const lang = filePath === undefined ? null : detectLanguage(filePath);
+  const highlighted = lang !== null ? highlightBlock(written, lang) : undefined;
+  const shown = lines.slice(0, WRITE_PREVIEW_LINES).map((line, index): RenderLine => {
     // A BLANK line is emitted WITHOUT segments (F3 final review). `Line.tsx` renders a segmented row as one
     // `<Text>` per segment and Ink collapses an empty one, so `[{text:""}]` painted nothing at all and a
     // preview of `a\n\nb` came back two rows — no longer the file. Only the segment-LESS branch reaches
     // `l.text || " "`, which is what holds the empty row open, so a blank line must take it.
     if (line === "") return { text: "" };
-    const segments = known ? highlightCode(line, lang) : [];
+    const segments = highlighted?.[index] ?? [];
     return row(...(segments.length > 0 ? segments : [plain(line)]));           // an empty line highlights to nothing
   });
   const hidden = lines.length - WRITE_PREVIEW_LINES;

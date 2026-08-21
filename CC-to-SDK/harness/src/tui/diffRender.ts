@@ -144,8 +144,12 @@ function sliceSegments(segments: readonly Segment[], start: number, end: number)
  *
  *  In the ordinary case neither arm fires: the only thing `wrap-ansi` does to NFC text without escapes is
  *  swallow the whitespace it breaks on, which the cursor steps over — never over content, so a piece can
- *  never be matched against the wrong occurrence of itself. */
-function wrapSegments(segments: readonly Segment[], width: number): Segment[][] {
+ *  never be matched against the wrong occurrence of itself.
+ *
+ *  Exported (F9 T2): `FilePermission.tsx`'s budgeted `CodeBlock` reuses this rather than re-deriving a
+ *  second segment-aware wrap — the row-budget's "PAINTED rows, wrap first, window second" discipline
+ *  (`rowBudget.tsx`'s header note) applies to a highlighted code block exactly as it does to a diff row. */
+export function wrapSegments(segments: readonly Segment[], width: number): Segment[][] {
   const normalized = segments.map((s) => ({ ...s, text: s.text.normalize() }));
   const source = normalized.map((s) => s.text).join("");
   const rows: Segment[][] = [];

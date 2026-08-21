@@ -1,120 +1,145 @@
-// tui/src/highlight.ts — zero-dep syntax highlighter for fenced code (spec Decision Log: no 1MB dep
-// for a LOW row). Manual single-pass lexer: strings and comments are consumed ATOMICALLY, whichever is
-// encountered first scanning left-to-right, so a keyword inside a string or a `//`/`#` inside a string is
-// never re-tokenized — the outermost construct always wins, and no pass overlaps another. Keywords/
-// numbers are only applied within the plain runs left between those atomic spans; leading whitespace
-// is just the start of the first plain run, so it always survives intact.
+// tui/src/highlight.ts — F9 T-SYNTAX Task 2: fenced-code highlighting on the real `highlight.js` singleton
+// Task 1 extracted to `hljsRuntime.ts`, replacing the zero-dep four-colour lexer this module used to be.
+// That lexer covered ten hand-picked languages against a spec Decision Log entry ("no 1MB dep for a LOW
+// row") that this wave overturns: `hljsRuntime.ts` proved the dependency is ALREADY PAID — `diffHighlight.ts`
+// (EP-R5) requires it for the diff body, so a second consumer here costs nothing but the lazy singleton's
+// first hit. What upstream trades that cost for is real: 383 languages instead of ten, real grammars instead
+// of a keyword/string/comment/number sketch, and colour that survives a block comment or a template literal
+// spanning multiple lines — none of which a line-at-a-time regex lexer can do AT ALL, because it has no
+// memory across lines.
+//
+// The scope→style table below is canon's `jsw` (bundle L523111), the fenced-code palette — a DIFFERENT map
+// from `diffHighlight.ts`'s three (`K$p`/`Y$p`/`jmH`), which paint the DIFF body, not fenced markdown. Two
+// things this table can express that the diff maps cannot: non-colour style axes (`emphasis`→italic,
+// `strong`→bold, `link`→underline — markdown's own inline scopes, reachable because ```markdown fences
+// exist), and a `{}` "reset row" of scopes hljs emits internally that must carry NO style of their own,
+// spec §T-SYNTAX/S2's transcription of `jsw` verbatim.
 import type { Segment } from "./render.js";
+import { canonicalLanguage, loadHljs, walkEmitter, isTokenTree, type StyledRun } from "./hljsRuntime.js";
 
-// F4 Task 3 — the scope colors are upstream's hljs map `DhH` (pack §1.10, bundle L420495), which is built
-// from CHALK CONSTANTS and is therefore theme-INDEPENDENT: `keyword: vt.blue`, `string: vt.red`,
-// `number: vt.green`, `comment: vt.green` — all FLAT, `DhH` dims nothing. Upstream paints fenced code those
-// four colors in every theme it ships, daltonized ones included, and its code colors do not repaint on a
-// theme switch. Fidelity wins over our house theme-token pattern; the two costs (no /theme live repaint for
-// fenced code; red/green present under the daltonized themes) are recorded divergences in the parity doc,
-// not accidents. These are bare ANSI names, which `resolveThemeColor` passes through unchanged, so Ink
-// accepts them as-is. This module imports NO theme: it is theme-independent all the way down.
-const KEYWORD = "blue", STRING = "red", NUMBER_COLOR = "green", COMMENT = "green";
-
-const KW: Record<string, RegExp> = {
-  ts: /\b(const|let|var|function|return|if|else|for|while|class|interface|type|import|export|from|new|await|async|try|catch|throw|extends|implements|readonly|public|private|switch|case|default|break|continue|typeof|instanceof|in|of|null|undefined|true|false|this)\b/g,
-  py: /\b(def|return|if|elif|else|for|while|class|import|from|as|with|try|except|raise|lambda|pass|break|continue|and|or|not|in|is|None|True|False|self|yield|async|await|global)\b/g,
-  sh: /\b(if|then|else|elif|fi|for|do|done|while|case|esac|function|echo|exit|return|local|export|set)\b/g,
+// ── the 36-scope canon table (`jsw` L523111) ────────────────────────────────────────────────────────────
+/** Exported so the unit test can pin the map WHOLESALE (`Object.keys(SCOPE_STYLES).sort()` against the
+ *  spec's full 36-name list) — the same "a subset port fails here" discipline `diffHighlight.ts`'s
+ *  `DIFF_SCOPES` fixture uses for its own three maps, applied to this one. */
+export const SCOPE_STYLES: Record<string, Partial<Segment>> = {
+  // blue
+  keyword: { color: "blue" }, literal: { color: "blue" }, class: { color: "blue" }, "title.class": { color: "blue" }, name: { color: "blue" },
+  // cyan
+  built_in: { color: "cyan" }, attr: { color: "cyan" },
+  // cyan, dimmed
+  type: { color: "cyan", dim: true },
+  // green
+  number: { color: "green" }, comment: { color: "green" }, doctag: { color: "green" }, addition: { color: "green" },
+  // red
+  regexp: { color: "red" }, string: { color: "red" }, deletion: { color: "red" },
+  // yellow
+  function: { color: "yellow" }, "title.function": { color: "yellow" },
+  // grey
+  meta: { color: "grey" }, tag: { color: "grey" },
+  // one style axis each, no colour
+  emphasis: { italic: true },
+  strong: { bold: true },
+  link: { underline: true },
+  // the RESET ROW: scopes hljs emits that carry no style of their own AT ALL — `fenceResolver` below reads
+  // an empty entry here as an instruction to clear whatever an ancestor painted, not to leave it alone.
+  subst: {}, symbol: {}, title: {}, params: {}, "meta-keyword": {}, "meta-string": {}, "meta.keyword": {}, "meta.string": {},
+  section: {}, attribute: {}, variable: {}, bullet: {}, code: {}, quote: {},
 };
-const LANG: Record<string, RegExp> = { ts: KW.ts, js: KW.ts, tsx: KW.ts, jsx: KW.ts, json: /\b(true|false|null)\b/g, py: KW.py, python: KW.py, sh: KW.sh, bash: KW.sh, zsh: KW.sh };
-/** Comment marker per lang, checked only OUTSIDE a string (json has no comment syntax). */
-const COMMENT_MARK: Record<string, string> = { ts: "//", js: "//", tsx: "//", jsx: "//", py: "#", python: "#", sh: "#", bash: "#", zsh: "#" };
-const NUMBER = /\b\d+(?:\.\d+)?\b/g;
-const QUOTES = new Set(["\"", "'", "`"]);
 
-/** Keyword/number pass over ONE plain run (already known to hold no strings/comments): collect
- *  {start,end,style} spans from both regexes, sort, drop any span overlapping an already-accepted one
- *  (first — i.e. leftmost — wins, so keywords and numbers never double-style the same characters), then
- *  fill the gaps between accepted spans with plain segments. */
-function styleWords(text: string, kwRe: RegExp): Segment[] {
-  const spans: { start: number; end: number; seg: Partial<Segment> }[] = [];
-  kwRe.lastIndex = 0;
-  for (let m: RegExpExecArray | null; (m = kwRe.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: KEYWORD } });
-  NUMBER.lastIndex = 0;
-  for (let m: RegExpExecArray | null; (m = NUMBER.exec(text)); ) spans.push({ start: m.index, end: m.index + m[0].length, seg: { color: NUMBER_COLOR } });
-  spans.sort((a, b) => a.start - b.start);
-  const accepted: typeof spans = [];
-  for (const s of spans) if (!accepted.length || s.start >= accepted[accepted.length - 1].end) accepted.push(s);
-  const out: Segment[] = []; let last = 0;
-  for (const s of accepted) {
-    if (s.start > last) out.push({ text: text.slice(last, s.start) });
-    out.push({ text: text.slice(s.start, s.end), ...s.seg });
-    last = s.end;
+/** `zsw` L523068 — the suffix-trimming lookup. Strip a leading `hljs-` (the pre-11 class-name convention a
+ *  few grammars still emit), then: exact lookup; on miss, trim everything after the LAST `.` and retry;
+ *  when no dot is left, the scope is unstyled. This is why `title.class.inherited` finds `title.class`
+ *  (one trim) rather than falling all the way to the unstyled bare `title` (two trims) — the loop stops at
+ *  the FIRST hit, and `title.class` is its own entry. A single prefix cut (trimming everything after the
+ *  FIRST dot) would skip straight past it. */
+export function scopeStyle(scope: string): Partial<Segment> | undefined {
+  let s = scope.startsWith("hljs-") ? scope.slice(5) : scope;
+  for (;;) {
+    if (Object.prototype.hasOwnProperty.call(SCOPE_STYLES, s)) return SCOPE_STYLES[s];
+    const dot = s.lastIndexOf(".");
+    if (dot === -1) return undefined;
+    s = s.slice(0, dot);
   }
-  if (last < text.length) out.push({ text: text.slice(last) });
-  return out;
 }
 
-/** One fenced-code line → styled segments. A lang outside `LANG` returns the whole line PLAIN, which is
- *  hljs's own answer for `plaintext` (it leaves the body unscoped). Both callers — markdown's `codeRuns`
- *  and toolSummaries' `previewRows` — already gate on `KNOWN_LANGS`, so this arm is only the total-function
- *  guard; the dim `inactive` fallback it replaced was dead code, and dropping it is what lets this module
- *  drop its `theme.js` import. */
-export function highlightCode(line: string, lang: string): Segment[] {
-  const kwRe = LANG[lang];
-  if (!kwRe) return [{ text: line }];
-  const marker = COMMENT_MARK[lang];
-  const out: Segment[] = [];
-  let plainStart = 0;
-  for (let i = 0; i < line.length; ) {
-    if (marker && line.startsWith(marker, i)) {
-      out.push(...styleWords(line.slice(plainStart, i), kwRe));
-      out.push({ text: line.slice(i), color: COMMENT });
-      return out;
-    }
-    if (QUOTES.has(line[i])) {
-      out.push(...styleWords(line.slice(plainStart, i), kwRe));
-      const quote = line[i];
-      let j = i + 1;
-      while (j < line.length && line[j] !== quote) j += line[j] === "\\" ? 2 : 1;
-      j = Math.min(j + 1, line.length);
-      out.push({ text: line.slice(i, j), color: STRING });
-      plainStart = i = j;
-      continue;
-    }
-    i++;
-  }
-  out.push(...styleWords(line.slice(plainStart), kwRe));
-  return out;
+/** What `markdown.ts`'s label polarity and `toolSummaries.ts`'s highlight gate both ask: does the singleton
+ *  know this tag at all (canonical name OR alias OR one of `hljsRuntime.ts`'s twelve `EXTRA_ALIASES`)? This
+ *  is the ONE set — `KNOWN_LANGS` (ten hand-picked languages) and `UPSTREAM_LANGS` (a 383-entry string
+ *  transcribed by hand from the bundle) both collapse into it, because the real registry answers both
+ *  questions identically now that we highlight with it instead of a hand-rolled subset. */
+export function supportsLanguage(tag: string): boolean {
+  return canonicalLanguage(tag) !== null;
 }
 
-/** Langs highlightCode actually knows — i.e. what this harness can COLOUR. `markdown.ts` uses it to decide
- *  highlighted vs. plain body, and `toolSummaries.ts` to decide whether to call `highlightCode` at all.
- *  It is deliberately NOT the label test; see `UPSTREAM_LANGS`. */
-export const KNOWN_LANGS = new Set(Object.keys(LANG));
+const STYLE_KEYS = ["color", "dim", "bold", "italic", "strikethrough", "underline", "bg"] as const;
 
-/** What upstream's `supportsLanguage` (`NhH` L420486 → `sre` L419379 → `ITs` L222529) would answer, and the
- *  ONLY thing `markdown.ts` may use to decide the dim language LABEL. `sre` resolves against hljs's whole
- *  registry, so a language we cannot colour (rust, go, java, css, sql, yaml, …) still gets NO label upstream —
- *  binding the label to `KNOWN_LANGS` labelled ~180 languages upstream leaves bare, which is the divergence
- *  the F4 fix round closed.
- *  Extracted MECHANICALLY from `~/claude-code-bundle/2.1.220/cli.pretty.js`, two lines, no hand-typing:
- *    · the 192 language NAMES are the keys of the lazy loader registry `H$p` at **L418473** (`name: () => …`),
- *      which is key-for-key the display-name map `aur` on L222493 that `ITs` probes first;
- *    · the 191 ALIASES are the keys of the alias map `lur`, also on **L222493** (`alias: "canonical"`), which
- *      `ITs` probes second — this is where `ts`/`js`/`py`/`sh`/`zsh`/`md`/`yml` live, so omitting it would
- *      have labelled the languages we DO highlight.
- *  383 entries after the union. Lookups must pass a LOWERCASED string: `sre` L419379 opens with
- *  `e.toLowerCase()`, which is why ```Python and ```TS resolve at all. */
-export const UPSTREAM_LANGS = new Set((
-  "1c abnf accesslog actionscript ada angelscript apache applescript arcade arduino armasm asciidoc aspectj autohotkey autoit avrasm awk axapta bash "
-  + "basic bnf brainfuck c cal capnproto ceylon clean clojure clojure-repl cmake coffeescript coq cos cpp crmsh crystal csharp csp css d dart delphi diff "
-  + "django dns dockerfile dos dsconfig dts dust ebnf elixir elm erb erlang erlang-repl excel fix flix fortran fsharp gams gauss gcode gherkin glsl gml "
-  + "go golo gradle graphql groovy haml handlebars haskell haxe hsp http hy inform7 ini irpf90 isbl java javascript jboss-cli json julia julia-repl "
-  + "kotlin lasso latex ldif leaf less lisp livecodeserver livescript llvm lsl lua makefile markdown mathematica matlab maxima mel mercury mipsasm mizar "
-  + "mojolicious monkey moonscript n1ql nestedtext nginx nim nix node-repl nsis objectivec ocaml openscad oxygene parser3 perl pf pgsql php php-template "
-  + "plaintext pony powershell processing profile prolog properties protobuf puppet purebasic python python-repl q qml r reasonml rib roboconf routeros "
-  + "rsl ruby ruleslanguage rust sas scala scheme scilab scss shell smali smalltalk sml sqf sql stan stata step21 stylus subunit swift taggerscript tap "
-  + "tcl thrift tp twig typescript vala vbnet vbscript vbscript-html verilog vhdl vim wasm wren x86asm xl xml xquery yaml zephir as asc apacheconf "
-  + "osascript ino arm adoc ahk x++ sh zsh bf h capnp icl dcl clj edn cmake.in coffee cson iced cls cc c++ h++ hpp hh hxx cxx crm pcmk cr cs c# dpr dfm "
-  + "pas pascal patch jinja bind zone docker bat cmd dst ex exs erl xlsx xls f90 f95 fs f# gms gss nc feature golang gql hbs html.hbs html.handlebars "
-  + "htmlbars hs hx https hylang i7 toml jsp js jsx mjs cjs wildfly-cli jsonc jldoctest kt kts ls lassoscript tex pluto mk mak make md mkdown mkd mma wl "
-  + "m moo mips moon nt nginxconf nixos mm objc obj-c obj-c++ objective-c++ ml scad pl pm pf.conf postgres postgresql text txt pwsh ps ps1 pde proto pp "
-  + "pb pbi py gyp ipython pycon k kdb qt re graph instances mikrotik rb gemspec podspec thor irb rs scm sci console shellsession st stanfuncs do ado p21 "
-  + "step stp styl tk craftcms ts tsx mts cts vb vbs v sv svh tao html xhtml rss atom xjb xsd xsl plist wsf svg xpath xq xqm yml zep mysql oracle "
-  + "freepascal lazarus lpr lfm php3 php4 php5 php6 php7 php8").split(" "));
+/** The `walkEmitter` resolver for the fenced-code map — the fence-side counterpart of `diffHighlight.ts`'s
+ *  `diffResolver`, but shaped differently because THIS palette has more than one style axis. A node with no
+ *  scope of its own returns `{}` (no keys), which `walkEmitter`'s field-by-field merge reads as "change
+ *  nothing" — Task 1's inheritance rule, and how a `strong` ancestor's `bold` survives past a nested
+ *  `emphasis` child instead of one style fully replacing the other (both axes are independent, and neither
+ *  entry mentions the other's key). A scoped node whose table entry NAMES fields (`{color:"blue"}`) sets only
+ *  those, same reason. A scoped node landing on the RESET ROW (`scopeStyle` answers `{}`) is different: those
+ *  scopes are canon's deliberate "nothing here, and don't let anything through either" markers — `subst`
+ *  inside a red `string` must not read red — so every style key is set EXPLICITLY to `undefined`, which is
+ *  what makes the merge CLEAR the inherited value instead of leaving it (the same shadowing
+ *  `hljsRuntime.ts`'s own doc comment describes for `{color: undefined}`, generalised to every key at once). */
+function fenceResolver(scope: string | undefined, _text: string): Partial<Segment> {
+  if (scope === undefined || scope === "") return {};
+  const style = scopeStyle(scope);
+  if (style === undefined) return {};
+  if (Object.keys(style).length === 0) {
+    const cleared: Partial<Segment> = {};
+    for (const key of STYLE_KEYS) cleared[key] = undefined;
+    return cleared;
+  }
+  return style;
+}
+
+/** The total-function fallback every failure arm below shares: one segment per line, unstyled, the exact
+ *  text back — hljs's own answer for `plaintext`, and this module's answer for "cannot highlight this". */
+const plainLines = (code: string): Segment[][] => code.split("\n").map((text) => [{ text }]);
+
+/** A `StyledRun`'s text may itself contain literal `\n`s — a block comment or a multi-line string is ONE
+ *  leaf in hljs's tree, so `walkEmitter` hands it back as one run whose text spans several source lines.
+ *  Splitting every run on `\n` and starting a fresh line array at each boundary is what turns the flat
+ *  stream back into per-line rows while keeping a comment green (or a string red) on every line it crosses
+ *  — the whole-block proof spec §T-SYNTAX/S2 calls for. An empty piece (two adjacent newlines, or a split
+ *  landing exactly on a boundary) contributes no segment, matching `highlightCode`'s old "a blank line
+ *  highlights to nothing" contract that `toolSummaries.ts` already depends on. */
+function splitRunsByLine(runs: readonly StyledRun[]): Segment[][] {
+  const lines: Segment[][] = [[]];
+  for (const run of runs) {
+    const { text, ...style } = run;
+    const parts = text.split("\n");
+    parts.forEach((part, index) => {
+      if (index > 0) lines.push([]);
+      if (part !== "") lines[lines.length - 1]!.push({ text: part, ...style });
+    });
+  }
+  return lines;
+}
+
+/** `o2p` applied to a WHOLE fence body (canon L523230) rather than one row at a time — the fix the diff path
+ *  never needed (a diff row IS one line by construction) but fenced code does: a language tag hljs cannot
+ *  even parse correctly is unknown to it, an unregistered tag has no grammar, and a JSON/JS/TS parse of code
+ *  containing a genuine syntax error still highlights via `ignoreIllegals: true` (upstream's own choice —
+ *  the alternative is a red wall where a typo sits). Every failure arm — unresolved tag, a missing/broken
+ *  hljs install, a grammar that throws, an emitter shape hljs's own internals didn't produce — takes the
+ *  same plain-lines answer a diff row's failure arm takes, for the same PAINT-PATH reason `hljsRuntime.ts`
+ *  gives `loadHljs`: this sits where a thrown exception would blank a whole rendered frame, not just dull
+ *  one row of it. */
+export function highlightBlock(code: string, lang: string): Segment[][] {
+  const canonical = canonicalLanguage(lang);
+  if (canonical === null) return plainLines(code);
+  const api = loadHljs();
+  if (api === null) return plainLines(code);
+  let result;
+  try {
+    result = api.highlight(code, { language: canonical, ignoreIllegals: true });
+  } catch {
+    return plainLines(code);
+  }
+  if (!isTokenTree(result._emitter)) return plainLines(code);
+  return splitRunsByLine(walkEmitter(result._emitter.rootNode, fenceResolver));
+}

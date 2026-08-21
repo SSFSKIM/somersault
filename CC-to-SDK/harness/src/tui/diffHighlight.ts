@@ -17,10 +17,19 @@
 //   `o2p`        L419578 — the token-tree walk, and its scope INHERITANCE into unscoped children
 //   `n2p`        L419530 — filename → language
 //   `sre`/`rHn`  L419378 / L419369 — the lazily-built hljs singleton every one of those goes through
-import { basename, extname } from "node:path";
-import { createRequire } from "node:module";
+//
+// F9 T-SYNTAX Task 1 moved the singleton, the alias inversion, EXTRA_ALIASES, the filename map, and the
+// o2p walk out to hljsRuntime.ts, so a second tree-to-style projection (the fenced-code map) can share
+// them instead of re-solving the same five sub-problems. What stays HERE is diff-specific: the three
+// scope-to-colour maps, GmH's text-sensitive re-scoping, and the thin adapters that keep every one of
+// this module's exported shapes — detectLanguage's `undefined` (not the runtime's `null`), `Segment`, not
+// `Partial<Segment>` — exactly as every existing caller and test/unit/diff-highlight.test.ts already
+// expect.
 import type { Segment } from "./render.js";
 import { currentTheme, isLightTheme, type ThemeId } from "./theme.js";
+import { loadHljs, detectLanguage as detectLanguageCanonical, walkEmitter, isTokenTree } from "./hljsRuntime.js";
+
+export { FILENAME_LANGS, setHljsLoaderForTest } from "./hljsRuntime.js";
 
 /** `cd` L419438, rendered into the ONE colour encoding this harness's renderer takes. `diffRender.ts` —
  *  the module Tasks 10–12 wire this into — resolves every colour to hex AT PRODUCTION time
@@ -60,78 +69,16 @@ export const DIFF_FOREGROUND: Record<DiffPalette, string> = { dark: cd(248, 248,
  *  `if`; upstream re-scopes exactly these sixteen to `_storage` so declarations read differently from
  *  control flow. It is the one irregular arm of the scope lookup. */
 export const STORAGE_KEYWORDS = new Set(["const", "let", "var", "function", "class", "type", "interface", "enum", "namespace", "module", "def", "fn", "func", "struct", "trait", "impl"]);
-/** `X$p` L419856 — five bare filenames, probed on the basename AND on its stem. */
-export const FILENAME_LANGS = new Map<string, string>([["Dockerfile", "dockerfile"], ["Makefile", "makefile"], ["Rakefile", "ruby"], ["Gemfile", "ruby"], ["CMakeLists", "cmake"]]);
 
-/** `Wi(e, t)` L15182 — everything before the first occurrence, or the whole string. */
+/** `Wi(e, t)` L15182 — everything before the first occurrence, or the whole string. Kept local rather than
+ *  imported from `hljsRuntime.ts`: it is a one-line transcription helper, not a table, and both modules
+ *  reach for it over unrelated data (there the filename stem, here the scope's dotted prefix). */
 const before = (value: string, sep: string) => { const at = value.indexOf(sep); return at === -1 ? value : value.slice(0, at); };
 
-// ── The hljs singleton ─────────────────────────────────────────────────────────────────────────────────
-// A LAZY, memoized `require` of the FULL package — upstream's `rHn` (L419369) shape exactly (`if (eaa)
-// return eaa; … eaa = t`), and for the same reason. Three facts decided this:
-//   1. the diff path's language set is NOT a curated subset. `sre` (L419378) resolves a name through `ITs`
-//      (L222529) against `aur`+`lur` (L222493) and then registers it out of the lazy loader registry `H$p`
-//      (L418473) — the SAME registry the markdown path's `supportsLanguage` uses. 192 canonical names +
-//      191 aliases, i.e. F4's `UPSTREAM_LANGS(383)`. `highlight.js@11.11.1` (the bundle's own version,
-//      `DmH` L418956) pre-registers exactly those 192, so the full package IS the upstream set, for free.
-//   2. `highlight.js/lib/core` costs 2 ms against the full package's ~60 ms, but buys that back only by
-//      hand-porting `lur`'s 191 aliases and `Ntd`'s sub-language dependency graph — duplicated data with
-//      its own drift risk, to save time we can simply defer instead.
-//   3. deferring is free here: the REPL dynamic-imports its TUI, and this module is reached from the diff
-//      renderer, which is reached from `toolRenderer` — i.e. at TUI MOUNT. A top-level `import` would put
-//      those 60 ms on every session's startup path including sessions that never render a diff. Behind the
-//      singleton they land once, on the first highlighted diff row.
-// `createRequire` rather than `await import(...)` because `highlightDiffLine` is synchronous by contract.
-// The load itself is TOTAL: a missing or corrupt `highlight.js` resolves to `undefined` (memoized, so a
-// broken install is not re-required once per diff row) and every caller then takes the same unstyled arm a
-// rejected language takes. This module sits on the PAINT path — `detectLanguage` throwing where
-// `highlightDiffLine` degrades would turn one bad dependency into a dead frame instead of a dull one.
-type Hljs = typeof import("highlight.js").default;
-const nodeRequire = createRequire(import.meta.url);
-const realLoad = (): Hljs => nodeRequire("highlight.js") as Hljs;
-let load = realLoad, cached: Hljs | undefined, loadFailed = false;
-function hljs(): Hljs | undefined {
-  if (cached !== undefined || loadFailed) return cached;
-  try { cached = load(); } catch { loadFailed = true; }
-  return cached;
-}
-/** The loader seam (house style: `reflowOracle.ts`'s `resetReflowProbingForTest`). Swapping the loader has
- *  to drop BOTH memos built off the old one — the singleton and the alias inversion. No argument restores
- *  the real `require`. */
-export function setHljsLoaderForTest(next?: () => Hljs): void { load = next ?? realLoad; cached = undefined; loadFailed = false; canonicalByDefinition = undefined; }
-
-/** hljs's alias table IS `lur` (L222493) — that map was extracted from this very package — so upstream's
- *  `ITs` alias→canonical resolution is available without copying 191 rows: `getLanguage` returns the SAME
- *  definition object for an alias and for its canonical name, so one identity map over `listLanguages()`
- *  inverts the whole table. Built once, on first use. */
-let canonicalByDefinition: Map<unknown, string> | undefined;
-/** …with TWELVE exceptions. `lur` (L222493) is a SUPERSET of the alias table `highlight.js@11.11.1` ships:
- *  these twelve rows resolve upstream and return `undefined` from `getLanguage` here, so a `.php5` or a
- *  `.mysql` diff would come out unhighlighted while the SAME name gets a language label on the fenced-code
- *  path (F4's `UPSTREAM_LANGS` already carries all twelve). Mapped to the canonical grammar `lur` points
- *  each at, so the two paths agree. */
-const EXTRA_ALIASES = new Map<string, string>([["mysql", "sql"], ["oracle", "sql"], ["freepascal", "delphi"], ["lazarus", "delphi"], ["lpr", "delphi"], ["lfm", "delphi"], ["php3", "php"], ["php4", "php"], ["php5", "php"], ["php6", "php"], ["php7", "php"], ["php8", "php"]]);
-function canonicalLanguage(name: string): string | undefined {
-  const api = hljs();
-  if (api === undefined) return undefined;
-  const lower = name.toLowerCase(), resolved = EXTRA_ALIASES.get(lower) ?? lower, definition = api.getLanguage(resolved);
-  if (!definition) return undefined;
-  if (canonicalByDefinition === undefined) {
-    canonicalByDefinition = new Map();
-    for (const registered of api.listLanguages()) { const d = api.getLanguage(registered); if (d && !canonicalByDefinition.has(d)) canonicalByDefinition.set(d, registered); }
-  }
-  return canonicalByDefinition.get(definition) ?? resolved;
-}
-
-/** `n2p` L419530, minus its third arm. Upstream also sniffs CONTENT — a `#!` shebang, a `<?php`/`<?xml`
- *  prologue — but only when it has the file body in hand; a diff row is not the file, and the signature
- *  Tasks 10–12 were planned against takes a path alone. Filename map first (probed on the basename and on
- *  its stem, so `CMakeLists.txt` resolves as cmake rather than as its `.txt`), then the extension. */
+/** `n2p` L419530. Delegates to `hljsRuntime.ts`'s `detectLanguage`, converting its `null` ("not found")
+ *  to the `undefined` every existing caller of THIS module's `detectLanguage` already depends on. */
 export function detectLanguage(filePath: string): string | undefined {
-  const base = basename(filePath), named = FILENAME_LANGS.get(base) ?? FILENAME_LANGS.get(before(base, "."));
-  if (named !== undefined) { const resolved = canonicalLanguage(named); if (resolved !== undefined) return resolved; }
-  const ext = extname(filePath).slice(1);
-  return ext === "" ? undefined : canonicalLanguage(ext);
+  return detectLanguageCanonical(filePath) ?? undefined;
 }
 
 /** Which of the three maps is live. Upstream selects by THEME NAME (`t2p` L419465 branches on
@@ -156,24 +103,19 @@ function scopeColor(scope: string | undefined, text: string, scopes: ReadonlyMap
   return scopes.get(scope) ?? scopes.get(before(scope, "."));
 }
 
-/** The hljs token tree. `scope` is 11.x; `kind` is the pre-11 name upstream still reads, kept because
- *  `o2p` reads both and a grammar can still emit either. */
-interface TokenNode { scope?: string; kind?: string; children: (TokenNode | string)[]; }
-const isTokenTree = (emitter: unknown): emitter is { rootNode: TokenNode } => {
-  if (typeof emitter !== "object" || emitter === null || !("rootNode" in emitter)) return false;
-  const root = (emitter as { rootNode: unknown }).rootNode;
-  return typeof root === "object" && root !== null && "children" in root;
-};
-
-/** `o2p` L419578. Note the INHERITANCE: a child node with no scope of its own is painted with its
- *  PARENT's scope, which is how the inside of a template literal or a sub-language block keeps its
- *  surrounding colour instead of dropping to the foreground. */
-function walk(node: TokenNode, inherited: string | undefined, scopes: ReadonlyMap<string, string>, out: Segment[]): void {
-  const scope = node.scope ?? node.kind ?? inherited;
-  for (const child of node.children) {
-    if (typeof child === "string") { const color = scopeColor(scope, child, scopes); out.push(color === undefined ? { text: child } : { text: child, color }); }
-    else walk(child, scope, scopes, out);
-  }
+/** The `walkEmitter` resolver for the diff palette. Two things make this more than a bare `scopeColor`
+ *  wrapper:
+ *   1. a node with NO scope of its own must return `{}` (no `color` key at all) rather than
+ *      `{ color: undefined }`, so `walkEmitter`'s field-by-field merge lets the nearest scoped ancestor's
+ *      colour fall through UNCHANGED — this is `o2p`'s inheritance-into-unscoped-children.
+ *   2. a node WITH its own scope must always set the `color` key, even when `scopeColor` answers
+ *      `undefined` for it — that is upstream's SHADOWING, not inheritance: once a node's own scope has
+ *      been consulted, its (possibly colourless) answer replaces whatever an ancestor supplied, the way
+ *      `subst` nested inside a coloured `string` still comes out uncoloured on the `ansi256` palette,
+ *      which carries no `subst` cell. Returning `{ color: undefined }` here — not omitting the key — is
+ *      what makes `walkEmitter`'s merge clear the inherited colour instead of keeping it. */
+function diffResolver(scopes: ReadonlyMap<string, string>): (scope: string | undefined, text: string) => Partial<Segment> {
+  return (scope, text) => (scope === undefined || scope === "" ? {} : { color: scopeColor(scope, text, scopes) });
 }
 
 /** ONE diff row → styled segments. `i2p` L419592, with two deliberate departures, both so the result drops
@@ -197,10 +139,9 @@ export function highlightDiffLine(code: string, lang: string | undefined, palett
   // would swallow the throw, but the log line is already on stdout, straight into a live TUI frame — so the
   // membership test has to come before the call. The try/catch behind it stays as the total-function guard
   // for a grammar that throws mid-parse.
-  try { const api = hljs(); if (api === undefined || !api.getLanguage(lang)) return plain; result = api.highlight(code + "\n", { language: lang, ignoreIllegals: true }); } catch { return plain; }
+  try { const api = loadHljs(); if (api === null || !api.getLanguage(lang)) return plain; result = api.highlight(code + "\n", { language: lang, ignoreIllegals: true }); } catch { return plain; }
   if (!isTokenTree(result._emitter)) return plain;
-  const out: Segment[] = [];
-  walk(result._emitter.rootNode, undefined, DIFF_SCOPES[palette], out);
+  const out: Segment[] = walkEmitter(result._emitter.rootNode, diffResolver(DIFF_SCOPES[palette]));
   const last = out[out.length - 1];
   if (last !== undefined && last.text.endsWith("\n")) {
     if (last.text === "\n") out.pop();

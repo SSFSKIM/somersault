@@ -128,6 +128,28 @@ describe("highlightDiffLine — the three scope maps", () => {
     // which for us means an UNSTYLED segment rather than an invented colour.
     expect(colorOf("def f(a):", "python", "ansi256", "a")).toBeUndefined();
   });
+  // Fix wave (task review, Important #2): pins `diffResolver`'s `{}`-inherits vs `{color: undefined}`-clears
+  // distinction through the REAL `highlightDiffLine` consumer, not a synthetic tree. A template literal with
+  // an interpolation — `` const s = `hi ${x}`; `` — is confirmed (real highlight.js@11.11.1 run) to parse as
+  // a `string` node containing the literal backtick text as direct children PLUS a nested `subst` node for
+  // `${x}`. `ansi256` (jmH, the 12-scope table) has a `string` cell but no `subst` cell, so `scopeColor`
+  // legitimately returns `undefined` for the subst node — and `diffResolver` must still set the `color` KEY
+  // (to `undefined`), which `walkEmitter`'s merge treats as CLEARING the inherited string colour, not as
+  // "no opinion, keep inheriting". If that field-presence distinction ever collapsed (e.g. a `subst` with no
+  // cell were resolved as `{}` instead of `{color: undefined}`), `${x}` would wrongly inherit the string's
+  // colour instead of coming out uncoloured, matching upstream's shadowing semantics.
+  it("ansi256: a `subst` node inside a `string` clears the inherited colour rather than keeping it (shadowing, not inheritance)", () => {
+    const line = "const s = `hi ${x}`;";
+    // The string's own direct text keeps its `string` cell...
+    expect(colorOf(line, "typescript", "ansi256", "`hi ")).toBe(A_STRING);
+    expect(colorOf(line, "typescript", "ansi256", "`")).toBe(A_STRING);
+    // ...but the nested `subst` span is genuinely present in the output AND genuinely uncoloured — not
+    // simply absent (which `colorOf`'s `?.color` would also read as `undefined`, masking a dropped segment).
+    const substSegment = highlightDiffLine(line, "typescript", "ansi256").find((s) => s.text === "${x}");
+    expect(substSegment).toBeDefined();
+    expect(substSegment?.color).toBeUndefined();
+    expect(substSegment?.color).not.toBe(A_STRING);
+  });
 });
 
 describe("highlightDiffLine — the plain arms", () => {

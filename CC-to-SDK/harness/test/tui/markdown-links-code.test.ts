@@ -131,9 +131,12 @@ describe("F4 Task 3 — images (constants pack §1.9, L420619–420624)", () => 
 });
 
 describe("F4 Task 3 — fenced code (constants pack §5, L420597–420602)", () => {
+  // F9 T2: real hljs replaces the ten-language regex lexer, so this now runs through the actual TypeScript
+  // grammar rather than a flat keyword/number regex pass — `=` gets its own (unstyled) operator node, which
+  // is why " x " and "= " land as two segments instead of one " x = " span; same rendered text, more nodes.
   it("code block is flush-left and unlabelled for a recognized language", () => {
     expect(renderMarkdown("```ts\nconst x = 1;\n```")).toEqual([
-      { text: "const x = 1;", segments: [{ text: "const", color: "blue" }, { text: " x = " }, { text: "1", color: "green" }, { text: ";" }] },
+      { text: "const x = 1;", segments: [{ text: "const", color: "blue" }, { text: " x " }, { text: "= " }, { text: "1", color: "green" }, { text: ";" }] },
     ]);
   });
 
@@ -158,29 +161,42 @@ describe("F4 Task 3 — fenced code (constants pack §5, L420597–420602)", () 
     expect(renderMarkdown("```\na\nb\n```").map((l) => l.text)).toEqual(["a", "b"]);
   });
 
-  // The fix round separated the two questions the label conflated. Upstream's `supportsLanguage` (`NhH`
-  // L420486 → `sre` L419379) answers off hljs's WHOLE registry — the loader map at bundle L418473 (192
-  // language names) plus the alias map `lur` at L222493 (191 aliases) — while our KNOWN_LANGS (10 aliases)
-  // only says what this harness can actually colour. Binding the label to KNOWN_LANGS therefore labelled
-  // ~180 languages upstream leaves bare. `UPSTREAM_LANGS` now answers the label; KNOWN_LANGS still answers
-  // the highlighting.
-  it("an hljs language we cannot highlight (rust) gets NO label and a plain body", () => {
-    // DIVERGENCE CLOSED: before the fix this rendered a dim `rust` label above the block. Upstream draws
-    // none — `rust` is a registry name at L418473, so `supportsLanguage("rust")` is true.
-    expect(renderMarkdown("```rust\nfn main() {}\n```")).toEqual([{ text: "fn main() {}" }]);
-    for (const lang of ["go", "java", "c", "cpp", "css", "sql", "yaml", "swift", "kotlin"])
+  // ONE SET now (F9 T2): `supportsLanguage` decides BOTH the label AND the body, off the real hljs registry
+  // (the loader map at bundle L418473, 192 language names, plus the alias map `lur` at L222493, 191
+  // aliases). Rust is a registry name, so it draws no label — and now that we highlight through the SAME
+  // registry rather than a ten-language regex lexer, it also colours: T-SYNTAX acceptance #1.
+  it("an hljs language outside the old ten-language lexer (rust) gets NO label and real colour", () => {
+    // DIVERGENCE CLOSED TWICE: before F4's fix this rendered a dim `rust` label; before F9 T2 the label was
+    // right but the body stayed flat because the lexer didn't know rust. Both are gone: `supportsLanguage`
+    // and `highlightBlock` now read the same 383-language registry.
+    expect(renderMarkdown("```rust\nfn main() {}\n```")).toEqual([
+      { text: "fn main() {}", segments: [{ text: "fn", color: "blue" }, { text: " " }, { text: "main", color: "yellow" }, { text: "() {}" }] },
+    ]);
+    // A bare identifier has no scope to colour in most grammars — these five stay flat exactly as they did
+    // under the old lexer, just for a different reason (a real grammar found nothing to tag, not "unknown").
+    for (const lang of ["go", "java", "c", "cpp", "css", "sql", "swift", "kotlin"])
       expect(renderMarkdown(`\`\`\`${lang}\nx\n\`\`\``), lang).toEqual([{ text: "x" }]);
+    // yaml's grammar DOES tag a bare scalar — `x` is a plain scalar VALUE, scope `string` — proving the
+    // colouring is real per-grammar work, not a coincidence of the five above staying uncoloured. A line
+    // that highlights to exactly ONE segment collapses to a flat run (`runsToLines`), not a `segments` array.
+    expect(renderMarkdown("```yaml\nx\n```")).toEqual([{ text: "x", color: "red" }]);
   });
 
   it("the language is lowercased before BOTH lookups (`sre` L419379 does `e.toLowerCase()`)", () => {
     // ```Python highlights as python AND draws no label; ```TS likewise. Before the fix both were
-    // case-sensitive misses: a dim `Python` label over an unhighlighted body.
+    // case-sensitive misses: a dim `Python` label over an unhighlighted body. `go` is Python's own
+    // function-name scope (`title.function`) here, not the language `go` — hljs's `def go():` names a
+    // function called `go`.
     const py = renderMarkdown("```Python\ndef go():\n```");
-    expect(py).toEqual([{ text: "def go():", segments: [{ text: "def", color: "blue" }, { text: " go():" }] }]);
+    expect(py).toEqual([
+      { text: "def go():", segments: [{ text: "def", color: "blue" }, { text: " " }, { text: "go", color: "yellow" }, { text: "()" }, { text: ":" }] },
+    ]);
     const ts = renderMarkdown("```TS\nconst x = 1;\n```");
     expect(ts[0].segments![0]).toEqual({ text: "const", color: "blue" });
     expect(ts.length).toBe(1);                            // no label row
-    expect(renderMarkdown("```RUST\nfn main() {}\n```")).toEqual([{ text: "fn main() {}" }]);
+    expect(renderMarkdown("```RUST\nfn main() {}\n```")).toEqual([
+      { text: "fn main() {}", segments: [{ text: "fn", color: "blue" }, { text: " " }, { text: "main", color: "yellow" }, { text: "() {}" }] },
+    ]);
   });
 
   it("a genuinely unknown language still gets the dim label", () => {
