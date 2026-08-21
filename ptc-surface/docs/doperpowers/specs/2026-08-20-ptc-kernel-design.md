@@ -342,6 +342,14 @@ agent.resume(session_id, **options) -> AgentHandle
   through its ordinary completion path — `result()` returns the aborted turn's partial result —
   and only its `.status` and registry row become `interrupted`. A drain that outlives the
   interrupt budget is treated as wedged: the driver is cancelled and `result()` raises instead.
+  Two honest consequences of waiting the drain out: `.status` (and the registry row, so
+  `agent.list()`) reads `running` for the whole drain — up to the 30 s budget — and only flips
+  to `interrupted` once the drain ends; and if the caller's own `timeout` expires *during* a
+  drain, the turn ends `interrupted` while `result()` raises the driver's `TimeoutError` rather
+  than an interrupt error — a known asymmetry, one settlement and one row either way.
+  A handle with **no session yet** (queued on the concurrency semaphore, or mid-connect) has
+  nothing draining, so `interrupt()` pre-empts its driver at once and `result()` raises;
+  waiting the budget out there would let the queued turn run — and bill — to completion.
 - `agent.resume(session_id)` opens a session with no turn in flight: the handle is `done` on
   arrival and exists to be `send()`-ed to. It is subject to the same depth brake as
   `run`/`spawn`/`fork` (it can drive unbounded turns), writes the same audit record, and its
