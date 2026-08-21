@@ -584,9 +584,18 @@ are binding.
   *Verdict (T19, live on codex-cli 0.146.0): PROMOTE.*
   `thread/start {cwd, approvalPolicy: "never", sandbox: "read-only"}` — copy verbatim —
   completed a trivial turn in 5.2 s with **zero** server→client requests of any kind.
-  T22 keeps the auto-accept responder anyway, but with per-method payloads: a blanket
-  `{"decision": "accept"}` is invalid for six of the ten server→client methods, and an
-  invalid reply is indistinguishable from no approval arriving.
+  `approvalPolicy: "never"` is proven (source-read, not live) to short-circuit exec,
+  apply-patch, sandbox-escalation, `request_permissions`, and server-originated-elicitation
+  approvals before any client request is emitted — but **not** MCP tool-call approvals: under
+  `never` + `read-only`, `PermissionProfile::read_only()` fails the auto-approve check in
+  `codex-mcp/src/mcp/mod.rs:85-105`, so a tool with no annotations (the default) still reaches
+  `request_mcp_server_elicitation` or `request_user_input` — a real server→client request. T22's
+  auto-accept responder is therefore **load-bearing, not belt-and-braces**, and must implement
+  per-method valid replies: a blanket `{"decision": "accept"}` is invalid for eight of the ten
+  server→client methods, and an invalid reply is indistinguishable from no approval arriving.
+  For methods PTC cannot satisfy honestly (`attestation/generate`,
+  `account/chatgptAuthTokens/refresh`), T22 should reply with a JSON-RPC error object, not an
+  empty result.
 - **S5 — MCP image blocks.** Claude Code 2.1.236 renders an image content block returned by an
   MCP tool. *Promote* → plots visible inline. *Fallback*: text mentions the saved PNG path only.
   *Verdict (T12, live on 2.1.238): PROMOTE.* The image block survives the host intact: the
@@ -874,6 +883,23 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   pattern (`_secretish(name, value)`) and its artifact writer redacts accordingly.
   Date/Author: 2026-08-21 / T18 review.
 
+- Decision: **OPEN** — whether/how to isolate a PTC-spawned `codex app-server` thread from the
+  user's `~/.codex` configuration (MCP servers, hooks, model, auth) is deferred to T22, not
+  decided here.
+  Rationale: S4's live capture shows a PTC-spawned thread silently inherits the user's whole
+  Codex surface — four of the user's MCP servers started by name (`node_repl`, `context7`,
+  `discord`, `openaiDeveloperDocs`), with `discord` failing its handshake twice *inside the
+  PTC-spawned thread*; a plugin `session-start` hook and a `stop` hook fired from
+  `~/.codex/plugins/cache/claude-plugins-official/explanatory-output-style/…/hooks.json` and
+  `~/.codex/hooks.json`; the user's configured model `gpt-5.6-sol` at
+  `reasoningEffort: "xhigh"`; and `instructionSources` pulling both `~/.codex/AGENTS.md` and the
+  repo's `AGENTS.md`. The cost is measurable and real: `thread/tokenUsage/updated` reports
+  25,647 total input tokens for an 8-token answer. Two candidate mechanisms exist and **neither
+  was tested**: `thread/start`'s free-form `config` overlay object (`additionalProperties:
+  true`), and `-c key=value` at `codex app-server` spawn. The discord-failure observation is
+  concrete evidence that a user's broken MCP server becomes PTC's problem absent isolation.
+  Date/Author: 2026-08-21 / T19 review.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
@@ -1136,15 +1162,31 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   `→ {"id":3,"method":"turn/start","params":{"threadId":"01a0234c-c405-…","input":[{"type":"text","text":"Reply with exactly this and nothing else: CODEX-OK"}]}}`
   `← {"id":3,"result":{"turn":{"id":"01a0234c-c513-77e1-9ca1-d39ce2ec31d6","items":[],"itemsView":"notLoaded","status":"inProgress",…}}}`
   `← {"method":"turn/completed","params":{"threadId":"01a0234c-c405-…","turn":{"id":"01a0234c-c513-…","items":[{"type":"agentMessage","id":"msg_0981835f…","text":"CODEX-OK","phase":"final_answer"}],"itemsView":"summary","status":"completed","durationMs":5228}}}`
-  The verdict generalizes past this no-tool turn: every approval path short-circuits on
-  `AskForApproval::Never` *before* any client request is emitted, and none of them consults
-  `approvalsReviewer` — `core/src/tools/sandboxing.rs:203` (exec) and `:354` (sandbox escape),
-  `core/src/tools/runtimes/apply_patch.rs:187`, `core/src/session/mod.rs:2435`
+  The verdict generalizes past this no-tool turn for five of the six approval classes: exec,
+  apply-patch, sandbox-escalation, `request_permissions`, and server-originated elicitation all
+  short-circuit on `AskForApproval::Never` *before* any client request is emitted, and none of
+  them consults `approvalsReviewer` — `core/src/tools/sandboxing.rs:203` (exec) and `:354`
+  (sandbox escape), `core/src/tools/runtimes/apply_patch.rs:187`, `core/src/session/mod.rs:2435`
   (`request_permissions` satisfied server-side), `codex-mcp/src/elicitation.rs:409`
-  (elicitations rejected by policy). That also disposes of the one confound: this machine's
-  `~/.codex/config.toml` sets `approvals_reviewer = "guardian_subagent"`, so absent those
-  branches one could argue a server-side reviewer absorbed the prompts rather than none being
-  raised. It is source reading, not a second live run — corroboration, not evidence.
+  (elicitations rejected by policy). That also disposes of the one confound on those five paths:
+  this machine's `~/.codex/config.toml` sets `approvals_reviewer = "guardian_subagent"`, so
+  absent those branches one could argue a server-side reviewer absorbed the prompts rather than
+  none being raised. It is source reading, not a second live run — corroboration, not evidence.
+  **MCP tool-call approvals are the sixth class, and they do not short-circuit the same way.**
+  `core/src/mcp_tool_call.rs:1295` gates on `mcp_permission_prompt_is_auto_approved`, which under
+  `Never` (`codex-mcp/src/mcp/mod.rs:85-105`) returns true only for
+  `PermissionProfile::Disabled`/`External` or a `Managed` profile with full disk-write access —
+  **not** for `PermissionProfile::read_only()`, the profile this spike's own params select. A
+  tool with no annotations defaults to requiring approval
+  (`core/src/mcp_tool_call.rs:2161-2178`); the guardian branch only handles
+  `OnRequest`/`Granular` (`mcp_tool_call.rs:1353`); so `Never` + `read-only` falls through to a
+  real server→client request — either `mcpServer/elicitation/request`
+  (`core/src/session/mcp.rs:455`) or `item/tool/requestUserInput`
+  (`core/src/session/mod.rs:2638`, which has no policy check at all). This spike's own thread
+  inherited four of the user's MCP servers (below), so that path is realistically reachable.
+  **Consequence: T22's client-side responder for server→client requests is load-bearing, not
+  optional** — the trivial-turn PROMOTE verdict and the promoted `thread/start` params stand,
+  but "every approval path short-circuits on Never" does not extend to MCP tool calls.
   Four wire-shape corrections T22's sketch needs, all checked against the schema the
   *installed* binary generates (`codex app-server generate-json-schema --out DIR`) rather than
   against the in-repo protocol crate, which is a fork and may lead or lag it.
@@ -1159,12 +1201,20 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   with camelCase tags (`{"type":"readOnly","networkAccess":false}`, `workspaceWrite`,
   `dangerFullAccess`, `externalSandbox`). The live exchange shows both halves: we sent
   `"read-only"` and read back `{"type":"readOnly",…}`. The external review's `workspaceWrite`
-  correction was right for the per-turn override and wrong for `thread/start`.
-  (4) **A blanket `{"decision":"accept"}` is invalid for six of the ten server→client
+  correction was right for the per-turn override and wrong for `thread/start`. Forward-compat
+  note: `app-server/README.md:142` documents `thread/start.sandbox` itself as a **legacy
+  shorthand** — "prefer experimental `permissions` profile selection by id; the legacy
+  `sandbox` shorthand is still accepted but cannot be combined with `permissions`" — and the
+  schema description echoes it ("retained for compatibility... prefer
+  `activePermissionProfile` for profile provenance"). Proven on 0.146.0 and right to promote
+  now, but T22 is on a deprecation track; this is the same permissions-profile machinery that
+  decides the MCP tool-approval behavior above.
+  (4) **A blanket `{"decision":"accept"}` is invalid for eight of the ten server→client
   methods** — the legacy v1 `execCommandApproval`/`applyPatchApproval` use `ReviewDecision`,
   whose accept value is `"approved"`; `item/permissions/requestApproval` wants `{permissions}`;
   `mcpServer/elicitation/request` wants `{action}`; `item/tool/requestUserInput` wants
-  `{answers}`; `item/tool/call` wants `{contentItems, success}`. Only
+  `{answers}`; `item/tool/call` wants `{contentItems, success}`; `attestation/generate` wants
+  `{token}`; `account/chatgptAuthTokens/refresh` wants `{accessToken, chatgptAccountId}`. Only
   `item/commandExecution/requestApproval` and `item/fileChange/requestApproval` take
   `{"decision":"accept"}`. This matters precisely on the fallback path: an invalid reply
   looks exactly like no approval having arrived.
@@ -1183,16 +1233,22 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   unbudgeted cost this spec had not accounted for: the run started four of the user's MCP
   servers (`node_repl`, `context7`, `discord`, `openaiDeveloperDocs`), fired a plugin
   `session-start` hook and a `stop` hook inside the PTC-spawned thread, and took the user's
-  configured model `gpt-5.6-sol` — roughly 4 of the 6.2 s wall clock elapsed before the model
-  produced a token. Two untested seams exist for isolating it: `thread/start` accepts a
-  free-form `config` overlay object, and `codex app-server` accepts `-c key=value` at spawn.
+  configured model `gpt-5.6-sol`. The wire shows MCP startup spanning 0.94–2.40 s and the
+  session-start hook at 4.19–4.21 s, but the 2.40–4.19 s window carries no notification at all
+  and is not attributable to a specific cause — do not read a precise "N of 6.2 s" split into
+  this. The harder datum: `thread/tokenUsage/updated` reports **25,647 total input tokens**
+  (11,008 cached) for a turn whose output was 8 tokens — that overhead, not the wall-clock
+  split, is the durable argument for isolating PTC's codex children. Two untested seams exist
+  for isolating it: `thread/start` accepts a free-form `config` overlay object, and
+  `codex app-server` accepts `-c key=value` at spawn.
   Evidence: `test/spikes/s4_codex_headless.py`, one live pass on codex-cli 0.146.0
   (macOS 26.5.2 arm64, ChatGPT subscription auth). Full 43-message bidirectional transcript at
   `/tmp/ptc-s4-codex-headless/wire.jsonl`; `run.json` records `"server_request_methods": []`.
-  Notification order observed: `thread/started` → `mcpServer/startupStatus/updated` ×16 →
-  `thread/status/changed` → `turn/started` → `hook/started`/`hook/completed` →
-  `item/started`/`item/completed` (userMessage) → `item/started` →
-  `item/agentMessage/delta` ×4 → `item/completed` (agentMessage) →
+  Notification order observed: `remoteControl/status/changed` (first inbound notification) →
+  `thread/started` → `mcpServer/startupStatus/updated` ×4 → `thread/status/changed` →
+  `turn/started` → `mcpServer/startupStatus/updated` ×12 (16 total) →
+  `hook/started`/`hook/completed` → `item/started`/`item/completed` (userMessage) →
+  `item/started` → `item/agentMessage/delta` ×4 → `item/completed` (agentMessage) →
   `thread/tokenUsage/updated` → `account/rateLimits/updated` →
   `hook/started`/`hook/completed` (stop) → `thread/status/changed` → `turn/completed`.
 
