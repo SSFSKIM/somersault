@@ -24,9 +24,11 @@ Five tracks in parallel git worktrees (bl2 pattern): sonnet implementers off con
 briefs, per-task sonnet reviews with reviewer-run mutation checks, fix subagents to the same worktree,
 sequential `git merge --no-ff` into main, full gates on the assembled tree
 (`npm run typecheck`, `npm run test:tui`, `npm run test:unit` from `harness/`; never bare `npm test`).
-**Merge-order constraint: T-IMAGE merges before T-RESUME** (T-RESUME's image-only acceptance cell
-consumes T-IMAGE's projection fix). Other tracks are order-free; expect `useChat.ts` / `ChatApp.tsx` /
-`bindings.ts` / `theme.ts` union-style conflicts as usual.
+**Merge-order constraint: I4 (the transcript image-projection fix) lands as a standalone commit
+before T-RESUME merges** — T-RESUME's image-only acceptance cell depends only on that commit, not on
+the clipboard/transport work, so a rollback of the riskier T-IMAGE transport tasks cannot strand
+T-RESUME (spec review finding, adopted). Other tracks are order-free; expect `useChat.ts` /
+`ChatApp.tsx` / `bindings.ts` / `theme.ts` union-style conflicts as usual.
 
 Live gates run on the subscription OAuth token (refreshed by owner 2026-08-22; verified live by
 probe 28: `apiProvider:"firstParty"` with no API key in env).
@@ -68,10 +70,25 @@ Slicing is by `stringWidth`, never `.length`.
 
 ### M1 — hit-map widening (task zero)
 
-`HitRow` becomes `{ anchor?: string; width: number; text: string; gutterWidth: number;
-softWrap: "hard" | "continuation"; kind: "line" | "gutter-block" }` (exact field names are the
-plan's call; the four capabilities are the requirement: which cluster a cell belongs to, the plain
-text of a row at a column range, where paint starts, and whether the row continues its predecessor).
+`HitRow` widens to carry (exact field names are the plan's call; the capabilities are the
+requirement):
+
+- **a stable row identity independent of `foldAnchor`** — today `anchor` exists only on fold
+  clusters, so ordinary user/assistant rows would be unhoverable (spec review finding, adopted).
+  Every painted row carries the identity of its source item (e.g. the slice/item index), with
+  `foldAnchor` remaining the optional click-target channel it already is. Hover keys off the item
+  identity; click-to-expand keys off `foldAnchor` exactly as today.
+- **plain text** of the row (derived via the existing `stripSgr` at publish time — painted rows are
+  pre-styled SGR strings, so the map stores the stripped form), plus **gutter width** and
+  **soft-wrap class** (`wrapItems.ts` already computes continuation information and discards it at
+  paint; carry it through).
+- **grapheme-safe column addressing**: column→character mapping over the plain text must respect
+  grapheme clusters and double-width cells (reuse the X4T `snapToGraphemes` machinery + a
+  `stringWidth`-aware walk; canon steps back one column on the trailing half of a wide cell). CJK,
+  emoji, and combining-mark cases are required test cells, not nice-to-haves.
+- **link spans where present** — the fold data's `linkRanges` channel (T-PRLINK) rides into the map
+  so word-select can select a whole OSC-8 link (canon L198615-198617).
+
 Published from the same slices being painted, so map ≡ paint (existing invariant, keep it).
 
 ### M2 — arm `"full"`, decode motion and drag
@@ -83,10 +100,19 @@ Published from the same slices being painted, so map ≡ paint (existing invaria
   rides-the-screen invariant survives; only the enable string changes.
 - `parse.ts`: split the `& 32` rejection — `(button & 32) && (button & 3) === 3` → `action:"motion"`;
   `(button & 32) && (button & 3) !== 3` → `action:"drag"`. Keep the `& 64` / `& 128` rejections.
-  Convert col/row to **0-based at the boundary** (canon L199668); migrate every existing consumer
-  (tap machine, `anchorAt`) in the same task so one convention holds everywhere.
-- In `"scroll"` mode, drop left-button press/release at dispatch (canon L199637 parity for the
-  opt-out).
+  The event type becomes a **discriminated union**: `motion` carries no `button` field at all (its
+  low bits are `3`, which the current `button: 0|1|2` type cannot represent — spec review finding,
+  adopted); `press`/`release`/`drag` keep `button: 0|1|2`.
+- **Coordinates stay 1-based end-to-end** (revised from v1's 0-based migration): ccx's fullscreen
+  geometry is deliberately 1-based with `top <= 0` as the not-addressable sentinel
+  (`RegionTopContext`), and a 0-based row 0 would collide with that sentinel. Canon's internal
+  0-based convention (L199668) is private, not observable behaviour — staying 1-based is a recorded
+  internal divergence with zero fidelity cost. Local/relative coordinates for the composer math are
+  computed by subtraction at the consumer, as canon does.
+- **Dispatch gate:** mouse events are dropped at dispatch when the current mouse mode does not arm
+  them — `off` drops everything, `scroll` drops left-button press/release and all motion/drag — so
+  unsolicited reports from a confused terminal are inert (acceptance 7 is otherwise untestable;
+  spec review finding, adopted).
 - Same-cell motion dedupe before hover dispatch (`lastHoverCol/Row`, L199673-199676) — canon's entire
   rate-limit defence for `?1003h`; port it verbatim.
 
@@ -101,8 +127,12 @@ Two visual halves (canon §2.3):
   plan's call (context into the row renderer, or SGR-dim suppression at paint for the hovered
   cluster's rows) — the observable behaviour is fixed.
 - **The background pair:** add `userMessageBackgroundHover` beside the existing background token in
-  all five palettes (canon values L188034: light `rgb(252,252,252)`, dark `rgb(70,70,70)`,
-  light-ansi `whiteBright`, dark-ansi `white`, light-daltonized `rgb(232,232,232)`).
+  ccx's **four concrete palettes** — light `rgb(252,252,252)`, dark `rgb(70,70,70)`,
+  light-daltonized `rgb(232,232,232)`, and **dark-daltonized** (value read from canon's sibling
+  palette block around L188034 at brief time — it exists in canon and must be verified, not
+  invented). ccx has no ANSI palettes (canon's light-ansi/dark-ansi rows are out of scope), and
+  `auto` is a runtime alias that resolves to dark/light — it carries no tokens of its own (spec
+  review finding, adopted).
 - Blank-cell suppression is free: the hit map already bounds `col <= width` by painted extent.
 - **Recorded divergence:** hover granularity is row-cluster; canon's ~20 per-widget hover sites
   (dialog buttons, footer controls, suggestion rows) need the layout tree ccx lacks — out of scope,
@@ -172,9 +202,9 @@ Two visual halves (canon §2.3):
 1. Fullscreen boot writes `?1000h ?1002h ?1003h ?1006h` with the alt-screen enter string; teardown
    still writes all four `l`s. `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` boots with today's exact
    `?1000h ?1006h`; `CLAUDE_CODE_DISABLE_MOUSE=1` arms nothing.
-2. Feeding SGR motion bytes (`\x1b[<35;C;RM`) produces `motion` events, deduped per cell; drag bytes
-   (`\x1b[<32;C;RM`) produce `drag` events; existing press/release/wheel behaviour unchanged
-   (existing tests keep passing after the 0-based migration).
+2. Feeding SGR motion bytes (`\x1b[<35;C;RM`) produces `motion` events (no `button` field), deduped
+   per cell; drag bytes (`\x1b[<32;C;RM`) produce `drag` events; existing press/release/wheel
+   behaviour and the 1-based coordinate convention unchanged (existing tests pass unmodified).
 3. Hovering a dim transcript row renders its text without dim and with the hover background token;
    moving off restores it; an expanded row is unaffected.
 4. A click inside the composer text moves the caret to the clicked character, correct across wrapped
@@ -272,9 +302,14 @@ cite; it no longer resolves.
   `enter to resume · esc to cancel` (ccx's existing `PREVIEW_FOOTER` string, verbatim).
 - **Keys:** Enter/`y` resume **with the fully loaded session**; Esc/`n` return to the list (canon
   reuses its Confirmation context; ccx binds the four keys in the picker's preview stage).
-- **Loading:** keep `Loading session…` + a dim `esc to cancel` hint, but as a bare padded column —
-  drop the frame chrome (canon L583604-583606). `(no messages)` remains only for a load *failure*;
-  a loaded-but-empty session renders nothing above the footer (canon has no empty-state string).
+- **Loading (revised per spec review — the current loader collapses failure to `[]`, making
+  failure and empty indistinguishable):** the preview state becomes a tagged
+  `loading | loaded(messages) | failed(error)`. `Loading session…` + a dim `esc to cancel` hint
+  render as a bare padded column (frame chrome dropped, canon L583604-583606); only the `failed`
+  state renders failure copy (`(no messages)` retires to this arm); a `loaded`-but-empty session
+  renders nothing above the footer (canon has no empty-state string). **Confirmation resumes with
+  the loaded payload** (canon's `onSelect(Ccs ?? Gwt)`) — resume must not re-read the file and
+  reject an empty result after a successful preview.
 
 ### R-2 — model plumbing
 
@@ -321,21 +356,51 @@ already tokenises it); atomic chip delete and orphan sweep extend to the image v
 `chat:imagePaste` enters the keymap: `ctrl+v` (mac/linux), `alt+v` (windows), both (wsl) — canon
 L174817.
 
-**Limits without `sharp` (deliberate divergence):** dimensions parsed from the PNG IHDR (and JPEG
-SOF where the bytes are JPEG); reject over 2000×2000 px or over 5 MiB base64 (canon `KX` L174696) by
-degrading to canon's own failure shape — a text block
-`[Image could not be processed: <reason>]` (canon L231262) — instead of running the JPEG resize
-ladder. The ladder + BMP rescue are a recorded follow-up. The ambient "Image in clipboard" polling
-hint is a recorded non-goal (v1).
+**Limits and re-encoding (revised per spec review — the v1 "reject anything oversized" cut would
+have rejected most real screenshots, since canon's 512,000-byte per-block ceiling is normally met by
+re-encoding, which we cut with `sharp`):**
 
-### I3 — submit-chain widening (the cross-cutting change)
+- Canon's full limit set applies: 2000×2000 px pre-limit (`KX` L174696), 5 MiB base64 input cap,
+  **and the 512,000-byte post-processing per-block ceiling** (`v$r` L174695) the v1 draft omitted.
+- **darwin re-encode path (zero new deps):** `sips` (present at `/usr/sbin`… `/usr/bin/sips`,
+  verified in R4) implements canon's ladder shape — resample to fit 2000×2000
+  (`--resampleHeightWidthMax`), then JPEG quality steps 80/60/40/20 until the block fits 512,000
+  bytes. Dimensions read from the PNG IHDR / JPEG SOF headers (no dep).
+- **Other platforms:** no re-encoder → an image that exceeds any limit degrades to canon's own
+  failure shape, a text block `[Image could not be processed: <reason>]` (L231262). `sharp` and the
+  BMP rescue remain recorded follow-ups.
+- **Per-turn aggregate cap (ccx-chosen guard, no canon twin, recorded):** total image base64 per
+  turn ≤ 5 MiB; exceeding entries degrade to the failure text block. This bounds memory and request
+  size where canon relies on practice.
+- **Persistence:** image entries are **never written** to `history.jsonl`, the stash, or any paste
+  cache — only the `[Image #N]` label text persists (a restored history line submits its literal
+  label; `pasteChips.ts` already documents that an image chip cannot be reconstructed from its
+  label, and base64 payloads must not land in plaintext files). Test cells pin this.
 
-`submit(prompt: string, …)` widens to `string | ContentBlock[]` through **all five layers**:
-`session/session.ts:132` (and the message builder at `:27`), `session/chatSession.ts:11`,
-`appserver/registry.ts:34`, `appserver/fleetEngine.ts:126`, `daemon/supervisor.ts:144`. The chip
-flatten step (`useChat.ts` submit path) emits canon's wire shape: **text block first, image blocks
-appended** (canon L371395-371427). String callers stay source-compatible (plain prompts still pass
-as strings).
+The ambient "Image in clipboard" polling hint is a recorded non-goal (v1).
+
+### I3 — submit-chain widening (the cross-cutting change; contract revised per spec review)
+
+- **The type is a narrow, JSON-safe input union defined by ccx** — `UserTurnInput =
+  string | Array<{type:"text"; text:string} | {type:"image"; source:{type:"base64";
+  media_type:string; data:string}}>` — not the SDK's response-side `ContentBlock` union (which
+  excludes image *input*; the SDK's own `SDKUserMessage.message` is a `MessageParam`, and probe 113
+  proved exactly this shape traverses it).
+- Widened layers: `session/session.ts:132` (and the message builder at `:27`),
+  `session/chatSession.ts:11`, `appserver/registry.ts:34`, `appserver/fleetEngine.ts:126`,
+  `daemon/supervisor.ts:144`, **plus the layers the v1 draft missed**: the composer queue
+  (`QueueEntry` must carry image entries structurally — a queued image turn must not flatten to its
+  label) and the host `submit` seam (`host/host.ts:58`).
+- **v1 transport scope (the honest boundary, recorded):** image submission is supported where the
+  submit call stays **in-process** — the foreground REPL, the `--detachable` host's own composer,
+  and the library API. Paths that cross a byte-capped wire frame (`ccx attach` clients over the
+  host socket — `host/server.ts` `MAX_FRAME`; app-server peers — `appserver/peer.ts` `MAX_IN`)
+  **refuse image entries with an explicit error/notice** rather than truncating or disconnecting;
+  a blob/file handoff for wire paths is a recorded follow-up. (Canon has no attach analog — its
+  REPL is single-process — so this boundary costs no canon fidelity.)
+- The chip flatten step (`useChat.ts` submit path) emits canon's wire shape: **text block first,
+  image blocks appended** (canon L371395-371427). String callers stay source-compatible everywhere
+  (plain prompts still pass as strings).
 
 ### I4 — transcript image rows (the cross-surface projection fix)
 
@@ -355,9 +420,16 @@ projection dropping image blocks, not a count/pane tension.
    still succeeds.
 4. A persisted session containing image turns renders `[Image #N]` rows in the transcript, the
    resume view, and the preview count agrees.
-5. **Live cell (subscription):** an interactive-path submit with a generated red PNG returns an
-   assistant turn naming the colour (probe 113's assertion, driven through ccx's own submit chain).
-6. Daemon/appserver string submits behave exactly as before (existing suites unchanged).
+5. **Live cell (subscription), probe-113-grade discrimination (revised per spec review):** through
+   ccx's own submit chain, a text-only control turn, then a red image (image-then-text), then a
+   blue image (text-then-image) on the same session — the run passes only if the control is
+   healthy AND the two turns name their own distinct colours (a single red cell can pass on a
+   colour-guessing model with a broken chain).
+6. Daemon/appserver string submits behave exactly as before (existing suites unchanged); an image
+   submit attempted across a wire-capped path (attach peer) is refused with the explicit notice,
+   not truncated.
+7. Image entries never appear in `history.jsonl`/stash bytes (asserted on the files); a queued
+   image turn survives the queue structurally and submits with its image block intact.
 
 ---
 
@@ -377,22 +449,31 @@ settings deny rules (`~/.ssh/**`, `~/.aws/**`, …) already load into ccx and re
 - `src/cli/main.ts:440` and `src/cli/hostMain.ts:51` (the `--detachable` interactive child):
   `?? "default"` → the auto-default resolution below. Both together or the EP-T1 split-brain defect
   returns. `needsBypassConsent` (`main.ts:330`) moves to the same single rule.
-- **The model-gate resolution (the one real design decision, settled):** an explicit `--model` always
-  wins. The defaulted case checks `resolveAutoModel`: if the launch model supports `auto`, launch
-  `auto`; if not (e.g. `--model claude-haiku-4-5`), launch `default` — no silent model swap, and the
-  banner never lies (canon's launch path silently degrades the mode; ccx keeps banner truth instead).
-  An **explicit** `--permission-mode auto` keeps today's behaviour (`resolveOptions.ts:88` forces an
-  auto-capable model — the user asked for auto by name).
+- **The model-gate resolution (the one real design decision, settled; sharpened per spec review):**
+  one launch resolver, and it **alias-resolves first**. The effective launch model (flag → saved
+  pref → `DEFAULTS.model`, passed through `resolveModelAlias` so `opus`/tier aliases resolve to
+  real ids — `autoModel.ts`'s own doc demands this) is tested with the **predicate
+  `isAutoSupportedModel`**, not the transformer `resolveAutoModel` (which converts unsupported
+  input to Sonnet — using it as a gate is exactly the silent swap we're avoiding). Supported →
+  launch `auto`; unsupported → launch `default` with the model untouched, banner truthful (canon's
+  launch path silently degrades the mode; ccx keeps banner truth instead). The resolver tracks
+  whether the mode was **explicit**: an explicit `--permission-mode auto` keeps today's behaviour
+  (`resolveOptions.ts:88` forces an auto-capable model — the user asked for auto by name). Test
+  cells cover tier aliases, saved model preferences, the detachable launch, and explicit-auto +
+  unsupported model.
 - Banner/hookOpts truth is free (one `foregroundConfig` object, the qa3-02 fix — keep it).
 - Headless `-p`, `--bg`, daemon, library: already `auto`; untouched. `ccx attach` still inherits the
   host's mode.
 
 ### A2 — the notice + the record
 
-- `autoModeNotice.ts` adopts canon 2.1.236's plan-gated copy (L676952-676958): pro/max/team → the
-  variant **without** "Sessions are slightly more expensive."; unknown/API plans keep the cost
-  sentence. Plan source is ccx's account info where available at render time; unknown → cost-sentence
-  variant (canon's else arm).
+- `autoModeNotice.ts` adopts canon 2.1.236's two-variant copy (L676952-676958) via the **coarser
+  observable rule** (revised per spec review — the SDK's `accountInfo()` exposes only
+  `apiProvider`/`tokenSource`, no `subscriptionType`, so canon's pro/max/team plan gate has no
+  reachable source in ccx): sessions authenticated by `CLAUDE_CODE_OAUTH_TOKEN`
+  (`tokenSource === "CLAUDE_CODE_OAUTH_TOKEN"`) get the variant **without** "Sessions are slightly
+  more expensive."; API-key sessions and unknown keep the cost sentence (canon's else arm).
+  Recorded fidelity divergence: token-source proxy instead of plan tier.
 - Record the **qa3-03 reversal** in `docs/parity/qa-sprint-1-triage.md` (decision, not regression:
   benchmark moved — canon rollout + owner's own setting), and update the EP-T1 comment block in
   `main.ts` to tell the new truth.
@@ -414,8 +495,9 @@ from user/policy scope, L106111-106121). Gated on an unwritten probe: whether th
    `default`.
 3. `ccx --permission-mode default` still pins Manual everywhere; `--permission-mode auto` with a
    non-auto model still forces the auto-capable model (unchanged explicit-auto path).
-4. The auto-mode notice fires on a fresh install's first auto launch; on a subscription account the
-   copy omits the cost sentence.
+4. The auto-mode notice fires on a fresh install's first auto launch; under an OAuth-token session
+   the copy omits the cost sentence, under an API-key session it keeps it (asserted at the
+   token-source seam, which is observable).
 5. qa-sprint-1-triage.md carries the reversal note; `test:unit` green.
 
 ---
@@ -472,8 +554,29 @@ from user/policy scope, L106111-106121). Gated on an unwritten probe: whether th
 - **Live gates on subscription** — owner refreshed the OAuth token (verified via probe 28);
   supersedes the metered-vs-wait fork. During research, one metered fallback run cost ~$0.86
   (disclosed).
-- **T-IMAGE merges before T-RESUME** — the image-projection fix is T-IMAGE's; T-RESUME's image-only
-  acceptance cell reads it from the merged tree.
+- **I4 decoupled: lands as a standalone projection commit before T-RESUME** (spec review, adopted)
+  — over v1's whole-track ordering, so a rollback of the clipboard/transport work cannot strand
+  T-RESUME's acceptance.
+- **Coordinates stay 1-based end-to-end** (spec review, adjusted) — the reviewer flagged the
+  0-based migration's collision with the `top <= 0` sentinel; rather than migrating every consumer
+  and the sentinel, ccx keeps its 1-based convention (canon's 0-based internals are unobservable).
+- **Image transport v1 is in-process only; wire-capped paths refuse with a notice** (spec review,
+  adopted) — the host socket's `MAX_FRAME` and app-server `MAX_IN` byte caps make 5 MiB frames
+  impossible today; blob handoff recorded as follow-up. Canon has no attach analog, so no fidelity
+  cost.
+- **darwin re-encode via `sips`, not `sharp`** (spec review, adjusted) — the reviewer showed the
+  512,000-byte ceiling makes reject-only useless for real screenshots; `sips` gives canon's ladder
+  on the primary platform with zero deps; other platforms degrade to text.
+- **Images never persist to history/stash** (spec review, adopted) — base64 payloads out of
+  plaintext files; labels only.
+- **Auto-notice variant keyed off token source, not plan tier** (spec review, adopted) —
+  `accountInfo()` exposes no `subscriptionType`; the observable proxy is recorded as a divergence.
+- **Model gate = alias-resolve then `isAutoSupportedModel`** (spec review, adopted) — the
+  transformer `resolveAutoModel` would have silently swapped aliased models, the exact defect the
+  decision exists to prevent.
+- **Resume preview state is tagged `loading|loaded|failed`; confirmation resumes with the loaded
+  payload** (spec review, adopted) — failure and empty were indistinguishable in the current
+  loader, and re-reading at confirm time could reject after a successful preview.
 
 ## Surprises & Discoveries
 
@@ -496,6 +599,12 @@ from user/policy scope, L106111-106121). Gated on an unwritten probe: whether th
   billed ~$0.86 metered (disclosed to owner; owner refreshed the token afterwards).
 - Under `auto`, a classifier denial is invisible on the wire (probe 85 D) — ccx cannot render *why*
   something was blocked (R5).
+- The spec review surfaced hard transport facts the research fan-out missed: the host socket and
+  app-server peers cap frames in bytes (`host/server.ts` `MAX_FRAME`, `appserver/peer.ts` `MAX_IN`),
+  so image blocks cannot naively cross attach/app-server wires; and `accountInfo()` carries no
+  `subscriptionType`, so canon's plan-gated notice copy has no reachable source in ccx.
+- The reviewer's "0-based migration collides with the `top <= 0` sentinel" finding dissolved by
+  *not* migrating: canon's coordinate base is internal convention, not observable behaviour.
 
 ## Outcomes & Retrospective
 
@@ -505,3 +614,11 @@ Pending — written at finish.
 
 - v1 (2026-08-22): initial spec from the five R-reports + owner grill (four forks settled) + design
   approval.
+- v2 (2026-08-22): Codex adversarial review (gpt-5.6-sol, xhigh) returned ten findings; nine adopted
+  (some adjusted), one countered with a simpler resolution (1-based coordinates over sentinel
+  migration). Substantive changes: hit-map identity/grapheme contract (M1), discriminated mouse
+  union + dispatch gate + 1-based convention (M2), four-palette hover tokens (M3), full canon image
+  limit set + `sips` ladder + persistence exclusion (I2), `UserTurnInput` union + in-process v1
+  transport scope + queue/host layers (I3), discriminating live cell (acceptance), tagged resume
+  loading state + loaded-payload confirmation (R-1), alias-resolved `isAutoSupportedModel` gate
+  (A1), token-source notice rule (A2), I4 decoupled from T-IMAGE for merge ordering.
