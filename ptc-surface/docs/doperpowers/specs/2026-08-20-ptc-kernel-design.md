@@ -482,12 +482,29 @@ data.
 
 ```python
 await workflow.parallel(*aws, limit=8) -> list        # gather with a bound + per-item error capture
-await workflow.pipeline(items, *stages) -> list       # per-item stage chaining, no inter-stage barrier
+await workflow.pipeline(items, *stages, limit=8) -> list   # per-item stage chaining, no inter-stage barrier
 workflow.phase(name)                                  # progress marker printed + audited
 ```
 
 Doctrine, not machinery: the skill shows Workflow-tool-style patterns (fan-out → verify →
 synthesize) written as plain cells.
+
+`limit` is a **per-fan-out** bound over arbitrary awaitables, not a second concurrency
+pool: `agents.shared_semaphore` bounds only what spawns a CLI subprocess, and most of
+what these helpers fan out (file reads, `bash`, pure coroutines) it never covered. Both
+apply when the awaitables are SDK calls and the tighter governs; acquisition is always
+this permit then the shared one, never the reverse. `pipeline` carries the same bound
+(keyword-only, after `*stages`) — T26 added it because per-item fan-out over a caller's
+list is the identical hazard, and a `bash`/`web_fetch` stage escapes the shared bound
+entirely. `pipeline` stages may be sync or async: an await-only contract would turn every
+plain-function stage into an opaque `TypeError` captured as that item's result, silently
+poisoning the batch. Error capture is `except Exception`, never `BaseException`, so an
+interrupted fan-out unwinds instead of reporting success; awaitables still queued for a
+permit when a fan-out is cancelled are closed, so an interrupt does not spray
+"coroutine … was never awaited" into the cell's own output. `parallel` and `pipeline` do
+not audit — every primitive they orchestrate audits itself, and only `phase` is a record
+in its own right (`shape.footer_line` ignores kind `phase` by design; phases show up in
+stdout).
 
 ## Skill and packaging
 
