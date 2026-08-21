@@ -603,11 +603,11 @@ hybrid harness — the count was ten until `workflow` shipped in T26 and earned 
 
 ## Trust model (README + skill, stated identically)
 
-Allowing `mcp__ptc__exec` **is** the security decision: from then on, model-written Python runs
-with your OS permissions, outside Claude Code's per-tool permission prompts and sandbox, and
-children spawned from the kernel default to `bypassPermissions`. The audit footer and
-`audit.jsonl` give visibility, not enforcement. Use a worktree/container for untrusted work. The
-kernel env should not carry `ANTHROPIC_API_KEY` if you want subscription billing — the key
+Allowing `mcp__plugin_ptc_ptc__exec` **is** the security decision: from then on, model-written
+Python runs with your OS permissions, outside Claude Code's per-tool permission prompts and
+sandbox, and children spawned from the kernel default to `bypassPermissions`. The audit footer
+and `audit.jsonl` give visibility, not enforcement. Use a worktree/container for untrusted work.
+The kernel env should not carry `ANTHROPIC_API_KEY` if you want subscription billing — the key
 shadows OAuth in the `claude` CLI and silently flips billing to metered API. The kernel inherits
 the adapter's process environment verbatim, which includes credential-bearing `CLAUDE_*`
 variables (a Claude Code tool environment carries an OAuth bearer token, `sk-ant-oat…`, among
