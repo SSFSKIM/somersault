@@ -384,7 +384,12 @@ agent.resume(session_id, **options) -> AgentHandle
   thread; `resume` = `thread/resume`; `fork` → `NotImplementedError("codex fork; use
   provider='claude'")`. Any server→client request that arrives despite the policy is
   auto-answered with that method's own response shape (not a blanket `{"decision":"accept"}`,
-  which most of them reject) and logged. Spike S4 pins all of this live.
+  which most of them reject) and logged; a method PTC cannot service gets a real JSON-RPC
+  error, never an empty `{}`, because a malformed result is indistinguishable from no reply.
+  Approvals of a command or a file change accept; anything asking for user data or consent
+  declines rather than inventing an answer. The child is spawned with
+  `--disable hooks --disable plugins` so the user's `~/.codex` hooks and plugins stay out of it
+  (T22 Decision Log). Spike S4 pins all of this live.
 - **Fan-in semantics (deliberate divergence from Prime)**: results are awaited **in code** —
   `await h.result()` blocks the *cell*, not the model; the exec/wait yield keeps the model free.
   Handles persist in the namespace across turns, so "spawn now, gather next turn" works without
@@ -920,7 +925,8 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
 
 - Decision: **OPEN** — whether/how to isolate a PTC-spawned `codex app-server` thread from the
   user's `~/.codex` configuration (MCP servers, hooks, model, auth) is deferred to T22, not
-  decided here.
+  decided here. *(Settled by the T22 entry below: the spawn-time seam works, the
+  `thread/start` overlay does not, and isolation ships default-on.)*
   Rationale: S4's live capture shows a PTC-spawned thread silently inherits the user's whole
   Codex surface — four of the user's MCP servers started by name (`node_repl`, `context7`,
   `discord`, `openaiDeveloperDocs`), with `discord` failing its handshake twice *inside the
@@ -934,6 +940,32 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   true`), and `-c key=value` at `codex app-server` spawn. The discord-failure observation is
   concrete evidence that a user's broken MCP server becomes PTC's problem absent isolation.
   Date/Author: 2026-08-21 / T19 review.
+
+- Decision: PTC isolates its Codex children at **spawn time**, with
+  `codex app-server --disable hooks --disable plugins`, **on by default**;
+  `PTC_CODEX_INHERIT=1` restores the user's full Codex surface. Of the two candidate
+  mechanisms the T19 review left untested, exactly one works.
+  Rationale: measured on codex-cli 0.146.0, no model tokens spent (`thread/start` starts a
+  thread's MCP servers without calling a model, so the whole comparison is free). The two
+  feature flags took a PTC thread from six inherited MCP servers to three — every
+  plugin-provided one (`context7`, `discord`, `dataAnalyticsWidgets`) gone, including the
+  `discord` server that fails its handshake inside our thread — and no hook fired at all
+  (`hook/started` count 0 on the live turn, against S4's session-start + stop pair). Token
+  cost fell from S4's 25,647 input tokens to **19,113** for the same 8-token answer.
+  The three seams that do **not** work, each a trap worth naming: (a) `thread/start`'s
+  free-form `config` overlay is **inert** — `{"mcp_servers": {}, "features": {...}}` changed
+  nothing, so the object being `additionalProperties: true` in the schema says nothing about
+  it being honoured; (b) `-c mcp_servers={…}` **merges** rather than replaces, so an empty
+  table is a no-op and a non-empty one only adds a server; (c) `-c
+  mcp_servers.<name>.enabled=false` makes `codex app-server` **exit silently before writing a
+  single line** — from a client's side indistinguishable from a hung server, which is why the
+  live suite keeps a free regression test that the flags PTC ships are still accepted.
+  What stays inherited, and is accepted: the user's own `[mcp_servers]` entries, their model
+  and reasoning effort, and `instructionSources` (both AGENTS.md files). No `-c` seam clears
+  the first, and the only mechanism that would — redirecting `CODEX_HOME` — also moves
+  `auth.json` and would break subscription auth. This is the deliberate residue, not an
+  oversight; `AgentOpts.model` overrides the model per call.
+  Date/Author: 2026-08-21 / T22.
 
 ## Surprises & Discoveries
 
@@ -1293,6 +1325,29 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   `item/started` → `item/agentMessage/delta` ×4 → `item/completed` (agentMessage) →
   `thread/tokenUsage/updated` → `account/rateLimits/updated` →
   `hook/started`/`hook/completed` (stop) → `thread/status/changed` → `turn/completed`.
+
+- Observation: [T22, live on codex-cli 0.146.0] Three wire facts the S4 corrections implied but
+  did not test, plus one the fidelity of a real transport forced.
+  (1) **A misplaced param is silently inert, not an error.** `thread/start {cwd,
+  approvalPolicy: "never", sandbox: "read-only", effort: "high"}` succeeded and came back with
+  `reasoningEffort: "xhigh"` untouched — the user's setting. So the sketch's habit of putting
+  `effort` on `thread/start` would never have raised anything; it would simply have never
+  applied. `effort` and `outputSchema` are `turn/start` fields, where the schema declares them.
+  (2) **The camelCase sandbox tag is refused outright**, confirming S4's correction live:
+  `thread/start {"sandbox": "workspaceWrite"}` → `-32600 unknown variant \`workspaceWrite\`,
+  expected one of \`read-only\`, \`workspace-write\`, \`danger-full-access\``.
+  (3) **asyncio's default 64 KiB line limit is not enough for this protocol.** The first live
+  run died with `ValueError('Separator is not found, and chunk exceed the limit')` on a single
+  `mcpServerStatus/list` result carrying the user's MCP tool catalogs (>100 KB on one line).
+  NDJSON has no continuation, so one over-long line kills the session; the client passes an
+  explicit 16 MiB `limit` to `create_subprocess_exec`, and a keyless test drives a 200 KB line
+  through the fake so the regression cannot come back.
+  (4) **A15 met**: `agent.spawn(..., provider="codex")` in a real kernel returned exactly
+  `CODEX-DONE`, turn `status: completed`, **zero** server→client requests, zero hooks, a real
+  thread id in `agents.json`, and 19,113 input tokens for 8 output.
+  Evidence: `test/live/test_codex_live.py` (one billed turn, subscription auth), the kernel's
+  own cell log for that run, and `test/unit/test_codex_backend.py` (30 keyless tests against a
+  fake that enforces the handshake, the sandbox enum, per-method reply shapes and the turn id).
 
 ## Outcomes & Retrospective
 
