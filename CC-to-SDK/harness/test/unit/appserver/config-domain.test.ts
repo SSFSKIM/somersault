@@ -674,8 +674,14 @@ describe("config/value/write + config/batchWrite", () => {
     // (upstream spells it singular), `language` and `disableAllHooks` are real top-level keys that warned;
     // `defaultMode`, `additionalDirectories` and `disableBypassPermissionsMode` live inside `permissions`,
     // so writing them at the top level is genuinely wrong and warned about nothing.
+    // `spellcheck`, `crossSessionInbound` and `theme` are the M6 half: the list was hand-transcribed from a
+    // February snapshot, and by SDK 0.3.237 it warned about 71 real keys — `spellcheck` among them, shipped
+    // upstream by the very bump that exposed it. Nothing detected the rot because a wrong advisory is never
+    // a visible failure, so `scripts/drift-check.mjs` now gates the list against the installed SDK's own
+    // generated `interface Settings` in both directions. These three keys are that gate's acceptance case
+    // stated as BEHAVIOR: if the list regresses to a stale transcription, this row goes red on its own.
     boot(deps());
-    for (const key of ["model", "attribution", "language", "disableAllHooks", "$schema"]) {
+    for (const key of ["model", "attribution", "language", "disableAllHooks", "$schema", "spellcheck", "crossSessionInbound", "theme"]) {
       const id = await send("config/value/write", { keyPath: [key], value: "x", mergeStrategy: "replace" });
       expect(reply(id).result.warnings, `a real top-level key must not warn: ${key}`).toBeUndefined();
     }

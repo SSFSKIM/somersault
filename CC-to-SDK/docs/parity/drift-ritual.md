@@ -14,6 +14,18 @@ Diffs installed vs npm HEAD `sdk.d.ts` on four surfaces: Options fields, Query m
 union members, top-level exported names. Exits 2 on parse failure (false-clean guard). No drift ≠ no
 change — bodies/jsdoc/semantics move without renames; skim the npm changelog when versions differ.
 
+The same command also runs three **local gates** that exit 1 rather than merely reporting, because
+unlike the HEAD comparison they are deterministic and have a right answer: the appserver scorecard's
+row presence, row staleness and registry coverage, and — added M6 — the **settings-key advisory**,
+`configDomain.ts`'s `KNOWN_TOP_LEVEL` against the installed SDK's generated
+`export declare interface Settings`, in both directions. That last one exists because the list was
+hand-transcribed and nothing was watching it: by 0.3.237 it warned about 71 real upstream keys and
+blessed 9 upstream had dropped, and no test or gate could go red, since a wrong advisory only ever
+costs a missing or spurious warning. On failure the gate prints the corrected body ready to paste, so
+adopting a schema move is a paste rather than another hand re-read of ~150 names. It compares against
+the **installed** SDK, never npm HEAD — the advisory must describe the SDK we ship against, and gating
+on HEAD would turn someone else's release into our red build.
+
 ## 2. On drift: classify each name
 
 - **Added** → a new premise. File it in `full-potential.md` §1 as 🔬 unverified; probe before
