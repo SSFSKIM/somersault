@@ -18,7 +18,7 @@ import { renderMessage } from "./render.js";
 import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, INTERRUPT_CANCELLED, INTERRUPT_PLAIN, INTERRUPT_TOOL, PLAN_REJECTED_TEXT, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
 import { displayPath } from "./paths.js";
 import { formatDuration } from "./format.js";
-import { Line } from "./Line.js";
+import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
@@ -1334,12 +1334,17 @@ export function projectPending(document: TranscriptDocument, options: Projection
 }
 
 /** The sole gutter owner. `start`/`end` slice the body (the Ctrl-O pager scrolls a long result without re-projecting
- *  it); `showGutter={false}` keeps the five-column indent while dropping the connector for a continuation page. */
-export function RenderItemView({ item, start, end, showGutter = true }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean }): React.ReactElement {
+ *  it); `showGutter={false}` keeps the five-column indent while dropping the connector for a continuation page.
+ *  `rowSelections` (F9 T-MOUSE Task 6) is one entry per row THIS call paints, in the SAME order — length 1 for
+ *  a `"line"` item, `body.length` for a `"gutter-block"` one — mirroring `FullscreenViewport.hitRowsOf`'s own
+ *  per-slice row count exactly, since it is built from that identical flattening. `undefined` (every call site
+ *  outside `FullscreenViewport`, and any frame with no live selection) paints nothing, matching every row's
+ *  behaviour before this task existed. */
+export function RenderItemView({ item, start, end, showGutter = true, rowSelections }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean; rowSelections?: readonly (LineSelection | undefined)[] }): React.ReactElement {
   // LT10: a tool header truncates at the terminal edge (upstream `wrap:"truncate-end"`) — an MCP-length name
   // must never wrap one header into several transcript rows. Ordinary line items (assistant text, local
   // notices, dividers) carry no `wrap` and keep wrapping; body rows keep wrapping, fold already sized them.
-  if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} />;
+  if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} selection={rowSelections?.[0]} />;
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
   // F9 T-MOUSE Task 3 — the gutter-block's own LEADING connector column (`⎿`) is the one dimmed run this
   // component paints OUTSIDE `Line.tsx` (every body row already goes through it, and un-dims there). Read
@@ -1349,7 +1354,7 @@ export function RenderItemView({ item, start, end, showGutter = true }: { item: 
   return (
     <Box flexDirection="row">
       <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={hovered ? false : item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
-      <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} />)}</Box>
+      <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} selection={rowSelections?.[i]} />)}</Box>
     </Box>
   );
 }

@@ -883,11 +883,28 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // the same reason (ComposerCaret's own doc: geometry current only for the render that produced it).
   const composerRef = useRef<ComposerCaret>(null);
   const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
+  // F9 T-MOUSE Task 6 — MULTI-CLICK WINDOWING. Canon's own `clickCount` (R1 §2.2): the LAST press's cell,
+  // timestamp AND resolved anchor, so the NEXT press can tell "is this a continuation of the same click
+  // sequence" — 500 ms AND within 1 cell in BOTH axes (plan Global Constraints) AND, beyond canon (which
+  // never faces a buffer that moves under it), the SAME anchor — T10's own "the anchor is the cluster, not
+  // the cell" rule (`fold-click.test.tsx` (d′)), reapplied here: a stream that slides a DIFFERENT cluster
+  // under the identical coordinates within the window must not read as a double-click on it. A ref, not
+  // state: like `tapAnchorRef`, nothing on screen renders differently for it, only the NEXT press's own
+  // decision reads it.
+  const lastPressRef = useRef<{ col: number; row: number; time: number; count: number; anchor: string | undefined } | null>(null);
   const clickable = fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching;
   // F9 T-MOUSE Task 3 — the wheel already discards a pending tap (T10's own reasoning: the document moved
   // under a held button); a hover has the SAME problem for the SAME reason — the cell under a stale
   // `hoveredKey` may now belong to a different cluster or none — so one signal clears both.
-  const discardTap = useCallback(() => { tapAnchorRef.current = null; hitmapRef.current?.clearHover(); }, []);
+  //   F9 T-MOUSE Task 6 — a live sweep has the SAME problem, for the SAME reason: the document moving under a
+  // held button invalidates whichever rows the anchor/focus cells used to name, so the wheel discards the
+  // selection too (spec's own "wheel during drag discards cleanly" cell).
+  //   A wheel tick ALSO breaks multi-click continuity, for the identical reason: scrolling between two clicks
+  // that happen to land back on the same coordinates is not a rapid double-click by any real definition, and
+  // `fold-click.test.tsx`'s own (d) case does exactly this (two ticks, one each way, landing the cursor back
+  // on the SAME cluster) — without this reset that case's "control" tap reads as a continuation and its
+  // second click resolves to a text selection instead of the fold toggle the test expects.
+  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); hitmapRef.current?.discardSelection(); }, []);
   useMouseSink((e: MouseInputEvent) => {
     // F9 T-MOUSE Task 3 — HOVER, ANSWERED BEFORE THE TAP GATE. Un-dimming a row is a pure paint effect (it
     // mutates nothing a later gesture could act on wrongly), so it does NOT share the tap machine's
@@ -903,16 +920,48 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     const at = tapAnchorRef.current;
     tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
     if (!clickable) return;
-    // F9 T-MOUSE task 2 widened the union: motion/drag now reach every mouse sink once `altScreen.ts` arms
-    // `?1002`/`?1003` by default. This tap machine only ever knew press/release, and `action` was the only
-    // other value a non-press report could hold — a drag or a hover crossing the pending cell would otherwise
-    // fall straight through to the "does this match the press?" check below and read as that press's release.
-    // Treated exactly like the existing modified-click case: kill the tap (already done above), do nothing.
-    if (e.action === "motion" || e.action === "drag") return;
+    // F9 T-MOUSE Task 6 — DRAG extends the in-flight sweep. `clickable` (not a redundant `mouseMode()` check,
+    // matching this file's own click-to-caret precedent below) is enough: `scroll`/`off` already drop every
+    // drag report before it reaches this sink (KeymapProvider's dispatch gate, T2), so there is nothing further
+    // to gate here — a drag this component ever sees is already a `full`-mode one. A non-left drag (right/
+    // middle button) is nobody's gesture in this track and is dropped exactly like a modified click below.
+    if (e.action === "drag") { if (e.button === 0) hitmapRef.current?.dragSelectionTo(e.col, e.row); return; }
+    // F9 T-MOUSE task 2 widened the union: motion now reaches every mouse sink once `altScreen.ts` arms
+    // `?1003` by default. This tap machine only ever knew press/release, and `action` was the only other
+    // value a non-press report could hold — a hover crossing the pending cell would otherwise fall straight
+    // through to the "does this match the press?" check below and read as that press's release. Treated
+    // exactly like the existing modified-click case: kill the tap (already done above), do nothing.
+    if (e.action === "motion") return;
     // Modified clicks are canon's own no-op, and a non-primary button is somebody else's gesture. Both land
     // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
     if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;
-    if (e.action === "press") { tapAnchorRef.current = { col: e.col, row: e.row, anchor: hitmapRef.current?.anchorAt(e.col, e.row) }; return; }
+    if (e.action === "press") {
+      const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
+      tapAnchorRef.current = { col: e.col, row: e.row, anchor };
+      // F9 T-MOUSE Task 6 — clickCount against the LAST PRESS (not the last release): within 500 ms, within
+      // 1 cell in both axes, AND the same resolved anchor (see `lastPressRef`'s own doc) extends the run;
+      // anything else (too slow, too far, or a different cluster) restarts it at 1. `count >= 2` is canon's
+      // own multi-click branch (a double OR triple click both fire on the SECOND/THIRD PRESS, never waiting
+      // for a release) — `count === 2` selects the word, anything higher stays a line select (canon never
+      // resets past triple; neither does this).
+      const last = lastPressRef.current;
+      const withinWindow = last !== null && e.col - last.col >= -1 && e.col - last.col <= 1 && e.row - last.row >= -1 && e.row - last.row <= 1 && Date.now() - last.time <= 500 && anchor === last.anchor;
+      const count = withinWindow ? last!.count + 1 : 1;
+      lastPressRef.current = { col: e.col, row: e.row, time: Date.now(), count, anchor };
+      if (count >= 2) hitmapRef.current?.multiClickSelectionAt(e.col, e.row, count === 2 ? 2 : 3);
+      else hitmapRef.current?.startSelectionAt(e.col, e.row);
+      return;
+    }
+    // F9 T-MOUSE Task 6 — THE CLICK/SWEEP DISCRIMINANT, read BEFORE anything else on release: canon's own
+    // `!yze(r) && r.anchor` (R1 §2.2), negated. `hasSelection()` answers `true` the moment a real sweep (a
+    // drag whose focus differs from its anchor) or a multi-click span exists; a plain press+release with no
+    // drag in between never sets `focus`, so it reads `false` here and falls through to the EXACT SAME fold/
+    // caret logic this tap machine has always run — the selection path adds a new outcome, it does not
+    // change the old one. `endSelectionDrag()` always runs (every press set `isDragging`, regardless of
+    // whether it grew into a sweep), matching canon's own "release always stops the drag" branch.
+    const sweeping = hitmapRef.current?.hasSelection() ?? false;
+    hitmapRef.current?.endSelectionDrag();
+    if (sweeping) return;                           // a completed sweep does not toggle a fold or move the caret
     if (!at || at.col !== e.col || at.row !== e.row) return;
     const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
     if (anchor !== undefined && anchor === at.anchor) { toggleFold(anchor); return; }
