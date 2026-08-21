@@ -499,6 +499,25 @@ understated its own scope is the more useful thing to remember.
 
 **Added to the parking lot by that round:**
 
+- **The four-process marker-store race test is intermittently red, and it is NOT this round's doing.**
+  `archive.test.ts`'s "four processes creating the marker store at once" fails by leaving one racer's
+  marker absent. Measured on the M6 machine: **3 failures in roughly 9 standalone runs**, plus one in a
+  full `test:unit` run — and the missing racer VARIES (`sess-0` twice, `sess-3` once), so it is a real race
+  and not a fixed ordering bug. The test's own docblock records 300 of 300 succeeding when the repair
+  landed in M5, so either the environment moved under it or the repair is narrower than measured.
+  **Attribution is firm:** `src/appserver/archive.ts` and `src/fleet/` are byte-identical to the M6 base
+  commit, and the only two hunks in `archive.test.ts` this round are at lines 1127 and 1194, far from the
+  race test at ~1425. Code under test and test are both unchanged, so the behaviour is the base's.
+  **What is still unknown is the errno.** Each racer writes `OK` or `<code> <message>` to a report file,
+  but the directory assertion fires before the test surfaces them and the temp dirs are cleaned up on the
+  way out. A temporary diagnostic that printed the reports did not reproduce in 3 runs — plausibly the
+  logging perturbing the timing, which is itself worth knowing. First step for whoever takes this: capture
+  the report contents on failure (the assertion order is the only thing in the way), since the child sets
+  `umask(0o200)` deliberately and the whole question is which syscall loses to a half-made directory.
+  Do NOT "fix" this by relaxing the assertion: a guard that has gone quiet is worse than one that is red.
+  Trigger: it is already triggering — `npm run test:unit` cannot be used as a clean gate until it is
+  settled, which is the real cost and the reason it is filed at the top of this list.
+
 - **`extraArgs` is a third identity vocabulary nobody strips.** Neither `review.ts` nor the swap family
   touches it, and in the installed SDK its entries are appended to argv AFTER the typed identity flags
   (`--resume`, `--fork-session`, `--session-id`, …). `thread/start`'s `config` is an unrestricted
