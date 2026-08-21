@@ -92,8 +92,9 @@
       "type": "object",
       "properties": {
         "cursor": {
+          "description": "opaque keyset cursor from a previous reply's nextCursor; never client-composed. It is bound to the walk that minted it: re-issuing it with a different cwd or archived refuses -32602, as does anything this server did not mint (a forged or truncated cursor, or a pre-keyset decimal offset). Change either parameter and start a fresh walk",
           "type": "string",
-          "pattern": "^\\d+$"
+          "pattern": "^[A-Za-z0-9_-]+$"
         },
         "limit": {
           "type": "integer",
