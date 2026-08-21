@@ -48,6 +48,7 @@ import { FullscreenFrame, dockCap, seamCap } from "./FullscreenFrame.js";
 import { todoPanelRows } from "./taskPanelModel.js";
 import { FullscreenViewport, type ViewportHitmap } from "./FullscreenViewport.js";
 import type { MouseInputEvent } from "./keys/types.js";
+import { mouseMode } from "./altScreen.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
 import { editExternal, openInEditor } from "./externalEditor.js";
@@ -880,8 +881,22 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const hitmapRef = useRef<ViewportHitmap>(null);
   const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
   const clickable = fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching;
-  const discardTap = useCallback(() => { tapAnchorRef.current = null; }, []);
+  // F9 T-MOUSE Task 3 — the wheel already discards a pending tap (T10's own reasoning: the document moved
+  // under a held button); a hover has the SAME problem for the SAME reason — the cell under a stale
+  // `hoveredKey` may now belong to a different cluster or none — so one signal clears both.
+  const discardTap = useCallback(() => { tapAnchorRef.current = null; hitmapRef.current?.clearHover(); }, []);
   useMouseSink((e: MouseInputEvent) => {
+    // F9 T-MOUSE Task 3 — HOVER, ANSWERED BEFORE THE TAP GATE. Un-dimming a row is a pure paint effect (it
+    // mutates nothing a later gesture could act on wrongly), so it does NOT share the tap machine's
+    // `clickable` gate below — that gate exists to keep a CLICK from acting on a transcript a dialog or
+    // overlay currently owns, and a row lighting up under the pointer behind a permission consult is not that
+    // kind of action; canon's own hover sites keep firing under its dialogs too. The gate here is the plan's
+    // own, narrower pair: `fullscreen` (mouse reporting is armed by the alt-screen enter sequence, and
+    // `hitmapRef` has nothing attached at all under classic) and `mouseMode() === "full"` — REDUNDANT with the
+    // dispatch gate that already drops motion in every other mode (KeymapProvider.tsx), and kept here anyway
+    // for the reason that gate's own `fullscreen` term is kept: "hover does nothing off `full`" should be true
+    // by construction at the consumer, not only by a coincidence one layer up a later refactor could remove.
+    if (e.action === "motion") { if (fullscreen && mouseMode() === "full") hitmapRef.current?.hoverAt(e.col, e.row); }
     const at = tapAnchorRef.current;
     tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
     if (!clickable) return;

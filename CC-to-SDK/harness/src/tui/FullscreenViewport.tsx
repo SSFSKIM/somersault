@@ -88,6 +88,7 @@ import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
 import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
 import { linkRangesOf, type HitRow } from "./mouse/hitmap.js";
+import { HoverContext } from "./mouse/hoverContext.js";
 import { stripSgr } from "./sgrFoldRow.js";
 import { useRegionRows, useRegionTop } from "./FullscreenFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
@@ -114,6 +115,15 @@ export interface ViewportHitmap {
    *  gives them (`keys/types.ts`) — or `undefined` where nothing clickable is. Task 10 turns a press and a
    *  release on the same answer into a tap. */
   anchorAt(col: number, row: number): string | undefined;
+  /** F9 T-MOUSE Task 3 — resolve a motion report's cell to the row-cluster's `itemKey` (same bound `anchorAt`
+   *  uses: past the window or past a row's own painted width answers "hover nothing") and set it HOVERED for
+   *  the next repaint. Owned here rather than duplicated as ChatApp state: the row list this resolves against
+   *  is the SAME one `anchorAt` reads, off the SAME frame just painted — a second copy one layer up would
+   *  drift from what is actually on screen, exactly `anchorAt`'s own doc's reasoning. */
+  hoverAt(col: number, row: number): void;
+  /** Explicit clear — a wheel tick (the document moved under the pointer; ChatApp wires this to the same
+   *  `onWheelTick` signal that already discards a pending tap for the identical reason). Idempotent. */
+  clearHover(): void;
 }
 
 export interface FullscreenViewportProps {
@@ -287,7 +297,20 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const at = painted[row - top];
     return at !== undefined && col >= 1 && col <= at.width ? at.anchor : undefined;
   }, []);
-  useImperativeHandle(hitmapRef, () => ({ anchorAt }), [anchorAt]);
+  // F9 T-MOUSE Task 3 — HOVER STATE. Plain `useState`, not a ref: unlike the tap anchor (which rides the NEXT
+  // click's own comparison, nothing else painting differently for it meanwhile) a hovered row IS the paint —
+  // nothing else in this render would otherwise change to reflect the pointer having moved, so this state
+  // update IS the "targeted invalidation" the brief asks for: it re-renders this ONE component (a normal frame
+  // paint this file already does on every content event), not the document, not `useChat`, not ChatApp's tree.
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const hoverAt = useCallback((col: number, row: number): void => {
+    const { top, rows: painted } = hit.current;
+    if (top <= 0) { setHoveredKey(null); return; }
+    const at = painted[row - top];
+    setHoveredKey(at !== undefined && col >= 1 && col <= at.width ? at.itemKey : null);
+  }, []);
+  const clearHover = useCallback(() => setHoveredKey(null), []);
+  useImperativeHandle(hitmapRef, () => ({ anchorAt, hoverAt, clearHover }), [anchorAt, hoverAt, clearHover]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no
@@ -364,10 +387,24 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // so the map is the paint by construction — including the row the pill takes, which `body` has already
   // removed from the window and which therefore has no entry to be clicked.
   hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS };
+  // F9 T-MOUSE Task 3 — a repaint that no longer paints the hovered cluster (it scrolled off, its fold state
+  // flipped, the document swapped under a session resume) must not leave a stale `itemKey` haunting a cell
+  // that now belongs to something else, or nothing. Checked against THIS render's own rows, never a stale
+  // copy, and applied DURING render for the same reason `settled`/`anchor` above are (:274) — an effect would
+  // paint one frame with a hover nothing on screen answers to before correcting itself.
+  if (hoveredKey !== null && !hit.current.rows.some((row) => row.itemKey === hoveredKey)) setHoveredKey(null);
   // Keyed by item id AND slice index: one item can contribute at most one slice to a window, but the index
   // keeps the key stable when the same block is re-sliced at a different offset.
   return <>
-    {slices.map((s, i) => <RenderItemView key={`${s.item.id}:${i}`} item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />)}
+    {slices.map((s, i) => (
+      // F9 T-MOUSE Task 3 — every slice gets a Provider (even `false` ones): the row list `hit.current` was
+      // just built from is per-SLICE (one `itemKey` per item, `hitRowsOf`), so the hovered flag is exactly as
+      // granular as a slice already is — no finer test is possible without the layout tree canon has and ccx
+      // does not (R1's structural premise).
+      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && sourceId(s.item.id) === hoveredKey}>
+        <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />
+      </HoverContext.Provider>
+    ))}
     {/* AMENDMENT 2: the pill names `v` exactly when `v` is registered above — one derivation, `showPill &&
         onDumpTranscript`, read twice, so the affordance and the key cannot drift apart. `editorDisplayName`
         answers null with neither `$VISUAL` nor `$EDITOR` set, where canon prints its bare `open in editor`. */}

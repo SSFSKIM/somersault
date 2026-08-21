@@ -8,7 +8,7 @@
 // Status colour and the running dim ride on the header SEGMENTS, never on the line: `Transcript.Line` renders
 // `l.segments` when present and ignores `l.color`/`l.dim`/`l.bold`/`l.italic` entirely in that branch, so a
 // line-level colour on a segmented header would silently render as plain text.
-import React from "react";
+import React, { useContext } from "react";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Box, Text } from "ink";
@@ -28,6 +28,7 @@ import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
+import { HoverContext } from "./mouse/hoverContext.js";
 import { osc8Open, OSC8_CLOSE } from "./osc8.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
@@ -1333,9 +1334,14 @@ export function RenderItemView({ item, start, end, showGutter = true }: { item: 
   // notices, dividers) carry no `wrap` and keep wrapping; body rows keep wrapping, fold already sized them.
   if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} />;
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
+  // F9 T-MOUSE Task 3 — the gutter-block's own LEADING connector column (`⎿`) is the one dimmed run this
+  // component paints OUTSIDE `Line.tsx` (every body row already goes through it, and un-dims there). Read
+  // straight off the same context `FullscreenViewport` provides around the whole slice, so a hovered block's
+  // connector brightens with its body rather than staying dim beside un-dimmed text underneath it.
+  const hovered = useContext(HoverContext);
   return (
     <Box flexDirection="row">
-      <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
+      <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={hovered ? false : item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
       <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} />)}</Box>
     </Box>
   );
