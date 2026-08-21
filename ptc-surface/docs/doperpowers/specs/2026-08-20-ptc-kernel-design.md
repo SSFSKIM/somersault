@@ -349,12 +349,18 @@ agent.resume(session_id, **options) -> AgentHandle
   releases the concurrency semaphore in `try/finally` and kills its CLI process tree on
   cancellation, so a hung child can be `h.interrupt()`ed without leaking permits.
 - **Codex backend**: a ~200-line stdio JSON-RPC client that spawns `codex app-server` and speaks
-  `initialize` → `thread/start {cwd, approvalPolicy: "never", sandbox, model?}` →
-  `turn/start {threadId, input:[{type:"text",text}]}` → collect `item/completed` agentMessage
-  items until `turn/completed`. `send` = another `turn/start` on the same thread; `resume` =
-  `thread/resume`; `fork` → `NotImplementedError("codex fork; use provider='claude'")`. Any
-  server→client approval request that arrives despite the policy is auto-approved and logged
-  (spike S4 pins the exact params).
+  `initialize {clientInfo:{name,version}}` → `initialized` (a *notification*; the handshake is
+  two messages and any request before it is refused) → `thread/start {cwd, approvalPolicy:
+  "never", sandbox: "read-only", model?}` → `turn/start {threadId, input:[{type:"text",text}]}`
+  → collect `item/completed` agentMessage items until `turn/completed`, taking the text from the
+  items and only the status from `turn/completed`. `sandbox` here is the kebab-case
+  `SandboxMode` enum, unlike the camelCase `SandboxPolicy` object that per-turn overrides and
+  all responses use. The turn id is retained from the `turn/start` response (`result.turn.id`)
+  because `turn/interrupt` needs `{threadId, turnId}`. `send` = another `turn/start` on the same
+  thread; `resume` = `thread/resume`; `fork` → `NotImplementedError("codex fork; use
+  provider='claude'")`. Any server→client request that arrives despite the policy is
+  auto-answered with that method's own response shape (not a blanket `{"decision":"accept"}`,
+  which most of them reject) and logged. Spike S4 pins all of this live.
 - **Fan-in semantics (deliberate divergence from Prime)**: results are awaited **in code** —
   `await h.result()` blocks the *cell*, not the model; the exec/wait yield keeps the model free.
   Handles persist in the namespace across turns, so "spawn now, gather next turn" works without
@@ -575,6 +581,12 @@ are binding.
   that produce zero server→client approval requests on current `codex app-server`
   (codex-cli 0.146.0). *Promote* when a trivial turn completes unattended. *Fallback*:
   client-side auto-accept of approval requests.
+  *Verdict (T19, live on codex-cli 0.146.0): PROMOTE.*
+  `thread/start {cwd, approvalPolicy: "never", sandbox: "read-only"}` — copy verbatim —
+  completed a trivial turn in 5.2 s with **zero** server→client requests of any kind.
+  T22 keeps the auto-accept responder anyway, but with per-method payloads: a blanket
+  `{"decision": "accept"}` is invalid for six of the ten server→client methods, and an
+  invalid reply is indistinguishable from no approval arriving.
 - **S5 — MCP image blocks.** Claude Code 2.1.236 renders an image content block returned by an
   MCP tool. *Promote* → plots visible inline. *Fallback*: text mentions the saved PNG path only.
   *Verdict (T12, live on 2.1.238): PROMOTE.* The image block survives the host intact: the
@@ -1113,6 +1125,76 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   was recallable only from the mid-turn assistant record. Parent's own file was untouched by
   the fork (14 records before and after; it then appended its tool_result at 07:24:11 and
   finished normally).
+
+- Observation: [S4 verdict — PROMOTE] `thread/start {cwd, approvalPolicy: "never", sandbox:
+  "read-only"}` completed a trivial turn on `codex app-server` with **zero** server→client
+  requests of any kind — not one approval, elicitation, or permission prompt. Turn status
+  `completed`, agent text exactly `CODEX-OK`, 5.2 s of model time.
+  Request and response, verbatim off the wire:
+  `→ {"id":2,"method":"thread/start","params":{"cwd":"…/ptc-surface/ptc","approvalPolicy":"never","sandbox":"read-only"}}`
+  `← {"id":2,"result":{"thread":{"id":"01a0234c-c405-7ba2-b09c-c5ad4e545052",…},"approvalPolicy":"never","approvalsReviewer":"auto_review","sandbox":{"type":"readOnly","networkAccess":false},"model":"gpt-5.6-sol","modelProvider":"openai","cwd":"…"}}`
+  `→ {"id":3,"method":"turn/start","params":{"threadId":"01a0234c-c405-…","input":[{"type":"text","text":"Reply with exactly this and nothing else: CODEX-OK"}]}}`
+  `← {"id":3,"result":{"turn":{"id":"01a0234c-c513-77e1-9ca1-d39ce2ec31d6","items":[],"itemsView":"notLoaded","status":"inProgress",…}}}`
+  `← {"method":"turn/completed","params":{"threadId":"01a0234c-c405-…","turn":{"id":"01a0234c-c513-…","items":[{"type":"agentMessage","id":"msg_0981835f…","text":"CODEX-OK","phase":"final_answer"}],"itemsView":"summary","status":"completed","durationMs":5228}}}`
+  The verdict generalizes past this no-tool turn: every approval path short-circuits on
+  `AskForApproval::Never` *before* any client request is emitted, and none of them consults
+  `approvalsReviewer` — `core/src/tools/sandboxing.rs:203` (exec) and `:354` (sandbox escape),
+  `core/src/tools/runtimes/apply_patch.rs:187`, `core/src/session/mod.rs:2435`
+  (`request_permissions` satisfied server-side), `codex-mcp/src/elicitation.rs:409`
+  (elicitations rejected by policy). That also disposes of the one confound: this machine's
+  `~/.codex/config.toml` sets `approvals_reviewer = "guardian_subagent"`, so absent those
+  branches one could argue a server-side reviewer absorbed the prompts rather than none being
+  raised. It is source reading, not a second live run — corroboration, not evidence.
+  Four wire-shape corrections T22's sketch needs, all checked against the schema the
+  *installed* binary generates (`codex app-server generate-json-schema --out DIR`) rather than
+  against the in-repo protocol crate, which is a fork and may lead or lag it.
+  (1) **`clientInfo.version` is required** alongside `name`; `title` is optional.
+  (2) **The handshake is two messages** — `initialize` request, then an `initialized`
+  *notification* (`ClientNotification` has exactly that one variant, no params). Any other
+  request before it is refused with `"Not initialized"`.
+  (3) **`sandbox` and `sandboxPolicy` are different types, and only one is camelCase.**
+  `thread/start.sandbox` is `SandboxMode`, a kebab-case string enum
+  (`"read-only" | "workspace-write" | "danger-full-access"`). `turn/start.sandboxPolicy` — and
+  the `sandbox` field in every *response* — is `SandboxPolicy`, an internally-tagged object
+  with camelCase tags (`{"type":"readOnly","networkAccess":false}`, `workspaceWrite`,
+  `dangerFullAccess`, `externalSandbox`). The live exchange shows both halves: we sent
+  `"read-only"` and read back `{"type":"readOnly",…}`. The external review's `workspaceWrite`
+  correction was right for the per-turn override and wrong for `thread/start`.
+  (4) **A blanket `{"decision":"accept"}` is invalid for six of the ten server→client
+  methods** — the legacy v1 `execCommandApproval`/`applyPatchApproval` use `ReviewDecision`,
+  whose accept value is `"approved"`; `item/permissions/requestApproval` wants `{permissions}`;
+  `mcpServer/elicitation/request` wants `{action}`; `item/tool/requestUserInput` wants
+  `{answers}`; `item/tool/call` wants `{contentItems, success}`. Only
+  `item/commandExecution/requestApproval` and `item/fileChange/requestApproval` take
+  `{"decision":"accept"}`. This matters precisely on the fallback path: an invalid reply
+  looks exactly like no approval having arrived.
+  Three things T22 should build on. (a) **The final text arrives three times and only one
+  copy is safe.** It streams as `item/agentMessage/delta`, lands authoritatively as
+  `item/completed` with `item.type == "agentMessage"` / `item.phase == "final_answer"`, and
+  appears again inside `turn/completed.params.turn.items`. Accumulate from `item/completed`
+  and take only `status`/`durationMs` from `turn/completed`: that notification carried
+  `"itemsView": "summary"`, an explicit signal its `items` array is a projection that may
+  elide items on a longer turn. The `userMessage` is emitted as an item pair too, so filter
+  on `item.type` rather than counting. (b) **`turn/interrupt` requires both `threadId` and
+  `turnId`** (`TurnInterruptParams`), so the turn id must be retained from the `turn/start`
+  *response* (`result.turn.id`) — not from the `turn/started` notification, which a client not
+  yet draining can miss. Success is `{}` and the turn ends `status: "interrupted"`.
+  (c) **`thread/start` inherits the user's entire `~/.codex` configuration**, which is an
+  unbudgeted cost this spec had not accounted for: the run started four of the user's MCP
+  servers (`node_repl`, `context7`, `discord`, `openaiDeveloperDocs`), fired a plugin
+  `session-start` hook and a `stop` hook inside the PTC-spawned thread, and took the user's
+  configured model `gpt-5.6-sol` — roughly 4 of the 6.2 s wall clock elapsed before the model
+  produced a token. Two untested seams exist for isolating it: `thread/start` accepts a
+  free-form `config` overlay object, and `codex app-server` accepts `-c key=value` at spawn.
+  Evidence: `test/spikes/s4_codex_headless.py`, one live pass on codex-cli 0.146.0
+  (macOS 26.5.2 arm64, ChatGPT subscription auth). Full 43-message bidirectional transcript at
+  `/tmp/ptc-s4-codex-headless/wire.jsonl`; `run.json` records `"server_request_methods": []`.
+  Notification order observed: `thread/started` → `mcpServer/startupStatus/updated` ×16 →
+  `thread/status/changed` → `turn/started` → `hook/started`/`hook/completed` →
+  `item/started`/`item/completed` (userMessage) → `item/started` →
+  `item/agentMessage/delta` ×4 → `item/completed` (agentMessage) →
+  `thread/tokenUsage/updated` → `account/rateLimits/updated` →
+  `hook/started`/`hook/completed` (stop) → `thread/status/changed` → `turn/completed`.
 
 ## Outcomes & Retrospective
 
