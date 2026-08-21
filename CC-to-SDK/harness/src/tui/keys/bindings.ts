@@ -255,6 +255,22 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
   // into the rename field instead of opening a preview.
   { context: "SessionPicker", bindings: {
     "space": "sessionPicker:preview", "ctrl+r": "sessionPicker:rename", "escape": "sessionPicker:dismiss",
+    // T-RESUME T2 (canon L584023, G6): Ctrl+V is the SECOND trigger for the same full-screen view Space
+    // opens, and it needs its OWN action — `sessionPicker:openView`, not `sessionPicker:preview` — because
+    // the two keys are gated differently in SessionPicker.tsx: space's handler is registered only while the
+    // search query is EMPTY (so a non-empty query still types a literal space), while ctrl+v is never
+    // typeable text in the first place and opens the view unconditionally in list mode. One action name
+    // cannot carry two different registration gates.
+    "ctrl+v": "sessionPicker:openView",
+    // T-RESUME T2 (canon G7, L174817/L583581/L583594): `y`/`n` answer the preview stage's confirm/cancel,
+    // reusing `confirm:yes`/`confirm:no` — the SAME action names canon's own `Confirmation` context binds
+    // them to (`yvc` registers against that context directly; ccx answers through this context instead,
+    // since `SessionPicker` already outranks everything preemptively). Bound UNCONDITIONALLY here exactly
+    // like `space` above: with no handler registered for the stage (list/rename), the match falls through to
+    // SessionPicker.tsx's own fallback, which types the letter — the same mechanism that already lets space
+    // type into a live query. `ResumeTranscriptView.tsx` is the only place that ever registers a handler for
+    // either action, so `y`/`n` do nothing until that component is mounted (the preview stage).
+    "y": "confirm:yes", "n": "confirm:no",
     // Wave S T10: the two widen controls (`fr`, L476542). They MUST be bound here — SessionPicker.tsx's own
     // fallback drops anything with `key.ctrl` set, so an unbound \x01 would reach nobody. `ctrl+b` (upstream's
     // third, all-branches) stays NULL below: CTRL-B-1, a permanent recorded divergence, not an omission to fix.
@@ -392,10 +408,10 @@ export const VALID_ACTIONS: readonly string[] = [
   "messageSelector:dismiss",
   // F6 T11 + WAVE C TASK 11. `modelPicker:decreaseEffort`/`increaseEffort` are upstream's other two ModelPicker
   // actions, held back at F6 with the effort axis and declared now that it ships (both the picker's row and the
-  // standalone EffortDialog bind them). The five `sessionPicker:*` names are OURS — upstream reads those keys
-  // raw (see the block); the last two arrived with Wave S T10's widen controls.
+  // standalone EffortDialog bind them). The six `sessionPicker:*` names are OURS — upstream reads those keys
+  // raw (see the block); the widen pair arrived with Wave S T10, `openView` with T-RESUME T2 (Ctrl+V).
   "modelPicker:thisSessionOnly", "modelPicker:decreaseEffort", "modelPicker:increaseEffort",
-  "sessionPicker:preview", "sessionPicker:rename", "sessionPicker:dismiss",
+  "sessionPicker:preview", "sessionPicker:openView", "sessionPicker:rename", "sessionPicker:dismiss",
   "sessionPicker:allProjects", "sessionPicker:allWorktrees",
   "select:previous", "select:next", "select:accept", "select:cancel", "select:pageUp", "select:pageDown", "select:first", "select:last",
   "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal", "confirm:toggleExplanation",

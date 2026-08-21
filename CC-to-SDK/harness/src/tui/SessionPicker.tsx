@@ -1,14 +1,16 @@
 // tui/src/SessionPicker.tsx — the /resume modal (F6 T11), rebuilt on the `Select` primitive and on
-// upstream's own anatomy (`moi`, bundle L476394-476628, with its preview pane `fGa` L476095). The literals,
-// the filter and the row projections live in `sessionPickerModel.ts`; this file is the three stages, their
-// keys, and the preview fetch.
+// upstream's own anatomy (`moi`, bundle L476394-476628). The literals, the filter and the row projections
+// live in `sessionPickerModel.ts`; the preview stage's OWN rendering lives in `ResumeTranscriptView.tsx`
+// (T-RESUME T2) — this file is the three stages' KEYS, state and the preview fetch, not their preview body.
 //
-// THREE STAGES, one component: `list` (search bar + the Select), `preview` (Space — the tail of the
-// highlighted session's transcript), `rename` (Ctrl-R — a text field over `renameSession`). Upstream is the
-// same shape (`te`), including the detail that preview and rename REPLACE the list rather than sitting
-// beside it.
+// THREE STAGES, one component: `list` (search bar + the Select), `preview` (Space/Ctrl+V — the full-screen
+// transcript takeover, `ResumeTranscriptView`), `rename` (Ctrl-R — a text field over `renameSession`).
+// Upstream is the same shape (`te`), including the detail that preview and rename REPLACE the list rather
+// than sitting beside it — T-RESUME T2 made that literal for preview: canon's own picker (`Ocs`, L583846)
+// is swapped out WHOLESALE for a separate component (`yvc`, L583551), not a pane inside its frame, and this
+// file's `stage === "preview"` arm now mirrors that (an early `return`, before `PickerFrame`).
 //
-// TWO THINGS DIVERGE FROM UPSTREAM, both deliberate and both recorded for T15:
+// THREE THINGS DIVERGE FROM UPSTREAM, all deliberate and all recorded for T15:
 //  · SEARCH IS MODELESS. Upstream has a `search` mode that DISABLES the list while you type (`isDisabled: te
 //    === "search"`, L476611) and re-enters `list` on ctrl+n. Ours filters live with the cursor still on the
 //    list, which is why the printable characters arrive through the Select's `onUnhandledKey` (movement and
@@ -17,6 +19,11 @@
 //    different component (a tree-select, `bGa`), and it keeps its numbers; ours is the shared `Select`, whose
 //    digit selection would fight the type-to-search field this task adds — a session id is mostly digits.
 //    Digits belong to the search box here.
+//  · THE PREVIEW STAGE'S PICK CARRIES THE LOADED MESSAGES (T-RESUME T2, canon G8/L583586-583588): resuming
+//    from the preview view hands `onPick` the SAME array `ResumeTranscriptView` rendered from, never a
+//    second read of the file that could reject an already-successfully-previewed session as empty. A pick
+//    straight off the LIST (Enter on the `Select`, no preview opened) still resumes by id alone, exactly as
+//    canon's own list-mode Enter does (`onSelect: (Ze) => o(Ze.value.log)`, L584061-584062).
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
@@ -26,13 +33,11 @@ import type { KeyEvent, TextEvent } from "./keys/types.js";
 import { InputText, Select } from "./select/Select.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import type { SessionInfo } from "./useChat.js";
-import { RenderItemView } from "./toolRenderer.js";
-import { moreAbove } from "./select/overflow.js";
+import { ResumeTranscriptView } from "./ResumeTranscriptView.js";
 import {
-  filterSessions, NARROWED_SCOPE, noConversations, noSessionsMatch, PREVIEW_EMPTY, PREVIEW_FOOTER,
-  PREVIEW_LOADING, previewItems, previewMessageCount, previewMeta, previewWidth, REFRESHING, RENAME_FOOTER,
+  filterSessions, NARROWED_SCOPE, noConversations, noSessionsMatch, REFRESHING, RENAME_FOOTER,
   RENAME_TITLE, renamePlaceholder, RESUME_FOOTER, resumeFooter, resumeHeader, resumeVisibleRows,
-  SEARCH_PLACEHOLDER, SEARCH_PREFIX, sessionMeta, sessionTitle, type ResumeScope,
+  SEARCH_PLACEHOLDER, SEARCH_PREFIX, sessionMeta, sessionTitle, type PreviewLoad, type ResumeScope,
 } from "./sessionPickerModel.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
@@ -55,9 +60,13 @@ function PickerFrame({ header, footer, children }: { header: React.ReactNode; fo
   );
 }
 
-export function SessionPicker({ sessions, onPick, onCancel, loadMessages, renameSession, reload, hasWorktree = false, refreshing = false, rows, columns }: {
+export function SessionPicker({ sessions, onPick, onCancel, loadMessages, renameSession, reload, hasWorktree = false, refreshing = false, fullscreen = false, rows, columns }: {
   sessions: SessionInfo[];
-  onPick: (s: SessionInfo) => void;
+  /** A pick from the LIST (Enter, no preview opened) calls this with no second argument — the caller re-reads
+   *  by id, exactly as before. A pick from the PREVIEW stage (Enter/`y`) carries the messages
+   *  `ResumeTranscriptView` already loaded (T-RESUME T2, canon G8): the caller must resume with THESE, never
+   *  re-read the file — see the header comment's third divergence. */
+  onPick: (s: SessionInfo, messages?: unknown[]) => void;
   onCancel: () => void;
   /** Re-run `listSessions` under a widened scope (Wave S T10). Absent → neither widen chord is offered, which
    *  is upstream's own gate: Ctrl+A appears only when an `onToggleAllProjects` callback exists (`d`, L476627). */
@@ -65,16 +74,20 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   /** Upstream's `R` gate — `git worktree list --porcelain` found more than one checkout. Detected by the
    *  caller (useChat) so the picker never waits on a child process to open. */
   hasWorktree?: boolean;
-  /** The preview fetch (`getSessionMessages`). Absent → Space is inert, which is what an unwired caller
-   *  should get rather than a pane that can never fill. `dir` is the HIGHLIGHTED ROW's own directory: once
+  /** The preview fetch (`getSessionMessages`, wrapped as the tagged `PreviewLoad` — `useChat.ts`'s
+   *  `previewSession`, T-RESUME T1/T2). Absent → Space/Ctrl+V are inert, which is what an unwired caller
+   *  should get rather than a view that can never fill. `dir` is the HIGHLIGHTED ROW's own directory: once
    *  Ctrl+A widens the list past this project, reading through the caller's launch cwd previews an empty
-   *  pane for every foreign row (external review, finding 2). */
-  loadMessages?: (id: string, dir?: string) => Promise<unknown[]>;
+   *  view for every foreign row (external review, finding 2). */
+  loadMessages?: (id: string, dir?: string) => Promise<PreviewLoad>;
   /** `renameSession`. Absent → Ctrl-R is inert, same reasoning; `dir` as above — a widened row must be
    *  renamed in the project that holds it, not in the one the REPL was launched from. */
   renameSession?: (id: string, title: string, dir?: string) => Promise<void>;
   /** Upstream's `isLoading` — the dim `· Refreshing…` clause on the header. */
   refreshing?: boolean;
+  /** Threaded straight to `ResumeTranscriptView`'s own `fullscreen` prop — the full-screen view's row budget
+   *  is `min(200, rows)` only in fullscreen mode (classic renders a flat 200-item tail into the flow). */
+  fullscreen?: boolean;
   rows?: number; columns?: number;
 }) {
   // Ref-backed (keys/refState.ts), the same law `MultiSelect` states: one stdin chunk dispatches several
@@ -91,11 +104,13 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   const [renames, setRenames] = useState<Record<string, string>>({});
   const [renameText, setRenameText, renameTextRef] = useRefState("");
   const [renameCursor, setRenameCursor, renameCursorRef] = useRefState(0);
-  // `messages: null` is "still loading". No session id is kept beside it: which session the pane is about is
-  // `focused`, and the token below is what makes a late arrival for another row a no-op. The RAW rows are
-  // held, not the projected ones, so a resize re-projects at the new pane width instead of redrawing a
-  // transcript wrapped for the terminal it was fetched at.
-  const [preview, setPreview] = useState<{ messages: readonly unknown[] | null; count: number }>({ messages: null, count: 0 });
+  // T-RESUME T1/T2: the tagged `PreviewLoad`, not a bare row array — `loading`/`loaded`/`failed` are now
+  // DISTINCT states (a rejecting read no longer collapses into the same shape as a successfully-loaded empty
+  // session). No session id is kept beside it: which session the view is about is `focused`, and the token
+  // below is what makes a late arrival for another row a no-op. The RAW rows are held, not the projected
+  // ones, so a resize re-projects at the new view's width instead of redrawing a transcript wrapped for the
+  // terminal it was fetched at.
+  const [previewLoad, setPreviewLoad] = useState<PreviewLoad>({ state: "loading" });
   // Wave S T10. The scope is the PICKER's, not the caller's: only this component knows which chords have been
   // pressed, and the caller's `sessions` prop is just the narrowed set it opened with. `widened` holds what the
   // last re-query returned (null = "nobody has widened anything yet, use the prop").
@@ -126,15 +141,26 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     const target = liveFocused();
     if (!target || !loadMessages) return;
     const id = target.sessionId, token = ++previewToken.current;
-    setPreview({ messages: null, count: 0 });
+    setPreviewLoad({ state: "loading" });
     setStage("preview");
-    void loadMessages(id, target.cwd).then((msgs) => {
-      if (!mounted.current || previewToken.current !== token) return;
-      // The `N messages` line is `isPreviewMessage`'s alone (sessionPickerModel.ts) — `msgs.length` counted
-      // tool traffic as conversation (qa4-07 ii). The ROWS below come from the shared projection, which draws
-      // that tool traffic; the two numbers are deliberately different things and only one is advertised.
-      setPreview({ messages: msgs, count: previewMessageCount(msgs) });
-    }, () => { if (mounted.current && previewToken.current === token) setPreview({ messages: [], count: 0 }); });
+    // `loadMessages` (→ `useChat.ts`'s `previewSession`) resolves the tagged state and never itself rejects
+    // — but the SECOND arm here is kept anyway (T-RESUME T2, brief step 3): a caller wired to something else
+    // (a test's raw promise, a future loader) that DOES reject must still land on `failed`, not an unhandled
+    // rejection this component would otherwise never catch.
+    void loadMessages(id, target.cwd).then(
+      (load) => { if (mounted.current && previewToken.current === token) setPreviewLoad(load); },
+      (e) => { if (mounted.current && previewToken.current === token) setPreviewLoad({ state: "failed", error: (e as Error).message }); },
+    );
+  };
+  /** Enter/`y` in the preview stage: resume with THE LOADED PAYLOAD, never a second read (T-RESUME T2, canon
+   *  `onSelect(Ccs ?? Gwt)`, L583586-583588) — a no-op unless the load actually succeeded. `y` reaches here
+   *  through `confirm:yes` (bindings.ts, registered by `ResumeTranscriptView`); Enter reaches here through
+   *  this component's own raw fallback below, because Enter has no SessionPicker-context binding (adding one
+   *  would steal it from the list stage's `Select`). */
+  const confirmResume = () => {
+    const target = liveFocused();
+    if (!target || previewLoad.state !== "loaded") return;
+    onPick(target, previewLoad.messages);
   };
   /** A widen chord: flip one axis, then re-query through the caller's loader. Tokened like the preview fetch —
    *  Ctrl+A Ctrl+A in one chunk fires two queries, and only the last one may land. */
@@ -181,6 +207,9 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
     // so a multi-word query would otherwise be unreachable. Space still previews from an empty query,
     // which is the state the footer advertises it in. Recorded divergence (T15).
     ...(stage === "list" && query === "" ? { "sessionPicker:preview": openPreview } : {}),
+    // Ctrl+V (T-RESUME T2, canon G6): the SECOND trigger for the same view, gated only on the stage — never
+    // on the query, because ctrl+v is a control chord and can never be live search text (unlike space).
+    ...(stage === "list" ? { "sessionPicker:openView": openPreview } : {}),
     ...(stage === "list" ? { "sessionPicker:rename": startRename } : {}),
     // The widen chords, gated exactly as upstream gates their hints (L476627): Ctrl+A on the reload seam
     // existing (`d`), Ctrl+W on that AND a detected worktree (`R`). Unregistered, they fall through to the
@@ -196,8 +225,9 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   const handleKey = (e: KeyEvent | TextEvent) => {
     const { input, key } = toKeyFlags(e);
     if (stage === "preview") {
-      const target = liveFocused();
-      if (e.kind === "key" && e.name === "enter" && target) onPick(target);
+      // Enter has no SessionPicker-context binding (see the `confirmResume` doc comment above) — it always
+      // arrives here rather than through `confirm:yes`, so it calls the same function `y` calls.
+      if (e.kind === "key" && e.name === "enter") confirmResume();
       return;
     }
     if (stage === "rename") {
@@ -221,31 +251,21 @@ export function SessionPicker({ sessions, onPick, onCancel, loadMessages, rename
   };
   useKeyFallback(handleKey);
 
-  if (stage === "preview") {
+  // T-RESUME T2 (canon L584057-584059): THE TAKEOVER. `ResumeTranscriptView` replaces the picker element
+  // WHOLESALE — no `PickerFrame`, no header, no title — mirroring canon's own component swap exactly. Sized
+  // off the geometry props (the same fallbacks the old preview pane used): `rows`/`columns` are the SLOT's,
+  // never a box height. `target` supplies the previewed session's own directory (a widened row belongs to
+  // another project) and its id, which is what keys the replay document's local entries.
+  if (stage === "preview" && focused) {
     const target = focused;
-    // Projected at RENDER time, off the retained rows: the pane width is a prop, so a resize while the pane
-    // is open re-wraps the transcript for the box it is actually in. `focused` supplies the previewed
-    // session's own directory (a widened row belongs to another project) and its id, which is what keys the
-    // replay document's local entries.
-    const pane = preview.messages === null ? null
-      : previewItems(preview.messages, { width: previewWidth(columns ?? process.stdout.columns ?? 80), ...(target?.sessionId === undefined ? {} : { id: target.sessionId }), ...(target?.cwd === undefined ? {} : { cwd: target.cwd }) });
     return (
-      <PickerFrame footer={PREVIEW_FOOTER} header={<Text bold color={role("suggestion")}>{target ? titleOf(target) : ""}</Text>}>
-        {pane === null
-          ? <Text dimColor>{PREVIEW_LOADING}</Text>
-          : (
-            <Box flexDirection="column">
-              {pane.items.length === 0 ? <Text dimColor>{PREVIEW_EMPTY}</Text> : null}
-              {/* The cut is at the TOP — the pane is tail-anchored — so the counted indicator sits above the
-                  rows and points the way the missing ones went (`moreAbove`, the package's one spelling).
-                  It reads `N+` when the message window cut the input first: the row count is then a floor. */}
-              {pane.hidden > 0 ? <Text dimColor>{moreAbove(pane.hidden, pane.windowTruncated)}</Text> : null}
-              {pane.items.map((item) => <RenderItemView key={item.id} item={item} />)}
-              {/* `dGa` L476179, under the same top rule upstream puts it under. */}
-              {target ? <Box marginTop={1}><Text>{previewMeta(target, preview.count)}</Text></Box> : null}
-            </Box>
-          )}
-      </PickerFrame>
+      <ResumeTranscriptView
+        session={target} load={previewLoad}
+        columns={columns ?? process.stdout.columns ?? 80} rows={rows ?? process.stdout.rows ?? 24}
+        fullscreen={fullscreen}
+        onResume={(messages) => onPick(target, messages)}
+        onExit={backToList}
+      />
     );
   }
 
