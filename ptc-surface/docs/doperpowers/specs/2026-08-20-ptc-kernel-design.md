@@ -334,8 +334,9 @@ agent.resume(session_id, **options) -> AgentHandle
   `structured` is populated when `output_schema` (a JSON Schema dict) was given.
 - `AgentHandle`: `.name`, `.session_id`, `.status` (`running|done|error|interrupted`),
   `await .result()`, `await .send(msg)` (a follow-up turn on the same session — this is the
-  SendMessage equivalent), `.messages()` (transcript so far), `.history()` (parsed `Transcript`,
-  M3 — raises `NotImplementedError` until the transcript reader lands), `.interrupt()`,
+  SendMessage equivalent), `.messages()` (transcript so far), `.history()` (T25: the child's
+  own `Transcript`, resolved by session id via the same `history()` glob fallback — a child's
+  cwd is never tracked on the handle so the direct-path guess is skipped), `.interrupt()`,
   `.close()`. **`.interrupt()` follows S1's terminal shape**: it signals the session and then
   *waits the drain out*, because an interrupted turn ends with a normal `ResultMessage`
   (`terminal_reason='aborted_streaming'`, no exception, 4–13 s). The handle therefore settles
