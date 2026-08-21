@@ -437,15 +437,28 @@ await web_search(query, *, allowed_domains=None, blocked_domains=None, max_resul
                  timeout=300) -> list[SearchResult(title, url, snippet)]   # .raw keeps the source blocks
 ```
 
-- `web_fetch`: `httpx` GET (redirects followed, 10 MB cap) → `markdownify` → full text stays in
+- `web_fetch`: `httpx` GET (redirects followed, 10 MB cap enforced *while streaming*) →
+  `markdownify` when the response is HTML, otherwise the body verbatim → full text stays in
   the returned object (the PTC spirit: filter in code, don't summarize by default). `prompt=`
-  runs `llm(prompt, over the text)` and fills `FetchResult.summary`.
+  runs `llm(prompt, over the text)` and fills `FetchResult.summary`. The fetch takes a permit
+  from the shared pool and **releases it before summarizing**: `llm()` draws on the same pool,
+  so holding across the model call would deadlock every caller at `max_concurrency`. `timeout`
+  is therefore the fetch deadline (queue wait included); the optional summarization runs under
+  `llm()`'s own.
 - `web_search`: a scoped one-shot SDK query allowed only the `WebSearch` tool; the runtime
   **parses the `WebSearch` tool_result block out of the message stream** and returns the
   structured results, discarding the model's prose (spike S6 pins the block shape). Whatever S6
   finds, the return type is always `list[SearchResult]` — under the S6 fallback the parse is
   best-effort and `SearchResult.raw` retains the source block for the caller. Domain filters
   pass through to the tool input. Subscription-billed.
+  Post-S6 corrections to this contract, all live-pinned: `.snippet` is **empty** on the shape
+  the tool actually returns (title and url only) — it stays in the dataclass for the fallback
+  path and any richer future payload, and callers must read it, never require it. Domain
+  filters are prompt hints (the tool's own inputs are the model's to set) and are **also
+  re-applied to the returned urls**, so a caller that asked for a restriction gets one whether
+  or not the hint was honored. Results are correlated back to a `WebSearch` `tool_use` id, so
+  another tool's output can never be scraped for urls; with no correlation available the parse
+  widens to every tool result rather than returning nothing.
 
 ### History (lossless memory)
 
@@ -644,6 +657,15 @@ are binding.
   message stream and parseable. *Promote* → clean field mapping into `SearchResult`.
   *Fallback*: best-effort extraction with `SearchResult.raw` retaining the source block —
   the return type is `list[SearchResult]` either way (A7 holds under both outcomes).
+  *Verdict (T24, live on SDK 0.2.142): PROMOTE, with the carrier corrected.* The results
+  are reachable and cleanly field-mappable, but they do **not** arrive as a structured
+  block: `ToolResultBlock.content` is a plain **string**, and the machine-readable payload
+  is a single `Links: [ … ]` JSON array embedded in it, carrying `title` and `url` per hit
+  and no snippet. So the mapping is a JSON parse of that one line — deterministic, not a
+  regex over prose — and the prose fallback is genuinely a fallback. `SearchResult.snippet`
+  is honestly empty on this shape rather than backfilled from the model's write-up. Runbook:
+  `test/spikes/s6_websearch_shape.py`; the observed block is the fixture in
+  `test/unit/test_web.py`.
 
 ## Acceptance
 
@@ -1419,6 +1441,44 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   Evidence: `test/live/test_codex_live.py` (one billed turn, subscription auth), the kernel's
   own cell log for that run, and `test/unit/test_codex_backend.py` (30 keyless tests against a
   fake that enforces the handshake, the sandbox enum, per-method reply shapes and the turn id).
+
+- Observation: [S6 verdict — PROMOTE, carrier corrected] WebSearch's results are reachable and
+  cleanly mappable, but the block that carries them is **not structured**. The live stream is
+  `AssistantMessage[ToolUseBlock(name='WebSearch')]` → `UserMessage[ToolResultBlock]` →
+  `AssistantMessage[TextBlock]` → `ResultMessage`, and the `ToolResultBlock.content` is a
+  **`str`**, not the `list[dict]` the type union also permits. Inside that string the
+  machine-readable payload sits on one line — `Links:` followed by a JSON array of
+  `{"title", "url"}` objects, **no snippet field at all** — with the model's prose after it and
+  a trailing `REMINDER: You MUST include the sources above …`. So the promoted path is a JSON
+  parse of that single line (deterministic; the prose scrape is a true fallback, and the two
+  must not both run or prose urls dilute a good answer), and `SearchResult.snippet` is honestly
+  empty rather than backfilled from the write-up. Two design consequences beyond the parse:
+  (1) domain filters are re-applied to the returned urls, because a prompt hint is the only way
+  to reach the tool's own `allowed_domains`/`blocked_domains` and a hint is not a guarantee;
+  (2) results are correlated to a `WebSearch` `tool_use` id so another tool's output is never
+  scraped for links, degrading to "take every tool result" rather than to silence if ids ever
+  stop lining up.
+  Evidence: `test/spikes/s6_websearch_shape.py`, one live run 2026-08-22 (bundled CLI via SDK
+  0.2.142), verbatim head of the block —
+  `ToolResultBlock(tool_use_id='toolu_01FXvPF29sbj6R72HyphiBRv', content='Web search results
+  for query: "anthropic claude agent sdk release notes"\n\nLinks: [{"title":"Claude Platform
+  release notes - Claude Platform Docs","url":"https://platform.claude.com/docs/en/release-
+  notes/overview"},{"title":"Releases · anthropics/claude-agent-sdk-python","url":"https://
+  github.com/anthropics/claude-agent-sdk-python/releases"}, … 8 entries]\n\nBased on the search
+  results, …')`. The same block (abridged to three entries, otherwise verbatim, prose tail and
+  REMINDER included) is the fixture pinning the parse in `test/unit/test_web.py`. A7's engine
+  ran live afterwards: 8 results, all 8 titled, every url absolute, first hit
+  `https://support.claude.com/en/articles/12138966-release-notes`, one `web_search` audit
+  record written for the cell.
+
+- Observation: the shared concurrency pool cannot wrap `web_fetch` end to end. `web_fetch`'s
+  optional `prompt=` summarization calls `llm()`, which takes a permit from the *same* pool, so
+  a `web_fetch` holding its own permit across that call self-deadlocks — at `max_concurrency=1`
+  immediately, and at any bound once that many summarizing fetches run at once. The permit now
+  covers the HTTP fetch only and is released before the model call; `timeout` is the fetch
+  deadline and the summarization runs under `llm()`'s own. Pinned by
+  `test_web_fetch_summary_does_not_deadlock_against_llm`, which runs the whole path at
+  `max_concurrency=1` under a wall-clock bound.
 
 ## Outcomes & Retrospective
 
