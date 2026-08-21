@@ -104,7 +104,12 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     get sessionId() { return sessionId; },
     whenReady: async () => { await ready; },
     pendingNow: () => [...pendingList],
-    async submit(prompt, onMessage) {
+    // F9 T-IMAGE Task 4 (I3a) scope cut: `ChatSession.submit` widened its prompt to `UserTurnInput`,
+    // but the remote wire (`RemoteChatSession.prompt`) stays string-only until Task 5 (I3b)'s
+    // negotiated staging transport lands — an image never reaches this adapter today. Annotated
+    // explicitly (rather than left to widen by inference from the interface) so that stays true at
+    // the type level too: passing an array here is a compile error, not a silent runtime strip.
+    async submit(prompt: string, onMessage: (m: unknown) => void) {
       const r = await ready;
       // One in-flight submit per client: a second would clobber turnSink/turnWaiter under the first
       // (this adapter is public API — the REPL's own queue already serializes, but callers vary).
