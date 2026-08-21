@@ -343,6 +343,40 @@ describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
     expect(cfg.permissionBroker).toBe(startConfigs[0].permissionBroker);
   });
 
+  it("an identity value hidden in `extraOptions` does not survive the swap either — the hatch is the door round the six", async () => {
+    // `extraOptions` is spread into the SDK `Options` LAST (resolveOptions.ts), so a knob placed there
+    // beats every typed field the swap just nulled: the replacement engine would resume the caller's
+    // chosen conversation, or write this thread's fresh one into a session id it no longer holds, while
+    // `swapEngine` re-stamps the record with the id it was supposed to keep. Stated in the SDK's OWN
+    // vocabulary, which renames four of the six (`resumeSessionAt`, `resumeDropsTurn`, `continue`).
+    const factoryConfigs: Array<Record<string, unknown>> = [];
+    const { c, threadId } = await bootThread({
+      session: () => mkEngine({ sessionId: "sess-hatch" }),
+      config: {
+        extraOptions: {
+          resume: "other-1", resumeSessionAt: "other-anchor", resumeDropsTurn: "other-drop",
+          forkSession: true, sessionId: "other-chosen", continue: true,
+          maxThinkingTokens: 4096,   // the hatch's legitimate half, which must still ride across
+        },
+      },
+      deps: {
+        resumeAtFactory: (_s: string, _a: string, _d: string, cfg: Record<string, unknown>) => { factoryConfigs.push(cfg); return mkEngine({}); },
+      },
+    });
+
+    send(c, { id: 3, method: "thread/rewind", params: { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await settle();
+
+    expect(factoryConfigs).toHaveLength(1);
+    const hatch = factoryConfigs[0].extraOptions as Record<string, unknown>;
+    for (const knob of ["resume", "resumeSessionAt", "resumeDropsTurn", "forkSession", "sessionId", "continue"]) {
+      // ABSENT, not present-and-undefined: the hatch is spread over the typed result, so a key that is
+      // there at all overrides — including the `resume` the rewind itself sets one line later.
+      expect(knob in hatch, `extraOptions.${knob} must not survive into the rewind swap`).toBe(false);
+    }
+    expect(hatch.maxThinkingTokens).toBe(4096);
+  });
+
   it("scope 'code' with a null prevUuid is allowed: the file restore runs, no engine swap happens, and the reply still carries the session id", async () => {
     const engine = mkEngine({ sessionId: "sess-1" });
     let swapped = 0;

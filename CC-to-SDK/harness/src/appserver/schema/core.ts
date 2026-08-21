@@ -58,8 +58,26 @@ export const cursorParam = z.object({
 // page of a walk nobody asked for, reported as success. A client with a checkbox reaches that by doing
 // nothing unusual. Refused, not documented-around: telling a client "don't do it" in a description is not
 // a guarantee, and the sibling method already spends the same eight bytes to make it one.
+//
+// WHAT THE KEYSET STILL DOES NOT PROMISE, stated because a limit a client has to infer from a data model
+// it cannot see is one it will not infer. A keyset is exhaustive only over an IMMUTABLE sort key, and
+// NEITHER component of this one is immutable for a logical session:
+//   - `updatedAt` is the recency this method sorts by, and a turn bumps it. A session updated mid-walk
+//     moves to the front of a descending order — ahead of a cursor already past that position — so an
+//     unseen row can be carried over the cursor and missed, and a row already delivered can come back.
+//   - `id` is `thr_…` for a row this server holds live and the bare sessionId for a store-only one, so a
+//     cold session that goes live between two pages changes which tuple it sorts as: the same session,
+//     under a different identity, on either side of the cursor.
+// Strictly smaller than the offset it replaced — that skipped a row for a first-party ARCHIVE, a client's
+// own action, where this needs a concurrent writer — and the fix is not one this shape can make: binding a
+// walk to a snapshot means holding one, which is an architecture with an owner and not a repair. So it is
+// PUBLISHED instead, in the `describe` below as well as here, which is where a client actually reads it.
+// `thread/search` publishes the same caveat for its own recency keys and names the escape this method has
+// no version of — `sortKey: created_at`, immutable, "use created_at for an exhaustive walk" (schema/
+// search.ts). A client that needs an exhaustive inventory should walk THAT method; `thread/list` is the
+// recency view, where being current matters more than being complete.
 export const listCursorParam = z.object({
-  cursor: z.string().regex(/^[A-Za-z0-9_-]+$/).optional().describe("opaque keyset cursor from a previous reply's nextCursor; never client-composed. It is bound to the walk that minted it: re-issuing it with a different cwd or archived refuses -32602, as does anything this server did not mint (a forged or truncated cursor, or a pre-keyset decimal offset). Change either parameter and start a fresh walk"),
+  cursor: z.string().regex(/^[A-Za-z0-9_-]+$/).optional().describe("opaque keyset cursor from a previous reply's nextCursor; never client-composed. It is bound to the walk that minted it: re-issuing it with a different cwd or archived refuses -32602, as does anything this server did not mint (a forged or truncated cursor, or a pre-keyset decimal offset). Change either parameter and start a fresh walk. NOT exhaustive under concurrent writes: this walk's sort key (updatedAt, then id) is mutable — a turn bumps updatedAt, and a store-only session that goes live here changes id from its sessionId to a thr_ id — so a session that moves while you page can be re-encountered or missed. For an exhaustive walk use thread/search with sortKey created_at, whose key is immutable"),
   limit: z.number().int().positive().optional(),
 });
 /** The archived PARTITION, in the ONE spelling both methods the spec gives it to publish (D-M5-3, M5

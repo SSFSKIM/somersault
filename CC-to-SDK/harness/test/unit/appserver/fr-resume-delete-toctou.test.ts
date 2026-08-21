@@ -157,3 +157,43 @@ describe("a resume-carrying thread/start is thread/resume's PEER, not an unguard
     expect(srv.registry.list()).toHaveLength(1);
   });
 });
+
+describe("what the PID probe's yield invalidates (M6 backlog)", () => {
+  // `admitResume` decides everything synchronously at arrival and THEN awaits `anyRosterPidLive` — a real
+  // `ps` subprocess, milliseconds wide. Two of those arrival answers do not survive that yield, and the
+  // roster fixture above is what forces the probe path to run at all.
+  const startResuming = (sessionId: string, id: number) =>
+    JSON.stringify({ id, method: "thread/start", params: { config: { resume: sessionId } } }) + "\n";
+
+  it("two starts that BOTH reach the probe still leave ONE record — the loser gets the arrival check's own refusal", async () => {
+    writeRoster(candidateRow("sess-race"));
+    const { srv, lines, c } = boot();
+    // ONE chunk: the registry is empty when EACH takes the arrival check, so both pass it and both yield.
+    // `resumingSessions` refcounts deletion and deliberately does not serialize siblings, so nothing else
+    // stands between them and two records stamped with one session id.
+    c.feed(startResuming("sess-race", 2) + startResuming("sess-race", 3));
+
+    await vi_waitFor(() => expect(parsed(lines).filter((f) => f.id === 2 || f.id === 3)).toHaveLength(2));
+    const frames = parsed(lines).filter((f) => f.id === 2 || f.id === 3);
+    expect(frames.filter((f) => f.result)).toHaveLength(1);
+    const lost = frames.filter((f) => f.error);
+    expect(lost).toHaveLength(1);
+    expect(lost[0].error.code).toBe(ERR.INVALID_PARAMS);
+    expect(lost[0].error.message).toMatch(/already holds a thread for that session/);
+    expect(srv.registry.list().filter((r) => r.sessionId === "sess-race")).toHaveLength(1);
+  });
+
+  it("a shutdown latched DURING the probe refuses the admission rather than leaking a thread past the dispose snapshot", async () => {
+    writeRoster(candidateRow("sess-shut"));
+    const { srv, lines, c } = boot();
+    c.feed(startResuming("sess-shut", 2));
+    // shutdown() latches synchronously and snapshots `registry.list()` — here, while the probe is still in
+    // flight, so a thread registered afterwards is in no snapshot and is never disposed: a leaked SDK
+    // session and its `claude` child, which is the leak the latch exists to close.
+    await srv.shutdown();
+
+    await vi_waitFor(() => expect(parsed(lines).find((f) => f.id === 2)).toBeTruthy());
+    expect(parsed(lines).find((f) => f.id === 2).error.code).toBe(ERR.SHUTTING_DOWN);
+    expect(srv.registry.list()).toHaveLength(0);
+  });
+});

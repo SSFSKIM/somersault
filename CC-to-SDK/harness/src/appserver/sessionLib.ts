@@ -216,7 +216,14 @@ export function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
  *  order, then whatever the store handed back. That grouping is DROPPED rather than kept as an outer sort
  *  key, and deliberately — a store row that goes live mid-walk changes group, which moves it across every
  *  row of the other group at once. That is the same skip/repeat the offset had, reintroduced one level up
- *  where a keyset cannot see it. */
+ *  where a keyset cannot see it.
+ *
+ *  IT IS A SMALLER RESIDUAL, NOT NONE, and `listCursorParam` publishes the limit to clients rather than
+ *  leaving them to infer it: a keyset walk is exhaustive only over an immutable key, and neither component
+ *  of this tuple is immutable for a logical session — a turn bumps `updatedAt`, and the id of a store-only
+ *  row IS its sessionId until this server holds it live, after which it is a `thr_…`. Either can still
+ *  carry a row across the cursor. Closing it means binding the walk to a snapshot, which is a different
+ *  architecture; `thread/search`'s `sortKey: created_at` is the immutable-key walk this server does have. */
 export const threadList: Handler = async (srv, ctx, id, params) => {
   const parsed = threadListParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }

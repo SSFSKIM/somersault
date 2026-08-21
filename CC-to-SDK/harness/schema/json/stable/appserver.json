@@ -92,7 +92,7 @@
       "type": "object",
       "properties": {
         "cursor": {
-          "description": "opaque keyset cursor from a previous reply's nextCursor; never client-composed. It is bound to the walk that minted it: re-issuing it with a different cwd or archived refuses -32602, as does anything this server did not mint (a forged or truncated cursor, or a pre-keyset decimal offset). Change either parameter and start a fresh walk",
+          "description": "opaque keyset cursor from a previous reply's nextCursor; never client-composed. It is bound to the walk that minted it: re-issuing it with a different cwd or archived refuses -32602, as does anything this server did not mint (a forged or truncated cursor, or a pre-keyset decimal offset). Change either parameter and start a fresh walk. NOT exhaustive under concurrent writes: this walk's sort key (updatedAt, then id) is mutable — a turn bumps updatedAt, and a store-only session that goes live here changes id from its sessionId to a thr_ id — so a session that moves while you page can be re-encountered or missed. For an exhaustive walk use thread/search with sortKey created_at, whose key is immutable",
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]+$"
         },

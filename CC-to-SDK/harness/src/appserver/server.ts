@@ -237,14 +237,19 @@ async function anyRosterPidLive(rows: RosterRow[]): Promise<boolean> {
  *  landing in the middle of a `thread/delete`. Both surfaces now run this, so a rule added here reaches
  *  them together instead of being remembered twice.
  *
- *  THE TWO GUARDS HAVE DIFFERENT SCOPES, which is why `admits` is a parameter rather than something this
- *  function re-derives:
+ *  THREE SCOPES, NOT TWO, which is why `admits` gates one of them and not the others:
  *   - The DELETE FENCE applies to every shape, fork included. A fork does not admit the id, but it READS
  *     that transcript to replay it, so erasing it mid-admission breaks the session being opened —
  *     `startThread` already reasoned this way for its own copy of the check.
- *   - The LIVE-HOLDER refusals apply only when the request ADMITS the id (`forkSession` beside `resume`
- *     opens a NEW session id — D-M5-21b), because a fork takes no identity from the holder and two forks
- *     off one parent are legitimate.
+ *   - The LOCAL live-holder refusal applies only when the request ADMITS the id (`forkSession` beside
+ *     `resume` opens a NEW session id — D-M5-21b): a fork takes no identity from the holder, and two forks
+ *     off one parent are legitimate. Two threads of THIS server stamped with one session id are not — that
+ *     is the state the refusal exists to prevent.
+ *   - The FLEET refusals are UNCONDITIONAL — a fork of a live fleet session is refused too, and that is
+ *     deliberate rather than an oversight of the carve-out above. What a fork reads is the parent's
+ *     transcript, and a live fleet holder is still APPENDING to that file, so the copy the fork replays is
+ *     torn: the same reasoning `thread/delete`'s own fleet arm gives (sessionLib.ts). Loosening it is a
+ *     product decision about a hazard nothing here can bound, not a repair.
  *
  *  Local before fleet, and each with its own sentence: a refusal whose remedy is unfollowable is worse than
  *  a generic one. The local test excludes fleet-origin records so the fleet arm below keeps its own.
@@ -260,11 +265,12 @@ async function admitResume(
   register: () => void | Promise<void>,
 ): Promise<boolean> {
   const { sessionId, admits } = target;
+  // A closure, not a value, because it is asked TWICE — at arrival and again after the probe below — and
+  // the whole point of the second ask is that the answer can have changed in between.
+  const localHolder = (): boolean => admits && srv.registry.list().some((r) => r.origin !== "fleet" && r.sessionId === sessionId);
   // BUSY, not a new code: "you may not resume this right now" is what the busy family means on the wire.
   if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return false; }
-  if (admits && srv.registry.list().some((r) => r.origin !== "fleet" && r.sessionId === sessionId)) {
-    ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_LOCAL); return false;
-  }
+  if (localHolder()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_LOCAL); return false; }
   // Before anything is spawned: a live fleet session is the one sessionId this must not fork. -32602 rather
   // than a new code — the request is well-formed but its target is something resume cannot legally act on.
   const candidates = fleetResumeCandidates(srv, sessionId);
@@ -280,6 +286,22 @@ async function admitResume(
   let admitted: void | Promise<void>;
   try {
     if (await anyRosterPidLive(candidates)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return false; }
+    // RE-ASKED AFTER THE PROBE, and HERE rather than in either caller, because the callers cannot see this
+    // window: every one of their own checks ran in the dispatch tick, and a `ps` subprocess is milliseconds
+    // wide. Two arrival answers do not survive it.
+    //  - `shuttingDown`: shutdown() latches and THEN snapshots `registry.list()`, so a thread registered
+    //    after that snapshot is disposed by nobody and leaks its `claude` child — the exact leak the latch
+    //    exists to close. `startThread` re-checks it at its own top for this reason, which is why the
+    //    `thread/resume` caller was never exposed; `createThread` (the other caller's `register`) has no
+    //    check of its own. `review/start` states the same rule for its own git yield.
+    //  - the LOCAL HOLDER: the arrival check fences an admission that arrives after a registration, not two
+    //    that arrive before either. `resumingSessions` refcounts DELETION and deliberately does not
+    //    serialize siblings (a second resume of one session is legal), so without this both pass arrival,
+    //    both probe and both register — two records stamped with one session id, which is precisely the
+    //    state that refusal exists to prevent. Same code and same sentence as the arrival check: the
+    //    loser's remedy does not depend on which side of the probe it lost on.
+    if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return false; }
+    if (localHolder()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_LOCAL); return false; }
     admitted = register();
   } finally {
     // MY hold, not the reservation (PF2): a sibling may still be inside its own probe, and the entry is

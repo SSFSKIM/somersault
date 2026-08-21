@@ -47,6 +47,7 @@ import { replyEngineThrow } from "./engineThrow.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
+import { SESSION_IDENTITY, stripIdentityHatch } from "./sessionIdentity.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams, reopenParams } from "./schema/rewind.js";
 
@@ -96,8 +97,8 @@ export const DECISION_PENDING = "a decision is pending — answer it first";
  *  one is written explicitly — the same rule `thread/reopen` already stated for the three it nulled.
  *
  *  Nulling all six rather than the subset each site happened to think of, because they are one question
- *  asked six ways (the vocabulary review.ts's `SESSION_IDENTITY` names for the same reason) and each site
- *  had a different, quiet hole:
+ *  asked six ways (`SESSION_IDENTITY`, shared with the other site that must drop it — review.ts) and each
+ *  site had a different, quiet hole:
  *   - `thread/rewind` set `resume`/`resumeAt`/`droppedTurnUuid` but inherited `forkSession`, so rewinding a
  *     FORKED thread branched to a brand-new conversation while `swapEngine` re-stamped the old id — a
  *     thread reporting an identity it no longer had. Its sibling `thread/reopen` guards exactly this and
@@ -110,11 +111,15 @@ export const DECISION_PENDING = "a decision is pending — answer it first";
  *     most recent one in the cwd instead.
  *
  *  Set to `undefined` rather than deleted: `resolveOptions` reads every one of these as "absent" when
- *  undefined, and an explicit write is what survives a spread. */
+ *  undefined, and an explicit write is what survives a spread. Written FROM the shared list rather than
+ *  spelled out again, so a seventh knob is dropped here the day it is named there.
+ *
+ *  AND THE SEVENTH HOLE, which nulling the typed six does not close: `extraOptions` carries the SDK's own
+ *  spelling of the same knobs straight into `Options`, past every typed field — `stripIdentityHatch` is
+ *  that half, and its own header is the argument for why it deletes where this writes `undefined`. */
 export const swapBaseConfig = (config: Record<string, unknown> | undefined): Record<string, unknown> => ({
-  ...(config ?? {}),
-  resume: undefined, resumeAt: undefined, droppedTurnUuid: undefined,
-  forkSession: undefined, sessionId: undefined, continueSession: undefined,
+  ...stripIdentityHatch(config ?? {}),
+  ...Object.fromEntries(SESSION_IDENTITY.map((k) => [k, undefined])),
 });
 
 /** The swap family's one host-op sender (§1d) — shared with `thread/clear` (settingsOps.ts), which is the
