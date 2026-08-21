@@ -22,12 +22,19 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 const lineCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;   // sidecars are unknown-typed: -1 or 1.5 must fall back, not summarize
 
 /** Rendering-only conversion, NOT a reduction of the source: a string is preserved verbatim; recognized
- *  `{type:"text", text}` blocks join in source order with `\n`. Any other block is left alone — `rawContent`
- *  keeps it, and F1 simply shows no generic textual detail for it until a later scope owns that shape. */
+ *  `{type:"text", text}` blocks join in source order with `\n`. F9 T-IMAGE I4: an `image` block joins too,
+ *  as the bare literal `[Image]` (canon L522876 — the generic/MCP-shaped tool-result renderer, unlike the
+ *  numbered `[Image #N]` a USER turn gets in `render.ts`'s `renderMessage`, which knows which ordinal the
+ *  image is; a tool result carries no per-turn numbering upstream). Any OTHER block is left alone —
+ *  `rawContent` keeps it, and F1 simply shows no generic textual detail for it until a later scope owns that
+ *  shape. */
 export function flatText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.filter((b): b is Record<string, unknown> => isRecord(b) && b.type === "text" && typeof b.text === "string").map((b) => b.text as string).join("\n");
+  return content
+    .filter((b): b is Record<string, unknown> => isRecord(b) && ((b.type === "text" && typeof b.text === "string") || b.type === "image"))
+    .map((b) => (b.type === "image" ? "[Image]" : b.text as string))
+    .join("\n");
 }
 /** Upstream `bbn` (L424186): the newline-delimited lines of a written/returned body, minus the trailing
  *  newline's phantom row. Exported whole (not just its length) because F3 Task 6's Write preview must show
