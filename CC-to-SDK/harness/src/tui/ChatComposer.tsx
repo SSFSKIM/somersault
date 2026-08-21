@@ -211,13 +211,21 @@ const menuKindLanes = (env: NodeJS.ProcessEnv): boolean => !!env.CLAUDE_CODE_ENA
 function suggestProps(state: EditorState, env: NodeJS.ProcessEnv): { items: SuggestItem[]; selected: number; maxColumnWidth?: number; emptyMessage?: string | null } | null {
   const c = state.command;
   const lanes = menuKindLanes(env);
+  // T-X4T: `query` is threaded onto COMMAND items ONLY, mirroring upstream's producer split (`ADc`,
+  // L600899/L600908 sets it; the `@`-mention producer `UMo`, L314103, does not). `c.query` is the RAW trigger
+  // text (`completionTriggers.ts`'s `head[1]`/token match) — not lowercased, not trimmed. `FIh` lowercases
+  // only the row TEXT, so a capitalized query must be lowercased HERE or it silently matches nothing;
+  // `.trim()` mirrors upstream's own `t.slice(1).toLowerCase().trim()` (L600908). An empty result becomes
+  // `undefined`, same as upstream calling its row builder with no third argument at all (L600929) —
+  // `Highlighted` treats a falsy `query` as "no highlight", so this must not be `""`.
+  const query = c?.head ? c.query.toLowerCase().trim() || undefined : undefined;
   if (c?.head) return {
     // DG55: `kind` is set HERE and only here. Upstream's slash source is the only producer of the field
     // (`VJa`, L490007 — `...t && { kind: p9f(e), sourceTag: nRb(e) }`), so "command rows only" is not a rule
     // the popup enforces, it is a fact about which of our three sources fills the field in. The `@`-mention
     // arm below and the history surfaces set nothing, and `S_a` gives a kindless row no lane at all.
     // The `...(lanes && …)` spread is `VJa`'s own literal shape, gate included.
-    items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description, ...(lanes && { kind: commandKind(e) }) })),
+    items: c.items.map((e) => ({ id: `cmd-${e.name}`, displayText: `/${e.name}`, description: e.description, ...(lanes && { kind: commandKind(e) }), ...(query && { query }) })),
     selected: c.index,
     // `k` (L490508–L490513) is computed over the WHOLE catalog, not the matches, so the name lane does not jitter as
     // the user narrows the list. `catalogColumnWidth` is that sum.

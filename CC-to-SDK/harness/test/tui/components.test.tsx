@@ -596,8 +596,10 @@ describe("ChatComposer", () => {
     expect(lastFrame()).toContain("/review");
     stdin.write("rev");
     await new Promise((r) => setTimeout(r, 10));
-    expect(lastFrame()).toContain("/review");
-    expect(lastFrame()).not.toContain("/brainstorming");
+    // T-X4T: the live query "rev" is now highlighted (bold SGR splits "/review" into separate spans), so
+    // strip ANSI before asserting the full string — same fix as suggest-popup.test.tsx's L438-444/L525.
+    expect(stripAnsi(lastFrame() ?? "")).toContain("/review");
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain("/brainstorming");
   });
   // MIGRATED in F5 t10 from "renders a command's argumentHint in the palette row". Upstream's suggestion row
   // (`VJa`, bundle L432406) carries only `displayText` and `description` — the argument evidence it shows
