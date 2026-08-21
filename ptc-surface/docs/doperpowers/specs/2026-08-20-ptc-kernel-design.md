@@ -801,7 +801,7 @@ Discoveries executed A1–A15 as written — 15 pass, A13 in its documented S5 f
 keyless tier of 209 passed / 0 skipped and a live tier of 8 passed / 0 skipped. Nothing is
 carried forward as failing.
 
-**Open residuals at close (the full ledger).** Six behaviors ship recorded-but-unclosed —
+**Open residuals at close (the full ledger).** Seven behaviors ship recorded-but-unclosed —
 each proven only against a fake, or not proven at all, and each written up in its own section
 above. None is an acceptance failure:
 
@@ -823,6 +823,11 @@ above. None is an acceptance failure:
    a sub-millisecond window between an `execute_request` landing and `pre_run_cell` stamping the
    cell can theoretically still race the watchdog (worst case is an honest kernel-died abort,
    never silence).
+7. **`history()` on a codex handle.** A codex handle's `session_id` is a thread id whose turns
+   are written as a codex rollout under `$CODEX_HOME/sessions`, not as Claude JSONL; v1 reads
+   the Claude store only and raises `NotImplementedError` rather than glob-matching an
+   unrelated transcript (final review r3, finding 8). Rollout parsing is the honest v1
+   boundary, deliberately not attempted; `h.messages()` carries the turns the handle saw.
 
 Distinct from these, and not counted as residuals: the declared **Non-goals** (Codex-side
 installation testing, Windows, dill/state snapshots, Workflow-tool replication) and the
