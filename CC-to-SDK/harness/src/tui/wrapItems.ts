@@ -64,13 +64,18 @@ export function wrapLine(line: RenderLine, width: number): readonly RenderLine[]
   const gutterWidth = line.gutter ? stringWidth(line.gutter.text) : 0;
   const rows = wrapRows(line.text, Math.max(1, full - gutterWidth));
   if (rows.length === 1 && rows[0] === line.text) return [line];
-  const { segments, gutter, ...style } = line;
+  const { segments, gutter, continuation: _continuation, ...style } = line;
   const cut = cutSegments(segments, line.text, rows);
   const pad = " ".repeat(gutterWidth);
+  // `continuation` (F9 T-MOUSE Task 1, render.ts): row 0 is this line's own hard start — never re-tagged, even
+  // when the SOURCE line was itself already a continuation of something wider (the id suffix in `wrapOne`
+  // below is what strings a whole wrapped item back together; this flag is per-ROW, not per-item) — every row
+  // after it is one this call produced by breaking the text, so it carries the flag the hit map reads.
   return rows.map((text, row) => ({
     ...style,
     text: row === 0 ? text : pad + text,
     ...(row === 0 && gutter ? { gutter } : {}),
+    ...(row > 0 ? { continuation: true as const } : {}),
     ...(cut?.[row]?.length ? { segments: row === 0 ? cut[row]! : indentSegments(cut[row]!, pad) } : {}),
   }));
 }

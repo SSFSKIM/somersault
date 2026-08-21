@@ -86,7 +86,9 @@ import { applyAnchor, type AnchorState } from "./scrollAnchor.js";
 import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type RenderItemSlice } from "./pager.js";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
-import { remapRowOffset, wrapItemsToWidth } from "./wrapItems.js";
+import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
+import { linkRangesOf, type HitRow } from "./mouse/hitmap.js";
+import { stripSgr } from "./sgrFoldRow.js";
 import { useRegionRows, useRegionTop } from "./FullscreenFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { JumpPill } from "./JumpPill.js";
@@ -160,12 +162,14 @@ export interface FullscreenViewportProps {
   hitmapRef?: React.Ref<ViewportHitmap>;
 }
 
-/** One PAINTED row's clickable identity: the cluster it belongs to, and how far its text reaches. Absent is
- *  a row that is not part of a cluster — kept in the array rather than skipped, because the index IS the
- *  row number and a compacted list would resolve every row below the first cluster to the wrong one. */
-type HitRow = { anchor: string; width: number } | undefined;
-/** THE COLUMN BOUND (spec §3.3). A click past the end of a row's text is not a click on that row — canon
- *  drops blank-cell clicks (549361) — so the width is the row's PAINTED extent: its plain text, plus the
+/** ONE HIT ROW, FULLY POPULATED (F9 T-MOUSE Task 1; `HitRow` is `mouse/hitmap.ts`'s own widened type). Every
+ *  painted row gets a real object now — `anchor` absent is "not a cluster", never a hole in the array — which
+ *  is what lets a later task's `columnToChar`/`linkRangesOf` query an ORDINARY line exactly the way they
+ *  query a fold row; `anchorAt` below still reads only `.anchor`/`.width` and cannot tell the difference from
+ *  before this task.
+ *
+ *  THE COLUMN BOUND (spec §3.3, unchanged). A click past the end of a row's text is not a click on that row —
+ *  canon drops blank-cell clicks (549361) — so `width` is the row's PAINTED extent: its plain text, plus the
  *  gutter columns ahead of it, measured in terminal cells rather than characters (a fold row's leader is
  *  `⏺`, two columns and one character). Clamped to the region's width, which is where a `truncate-end`
  *  header — the one row that can be wider than the pane — actually stops.
@@ -173,20 +177,44 @@ type HitRow = { anchor: string; width: number } | undefined;
  *  either measure back and an all-ASCII fixture stays green while the last cell of every ACTIVE cluster row
  *  goes inert — the blinking-leader row, the one most likely to be clicked mid-turn. `fold-hitmap.test.tsx`
  *  therefore carries a document whose painted extent DIFFERS from its character count (a `⏺` leader, a CJK
- *  hint body, a gutter-bearing line); those cells are the defence, and both call sites here are covered.
+ *  hint body, a gutter-bearing line); those cells are the defence, and both call sites below are covered.
  *  The line arm's gutter term has no tagged producer today — a cluster row is never an assistant bullet —
- *  and is the `RenderLine` contract rather than dead weight; the fixture pins it as such. */
-const hitRow = (anchor: string | undefined, width: number, columns: number): HitRow =>
-  anchor === undefined ? undefined : { anchor, width: Math.min(width, columns) };
+ *  and is the `RenderLine` contract rather than dead weight; the fixture pins it as such.
+ *
+ *  `itemKey` is `wrapItems.ts`'s `sourceId(item.id)` — the source item's own durable id with any wrap-row
+ *  suffix stripped — never this loop's position, so it survives a re-wrap or an item streaming in above it
+ *  unchanged (`hitmap.ts`'s own doc states why a slice INDEX cannot be used here). `softWrap` reads
+ *  `RenderLine.continuation` (`wrapItems.ts`'s `wrapLine`, set on every row a wrap produced past the first) —
+ *  present on `item.line` for a wrapped LINE item and on `item.body[row]` for a gutter block's wrapped body,
+ *  which is why this one helper covers both arms despite their very different shapes below. `text` is
+ *  defensively `stripSgr`'d again even though every producer already hands `RenderLine.text` plain
+ *  (`toolRenderer.tsx` strips a `preStyled` run at publish) — cheap, idempotent, and the honest reading of
+ *  "plain text via the existing stripSgr" rather than a second contract nothing enforces. */
+const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, columns: number): HitRow => {
+  const gutterWidth = l.gutter ? stringWidth(l.gutter.text) : 0;
+  const linkRanges = linkRangesOf(l);
+  return { itemKey, anchor, kind: "line", gutterWidth, text: stripSgr(l.text), softWrap: l.continuation === true ? "continuation" : "hard",
+    width: Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
+};
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
  *  the map cannot describe a frame other than the one on screen. A gutter block contributes one entry per
  *  BODY row it paints (its five-column connector column is a sibling Box, blank on continuations but still
- *  occupying the cells), a line item exactly one. */
-function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): readonly HitRow[] {
+ *  occupying the cells), a line item exactly one — the body arm builds off `hitRowOfLine` too (each body row
+ *  is its own `RenderLine`) and only overrides `kind`/`gutterWidth`/`width` for the block's fixed connector. */
+// Exported for `test/tui/hitmap.test.ts` (F9 T-MOUSE Task 1): that file pins the widened `HitRow` shape
+// against the REAL publish path (`wrapItemsToWidth` → `pageItemSlices` → this function) without mounting a
+// React tree — the component-level cases (`fold-hitmap.test.tsx`) keep proving the `anchorAt`/frame-origin
+// wiring this function's caller owns.
+export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): readonly HitRow[] {
   const out: HitRow[] = [];
   for (const { item, start, end } of slices) {
-    if (item.kind === "line") { out.push(hitRow(item.foldAnchor, (item.line.gutter ? stringWidth(item.line.gutter.text) : 0) + stringWidth(item.line.text), columns)); continue; }
-    for (let row = start; row < end; row++) out.push(hitRow(item.foldAnchor, item.gutter.length + stringWidth(item.body[row]!.text), columns));
+    const itemKey = sourceId(item.id);
+    if (item.kind === "line") { out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, columns)); continue; }
+    for (let row = start; row < end; row++) {
+      const body = item.body[row]!;
+      out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, columns), kind: "gutter-block",
+        gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
+    }
   }
   return out;
 }

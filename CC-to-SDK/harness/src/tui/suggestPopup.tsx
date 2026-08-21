@@ -20,6 +20,7 @@ import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import type { CommandKind } from "./commandComplete.js";
+import { snapToGraphemes } from "./graphemes.js";
 
 /** `Ut` — upstream's `Bun.stringWidth(s, { ambiguousIsNarrow: true })`; `string-width` is that function, and
  *  mdTable.ts already documents the equivalence. */
@@ -313,25 +314,9 @@ export function matchRanges(text: string, query: string, contiguousOnly = false)
 
 /** `BIh`, bundle L536337–536357 (NEW in 2.1.236, no 2.1.220 counterpart) — widens each range out to the
  *  nearest grapheme-cluster boundary so a highlight can never cut a combining sequence or a multi-codepoint
- *  emoji in half. `NON_LATIN1` mirrors upstream's `DSw` (`/[^ -˿]/`, L536524, i.e. anything outside
- *  U+0020–U+02FF): text made entirely of that range is exactly what upstream trusts index === grapheme
- *  boundary for, and the Intl.Segmenter pass is skipped outright — the common case (plain command names and
- *  English descriptions) never pays for it. */
-const NON_LATIN1 = /[^ -˿]/;
-function snapToGraphemes(text: string, ranges: Array<[number, number]>): Array<[number, number]> {
-  if (ranges.length === 0 || !NON_LATIN1.test(text)) return ranges;
-  const boundaries = new Set<number>();
-  for (const { index } of new Intl.Segmenter().segment(text)) boundaries.add(index);
-  const snapped: Array<[number, number]> = [];
-  for (const [start, end] of ranges) {
-    let s = start; while (s > 0 && !boundaries.has(s)) s--;         // widen the start back to a cluster boundary
-    let e = end; while (e < text.length && !boundaries.has(e)) e++; // widen the end forward to a cluster boundary
-    const last = snapped[snapped.length - 1];
-    if (last && s <= last[1]) last[1] = Math.max(last[1], e);       // widening made two ranges touch → merge
-    else snapped.push([s, e]);
-  }
-  return snapped;
-}
+ *  emoji in half. F9 T-MOUSE Task 1 extracted the implementation to `./graphemes.js` (a leaf module) so the
+ *  hit map's `columnToChar`/`charToColumn` could reuse it without importing this popup component; imported
+ *  back here so this file's own behaviour and tests are untouched. */
 
 /** `T_r`, bundle L536253–536285 — the highlighting `<Text>`. Style is the 2.1.236 shape: a matched span is
  *  BOLD and un-dimmed and takes NO colour of its own; `color`/`selected` are decided by the CALLER before
