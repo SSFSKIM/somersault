@@ -562,6 +562,11 @@ are binding.
   client-side auto-accept of approval requests.
 - **S5 — MCP image blocks.** Claude Code 2.1.236 renders an image content block returned by an
   MCP tool. *Promote* → plots visible inline. *Fallback*: text mentions the saved PNG path only.
+  *Verdict (T12, live on 2.1.238): PROMOTE.* The image block reaches the model as real pixels
+  (it described the plot's title and data points, which no text block carried); the terminal
+  transcript marks it `[Image]` in the ctrl+O detail view. `_content` keeps emitting
+  `ImageContent`; the PNG on disk stays as the durable copy, and M1 adds its path to the
+  shaped text so a human reader can reach the file. Runbook: `test/spikes/s5_image_block.md`.
 - **S6 — WebSearch tool_result shape.** The structured results block is reachable in the SDK
   message stream and parseable. *Promote* → clean field mapping into `SearchResult`.
   *Fallback*: best-effort extraction with `SearchResult.raw` retaining the source block —
@@ -943,6 +948,33 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   Evidence: `uv venv ~/.ptc/venv --python 3.12 --seed` → exit 2, "A virtual environment
   already exists"; fixed in `plugin/bin/ptc-launch` and `src/ptc/venv.py`, regression-covered
   by `test/integration/test_provision_upgrade.py`.
+
+- Observation: [S5 verdict — PROMOTE] Claude Code 2.1.238 accepts an MCP `ImageContent`
+  block and puts the actual pixels in front of the model. The host converts the MCP wire
+  form (`{type: "image", data, mimeType}`) into the Anthropic content form
+  (`{type: "image", source: {type: "base64", media_type, data}}`) and hands it to the model
+  *after* the text block, preserving `_content`'s order; the base64 is a byte-exact
+  round-trip of the file the display shim wrote (18 897-byte PNG → 25 196 base64 chars). The
+  model demonstrably saw the image rather than a placeholder — asked what the tool returned,
+  it described the plot's title and its four data points, neither of which appears in the
+  text block. `_content` stands as built in T8: image block first-class, PNG on disk as the
+  durable copy. Two limits worth knowing: in a terminal "inline" means an `[Image]` marker,
+  not pixels — the collapsed transcript shows only `Called plugin:ptc:ptc`, and the ctrl+O
+  detailed transcript shows the text block plus a second `⎿ [Image]` row — and the shaped
+  text does **not** yet name the saved PNG path, so a human reading the transcript has no
+  route to the file. M1's image work should add that path line (the spec's *Images* row
+  already calls for it); it is not a fallback, it is the human-side half of the same result.
+  Evidence: runbook `test/spikes/s5_image_block.md`, run live on 2.1.238.
+  Headless (`claude -p --output-format stream-json`, plugin dir, session
+  `0d9b7cbf-…`): `TOOL_USE_NAMES ["ToolSearch", "mcp__plugin_ptc_ptc__exec"]`; the
+  `tool_result` content array was
+  `[{"type":"text","text":"[cell 2 · ok · 0.3s]\nS5_PLOTTED"},
+  {"type":"image","source":{"type":"base64","media_type":"image/png","data":<25196 chars>}}]`,
+  `is_error` unset; the assistant then wrote "the rendered line plot titled \"s5\" with
+  points 1, 4, 2, 8". Interactive (tmux, `claude --plugin-dir ./plugin`): detailed transcript
+  rows `⎿ [cell 2 · ok · 0.3s] / S5_PLOTTED` then `⎿ [Image]`. On-disk shim output present in
+  all three runs (keyless CLI, headless, interactive): `~/.ptc/kernels/<key>/cells/2-0.png`,
+  PNG 534×434 RGBA.
 
 ## Outcomes & Retrospective
 
