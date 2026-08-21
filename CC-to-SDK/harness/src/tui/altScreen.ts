@@ -36,24 +36,52 @@ export const EXIT_ALT = "\x1b[<u\x1b[?1049l\x1b[>4m";
  *  is still visible to the user ten minutes later, in a shell that is not ours. */
 export const MOUSE_OFF = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 /** canon `ncy` L177070, i.e. `AUe("scroll")` (L177057-177061): mode 1000 (button reporting, which is what
- *  carries the wheel) plus 1006 (SGR encoding, so a column past 95 is still readable). Written WITH the screen,
- *  as canon's alt-screen mount does (`pVe() + AUe(mode)`, L535814).
- *    WITHOUT IT THE WHEEL IS NOT SILENT — IT IS SOMEBODY ELSE'S KEY. A terminal on the alternate screen with
- *  reporting off answers a wheel tick with the ALTERNATE-SCROLL fallback: bare arrow keys. Those reach the
- *  composer, and the composer walks prompt history. The absent enable was the bug, not a missing feature.
- *    RECORDED DIVERGENCE: canon mounts `"full"` (`rcy`, +1002 +1003 — button-drag and any-motion, for hover and
- *  click hit-testing). We arm the WHEEL ONLY, which is the exact subset canon itself names `"scroll"`, because
- *  ccx has no hover and no click targets, so those two modes would buy nothing and cost a report per pixel of
- *  mouse movement.
- *    AND THE WHEEL IS PAID FOR IN SELECTION, EVEN AT THIS WIDTH — the narrower set does not dodge that. Mode
- *  1000 ALONE already routes press and release to the application, so on xterm-family terminals, iTerm2,
- *  Terminal.app, Ghostty and Alacritty a plain click-drag inside fullscreen stops sweeping text: the user gets
- *  native selection back only by holding the terminal's own override modifier (Shift on xterm-family, Option on
- *  iTerm2/Terminal.app). That is the real trade this constant makes, canon pays exactly the same one through
- *  `"full"`, and what our subset actually spares the terminal is 1002/1003's motion flood, not the cost above.
- *    MOUSE_OFF stays canon's full four: turning off a mode we never set costs nothing, and it is the byte
- *  string whose absence is still visible ten minutes later. */
+ *  carries the wheel) plus 1006 (SGR encoding, so a column past 95 is still readable). This is canon's own
+ *  `"scroll"` tracking set — no longer ccx's default (see `MOUSE_ON_FULL`/`mouseMode` below, F9 T-MOUSE task 2),
+ *  but still a live string: it is exactly what `mouseEnable("scroll")` returns, which is exactly what the
+ *  `CLAUDE_CODE_DISABLE_MOUSE_CLICKS` escape hatch selects (canon `G_e()` L126009-126016) — a user who wants
+ *  the wheel but none of button reporting, drag or hover still gets this exact byte string. */
 export const MOUSE_ON_SCROLL = "\x1b[?1000h\x1b[?1006h";
+/** canon `ofS` L199044 (`AUe("full")`), and canon's DEFAULT tracking set (`H0t` L663070:
+ *  `Y7E === void 0 ? "full" : Y7E`, fed by `G_e()` unless an env hatch narrows it — see `mouseMode`). Adds 1002
+ *  (button-motion: a drag report while a button is held) and 1003 (any-motion: a report on every cell of
+ *  pointer travel, button or not — hover) to `MOUSE_ON_SCROLL`'s 1000+1006. F9 T-MOUSE task 2 arms this by
+ *  default and `parse.ts` decodes what it reports into `action:"drag"|"motion"`; later F9 tasks (hover
+ *  brighten, drag selection) are the consumers this wave builds toward — arm and decode first, so each later
+ *  task lands on live events instead of building its own plumbing too.
+ *    WITHOUT EITHER STRING THE WHEEL IS NOT SILENT — IT IS SOMEBODY ELSE'S KEY: a terminal on the alternate
+ *  screen with reporting off answers a wheel tick with the ALTERNATE-SCROLL fallback (bare arrow keys, which
+ *  the composer would then read as prompt-history navigation).
+ *    NATIVE SELECTION IS TRADED AWAY AT THIS WIDTH TOO, and canon pays the identical price through `"full"`:
+ *  mode 1000 alone already routes press/release to the application, so a plain click-drag inside fullscreen
+ *  stops sweeping text on xterm-family terminals, iTerm2, Terminal.app, Ghostty and Alacritty; the user gets
+ *  native selection back only by holding the terminal's own override modifier (Shift on xterm-family, Option on
+ *  iTerm2/Terminal.app) — canon's documented answer (its copy toast names the modifier), not a disarm.
+ *    MOUSE_OFF stays canon's full four regardless of which of these two strings armed: turning off a mode we
+ *  never set costs nothing, and it is the byte string whose absence is still visible ten minutes later. */
+export const MOUSE_ON_FULL = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
+/** canon's tracking-set NAME (`nx.MOUSE_*` L199043, selected via `IXe`, L199031-199039): `"full"` arms
+ *  `MOUSE_ON_FULL`, `"scroll"` arms `MOUSE_ON_SCROLL`, `"off"` arms nothing at all — the unconditional
+ *  `MOUSE_OFF` teardown above is a separate concern, always written regardless of mode. Selects what
+ *  `mouseEnable` returns and, downstream, gates the mouse-event filter in `KeymapProvider.tsx`'s dispatch. */
+export type MouseMode = "full" | "scroll" | "off";
+/** canon `G_e()` L126009-126016, byte for byte: two independent env escape hatches, checked in this order,
+ *  each read as bare JS truthiness on the raw string — an env var is always a string, so `""` is the only
+ *  falsy value and e.g. `CLAUDE_CODE_DISABLE_MOUSE=0` still disables (canon's own
+ *  `V.CLAUDE_CODE_DISABLE_MOUSE ? "off" : "full"` has the identical property; this is not a departure).
+ *  Neither set: canon's default, `"full"`. */
+export function mouseMode(env: NodeJS.ProcessEnv = process.env): MouseMode {
+  if (env.CLAUDE_CODE_DISABLE_MOUSE !== undefined) return env.CLAUDE_CODE_DISABLE_MOUSE ? "off" : "full";
+  if (env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS !== undefined) return env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS ? "scroll" : "full";
+  return "full";
+}
+/** canon `IXe(mode)` L199031-199039. `"off"` writes nothing — MOUSE_OFF is the teardown's job, not this
+ *  table's, and disabling a mode nothing armed costs nothing. */
+export function mouseEnable(mode: MouseMode): string {
+  if (mode === "full") return MOUSE_ON_FULL;
+  if (mode === "scroll") return MOUSE_ON_SCROLL;
+  return "";
+}
 /** canon `nV` L177070 (DECTCEM). The last thing out, as in `Uho` L180343. */
 export const CURSOR_SHOW = "\x1b[?25h";
 /** canon `Usr` L177070 (DECRST 2004), written by `Uho` (L180343) one byte ahead of `nV`. UNCONDITIONAL, for
@@ -163,7 +191,7 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
   // `leaveScreen`) already writes MOUSE_OFF first, unconditionally. So appending the enable here makes the
   // editor/suspend round trips and T15's `/tui` flips symmetric by construction: there is no third place that
   // could forget it, and a classic launch (which never calls `enter()`) never arms tracking at all.
-  const enterSeq = ENTER_ALT + kittyUpgrade(deps.termProgram) + MOUSE_ON_SCROLL;
+  const enterSeq = ENTER_ALT + kittyUpgrade(deps.termProgram) + mouseEnable(mouseMode());
   let armed = false;
   const write = (s: string) => { try { deps.writeSync(s); } catch { /* the fd is gone; nothing left to save */ } };
   const takeScreen = () => { write(enterSeq); armed = true; };

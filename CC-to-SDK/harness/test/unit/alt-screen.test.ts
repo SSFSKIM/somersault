@@ -6,9 +6,9 @@
 // ~/claude-code-bundle/2.1.220/cli.pretty.js while writing them.
 import { describe, it, expect, vi } from "vitest";
 import {
-  ENTER_ALT, EXIT_ALT, MOUSE_OFF, MOUSE_ON_SCROLL, CURSOR_SHOW, PASTE_OFF, SGR_RESET, KITTY_TERMINALS,
+  ENTER_ALT, EXIT_ALT, MOUSE_OFF, MOUSE_ON_SCROLL, MOUSE_ON_FULL, CURSOR_SHOW, PASTE_OFF, SGR_RESET, KITTY_TERMINALS,
   kittyUpgrade, resolveTerminalName, createAltScreenGuard, resumePointer, exitAltScreen,
-  createChatTeardown,
+  createChatTeardown, mouseMode, mouseEnable,
 } from "../../src/tui/altScreen.js";
 
 /** A recording writeSync sink — the DI seam the guard takes instead of touching fd 1. */
@@ -39,14 +39,42 @@ describe("alt-screen bytes (canon 2.1.220)", () => {
   });
 
   // canon `ncy` L177070 → `mY(MOUSE_NORMAL) + mY(MOUSE_SGR)`, modes 1000 and 1006, which is exactly what
-  // `AUe("scroll")` (L177057-177061) returns. The name is canon's own for this subset. NOT `rcy`/`"full"`,
-  // which adds 1002 and 1003 (button-drag and any-motion tracking) for hover and click — a recorded divergence,
-  // because ccx has no hover and no click targets and would only be paying for a motion flood.
-  //   IT DOES NOT BUY BACK NATIVE SELECTION, and the comment must not claim it does: mode 1000 alone routes
-  // press and release to the application, so drag-to-select inside fullscreen needs the terminal's override
-  // modifier (Shift on xterm-family, Option on iTerm2/Terminal.app) at this width just as it does at canon's.
+  // `AUe("scroll")` (L177057-177061) returns. The name is canon's own for this subset — no longer ccx's
+  // default (F9 T-MOUSE task 2), but still live: it is what `CLAUDE_CODE_DISABLE_MOUSE_CLICKS` selects.
   it("MOUSE_ON_SCROLL is canon's `scroll` set — wheel reporting plus SGR encoding, and nothing else", () => {
     expect(MOUSE_ON_SCROLL).toBe("\x1b[?1000h\x1b[?1006h");
+  });
+
+  // canon `ofS` L199044 → `mY(MOUSE_NORMAL) + mY(MOUSE_BUTTON) + mY(MOUSE_ANY) + mY(MOUSE_SGR)`, modes 1000,
+  // 1002, 1003, 1006 in that order — canon's DEFAULT set (`H0t` L663070), and ccx's since F9 T-MOUSE task 2.
+  it("MOUSE_ON_FULL is canon's `full` set — adds button-drag (1002) and any-motion (1003) to the scroll set", () => {
+    expect(MOUSE_ON_FULL).toBe("\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
+  });
+
+  // canon `G_e()` L126009-126016. The two env hatches are independent and checked in this order; neither set
+  // is canon's default, `"full"`.
+  describe("mouseMode — canon G_e()", () => {
+    it("defaults to full with neither env var set", () => {
+      expect(mouseMode({})).toBe("full");
+    });
+    it("CLAUDE_CODE_DISABLE_MOUSE truthy → off, falsy → full", () => {
+      expect(mouseMode({ CLAUDE_CODE_DISABLE_MOUSE: "1" })).toBe("off");
+      expect(mouseMode({ CLAUDE_CODE_DISABLE_MOUSE: "" })).toBe("full");
+    });
+    it("CLAUDE_CODE_DISABLE_MOUSE_CLICKS truthy → scroll, falsy → full", () => {
+      expect(mouseMode({ CLAUDE_CODE_DISABLE_MOUSE_CLICKS: "1" })).toBe("scroll");
+      expect(mouseMode({ CLAUDE_CODE_DISABLE_MOUSE_CLICKS: "" })).toBe("full");
+    });
+    it("CLAUDE_CODE_DISABLE_MOUSE outranks CLAUDE_CODE_DISABLE_MOUSE_CLICKS — checked first, same as G_e()", () => {
+      expect(mouseMode({ CLAUDE_CODE_DISABLE_MOUSE: "1", CLAUDE_CODE_DISABLE_MOUSE_CLICKS: "" })).toBe("off");
+    });
+  });
+
+  // canon `IXe(mode)` L199031-199039.
+  it("mouseEnable selects the matching string, and \"off\" writes nothing", () => {
+    expect(mouseEnable("full")).toBe(MOUSE_ON_FULL);
+    expect(mouseEnable("scroll")).toBe(MOUSE_ON_SCROLL);
+    expect(mouseEnable("off")).toBe("");
   });
 
   // canon `nV = mY(ev.CURSOR_VISIBLE)` L177070 (mode 25), written by the terminal-mode restore `Uho`
@@ -130,14 +158,14 @@ describe("AltScreenGuard lifecycle", () => {
     const g = createAltScreenGuard({ writeSync: s.writeSync, termProgram: "ghostty" });
     expect(g.active()).toBe(false);
     g.enter();
-    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1006h"]);
+    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h"]);
     expect(g.active()).toBe(true);
   });
 
   it("enter on an unlisted terminal writes the bare enter sequence, mouse-on still appended", () => {
     const s = sink();
     createAltScreenGuard({ writeSync: s.writeSync, termProgram: "Apple_Terminal" }).enter();
-    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h"]);
+    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h"]);
   });
 
   // THE PAIR THAT MUST NOT DRIFT. The enable is armed in exactly one place and disarmed in three (exit,
@@ -150,11 +178,11 @@ describe("AltScreenGuard lifecycle", () => {
       const s = sink();
       const g = createAltScreenGuard({ writeSync: s.writeSync });
       g.enter();
-      expect(s.writes.join("")).toContain(MOUSE_ON_SCROLL);
+      expect(s.writes.join("")).toContain(MOUSE_ON_FULL);
       s.writes.length = 0;
       act(g);
       expect(s.writes[0]).toBe(MOUSE_OFF);
-      expect(s.writes.join("")).not.toContain(MOUSE_ON_SCROLL);
+      expect(s.writes.join("")).not.toContain(MOUSE_ON_FULL);
     });
 
   // A guard that never took the screen never armed the mouse either — a classic launch must not emit a
@@ -260,7 +288,7 @@ describe("AltScreenGuard.aroundSubprocess", () => {
       "\x1b[0m",
       "\x1b[?25h",
       "<spawnSync>",
-      "\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1006h",
+      "\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h",
     ]);
     expect(g.active()).toBe(true);      // the guard still owns the screen across the handoff
   });
@@ -271,7 +299,7 @@ describe("AltScreenGuard.aroundSubprocess", () => {
     g.enter();
     s.writes.length = 0;
     expect(() => g.aroundSubprocess(() => { throw new Error("editor died"); })).toThrow("editor died");
-    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h");
+    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
   });
 
   it("is a bare passthrough when the guard was never armed", () => {
@@ -301,7 +329,7 @@ describe("AltScreenGuard.handoff", () => {
     ]);
     expect(g.active()).toBe(true);      // still ours across the stop: a kill while suspended must find a guard
     back();
-    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1006h");
+    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
   });
 
   it("hands back a no-op on an unarmed guard, so a classic ctrl+z writes nothing", () => {

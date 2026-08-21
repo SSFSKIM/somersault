@@ -885,6 +885,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     const at = tapAnchorRef.current;
     tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
     if (!clickable) return;
+    // F9 T-MOUSE task 2 widened the union: motion/drag now reach every mouse sink once `altScreen.ts` arms
+    // `?1002`/`?1003` by default. This tap machine only ever knew press/release, and `action` was the only
+    // other value a non-press report could hold — a drag or a hover crossing the pending cell would otherwise
+    // fall straight through to the "does this match the press?" check below and read as that press's release.
+    // Treated exactly like the existing modified-click case: kill the tap (already done above), do nothing.
+    if (e.action === "motion" || e.action === "drag") return;
     // Modified clicks are canon's own no-op, and a non-primary button is somebody else's gesture. Both land
     // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
     if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;

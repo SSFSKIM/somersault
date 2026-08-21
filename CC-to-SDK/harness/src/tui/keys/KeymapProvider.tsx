@@ -19,6 +19,7 @@ import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, 
 import { useStdin, useStdout } from "ink";
 import { parseBytes } from "./parse.js";
 import { createWheelGuard } from "./wheelGuard.js";
+import { mouseMode } from "../altScreen.js";
 import type { InputEvent, KeyContextName, KeyEvent, MouseInputEvent, TextEvent } from "./types.js";
 import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
 import { bindingFor, bindingsFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
@@ -131,6 +132,12 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   // writes without re-mounting.
   const wheelGuardRef = useRef<ReturnType<typeof createWheelGuard>>();
   if (!wheelGuardRef.current) wheelGuardRef.current = createWheelGuard(() => (depsRef.current?.now ?? Date.now)());
+  // F9 T-MOUSE task 2 — canon `lastHoverCol/lastHoverRow` (L199673-199676), one pair per stream just like the
+  // wheel guard above. `null` (not 0) is the "nothing seen yet" sentinel: 1-based coordinates never reach 0,
+  // but a stray comparison against an unset `0` would still coincidentally match a first report at col/row 0
+  // if the sentinel were a number, and this parser has already had one 0-vs-unset bug (parse.ts's own doc).
+  const lastMotionColRef = useRef<number | null>(null);
+  const lastMotionRowRef = useRef<number | null>(null);
 
   const pendingRef = useRef<KeySpec[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -211,6 +218,27 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     //  gesture, not on whether anyone was there to receive it.
     if (ev.kind === "mouse") {
       clearChord();
+      // F9 T-MOUSE task 2 — THE MODE GATE. Arming widened to `MOUSE_ON_FULL` by default (altScreen.ts), so
+      // this dispatch site is now the one place that turns the env escape hatches into dropped events: a
+      // terminal that ignores an `off`/`scroll` disable and reports anyway must still find nothing downstream.
+      // `off` drops everything; `scroll` (canon L199637: `getMouseMode() === "scroll" && (button & 3) === 0`)
+      // drops motion/drag unconditionally — there is no consumer for either at this width — and drops a LEFT
+      // press/release only, letting right/middle through exactly as canon does. Read fresh per event: env does
+      // not change mid-session, so this costs one object lookup, not a subscription.
+      const mode = mouseMode();
+      if (mode === "off") return;
+      if (mode === "scroll" && (ev.action === "motion" || ev.action === "drag" || ev.button === 0)) return;
+      // THE SAME-CELL DEDUPE — canon `lastHoverCol/lastHoverRow` (L199673-199676). 1003 (any-motion) reports on
+      // every cell of pointer travel; without this a mouse merely resting between two keystrokes would still be
+      // re-reported by a terminal on every heartbeat some emulators send, and a future hover consumer would
+      // re-run its diff for a cell that never changed. Only `motion` is deduped — a `drag` at the same cell as
+      // the last one is still new information (the button just got pressed there, or is being held down), and
+      // canon's own dedupe is scoped to the hover branch alone.
+      if (ev.action === "motion") {
+        if (ev.col === lastMotionColRef.current && ev.row === lastMotionRowRef.current) return;
+        lastMotionColRef.current = ev.col;
+        lastMotionRowRef.current = ev.row;
+      }
       if (swallowed) return;
       mouseHandler(reg)?.(ev);
       return;

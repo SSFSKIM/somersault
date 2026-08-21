@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ENTER_ALT, EXIT_ALT, MOUSE_OFF, MOUSE_ON_SCROLL } from "../../src/tui/altScreen.js";
+import { ENTER_ALT, EXIT_ALT, MOUSE_OFF, MOUSE_ON_FULL } from "../../src/tui/altScreen.js";
 import { TMUX_CC_NOTICE } from "../../src/tui/renderer.js";
 import { runChatClient } from "../../src/tui/chatMain.js";
 
@@ -75,7 +75,7 @@ describe("runChatClient — the fullscreen boot", () => {
   it("arms the alt-screen guard BEFORE the first paint and hands ChatApp the choice", async () => {
     let props: any;
     await boot({ CLAUDE_CODE_NO_FLICKER: "1" }, (p) => { props = p; });
-    const enter = spy.fd1.indexOf(ENTER_ALT + MOUSE_ON_SCROLL);
+    const enter = spy.fd1.indexOf(ENTER_ALT + MOUSE_ON_FULL);
     expect(enter).toBeGreaterThanOrEqual(0);                 // the screen was taken…
     expect(enter).toBeLessThan(spy.renderMark);              // …and taken before Ink painted into it
     expect(props.renderer).toEqual({ mode: "fullscreen", reason: "env_on" });

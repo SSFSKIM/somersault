@@ -172,9 +172,10 @@ describe("SGR button reports decode into MouseInputEvent", () => {
     expect(one("\x1b[<64;9;9M")).toMatchObject({ kind: "key", name: "wheelup" });
     expect(one("\x1b[<65;9;9M")).toMatchObject({ kind: "key", name: "wheeldown" });
   });
-  it("motion (bit 32) and the no-button code (low bits 3) stay ignored", () => {
-    expect(one("\x1b[<32;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });   // drag with 1 held
-    expect(one("\x1b[<35;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });   // bare motion (1003)
+  // F9 T-MOUSE task 2 widened this: bit 32 is no longer an unconditional drop now that `altScreen.ts` arms
+  // 1002/1003 by default — it decodes into `drag`/`motion` (see the dedicated describe block below). Only the
+  // no-button code OUTSIDE bit 32 stays ignored: it is neither a real click nor a real motion report.
+  it("the anonymous no-button code (low bits 3, bit 32 unset) stays ignored", () => {
     expect(one("\x1b[<3;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" });
     expect(one("\x1b[<3;5;5m")).toMatchObject({ kind: "ignored", reason: "mouse" });    // legacy anonymous release
   });
@@ -205,6 +206,31 @@ describe("SGR button reports decode into MouseInputEvent", () => {
     expect(one("\x1b[<16;7;7m")).toMatchObject({ kind: "mouse", action: "release", button: 0, ctrl: true, alt: false, shift: false }));
 });
 
+// F9 T-MOUSE task 2 — bit 32, once `altScreen.ts` arms 1002/1003. Canon's own split (`UfS` L199670/L199703):
+// low bits 3 alongside 32 means no button is down (bare pointer travel — motion); any other low bits mean a
+// button IS held while the pointer moves (drag). Neither reads `final`: SGR never terminates either with `m`.
+describe("bit 32 decodes into motion (no button) or drag (button held)", () => {
+  it("bare motion carries col/row and NO `button` property at all", () => {
+    const ev = one("\x1b[<35;10;5M");
+    expect(ev).toEqual({ kind: "mouse", action: "motion", col: 10, row: 5, ctrl: false, alt: false, shift: false, raw: "\x1b[<35;10;5M" });
+    expect("button" in ev).toBe(false);
+  });
+  it.each([["\x1b[<32;3;4M",0],["\x1b[<33;3;4M",1],["\x1b[<34;3;4M",2]])("%s → drag button %i", (b, n) =>
+    expect(one(b)).toEqual({ kind: "mouse", action: "drag", button: n, col: 3, row: 4, ctrl: false, alt: false, shift: false, raw: b }));
+  it("drag and motion decode the same modifier bits as a press", () => {
+    expect(one("\x1b[<36;3;4M")).toMatchObject({ action: "drag", button: 0, shift: true, alt: false, ctrl: false });   // 32+4
+    expect(one("\x1b[<55;3;4M")).toMatchObject({ action: "motion", shift: true, alt: false, ctrl: true });             // 32+16+4+3
+  });
+  // `& 128` still wins over bit 32 in `sgrClick` — an extended-button bit set alongside 32 is not a real drag
+  // or motion report under any encoding a terminal actually sends. (64+32 is caught earlier still: `sgrWheel`'s
+  // `& 67` mask sees bit 64 regardless of 32 and claims it as a wheel tick first — pinned in the wheel describe
+  // block above, "the wheel pair is still a KEY, whichever decoder is asked first".)
+  it("128 still wins over bit 32", () =>
+    expect(one("\x1b[<160;5;5M")).toMatchObject({ kind: "ignored", reason: "mouse" }));  // 128+32
+  it("col/row 0 is still rejected for a motion/drag report, same as a click", () =>
+    expect(one("\x1b[<32;0;5M")).toMatchObject({ kind: "ignored", reason: "mouse" }));
+});
+
 // The guard swallows bare arrows for 75 ms after a wheel tick by inspecting `kind === "key"` only. Pinned here
 // because the union grew under it: a mouse event must pass through untouched and must not stand in for a wheel.
 describe("the wheel guard is blind to mouse events", () => {
@@ -221,7 +247,7 @@ describe("the wheel guard is blind to mouse events", () => {
 });
 
 describe("non-key sequences never leak as text", () => {
-  it.each([["\x1b[<32;10;10M","mouse"],["\x1b[<3;10;10M","mouse"],
+  it.each([["\x1b[<128;10;10M","mouse"],["\x1b[<3;10;10M","mouse"],
            ["\x1b[I","focus"],["\x1b[O","focus"]])("%s → ignored:%s", (b, r) =>
     expect(one(b)).toMatchObject({ kind: "ignored", reason: r }));
   it("X10 mouse consumes its 3 payload bytes", () =>

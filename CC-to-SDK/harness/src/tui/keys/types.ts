@@ -15,18 +15,27 @@ export interface KeyEvent { kind: "key"; name: string; ctrl: boolean; alt: boole
  *  know), and the composer's chip path keys off this PROVENANCE, never off size: a 900-character run someone
  *  typed stays literal where the same bytes pasted collapse to `[Pasted text #N]` (F5 task 3). */
 export interface TextEvent { kind: "text"; text: string; raw: string; paste?: true }
-/** A button press or release from an SGR (?1006) mouse report, under the ?1000 tracking altScreen.ts arms.
- *  `col`/`row` are the terminal's own 1-based cell coordinates, passed through undisturbed — they are the
- *  entire content of the gesture, which is why a click cannot be a `KeyEvent` the way a wheel tick is (a tick
- *  means "move the page" and has no target; a click IS its target). `button` is the low two bits: 0 left,
- *  1 middle, 2 right. Motion reports and the no-button code never reach here — parse.ts drops them.
+/** A button/pointer report from an SGR (?1006) mouse report, under whatever tracking `altScreen.ts` arms
+ *  (`MouseMode` — "off"/"scroll"/"full"; the dispatch gate in `KeymapProvider.tsx` enforces the mode, this type
+ *  is shape-only). `col`/`row` are the terminal's own 1-based cell coordinates, passed through undisturbed and
+ *  kept 1-based end to end (spec v2 decision — never converted to 0-based anywhere downstream); they are the
+ *  entire content of a click, which is why it cannot be a `KeyEvent` the way a wheel tick is (a tick means
+ *  "move the page" and has no target; a click IS its target).
+ *    A DISCRIMINATED UNION ON `action`, widened by F9 T-MOUSE task 2 to carry motion/drag once `altScreen.ts`
+ *  arms `?1002`/`?1003` (the "full" default): `press`/`release`/`drag` carry `button` (the low two bits: 0
+ *  left, 1 middle, 2 right — a drag is "this button is held while the pointer moves"); `motion` is bare pointer
+ *  travel with no button down at all and carries NO `button` field — there is nothing to name, and a consumer
+ *  that defaulted a missing button to 0 would read every hover as a phantom left-click. The anonymous "no
+ *  button" code that is NEITHER a press/release NOR motion (bit 32 unset, low bits 3) never reaches here —
+ *  parse.ts drops it, same as before.
  *    THE NAME IS `MouseInputEvent`, NOT `MouseEvent`, ON PURPOSE: tsconfig sets no `lib` override, so the DOM's
  *  global `MouseEvent` is in scope and a consumer that forgot the import would silently bind THAT and typecheck
  *  clean, all the way to a runtime shape mismatch. */
-export interface MouseInputEvent {
-  kind: "mouse"; action: "press" | "release"; button: 0 | 1 | 2;
-  col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string;
-}
+export type MouseInputEvent =
+  | { kind: "mouse"; action: "press" | "release" | "drag"; button: 0 | 1 | 2;
+      col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string }
+  | { kind: "mouse"; action: "motion";
+      col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string };
 /** Consumed and deliberately dropped — must never reach the composer as text (P86 §1.8). */
 export interface IgnoredEvent { kind: "ignored"; reason: "mouse" | "focus" | "unknown-sequence"; raw: string }
 export type InputEvent = KeyEvent | TextEvent | MouseInputEvent | IgnoredEvent;
