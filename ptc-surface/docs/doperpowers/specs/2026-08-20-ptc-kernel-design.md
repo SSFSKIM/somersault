@@ -543,6 +543,11 @@ are binding.
   Claude Code session is mid-turn (its JSONL partially flushed). *Promote* if the fork child
   answers a parent-only fact. *Fallback*: document fork as sound between turns; mid-turn the
   child sees the transcript up to the last flushed message (acceptable; note in skill).
+  *Verdict (T18, live on 2.1.238): PROMOTE.* The child, forked from inside a Bash tool call
+  the parent was still running, answered both a parent-only fact from the user prompt and a
+  random phrase the parent assistant had invented *in that same in-flight turn*. Fallback
+  wording is unnecessary: mid-turn *is* up-to-the-last-flushed-message, and Claude Code
+  flushes per message, so the boundary is one message back, not one turn back.
 - **S3 — hook discovery.** The SessionStart hook's ancestor tree-walk lands on the same
   `claude` pid the MCP adapter sees, in release Claude Code 2.1.236, including `--resume`
   (hook fires per-start and rewrites the run-file) and two concurrent windows in one cwd
@@ -1031,6 +1036,42 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   rows `⎿ [cell 2 · ok · 0.3s] / S5_PLOTTED` then `⎿ [Image]`. On-disk shim output present in
   all three runs (keyless CLI, headless, interactive): `~/.ptc/kernels/<key>/cells/2-0.png`,
   PNG 534×434 RGBA.
+
+- Observation: [S2 verdict — PROMOTE] `resume=<parent sid> + fork_session=True` works from
+  *inside a tool call the parent is still running*, and the fallback the spec pre-designed is
+  not needed. The mechanism, read off the on-disk transcripts rather than inferred from the
+  answer: Claude Code appends each message to `~/.claude/projects/<slug>/<sid>.jsonl` **as it
+  completes**, so at fork time the parent's file already held the turn's user message *and* the
+  assistant text emitted seconds earlier in that same turn — only the tool_result of the
+  still-running Bash call was missing (it cannot exist yet). "Partially flushed" is therefore
+  one *message* back, not one turn back, and the useful framing for the skill is not "fork
+  between turns" but "a fork sees everything except the cell it is being called from".
+  Three mechanism facts M2 should build on. (1) **The dangling `tool_use` is elided.** The
+  parent's last flushed record was an `assistant`/`tool_use:Bash` block with no matching
+  tool_result; the child's transcript copies the prefix *up to but not including* it. That
+  pruning is why a mid-turn fork is well-formed at all — nothing else resolves the orphaned
+  call — and it means the child cannot see the arguments of the very tool call that forked it.
+  (2) **The copy is verbatim except for identity.** Copied records keep their original `uuid`s
+  and timestamps; only `sessionId` is rewritten to the child's. There is no fork-provenance
+  field anywhere in the child file, so `agent.fork` must record the child `session_id` from the
+  SDK `ResultMessage` itself if the registry is to link a child back to its parent.
+  (3) **A fork is not a cheap primitive, and `setting_sources=[]` does not make it one.** The
+  child paid a cold cache write of the whole inherited context — `cache_creation 15 321`,
+  `cache_read 0`, $0.308 — for a two-line answer against a parent transcript of only 14
+  records. `setting_sources=[]` stops the child loading *its own* config and hooks; it cannot
+  stop the parent's CLAUDE.md, skill listing, and hook-output attachments riding along inside
+  the resumed transcript, and a real mid-session parent is far larger than this one. Price
+  `agent.fork` in the skill as a deliberate one-shot, never a loop body.
+  Evidence: `test/spikes/s2_live_fork.py`, one live pass on 2.1.238 (parent `claude -p`,
+  session `46422f60-…`, 25.4 s, rc=0). Snapshot taken inside the running Bash call —
+  `FORK_SNAPSHOT records=14 bytes=39462`, last three records `user str[544]` (MARKER) /
+  `assistant text[36]` = `"INVENTED: vorbulent-skreeth-omnidrax"` / `assistant tool_use:Bash`.
+  Child (`45e8987d-…`, CLI 2.1.237) replied `MARKER: quokka-basilisk-42\nINVENTED:
+  vorbulent-skreeth-omnidrax`, `subtype 'success'`, `terminal_reason 'completed'`,
+  `total_cost_usd 0.30844`; the invented phrase appears nowhere in the parent's prompt, so it
+  was recallable only from the mid-turn assistant record. Parent's own file was untouched by
+  the fork (14 records before and after; it then appended its tool_result at 07:24:11 and
+  finished normally).
 
 ## Outcomes & Retrospective
 
