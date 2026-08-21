@@ -52,7 +52,7 @@ import { tokenWarning, TOKEN_WARNING_KEY, TOKEN_WARNING_TIMEOUT_MS } from "./tok
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
-import { lastAssistantText } from "../sessions/rows.js";
+import { recentAssistantTexts, RECENT_ASSISTANT_CAP } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayDocument } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
@@ -796,7 +796,7 @@ export function useChat(
       () => {},
     );
   };
-  const lastAssistant = useRef("");    // the last assistant reply's text, for /copy
+  const lastAssistant = useRef<string[]>([]);    // recent assistant replies' text, NEWEST FIRST, for /copy [N] (ring, cap RECENT_ASSISTANT_CAP)
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1242,11 +1242,11 @@ export function useChat(
     // would open an unrelated cluster on sight.
     expandedFoldsRef.current.clear();
     setCtxPct(undefined);               // W-S5, see above: measured against a conversation that is gone
-    // THE SAME BOUNDARY AND THE SAME CLASS for /copy's one source: the retained reply was measured against a
+    // THE SAME BOUNDARY AND THE SAME CLASS for /copy's ring: every entry in it was measured against a
     // conversation that is gone, so `/clear` followed by `/copy` was putting the wiped text on the system
     // clipboard. `resumeInto` and the rewind rebuild both assign this ref AFTER their swap, so they keep
     // their seed by construction and only `/clear` (and the empty-rewind arm) newly reset.
-    lastAssistant.current = "";
+    lastAssistant.current = [];
     // WAVE S T12, THE SAME BOUNDARY AND THE SAME CLASS AS W-S5/Task 8: the ack is a number measured against
     // a conversation that no longer exists. `/clear` swaps the ENGINE (host `clear` op), so `usage()`
     // restarts at zero — an ack of 500 carried across would sit above every count the new conversation
@@ -1520,14 +1520,19 @@ export function useChat(
         // — it was never true for a real reply, and /copy therefore never advanced. Every other nested-frame
         // reader in the tree (transcriptModel, toolRenderer, liveTurn, host, router) already tests this way.
         if (appended && data?.type === "assistant" && !data.parent_tool_use_id) {
-          const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
+          // T-COPY decision 1: blocks join with a BLANK LINE ("\n\n"), matching canon's `xd(o, "\n\n")`
+          // (tjh/xd, R1 §1.6.4) — both this live join and the disk-side `recentAssistantTexts` must agree.
+          const t = (data.message?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n\n");
           // …and NOT an api_error frame. A failed turn's terminal message is `type:"assistant"` with
           // `parent_tool_use_id:null` and ordinary text — it differs from a reply only by
           // `is_api_error_message:true` (probe 96's terminal shape, pinned in useChat-error.test.tsx). Canon's
           // /copy rule is "the newest NON-ERROR assistant message", so it neither sources the clipboard nor
-          // displaces the last real reply. The suggester tail below is deliberately NOT filtered: it wants
+          // displaces the ring's head. The suggester tail below is deliberately NOT filtered: it wants
           // every turn the conversation actually had, failures included.
-          if (t.trim() && data.is_api_error_message !== true) lastAssistant.current = t;
+          // T-COPY decision 2: bare truthiness on `t` (canon's `if(i)`), not `.trim()` — a lone-whitespace
+          // reply still qualifies. T-COPY: unshift-and-cap turns the old single-slot overwrite into the
+          // NEWEST-FIRST ring `/copy N` indexes into (see `recentAssistantTexts`'s twin walk on the disk side).
+          if (t && data.is_api_error_message !== true) lastAssistant.current = [t, ...lastAssistant.current].slice(0, RECENT_ASSISTANT_CAP);
           // W-C T12: the same text, into the suggester's tail — behind the `appended` guard, so a redelivered
           // or replayed frame neither doubles the tail nor inflates the `early_conversation` count.
           noteTail("assistant", t);
@@ -2006,7 +2011,28 @@ export function useChat(
         // would be unreachable. See ChatApp's `app:toggleTranscript` neighbour for the full routing note.
         case "history": openHistorySearch(); break;
         case "rewind": void openRewind(); break;
-        case "copy": { const t = lastAssistant.current; if (!t) { notice("No assistant message to copy"); break; } await copyText(t); notice(`✓ copied ${t.length} chars`); break; }
+        // T-COPY: `/copy N` indexes the ring, N=1 (or bare /copy) = newest, matching canon's `lHw`
+        // (R1 §1.4) — validation is `Number(arg)`, integer, >= 1; anything else is the usage string.
+        // `cmd.args` arrives already trimmed (commands.ts parseCommand:19), matching canon's `r?.trim()`.
+        case "copy": {
+          const ring = lastAssistant.current;
+          if (ring.length === 0) { notice("No assistant message to copy"); break; }
+          let idx = 0;
+          const arg = cmd.args;
+          if (arg) {
+            const n = Number(arg);
+            if (!Number.isInteger(n) || n < 1) { notice(`Usage: /copy [N] where N is 1 (latest), 2, 3, … Got: ${arg}`); break; }
+            if (n > ring.length) { notice(`Only ${ring.length} assistant ${ring.length === 1 ? "message" : "messages"} available to copy`); break; }
+            idx = n - 1;
+          }
+          const t = ring[idx];
+          await copyText(t);
+          // Canon's `Sp(e,"\n")+1` (R1 §1.8): count of "\n" occurrences in the copied text, plus one — a
+          // line count, not a paragraph count, so the "\n\n" block separator counts double as it should.
+          const lines = (t.match(/\n/g)?.length ?? 0) + 1;
+          notice(`Copied to clipboard (${t.length} characters, ${lines} lines)`);
+          break;
+        }
         case "export": {
           const id = session.sessionId;
           if (!id) { notice("no conversation to export yet"); break; }
@@ -2251,7 +2277,7 @@ export function useChat(
     // command output from later Ctrl-O detail — a real session change is the only terminal boundary.
     if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); reconcile(); }
     else replaceDocument(replayDocument(msgs, { id, width: columnsFn() }));
-    lastAssistant.current = lastAssistantText(msgs);            // /copy follows what is ON SCREEN, not just live turns
+    lastAssistant.current = recentAssistantTexts(msgs);         // /copy [N] follows what is ON SCREEN, whole ring seeded, not just live turns
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     // The old session's bg tasks died with its engine — the old subscription is already detached, and no
@@ -2727,7 +2753,7 @@ export function useChat(
     // messages. (Ctrl-O never uses this path.)
     if (rows.length) replaceDocument(replayDocument(rows, { id, label: "⏪ rewound", width: columnsFn() }));
     else { const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh); }
-    lastAssistant.current = lastAssistantText(rows);        // /copy follows what is on screen
+    lastAssistant.current = recentAssistantTexts(rows);     // /copy [N] follows what is on screen, whole ring seeded
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     if (opts.prefill !== undefined) setComposerPrefill({ text: opts.prefill, token: Date.now() });

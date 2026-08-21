@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rowKind, rewindAnchorsFrom, promptText, lastAssistantText } from "../../src/sessions/rows.js";
+import { rowKind, rewindAnchorsFrom, promptText, recentAssistantTexts } from "../../src/sessions/rows.js";
 
 const user = (text: string, uuid?: string) => ({ type: "user", uuid, message: { role: "user", content: text } });
 const userBlocks = (blocks: unknown[], uuid = "u") => ({ type: "user", uuid, message: { role: "user", content: blocks } });
@@ -51,32 +51,64 @@ describe("promptText", () => {
   it("block content first text", () => expect(promptText(userBlocks([{ type: "text", text: "hey" }]))).toBe("hey"));
 });
 
-describe("lastAssistantText", () => {
-  it("returns the LAST assistant reply's text", () => {
+describe("recentAssistantTexts", () => {
+  // Generalized from the old single-slot `lastAssistantText` (T-COPY): a NEWEST-FIRST ring so `/copy N`
+  // can index into it (N=1 ⇒ index 0). Canon `tjh` (R1 §1.6): backwards walk, push instead of early-return.
+  it("index 0 is the newest reply", () => {
     const msgs = [assistant("first", "a1"), user("q", "u1"), assistant("second", "a2")];
-    expect(lastAssistantText(msgs)).toBe("second");
+    expect(recentAssistantTexts(msgs)[0]).toBe("second");
+  });
+  it("orders every entry newest-first, not just the head — this is what /copy N indexes into", () => {
+    const msgs = [assistant("one", "a1"), assistant("two", "a2"), assistant("three", "a3")];
+    expect(recentAssistantTexts(msgs)).toEqual(["three", "two", "one"]);
+  });
+  // Canon's cap is `sHw = 20` (R1 §1.6.1) and counts COLLECTED entries, not rows scanned.
+  it("caps at 20 by default — the 21st-oldest reply falls off the ring", () => {
+    const msgs = Array.from({ length: 21 }, (_, i) => assistant(`msg${i}`, `a${i}`));   // msg0 oldest … msg20 newest
+    const out = recentAssistantTexts(msgs);
+    expect(out).toHaveLength(20);
+    expect(out[0]).toBe("msg20");                  // newest
+    expect(out[19]).toBe("msg1");                  // the 20th-newest, exactly at the cap
+    expect(out).not.toContain("msg0");              // the 21st-back, one past the cap, dropped
+  });
+  it("a list of exactly 20 replies is not truncated (the boundary's other edge)", () => {
+    const msgs = Array.from({ length: 20 }, (_, i) => assistant(`msg${i}`, `a${i}`));
+    expect(recentAssistantTexts(msgs)).toHaveLength(20);
+  });
+  it("cap is overridable by the caller", () => {
+    const msgs = Array.from({ length: 5 }, (_, i) => assistant(`m${i}`, `a${i}`));
+    expect(recentAssistantTexts(msgs, 2)).toEqual(["m4", "m3"]);
   });
   it("skips trailing assistant rows that carry no text (tool_use only)", () => {
     const msgs = [assistant("real", "a1"), { type: "assistant", uuid: "a2", message: { role: "assistant", content: [{ type: "tool_use", name: "Bash", input: {} }] } }];
-    expect(lastAssistantText(msgs)).toBe("real");
+    expect(recentAssistantTexts(msgs)).toEqual(["real"]);
   });
-  it("joins multiple text blocks of one reply", () => {
+  // Fidelity decision 1 (T-COPY brief): canon joins text blocks with a BLANK LINE (`xd(o, "\n\n")`,
+  // R1 §1.6.4), not a bare newline — ccx previously joined with "\n" here.
+  it("joins multiple text blocks of one reply with a blank line, matching canon's xd(o, \"\\n\\n\")", () => {
     const msgs = [{ type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "one" }, { type: "text", text: "two" }] } }];
-    expect(lastAssistantText(msgs)).toBe("one\ntwo");
+    expect(recentAssistantTexts(msgs)).toEqual(["one\n\ntwo"]);
   });
-  it("returns empty string when there is no assistant text at all", () => {
-    expect(lastAssistantText([user("q", "u1")])).toBe("");
+  it("returns an empty array when there is no assistant text at all", () => {
+    expect(recentAssistantTexts([user("q", "u1")])).toEqual([]);
+  });
+  // Fidelity decision 2 (T-COPY brief): canon's list gate is bare truthiness on the joined string (`if(i)`),
+  // not `.trim()` — a text block whose only content is whitespace still qualifies and enters the ring.
+  it("bare-truthiness gate: a whitespace-only text block QUALIFIES (canon's `if(i)`, not `.trim()`)", () => {
+    const msgs = [{ type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: " " }] } }];
+    expect(recentAssistantTexts(msgs)).toEqual([" "]);
   });
   // A failed turn persists as an ordinary-looking assistant row whose only tell is `is_api_error_message`
   // (probe 96's synthetic frame). Seeding /copy from it on resume would hand the user "API Error: 401 …" as
-  // the assistant's reply, so the disk seeder skips it exactly like the live writer does.
+  // the assistant's reply, so the disk seeder skips it exactly like the live writer does — and it is
+  // excluded from the ring entirely, not merely from index 0, so it can never surface at any N.
   const apiError = (text: string, uuid: string) => ({ ...assistant(text, uuid), is_api_error_message: true, error: "authentication_failed" });
-  it("skips api-error rows and keeps the last REAL reply", () => {
-    const msgs = [assistant("real", "a1"), user("q", "u1"), apiError("Failed to authenticate. API Error: 401", "a2")];
-    expect(lastAssistantText(msgs)).toBe("real");
+  it("skips api-error rows everywhere in the ring, not just at the head", () => {
+    const msgs = [assistant("oldest real", "a0"), apiError("Failed to authenticate. API Error: 401", "aerr"), assistant("newest real", "a2")];
+    expect(recentAssistantTexts(msgs)).toEqual(["newest real", "oldest real"]);
   });
-  it("returns empty string when the only assistant row is an api error", () => {
-    expect(lastAssistantText([user("q", "u1"), apiError("API Error: 401", "a1")])).toBe("");
+  it("returns an empty array when the only assistant row is an api error", () => {
+    expect(recentAssistantTexts([user("q", "u1"), apiError("API Error: 401", "a1")])).toEqual([]);
   });
   // The shape that actually arrives here. Measured against a real session on SDK 0.3.220: getSessionMessages
   // STRIPS the row-level flag, so a disk row's only tell is the synthetic model marker inside `message`.
@@ -85,7 +117,7 @@ describe("lastAssistantText", () => {
        message: { id: "m", role: "assistant", model: "<synthetic>", type: "message", content: [{ type: "text", text }] } });
   it("skips a disk-read synthetic row (flag stripped, model \"<synthetic>\" survives)", () => {
     const msgs = [assistant("real", "a1"), user("q", "u1"), diskSynthetic("You've hit your session limit · resets 10:50am", "a2")];
-    expect(lastAssistantText(msgs)).toBe("real");
-    expect(lastAssistantText([diskSynthetic("API Error: 401", "a1")])).toBe("");
+    expect(recentAssistantTexts(msgs)).toEqual(["real"]);
+    expect(recentAssistantTexts([diskSynthetic("API Error: 401", "a1")])).toEqual([]);
   });
 });
