@@ -627,6 +627,19 @@ records, the T20/T21 child-env plumbing) must redact credential-bearing variable
 them anywhere durable: match by name (`KEY|TOKEN|BEARER|SECRET`) and by value prefix
 (`sk-ant-`), not pass the environment through unfiltered.
 
+The same boundary covers `provider="codex"`, and one consequence of it is worth naming
+outright: a codex child is pinned to `sandbox: "read-only"`, and read-only in codex means
+*no writes*, not *no reads* — `SandboxPolicy::has_full_disk_read_access` returns `true` for
+every policy including `ReadOnly` (`codex-rs/protocol/src/protocol.rs:1152-1153`). With the
+real `HOME`/`CODEX_HOME` forwarded so subscription auth works, such a child can read any file
+this user can, `~/.claude` included, and anything it reads leaves through the model request —
+so this one crosses the VENDOR boundary that the child-env allowlist otherwise holds. That is
+the same trust class as the kernel itself, which runs arbitrary `bypassPermissions` Python:
+the honest boundary is the `mcp__plugin_ptc_ptc__exec` allow decision, and the answer is
+excellent visibility rather than a pretence of enforcement. The candidate hardening — a
+read-restricted permission profile or a workspace-scoped sandbox for codex children — is
+recorded as a residual, not shipped.
+
 ## Configuration reference
 
 | env (config file mirrors) | default | meaning |
@@ -809,7 +822,7 @@ Discoveries executed A1–A15 as written — 15 pass, A13 in its documented S5 f
 keyless tier of 209 passed / 0 skipped and a live tier of 8 passed / 0 skipped. Nothing is
 carried forward as failing.
 
-**Open residuals at close (the full ledger).** Seven behaviors ship recorded-but-unclosed —
+**Open residuals at close (the full ledger).** Eight behaviors ship recorded-but-unclosed —
 each proven only against a fake, or not proven at all, and each written up in its own section
 above. None is an acceptance failure:
 
@@ -836,6 +849,19 @@ above. None is an acceptance failure:
    the Claude store only and raises `NotImplementedError` rather than glob-matching an
    unrelated transcript (final review r3, finding 8). Rollout parsing is the honest v1
    boundary, deliberately not attempted; `h.messages()` carries the turns the handle saw.
+
+8. **A codex child can read the whole disk.** PTC pins its codex threads to
+   `sandbox: "read-only"`, which in codex constrains WRITES only —
+   `SandboxPolicy::has_full_disk_read_access` is `true` for every policy, `ReadOnly`
+   included (`codex-rs/protocol/src/protocol.rs:1152-1153`) — while `_child_env` forwards
+   the real `HOME`/`CODEX_HOME` because that is where subscription auth lives. A codex task,
+   or a prompt injection reaching one, can therefore read `~/.claude` or anything else this
+   user can and carry it out through the model request, across the vendor boundary the
+   child-env allowlist exists to hold. Adjudicated as the kernel's own trust class rather
+   than a defect (final review r4, finding 1): see Trust model. The candidate hardening is a
+   read-restricted permission profile or a workspace-scoped sandbox for codex children —
+   `app-server/README.md` already prefers permission-profile selection over the `sandbox`
+   shorthand, so the seam exists; it is future work, unbuilt and unmeasured.
 
 Distinct from these, and not counted as residuals: the declared **Non-goals** (Codex-side
 installation testing, Windows, dill/state snapshots, Workflow-tool replication) and the
