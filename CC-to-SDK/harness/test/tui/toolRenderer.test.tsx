@@ -4,7 +4,7 @@ import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, osc8WebLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { FoldPendingState, stampToolStarts } from "../../src/tui/foldPendingState.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
@@ -40,6 +40,12 @@ describe("F1 shared tool renderer", () => {
     expect(osc8FileLink("/tmp/a b.ts", "src/a b.ts")).toBe("\x1b]8;;file:///tmp/a%20b.ts\x07src/a b.ts\x1b]8;;\x07");
     expect(displayPath("/work/src/app.ts", "/work", "/home/me")).toBe("src/app.ts"); expect(displayPath("/home/me/.x", "/work", "/home/me")).toBe("~/.x");
     expect(displayPath("/Users/me/project/src/app.ts", "/Users/me/project", "/Users/me")).toBe("src/app.ts");
+  });
+  // T-PRLINK: `osc8WebLink` is `osc8FileLink`'s sibling for an already-absolute URL (no `pathToFileURL`
+  // resolution) — canon's PR link passes `assumeSupport: !0` (`Mi`, 204156–204172), so this is UNGATED like
+  // `osc8FileLink` itself, not routed through `hyperlinksSupported()` the way `markdownInline.ts`'s `osc8` is.
+  it("osc8WebLink wraps an already-absolute url with the same BEL-terminated bytes as osc8FileLink, unresolved", () => {
+    expect(osc8WebLink("https://github.com/o/r/pull/12", "#12")).toBe("\x1b]8;;https://github.com/o/r/pull/12\x07#12\x1b]8;;\x07");
   });
   it("uses macOS bullet, bold name-only segments, parens, and one sibling gutter", () => {
     const items = renderToolEvent(read, normalized, options); const header = items[0]!;
@@ -1263,6 +1269,27 @@ describe("Tool-stream T5: the fullscreen projection switch", () => {
     const bashOnly = built(bash("bash-1", "npm run build"), result("bash-1", "ok"), bash("bash-2", "npm test"), result("bash-2", "ok"), prose("done"));
     expect(groupLines(projectCompact(bashOnly, context))).toEqual([]);            // classic never folds a non-read Bash
     expect(lineTexts(projectCompact(bashOnly, context))).toEqual(["⏺ Bash(npm run build)", "⏺ Bash(npm test)", "done"]);
+  });
+
+  // T-PRLINK, END TO END: a real `gh pr create` Bash call, scraped by `recognizeGitOps`, through the whole
+  // fullscreen fold pipeline to a `RenderLine`. This is the stripSgr-leak proof AT THE CONSUMER BOUNDARY —
+  // `groupRowLine` (toolRenderer.tsx) is the one place `RenderLine.text` gets computed from the `preStyled`
+  // clause run, so it is the site a regressed `stripSgr` would actually corrupt.
+  it("scrapes a `gh pr create` Bash call into a linked PR clause, with a clean RenderLine.text and the OSC-8 bytes in segments", () => {
+    const doc = built(bash("bash-1", "gh pr create --fill"), result("bash-1", "https://github.com/o/r/pull/12\n"), prose("done"));
+    const rows = groupLines(projectCompact(doc, FS));
+    expect(rows).toHaveLength(1);
+    const line = (rows[0] as { line: RenderLine }).line;
+    // The copy fix: `PR ` survives in front of the linked `#12`, byte-exact with the no-url arm.
+    expect(line.text).toBe("  Created PR #12");
+    // The leak this ticket exists to plug: NOT ONE escape byte reaches the plain-text channel width math,
+    // the pager and every text assertion actually read.
+    expect(line.text).not.toContain("\x1b]8");
+    expect(line.text).not.toContain("\x1b[");
+    // …and the link is not simply gone: the preStyled segment underneath still carries the real OSC-8 bytes,
+    // wrapping exactly the `#12` span with the scraped url as the target.
+    const preStyled = line.segments!.find((s) => s.preStyled === true)!;
+    expect(preStyled.text).toContain("\x1b]8;;https://github.com/o/r/pull/12\x07#12\x1b]8;;\x07");
   });
 });
 

@@ -16,8 +16,15 @@
 // 2026-08-03, measured on the golden); the settled run additionally carries the `inactive` grey.
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import type { FoldClause } from "./toolFold.js";
+import { osc8Open, OSC8_CLOSE } from "./osc8.js";
 
 const DIM = "\x1b[2m", BOLD = "\x1b[1m", NORMAL_INTENSITY = "\x1b[22m", DEFAULT_FG = "\x1b[39m";
+/** T-PRLINK: underline (canon's `U9e` 531112 `underline: rCh`, default `!0`) and the OSC-8 BEL-terminated
+ *  introducer/terminator pair (`osc8Open`/`OSC8_CLOSE`, `./osc8.js` — the shared shape `toolRenderer.tsx`'s
+ *  `osc8FileLink`/`osc8WebLink` also build from). Both open OUTSIDE the OSC-8 span and close outside it too,
+ *  so the escape → label → escape triple a terminal actually needs stays an unbroken substring (research
+ *  report §1.2/§2.3(b)). */
+const UNDERLINE = "\x1b[4m", NORMAL_UNDERLINE = "\x1b[24m";
 
 /** A resolved theme colour → its 24-bit open/close pair. `resolveThemeColor` yields `#rrggbb` for every
  *  shipped theme's `inactive` (all four are `rgb(...)` tokens), and a 3-digit hex expands the same way; a
@@ -32,9 +39,18 @@ function foreground(color: string): { open: string; close: string } | undefined 
   return { open: `\x1b[38;2;${red};${green};${blue}m`, close: DEFAULT_FG };
 }
 
-/** Every SGR the writer emits is a CSI-m code, so this is the exact inverse of the wrapping above — the
- *  row's `RenderLine.text` (width math, tests, the pager) must stay the plain sentence. */
-export const stripSgr = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, "");
+/** T-PRLINK: this writer now also emits OSC-8 (via `linkRanges`, below), so a CSI-m-only strip would leak the
+ *  hyperlink's introducer/terminator bytes straight into `RenderLine.text` — invisible on screen but corrupting
+ *  for wrapItems' re-cut, the pager and every plain-text assertion (same class of bug `fullscreen-osc8.test.tsx`
+ *  documents for the OTHER direction, a clip that drops a label). The alternation is the same SHAPE as
+ *  `statusLine.ts`'s `SGR_OR_OSC8` (CSI-m OR a `\x1b]8;` introducer up to its BEL/ST terminator), not the
+ *  identical regex — statusLine.ts's owns its own copy (`[\d;]*`) for a heavier module (spawns child
+ *  processes) this row-composer has no reason to import just to share a character-class spelling; this one
+ *  spells the digit class `[0-9;]*`. Kept as two definitions deliberately, not merged. The escapes go;
+ *  the label between an open and close pair is untouched, so the row's `RenderLine.text` stays the plain
+ *  sentence — width math, tests, the pager. */
+const SGR_OR_OSC8 = /\x1b\[[0-9;]*m|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+export const stripSgr = (text: string): string => text.replace(SGR_OR_OSC8, "");
 
 /** The clause run as one pre-styled string: the clauses joined by the literal `", "` (R3.8), each
  *  `boldRanges` span opened and closed independently, and — for the active row only — the trailing `…`
@@ -51,12 +67,40 @@ export function composeFoldRun(clauses: readonly FoldClause[], form: "active" | 
   let out = (colour?.open ?? "") + DIM;
   for (const [index, clause] of clauses.entries()) {
     if (index > 0) out += ", ";
+    // T-PRLINK: `linkRanges` is always a SUBSET of `boldRanges` at identical offsets (every span canon links
+    // is also bold — see `FoldClause`'s doc comment), so one pass over `boldRanges` suffices; this map is
+    // just an O(1) lookup for "does THIS bold span happen to also carry a href".
+    const hrefByRange = new Map((clause.linkRanges ?? []).map(([start, end, href]) => [`${start}:${end}`, href]));
+    const plainRanges = clause.plainRanges ?? [];
+    let plainIndex = 0;
+    // Review-round fix (§1.4): appends `text.slice(from, to)`, lifting out any `plainRanges` span it contains
+    // to NORMAL intensity so it escapes the clause's ambient dim (today only the linked PR clause's `PR `
+    // prefix). `plainRanges` never overlaps a `boldRanges` span (see `clause()`), and in that one producer the
+    // plain span always abuts the following bold range, so this never needs to re-open dim afterward — same
+    // "no dim re-open" rule this file already applies once a bold count has closed.
+    const emitWithPlainRanges = (from: number, to: number) => {
+      let cursor = from;
+      while (plainIndex < plainRanges.length && plainRanges[plainIndex]![0] < to) {
+        const [plainStart, plainEnd] = plainRanges[plainIndex]!;
+        out += clause.text.slice(cursor, plainStart) + NORMAL_INTENSITY + clause.text.slice(plainStart, plainEnd);
+        cursor = plainEnd;
+        plainIndex++;
+      }
+      out += clause.text.slice(cursor, to);
+    };
     let cursor = 0;
     for (const [start, end] of clause.boldRanges) {
-      out += clause.text.slice(cursor, start) + BOLD + clause.text.slice(start, end) + NORMAL_INTENSITY;
+      const href = hrefByRange.get(`${start}:${end}`);
+      emitWithPlainRanges(cursor, start);
+      out += BOLD;
+      // The underline and OSC-8 open OUTSIDE the label and close outside it too — never nested inside one
+      // another — so `\x1b]8;;<href>\x07<label>\x1b]8;;\x07` stays an unbroken substring a terminal (and a
+      // test) can match without accounting for interleaved SGR.
+      out += href === undefined ? clause.text.slice(start, end) : UNDERLINE + osc8Open(href) + clause.text.slice(start, end) + OSC8_CLOSE + NORMAL_UNDERLINE;
+      out += NORMAL_INTENSITY;
       cursor = end;
     }
-    out += clause.text.slice(cursor);
+    emitWithPlainRanges(cursor, clause.text.length);
   }
   if (options?.elapsed !== undefined) out += DIM + options.elapsed + NORMAL_INTENSITY;
   if (options?.ellipsis === true) out += "…";
