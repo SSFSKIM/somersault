@@ -14,7 +14,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
-import { useChat } from "../../src/tui/useChat.js";
+import { useChat, type ChatSession } from "../../src/tui/useChat.js";
+import { ChatApp } from "../../src/tui/ChatApp.js";
+import { renderWithKeymap } from "./keysTestUtil.js";
 import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "../../src/tui/autoModeNotice.js";
 import { loadPrefs, savePrefs, type CcxPrefs } from "../../src/tui/prefs.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
@@ -189,6 +191,42 @@ describe("useChat — auto-mode entry notice", () => {
       expect(loadPrefs(env).hasSeenAutoModeEntryWarning).toBeUndefined();      // nothing reached disk to do the suppressing
     } finally { vi.useRealTimers(); unmount(); }
   });
+
+  // T2 REVIEW FIX (Important): every case above drives `useChat` DIRECTLY through `Host`, so a break in the
+  // real forwarding chain — `main.ts`'s `hookOpts` → `ChatClientOpts.hookOpts` (chatMain.tsx) → `ChatApp`'s
+  // own `hookOpts` prop → the `{ ...(hookOpts ?? {}), ... }` spread into `useChat`'s opts (ChatApp.tsx:374) —
+  // fails NONE of them. This test closes that gap by mounting the real `ChatApp`, exactly as it is mounted
+  // in production, with `hookOpts.initialTokenSource` set: only `ChatApp`'s own prop-spread carries the field
+  // from here into `useChat`, so severing that spread (the reviewer's mutation) has to break this test even
+  // though every `Host`-driven case above stays green.
+  it("ChatApp forwards hookOpts.initialTokenSource to useChat — the real notice renders without the cost sentence", async () => {
+    const env = tmpRoot();
+    const fake = fakeRemote();
+    const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    const flat = (r: { lastFrame: () => string | undefined }) => strip(r.lastFrame() ?? "").replace(/\n/g, " ").replace(/\s+/g, " ");
+    const waitForFrame = async (r: { lastFrame: () => string | undefined }, cond: (text: string) => boolean, timeout = 3000) => {
+      const start = Date.now();
+      for (;;) {
+        if (cond(flat(r))) return;
+        if (Date.now() - start > timeout) throw new Error(`waitForFrame timeout; last frame: ${flat(r)}`);
+        await new Promise((res) => setTimeout(res, 10));
+      }
+    };
+    const r = renderWithKeymap(
+      <ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd={process.cwd()}
+        hookOpts={{ initialTokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }}
+        deps={{ env, columns: () => 80, rows: () => 24, getSessionMessages: async () => [] }} />,
+    );
+    try {
+      await waitForFrame(r, (t) => t.includes("❯"));   // the composer prompt glyph — mount settled
+      fake.pushEvent({ kind: "state", status: { state: "working", status: "idle", permissionMode: "auto" } });
+      // Real time deliberately (see the sibling comment above on the "launches already in auto" case): the
+      // notice effect's setTimeout arms as part of this same render pass, before any fake-timer install could
+      // intercept it.
+      await waitForFrame(r, (t) => t.includes("Ideal for long-running tasks."), AUTO_MODE_NOTICE_DELAY_MS + 2000);
+      expect(flat(r)).not.toContain("Sessions are slightly more expensive.");
+    } finally { r.unmount(); }
+  }, 10000);
 
   it("a prefs write that throws is swallowed — the notice still shows, once, and the timer doesn't kill the session", async () => {
     const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
