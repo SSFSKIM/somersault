@@ -341,7 +341,7 @@ describe("<ChatComposer> — the persisted history it seeds from and appends to"
 
   it("appends a submitted prompt to memory AND to disk, and the walk sees it immediately", async () => {
     const sent: string[] = [];
-    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(t) });
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText) });
     await settle();
     for (const ch of "hello there") stdin.write(ch);
     await waitFor(() => strip(frame(lastFrame)).includes("hello there"));
@@ -493,7 +493,7 @@ describe("<ChatComposer> — the persisted history it seeds from and appends to"
   it("CM57: a recalled chip whose body is still cached comes back expandable", async () => {
     const body = "z".repeat(PASTE_INLINE_MAX + 1);                        // over `nu_`, so it goes to the cache
     const sent: string[] = [];
-    const first = mount({ onSubmit: (t) => sent.push(t) });
+    const first = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText) });
     await settle();
     first.stdin.write("\x1b[200~" + body + "\x1b[201~");
     await waitFor(() => strip(frame(first.lastFrame)).includes("[Pasted text #1]"));
@@ -501,7 +501,7 @@ describe("<ChatComposer> — the persisted history it seeds from and appends to"
     await waitFor(() => sent.length === 1);
     first.unmount();
     // A NEW composer (a new process, as far as the cache is concerned) recalls it.
-    const second = mount({ onSubmit: (t) => sent.push(t) });
+    const second = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText) });
     await settle();
     second.stdin.write(UP);
     await waitFor(() => strip(frame(second.lastFrame)).includes("[Pasted text #1]"));
@@ -513,7 +513,7 @@ describe("<ChatComposer> — the persisted history it seeds from and appends to"
   it("CM57: a recalled chip whose body is GONE is rewritten to ou_'s literal (L317398)", async () => {
     const body = "y".repeat(PASTE_INLINE_MAX + 1);
     const sent: string[] = [];
-    const first = mount({ onSubmit: (t) => sent.push(t) });
+    const first = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText) });
     await settle();
     first.stdin.write("\x1b[200~" + body + "\x1b[201~");
     await waitFor(() => strip(frame(first.lastFrame)).includes("[Pasted text #1]"));

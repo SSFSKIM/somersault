@@ -159,7 +159,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
 
   it("a body at or under the inline cap is never cached at all — it rides inside the history line", async () => {
     const sent: string[] = [];
-    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(t) });
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText) });
     await settle();
     stdin.write(bracketed(BODY));                                 // 25 chars: a chip by the NEWLINE arm, well under nu_
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));
@@ -171,7 +171,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
   it("CLAUDE_CODE_SKIP_PROMPT_HISTORY suppresses the cache write too (the gate wraps the whole append)", async () => {
     const body = "q".repeat(PASTE_INLINE_MAX + 1);
     const sent: string[] = [];
-    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(t), historyEnv: { ...process.env, CLAUDE_CODE_SKIP_PROMPT_HISTORY: "1" } });
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText), historyEnv: { ...process.env, CLAUDE_CODE_SKIP_PROMPT_HISTORY: "1" } });
     await settle();
     stdin.write(bracketed(body));
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1]"));
@@ -248,7 +248,7 @@ describe("ChatComposer — the paste cache and `paste again to expand`", () => {
 
   it("an expanded paste submits ONCE, as plain text (the map entry really is gone)", async () => {
     const sent: string[] = [];
-    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(t) });
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText) });
     await settle();
     stdin.write(bracketed(BODY));
     await waitFor(() => strip(frame(lastFrame)).includes("[Pasted text #1 +3 lines]"));

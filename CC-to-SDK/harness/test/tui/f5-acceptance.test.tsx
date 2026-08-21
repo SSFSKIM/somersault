@@ -80,7 +80,7 @@ describe("F5 acceptance #1 — a 40-newline paste is one atomic chip that submit
     expect(PASTE_BODY.length).toBeLessThan(800);                 // …so the NEWLINE arm decides, not `CMt`
 
     const sent: string[] = [];
-    const { stdin, lastFrame } = mount({ onSubmit: (t) => { sent.push(t); }, project: "/tmp/ccx-f5-paste" });
+    const { stdin, lastFrame } = mount({ onSubmit: (t) => { sent.push(typeof t === "string" ? t : t.submitText); }, project: "/tmp/ccx-f5-paste" });
     await settle();
 
     stdin.write(bracketed(PASTE_BODY));
@@ -162,7 +162,7 @@ describe("F5 acceptance #3 — `/mod` completes to `/model`: ghost + Tab mid-tex
   it("draws dim ghost text and accepts it on Tab without submitting; Enter on the head popup runs the command", async () => {
     // ── the ghost surface (mid-text) ──
     const sent: string[] = [];
-    const ghost = mount({ onSubmit: (t) => { sent.push(t); }, commandCatalog: GHOST_CAT, project: "/tmp/ccx-f5-ghost" });
+    const ghost = mount({ onSubmit: (t) => { sent.push(typeof t === "string" ? t : t.submitText); }, commandCatalog: GHOST_CAT, project: "/tmp/ccx-f5-ghost" });
     await settle();
     ghost.stdin.write("see /mod");
     // The catalog reaches the open command state through an EFFECT, so the ghost is one render behind the
@@ -182,7 +182,7 @@ describe("F5 acceptance #3 — `/mod` completes to `/model`: ghost + Tab mid-tex
     ghost.unmount();
 
     // ── the popup surface (head), where a LOCAL command is executable ──
-    const head = mount({ onSubmit: (t) => { sent.push(t); }, commandCatalog: GHOST_CAT, project: "/tmp/ccx-f5-ghost" });
+    const head = mount({ onSubmit: (t) => { sent.push(typeof t === "string" ? t : t.submitText); }, commandCatalog: GHOST_CAT, project: "/tmp/ccx-f5-ghost" });
     await settle();
     head.stdin.write("/mod");
     await waitFor(() => strip(frame(head.lastFrame)).includes("switch model"));   // the popup, with its row

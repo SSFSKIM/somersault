@@ -315,3 +315,38 @@ export async function reencodeDarwin(
     await removeScratchDir(dir);
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// F9 T-IMAGE Task 3 (I2): the paste-time ORCHESTRATION this file's own header handed to the paste
+// handler — read, then re-encode when needed, so the composer's Ctrl-V handler makes exactly one call
+// and never touches `deps`/the ladder constants itself. This is the only function in the file with an
+// opinion about the OUTCOME shape a chip mint reads (`editor.ts`'s `insertImageChip`); everything above
+// stays the leaf `readClipboardImage`/`reencodeDarwin` were built as.
+
+/** What Ctrl-V's handler does with the result: mint a ready image chip, mint a failed one (still a chip —
+ *  the turn degrades at BUILD time, canon L231262 — never a silent no-op), fall through to the ordinary
+ *  text-paste path, or toast. `data` is already base64 — the one encode this module owes its caller, since
+ *  `PastedEntry`'s `content` field is base64 by contract (editor.ts). */
+export type ClipboardPasteOutcome =
+  | { kind: "image"; content: string; mediaType: string; dimensions: { width: number; height: number } }
+  | { kind: "image-failed"; reason: string }
+  | { kind: "text"; text: string }
+  | { kind: "none" };
+
+/** `readClipboardImage` → (oversized? re-encode : pass through) → base64. The two size gates are canon's own
+ *  (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`); a raw read within both never touches `sips` at all — the
+ *  common case (a normal screenshot) costs one subprocess round trip, not three. Darwin gets the re-encode
+ *  ladder; every other platform degrades an oversized image straight to `image-failed`, matching canon's own
+ *  failure shape for "no re-encoder available" (spec I2, "Other platforms"). */
+export async function pasteClipboardImage(deps: ClipboardDeps = defaultClipboardDeps()): Promise<ClipboardPasteOutcome> {
+  const r = await readClipboardImage(deps);
+  if (r.kind === "none") return { kind: "none" };
+  if (r.kind === "text") return { kind: "text", text: r.text };
+  if (r.kind === "failed") return { kind: "image-failed", reason: r.reason };
+  const overLimit = r.dimensions.width > MAX_DIMENSION || r.dimensions.height > MAX_DIMENSION || r.data.length > POST_PROCESS_BYTE_BUDGET;
+  if (!overLimit) return { kind: "image", content: r.data.toString("base64"), mediaType: r.mediaType, dimensions: r.dimensions };
+  if (deps.platform !== "darwin") return { kind: "image-failed", reason: "image exceeds size limits and no re-encoder is available on this platform" };
+  const re = await reencodeDarwin({ data: r.data, mediaType: r.mediaType }, deps);
+  if (!re) return { kind: "image-failed", reason: "image could not be reduced to fit the request size limit" };
+  return { kind: "image", content: re.data.toString("base64"), mediaType: re.mediaType, dimensions: re.dimensions };
+}

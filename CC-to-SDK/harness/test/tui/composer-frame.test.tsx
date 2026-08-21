@@ -354,7 +354,7 @@ describe("ChatComposer — paste chips and the Pasting… row", () => {
   it("collapses a large paste into `[Pasted text #1 …]` and sends the full content on submit", async () => {
     const sent: string[] = [];
     const { stdin, lastFrame } = renderWithKeymap(
-      <ChatComposer onSubmit={(t) => sent.push(t)} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} />,
+      <ChatComposer onSubmit={(t) => sent.push(typeof t === "string" ? t : t.submitText)} cwd={tmpdir()} commandCatalog={[]} columns={() => 60} rows={() => 24} />,
     );
     await settle();
     const body = "alpha\nbravo\ncharlie\ndelta";

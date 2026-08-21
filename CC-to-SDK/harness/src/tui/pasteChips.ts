@@ -46,6 +46,11 @@ export function newlineThreshold(rows: number): number { return Math.max(0, Math
 export function chipLabel(id: number, lineCount: number): string {
   return lineCount === 0 ? `[Pasted text #${id}]` : `[Pasted text #${id} +${lineCount} lines]`;
 }
+/** F9 T-IMAGE (I2), `agr`'s image sibling: `[Image #N]`, no line-count suffix — canon has none for the
+ *  species (there is nothing to count), and this is the one label form both a ready image and a failed one
+ *  mint (editor.ts's `insertImageChip`): the failure is a property of the ENTRY, invisible in the chip
+ *  itself, and only degrades to the `[Image could not be processed: …]` text at build time. */
+export function imageChipLabel(id: number): string { return `[Image #${id}]`; }
 
 /** `KF`'s recognizer, verbatim. Global, so a caller must either re-instantiate it or reset `lastIndex`;
  *  `chipSpans` below goes through `matchAll`, which clones the regex and leaves this one's `lastIndex` at 0. */
@@ -130,9 +135,9 @@ export function snapOut(s: EditorState): EditorState {
   return { ...s, cursor: { row, col: col < (chip.start + chip.end) / 2 ? chip.start : chip.end } };
 }
 
-/** Why there is NO garbage collector here (t4-fix2). The map is keyed by ids the buffer carries, so an entry
- *  whose label the user deleted looks like garbage — but pruning it live is wrong, and upstream does not.
- *  Upstream's live-buffer effect is gated on the map holding an image or audio entry (`iD`, L495715) and
+/** Why there is NO garbage collector here (t4-fix2), for TEXT. The map is keyed by ids the buffer carries, so
+ *  an entry whose label the user deleted looks like garbage — but pruning it live is wrong, and upstream does
+ *  not. Upstream's live-buffer effect is gated on the map holding an image or audio entry (`iD`, L495715) and
  *  filters to exactly those two species (L495721); TEXT entries are pruned only implicitly at submit, where
  *  the outgoing map is rebuilt from the ids present in the submitted text (L536788-L536792).
  *
@@ -141,7 +146,28 @@ export function snapOut(s: EditorState): EditorState {
  *  navigation, the Ctrl-S stash, undo. Prune on the way out and every one of those round trips strands the
  *  payload — measured, before this was reverted: Ctrl-W, Ctrl-Y, submit sent the literal `[Pasted text #1 …]`.
  *  A stale entry costs one map slot and is inert: `substituteChips` expands only ids whose label is actually
- *  present, and the whole map dies with the buffer at submit. */
+ *  present, and the whole map dies with the buffer at submit.
+ *
+ *  F9 T-IMAGE (I2) restores upstream's OTHER half of that same gate, for exactly the species it was written
+ *  for. An image entry carries up to ~683,000 base64 CHARACTERS (the 512,000-byte re-encode ceiling); a chip
+ *  that gets torn apart by a non-atomic edit — `killToEnd`/`killToStart` cut raw characters from the cursor
+ *  to a line edge and can slice straight through the middle of a `[Image #N]` label, where the atomic
+ *  `deleteTokenBefore` never would — must not leave that payload pinned in memory for the rest of the
+ *  session. `applyKey`'s wrapper runs this after every key, gated cheaply on the map actually holding a
+ *  non-text entry, so a text-only session pays nothing. */
+export function sweepOrphanImages(s: EditorState): EditorState {
+  const hasNonText = Object.values(s.pastedContents).some((entry) => entry.type !== "text");
+  if (!hasNonText) return s;
+  const present = new Set<number>();
+  for (const line of s.lines) for (const span of chipSpans(line)) present.add(span.id);
+  let changed = false;
+  const pastedContents: PastedMap = {};
+  for (const [key, entry] of Object.entries(s.pastedContents)) {
+    if (entry.type !== "text" && !present.has(Number(key))) { changed = true; continue; }
+    pastedContents[Number(key)] = entry;
+  }
+  return changed ? { ...s, pastedContents } : s;
+}
 
 /** `fSe`: expand every recognized chip whose id names a text entry. RIGHT TO LEFT, because each replacement
  *  changes the length of everything after it. A chip with no entry (a stale id, an `[Image #N]`) stays literal —
@@ -177,7 +203,9 @@ function newestTextChip(s: EditorState): { row: number; span: ChipSpan; content:
     for (const span of chipSpans(s.lines[row]))
       if (s.pastedContents[span.id]?.type === "text" && (!best || span.id > best.span.id)) best = { row, span };
   if (!best) return null;
-  const content = s.pastedContents[best.span.id].content;
+  const winner = s.pastedContents[best.span.id];
+  if (winner?.type !== "text") return null;   // narrowing only — line 205's own check already guarantees this
+  const content = winner.content;
   if (content.length > PASTE_LIMIT) return null;
   return { ...best, content };
 }

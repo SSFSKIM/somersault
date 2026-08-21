@@ -10,14 +10,15 @@
 //  · `iu_`  (L317513) the resolve — `e.content || (e.contentHash ? load(e.contentHash) : null)`
 //  · `hon`/`mP`/`LV` (L236123/L236131/L236136) mode ⇄ display's `!` prefix
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pastePath, pasteHash } from "../../src/tui/pasteCache.js";
+import { pastePath, pasteHash, pasteCacheDir } from "../../src/tui/pasteCache.js";
 import {
-  HISTORY_CAP, PASTE_INLINE_MAX, appendHistory, composerMode, displayForMode, historyPath,
+  HISTORY_CAP, PASTE_INLINE_MAX, appendHistory, composerMode, displayForMode, historyPath, hydrateEntry,
   readHistory, resolvePastedContent, stripModePrefix, type HistoryEntry,
 } from "../../src/tui/promptHistory.js";
+import { substituteChips } from "../../src/tui/pasteChips.js";
 
 let env: NodeJS.ProcessEnv;
 const PROJ = "/w/proj";
@@ -211,10 +212,12 @@ describe("pastedContents — the nu_ split", () => {
     expect(map[2].contentHash).toBe(pasteHash(big));
   });
 
-  it("carries upstream's optional mediaType/filename through untouched", () => {
-    appendHistory({ display: "d", project: PROJ, pastedContents: { 1: { id: 1, type: "text", content: "x", lineCount: 0, mediaType: "text/plain", filename: "n.txt" } } }, env);
-    expect(readHistory({ scope: "everywhere" }, env)[0].pastedContents![1]).toMatchObject({ mediaType: "text/plain", filename: "n.txt" });
-  });
+  // F9 T-IMAGE (I2) retired "carries upstream's optional mediaType/filename through untouched": that field
+  // pair was never reachable from a real submit (editor.ts's TEXT `PastedEntry` never carried them, even
+  // before this task — the old inline `HistoryAppend` type just happened to allow them structurally), and
+  // the image species now landing with its OWN dedicated arm makes the type say so: `appendHistory` filters
+  // to `type:"text"` before this line is even reached (see its own header). See I2's other new coverage —
+  // image/image-failed entries are dropped entirely, never even the empty-object shape this test pinned.
 
   it("an entry with no pastes persists an empty map, never undefined", () => {
     appendHistory({ display: "plain", project: PROJ }, env);
@@ -301,5 +304,72 @@ describe("isolation", () => {
     mkdirSync(env.CCX_FLEET_ROOT!, { recursive: true });
     writeFileSync(historyPath(env), JSON.stringify({ display: "tail", timestamp: 1, project: PROJ }));
     expect(readHistory({ scope: "everywhere" }, env).map((e) => e.display)).toEqual(["tail"]);
+  });
+});
+
+// ═══════════════════════════ F9 T-IMAGE Task 3 (I2): persistence excludes images ═══════════════════════════
+
+/** Every regular file under `root`, recursively — `history.jsonl` plus whatever the paste cache wrote —
+ *  read as utf8. A cache file that happens to be genuinely binary would throw here, which is itself an
+ *  honest failure for this suite's purpose: nothing this task writes is anything but text. */
+function allFileContents(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, ent.name);
+      if (ent.isDirectory()) walk(p);
+      else out.push(readFileSync(p, "utf8"));
+    }
+  };
+  if (existsSync(root)) walk(root);
+  return out;
+}
+
+describe("appendHistory excludes image/image-failed payloads (plan's persistence recursive-scan cell)", () => {
+  const IMAGE_PAYLOAD = "QkFTRTY0IUltYWdlUGF5bG9hZFNlbnRpbmVs"; // a base64-looking sentinel this suite never types elsewhere
+  it("a recursive scan of the isolated fleet root finds the label but never the payload", () => {
+    appendHistory({
+      display: `see [Image #1] and [Image #2]`,
+      project: PROJ,
+      pastedContents: {
+        1: { id: 1, type: "image", content: IMAGE_PAYLOAD, mediaType: "image/png", dimensions: { width: 4, height: 4 } },
+        2: { id: 2, type: "image-failed", reason: "too large" },
+      },
+    }, env);
+    const files = allFileContents(env.CCX_FLEET_ROOT!);
+    expect(files.length).toBeGreaterThan(0);                          // history.jsonl itself, at minimum
+    for (const content of files) expect(content).not.toContain(IMAGE_PAYLOAD);
+    expect(files.some((c) => c.includes("[Image #1]") && c.includes("[Image #2]"))).toBe(true);
+    // No pastedContents entry AT ALL for either id — not even a stub referencing the failure reason.
+    const persisted = JSON.parse(readFileSync(historyPath(env), "utf8").trim());
+    expect(persisted.pastedContents).toEqual({});
+  });
+  it("a large image payload never reaches the paste cache either (the ONLY write-to-disk site for a paste body)", () => {
+    const big = "Q".repeat(PASTE_INLINE_MAX + 1);                     // well over the inline threshold — a TEXT paste this size WOULD hit the cache
+    appendHistory({
+      display: "[Image #1]",
+      project: PROJ,
+      pastedContents: { 1: { id: 1, type: "image", content: big, mediaType: "image/png", dimensions: { width: 4, height: 4 } } },
+    }, env);
+    expect(existsSync(pasteCacheDir(env))).toBe(false);                // the write site (`storePaste`) was never reached
+  });
+});
+
+describe("history reload: a restored line submits its literal label, with NO manifest (plan's history-reload cell)", () => {
+  it("hydrateEntry drops the image entry entirely; the label survives as ordinary characters", () => {
+    appendHistory({
+      display: "look at [Image #1]",
+      project: PROJ,
+      pastedContents: { 1: { id: 1, type: "image", content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 4, height: 4 } } },
+    }, env);
+    // A FRESH read+hydrate — the same two calls a brand-new composer's disk seed runs (ChatComposer.tsx,
+    // useChat.ts's `loadHistory`) — never the in-memory session that wrote the line.
+    const row = readHistory({ scope: "everywhere" }, env)[0];
+    const hydrated = hydrateEntry(row, env);
+    expect(hydrated.display).toBe("look at [Image #1]");              // the literal label, untouched
+    expect(hydrated.pastedContents).toEqual({});                      // NO manifest — nothing to expand
+    // Executing the restored line (useChat's `executeHistory` runs exactly this) sends the label AS TEXT —
+    // `substituteChips` has no entry to expand, so it degrades to ordinary characters, never a payload.
+    expect(substituteChips(hydrated.display, hydrated.pastedContents)).toBe("look at [Image #1]");
   });
 });

@@ -21,8 +21,15 @@ import { renderWithKeymap } from "./keysTestUtil.js";
 import { ChatComposer, PASTE_EXPAND_HINT } from "../../src/tui/ChatComposer.js";
 import { ComposerWithFooter } from "./helpers/composerFooter.js";
 import { appendHistory } from "../../src/tui/promptHistory.js";
-import { bufferText, initialEditorState, type EditorState, type PastedMap } from "../../src/tui/editor.js";
+import { bufferText, initialEditorState, type EditorState, type PastedEntry, type PastedMap } from "../../src/tui/editor.js";
 import { findInlineMatch, offsetToCursor, cursorToOffset, installMatch, restoreDraft, NO_MATCH_PROMPT, SEARCH_PROMPT } from "../../src/tui/historySearchInline.js";
+
+// F9 T-IMAGE (I2) widened `PastedEntry` to a 3-arm union; this file's own maps are text-only, so this
+// narrows the read side rather than casting blindly at each call site (see paste-chips.test.ts's twin).
+const textEntry = (e: PastedEntry | undefined): Extract<PastedEntry, { type: "text" }> => {
+  if (e?.type !== "text") throw new Error(`expected a text pasted entry, got ${JSON.stringify(e)}`);
+  return e;
+};
 
 // ————————————————————————— pure: the walk and the two buffer transforms —————————————————————————
 
@@ -77,7 +84,7 @@ describe("installMatch / restoreDraft", () => {
     const base = { ...initialEditorState(), pasteCounter: 3 };
     const s = installMatch(base, { display: "see [Pasted text #1 +2 lines]", pastedContents: { 1: { id: 1, type: "text", content: "a\nb\nc", lineCount: 2 } } }, 0, "see");
     expect(s.lines[0]).toBe("see [Pasted text #4 +2 lines]");
-    expect(s.pastedContents[4].content).toBe("a\nb\nc");
+    expect(textEntry(s.pastedContents[4]).content).toBe("a\nb\nc");
     expect(s.pastedContents[1]).toBeUndefined();
   });
   it("recomputes the caret against the REBUILT text, so a re-minted chip cannot shift it", () => {
@@ -115,7 +122,7 @@ describe("installMatch / restoreDraft", () => {
     const map: PastedMap = { 1: { id: 1, type: "text", content: "MINE", lineCount: 0 } };
     const parked: EditorState = { ...initialEditorState(), lines: ["x"], pastedContents: map };
     const recalled: EditorState = { ...parked, pastedContents: { 1: { id: 1, type: "text", content: "RECALLED", lineCount: 0 } } };
-    expect(restoreDraft(recalled, { display: "x", cursor: parked.cursor, pastedContents: map }).pastedContents[1].content).toBe("MINE");
+    expect(textEntry(restoreDraft(recalled, { display: "x", cursor: parked.cursor, pastedContents: map }).pastedContents[1]).content).toBe("MINE");
   });
 
   it("a restore is itself idempotent — restoring twice does not re-clobber the buffer a second time", () => {
@@ -249,7 +256,7 @@ describe("<ChatComposer> — CM58's inline reverse-i-search", () => {
   it("ENTER executes the match through the composer's own submit path", async () => {
     seed("!git status", "run typecheck");
     const sent: string[] = [];
-    const { stdin } = mount({ onSubmit: (t) => sent.push(t) });
+    const { stdin } = mount({ onSubmit: (t) => sent.push(typeof t === "string" ? t : t.submitText) });
     await settle();
     stdin.write(CTRL_R); await settle();
     stdin.write("git");

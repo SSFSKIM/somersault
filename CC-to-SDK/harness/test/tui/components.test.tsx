@@ -289,7 +289,7 @@ describe("TurnSpinner", () => {
 describe("ChatComposer", () => {
   it("submits on Enter and inserts a newline on \\+Enter", async () => {
     const got: string[] = [];
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => got.push(t)} cwd={tmpdir()} commandCatalog={[]} />);
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => got.push(typeof t === "string" ? t : t.submitText)} cwd={tmpdir()} commandCatalog={[]} />);
     await new Promise((r) => setTimeout(r, 20));                  // let useInput subscribe before keys
     // ink timing discipline: await a re-render between dependent keystrokes so each useInput call sees the
     // updated reducer state (a non-functional setState reads a render-time closure; see plan Global Constraints).
@@ -637,7 +637,7 @@ describe("Wave-1 keymap wiring", () => {
     const edits: string[] = [];
     const fakeEdit = (t: string) => { edits.push(t); return "from-editor"; };
     const submitted: string[] = [];
-    const { stdin } = render(<ChatComposer onSubmit={(t) => submitted.push(t)} cwd="/" commandCatalog={[]} editExternal={fakeEdit} />);
+    const { stdin } = render(<ChatComposer onSubmit={(t) => submitted.push(typeof t === "string" ? t : t.submitText)} cwd="/" commandCatalog={[]} editExternal={fakeEdit} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("hi");
     await new Promise((r) => setTimeout(r, 20));
@@ -696,7 +696,7 @@ describe("Wave-1 keymap wiring", () => {
 
   it("chord completes but editExternal returns null → the ORIGINAL buffer is preserved (not cleared)", async () => {
     const submitted: string[] = [];
-    const { stdin } = render(<ChatComposer onSubmit={(t) => submitted.push(t)} cwd="/" commandCatalog={[]} editExternal={() => null} />);
+    const { stdin } = render(<ChatComposer onSubmit={(t) => submitted.push(typeof t === "string" ? t : t.submitText)} cwd="/" commandCatalog={[]} editExternal={() => null} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("keep me");
     await new Promise((r) => setTimeout(r, 20));

@@ -539,7 +539,7 @@ describe("through ChatComposer", () => {
 
   it("Tab on the ghost completes without submitting", async () => {
     let submitted: string | null = null;
-    const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={(t) => { submitted = t; }} cwd="/tmp" commandCatalog={CAT} />));
+    const { stdin, lastFrame } = render(wrap(<ChatComposer onSubmit={(t) => { submitted = typeof t === "string" ? t : t.submitText; }} cwd="/tmp" commandCatalog={CAT} />));
     await tick();
     stdin.write("see /revi");
     await tick();

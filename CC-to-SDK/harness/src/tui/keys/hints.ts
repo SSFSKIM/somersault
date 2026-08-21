@@ -140,6 +140,20 @@ export function expandHintText(keys: readonly string[], platform: NodeJS.Platfor
   const chord = formatBindingLower(key, platform);
   return chord === "" ? "" : `(${chord} to ${description})`;
 }
+/** F9 T-IMAGE (I2), canon L607379 verbatim: `V.isSSH() ? "No image found in clipboard. You're SSH'd; try
+ *  scp?" : \`No image found in clipboard. Use ${chord} to paste images.\`` — `chord` there is upstream's own
+ *  live-derived `chat:imagePaste` binding (the SAME lower-case grammar `formatBindingLower` prints, not the
+ *  parens form `expandHintText` composes), which is why this is its own function rather than a call to that
+ *  one: the sentence has the chord in the MIDDLE, no wrapping parens. `ssh` is a plain boolean rather than an
+ *  env read so the pure half of this stays testable without mutating `process.env`; the composer's Ctrl-V
+ *  handler is the one caller that reads `SSH_CONNECTION`. An unbound chord still completes the sentence
+ *  honestly via `formatBindingLower`'s own `""` (no dead-key literal to fall back to — there is no default
+ *  fallback for a rebindable-from-day-one action the way `ctrl+o` has one). */
+export function noImageInClipboardText(keys: readonly string[], ssh: boolean, platform: NodeJS.Platform = process.platform): string {
+  if (ssh) return "No image found in clipboard. You're SSH'd; try scp?";
+  const chord = formatBindingLower(preferredKey(keys), platform);
+  return chord === "" ? "No image found in clipboard." : `No image found in clipboard. Use ${chord} to paste images.`;
+}
 /** `$e`'s `parens` prop is the ONLY difference between its two output forms (L183875 vs L183883), so the bare
  *  clause is the parens form minus its wrapper. One site needs it: `Vha`'s backgrounded-agent row (429646)
  *  nests the chord hint inside a LARGER parenthesised list (`(↓ to manage · ctrl+o to expand)`), where a

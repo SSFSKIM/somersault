@@ -125,12 +125,16 @@ export function rebuildChips(entry: HistNavEntry, pasteCounter: number): { displ
   const src = entry.pastedContents ?? {};
   const ids = Object.keys(src).map(Number).filter((id) => src[id]?.type === "text").sort((a, b) => a - b);
   if (ids.length === 0) return { display: entry.display, pastedContents: {}, pasteCounter };
-  const remap = new Map<number, PastedEntry>();
+  // F9 T-IMAGE (I2): `PastedEntry` is a 3-arm union now, but `ids` above already filtered to `type:"text"` —
+  // this re-check is a type NARROWING (the filter and this lookup are two separate expressions, so TS
+  // cannot correlate them on its own), not a new runtime branch; it is always true here.
+  const remap = new Map<number, Extract<PastedEntry, { type: "text" }>>();
   const pastedContents: PastedMap = {};
   let next = pasteCounter;
   for (const id of ids) {
     const e = src[id];
-    const fresh: PastedEntry = { id: ++next, type: "text", content: e.content, lineCount: e.lineCount ?? newlineCount(e.content) };
+    if (e?.type !== "text") continue;
+    const fresh = { id: ++next, type: "text" as const, content: e.content, lineCount: e.lineCount ?? newlineCount(e.content) };
     remap.set(id, fresh);
     pastedContents[fresh.id] = fresh;
   }

@@ -14,7 +14,7 @@ import type { CommandEntry } from "./commandComplete.js";
 import { acceptCommand, acceptGhost, acceptMention, commandActive, completionActive, ghostText, mentionActive, moveCommand, moveMention, syncCompletions } from "./completions.js";
 export { commandActive, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, mentionActive, setCommandCatalog, setMentionFiles, suggestPopupShown, syncCompletions } from "./completions.js";
 export type { GhostText } from "./completions.js";
-import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, ingestPaste, snapOut, substituteChips } from "./pasteChips.js";
+import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, imageChipLabel, ingestPaste, snapOut, substituteChips, sweepOrphanImages } from "./pasteChips.js";
 // F5 task 7: the history WALK moved out to its own module (the plan's pre-allocated split), leaving this file
 // the buffer reducer it is. Same deliberate module cycle pasteChips.ts documents — editorHistory imports
 // `bufferText`/`setBuffer`/the state types from here and this file imports the walk from there, all hoisted
@@ -40,9 +40,31 @@ export interface CommandState { span: TokenSpan; query: string; head: boolean; i
 /** One collapsed paste, rendered in the buffer as a `[Pasted text #id +N lines]` placeholder (F5 task 3 fills
  *  the map). Declared HERE, with the undo entry that carries it, so the undo shape never has to reopen.
  *  `lineCount` is OURS: upstream stores `{ id, type, content }` (bundle L495755) and passes the count to `agr`
- *  as an argument instead. We keep it so a re-render of the label never has to re-walk the content. */
-export interface PastedEntry { id: number; type: "text"; content: string; lineCount: number }
+ *  as an argument instead. We keep it so a re-render of the label never has to re-walk the content.
+ *
+ *  F9 T-IMAGE (I2) widens this to a 3-arm union — the composer carrier's whole point. `"image"` carries the
+ *  paste-time-ready block (`content` base64, already re-encoded to fit under I1's ladder); `"image-failed"` is what
+ *  a ladder-exhausted or unreadable clipboard image mints INSTEAD of nothing, so Ctrl-V still gives the user a
+ *  chip to see and delete rather than a silent no-op, and the turn still submits — it degrades to the
+ *  `[Image could not be processed: …]` text block at BUILD time (Task 4's builder), never here. Both image
+ *  arms render the identical `[Image #N]` label (`imageChipLabel`, pasteChips.ts) — the failure is a property
+ *  of the entry, invisible in the chip itself. */
+export type PastedEntry =
+  | { id: number; type: "text"; content: string; lineCount: number }
+  | { id: number; type: "image"; content: string /* base64 */; mediaType: string; dimensions: { width: number; height: number } }
+  | { id: number; type: "image-failed"; reason: string };
 export type PastedMap = Record<number, PastedEntry>;
+/** F9 T-IMAGE (I2) — the structural composer carrier (spec v3.1). Before this task `submitTurn` FLATTENED
+ *  every chip (`substituteChips`) into one string before `onSubmit` ever saw it, so an image entry — which
+ *  cannot be reconstructed from its label — was unreachable past the editor no matter what the rest of the
+ *  chain did. `submitText` is that same flattened string (TEXT chips expanded, exactly as `submit` always
+ *  was — an `[Image #N]` label stays literal in it, `substituteChips` only ever touches `type:"text"`);
+ *  `display` is the chip-labelled text history persists; `pastedContents` is the LIVE map at submit time, so
+ *  an image/image-failed entry rides structurally to whatever reads this object instead of dying with the
+ *  flatten. `ChatComposer` → `ChatApp` → `useChat.submit` → `QueueEntry` all carry it by reference; the
+ *  string-typed `submit` field stays alongside it (unchanged, byte-identical to before this task) so every
+ *  existing plain-string caller/test of `EditorResult.submit` keeps working untouched. */
+export interface ComposerSubmission { display: string; submitText: string; pastedContents: PastedMap }
 /** CM-stash, upstream's `chat:stash` record (bundle L495837): the Ctrl-S park is `{ text, cursorOffset,
  *  pastedContents }` and the restore (L495833) puts all three back — `At(A.text), Qe(A.cursorOffset),
  *  x(A.pastedContents)`. Ours was a bare string until t7, which silently dropped a stashed draft's chips
@@ -90,6 +112,11 @@ export interface EditorResult {
    *  a turn's history text keeps the chip LABELS while `submit` carries the expanded payload, and a command's
    *  is the completed `/name` rather than whatever half-typed prefix was in the buffer. */
   historyAppend?: HistNavEntry;
+  /** F9 T-IMAGE (I2) — set ONLY by `submitTurn` (a `/command` accept still reports the bare string on `submit`
+   *  alone, exactly as before). ChatComposer prefers this over `submit` when both are present, so an
+   *  image/image-failed entry rides to `onSubmit` structurally; every OTHER reader of `EditorResult` — every
+   *  existing test that reads `.submit` — is unaffected, because `submit`'s own value never changed. */
+  submission?: ComposerSubmission;
 }
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
 export interface KeyFlags {
@@ -149,6 +176,23 @@ export function insertText(s: EditorState, t: string): EditorState {
   const mid = parts.slice(1, -1); const last = parts[parts.length - 1];
   lines.splice(row, 1, before + parts[0], ...mid, last + after);
   return { ...s, lines, cursor: { row: row + parts.length - 1, col: last.length } };
+}
+/** F9 T-IMAGE (I2): the Ctrl-V handler's image arm — the one paste path with no "too small to collapse"
+ *  threshold. Unlike `ingestPaste`'s text arm, an image is NEVER inserted as literal characters; it always
+ *  mints a chip, ready or `image-failed` (the reader/re-encode ladder's own two outcomes, ChatComposer's own
+ *  concern — this function only turns whichever one already happened into a buffer entry). `outcome` is
+ *  narrowed to exactly those two shapes so a caller cannot accidentally hand this the "text"/"none" results
+ *  I1's `readClipboardImage` can also produce — those take the ordinary paste/toast paths instead. */
+export function insertImageChip(
+  s: EditorState,
+  outcome: { kind: "image"; content: string /* base64 */; mediaType: string; dimensions: { width: number; height: number } }
+    | { kind: "image-failed"; reason: string },
+): EditorState {
+  const id = s.pasteCounter + 1;
+  const entry: PastedEntry = outcome.kind === "image"
+    ? { id, type: "image", content: outcome.content, mediaType: outcome.mediaType, dimensions: outcome.dimensions }
+    : { id, type: "image-failed", reason: outcome.reason };
+  return insertText({ ...s, pasteCounter: id, pastedContents: { ...s.pastedContents, [id]: entry } }, imageChipLabel(id));
 }
 function removeRange(s: EditorState, start: Cursor, end: Cursor): EditorState {
   const lines = [...s.lines];
@@ -315,7 +359,15 @@ function submitTurn(s: EditorState): EditorResult {
   // `fSe` (F5 task 3): the buffer showed `[Pasted text #1 +40 lines]`, the MODEL gets the forty lines. History
   // keeps the display text — that is what the user typed and what Up must bring back, chip label and all (the
   // map that makes it expandable is task 6's problem to persist).
-  return { state: { ...initialEditorState(history), ...durable(s) }, submit: substituteChips(t, s.pastedContents), historyAppend: entry };
+  const submitText = substituteChips(t, s.pastedContents);
+  // F9 T-IMAGE (I2): `submission` carries the SAME `submitText` plus the live map, structurally — see
+  // `ComposerSubmission`'s own header for why `submit` stays exactly as it was rather than being replaced.
+  return {
+    state: { ...initialEditorState(history), ...durable(s) },
+    submit: submitText,
+    submission: { display: t, submitText, pastedContents: s.pastedContents },
+    historyAppend: entry,
+  };
 }
 
 /** Esc-Esc's second press (upstream L395630-L395634): `if (e.trim() !== "") cgr(e)`, then clear. Blank buffer
@@ -538,7 +590,10 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
     // Which of ingestPaste's three outcomes this was (F5 task 5). A minted chip advanced the counter; an
     // expand left it alone and removed the entry it names; a sub-threshold insert did neither.
     const minted = next.pasteCounter > s.pasteCounter ? next.pastedContents[next.pasteCounter] : undefined;
-    const paste: PasteSignal | undefined = minted ? { kind: "chip", content: minted.content }
+    // `ingestPaste` (pasteChips.ts) mints TEXT chips only — an image chip is `insertImageChip`'s own path,
+    // which never runs through this arm — so `minted.type === "text"` is a type narrowing, not a new
+    // runtime branch; it is always true whenever `minted` itself is defined here.
+    const paste: PasteSignal | undefined = minted && minted.type === "text" ? { kind: "chip", content: minted.content }
       : s.pastedContents[s.pasteCounter] !== undefined && next.pastedContents[s.pasteCounter] === undefined ? { kind: "expand" }
       : undefined;
     return { state: syncCompletions(next), paste };
@@ -612,6 +667,9 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags, now: numb
   // (measured: Ctrl-W → Ctrl-Y → submit sent the literal `[Pasted text #1 …]`). A stale entry is inert —
   // `substituteChips` expands only ids whose label is present — and dies with the buffer at submit.
   if (sameText(state.lines, s.lines) && (state.cursor.row !== s.cursor.row || state.cursor.col !== s.cursor.col)) state = snapOut(state);
+  // F9 T-IMAGE (I2): drop an image/image-failed entry whose label no longer appears anywhere in the buffer —
+  // see pasteChips.ts's `sweepOrphanImages` for why TEXT stays exempt and this species does not.
+  state = sweepOrphanImages(state);
   if (r.submit !== undefined) return { ...r, state, killed };
   if (state === s) return { ...r, killed };
   if (sameText(state.lines, s.lines) || state.undo !== s.undo) return { ...r, state, killed };

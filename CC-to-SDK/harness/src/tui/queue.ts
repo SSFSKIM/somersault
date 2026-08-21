@@ -106,6 +106,17 @@ export function joinQueuedForComposer(entries: readonly QueueEntry[]): { text: s
     const built = rebuildChips({ display: e.value, pastedContents: e.pastedContents }, counter);
     counter = built.pasteCounter;
     for (const entry of Object.values(built.pastedContents)) merged[entry.id] = entry;
+    // F9 T-IMAGE (I2): `rebuildChips` re-mints TEXT ids only (editorHistory.ts's own scope — a recalled
+    // image cannot be reconstructed from its label the way a re-paste can, so it has no "expand" gesture to
+    // protect against and no need for a fresh id on THAT count). An image/image-failed entry therefore rode
+    // through `built.display` with its label untouched, and is carried here under its OWN id — bumping the
+    // running counter past it so a LATER entry's text re-mint in this same join can never land on it.
+    for (const [key, entry] of Object.entries(e.pastedContents ?? {})) {
+      if (entry.type === "text") continue;
+      const id = Number(key);
+      merged[id] = entry;
+      counter = Math.max(counter, id);
+    }
     parts.push(built.display);
   }
   const text = parts.filter(Boolean).join("\n");                                  // `[...ne, re].filter(Boolean)`
@@ -124,6 +135,19 @@ export function joinQueuedForComposer(entries: readonly QueueEntry[]): { text: s
  *  the draft itself is still in the buffer, chips and all. */
 export function applyQueueDrain(s: EditorState, popped: { text: string; pastedContents?: PastedMap }): EditorState {
   const built = rebuildChips({ display: popped.text, pastedContents: popped.pastedContents }, s.pasteCounter);
+  // F9 T-IMAGE (I2): `rebuildChips` only ever RETURNS the ids it re-minted (text), so an image/image-failed
+  // entry `joinQueuedForComposer` already carried through under its OWN id (see there) would otherwise be
+  // silently dropped on this second remap pass — "drain hands it back intact" means intact all the way to
+  // the live buffer, not just to the composer's Up-arrow join. Carried in under that same original id, with
+  // the counter bumped past it so the next chip pasted into the LIVE buffer cannot collide with one.
+  const carried: PastedMap = {};
+  let pasteCounter = built.pasteCounter;
+  for (const [key, entry] of Object.entries(popped.pastedContents ?? {})) {
+    if (entry.type === "text") continue;
+    const id = Number(key);
+    carried[id] = entry;
+    pasteCounter = Math.max(pasteCounter, id);
+  }
   const draft = bufferText(s);
   const queuedLines = built.display.split("\n");
   const lines = [built.display, draft].filter(Boolean).join("\n").split("\n");
@@ -132,7 +156,7 @@ export function applyQueueDrain(s: EditorState, popped: { text: string; pastedCo
     : { row: lines.length - 1, col: lines[lines.length - 1].length };
   return {
     ...s, lines, cursor,
-    pastedContents: { ...s.pastedContents, ...built.pastedContents }, pasteCounter: built.pasteCounter,
+    pastedContents: { ...s.pastedContents, ...built.pastedContents, ...carried }, pasteCounter,
     histIndex: null, stash: null, histEdits: new Map(), histMode: undefined, histRecalled: null,
     undo: [], mention: null, command: null, killRun: false, yankSite: null,
   };

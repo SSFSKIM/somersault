@@ -7,6 +7,7 @@ import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
+import type { ComposerSubmission, PastedMap } from "../../src/tui/editor.js";
 import { needsModelConfirm } from "../../src/tui/modelConfirmModel.js";
 import type { PermissionDecision } from "../../src/index.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
@@ -599,6 +600,48 @@ describe("useChat", () => {
     release();           await waitFor(() => submits === 2);                           // turn ends → drains "second"
     expect(frame(lastFrame)).not.toContain("q:second");
     release();           // release the drained turn so it settles cleanly
+  });
+
+  // F9 T-IMAGE (I2), the plan's required "queue: submit-while-busy enqueues the structural entry, drain
+  // hands it back intact" cell. Before this task `submit` only ever saw a flattened string — an image entry
+  // could not reach the queue at all. `submit`'s widened signature (`ComposerSubmission | string`) is what
+  // makes this reachable; `popQueueToComposer` is the SAME seam ChatComposer's Up-arrow reads (queue.ts's
+  // `joinQueuedForComposer`), proven here at the useChat boundary rather than through a rendered composer.
+  it("a structural submit while busy enqueues the image entry, and the queue hands it back intact", async () => {
+    let release = () => {}; let submits = 0;
+    let fake!: FakeRemote;
+    fake = fakeRemote({ submit: async (_p, onMessage) => {
+      submits++;
+      fake.pushEvent({ kind: "turn", phase: "start", seq: submits });
+      const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "reply" }] } };
+      onMessage(m); fake.pushEvent({ kind: "message", data: m });
+      await new Promise<void>((res) => { release = res; });
+      fake.pushEvent({ kind: "turn", phase: "end", seq: submits });
+      return { result: "done" };
+    } });
+    const api: { run?: (s: ComposerSubmission | string) => void; pop?: () => { text: string; pastedContents?: PastedMap } | null } = {};
+    function H() {
+      const c = useChat(() => fake);
+      api.run = c.submit; api.pop = (c as any).popQueueToComposer;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.length}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("first turn"); await waitFor(() => frame(lastFrame).includes("BUSY"));
+    const imageEntry = { id: 1, type: "image" as const, content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } };
+    api.run!({ display: "look [Image #1]", submitText: "look [Image #1]", pastedContents: { 1: imageEntry } });
+    await waitFor(() => frame(lastFrame).includes("q:1"));
+    // ENQUEUE + DRAIN in one read: `popQueueToComposer` is the exact seam ChatComposer's Up-arrow calls
+    // (`queuePop`), so if the entry survived the enqueue it survives here too.
+    const popped = api.pop!();
+    expect(popped).not.toBeNull();
+    expect(popped!.text).toBe("look [Image #1]");
+    // DRAIN: `joinQueuedForComposer` hands the SAME image entry back, not just its label.
+    expect(popped!.pastedContents).toBeDefined();
+    const backId = Number(Object.keys(popped!.pastedContents!)[0]);
+    expect(popped!.pastedContents![backId]).toEqual({ ...imageEntry, id: backId });
+    release();            // release the running turn so it settles cleanly
+    await waitFor(() => !frame(lastFrame).includes("BUSY"));
   });
 
   it("drains PAST a queued unknown command (no stall) to a following turn", async () => {

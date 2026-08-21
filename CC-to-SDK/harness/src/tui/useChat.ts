@@ -73,7 +73,7 @@ import { isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "./
 import { composerMode } from "./promptMode.js";
 import { buildStatusLinePayload, createStatusLineDriver, runStatusLine as realRunStatusLine, STATUS_LINE_MOUNT_CONTEXT_BUDGET_MS, type StatusLineConfig, type StatusLineDriver, type StatusLineDriverDeps, type StatusLineSnapshot, type StatusLineUsage } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
-import type { PastedMap } from "./editor.js";
+import type { ComposerSubmission, PastedMap } from "./editor.js";
 
 /** What became of ONE `resolveDecision` call (BL6 review Important 1). Three outcomes, and only the first
  *  means "this client's answer is the one that settled the park":
@@ -2910,7 +2910,17 @@ export function useChat(
   // `!` run immediately (control-channel / local — safe mid-turn). Type-ahead while Claude works (CC parity).
   // Wave C Task 14 took `#` out of that exemption with the memory mode: a `#` line is a model turn now, so it
   // queues like any other prompt instead of jumping the running turn.
-  function submit(prompt: string) {
+  // F9 T-IMAGE (I2): `sub` widened to the structural carrier. Every EXISTING string caller (slash commands,
+  // `executeHistory`, the inline `command:*` chord, a queued text drain) stays source-compatible — `prompt`/
+  // `pastedContents` below just normalize the one new shape down to the same two locals the string arm
+  // always had. What is genuinely new: an image/image-failed entry now survives as far as the QUEUE (see
+  // `makeQueueEntry`) instead of dying at the flatten this task removed from `editor.ts`. Actually DELIVERING
+  // it to the model — widening `dispatch`/`runTurn`/`session.submit` to accept the block array — is Task 4's
+  // transport widening (spec v3.1 scope cut); until then `dispatch` still runs on `prompt` alone, which is
+  // exactly `submitText` — the same string this function always dispatched, image labels literal inside it.
+  function submit(sub: ComposerSubmission | string) {
+    const prompt = typeof sub === "string" ? sub : sub.submitText;
+    const pastedContents = typeof sub === "string" ? undefined : sub.pastedContents;
     if (disposed.current || !prompt.trim()) return;
     setSubmitCount((n) => n + 1);
     // W-C T12: `logOutcomeAtSubmission`'s reset (L489800/L495609) — every submit clears the slice, whether the
@@ -2921,7 +2931,7 @@ export function useChat(
     if (prompt.startsWith("!")) { dispatch(prompt); return; }
     const cmd = parseCommand(prompt);
     if (cmd && LOCAL_NAMES.has(cmd.name)) { dispatch(prompt); return; }
-    setQueue((q) => [...q, makeQueueEntry(prompt)]);                            // turn while busy → enqueue
+    setQueue((q) => [...q, makeQueueEntry(prompt, pastedContents)]);            // turn while busy → enqueue
   }
   /** CM51. The mode is DERIVED from the text's own prefix, the one derivation `composerMode` owns for the
    *  whole port — so a queued `!git status` re-enters the composer in bash mode when the drain hands it back
@@ -2930,8 +2940,11 @@ export function useChat(
    *  The `=== "bash"` ternary IS the rename Wave C Task 14 folded `modeOfDisplay` down to: the queue entry
    *  carries upstream's `prompt | bash` wire spelling, the reducer carries `normal | bash`, and this is the
    *  one site where the two vocabularies meet. */
-  function makeQueueEntry(prompt: string): QueueEntry {
-    return { value: prompt, mode: composerMode(prompt) === "bash" ? "bash" : "prompt", priority: "now", origin: "user" };
+  // F9 T-IMAGE (I2): `pastedContents` is a new optional parameter, not a new required one — every existing
+  // caller (there were none besides `submit`'s own enqueue arm) is unaffected, and a plain-string submit
+  // still mints an entry with the field absent, exactly as before.
+  function makeQueueEntry(prompt: string, pastedContents?: PastedMap): QueueEntry {
+    return { value: prompt, mode: composerMode(prompt) === "bash" ? "bash" : "prompt", priority: "now", origin: "user", ...(pastedContents ? { pastedContents } : {}) };
   }
   /** CM48's drain, the useChat half (`popAllEditable`, bundle L149093): hand EVERY editable entry back to the
    *  composer as one `\n`-joined block and clear them from the queue; a non-editable entry survives it. The

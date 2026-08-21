@@ -151,7 +151,7 @@ const PROOFS: Record<string, () => Promise<void> | void> = {
     const edits: string[] = [];
     const submitted: string[] = [];
     const fakeEdit = (t: string) => { edits.push(t); return "EDITED:" + t; };
-    const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => submitted.push(t)} cwd="/" commandCatalog={[]} editExternal={fakeEdit} />);
+    const { stdin, lastFrame } = render(<ChatComposer onSubmit={(t) => submitted.push(typeof t === "string" ? t : t.submitText)} cwd="/" commandCatalog={[]} editExternal={fakeEdit} />);
     await settle();
     stdin.write("hi"); await waitFor(() => frame(lastFrame).includes("hi"));
     stdin.write("\x18");                            // Ctrl-X arms the chord
