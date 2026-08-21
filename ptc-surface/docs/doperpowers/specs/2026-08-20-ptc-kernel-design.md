@@ -409,7 +409,7 @@ agent.resume(session_id, **options) -> AgentHandle
   This is an env check inside a process that exposes arbitrary Python: a determined child can
   spawn agents by other means (native Agent tool, its own SDK install). The guard exists to stop
   *accidental* recursion storms on the cooperative path; the actual boundary remains the
-  `mcp__ptc__exec` allow decision (Trust model).
+  `mcp__plugin_ptc_ptc__exec` allow decision (Trust model).
 - **Concurrency**: one semaphore (default 8, `PTC_MAX_CONCURRENCY`) across all SDK-spawning
   calls (`agent.*`, `llm`, `web_search`) bounds subprocess storms.
 - **Registry**: `~/.ptc/kernels/<key>/agents.json` — `{name, provider, session_id/thread_id,
@@ -760,7 +760,7 @@ Two tiers, and the tiering is part of the contract:
   (same kernel as A1, keyed by `CLAUDE_CODE_SESSION_ID`).
 - **A11 Skill triggers.** `claude -p --plugin-dir ./plugin "analyze all python files under
   src/ for TODO density; keep intermediate data in variables"` → the transcript contains a
-  `mcp__ptc__exec` call (the model chose the kernel unprompted).
+  `mcp__plugin_ptc_ptc__exec` call (the model chose the kernel unprompted).
 - **A12 Truncation.** `exec("print('y'*100000)")` → result ≤ ~12k chars, contains the elision
   marker and a `cells/<n>.log` path whose file holds the full 100k.
 - **A13 Images.** A matplotlib cell yields an image block visible in Claude Code (S5), or —
