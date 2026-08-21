@@ -626,13 +626,19 @@ scorecard reader looks for them in one place.
    reads a wire message timestamp; our wire carries no timestamps at all. So the ticker is
    accurate to one repaint rather than to the call's true start, and an unstamped member
    renders no ticker rather than a zero.
-6. **An expanded cluster that is still running shows no progress at all** (measured in T12's
-   second run). Expanding a live cluster drops the blinking leader row, the `⎿` hint block
-   and the elapsed ticker in one step; in-flight members render as bare header rows —
-   seventeen seconds of `⏺ Bash(…sleep(20)…)` with nothing beneath it. Opening a live cluster
-   trades all progress signalling for the member list. **What canon does in this state is
-   still unmeasured against the bundle**; this is the wave's most substantive fidelity gap
-   and the natural first item of a follow-up.
+6. **An expanded cluster that is still running shows the member list and nothing else — and
+   that is CANON'S OWN BEHAVIOR, not a divergence** (measured in T12's second run; RESOLVED
+   against the 2.1.236 bundle, 2026-08-21 backlog round, `r5-toolstream-research.md`). Canon's
+   expanded branch returns early before every piece of cluster-level dressing (`N3l`'s
+   `if (verbose)` exit at L531523-543; the suppression exit, bash suffix, ticker anchor, clause
+   chain, spinner/chip/hint row all sit at L531544-667, unreachable). The only surviving
+   animation is the per-member blinking leader (`OCh` L531399), which ccx's expanded members
+   also carry; a running Bash member paints `Bash(command)` with nothing beneath it in canon
+   exactly as in ccx (Bash defines no `renderToolUseTag`, registry L534640-660). ccx's
+   `groupItems` early-return (toolRenderer.tsx:861) is structurally identical. What the
+   measurement DID surface is a real, narrower gap filed as its own follow-up below: canon's
+   verbose branch also renders absorbed thinking blocks, hook info and relevant memories
+   (L531537-542) where ccx's `expandedMemberItems` walks tool members only.
 7. **The v1 mouse cut** (§2): mouse arming stays `?1000h ?1006h`, so there is no hover
    brighten, no expanded-row background tint, no click-to-position-cursor in the composer and
    no auto-copy-on-select, and tap detection approximates canon's "no selection produced"
@@ -668,8 +674,13 @@ attempt: with the renderer pinned by an environment variable, `/tui default` ans
   regression from this wave — reproduced identically on `ec9e7a2f97` — but expanded clusters
   put many file rows on the main frame, so its exposure is new. Its own ticket; scored on
   `docs/parity/tui-ux.md`'s tool-use row.
-- **The open-expanded-cluster progress gap** (divergence 6) — needs a bundle measurement
-  before it needs a design.
+- **The open-expanded-cluster progress gap** (divergence 6) — RESOLVED 2026-08-21: measured
+  against 2.1.236, canon behaves identically (see the rewritten divergence 6); the ticket
+  dissolves. Its measurement filed a REPLACEMENT ticket: **an expanded cluster omits the
+  absorbed thinking blocks, hook info and relevant memories canon renders in its verbose
+  branch** (2.1.236 L531537-542) — a cluster that absorbed thinking shows `Thought for Ns` in
+  the collapsed clause and then nothing when opened. Unscheduled; needs a design pass over
+  `expandedMemberItems`.
 - **The PR-link affordance** (divergence 4) — the data is carried; nothing schedules the
   render layer.
 - **A third instance of the wrong-moment class at `useChat.ts:1477`** — reported, not fixed,

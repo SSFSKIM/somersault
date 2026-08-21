@@ -626,11 +626,13 @@ cluster emits no row where canon emits a zero-height clickable one; the errored-
 per-lifetime where canon's is per-arriving-message (membership-only, disk-sourced entries only); PR
 numbers render as text because a text-plus-bold-ranges clause has nowhere to hang an href (the
 scraped url is carried, the affordance unscheduled — the wave's one open backlog item); the ticker's
-start-time mechanism; and **the open-expanded-cluster progress gap** — expanding a still-running
-cluster drops the blinking leader, the hint block and the ticker in one step, so a live cluster
-trades all progress signalling for the member list, and what canon does in that state is still
-unmeasured. That last one is the wave's most substantive fidelity gap and the natural first item of
-a follow-up; it is not scored as shipped.
+start-time mechanism; and **the open-expanded-cluster progress gap — RESOLVED 2026-08-21 as
+canon-identical**: measured against the 2.1.236 bundle (backlog round, `r5-toolstream-research.md`),
+canon's expanded branch returns early before every piece of cluster dressing and shows exactly what
+ccx shows — the member list with per-member blinking leaders and nothing else — so the "gap"
+dissolves into parity. The measurement filed a narrower replacement ticket: an expanded cluster
+omits the absorbed thinking/hook/memory blocks canon's verbose branch renders (L531537-542);
+unscheduled.
 
 **One entry left the file rather than being carried.** The fullscreen wave's recorded "expanded rows
 persist into the classic replay" limitation was measured live here and does not exist: an expanded
