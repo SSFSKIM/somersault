@@ -298,7 +298,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, dockCrowded = false }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Two of canon's surface
    *  deltas land on this component, and both are SUBTRACTIONS from what it paints rather than new content:
    *  D10 hoists the suggestion popup out of here into the band above the dock (`usePaletteHoist` below), and
@@ -308,6 +308,14 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   /** F9 T-MOUSE Task 4 — see `ComposerCaret`. `ChatApp` holds the ref; a bare mount with nothing above it
    *  simply has no reader, exactly like `hitmapRef` in `FullscreenViewport`. */
   originRef?: React.Ref<ComposerCaret>;
+  /** F9 T-MOUSE Task 4 fix (task review Critical) — true whenever `ChatApp` is painting a `TaskPanel` or the
+   *  live-turn spinner/retry/compaction row above this component inside `dock` (the exact booleans that gate
+   *  those elements there: `todosOpen`, `state.busy`, `state.compacting`, each already implying `!paneOwned`
+   *  since this component only mounts when nothing pane-owning is up). The hoisted suggestion palette is NOT
+   *  included here — this component already knows its own `hoisted` locally and folds it in directly. Used
+   *  only to suppress `caretAt`'s addressability (see `originExact` below); defaults false so a bare mount
+   *  with no `ChatApp` above it keeps whatever `useDockTop()` alone would answer. */
+  dockCrowded?: boolean;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -1264,15 +1272,26 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // notification overlay row is NOT counted: it renders only in classic (`fullscreen ||`, above), so it is
   // always absent on this path. `0` — not addressable — off `fullscreen` or wherever `useDockTop` itself
   // answers `0` (classic, or no `FullscreenFrame` above at all, e.g. a bare component test).
-  //   NOT ACCOUNTED FOR (recorded divergence, F9 T-MOUSE Task 4 report): a task panel, the live-turn
-  // spinner/retry/compaction row, or a hoisted suggestion palette rendering ABOVE the composer inside `dock`
-  // shift its true screen row by their own height, which this arithmetic does not see — `ChatApp` builds
-  // `dock` and knows when each is mounted, but their exact row counts are each other components' own
-  // business, and wiring that through was cut from this task's scope. A click during one of those states
-  // lands on the WRONG row rather than failing safe; the effect is bounded to right when a user is unlikely to
-  // be repositioning the caret at all (a live turn, an open task panel, an open command/mention list).
+  //   FAIL SAFE UNDER A DOCK CO-OCCUPANT (task review Critical, fix round). `useDockTop()` answers the
+  // DOCK BAND's first row, not the composer's — whenever a `TaskPanel`, the live-turn spinner/retry/
+  // compaction row, or a hoisted suggestion palette paints above the composer inside `dock` (ChatApp.tsx),
+  // the composer's TRUE screen row is that published row plus however many rows the earlier occupant took,
+  // which this arithmetic cannot see (`ChatApp` builds `dock`; each occupant's own painted height is that
+  // occupant's business, not threaded through). Measured: `FullscreenFrame`'s region does self-correct by
+  // shrinking to absorb SOME of a taller dock, but only up to its own floor — once the dock outgrows what
+  // the region still has to give back (a live turn plus a multi-line draft is enough), `dockTop` goes stale
+  // and a click resolves against a DIFFERENT, still-valid logical line rather than failing safe.
+  //   `dockCrowded` is that "another occupant is above me" fact, threaded from `ChatApp` (the palette is the
+  // one exception — `hoisted` below already answers it locally, so it isn't duplicated as a prop). ORIGIN
+  // GOES NOT-ADDRESSABLE (0) rather than attempting the arithmetic anyway — the same "computed constant,
+  // degrade to 0" contract `RegionTopContext`'s own header states, which the pre-fix code claimed to follow
+  // and did not hold to in this one case. THE COST, recorded: canon repositions the caret correctly during a
+  // busy turn or an open task panel (occupant-height accounting, R1 §2.6's general case); ccx v1 defers that
+  // and a click during those states is simply refused rather than silently wrong — the follow-up is threading
+  // each occupant's own painted row count into this arithmetic instead of a single crowded/not flag.
   const dockTop = useDockTop();
-  const bufferTopRow = fullscreen && dockTop > 0 ? dockTop + (waitingForPermission ? 2 : 0) + 1 : 0;
+  const originExact = fullscreen && dockTop > 0 && !dockCrowded && !hoisted;
+  const bufferTopRow = originExact ? dockTop + (waitingForPermission ? 2 : 0) + 1 : 0;
   const caretAt = useCallback((col: number, row: number): boolean => {
     if (bufferTopRow <= 0) return false;
     const found = caretFromLocalPosition(stateRef.current.lines, innerWidth, row - bufferTopRow, col - leftInset);
