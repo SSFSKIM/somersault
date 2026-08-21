@@ -334,8 +334,24 @@ agent.resume(session_id, **options) -> AgentHandle
   `structured` is populated when `output_schema` (a JSON Schema dict) was given.
 - `AgentHandle`: `.name`, `.session_id`, `.status` (`running|done|error|interrupted`),
   `await .result()`, `await .send(msg)` (a follow-up turn on the same session — this is the
-  SendMessage equivalent), `.messages()` (transcript so far), `.history()` (parsed `Transcript`),
-  `.interrupt()`, `.close()`.
+  SendMessage equivalent), `.messages()` (transcript so far), `.history()` (parsed `Transcript`,
+  M3 — raises `NotImplementedError` until the transcript reader lands), `.interrupt()`,
+  `.close()`. **`.interrupt()` follows S1's terminal shape**: it signals the session and then
+  *waits the drain out*, because an interrupted turn ends with a normal `ResultMessage`
+  (`terminal_reason='aborted_streaming'`, no exception, 4–13 s). The handle therefore settles
+  through its ordinary completion path — `result()` returns the aborted turn's partial result —
+  and only its `.status` and registry row become `interrupted`. A drain that outlives the
+  interrupt budget is treated as wedged: the driver is cancelled and `result()` raises instead.
+- `agent.resume(session_id)` opens a session with no turn in flight: the handle is `done` on
+  arrival and exists to be `send()`-ed to. It is subject to the same depth brake as
+  `run`/`spawn`/`fork` (it can drive unbounded turns), writes the same audit record, and its
+  registry row carries the resumed id — the row is what makes a session resumable after a
+  kernel restart, so it must never be null.
+- **Kernel death reaps the kernel's children.** Agent CLIs are spawned without a session of
+  their own, so they live in the kernel's process group; `kill_kernel`/`restart` and the idle
+  watchdog therefore kill the *group*, not the pid (SIGKILL and `os._exit` both bypass the
+  SDK's `atexit` reaper). Background `bash()` children get their own session and are reaped by
+  the shell layer instead.
 - **Claude backend**: `claude-agent-sdk` in-kernel, version-pinned in the venv. `run` =
   `query(...)`; `spawn` = `ClaudeSDKClient` with its own session (streamed to a registry entry
   as it goes); `fork` = `resume=<claude_session_id from meta.json>` + `fork_session=True`
@@ -882,6 +898,17 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   plumbing) is a credential leak unless it redacts. The S2 probe itself implements this
   pattern (`_secretish(name, value)`) and its artifact writer redacts accordingly.
   Date/Author: 2026-08-21 / T18 review.
+  Amendment (T20): the rule binds *surfaces that log or forward environment*, and T20 shipped
+  none. `_child_env` builds four `PTC_*` variables from scratch and forwards nothing else; the
+  SDK's own merge over the inherited environment is what pays for subscription auth and must
+  NOT be filtered (redacting it breaks the OAuth bearer the child needs). No audit record,
+  registry row, cell log or CLI output enumerates the environment — `ptc doctor` prints two
+  named non-credential variables and nothing else — so there is no redaction *call site* yet,
+  and a helper used by nothing would be dead code. `test_child_env_is_ptc_only_and_carries_no_
+  secrets` states the predicate as an assertion on the actual seam and fails the moment someone
+  widens `_child_env` to an `os.environ` merge. The redaction helper lands with the first
+  surface that logs or forwards inherited env (a debug dump, an env-carrying audit record).
+  Date/Author: 2026-08-21 / T20 review-fix.
 
 - Decision: **OPEN** — whether/how to isolate a PTC-spawned `codex app-server` thread from the
   user's `~/.codex` configuration (MCP servers, hooks, model, auth) is deferred to T22, not
@@ -999,6 +1026,13 @@ Spikes come **before** the milestones whose architecture they decide, as an expl
   CANCEL_ORPHANS []`; `recover_after_cli_death: subtype 'success' after the kill`;
   `interrupt_terminal_reason: subtype 'error_during_execution', terminal_reason
   'aborted_streaming'`.
+  T20 follow-up (2026-08-21, review-fix): `AgentHandle.interrupt()` implements exactly this
+  shape — signal, then wait the drain out and let the driver's normal completion settle the
+  handle, cancelling only past the drain budget. Proven against the fake (whose `interrupt()`
+  now produces the aborted result after a delay, as the CLI does) and RED-proven against the
+  pre-empting order. **Not yet re-run live**: the one budgeted T20 live run predates the fix
+  and covered run/spawn/gather/list only — a live interrupt belongs to the next live budget
+  (T21's run or T28's acceptance).
 
 - Observation: `ClaudeAgentOptions(setting_sources=None)` — the default — means "load
   everything the CLI would": the user's `~/.claude/settings.json`, project settings, their
