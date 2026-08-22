@@ -1170,6 +1170,31 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   `_Agent` under `max_concurrency=1`, which only passes if the permit really came back.
   Date/Author: 2026-08-21 / T22 review-fix.
 
+- Decision: PTC's **model-facing size budgets stand as specified** — `max_output_chars`
+  default 12 000 with the 50 000 server clamp, and `plugin/skills/ptc/SKILL.md` at ~12 KB.
+  Rejected: applying the codex-rs harness's ">1K tokens of model context is a P0" review
+  ceiling (`AGENTS.md:104-106`) to either of them.
+  Rationale: that ceiling governs the RUST harness's own additions to a Codex turn's context;
+  PTC is a Claude Code MCP server plus a skill, and its two budgets are already measured
+  against the norms that do govern it. (a) A cell result is a TOOL RESULT, and Claude Code's
+  own native tools return more: Bash up to ~30 000 characters, Read up to 2 000 lines. The
+  host's MCP output cap is 25 000 tokens (Surprises & Discoveries above), which 12 000
+  characters sits far under; the value is user-configurable per call and by
+  `PTC_MAX_OUTPUT_CHARS`, and the 50 000 clamp is the ceiling on what a caller may ask for,
+  not a default anyone gets. A12 acceptance measured a live truncated result at 12 137
+  characters against a 100 001-character log. (b) A skill is progressive disclosure:
+  `SKILL.md` is loaded when the model reaches for the skill, not resident in every turn, and
+  its ~12 KB measures ~2.2k tokens — ordinary for a Claude Code skill. T27's review already
+  adjudicated this exact length once ("update the target, not cut content"), and cutting
+  operational instructions into the README would move them out of the only document the
+  model reads at the moment it needs them. Recorded so the question does not reopen for a
+  fourth reviewer: the honest lever if these budgets ever prove too large is measurement of
+  real cells and real skill loads, not a threshold borrowed from another product in this
+  repository. The same review's "split the feature into reviewable stages" finding is the
+  round-1 adjudication recurring unchanged (this work WAS staged as 28 independently
+  reviewed tasks; the whole-branch diff is the plan, not one review unit) and stands.
+  Date/Author: 2026-08-22 / controller adjudication, final review r6.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
