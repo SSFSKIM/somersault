@@ -362,6 +362,16 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // the same problem `hoveredKey`'s `useState` solves for hover; selection needs its own trigger because the
   // VALUE React would otherwise track is sitting outside React entirely.
   const selectionStateRef = useRef<SelectionState>(createSelectionState());
+  // Final-review finding 7: `SelectionState` addresses rows by NUMERIC INDEX into `hit.current.rows`, and
+  // that array is rebuilt from scratch on every publish — a streamed repaint (a new item published above
+  // the selection, a fold toggling, a scroll re-wrapping the window) can leave the same index pointing at
+  // DIFFERENT content than the reader actually dragged over, mis-highlighting and mis-copying. This ref is
+  // the itemKey each row carried at the moment the selection was last set (start/drag/multi-click) — the
+  // one thing a numeric row index cannot tell apart from "the same row, unmoved". Compared against the
+  // FRESH keys below on every publish; a mismatch clears the selection rather than paint (or copy) against
+  // content that is no longer what was selected. Remapping the selection onto its content's new position
+  // is the real fix and a real follow-up — this is the honest v1: never wrong, sometimes just gone.
+  const selectionKeysRef = useRef<readonly string[] | null>(null);
   const [, setPaintTick] = useState(0);
   const repaint = useCallback(() => setPaintTick((n) => n + 1), []);
   // `hit.current.top` is read at CALL TIME, not at the time this closure was created — `hit` is a stable ref
@@ -371,16 +381,21 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const { top } = hit.current;
     return top <= 0 ? undefined : { row: row - top + 1, col };
   };
+  // The snapshot is the WHOLE current row list, not just the gesture's own span: a drag can extend past
+  // rows it has not touched yet, and every row it might come to cover needs its key on record.
+  const snapshotSelectionKeys = () => { selectionKeysRef.current = hit.current.rows.map((r) => r.itemKey); };
   const startSelectionAt = useCallback((col: number, row: number) => {
     const cell = cellAt(col, row);
     if (!cell) return;
     startSelection(selectionStateRef.current, cell);
+    snapshotSelectionKeys();
     repaint();
   }, [repaint]);
   const dragSelectionTo = useCallback((col: number, row: number) => {
     const cell = cellAt(col, row);
     if (!cell) return;
     dragTo(selectionStateRef.current, cell);
+    snapshotSelectionKeys();
     repaint();
   }, [repaint]);
   const multiClickSelectionAt = useCallback((col: number, row: number, count: 2 | 3) => {
@@ -390,6 +405,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const hitRow = painted[rowIndex];
     if (!hitRow) return;
     multiClick(selectionStateRef.current, { row: rowIndex + 1, col }, count, hitRow);
+    snapshotSelectionKeys();
     repaint();
   }, [repaint]);
   const endSelectionDrag = useCallback(() => { selectionStateRef.current.isDragging = false; }, []);
@@ -397,6 +413,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   const discardSelection = useCallback(() => {
     const s = selectionStateRef.current;
     s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
+    selectionKeysRef.current = null;
     repaint();
   }, [repaint]);
   // F9 T-MOUSE Task 7 — the auto-copy latch's own read: the SAME geometry the paint path derives
@@ -494,6 +511,23 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // copy, and applied DURING render for the same reason `settled`/`anchor` above are (:274) — an effect would
   // paint one frame with a hover nothing on screen answers to before correcting itself.
   if (hoveredKey !== null && !hit.current.rows.some((row) => row.itemKey === hoveredKey)) setHoveredKey(null);
+
+  // Final-review finding 7 — SELECTION STALENESS. Same "applied during render" discipline as the hover
+  // check just above, for the same reason: an effect would paint one frame with a highlight (or a copy)
+  // against content the reader never dragged over before correcting itself. `selectedSpans` gives the
+  // rows THIS selection currently claims (against the array just published, so its row-count clamping is
+  // already fresh); each of those rows' itemKey is compared against what that same index carried at
+  // selection time. Any mismatch means the document moved under the sweep — clear it.
+  if (selectionKeysRef.current) {
+    const spans = selectedSpans(selectionStateRef.current, hit.current.rows);
+    const snapshot = selectionKeysRef.current;
+    const shifted = spans.some((span) => hit.current.rows[span.row - 1]?.itemKey !== snapshot[span.row - 1]);
+    if (shifted) {
+      const s = selectionStateRef.current;
+      s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
+      selectionKeysRef.current = null;
+    }
+  }
 
   // F9 T-MOUSE Task 6 — SELECTION PAINT. `selectedSpans` reads exactly the rows array just published above —
   // the region-bounds scope `selection.ts` documents ("every row this module ever sees IS the region") — so
