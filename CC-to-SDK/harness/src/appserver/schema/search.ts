@@ -16,7 +16,8 @@ import { SEARCH_CAPS } from "../searchScan.js";
  *  chose into the one it rejected.
  *
  *  `cursor` is an OPAQUE server-minted string (base64url of `{v,s,r,q,g}` — searchScan.ts's codec), unlike
- *  `thread/list`'s decimal offset and `thread/read`'s `"<epoch>:<row>"`: it is a keyset naming the next
+ *  `thread/read`'s `"<epoch>:<row>"` (and unlike `thread/list`, which since M6 is a keyset of its own —
+ *  `{v,s}`, no rows to address and no term to be bound to): it is a keyset naming the next
  *  (sortValue, sessionId, rowIndex) position to examine, and a client that composed one by hand would be
  *  composing a position in an ordering it cannot see. Garbage — including a forged row offset or a
  *  non-finite sort value — refuses. So does a cursor whose WALK moved (D-M5-26): `q` fingerprints the

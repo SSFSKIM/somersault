@@ -10,7 +10,20 @@ import type { SessionStore, SessionStoreEntry } from "@anthropic-ai/claude-agent
 type SuiteFns = {
   describe: (name: string, fn: () => void) => void;
   it: (name: string, fn: () => Promise<void> | void) => void;
-  expect: (v: unknown) => any;
+  expect: (v: unknown, message?: string) => any;
+};
+
+/** The declared contract, not a weaker paraphrase of it: `sdk.d.ts` says `mtime` "is integer Unix epoch
+ *  milliseconds (floor fractional sources)". This gate used to assert `typeof mtime === "number"` — which
+ *  NaN, ±Infinity and 1.5 all satisfy. So the gate whose whole job is to BLESS an adapter's timestamps
+ *  accepted the one value that makes every downstream comparison meaningless: `NaN - NaN` is NaN, so a
+ *  comparator reads it as "no opinion" and `.sort()` hands back unrelated rows in an unspecified order.
+ *
+ *  `searchScan.ts` screens non-finite values at the consumer, but a consumer-side screen only ever protects
+ *  the consumers that already exist — the gate is what every FUTURE one inherits, and it was handing them a
+ *  guarantee it did not check. `Number.isInteger` is the contract exactly, and subsumes finiteness. */
+const expectEpochMs = (expect: SuiteFns["expect"], mtime: unknown, where: string): void => {
+  expect(Number.isInteger(mtime), `${where}: mtime must be integer Unix epoch ms per the SessionStore contract, got ${typeof mtime} ${String(mtime)}`).toBe(true);
 };
 
 export interface ConformanceOpts {
@@ -54,7 +67,7 @@ export function sessionStoreConformance(name: string, makeStore: () => SessionSt
       expect((await s.load({ projectKey: "q", sessionId: "s3" }))!.map((x) => x.uuid)).toEqual(["c"]);
     });
 
-    it("listSessions() reports each session once with a numeric mtime", async () => {
+    it("listSessions() reports each session once with an integer-epoch-ms mtime", async () => {
       const s = await makeStore();
       if (!s.listSessions) return; // optional per contract
       await s.append({ projectKey: "p", sessionId: "s4" }, [e("a", 1)]);
@@ -62,7 +75,7 @@ export function sessionStoreConformance(name: string, makeStore: () => SessionSt
       await s.append({ projectKey: "p", sessionId: "s4" }, [e("c", 3)]);
       const list = await s.listSessions("p");
       expect(list.map((r) => r.sessionId).sort()).toEqual(["s4", "s5"]);
-      for (const r of list) expect(typeof r.mtime).toBe("number");
+      for (const r of list) expectEpochMs(expect, r.mtime, `listSessions()[${r.sessionId}]`);
     });
 
     it("listSessionSummaries() folds set-once + last-wins fields per session", async () => {
@@ -73,7 +86,7 @@ export function sessionStoreConformance(name: string, makeStore: () => SessionSt
       await s.append(key, [e("b", 2)]);
       const [sum] = await s.listSessionSummaries("p");
       expect(sum.sessionId).toBe("s6");
-      expect(typeof sum.mtime).toBe("number");
+      expectEpochMs(expect, sum.mtime, `listSessionSummaries()[${sum.sessionId}]`);
       expect(sum.data.firstPrompt).toBe("m1"); // set-once froze on first sight
     });
 

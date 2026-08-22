@@ -203,13 +203,63 @@ function rowMethodNames(methodCol) {
 const rowNamedMethods = new Set(statusRows.flatMap((r) => rowMethodNames(r[3])));
 const appserverUnrowed = [...liveMethods].filter((m) => !rowNamedMethods.has(m));
 
+// ---- Settings-key pass (M6): configDomain.ts's KNOWN_TOP_LEVEL is an ADVISORY list — a key outside it
+// warns ("written anyway"), never refuses. That is exactly why it has to be true, and exactly why nothing
+// was watching it: every way of being wrong costs a missing warning or a spurious one, never a visible
+// failure, so it rots in silence under the code it is supposed to verify. It was hand-transcribed from a
+// February snapshot of the reference harness and by SDK 0.3.237 had drifted 71 keys in one direction and 9
+// in the other — including `spellcheck`, which upstream had just shipped and which we therefore warned about.
+//
+// Upstream truth is the SDK's own `export declare interface Settings`, generated from the same SettingsSchema
+// the real harness validates against — a versioned artifact that arrives with every bump, which the February
+// snapshot is not. Compared against the INSTALLED sdk.d.ts, never npm HEAD: the advisory must describe the SDK
+// we ship against, and gating on HEAD would turn someone else's release into our red build. Local and
+// deterministic, so it is a gate (exit 1), like the appserver passes above and unlike the HEAD report.
+function settingsTopLevelKeys(dts) {
+  const m = dts.match(/export declare interface Settings \{/);
+  if (!m) return [];
+  const start = m.index + m[0].length;
+  const end = dts.indexOf("\n}", start); // nested members close at "    };" — a flush-left "}" is the interface's own
+  const body = end === -1 ? "" : dts.slice(start, end);
+  // Exactly-4-space indent IS the top-level test, and it is why nested keys need no separate exclusion:
+  // `permissions.defaultMode` sits at 8, and a jsdoc continuation line puts `*` where a key name would go.
+  // Those nested names are precisely the ones the advisory must keep warning about at the top level.
+  return [...new Set([...body.matchAll(/^ {4}(?:readonly )?(\$?[A-Za-z_][\w$]*)\??\s*:/gm)].map((k) => k[1]))];
+}
+const configDomainPath = join(root, "harness", "src", "appserver", "configDomain.ts");
+const upstreamSettingsKeys = settingsTopLevelKeys(installedDtsRaw);
+const knownBlock = readFileSync(configDomainPath, "utf8").match(/const KNOWN_TOP_LEVEL = new Set\(\[([\s\S]*?)\]\);/);
+const knownSettingsKeys = knownBlock ? [...knownBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+// Same false-clean guard the passes above get, and for the same reason: an empty parse finds no divergence
+// and prints "in sync", so a reformat of either side would switch this gate off without anyone noticing.
+for (const [what, arr] of [["sdk.d.ts interface Settings", upstreamSettingsKeys], ["configDomain.ts KNOWN_TOP_LEVEL", knownSettingsKeys]]) {
+  if (!arr.length) { console.error(`PARSE FAILURE: settings-key pass extracted 0 keys from ${what} — fix the regexes in this script before trusting any verdict.`); process.exit(2); }
+}
+const knownSet = new Set(knownSettingsKeys), upstreamSet = new Set(upstreamSettingsKeys);
+const settingsMissing = upstreamSettingsKeys.filter((k) => !knownSet.has(k)).sort();
+const settingsStale = knownSettingsKeys.filter((k) => !upstreamSet.has(k)).sort();
+/** The corrected list, in the source file's own dense style — the fix for this gate is a paste, not a re-read
+ *  of 149 names against a moving schema, which is the transcription step that produced the drift. */
+function pasteableKeyList(keys) {
+  const lines = [];
+  let line = " ";
+  for (const k of [...keys].sort()) {
+    const piece = ` "${k}",`;
+    if (line.length + piece.length > 108) { lines.push(line); line = " "; }
+    line += piece;
+  }
+  if (line.trim()) lines.push(line);
+  return lines.join("\n").replace(/,$/, "");
+}
+
 const report = {
   package: PKG, installed: installedVersion, head: headVersion, drift: diff(installed, head),
   appserver: { scorecard: "docs/parity/appserver.md", walked: appserverWalked, tally: appserverTally, missing: appserverMissing, stale: appserverStale, unrowed: appserverUnrowed },
+  settingsKeys: { source: "harness/src/appserver/configDomain.ts KNOWN_TOP_LEVEL", upstream: upstreamSettingsKeys.length, known: knownSettingsKeys.length, missing: settingsMissing, stale: settingsStale },
 };
 // The gate's verdict travels with the JSON too: exit 1 on a missing, stale or unrowed row, exactly as the
 // text mode does.
-if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(appserverMissing.length || appserverStale.length || appserverUnrowed.length ? 1 : 0); }
+if (asJson) { console.log(JSON.stringify(report, null, 2)); process.exit(appserverMissing.length || appserverStale.length || appserverUnrowed.length || settingsMissing.length || settingsStale.length ? 1 : 0); }
 
 console.log(`${PKG}: installed ${installedVersion} vs npm HEAD ${headVersion}\n`);
 let any = false;
@@ -254,3 +304,19 @@ if (appserverUnrowed.length) {
 }
 console.log(`  ${appserverTally.rows} rows by status: ${ordered(appserverTally.status, ["shipped(M1)", "shipped(M2a)", "shipped(M2b)", "shipped(M3)", "planned(M3)", "probe-gated", "N/A"])}`);
 console.log(`  ${appserverTally.rows} rows by origin scope: ${ordered(appserverTally.origin, ["both", "inProcess", "fleet-only", "N/A"])}`);
+
+// ---- Settings-key gate: computed above (before the --json exit, for the same reason the appserver gate is).
+console.log(`\nsettings-key advisory drift (KNOWN_TOP_LEVEL vs sdk.d.ts \`interface Settings\`, installed ${installedVersion}):`);
+console.log(`  ${upstreamSettingsKeys.length} keys declared upstream, ${knownSettingsKeys.length} in the advisory list`);
+if (settingsMissing.length || settingsStale.length) {
+  // Both directions are wrong, but they are wrong differently, and saying which is which is the difference
+  // between a gate that reports and a gate that teaches: a MISSING key makes the server warn about a setting
+  // that is real (the visible failure), a STALE one makes it stay silent about a setting that is not.
+  if (settingsMissing.length) console.error(`\nFAIL: real upstream key(s) the advisory warns about (${settingsMissing.length}): ${settingsMissing.join(", ")}`);
+  if (settingsStale.length) console.error(`\nFAIL: advisory key(s) upstream no longer declares (${settingsStale.length}): ${settingsStale.join(", ")}`);
+  console.error(`\nReplace the KNOWN_TOP_LEVEL body in harness/src/appserver/configDomain.ts with:\n`);
+  console.error(pasteableKeyList(upstreamSettingsKeys));
+  process.exitCode = 1;
+} else {
+  console.log(`  the advisory matches the installed SDK's declared settings surface exactly — no drift`);
+}

@@ -182,6 +182,13 @@ const forksSession = (config: Record<string, unknown> | undefined): boolean => B
 
 const RESUME_LIVE_FLEET = "sessionId belongs to a running fleet session; use thread/attach";
 
+/** The same refusal for a holder in THIS process, and it names a different remedy because "use
+ *  thread/attach" is unfollowable here — the client is already connected to the server that holds it.
+ *  Both remedies are spelled because the two ways a local record can hold an id want different ones: a
+ *  working thread is closed, and one whose engine died is `thread/reopen`'d (the method that exists for
+ *  exactly that state), never resumed into a SECOND record naming the same session. */
+const RESUME_LIVE_LOCAL = "This server already holds a thread for that session; close it first, or thread/reopen it if its engine died";
+
 /** The refusal for a session held by a live ccx process ELSEWHERE on this machine — shared by
  *  `thread/archive` (archiveDomain.ts) and `thread/delete` (sessionLib.ts), the two methods that refuse
  *  rather than redirect. It lives HERE, beside `liveInFleet`, because the sentence and the probe are one
@@ -220,6 +227,90 @@ function fleetResumeCandidates(srv: AppServer, sessionId: string): "live" | Rost
 async function anyRosterPidLive(rows: RosterRow[]): Promise<boolean> {
   for (const row of rows) if (await isPidLive(row.pid, row.procStart)) return true;
   return false;
+}
+
+/** ADMISSION, for every request that names an existing session — `thread/resume` and the resume-carrying
+ *  `thread/start`, which spec D-M5-21 already calls two of the three admission surfaces but which had
+ *  drifted into two different answers. `thread/start` ran none of this: two starts naming one session each
+ *  registered a record stamped with it, leaving `findLiveBySessionId` to pick one arbitrarily and the other
+ *  thread's history to be archived or deleted out from under a live engine; and no fence stopped a start
+ *  landing in the middle of a `thread/delete`. Both surfaces now run this, so a rule added here reaches
+ *  them together instead of being remembered twice.
+ *
+ *  THREE SCOPES, NOT TWO, which is why `admits` gates one of them and not the others:
+ *   - The DELETE FENCE applies to every shape, fork included. A fork does not admit the id, but it READS
+ *     that transcript to replay it, so erasing it mid-admission breaks the session being opened —
+ *     `startThread` already reasoned this way for its own copy of the check.
+ *   - The LOCAL live-holder refusal applies only when the request ADMITS the id (`forkSession` beside
+ *     `resume` opens a NEW session id — D-M5-21b): a fork takes no identity from the holder, and two forks
+ *     off one parent are legitimate. Two threads of THIS server stamped with one session id are not — that
+ *     is the state the refusal exists to prevent.
+ *   - The FLEET refusals are UNCONDITIONAL — a fork of a live fleet session is refused too, and that is
+ *     deliberate rather than an oversight of the carve-out above. What a fork reads is the parent's
+ *     transcript, and a live fleet holder is still APPENDING to that file, so the copy the fork replays is
+ *     torn: the same reasoning `thread/delete`'s own fleet arm gives (sessionLib.ts). Loosening it is a
+ *     product decision about a hazard nothing here can bound, not a repair.
+ *
+ *  Local before fleet, and each with its own sentence: a refusal whose remedy is unfollowable is worse than
+ *  a generic one. The local test excludes fleet-origin records so the fleet arm below keeps its own.
+ *
+ *  `register` runs INSIDE the roster reservation and is not awaited until after the release, which is
+ *  `thread/resume`'s established shape: the reservation fences the window before REGISTRATION — after it,
+ *  `findLiveBySessionId` sees the thread and `thread/delete`'s live-guard covers the rest — and holding it
+ *  across the shelf read would be incidental rather than principled. Returns whether the caller was
+ *  admitted, so a refused request runs none of its own follow-on work (the eager unarchive). */
+async function admitResume(
+  srv: AppServer, ctx: ConnCtx, id: RequestId,
+  target: { sessionId: string; admits: boolean },
+  register: () => void | Promise<void>,
+): Promise<boolean> {
+  const { sessionId, admits } = target;
+  // A closure, not a value, because it is asked TWICE — at arrival and again after the probe below — and
+  // the whole point of the second ask is that the answer can have changed in between.
+  const localHolder = (): boolean => admits && srv.registry.list().some((r) => r.origin !== "fleet" && r.sessionId === sessionId);
+  // BUSY, not a new code: "you may not resume this right now" is what the busy family means on the wire.
+  if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return false; }
+  if (localHolder()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_LOCAL); return false; }
+  // Before anything is spawned: a live fleet session is the one sessionId this must not fork. -32602 rather
+  // than a new code — the request is well-formed but its target is something resume cannot legally act on.
+  const candidates = fleetResumeCandidates(srv, sessionId);
+  if (candidates === "live") { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return false; }
+  // No roster candidate to probe (the overwhelmingly common case): register in this same dispatch tick, so
+  // there is no yield for a delete to race into (see fleetResumeCandidates).
+  if (candidates.length === 0) { await register(); return true; }
+  // The probe below AWAITS. Reserve synchronously HERE, before that yield — with the arrival check above,
+  // these are what make admission and deletion mutually exclusive even when a delete completes inside the
+  // probe (see resumingSessions and sessionLib.ts's delete). Released in a `finally`: a refused probe must
+  // not reserve forever.
+  srv.resumingSessions.set(sessionId, (srv.resumingSessions.get(sessionId) ?? 0) + 1);
+  let admitted: void | Promise<void>;
+  try {
+    if (await anyRosterPidLive(candidates)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return false; }
+    // RE-ASKED AFTER THE PROBE, and HERE rather than in either caller, because the callers cannot see this
+    // window: every one of their own checks ran in the dispatch tick, and a `ps` subprocess is milliseconds
+    // wide. Two arrival answers do not survive it.
+    //  - `shuttingDown`: shutdown() latches and THEN snapshots `registry.list()`, so a thread registered
+    //    after that snapshot is disposed by nobody and leaks its `claude` child — the exact leak the latch
+    //    exists to close. `startThread` re-checks it at its own top for this reason, which is why the
+    //    `thread/resume` caller was never exposed; `createThread` (the other caller's `register`) has no
+    //    check of its own. `review/start` states the same rule for its own git yield.
+    //  - the LOCAL HOLDER: the arrival check fences an admission that arrives after a registration, not two
+    //    that arrive before either. `resumingSessions` refcounts DELETION and deliberately does not
+    //    serialize siblings (a second resume of one session is legal), so without this both pass arrival,
+    //    both probe and both register — two records stamped with one session id, which is precisely the
+    //    state that refusal exists to prevent. Same code and same sentence as the arrival check: the
+    //    loser's remedy does not depend on which side of the probe it lost on.
+    if (srv.isShuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return false; }
+    if (localHolder()) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_LOCAL); return false; }
+    admitted = register();
+  } finally {
+    // MY hold, not the reservation (PF2): a sibling may still be inside its own probe, and the entry is
+    // gone only when the last of us leaves.
+    const held = (srv.resumingSessions.get(sessionId) ?? 1) - 1;
+    if (held > 0) srv.resumingSessions.set(sessionId, held); else srv.resumingSessions.delete(sessionId);
+  }
+  await admitted;
+  return true;
 }
 
 /** "Does a FLEET ROSTER ROW or this server's own registry say someone holds this session?" — both halves
@@ -343,16 +434,26 @@ export class AppServer {
       // agree — a stamp without its unarchive, or the reverse, is the half-shipped shape this milestone
       // keeps paying for.
       const cfg = parsed.data.config;
-      const resuming = typeof cfg?.resume === "string" && !forksSession(cfg) ? cfg.resume : undefined;
-      const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
-      // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
-      // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
-      // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
-      // client's first turn — a window, lasting whole requests rather than a tick, in which thread/archive
-      // and thread/delete both judge a live conversation to be cold.
-      if (resuming && !record.sessionId) record.sessionId = resuming;
-      ctx.peer.reply(id, { thread: threadView(srv, record) });
-      srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
+      // `resumeTarget` is "this request names an existing transcript" (fork or not — the delete fence cares
+      // about both); `resuming` is the narrower "it ADMITS that id", which is what the stamp, the shelf
+      // read and the live-holder refusals all key on.
+      const resumeTarget = typeof cfg?.resume === "string" ? cfg.resume : undefined;
+      const resuming = resumeTarget !== undefined && !forksSession(cfg) ? resumeTarget : undefined;
+      const register = (): void => {
+        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
+        // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
+        // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
+        // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
+        // client's first turn — a window, lasting whole requests rather than a tick, in which thread/archive
+        // and thread/delete both judge a live conversation to be cold.
+        if (resuming && !record.sessionId) record.sessionId = resuming;
+        ctx.peer.reply(id, { thread: threadView(srv, record) });
+        srv.broadcastServer("thread/started", { thread: threadView(srv, record) });
+      };
+      // A start that names NO session is not an admission at all: nothing to fence, nobody to conflict
+      // with, and it must not pay for a roster read to learn that.
+      if (resumeTarget === undefined) { register(); return; }
+      if (!await admitResume(srv, ctx, id, { sessionId: resumeTarget, admits: resuming !== undefined }, register)) return;
       // LAST, once admission has fully succeeded — same placement and same guarded helper as the other
       // two admission surfaces, so this one cannot drift from them (D-M5-21).
       if (resuming) await srv.autoUnarchive(ctx, resuming);
@@ -360,43 +461,13 @@ export class AppServer {
     "thread/resume": async (srv, ctx, id, params) => {
       const parsed = threadResumeParams.safeParse(params);
       if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-      // Before anything is spawned (see fleetResumeCandidates): a live fleet session is the one sessionId
-      // this method must not fork. -32602 rather than a new code — the request is well-formed but its ONE
-      // parameter names something resume cannot legally act on, which is what INVALID_PARAMS means here
-      // (thread/delete's own live-refusal reasons the same way). The loop below awaits ONLY when a roster
-      // row actually carries this sessionId; with none (the ordinary case) the handler falls straight
-      // through to startThread in its dispatch tick — see fleetResumeCandidates for why that matters.
+      // The whole guard — fences, live-holder refusals, roster probe and reservation — is `admitResume`,
+      // shared with the resume-carrying `thread/start` so the two admission surfaces cannot answer
+      // differently again. `startThread` registers the record synchronously and only then awaits (its
+      // D-M5-21 shelf read), which is the property the reservation's placement depends on.
       const sessionId = parsed.data.sessionId;
-      const candidates = fleetResumeCandidates(srv, sessionId);
-      if (candidates === "live") { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
-      // No roster candidate to probe (the overwhelmingly common case): fall straight through to
-      // startThread in this same dispatch tick — no await, so no window for a delete to race (see
-      // fleetResumeCandidates), and `startThread`'s own deletingSessions check still fences an in-flight one.
-      if (candidates.length === 0) { await srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }); return; }
-      // R13: the probe below AWAITS. Reserve the resume synchronously HERE, before that yield, and refuse if
-      // a delete is already in flight — the two arrival-time checks that make admission and deletion
-      // mutually exclusive even when a concurrent delete completes inside the probe (see resumingSessions
-      // and sessionLib.ts's delete). Released in a `finally` — a refused probe must not reserve forever.
-      if (srv.deletingSessions.has(sessionId)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
-      srv.resumingSessions.set(sessionId, (srv.resumingSessions.get(sessionId) ?? 0) + 1);
-      let admitted: Promise<void> | undefined;
-      try {
-        if (await anyRosterPidLive(candidates)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, RESUME_LIVE_FLEET); return; }
-        // CAPTURED, not awaited, INSIDE the reservation (M5 Task 9). `startThread` registers the record
-        // synchronously and only then awaits (its D-M5-21 shelf read), and this reservation's whole job is
-        // to fence the window BEFORE that registration — after it, `findLiveBySessionId` sees the thread
-        // and `thread/delete`'s own live-guard covers the rest. Holding it across the shelf read would be
-        // incidental rather than principled, and it would make the release stop coinciding with the
-        // admission it is fencing. Awaited below the `finally` so the request is still not reported
-        // finished before its admission is.
-        admitted = srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended });
-      } finally {
-        // MY hold, not the reservation (PF2): a sibling resume may still be inside its own probe, and the
-        // entry is gone only when the last of us leaves.
-        const held = (srv.resumingSessions.get(sessionId) ?? 1) - 1;
-        if (held > 0) srv.resumingSessions.set(sessionId, held); else srv.resumingSessions.delete(sessionId);
-      }
-      await admitted;
+      await admitResume(srv, ctx, id, { sessionId, admits: !forksSession(parsed.data.config) },
+        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }));
     },
     "thread/list": threadList,
     "thread/fork": threadFork,

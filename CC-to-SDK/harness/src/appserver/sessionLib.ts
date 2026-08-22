@@ -34,6 +34,7 @@ import {
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { threadListParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./schema/threads.js";
 import { inArchivedPartition, listArchived } from "./archive.js";
+import { compareTuple, decodeListCursor, encodeListCursor, fingerprint, finite } from "./searchScan.js";
 import { SessionStoreError, storeRefusal } from "./archiveDomain.js";
 import { auditSessionStore } from "../sessions/index.js";
 
@@ -191,18 +192,52 @@ export function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
  *  them. A live record whose `sessionId` has not yet latched (engine-faithful: undefined until the first
  *  turn's init frame) cannot be looked up in the store map at all — it is included as its own unmatched
  *  row, exactly like a fresh thread/list did before this task, and the store row it might one day match is
- *  independently listed as store-only until that happens. Cursor pages the merge (offset cursor, Task 7's
- *  convention) — never either input alone — and since Task 10, the merge AFTER the archived partition is
- *  cut from it: the offset indexes `filtered`, the half being walked, at both ends (see below).
+ *  independently listed as store-only until that happens. The cursor pages the merge — never either input
+ *  alone — and since Task 10, the merge AFTER the archived partition is cut from it: the page is cut from
+ *  `filtered`, the half being walked, at both ends (see below).
  *
  *  M5 Task 10 adds `archived`, and it selects a PARTITION rather than filtering one: omitted or `false`
  *  lists only unarchived sessions — which is what this method already did, so an existing client sees no
  *  change — and `true` lists only archived ones. It is the same partition `thread/search` publishes, off
  *  the same predicate and the same published spelling (archive.ts's `inArchivedPartition`, core.ts's
- *  `archivedParam`), because the spec hands it to the two methods in one sentence. */
+ *  `archivedParam`), because the spec hands it to the two methods in one sentence.
+ *
+ *  M6 re-cursors it as a KEYSET over a total order (schema/core.ts's `listCursorParam` carries the wire
+ *  half of this). The offset it replaces indexed a position in `filtered`, and `thread/archive`/
+ *  `thread/unarchive` move a session across the very partition being walked — so a client that shelved a
+ *  row it had already been handed shifted every later position by one and the next page silently began one
+ *  row late. A tuple has no such coupling: whatever leaves or joins the partition, "the rows after this
+ *  tuple" names the same rows it named before.
+ *
+ *  It is `updatedAt` DESCENDING, tie-broken by `id` ASCENDING — the recency order this method's two
+ *  neighbours already use (the SDK's own `listSessions` documents its result order as unspecified and
+ *  sorts by mtime descending; `thread/search` sorts by recency off `compareTuple`), and the first total
+ *  order this merge has ever had. `filtered` was `[...liveViews, ...storeOnlyViews]`: registry-insertion
+ *  order, then whatever the store handed back. That grouping is DROPPED rather than kept as an outer sort
+ *  key, and deliberately — a store row that goes live mid-walk changes group, which moves it across every
+ *  row of the other group at once. That is the same skip/repeat the offset had, reintroduced one level up
+ *  where a keyset cannot see it.
+ *
+ *  IT IS A SMALLER RESIDUAL, NOT NONE, and `listCursorParam` publishes the limit to clients rather than
+ *  leaving them to infer it: a keyset walk is exhaustive only over an immutable key, and neither component
+ *  of this tuple is immutable for a logical session — a turn bumps `updatedAt`, and the id of a store-only
+ *  row IS its sessionId until this server holds it live, after which it is a `thr_…`. Either can still
+ *  carry a row across the cursor. Closing it means binding the walk to a snapshot, which is a different
+ *  architecture; `thread/search`'s `sortKey: created_at` is the immutable-key walk this server does have. */
 export const threadList: Handler = async (srv, ctx, id, params) => {
   const parsed = threadListParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  // Decoded BEFORE either store is read, and REFUSED rather than repaired (the `thread/search` precedent,
+  // D-M5-16a). A cursor this server did not mint — forged, truncated, or the decimal offset an older
+  // server minted for this same method — has no position to resume at, and treating it as "start from the
+  // beginning" would hand the client the first page a second time under a reply that looks like success.
+  // …and the same refusal covers a cursor minted in a DIFFERENT walk of this method. `cwd` and `archived`
+  // choose which set of rows is being ordered, and `archived` selects a whole partition — so a cursor
+  // carried across a show-archived toggle decodes fine, finds a place in the other partition's ordering,
+  // and silently begins after everything sorting before it. Same wrong page, different door.
+  const walk = fingerprint([parsed.data.cwd, parsed.data.archived === true]);
+  const cursor = parsed.data.cursor === undefined ? null : decodeListCursor(parsed.data.cursor);
+  if (parsed.data.cursor !== undefined && (cursor === null || cursor.q !== walk)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid cursor"); return; }
   const listFn = srv.deps.listSessions ?? realListSessions;
   // The SESSION store's readability, established before the listing that would otherwise report its
   // failure as absence (D-M5-25a rev 2). `thread/search` audited from the day the finding landed and this
@@ -246,13 +281,26 @@ export const threadList: Handler = async (srv, ctx, id, params) => {
   const wantArchived = parsed.data.archived === true;
   const filtered = merged.filter((v) => inArchivedPartition(archivedSet, v.sessionId as string | undefined, wantArchived));
   const limit = parsed.data.limit ?? DEFAULT_LIST_LIMIT;
-  const offset = parsed.data.cursor ? Number(parsed.data.cursor) : 0;
-  // Paging is over `filtered`, both ends: the offset indexes the partition a client is walking, and
-  // exhaustion is reported against ITS length — comparing against `merged` would mint a cursor for a page
-  // that does not exist and leave the client paging past the end.
-  const page = filtered.slice(offset, offset + limit);
-  const consumed = offset + page.length;
-  ctx.peer.reply(id, { data: page, nextCursor: consumed < filtered.length ? String(consumed) : null });
+  // ONE tuple function for the sort, the resume and the mint — searchScan.ts keeps its three that way for
+  // the reason a review found there: two spellings of one ordering is how a cursor comes to name a place
+  // the sort does not put it. `updatedAt` is screened through the same `finite` the search sort uses, so a
+  // row carrying NaN (a bring-your-own store's `mtime` satisfies `typeof === "number"` with one) sorts
+  // last instead of poisoning `compareTuple`'s subtraction and unordering the rows around it. `id` is
+  // present and unique on both row kinds — `thr_…` on a live view, the store sessionId on a store-only one
+  // — which is what makes this a total order and therefore a resumable one.
+  const tupleOf = (v: Record<string, unknown>) => ({ v: finite(v.updatedAt), s: v.id as string });
+  const ordered = [...filtered].sort((a, b) => compareTuple(tupleOf(a), tupleOf(b), "desc"));
+  // STRICTLY after the cursor: it names the last row already delivered, not the next one to examine (the
+  // two `thread/search` cursors name the next, because theirs can point INTO a session's rows and row 0 of
+  // the next session is a place, not a row already sent). `-1` is every remaining row sorting at or before
+  // it — the walk is over, which is the honest answer when the row the cursor named is now the last one.
+  const from = cursor ? ordered.findIndex((r) => compareTuple(tupleOf(r), cursor, "desc") > 0) : 0;
+  // Paging is over `filtered`, both ends: the walk covers the partition a client asked for, and exhaustion
+  // is reported against ITS length — comparing against `merged` would mint a cursor for a page that does
+  // not exist and leave the client paging past the end.
+  const page = from < 0 ? [] : ordered.slice(from, from + limit);
+  const more = from >= 0 && from + page.length < ordered.length;
+  ctx.peer.reply(id, { data: page, nextCursor: more ? encodeListCursor({ ...tupleOf(page[page.length - 1]), q: walk }) : null });
 };
 
 /** `thread/fork`: resolve the source id, ask the store to fork it (a pure store-level copy — the source

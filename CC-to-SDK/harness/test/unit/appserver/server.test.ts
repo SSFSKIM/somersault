@@ -305,25 +305,29 @@ describe("threadView (parent §5's 14-field Thread projection) + thread/list cur
     expect(busyView.status).toEqual({ state: "active", waitingOn: "decision" });
   });
 
-  it("thread/list pages with a decimal-string cursor: limit:1 on two threads returns nextCursor that fetches the second", async () => {
+  it("thread/list pages with an opaque keyset cursor: limit:1 on two threads returns nextCursor that fetches the second", async () => {
+    // Two threads started in the same tick share a `updatedAt` to the second, so which of them leads is
+    // decided by the ORDER'S TIE-BREAK — `id` ascending — and the ids are random hex. The expectation is
+    // therefore written off the tie-break rather than off the start order, which is what it was written off
+    // while the merge had no total order to break ties with.
     const { lines, c } = boot();
     send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
     send(c, { id: 2, method: "thread/start", params: {} });
     send(c, { id: 3, method: "thread/start", params: {} });
     await new Promise((r) => setTimeout(r, 0));
-    const t1 = threadIdOf({ lines }, 2);
-    const t2 = threadIdOf({ lines }, 3);
+    const [first, second] = [threadIdOf({ lines }, 2), threadIdOf({ lines }, 3)].sort();
 
     send(c, { id: 4, method: "thread/list", params: { limit: 1 } });
     const page1 = (await waitReply(lines, 4)).result;
     expect(page1.data).toHaveLength(1);
-    expect(page1.data[0].id).toBe(t1);
-    expect(page1.nextCursor).toBe("1");
+    expect(page1.data[0].id).toBe(first);
+    expect(page1.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/); // server-minted and opaque, never the client's to compose
+    expect(page1.nextCursor).not.toMatch(/^\d+$/); // and no longer the offset a pre-M6 client would have replayed
 
     send(c, { id: 5, method: "thread/list", params: { limit: 1, cursor: page1.nextCursor } });
     const page2 = (await waitReply(lines, 5)).result;
     expect(page2.data).toHaveLength(1);
-    expect(page2.data[0].id).toBe(t2);
+    expect(page2.data[0].id).toBe(second);
     expect(page2.nextCursor).toBeNull();
   });
 

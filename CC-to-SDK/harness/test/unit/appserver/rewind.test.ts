@@ -305,6 +305,78 @@ describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
     expect(record.swapInFlight).toBe(false);
   });
 
+  it("a thread STARTED as a fork carries NO session-identity knob into the rewind swap — the id it reports stays the id it holds", async () => {
+    // `record.config` is the client's verbatim thread/start passthrough, so a thread opened with
+    // `forkSession: true` kept that flag for life. Spread beside the `resume` the factory sets, the pair is
+    // the SDK's own "branch to a NEW session id" — so the rewind would open a different conversation while
+    // `swapEngine` re-stamps the old id, and `routeInit`'s latch early-returns on an already-stamped
+    // record, making the mis-report permanent. `thread/reopen` guards exactly this and says so in its
+    // header; the guard had simply never reached its sibling.
+    const oldEngine = mkEngine({ sessionId: "fork-1" });
+    const factoryConfigs: Array<Record<string, unknown>> = [];
+    const { c, threadId, startConfigs } = await bootThread({
+      session: () => oldEngine,
+      // Every one of the six set at start, because the point is that NONE of them survives — not that the
+      // one that bit us does not.
+      config: {
+        model: "claude-opus-4-8", cwd: "/tmp/proj",
+        resume: "parent-1", forkSession: true, sessionId: "chosen-1",
+        continueSession: true, resumeAt: "stale-anchor", droppedTurnUuid: "stale-drop",
+      },
+      deps: {
+        resumeAtFactory: (_s: string, _a: string, _d: string, cfg: Record<string, unknown>) => { factoryConfigs.push(cfg); return mkEngine({}); },
+      },
+    });
+
+    send(c, { id: 3, method: "thread/rewind", params: { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await settle();
+
+    expect(factoryConfigs).toHaveLength(1);
+    const cfg = factoryConfigs[0];
+    for (const knob of ["resume", "resumeAt", "droppedTurnUuid", "forkSession", "sessionId", "continueSession"]) {
+      expect(cfg[knob], `${knob} must not survive into the rewind swap`).toBeUndefined();
+    }
+    // …while everything that is NOT identity still rides across. The broker especially: without it the
+    // replacement engine parks nothing and every later tool call bypasses this server's permission surface.
+    expect(cfg.model).toBe("claude-opus-4-8");
+    expect(cfg.cwd).toBe("/tmp/proj");
+    expect(cfg.permissionBroker).toBe(startConfigs[0].permissionBroker);
+  });
+
+  it("an identity value hidden in `extraOptions` does not survive the swap either — the hatch is the door round the six", async () => {
+    // `extraOptions` is spread into the SDK `Options` LAST (resolveOptions.ts), so a knob placed there
+    // beats every typed field the swap just nulled: the replacement engine would resume the caller's
+    // chosen conversation, or write this thread's fresh one into a session id it no longer holds, while
+    // `swapEngine` re-stamps the record with the id it was supposed to keep. Stated in the SDK's OWN
+    // vocabulary, which renames four of the six (`resumeSessionAt`, `resumeDropsTurn`, `continue`).
+    const factoryConfigs: Array<Record<string, unknown>> = [];
+    const { c, threadId } = await bootThread({
+      session: () => mkEngine({ sessionId: "sess-hatch" }),
+      config: {
+        extraOptions: {
+          resume: "other-1", resumeSessionAt: "other-anchor", resumeDropsTurn: "other-drop",
+          forkSession: true, sessionId: "other-chosen", continue: true,
+          maxThinkingTokens: 4096,   // the hatch's legitimate half, which must still ride across
+        },
+      },
+      deps: {
+        resumeAtFactory: (_s: string, _a: string, _d: string, cfg: Record<string, unknown>) => { factoryConfigs.push(cfg); return mkEngine({}); },
+      },
+    });
+
+    send(c, { id: 3, method: "thread/rewind", params: { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await settle();
+
+    expect(factoryConfigs).toHaveLength(1);
+    const hatch = factoryConfigs[0].extraOptions as Record<string, unknown>;
+    for (const knob of ["resume", "resumeSessionAt", "resumeDropsTurn", "forkSession", "sessionId", "continue"]) {
+      // ABSENT, not present-and-undefined: the hatch is spread over the typed result, so a key that is
+      // there at all overrides — including the `resume` the rewind itself sets one line later.
+      expect(knob in hatch, `extraOptions.${knob} must not survive into the rewind swap`).toBe(false);
+    }
+    expect(hatch.maxThinkingTokens).toBe(4096);
+  });
+
   it("scope 'code' with a null prevUuid is allowed: the file restore runs, no engine swap happens, and the reply still carries the session id", async () => {
     const engine = mkEngine({ sessionId: "sess-1" });
     let swapped = 0;

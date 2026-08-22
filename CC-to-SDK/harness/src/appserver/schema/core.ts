@@ -18,20 +18,66 @@ export const initializeParams = z.object({
   optOutNotificationMethods: z.array(z.string()).optional(),
 });
 export const serverStatusParams = z.object({});
-// The one cursor shape, reused (via .extend(cursorParam.shape)) by thread/list and decision/list.
-// Both page a plain in-memory array (the merged thread view, a parked-decision set) that a rewind never
-// truncates, so a bare decimal offset needs no epoch to qualify it against — which is the narrow claim,
-// and the only one still true. It is NOT a claim that the offset stays valid for a session's whole
-// lifetime: the offset indexes a POSITION in the array, so anything that changes what the array holds
-// between two pages shifts every later position, and a walk can then skip or repeat a row. Since M5 Task
-// 10 `thread/list` pages a PARTITION of the merge (`archived`), and `thread/archive`/`thread/unarchive`
-// are a first-party way for a client of this same milestone to move a session across that partition
-// mid-walk — so the mutator is no longer only "a thread closed by itself". See the spec's parking lot:
-// `thread/search` already ships the keyset that solves this class (D-M5-16), and re-cursoring a shipped
-// method is a wire change M5 deliberately did not take.
+// `decision/list`'s cursor, and now only its. A decimal offset indexes a POSITION in the array being
+// paged, so anything that changes what the array holds between two pages shifts every later position and
+// the walk skips or repeats a row — which is a defect wherever the array can move under the walk, and is
+// why `thread/list` no longer shares this shape (listCursorParam below). It stays here because a parked
+// decision set is not that array: `decision/list` replies `nextCursor: null` unconditionally (an unpaged
+// envelope, spec gap 2), so no client ever holds a decision cursor to send back, and the offset this
+// accepts addresses nothing. Narrowing it to a keyset would be a wire change buying a walk that does not
+// exist; the day decision/list actually pages, it takes the shape below, not this one.
 // thread/read used to reuse this shape too (Task 7); Task 13 below splits it off.
 export const cursorParam = z.object({
   cursor: z.string().regex(/^\d+$/).optional(),
+  limit: z.number().int().positive().optional(),
+});
+// M6: `thread/list`'s own cursor, split off from `cursorParam` for the reason `epochCursorParam` was —
+// one method's position needs a qualification the others' do not, and widening the shared shape would
+// only break the remaining reuser's convention for no benefit.
+//
+// It is an OPAQUE keyset (base64url of `{v,s,q}` — searchScan.ts's codec), naming the SORT POSITION of the
+// last row the previous page delivered rather than a count of rows consumed. `thread/list` pages a
+// PARTITION of the live+store merge (`archived`, M5 Task 10), and `thread/archive`/`thread/unarchive` are
+// a first-party way for a client to move a session across that partition mid-walk — so under an offset a
+// walk that archived a row it had already been handed silently skipped the next one. A position in the
+// ordering has no such coupling: the rows before it can come and go, and "the rows after this tuple" is
+// still the same set. `thread/search` has shipped this pattern since D-M5-16; the ordering it resumes
+// into is `updatedAt` descending, `id` ascending (sessionLib.ts's threadList).
+//
+// THE WIRE CHANGE, stated because it is the one this costs: a decimal cursor minted by an older server no
+// longer decodes, and is refused `-32602` rather than read as "start from the beginning". A silent restart
+// would hand that client a duplicate first page under a reply that looks like success, which is the same
+// failure the keyset exists to remove, arriving through the error path instead of the happy one. The
+// pattern below is base64url's alphabet, so such a cursor still reaches the decoder — the refusal is the
+// decoder's, and it is the same refusal a forged or truncated cursor gets.
+//
+// It carries `thread/search`'s `q` too — the fingerprint binding a cursor to the walk it was minted for
+// (D-M5-26), here over `cwd` and `archived`. Without it the fix would have had a second door left open:
+// `archived` selects a partition, so a cursor kept across a show-archived toggle DECODES, finds a place in
+// the other partition's ordering, and resumes after everything sorting before that tuple — a well-defined
+// page of a walk nobody asked for, reported as success. A client with a checkbox reaches that by doing
+// nothing unusual. Refused, not documented-around: telling a client "don't do it" in a description is not
+// a guarantee, and the sibling method already spends the same eight bytes to make it one.
+//
+// WHAT THE KEYSET STILL DOES NOT PROMISE, stated because a limit a client has to infer from a data model
+// it cannot see is one it will not infer. A keyset is exhaustive only over an IMMUTABLE sort key, and
+// NEITHER component of this one is immutable for a logical session:
+//   - `updatedAt` is the recency this method sorts by, and a turn bumps it. A session updated mid-walk
+//     moves to the front of a descending order — ahead of a cursor already past that position — so an
+//     unseen row can be carried over the cursor and missed, and a row already delivered can come back.
+//   - `id` is `thr_…` for a row this server holds live and the bare sessionId for a store-only one, so a
+//     cold session that goes live between two pages changes which tuple it sorts as: the same session,
+//     under a different identity, on either side of the cursor.
+// Strictly smaller than the offset it replaced — that skipped a row for a first-party ARCHIVE, a client's
+// own action, where this needs a concurrent writer — and the fix is not one this shape can make: binding a
+// walk to a snapshot means holding one, which is an architecture with an owner and not a repair. So it is
+// PUBLISHED instead, in the `describe` below as well as here, which is where a client actually reads it.
+// `thread/search` publishes the same caveat for its own recency keys and names the escape this method has
+// no version of — `sortKey: created_at`, immutable, "use created_at for an exhaustive walk" (schema/
+// search.ts). A client that needs an exhaustive inventory should walk THAT method; `thread/list` is the
+// recency view, where being current matters more than being complete.
+export const listCursorParam = z.object({
+  cursor: z.string().regex(/^[A-Za-z0-9_-]+$/).optional().describe("opaque keyset cursor from a previous reply's nextCursor; never client-composed. It is bound to the walk that minted it: re-issuing it with a different cwd or archived refuses -32602, as does anything this server did not mint (a forged or truncated cursor, or a pre-keyset decimal offset). Change either parameter and start a fresh walk. NOT exhaustive under concurrent writes: this walk's sort key (updatedAt, then id) is mutable — a turn bumps updatedAt, and a store-only session that goes live here changes id from its sessionId to a thr_ id — so a session that moves while you page can be re-encountered or missed. For an exhaustive walk use thread/search with sortKey created_at, whose key is immutable"),
   limit: z.number().int().positive().optional(),
 });
 /** The archived PARTITION, in the ONE spelling both methods the spec gives it to publish (D-M5-3, M5

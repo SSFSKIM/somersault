@@ -14,7 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.234",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.237",
     "cc-harness": "file:../harness",
     "zod": "^4.0.0"
   },
