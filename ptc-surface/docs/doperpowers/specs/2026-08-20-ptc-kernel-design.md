@@ -1210,6 +1210,18 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   callers who would rather filter in Python. All three families stand.
   Date/Author: 2026-08-22 / controller adjudication, final review r6; extended r8.
 
+- Decision: foreground `bash()` output is BOUNDED (same 4 MB head/tail + elision notice as
+  background handles), overturning the earlier contract that a foreground command returns
+  its whole output. A pre-existing test pinned the old contract and was deliberately
+  reversed, not extended.
+  Rationale: r12 finding 3 — the unbounded lists let `yes` OOM-kill the persistent kernel
+  well inside its own 120 s timeout; a time limit does not bound bytes. The full stream was
+  never recoverable anyway once it out-sized memory, and background results already taught
+  callers the head+notice+tail shape. Cost accepted: a caller that relied on a large
+  foreground result arriving whole now sees an elision notice; the full text was never
+  written to disk on the foreground path, so the notice is honest about the loss.
+  Date/Author: 2026-08-23 / r12 fix wave, controller-adopted.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
@@ -1742,6 +1754,8 @@ background wrappers; a self-owned tmux session with file-polled output is the re
 detachment.
 
 ## Revision Notes
+
+- 2026-08-23 (r12): round 12 confirmed all seven findings (3 P1). Admission/settlement decisions now use the settled tri-state identity (unknown discharges nothing and settles nothing, a3e42a70b8); unregistered background handles signal their own child only (a571561bd3); foreground output bounded — Decision Log entry above (c62946d354); `ptc kill` reports the signal not the record (b2956f9220); child key entropy 24→48 bits and `live` derived from real session state (a0158eb270); UTF-8 straddle at the read boundary preserved (0a9a78ce9c).
 
 - 2026-08-22 (r11): external round 11 confirmed 5 of 6 findings (the sixth is the standing split-the-feature adjudication). Headline: the marketplace install path was structurally broken — root inverted, package root == plugin root (818c573297); dev-install line 607 and the two standing path references updated, historical Surprises mentions kept. Also fixed: leader_exited staleness bound + existence-gated exemption and construction-known pgid for leaders that race registration (220fd6c2fe), epoch rotation now migrates caller cursors (8e36d7146e), child session id captured mid-stream (b4857ac414). Residual ledger grows to nine (live marketplace install untested).
 
