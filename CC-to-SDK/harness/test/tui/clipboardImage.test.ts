@@ -267,14 +267,30 @@ describe("linux/windows command construction — string-only, not integration-ru
       'wl-paste -l 2>/dev/null | grep -E "image/(png|jpeg|jpg|gif|webp|bmp)"',
     );
   });
-  it("linux saveImage tries png then bmp across both xclip and wl-paste, in canon's order", () => {
+  it("linux saveImage tries png then bmp across both xclip and wl-paste, in canon's order — path single-quoted (final-review finding 8)", () => {
     const cmd = linuxSaveImageCommand("/tmp/x.png");
     expect(cmd).toBe(
-      "xclip -selection clipboard -t image/png -o > /tmp/x.png 2>/dev/null || " +
-      "wl-paste --type image/png > /tmp/x.png 2>/dev/null || " +
-      "xclip -selection clipboard -t image/bmp -o > /tmp/x.png 2>/dev/null || " +
-      "wl-paste --type image/bmp > /tmp/x.png",
+      "xclip -selection clipboard -t image/png -o > '/tmp/x.png' 2>/dev/null || " +
+      "wl-paste --type image/png > '/tmp/x.png' 2>/dev/null || " +
+      "xclip -selection clipboard -t image/bmp -o > '/tmp/x.png' 2>/dev/null || " +
+      "wl-paste --type image/bmp > '/tmp/x.png'",
     );
+  });
+  it("linux saveImage single-quotes a path containing a space, in EVERY redirection", () => {
+    const cmd = linuxSaveImageCommand("/tmp/my clipboard/x.png");
+    expect(cmd).toBe(
+      "xclip -selection clipboard -t image/png -o > '/tmp/my clipboard/x.png' 2>/dev/null || " +
+      "wl-paste --type image/png > '/tmp/my clipboard/x.png' 2>/dev/null || " +
+      "xclip -selection clipboard -t image/bmp -o > '/tmp/my clipboard/x.png' 2>/dev/null || " +
+      "wl-paste --type image/bmp > '/tmp/my clipboard/x.png'",
+    );
+    // Unquoted, the space would split the redirection target into two shell words — every occurrence in
+    // this command must be the quoted form, never the bare path.
+    expect(cmd).not.toContain("> /tmp/my");
+  });
+  it("linux saveImage escapes an embedded single quote rather than breaking out of the quoted string", () => {
+    const cmd = linuxSaveImageCommand("/tmp/it's/x.png");
+    expect(cmd).toContain("> '/tmp/it'\\''s/x.png'");
   });
   it("windows checkImage is a PowerShell Clipboard.ContainsImage probe", () => {
     const cmd = windowsCheckImageCommand();

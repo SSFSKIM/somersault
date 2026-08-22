@@ -143,13 +143,22 @@ export function linuxCheckImageCommand(): string {
   return 'xclip -selection clipboard -t TARGETS -o 2>/dev/null | grep -E "image/(png|jpeg|jpg|gif|webp|bmp)" || '
     + 'wl-paste -l 2>/dev/null | grep -E "image/(png|jpeg|jpg|gif|webp|bmp)"';
 }
+/** Final-review finding 8: single-quote for `sh -c`, POSIX shell style — wrap in `'...'` and escape any
+ *  embedded single quote as `'\''` (close the quote, an escaped literal quote, reopen it). The scratch
+ *  path this module mints (`makeScratchDir`, a `tmpdir()`-rooted UUID directory) never contains one, but a
+ *  redirection target interpolated unquoted is a shell-injection / word-splitting hazard on ANY path with
+ *  a space or shell metacharacter regardless of what this module happens to mint today. */
+function shQuote(path: string): string {
+  return `'${path.replace(/'/g, "'\\''")}'`;
+}
 /** canon L333975: PNG first via xclip, PNG via wl-paste, then the BMP rescue arms of both — in that
  *  exact fallback order (`||` chain; the first tool/format that produces bytes wins). */
 export function linuxSaveImageCommand(path: string): string {
-  return `xclip -selection clipboard -t image/png -o > ${path} 2>/dev/null || `
-    + `wl-paste --type image/png > ${path} 2>/dev/null || `
-    + `xclip -selection clipboard -t image/bmp -o > ${path} 2>/dev/null || `
-    + `wl-paste --type image/bmp > ${path}`;
+  const p = shQuote(path);
+  return `xclip -selection clipboard -t image/png -o > ${p} 2>/dev/null || `
+    + `wl-paste --type image/png > ${p} 2>/dev/null || `
+    + `xclip -selection clipboard -t image/bmp -o > ${p} 2>/dev/null || `
+    + `wl-paste --type image/bmp > ${p}`;
 }
 /** canon L333976: a non-interactive STA PowerShell probe of `Clipboard.ContainsImage()`, exiting 1
  *  (canon's checkImage failure signal) when there is none. */
