@@ -1787,6 +1787,8 @@ detachment.
 
 ## Revision Notes
 
+- 2026-08-23 (r14): round 14 confirmed all six findings (2 P1, both refinements of earlier campaign hardening — first severity decline). Birth-stamp records are refuted only same-source (728f27a09e); the middle registration path carries the setsid construction proof (2f049799de); record-then-log rotation windows re-settle from the archive (1cc4ca2aff); interrupted cells exit 130 — new documented code beside 0/1/3 (32e551dd8c); generated agent-handle names are 48-bit and claimed against persisted rows (619ad859e1); an image moved mid-reply costs a note, not the reply (cfa4ae9cf9).
+
 - 2026-08-23 (r13): round 13 confirmed all seven findings (5 P1). Zombie-state-aware identity (6996c5c64e); SUB-handshake race closed two-layer — wait_for_ready plus disk-derived cell id (ce79e4c024); interrupt fallback bound to its entry incarnation (294d74586b); expiry notice survives failed respawns (7fcadffff3); venv-upgrade recycle via .ptc-version identity — Decision Log (05219fe77e); bootstrap reconciles orphaned registry rows — Decision Log (2763c81ac1); codex-teardown kernel-side release + residual 10 (f5a2cd6fc8).
 
 - 2026-08-23 (r12): round 12 confirmed all seven findings (3 P1). Admission/settlement decisions now use the settled tri-state identity (unknown discharges nothing and settles nothing, a3e42a70b8); unregistered background handles signal their own child only (a571561bd3); foreground output bounded — Decision Log entry above (c62946d354); `ptc kill` reports the signal not the record (b2956f9220); child key entropy 24→48 bits and `live` derived from real session state (a0158eb270); UTF-8 straddle at the read boundary preserved (0a9a78ce9c).
