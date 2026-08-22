@@ -604,7 +604,7 @@ hybrid harness — the count was ten until `workflow` shipped in T26 and earned 
 
 ### Installation modes
 
-- Dev: `claude --plugin-dir ptc-surface/ptc/plugin`.
+- Dev: `claude --plugin-dir ptc-surface/ptc` (r11: the package IS the plugin root).
 - Settings snippet (README): allow `mcp__plugin_ptc_ptc__*` in `permissions.allow` for
   prompt-free use (plugin installs); a directly registered server is `mcp__ptc__*`.
 - First run: the launcher provisions `~/.ptc/venv` inside Claude Code's 30 s MCP startup
@@ -822,7 +822,7 @@ Discoveries executed A1–A15 as written — 15 pass, A13 in its documented S5 f
 keyless tier of 209 passed / 0 skipped and a live tier of 8 passed / 0 skipped. Nothing is
 carried forward as failing.
 
-**Open residuals at close (the full ledger).** Eight behaviors ship recorded-but-unclosed —
+**Open residuals at close (the full ledger).** Nine behaviors ship recorded-but-unclosed —
 each proven only against a fake, or not proven at all, and each written up in its own section
 above. None is an acceptance failure:
 
@@ -862,6 +862,12 @@ above. None is an acceptance failure:
    read-restricted permission profile or a workspace-scoped sandbox for codex children —
    `app-server/README.md` already prefers permission-profile selection over the `sandbox`
    shorthand, so the seam exists; it is future work, unbuilt and unmeasured.
+
+9. **A real marketplace install has never been run.** r11's root inversion makes the cached
+   plugin root self-contained, and the containment test pins the structure — but the claim
+   that a marketplace install now starts rests on that structural test plus the
+   `${CLAUDE_PLUGIN_ROOT}`-relative manifests; no live `claude plugin install` against a
+   marketplace has been performed (needs a logged-in CLI, same tier as the live suite).
 
 Distinct from these, and not counted as residuals: the declared **Non-goals** (Codex-side
 installation testing, Windows, dill/state snapshots, Workflow-tool replication) and the
@@ -1004,7 +1010,7 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   Date/Author: 2026-08-21 / controller adjudication of T11 concern 1.
 
 - Decision: `ptc/src/ptc/discovery.py`'s process-tree walk (in `resolve()`) is a second,
-  independent copy of `find_claude_ancestor()` in `plugin/hooks/session_start.py`, not a
+  independent copy of `find_claude_ancestor()` in `hooks/session_start.py`, not a
   shared helper. A cross-reference comment sits in both files, pointing each file at the
   other and naming the "keep the two predicates in sync" obligation.
   Rationale: the hook runs under system Python, before `~/.ptc/venv` exists and outside the
@@ -1171,7 +1177,7 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   Date/Author: 2026-08-21 / T22 review-fix.
 
 - Decision: PTC's **model-facing size budgets stand as specified** — `max_output_chars`
-  default 12 000 with the 50 000 server clamp, and `plugin/skills/ptc/SKILL.md` at ~12 KB.
+  default 12 000 with the 50 000 server clamp, and `skills/ptc/SKILL.md` at ~12 KB.
   Rejected: applying the codex-rs harness's ">1K tokens of model context is a P0" review
   ceiling (`AGENTS.md:104-106`) to either of them.
   Rationale: that ceiling governs the RUST harness's own additions to a Codex turn's context;
@@ -1682,6 +1688,10 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
 - Observation: a fail-open rule masks defects in its consumers — closing bgroups' unknown-identity hole (r10) immediately failed an existing shell test and exposed that `BashHandle` held a SNAPSHOT of its registry row (`dict(...)` at registration) while `_retire` marks `leader_exited` on the row in place, so the handle never saw the mark and, under the new fail-closed rule, `kill()` on a daemonizer read its own orphan group as unidentifiable. The old fail-open bias had been answering "unknown → signal anyway", which happened to give the right kill for the wrong reason. Fixed by holding the row object itself.
   Evidence: `test_killing_a_daemonizers_handle_reaps_the_group_its_row_was_kept_for` failed only after `_recycled` failed closed ("h.kill() never reached descendant … — its row named it"); passes with the shared-row fix. Commit 47ef638345.
 
+- Observation: the shipped marketplace install path could never have started — and dev installs are what hid it. `ptc-launch` resolved the Python package as the plugin root's PARENT, but a marketplace cache copies only the directory holding `.claude-plugin/plugin.json`; every acceptance run used `--plugin-dir` against the checkout, where the parent exists, so nothing keyless or live ever exercised the layout the Decision Log declares shipped. r11 inverted the root (the package directory IS the plugin root) with a structural containment test so the package cannot silently walk back out.
+  Evidence: r11 finding 1 (P1); commit 818c573297; `test_the_plugin_root_contains_everything_the_launcher_hashes`. No live marketplace install has been performed — recorded as residual 9.
+  Date: 2026-08-22.
+
 ## Outcomes & Retrospective
 
 Written 2026-08-22 at finish.
@@ -1732,6 +1742,8 @@ background wrappers; a self-owned tmux session with file-polled output is the re
 detachment.
 
 ## Revision Notes
+
+- 2026-08-22 (r11): external round 11 confirmed 5 of 6 findings (the sixth is the standing split-the-feature adjudication). Headline: the marketplace install path was structurally broken — root inverted, package root == plugin root (818c573297); dev-install line 607 and the two standing path references updated, historical Surprises mentions kept. Also fixed: leader_exited staleness bound + existence-gated exemption and construction-known pgid for leaders that race registration (220fd6c2fe), epoch rotation now migrates caller cursors (8e36d7146e), child session id captured mid-stream (b4857ac414). Residual ledger grows to nine (live marketplace install untested).
 
 - 2026-08-22 (post-close r10): a tenth external-review pass surfaced three findings past r9's convergence — the archive-settle epoch guard, the bgroups unknown-identity fail-open (r9's parked item, elevated), and the pending marker's missing nonce. All three fixed (commit 47ef638345); Surprises gains the masked BashHandle row-snapshot defect the fail-closed rule exposed. The drift test's currentTime/read entry was reclassified a declared forward loan over the installed binary's schema (commit 7eb05a6fbc).
 
