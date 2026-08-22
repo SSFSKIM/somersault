@@ -1797,6 +1797,8 @@ detachment.
 
 ## Revision Notes
 
+- 2026-08-23 (r15): round 15 confirmed all five findings (2 P1, refinement-grade). Bootstrap client synchronizes its SUB channel (7b8c01c0f9); meta persists and restart restores max_depth beside depth (9bdd6a41f7); run files bind to the Claude ancestor's birth incarnation — hook records, discovery verifies, absent-field migrates (fdb029087d); explicit since=0 stays authoritative over archived cursors (0b888807d6); sanitized session keys carry a 64-bit digest — dirty-alias kernels re-key on upgrade, stated migration (a6f070e4ba).
+
 - 2026-08-23 (r14): round 14 confirmed all six findings (2 P1, both refinements of earlier campaign hardening — first severity decline). Birth-stamp records are refuted only same-source (728f27a09e); the middle registration path carries the setsid construction proof (2f049799de); record-then-log rotation windows re-settle from the archive (1cc4ca2aff); interrupted cells exit 130 — new documented code beside 0/1/3 (32e551dd8c); generated agent-handle names are 48-bit and claimed against persisted rows (619ad859e1); an image moved mid-reply costs a note, not the reply (cfa4ae9cf9).
 
 - 2026-08-23 (r13): round 13 confirmed all seven findings (5 P1). Zombie-state-aware identity (6996c5c64e); SUB-handshake race closed two-layer — wait_for_ready plus disk-derived cell id (ce79e4c024); interrupt fallback bound to its entry incarnation (294d74586b); expiry notice survives failed respawns (7fcadffff3); venv-upgrade recycle via .ptc-version identity — Decision Log (05219fe77e); bootstrap reconciles orphaned registry rows — Decision Log (2763c81ac1); codex-teardown kernel-side release + residual 10 (f5a2cd6fc8).
