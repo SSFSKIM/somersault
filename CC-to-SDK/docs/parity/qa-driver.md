@@ -484,6 +484,16 @@ Find the row with `capture-pane -p | cat -n`, then encode `ESC [ < 0 ; COL ; ROW
 
 So the escape-sequence parsers on both sides are well-behaved. There is simply nothing to click.
 
+> **STALE for `ccx`'s fullscreen renderer since F9 T-MOUSE (2026-08-22).** This whole section's
+> proving run was against `ccx`-classic (the subject at the time), and every bullet above is still
+> true as a description of that renderer and of `claude` itself — neither enables mouse reporting,
+> so neither has anything to click. It stopped being true of `ccx` as a whole: fullscreen `ccx` now
+> arms the full mouse set by default and there genuinely is something to click — a fold cluster
+> toggles (tool-stream wave, 2026-08-19), a transcript row hovers and can be dragged into a
+> selection that auto-copies, and a composer click positions the caret (F9 T-MOUSE). See §4.2's own
+> correction above and `.doperpowers/sdd/2026-08-22-f9-t-mouse/task-8-report.md` for the byte-level
+> captures.
+
 ---
 
 ## 5. Resize probe
@@ -763,7 +773,7 @@ What a QA agent **can** and **cannot** do with this harness.
 | Mouse events via `send-keys -M` | **NO** | only valid inside a tmux key binding with a live mouse event in context; not scriptable |
 | Bracketed paste | **YES** | wrap with `-H 1b 5b 32 30 30 7e` … `1b 5b 32 30 31 7e` (not exercised in this run) |
 | Window resize / SIGWINCH | **YES** | `tmux resize-window -t <s> -x W -y H` |
-| Real clicks | **NO** | nothing to click — both TUIs are keyboard-only (§4.2) |
+| Real clicks | **YES, on `ccx`'s fullscreen renderer since F9 T-MOUSE** | `claude`/`ccx`-classic still have nothing to click (§4.2 — the proving run below was against `ccx`-classic); fullscreen `ccx` hovers, drags-to-select, double/triple-clicks and copies, and positions the composer caret — see the SGR mouse events row above |
 
 ### Net
 

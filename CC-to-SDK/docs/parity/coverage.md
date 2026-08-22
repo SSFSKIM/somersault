@@ -293,7 +293,8 @@
 >   *reopened* six surfaces that file had excluded from its own denominator on the ground that ccx had no
 >   alternate screen (mouse, the `ds()`-gated live-turn clauses and the `LT5` elapsed suffix, `CM7`'s composer
 >   viewport, the sticky prompt chip, hardware scroll, brief/focus mode). They enter at 0 in the same pass the
->   renderer's own rows enter at 1. Explicitly **not** shipped and recorded as such: all mouse (D7-D9), the
+>   renderer's own rows enter at 1. Explicitly **not** shipped and recorded as such: all mouse (D7-D9)
+>   — **SHIPPED at F9, 2026-08-22, see the F9 wave entry below** — the
 >   D4/D5 cell-diff renderer, the sticky prompt chip, `scrollHint` (D22), DECSTBM, FleetView's permissive gate
 >   (D19), `/focus` (D20), and the upsell machinery.
 
@@ -415,6 +416,32 @@
 >   under-load flake; two clean full passes followed) · one-turn keyed health check (haiku, `success`,
 >   1 turn) per the post-auth-incident ritual · `test/live/context-tool.test.ts` green keyed. No domain
 >   score moves — a version bump realizes no new envelope; it keeps the evidence honest.
+
+> - **F9 wave — mouse remainder, syntax coverage, resume transcript view, image paste, auto default
+>   (2026-08-22)** — five tracks, spec `docs/superpowers/specs/2026-08-22-f9-wave-design.md`.
+>   **T-MOUSE**: the fullscreen v1 mouse cut list (motion tracking, hover brighten, drag-selection,
+>   auto-copy-on-select, click-to-position-cursor, expanded-row tint) SHIPS — the full arm string
+>   `?1000h ?1002h ?1003h ?1006h` with both env opt-outs preserved byte-exact, dual-channel clipboard
+>   (native + OSC 52, incl. tmux-DCS and screen-DCS forms) on a once-per-sweep auto-copy latch, and a
+>   selection-lifetime keymap hook — with region-bounds selection scope and row-cluster (not per-widget)
+>   hover as recorded deliberate scope cuts. **T-SYNTAX**: `tui/highlight.ts`'s fenced-code path
+>   rewritten onto the real `highlight.js` runtime already vendored for diff bodies, 10 → ~383
+>   languages, zero new dependencies (`syntaxHighlightingDisabled` stays unbuilt/unreachable) — the
+>   same pass caught two stale ❌ rows in `tui-ux.md` describing a diff-body highlighting gap that
+>   `diffHighlight.ts` had already closed back in Wave R. **T-RESUME**: `/resume`'s in-pane preview
+>   replaced by canon's full-screen rendered transcript takeover (`ResumeTranscriptView.tsx`), closing
+>   the last D-W9 arm including the image-only session case. **T-IMAGE**: Ctrl-V/Alt-V image paste end
+>   to end — a clipboard reader (macOS `osascript`, Linux `xclip`/`wl-paste`, Windows PowerShell), a
+>   `sips`-based re-encode ladder on darwin only (no new dependency; degrades to canon's failure text
+>   block elsewhere), and a negotiated `stageImage` host op that keeps the app-server/daemon/fleet/
+>   `harness.run` surfaces string-only in this wave (never a silent text-only fallback against a
+>   pre-image host) — live-verified naming red/blue/green fixtures across two live sessions plus a
+>   real macOS clipboard round trip. **T-AUTO**: interactive default permission mode flips to `auto`,
+>   recorded in `qa-sprint-1-triage.md`. **No domain score below moves** — this is terminal bytes, Ink
+>   layout, hljs (already a dependency) and the composer/session-message-builder surface; the one SDK
+>   envelope fact this wave confirms is P87 (image content blocks inside streaming-input user messages)
+>   REACHABLE, already reflected in the T-IMAGE row above. TUI/UX parity: see `tui-ux.md`'s F9
+>   close-out (§1 ~87.5%, §2 ~71.4%, §1a's own K-table ledger ~76%, overall ~78.1% → ~79.2%).
 
 > - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36
