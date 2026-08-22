@@ -1193,7 +1193,16 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   repository. The same review's "split the feature into reviewable stages" finding is the
   round-1 adjudication recurring unchanged (this work WAS staged as 28 independently
   reviewed tasks; the whole-branch diff is the plan, not one review unit) and stands.
-  Date/Author: 2026-08-22 / controller adjudication, final review r6.
+  Round 8 raised all three again — that reviewer is not steerable and re-derives this
+  repository's own ceiling from `AGENTS.md` on every pass, so recurrence is the behaviour
+  of the instrument rather than new evidence — and added a third member of the same family:
+  `web_fetch(..., prompt=…)` putting fetched content into an `llm()` call. That one is the
+  deliberate analog of Claude Code's native WebFetch, which is a model-summarized fetch by
+  definition; its existing 200 000-character content cap is ~50k tokens, comfortably inside
+  the sub-model's own context, and paying for the page is what asking for a summary of it
+  means — SKILL.md carries that cost at the call site, and `.text` is always there for
+  callers who would rather filter in Python. All three families stand.
+  Date/Author: 2026-08-22 / controller adjudication, final review r6; extended r8.
 
 ## Surprises & Discoveries
 
