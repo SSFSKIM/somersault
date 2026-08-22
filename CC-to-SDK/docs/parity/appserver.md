@@ -12,9 +12,9 @@
 > a `planned(...)`/`probe-gated` row's name must **not** be registered in `schema/index.ts`.
 >
 > **Scope of this scorecard:** the four sources spec §10 calls "generated, not hand-counted" —
-> `host/ops.ts` (**34** ops — the TUI-clone waves grew the host wire past M1's 25, see gap 6),
+> `host/ops.ts` (**35** ops — the TUI-clone waves grew the host wire past M1's 25, see gap 6),
 > `bridge/types.ts` (11 `ControlFrame` verbs), `sessions/index.ts` (7 store wrappers), and `sdk.d.ts`'s
-> `interface Query` (27 methods) — **79 seam tokens** total. Spec §10's full denominator has two more
+> `interface Query` (27 methods) — **80 seam tokens** total. Spec §10's full denominator has two more
 > legs (`docs/parity/tui-ux.md` §control-plane, the fleet CLI verbs); those aren't code-walkable the
 > same way and stay tracked in `tui-ux.md` / `coverage.md`, not here.
 >
@@ -473,7 +473,22 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     otherwise recover TRUNCATED at a stale anchor, or fork to a new id while `record.sessionId` kept
     reporting the old one.
 
-## Host ops — `harness/src/host/ops.ts` (34 tokens)
+11. **The app-server has no image surface, and the gate found only half of that** — gap 3's mirror
+    image. There, methods had no backing host op; here a host op has no method. F9 T-IMAGE (`9d823d0bf3`)
+    grew `host/ops.ts` a `stageImage` op and grew `prompt` an `images` claim array, and neither reached
+    `appserver/`: `git grep stageImage` under that directory returns nothing, so a fleet-origin thread
+    cannot send an image at all. **Whether it should is an open product question, deliberately not
+    answered here** — the scorecard's job is to stop the absence being invisible, not to commit the
+    roadmap to a `turn/stageImage`.
+
+    Two things are worth separating, because only one of them was catchable. The MISSING ROW went red
+    on the registry-coverage gate the moment the op landed — correctly, and it stayed red on `main`
+    from `9d823d0bf3` until this entry, because the gate is run as part of the drift ritual and the F9
+    wave did not run one. The `prompt.images` shortfall went undetected and would have stayed that way:
+    **the walker matches token NAMES, so an op that grows a new capability inside an existing schema
+    keeps its green row and its `both`.** A name-level instrument cannot see a field-level gap, which is
+    the same rot the M6 settings-key gate was built for, one level further down. Closing it means
+    walking op SHAPES, not op names — unbuilt, and named here rather than assumed.
 
 **Since M3 Task 10 the `both` in this table is literal, not forward-looking — and since Task 11 that
 holds for the four swap-family rows too (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), whose
@@ -495,7 +510,8 @@ this origin. The dedup guard goes with it: a re-add forwards, and the host decid
 | `stop` | host/ops.ts | `thread/stop` | both | shipped(M3) — ends the SESSION, origin-branched: the host op for a fleet thread (EOF is the contract — no receipt is awaited — then the roster row must turn terminal within a bounded poll, `-33008` naming the stuck state if it does not, record left standing), `thread/close`'s own path for an inProcess one. Both announce `thread/closed {reason:"stopped"}` |
 | `pending` | host/ops.ts | `decision/list` | both | shipped(M1) |
 | `answer` | host/ops.ts | `decision/respond` | both | shipped(M1) — Wave T wire shapes (see above) |
-| `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) |
+| `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) — **text only**: F9 T-IMAGE grew this op an `images` claim array that `turn/start` does not carry, so the row's `both` is true of the op and not of its whole schema (gap 11). A field-level shortfall the walker cannot see — it matches TOKEN names, so an op that grows a capability keeps a green row |
+| `stageImage` | host/ops.ts | **none** | N/A | **unscored — gap 11.** F9 T-IMAGE Task 5 (I3b): mints a staging file for ONE image and replies with the path the client writes the bytes to, over the filesystem rather than the socket, before claiming it in `prompt`'s `images`. Its own op deliberately, so an old host answers "unknown op" and the skew is LOUD (a bare field on `prompt` would be silently stripped). The app-server names no image surface at all — not this op, not `prompt.images` — so images are host-local today and a fleet thread cannot send one. Scored `unscored` rather than `N/A`: `N/A` in this table means *decided not to expose*, and nobody has decided this |
 | `interrupt` | host/ops.ts | `turn/interrupt` | both | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
 | `follow` | host/ops.ts | `thread/subscribe` | both | shipped(M1) |
 | `unfollow` | host/ops.ts | `thread/unsubscribe` | both | shipped(M1) |
@@ -711,10 +727,10 @@ git/diff seam, the reviewing agent fetching its own subject exactly as Codex's d
 
 ## Totals
 
-34 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **79 walked tokens**,
+35 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **80 walked tokens**,
 all rowed above — plus the 16 server-origin method rows and the 2 archive NOTIFICATION rows beside them,
 which no walker produces, plus M4's 2 review rows, for
-**99 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
+**100 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
 until then, having missed Task 7's adoption pair as well as its own workspace pair; Task 13's
 `thread/shellCommand` is the eighth server-origin row and Task 14's `thread/reopen` the ninth. M3 Task 15
 is the last landing that had to recount by hand: the gate prints the row total itself now, and both counts
@@ -732,14 +748,19 @@ already parses every row for its staleness pass, so since M3 Task 15 it tallies 
 lines on every run — `N rows by status` and `N rows by origin scope`. Run it; between runs the authority
 is each row's own `status` and `origin scope` column, as it always was.
 
-What those two lines say at this sweep (**M5 Task 11, 2026-08-19** — restated per landing, never trusted
-between them): **99 rows, 97 of them shipped** (2 of those `shipped(M4)`, 9 `shipped(M5)`), the remaining two being the
-`N/A` pair — `seedReadState`
-(internal plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row).
-This landing writes prose and no rows, so every figure in this section stands exactly where M5 Task 10
-left it — which is the reason to rerun the gate and restate them anyway rather than skip the sweep: a
-summary left unrewritten at a docs landing is indistinguishable from one nobody rechecked, and the
-recheck is the whole value of the line.
+What those two lines say at this sweep (**M6 scorecard repair, 2026-08-22** — restated per landing, never
+trusted between them): **100 rows, 97 of them shipped** (2 of those `shipped(M4)`, 9 `shipped(M5)`), the
+remaining three being the `N/A` pair — `seedReadState`
+(internal plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row) —
+plus `stageImage`, which the gate prints in a bucket of its own as **`unparsed 1`**. That bucket is
+deliberate and should stay: the row's status is outside the shipped/`N/A` vocabulary because the surface
+is genuinely unscored (gap 11), and forcing it to `N/A` would file an undecided question as a decision.
+An `unparsed` count above 1 means a row's status really is malformed.
+
+The previous sweep read **99 rows, 97 shipped** at M5 Task 11 (2026-08-19); the delta is `stageImage`'s
+row alone. The lesson the delta carries: that sweep was accurate the day it was written and wrong within
+two days, because a landing in ANOTHER wave (F9's image transport) grew a walked source without running
+this gate. Restating per landing only works if every landing that touches a walked source counts as one.
 **Three buckets are empty, each emptied by a nameable landing:** `planned(...)` by M3 Task 9, when
 `thread/stop` shipped; `probe-gated` by M2b Wave 4's Task 5, which probed all four gated tokens live on
 2026-08-11 (three promoted — `streamInput`, `reloadPlugins`, `reloadSkills` — and one retired to `N/A`);
