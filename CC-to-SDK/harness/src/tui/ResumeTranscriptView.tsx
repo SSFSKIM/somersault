@@ -33,8 +33,13 @@ import {
  *  (`rows`, the caller's `overlayRows()`) when the view is mounted inside it. Exported so the caller (and
  *  tests) can compute the SAME number without re-deriving the arithmetic. */
 const RESUME_VIEW_CAP = 200;
+/** Final-review finding 5: the footer below (border + meta line + hints line) always paints, in
+ *  fullscreen or not — but only fullscreen's budget is a hard ceiling on the SAME fixed rows the footer
+ *  also has to fit in. Reserving these three rows out of the transcript's own budget is what keeps a
+ *  full transcript from pushing the footer past `rows` instead of leaving it clipped by the frame. */
+const FOOTER_ROWS = 3;
 export const resumeViewBudget = (fullscreen: boolean, rows: number): number =>
-  fullscreen ? Math.min(RESUME_VIEW_CAP, rows) : RESUME_VIEW_CAP;
+  fullscreen ? Math.max(1, Math.min(RESUME_VIEW_CAP, rows) - FOOTER_ROWS) : RESUME_VIEW_CAP;
 
 export function ResumeTranscriptView({ session, load, columns, rows, fullscreen, onResume, onExit }: {
   /** The highlighted row: `previewMeta`'s `<relative> · N messages[ · branch]` and `transcriptItems`'s

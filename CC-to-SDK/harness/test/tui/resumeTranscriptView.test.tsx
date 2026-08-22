@@ -109,6 +109,22 @@ describe("ResumeTranscriptView — detail-all rendering and the fullscreen budge
     // small budget's worth of rows (proof by absence — the very first reply cannot possibly still be on screen).
     expect(flat(frame(r.lastFrame))).not.toContain("reply number 0 ");
   });
+
+  // Final-review finding 5: the fullscreen budget did not reserve the footer's own rows (border + meta +
+  // hints = 3), so a full transcript could paint right up to `rows` and push the footer past it. With the
+  // reservation, a long transcript at a small `rows` must leave exactly enough room for both.
+  it("reserves the footer's 3 rows out of the fullscreen budget — total painted rows never exceed `rows`", async () => {
+    const long = Array.from({ length: 60 }, (_, i) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: `reply number ${i}` }] } }));
+    const r = mountView({ state: "loaded", messages: long }, { fullscreen: true, rows: 10 });
+    await waitFor(() => flat(frame(r.lastFrame)).includes(PREVIEW_FOOTER));
+    const lines = plain(frame(r.lastFrame)).split("\n");
+    // The footer's own rule + meta + hints are still fully present, not clipped...
+    const ruleIndex = lines.findIndex((l) => /^─+$/.test(l.trim()));
+    expect(ruleIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[ruleIndex + 2]!.trim()).toBe(PREVIEW_FOOTER);
+    // ...and the whole view (transcript + footer) never exceeds the rows budget it was granted.
+    expect(lines.length).toBeLessThanOrEqual(10);
+  });
 });
 
 describe("ResumeTranscriptView — the image-only session (T-RESUME T3 cell 5, closes D-W9's image arm)", () => {
