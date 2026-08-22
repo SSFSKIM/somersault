@@ -1035,7 +1035,17 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   review caught this as an Important finding against the "both ways" claim in the original
   report. Fixed in the T13 review-fix pass by adding the comment to
   `find_claude_ancestor()` in `session_start.py`; both files now name each other.
-  Date/Author: 2026-08-21 / T13 executor; correction 2026-08-21 / T13 review-fix.
+  Extension (r15): the two-copy structure — and the sync obligation — now covers the
+  process IDENTITY the two sides exchange through the run file as well as the walk. The
+  hook records the `claude` ancestor's birth stamp when it writes the file
+  (`birth_identity`), and `resolve()` re-reads it (`ownership.hook_birth_identity`) and
+  refuses a file whose stamp names a different incarnation of that pid. The two readings
+  must come from the SAME source to be comparable, so both are `/proc/<pid>/stat` field 22
+  on Linux and the pinned `ps -o lstart=` string elsewhere — libproc's finer stamp, which
+  kernel ownership uses, is deliberately absent because no stdlib-only hook can produce it.
+  A run file with no stamp keeps today's acceptance; the hook rewrites every file on every
+  SessionStart, so that window ages out with no migration step.
+  Date/Author: 2026-08-23 / r15 finding 3.
 
 - Decision: Both walks match a candidate ancestor by **substring** — `"claude" in
   os.path.basename(comm)` — not exact equality. `discovery.resolve()`'s walk was written to
