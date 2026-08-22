@@ -1679,6 +1679,9 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   (121.6 s, `PTC_LIVE=1`, subscription auth, no `ANTHROPIC_API_KEY` in the environment or in
   the kernel's own env per A7's in-cell check); per-cell notes above.
 
+- Observation: a fail-open rule masks defects in its consumers — closing bgroups' unknown-identity hole (r10) immediately failed an existing shell test and exposed that `BashHandle` held a SNAPSHOT of its registry row (`dict(...)` at registration) while `_retire` marks `leader_exited` on the row in place, so the handle never saw the mark and, under the new fail-closed rule, `kill()` on a daemonizer read its own orphan group as unidentifiable. The old fail-open bias had been answering "unknown → signal anyway", which happened to give the right kill for the wrong reason. Fixed by holding the row object itself.
+  Evidence: `test_killing_a_daemonizers_handle_reaps_the_group_its_row_was_kept_for` failed only after `_recycled` failed closed ("h.kill() never reached descendant … — its row named it"); passes with the shared-row fix. Commit 47ef638345.
+
 ## Outcomes & Retrospective
 
 Written 2026-08-22 at finish.
@@ -1729,6 +1732,8 @@ background wrappers; a self-owned tmux session with file-polled output is the re
 detachment.
 
 ## Revision Notes
+
+- 2026-08-22 (post-close r10): a tenth external-review pass surfaced three findings past r9's convergence — the archive-settle epoch guard, the bgroups unknown-identity fail-open (r9's parked item, elevated), and the pending marker's missing nonce. All three fixed (commit 47ef638345); Surprises gains the masked BashHandle row-snapshot defect the fail-closed rule exposed. The drift test's currentTime/read entry was reclassified a declared forward loan over the installed binary's schema (commit 7eb05a6fbc).
 
 - 2026-08-20: Initial spec from the approved design (brainstorming session over
   `Conversation.md`, Prime Agent source, CC-to-SDK, Claude Code 2.1.236 reference source).
