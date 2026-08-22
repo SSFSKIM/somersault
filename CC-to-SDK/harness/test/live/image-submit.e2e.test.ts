@@ -15,7 +15,7 @@
 //
 // THEN (review-mandated): re-read the session from disk via `getSessionMessages`, confirm the image blocks
 // actually persisted, and project them through both the live transcript renderer (`replayDocument` +
-// `projectCompact`, the species-router stack) and the resume-view model (`previewItems`/`previewMessageCount`,
+// `projectCompact`, the species-router stack) and the resume-view model (`transcriptItems`/`previewMessageCount`,
 // what the `/resume` picker's preview pane draws) — asserting `[Image #N]` rows on both, and a preview count
 // of exactly 1 for an image-only slice built from the real persisted block (not a synthetic fixture).
 //
@@ -35,7 +35,7 @@ import { hostSocketPath } from "../../src/fleet/paths.js";
 import { getSessionMessages } from "../../src/sessions/index.js";
 import { replayDocument } from "../../src/tui/replay.js";
 import { projectCompact, type ProjectionOptions } from "../../src/tui/toolRenderer.js";
-import { previewItems, previewMessageCount, previewWidth } from "../../src/tui/sessionPickerModel.js";
+import { transcriptItems, previewMessageCount } from "../../src/tui/sessionPickerModel.js";
 import type { UserTurnInput, UserContentBlock } from "../../src/session/turnInput.js";
 
 const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
@@ -186,9 +186,10 @@ live("F9 T-IMAGE Task 6 — live discrimination through the real REPL submit cha
       const projectedTexts = projected.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.kind === "gutter-block" ? i.body.map((l) => l.text) : []));
       expect(projectedTexts).toContain("[Image #1]");
 
-      // The resume-view model — `previewItems`/`previewMessageCount`, exactly what the `/resume` picker's
-      // preview pane draws — over the SAME full persisted transcript.
-      const fullPane = previewItems(messages, { width: previewWidth(100), id: sessionId, cwd, limit: 200 });
+      // The resume-view model — `transcriptItems`/`previewMessageCount`, exactly what the `/resume`
+      // transcript view draws post-T-RESUME (the old previewItems/previewWidth pane API was replaced by
+      // the D-W9 takeover; width 98 = the old previewWidth(100) arithmetic, budget 200 = the classic cap).
+      const fullPane = transcriptItems(messages, { width: 98, id: sessionId, cwd, budget: 200 });
       const fullPaneTexts = fullPane.items.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.kind === "gutter-block" ? i.body.map((l) => l.text) : []));
       expect(fullPaneTexts.some((t) => t.includes("[Image #1]"))).toBe(true);
       expect(previewMessageCount(messages)).toBeGreaterThanOrEqual(imageUserMessages.length);
@@ -201,7 +202,7 @@ live("F9 T-IMAGE Task 6 — live discrimination through the real REPL submit cha
       expect(firstImageBlock).toBeTruthy();
       const imageOnlySlice = [{ type: "user", message: { content: [firstImageBlock] } }];
       expect(previewMessageCount(imageOnlySlice)).toBe(1);
-      const onlyPane = previewItems(imageOnlySlice, { width: previewWidth(100) });
+      const onlyPane = transcriptItems(imageOnlySlice, { width: 98, budget: 200 });
       const onlyPaneTexts = onlyPane.items.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.kind === "gutter-block" ? i.body.map((l) => l.text) : []));
       expect(onlyPaneTexts).toContain("[Image #1]");
     } finally {
