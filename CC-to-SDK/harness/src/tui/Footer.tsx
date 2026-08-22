@@ -149,10 +149,10 @@ export function footerStatusRows({ statusLineConfigured, statusLineText, bashMod
  *  Here it is not: the composer's slot is the ONLY reader of the notification queue, so the suppression would
  *  take the whole immediate rank with it (FSW T14, amendment 1).
  *    THE IMMEDIATE RANK IS NOT ONE PRODUCER, and the fix round says so where the predicate is rather than in a
- *  report. SIX surfaces post at `priority:"immediate"` today (`grep 'priority: "immediate"'`): the yank hint,
- *  the `←←` agents hint, the history-search hint and the Esc-again-to-clear arm (ChatComposer), and the
- *  Esc-again-to-rewind arm and the `v` dump's `wrote <file>` receipt (ChatApp). All six are keystroke feedback
- *  with no other surface — the dump receipt is merely the one whose absence a test caught — so all six move
+ *  report. SEVEN surfaces post at `priority:"immediate"` today (`grep 'priority: "immediate"'`): the yank hint,
+ *  the `←←` agents hint, the history-search hint and the Esc-again-to-clear arm (ChatComposer), the
+ *  Esc-again-to-rewind arm and the `v` dump's `wrote <file>` receipt (ChatApp), and F9 T7's copy toast. All are keystroke feedback
+ *  with no other surface — the dump receipt is merely the one whose absence a test caught — so all seven move
  *  here together in fullscreen, and everything BELOW immediate is genuinely silenced, which is canon's
  *  behaviour for all of them.
  *    THE HOME IS CANON'S OWN MECHANISM: `Wtl` (L494681), the footer's right region, a column flushed right on
