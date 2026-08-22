@@ -1260,6 +1260,17 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   row is owed the distinction. Fixer choice, controller-adopted.
   Date/Author: 2026-08-23 / r13 fix wave.
 
+- Decision: on restart, meta.json's kernel-lifetime fields (idle_hours, max_concurrency,
+  depth, max_depth) override even an EXPLICITLY passed `config=`; the explicit config
+  supplies everything else and any lifetime field meta does not record. Rule: what the
+  kernel LIVES under travels with the kernel; what the caller RENDERS with stays the
+  caller's.
+  Rationale: r16 finding 3. "Explicit config wins wholesale" was never true — r8/r15
+  already overlaid depth onto explicit configs — and making it true would reopen the
+  recursion brake through `restart_kernel(key, config=Config.from_env())`, the exact
+  construction r15 closed in env form. Fixer deviation, controller-adopted.
+  Date/Author: 2026-08-23 / r16 fix wave.
+
 ## Surprises & Discoveries
 
 - Observation: Prime Agent's model surface is exactly one tool (`ipython`) with **no cell
@@ -1795,7 +1806,26 @@ build base-then-replay, not base-from-head. (5) Long external jobs outlive harne
 background wrappers; a self-owned tmux session with file-polled output is the reliable
 detachment.
 
+
+**Extended campaign addendum (r10–r16, 2026-08-22..23).** After the nine-round campaign
+closed, a further seven whole-branch rounds ran at the user's invocation on the same
+scoped-synthetic-base method. They raised 37 findings — 36 fixed (35 fully, 1 partially by
+design with its unreachable half recorded as residual 10), 1 the standing split-the-feature
+adjudication, cited — with ZERO recurrences of any fixed item across all sixteen rounds.
+Severity rose mid-campaign (r13: five P1, including zombie-liveness and a ZeroMQ
+subscription race) then declined monotonically to r16's single refinement-grade P1;
+convergence was declared when two consecutive rounds returned only refinements of the
+campaign's own hardening. The keyless suite grew 370 → 454. Structural changes of note:
+the package root became the plugin root (marketplace-capable), foreground output was
+bounded (a deliberate contract overturn, in the Decision Log), interrupted cells exit 130,
+and the residual ledger grew from eight to ten. The r9 lesson sharpened: on a ~17k-line
+surface, each external round samples rather than exhausts — "a quiet round" means the
+reviewer's marginal yield fell, and only a declining multi-round trend, not one clean
+round, supports stopping.
+
 ## Revision Notes
+
+- 2026-08-23 (r16, campaign close): round 16 confirmed all three findings (1 P1). Confirmed-dead kernels reap their recorded process group under the existence gate (1efe150061); interrupt binds to the cell captured at entry (647a30bd7b); kernel-lifetime config travels with the kernel — Decision Log entry (3dc369e16b). Extended campaign r10–r16 declared converged; addendum at the end of Outcomes & Retrospective.
 
 - 2026-08-23 (r15): round 15 confirmed all five findings (2 P1, refinement-grade). Bootstrap client synchronizes its SUB channel (7b8c01c0f9); meta persists and restart restores max_depth beside depth (9bdd6a41f7); run files bind to the Claude ancestor's birth incarnation — hook records, discovery verifies, absent-field migrates (fdb029087d); explicit since=0 stays authoritative over archived cursors (0b888807d6); sanitized session keys carry a 64-bit digest — dirty-alias kernels re-key on upgrade, stated migration (a6f070e4ba).
 
