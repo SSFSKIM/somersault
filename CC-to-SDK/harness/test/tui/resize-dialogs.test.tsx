@@ -110,6 +110,7 @@ const settingsProps = {
   fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
   onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {}, reduceMotion: false, setReduceMotion: () => {},
   progressBarEnabled: true, setProgressBarEnabled: () => {}, promptSuggestionEnabled: false, setPromptSuggestionEnabled: () => {},
+  copyOnSelect: true, setCopyOnSelect: () => {},
 };
 
 describe("SettingsDialog re-derives its geometry from the size it is given", () => {

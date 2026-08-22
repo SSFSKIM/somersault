@@ -42,8 +42,8 @@ export interface ChatClientOpts {
   // `initialTokenSource` (T2, F9 T-AUTO §A2): `AccountFacts.tokenSource` from the SAME `accountInfo()` race
   // main.ts already runs for the welcome banner's billing label — a second consumer of one fact, not a
   // second round-trip. Absent on `ccx attach` and on a resume/continue launch (main.ts's `runChatClient`
-  // callers), which is the notice's unknown arm.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
+  // callers), which is the notice's unknown arm. `initialCopyOnSelect` (F9 T-MOUSE T7) rides the same bag.
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -703,6 +703,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     initialPrefersReducedMotion: opts.hookOpts?.initialPrefersReducedMotion ?? (prefs.prefersReducedMotion ?? false),
     // T-CH34: and the `Terminal progress bar` row from the same read — DEFAULT TRUE, canon's own polarity.
     initialTerminalProgressBarEnabled: opts.hookOpts?.initialTerminalProgressBarEnabled ?? (prefs.terminalProgressBarEnabled ?? true),
+    // F9 T-MOUSE Task 7: and the `Copy on select` row from the same read — DEFAULT TRUE, canon's own polarity.
+    initialCopyOnSelect: opts.hookOpts?.initialCopyOnSelect ?? (prefs.copyOnSelect ?? true),
     // W-C T10 (EP-C2): the ONE place ccx reads a settings file for its own UI, and the one place it can be:
     // canon L154558 honours `statusLine` from the USER file only (a checked-out project may not install a
     // command on the machine that checks it out), and every layer below this is a pure function or a hook a

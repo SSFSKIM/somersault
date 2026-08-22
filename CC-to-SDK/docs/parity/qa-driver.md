@@ -350,7 +350,24 @@ tmux display -p -t qacc \
 
 Result for `claude` 2.1.222 — `any=0 btn=0 std=0 sgr=0 all=0`, in **every** state tested: fresh
 REPL, mid-turn, after a folded tool row, after `ctrl+o` expansion, and with the `/model` picker
-open. `ccx` reports the same all-zero set. **Neither TUI ever enables mouse reporting.**
+open. `ccx` reports the same all-zero set. ~~**Neither TUI ever enables mouse reporting.**~~
+
+> **STALE for `ccx`'s fullscreen renderer since F9 T-MOUSE (`bb3db3569a`, 2026-08-22).** The
+> all-zero reading above was `ccx`-classic (this proving run's subject) and `claude` 2.1.222 — both
+> still true as stated. Fullscreen `ccx` now arms the maximum set by default:
+> `?1000h ?1002h ?1003h ?1006h` (`MOUSE_ON_FULL`, `mouseMode`/`mouseEnable` in `src/tui/altScreen.ts`,
+> pinned byte-for-byte by `test/unit/alt-screen.test.ts`). Re-verified live in this same harness
+> (T-MOUSE task 8, isolated home, private tmux socket): after an unpinned/`CLAUDE_CODE_NO_FLICKER=1`
+> launch, `tmux display -p 'any=#{mouse_any_flag} btn=#{mouse_button_flag} std=#{mouse_standard_flag}
+> sgr=#{mouse_sgr_flag} all=#{mouse_all_flag}'` read `any=1 btn=0 std=0 sgr=1 all=1`, and a
+> `pipe-pane`-captured raw log showed the exact enter bytes `\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h`
+> right after `smcup`. `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` restores precisely the two-mode arm this
+> section originally measured (`\x1b[?1000h\x1b[?1006h`, flags `any=1 std=1 sgr=1 btn=0 all=0`,
+> confirmed both by raw bytes and by feeding a motion+drag sweep at a transcript row and finding the
+> frame byte-identical before and after). `CLAUDE_CODE_DISABLE_MOUSE=1` still arms nothing at all
+> (`std=btn=sgr=all=0`, no `?100xh` bytes anywhere in the enter sequence). See
+> `docs/superpowers/specs/2026-08-22-f9-wave-design.md` Track T-MOUSE and
+> `.doperpowers/sdd/2026-08-22-f9-t-mouse/task-8-report.md` for the full evidence.
 
 > **STALE for claude ≥2.1.226 — and the trigger is NOT geometry** (sweep #2 filed s2qa6-19 as
 > "alt screen at ≤24 rows"; the FULLSCREEN-1 grounding, 2026-08-12, overturned the mechanism with
@@ -740,7 +757,7 @@ What a QA agent **can** and **cannot** do with this harness.
 | Arrow keys (dialog navigation) | **YES** | `send-keys -t <s> Down` then `Enter` — used to answer the trust and bypass dialogs |
 | Shift+Tab (mode cycling) | **YES** | `send-keys -t <s> BTab` |
 | Arbitrary raw bytes | **YES** | `send-keys -t <s> -H <hex> <hex> …` — the general escape hatch |
-| SGR mouse events | **YES (delivered)** | `send-keys -H` with `ESC [ < b ; col ; row M/m`; delivery proven, but **no effect** because neither TUI enables mouse reporting |
+| SGR mouse events | **YES (delivered)** | `send-keys -H` with `ESC [ < b ; col ; row M/m`; delivery proven. **No effect on `claude`/`ccx`-classic** (neither enables mouse reporting), but **live effect on `ccx`'s fullscreen renderer since F9 T-MOUSE** — a motion sweep un-dims/backgrounds a hovered transcript row, a press-drag-release sweep paints `selectionBg` and auto-copies (native clipboard + OSC 52, tmux-DCS-wrapped under `$TMUX`), and click/double/triple-click position the caret or select word/line — all confirmed via this exact byte-injection method, task-8 report has the captures |
 | X10 mouse events | **YES (delivered)** | `send-keys -H 1b 5b 4d …`; same — delivered, swallowed cleanly |
 | Mouse events via pane tty write | **NO** | wrong pty direction; see §4.3 Method A |
 | Mouse events via `send-keys -M` | **NO** | only valid inside a tmux key binding with a live mouse event in context; not scriptable |

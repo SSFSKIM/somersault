@@ -125,6 +125,20 @@ export function useRegionRows(): number { return useContext(RegionRowsContext); 
  *  rows; keying off a published origin means only a bounded frame can have any. */
 const RegionTopContext = createContext(0);
 export function useRegionTop(): number { return useContext(RegionTopContext); }
+
+/** THE BOTTOM BAND'S FIRST TERMINAL ROW (F9 T-MOUSE Task 4), published the same way `RegionTopContext` is —
+ *  arithmetic over what this file already knows, not a measurement of its own. The region ends where it is
+ *  granted (`regionRows`, the SAME value `RegionRowsContext` hands the viewport, MEASURED post-layout by the
+ *  effect below), so the row right after it is `REGION_TOP_ROW + regionRows` — the composer's own top row IS
+ *  this value whenever the composer is the dock's only occupant above the footer (F9 T-MOUSE Task 4's
+ *  `ChatComposer` reads it through `useDockTop`). It is NOT the composer's origin in general: a task panel, the
+ *  live-turn spinner or a hoisted suggestion palette can render above the composer inside `dock`, and this
+ *  context knows nothing about them — `ChatComposer` treats those as the SAME "0 = not addressable" case a
+ *  missing `RegionTopContext` is, an accepted v1 scope cut (recorded in the F9 T-MOUSE Task 4 report) rather
+ *  than a silent wrong answer. DEFAULT 0 for the identical reason `RegionTopContext`'s is: outside a bounded
+ *  frame, or on the `seam` arm (where the composer is unmounted), there is nothing to address. */
+const DockTopContext = createContext(0);
+export function useDockTop(): number { return useContext(DockTopContext); }
 /** The frame's own first terminal row. `enter()` writes `\x1b[2J\x1b[H` (altScreen.ts `ENTER_ALT`) and Ink
  *  paints from the home position, so the frame starts at row 1 and the row it does NOT own is the last one —
  *  the same arithmetic `frameHeight` states from the other end. */
@@ -317,10 +331,15 @@ export function FullscreenFrame({ mode = "fullscreen", rows, regionChildren, doc
           `bottomRef` stays attached across it. The seam adds nothing but its border row: the cap, the clip and
           the diagnostic above are the dock's, unchanged. (The seam is a fullscreen-only slot: ChatApp's
           `seamActive` is false on the main screen, so the classic arm always takes the dock branch.) */}
-      {seamUp
-        ? <Box ref={bottomRef} flexDirection="column" {...slotStyle}
-            borderStyle={SEAM_RULE} borderColor={seamRuleColor()} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
-        : <Box ref={bottomRef} flexDirection="column" {...slotStyle}>{dock}</Box>}
+      {/* F9 T-MOUSE Task 4 — `DockTopContext` wraps BOTH tenants at the same tree position (the header's own
+          rule for `bottomRef`: one element position, not two code paths). Harmless on the `seam` arm — the
+          composer is unmounted there, so nothing reads it — and cheap enough not to special-case out. */}
+      <DockTopContext.Provider value={bounded ? REGION_TOP_ROW + regionRows : 0}>
+        {seamUp
+          ? <Box ref={bottomRef} flexDirection="column" {...slotStyle}
+              borderStyle={SEAM_RULE} borderColor={seamRuleColor()} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
+          : <Box ref={bottomRef} flexDirection="column" {...slotStyle}>{dock}</Box>}
+      </DockTopContext.Provider>
     </Box>
   );
 }

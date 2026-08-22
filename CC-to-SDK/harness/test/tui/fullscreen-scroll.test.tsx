@@ -28,7 +28,7 @@ import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { RegionPager, pagerChromeRows } from "../../src/tui/RegionPager.js";
 import { jumpPillText } from "../../src/tui/JumpPill.js";
 import { dumpDir } from "../../src/tui/transcriptDump.js";
-import { createAltScreenGuard, ENTER_ALT, EXIT_ALT, MOUSE_ON_SCROLL } from "../../src/tui/altScreen.js";
+import { createAltScreenGuard, ENTER_ALT, EXIT_ALT, MOUSE_ON_FULL } from "../../src/tui/altScreen.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { YANK_HINT_TEXT } from "../../src/tui/ChatComposer.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
@@ -563,7 +563,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       const child = writes.indexOf(SPAWN);
       expect(child).toBeGreaterThan(0);
       expect(writes.slice(0, child)).toContain(EXIT_ALT);                // rmcup BEFORE the child
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL]);   // …and smcup after it, nothing between
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_FULL]);   // …and smcup after it, nothing between
       expect(guard.active()).toBe(true);                                 // the guard owns the screen across the handoff
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); }
@@ -597,7 +597,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       fake.parkPermission(planEntry());
       await waitFor(() => (r.lastFrame() ?? "").includes("Ready to code?"));
       r.stdin.write("\x07");
-      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_SCROLL));
+      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_FULL));
       // …AND THE ROUND TRIP LANDED (t12 re-review). Without this the escape order alone would pass on a child
       // that never ran: a `spawnSync` failure comes back as `r.error`, `editExternal` answers null, and the
       // dialog keeps its original plan while the brackets look perfect. The dialog adopts a changed edit
@@ -606,7 +606,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       const child = writes.indexOf(SPAWN);
       expect(child).toBeGreaterThan(0);
       expect(writes.slice(0, child)).toContain(EXIT_ALT);
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL]);
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_FULL]);
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); }
   });
@@ -630,12 +630,12 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       await tick();
       r.stdin.write("/keybindings"); await waitFor(() => (r.lastFrame() ?? "").includes("/keybindings"));
       r.stdin.write("\r");
-      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_SCROLL));
+      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_FULL));
       expect(readFileSync(kbFile(home), "utf8")).toBe("EDITED");         // the child really opened the real file
       const child = writes.indexOf(SPAWN);
       expect(child).toBeGreaterThan(0);
       expect(writes.slice(0, child)).toContain(EXIT_ALT);                // rmcup BEFORE the child
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL]);   // …and smcup after it, nothing between
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_FULL]);   // …and smcup after it, nothing between
       expect(guard.active()).toBe(true);
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); rmSync(home, { recursive: true, force: true }); }
@@ -692,11 +692,11 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
       await waitFor(() => (r.lastFrame() ?? "").includes(PROMPT));
       await tick();
       r.stdin.write("\x07");                                            // ctrl+g — and the editor saves nothing
-      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_SCROLL));
+      await waitFor(() => writes.includes(ENTER_ALT + MOUSE_ON_FULL));
       await settle();
       expect(ed.ran()).toBe(true);                                      // the child really ran…
       const child = writes.indexOf(SPAWN);
-      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL, REPAINT]);   // …and smcup's blank screen was painted over
+      expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_FULL, REPAINT]);   // …and smcup's blank screen was painted over
       r.unmount();
     } finally { process.env.VISUAL = ""; ed.clean(); }
   });
@@ -735,7 +735,7 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     await settle();
     const child = writes.indexOf(SPAWN);                                // the file's own idiom: the handoff's
     expect(writes.slice(0, child)).toContain(EXIT_ALT);                 // leading leg carries mouse/cursor bytes
-    expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_SCROLL, REPAINT]);     // …and the return leg is exactly these two
+    expect(writes.slice(child + 1)).toEqual([ENTER_ALT + MOUSE_ON_FULL, REPAINT]);     // …and the return leg is exactly these two
     r.unmount();
   });
 

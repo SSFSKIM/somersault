@@ -29,7 +29,12 @@ export type ThemeId = "auto" | "dark" | "light" | "dark-daltonized" | "light-dal
 
 export const THEME_TOKEN_NAMES = [
   "claude", "text", "inverseText", "inactive", "subtle", "success", "error", "warning", "permission", "suggestion", "remember",
-  "autoAccept", "skill", "bashBorder", "promptBorder", "planMode", "background", "selectionBg", "userMessageBackground", "composerSidebarBackground",
+  "autoAccept", "skill", "bashBorder", "promptBorder", "planMode", "background", "selectionBg", "userMessageBackground",
+  // F9 T-MOUSE Task 3 — the hover twin of `userMessageBackground` (bundle L188034: every non-ANSI block —
+  // `FcS` light, `jcS` dark, `UcS` light-daltonized, `zcS` dark-daltonized — carries it right beside its
+  // plain sibling; the two ANSI blocks `$cS`/`BcS` are out of scope exactly as the 30 tokens above already
+  // are). Used at bundle L562779/L670351/L670612/L670801 as the band a hovered row/button swaps to.
+  "userMessageBackgroundHover", "composerSidebarBackground",
   "bashMessageBackgroundColor", "memoryBackgroundColor", "rate_limit_fill", "rate_limit_empty",
   "diffAdded", "diffRemoved", "diffAddedDimmed", "diffRemovedDimmed", "diffAddedWord", "diffRemovedWord",
 ] as const;
@@ -42,7 +47,7 @@ const DARK: ThemeTokens = {
   claude: "rgb(215,119,87)", text: "rgb(255,255,255)", inverseText: "rgb(0,0,0)", inactive: "rgb(153,153,153)", subtle: "rgb(80,80,80)",
   success: "rgb(78,186,101)", error: "rgb(255,107,128)", warning: "rgb(255,193,7)", permission: "rgb(177,185,249)", suggestion: "rgb(177,185,249)", remember: "rgb(177,185,249)",
   autoAccept: "rgb(175,135,255)", skill: "rgb(175,135,255)", bashBorder: "rgb(253,93,177)", promptBorder: "rgb(136,136,136)", planMode: "rgb(72,150,140)",
-  background: "rgb(0,204,204)", selectionBg: "rgb(38, 79, 120)", userMessageBackground: "rgb(55, 55, 55)", composerSidebarBackground: "rgb(38, 38, 38)",
+  background: "rgb(0,204,204)", selectionBg: "rgb(38, 79, 120)", userMessageBackground: "rgb(55, 55, 55)", userMessageBackgroundHover: "rgb(70, 70, 70)", composerSidebarBackground: "rgb(38, 38, 38)",
   bashMessageBackgroundColor: "rgb(65, 60, 65)", memoryBackgroundColor: "rgb(55, 65, 70)", rate_limit_fill: "rgb(177,185,249)", rate_limit_empty: "rgb(80,83,112)",
   diffAdded: "rgb(34,92,43)", diffRemoved: "rgb(122,41,54)", diffAddedDimmed: "rgb(71,88,74)", diffRemovedDimmed: "rgb(105,72,77)", diffAddedWord: "rgb(56,166,96)", diffRemovedWord: "rgb(179,89,107)",
 };
@@ -50,7 +55,7 @@ const LIGHT: ThemeTokens = {
   claude: "rgb(215,119,87)", text: "rgb(0,0,0)", inverseText: "rgb(255,255,255)", inactive: "rgb(102,102,102)", subtle: "rgb(175,175,175)",
   success: "rgb(44,122,57)", error: "rgb(171,43,63)", warning: "rgb(150,108,30)", permission: "rgb(87,105,247)", suggestion: "rgb(87,105,247)", remember: "rgb(0,0,255)",
   autoAccept: "rgb(135,0,255)", skill: "rgb(135,0,255)", bashBorder: "rgb(255,0,135)", promptBorder: "rgb(153,153,153)", planMode: "rgb(0,102,102)",
-  background: "rgb(0,153,153)", selectionBg: "rgb(180, 213, 255)", userMessageBackground: "rgb(240, 240, 240)", composerSidebarBackground: "rgb(245, 245, 245)",
+  background: "rgb(0,153,153)", selectionBg: "rgb(180, 213, 255)", userMessageBackground: "rgb(240, 240, 240)", userMessageBackgroundHover: "rgb(252, 252, 252)", composerSidebarBackground: "rgb(245, 245, 245)",
   bashMessageBackgroundColor: "rgb(250, 245, 250)", memoryBackgroundColor: "rgb(230, 245, 250)", rate_limit_fill: "rgb(87,105,247)", rate_limit_empty: "rgb(39,47,111)",
   diffAdded: "rgb(105,219,124)", diffRemoved: "rgb(255,168,180)", diffAddedDimmed: "rgb(199,225,203)", diffRemovedDimmed: "rgb(253,210,216)", diffAddedWord: "rgb(47,157,68)", diffRemovedWord: "rgb(209,69,75)",
 };
@@ -58,7 +63,12 @@ const DARK_DALTONIZED: ThemeTokens = {
   claude: "rgb(255,153,51)", text: "rgb(255,255,255)", inverseText: "rgb(0,0,0)", inactive: "rgb(153,153,153)", subtle: "rgb(80,80,80)",
   success: "rgb(51,153,255)", error: "rgb(255,102,102)", warning: "rgb(255,204,0)", permission: "rgb(153,204,255)", suggestion: "rgb(153,204,255)", remember: "rgb(153,204,255)",
   autoAccept: "rgb(175,135,255)", skill: "rgb(175,135,255)", bashBorder: "rgb(51,153,255)", promptBorder: "rgb(136,136,136)", planMode: "rgb(102,153,153)",
-  background: "rgb(0,204,204)", selectionBg: "rgb(38, 79, 120)", userMessageBackground: "rgb(55, 55, 55)", composerSidebarBackground: "rgb(38, 38, 38)",
+  background: "rgb(0,204,204)", selectionBg: "rgb(38, 79, 120)", userMessageBackground: "rgb(55, 55, 55)",
+  // F9 T-MOUSE Task 3 — dark-daltonized's `userMessageBackgroundHover`, read from canon bundle L188034's
+  // `zcS` block (2.1.236 `cli.pretty.js`): `rgb(70, 70, 70)`, BYTE-IDENTICAL to plain dark's (`jcS`) pair
+  // above — `zcS.userMessageBackground` is itself already identical to `jcS`'s (both `rgb(55, 55, 55)`,
+  // this table's own existing capture), so the hover twin tracking it is not a coincidence of this one cell.
+  userMessageBackgroundHover: "rgb(70, 70, 70)", composerSidebarBackground: "rgb(38, 38, 38)",
   bashMessageBackgroundColor: "rgb(65, 60, 65)", memoryBackgroundColor: "rgb(55, 65, 70)", rate_limit_fill: "rgb(153,204,255)", rate_limit_empty: "rgb(69,92,115)",
   diffAdded: "rgb(0,68,102)", diffRemoved: "rgb(102,0,0)", diffAddedDimmed: "rgb(62,81,91)", diffRemovedDimmed: "rgb(62,44,44)", diffAddedWord: "rgb(0,119,179)", diffRemovedWord: "rgb(179,0,0)",
 };
@@ -66,7 +76,7 @@ const LIGHT_DALTONIZED: ThemeTokens = {
   claude: "rgb(255,153,51)", text: "rgb(0,0,0)", inverseText: "rgb(255,255,255)", inactive: "rgb(102,102,102)", subtle: "rgb(175,175,175)",
   success: "rgb(0,102,153)", error: "rgb(204,0,0)", warning: "rgb(255,153,0)", permission: "rgb(51,102,255)", suggestion: "rgb(51,102,255)", remember: "rgb(51,102,255)",
   autoAccept: "rgb(135,0,255)", skill: "rgb(135,0,255)", bashBorder: "rgb(0,102,204)", promptBorder: "rgb(153,153,153)", planMode: "rgb(51,102,102)",
-  background: "rgb(0,153,153)", selectionBg: "rgb(180, 213, 255)", userMessageBackground: "rgb(220, 220, 220)", composerSidebarBackground: "rgb(235, 235, 235)",
+  background: "rgb(0,153,153)", selectionBg: "rgb(180, 213, 255)", userMessageBackground: "rgb(220, 220, 220)", userMessageBackgroundHover: "rgb(232, 232, 232)", composerSidebarBackground: "rgb(235, 235, 235)",
   bashMessageBackgroundColor: "rgb(250, 245, 250)", memoryBackgroundColor: "rgb(230, 245, 250)", rate_limit_fill: "rgb(51,102,255)", rate_limit_empty: "rgb(23,46,114)",
   diffAdded: "rgb(153,204,255)", diffRemoved: "rgb(255,204,204)", diffAddedDimmed: "rgb(209,231,253)", diffRemovedDimmed: "rgb(255,233,233)", diffAddedWord: "rgb(51,102,204)", diffRemovedWord: "rgb(153,51,51)",
 };

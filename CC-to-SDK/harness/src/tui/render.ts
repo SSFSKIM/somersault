@@ -7,7 +7,12 @@
 // `strikethrough`/`underline`/`bg` (F4 Task 1) are the substrate the rest of F4 builds on: markdown `~~…~~`
 // and `<u>…</u>` (Task 3) set the first two, the diff background bands (Task 7) set `bg`. `bg` is a color in
 // the same §2.2 TH2 grammar as `color` and is resolved by the <Line> view, not by its producers.
-export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; gutter?: Gutter; segments?: Segment[]; }
+// `continuation` (F9 T-MOUSE Task 1): set ONLY by `wrapItems.ts`'s `wrapLine` on a row it did not start —
+// upstream's soft-wrap vs. hard-break distinction (the wave's own R1 research, §2.4/§3.2), needed by the hit
+// map so a later selection sweep can join a wrapped paragraph's copy as one line rather than one per painted
+// row. Absent (never `false`) means "this row starts a logical line", which is every producer's own output
+// before it reaches `wrapLine`, and every row that already fit at its painted width.
+export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; gutter?: Gutter; segments?: Segment[]; continuation?: true; }
 // `italic` on the gutter: the `∴` thinking gutter (pack §8.3, Task 9) is dim+italic while its line is not.
 export interface Gutter { text: string; color?: string; dim?: boolean; italic?: boolean; }
 // `preStyled` (F3 Task 1, the bold-count mechanism of spec Decision Log 2026-08-04): the segment's `text`

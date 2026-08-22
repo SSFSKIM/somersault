@@ -23,6 +23,18 @@ import { historyNext, historyPrev, pushHistory, type DraftStash, type HistEdit, 
 // The prefix→mode reading lives in `promptMode.ts` (a zero-import leaf) so the history seed and this reducer
 // share ONE derivation; `InputMode` moved with it and is re-exported here, so existing imports are unchanged.
 import { composerMode, type InputMode } from "./promptMode.js";
+// F9 T-MOUSE Task 4 — click-to-caret's inverse map. `wrapRows` is `wrapItems.ts`'s wrap primitive, "Ink's own
+// wrap, verbatim" — the SAME call every other painted-row producer in this tree makes, so reusing it (rather
+// than a second `wrapAnsi(text, width, {trim:false, hard:true})` typed out here) is what keeps this file's
+// click math from ever diverging from what `ChatComposer` actually paints. `columnToChar`/`HitRow` are T1's
+// grapheme-safe column map (`mouse/hitmap.ts`) — the same one the transcript's own click and hover paths use,
+// reused here rather than a second CJK/combining-mark walk. Both imports are runtime-safe despite this file's
+// own "no React/Ink" header: `wrapItems.ts`'s only VALUE imports are `wrap-ansi`/`string-width` (plain npm
+// libs) and `pager.js` (itself a type-only re-export), and `mouse/hitmap.ts`'s are the same two libs plus the
+// shared grapheme snapper — neither pulls in React or Ink at runtime, only erased `type` imports do.
+import { wrapRows } from "./wrapItems.js";
+import { columnToChar, type HitRow } from "./mouse/hitmap.js";
+import stringWidth from "string-width";
 export { historyEdited, historyLabel, historyPosition, historyView, rebuildChips } from "./editorHistory.js";
 export type { DraftStash, HistEdit, HistFilter, HistNavEntry } from "./editorHistory.js";
 export type { InputMode } from "./promptMode.js";
@@ -677,4 +689,74 @@ export function applyKey(s: EditorState, input: string, key: KeyFlags, now: numb
   if (head && now - head.at < UNDO_COALESCE_MS) return { ...r, state, killed };            // inside the window: fold in
   const entry = { lines: s.lines, cursor: s.cursor, pastedContents: s.pastedContents, at: now };
   return { ...r, state: { ...state, undo: [...s.undo.slice(-(UNDO_CAP - 1)), entry] }, killed };
+}
+
+// ── F9 T-MOUSE TASK 4 — CLICK-TO-CARET, THE INVERSE MAP ──────────────────────────────────────────────────
+//
+// Spec M4 / research R1 §2.6: canon's search input (bundle L539383-539394) wraps a PREFIXED string — the
+// label plus the query, one blob — with the SAME wrapper it paints with, looks the click's `(line, column)`
+// up in the wrapped result, and subtracts the prefix's width back off at the end, clamped to the raw text's
+// own length. That "wrap the whole thing, subtract after" shape is the general contract below; canon's OTHER
+// click site — the composer proper (L607573-578) — has no textual prefix at all (its own `getOffsetFromPosition`
+// is a plain wrap-and-look-up), which is exactly ccx's own shape: `PromptGlyph` is a separate Ink flex column,
+// never text concatenated onto a buffer line, so `ChatComposer`'s real call passes `prefixWidth: 0` and this
+// degrades to that simpler case. The parameter still exists — and is still exercised at a non-zero value by
+// this file's own tests — because the contract is the reusable primitive, not a composer-only shortcut.
+
+/** One buffer LINE's inverse map: wrap `" ".repeat(prefixWidth) + text` at `innerWidth` — `wrapRows`, the
+ *  exact primitive `ChatComposer` relies on Ink to run per line (see the import banner above) — find the
+ *  painted row `line` lands on (clamped into range: a `line` past the last wrapped row reads as the last one,
+ *  matching `columnToChar`'s own "click past the end is a click on the row's own end" rule), resolve `column`
+ *  (1-based, this codebase's mouse convention throughout) to a grapheme offset in THAT row via T1's
+ *  `columnToChar`, then walk back to an offset in the ORIGINAL (unprefixed) text.
+ *
+ *  `columnToChar` returns `undefined` for a column past the row's painted width (too far right) OR at/before
+ *  its `gutterWidth` (too far left) — built here with `gutterWidth: 0` because the prefix is baked directly
+ *  into the wrapped ROW TEXT rather than reserved as a separate margin (canon's own prefix is concatenated
+ *  text too, never a persistent per-row indent the way a transcript gutter is), so a column landing ON the
+ *  padding resolves to a REAL grapheme offset inside `[0, prefixWidth)` rather than to `undefined` — and it is
+ *  the FINAL clamp below, not this lookup, that turns that into "clamps to 0" (subtracting `prefixWidth` from
+ *  an offset smaller than it goes negative, and `Math.max(0, …)` is the one line doing the clamping the spec
+ *  names). A genuinely out-of-bounds column (before the row starts, or past its last cell) clamps to that
+ *  row's own edge — `0` or `row.length` — which is `columnToChar`'s "too far left" case, and this function's own
+ *  "too far right" fallback, respectively.
+ *
+ *  `text.length` is JS string length (UTF-16 code units), the SAME unit every cursor `col` in `EditorState`
+ *  already uses (`lineEnd`, `moveRight`, …) — not `stringWidth` — so the offset this returns drops straight
+ *  into a `Cursor` with no further conversion. */
+export function offsetFromPosition(text: string, prefixWidth: number, innerWidth: number, line: number, column: number): number {
+  const width = Math.max(1, Math.floor(innerWidth));
+  const pad = " ".repeat(Math.max(0, prefixWidth));
+  const rows = wrapRows(pad + text, width);
+  const rowIndex = Math.max(0, Math.min(Math.floor(line), rows.length - 1));
+  const row = rows[rowIndex] ?? "";
+  const before = rows.slice(0, rowIndex).reduce((sum, r) => sum + r.length, 0);
+  const hit: HitRow = { itemKey: "", anchor: undefined, width: stringWidth(row), text: row, gutterWidth: 0, softWrap: "hard", kind: "line" };
+  const cell = columnToChar(hit, column);
+  const charStart = cell ? cell.charStart : (column <= hit.gutterWidth ? 0 : row.length);
+  return Math.max(0, Math.min(text.length, before + charStart - Math.max(0, prefixWidth)));
+}
+
+/** The composer's OWN inverse map: `lines` paints as one wrapped block PER LOGICAL LINE (`ChatComposer`'s
+ *  `renderBuffer` — one `<Text>` per `lines[r]`, no whole-buffer join), so a click's row has to be resolved to
+ *  a (logical line, wrapped row WITHIN that line) pair before `offsetFromPosition` can answer it — walking
+ *  each line's own painted height in order is the direct transcription of that paint order, and it is the
+ *  reason this lives beside `offsetFromPosition` rather than being folded into it: the composer's buffer is a
+ *  LIST of independently-wrapped lines, not one prefixed blob.
+ *
+ *  `localRow`/`localCol` arrive already stripped of the composer's screen origin and left inset by the caller
+ *  (`ChatComposer`'s `caretAt`, mirroring canon's own `localRow`/`localCol` — R1 §2.6, L607573-578 — being
+ *  RECOMPUTED per handler rather than carried as absolute terminal coordinates). `undefined` — not addressable
+ *  — for a row above the first line or at/past the buffer's last painted row: the placeholder, the ghost's
+ *  dimmed tail and the inline argument hint are cosmetic paint with nothing here to place a caret in. */
+export function caretFromLocalPosition(lines: readonly string[], innerWidth: number, localRow: number, localCol: number): Cursor | undefined {
+  const width = Math.max(1, Math.floor(innerWidth));
+  if (localRow < 0) return undefined;
+  let painted = 0;
+  for (let line = 0; line < lines.length; line++) {
+    const rowCount = wrapRows(lines[line]!, width).length;
+    if (localRow < painted + rowCount) return { row: line, col: offsetFromPosition(lines[line]!, 0, width, localRow - painted, localCol) };
+    painted += rowCount;
+  }
+  return undefined;
 }

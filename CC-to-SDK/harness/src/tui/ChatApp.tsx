@@ -38,7 +38,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
-import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useMouseSink, useSuspendInput, useSwallowKeys } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useMouseSink, useSelectionLifetime, useSuspendInput, useSwallowKeys } from "./keys/KeymapProvider.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
@@ -47,7 +47,9 @@ import { Transcript } from "./Transcript.js";
 import { FullscreenFrame, dockCap, seamCap } from "./FullscreenFrame.js";
 import { todoPanelRows } from "./taskPanelModel.js";
 import { FullscreenViewport, type ViewportHitmap } from "./FullscreenViewport.js";
-import type { MouseInputEvent } from "./keys/types.js";
+import type { KeyEvent, MouseInputEvent, TextEvent } from "./keys/types.js";
+import { copyText, copyToastText } from "./copy.js";
+import { mouseMode } from "./altScreen.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
 import { editExternal, openInEditor } from "./externalEditor.js";
@@ -62,7 +64,7 @@ import { Line } from "./Line.js";
 import { userEchoLines } from "./render.js";
 import { indentRenderLine } from "./agentProgress.js";
 import { PaletteHost, PaletteSlot } from "./paletteSlot.js";
-import { ChatComposer, composerOwns, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
+import { ChatComposer, composerOwns, type ComposerCaret, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { pushHistory } from "./editorHistory.js";
 import { composerMode } from "./promptMode.js";
@@ -138,10 +140,22 @@ export const TYPING_IDLE_MS = 1500;
  *  (L549357), which is half the notification slot's default: the sentence names a path the user either acts on
  *  immediately or does not need. */
 const TRANSCRIPT_DUMP_NOTICE_MS = 4000;
+// F9 T-MOUSE Task 7 — the copy toast rides the transcript-dump notice's exact shape: a `priority:"immediate"`
+// post (`Footer.tsx`'s `footerNotice` draws ONLY `"immediate"` entries in fullscreen — the mode this feature
+// exists in — so anything lower would silently never paint) with a short, self-clearing timeout.
+const COPY_TOAST_MS = 4000;
 /** Stable empties for the transient region while the pager owns the screen — fresh `[]` literals per render
  *  would remount the (empty) region every frame for nothing. */
 const EMPTY_ITEMS: readonly RenderItem[] = [];
 const EMPTY_LINES: readonly RenderLine[] = [];
+
+// F9 T-MOUSE Task 7 — the selection-lifetime allow-list (canon's `oNw`, R1 §2.5): keys that do NOT clear a
+// live selection because they are the keyboard's own selection-extension/navigation chords, not "ordinary"
+// typing or commands. `SELECTION_CLEAR_EXEMPT_BARE` never clears regardless of modifiers; `ctrl+home`/
+// `ctrl+end` and a shift/meta/super arrow-or-home-or-end are the other two halves, checked inline (they need
+// the event's own modifier flags, which a flat name set cannot encode).
+const SELECTION_CLEAR_EXEMPT_BARE = new Set(["escape", "pageup", "pagedown"]);
+const SELECTION_EXTEND_KEYS = new Set(["up", "down", "left", "right", "home", "end"]);
 
 /** Physical rows a run of ALREADY-WRAPPED items occupies — one item per row by construction, which is what
  *  `streamingItems` returns and the only thing this may be pointed at. */
@@ -205,8 +219,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   initialTodosOpen?: boolean;
   // `initialTokenSource` (T2, F9 T-AUTO §A2): see chatMain.tsx's `ChatClientOpts.hookOpts` for provenance —
   // this component's own contribution to the chain is only to spread `hookOpts` into `useChat` below
-  // unmodified, which it already does.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
+  // unmodified, which it already does. `initialCopyOnSelect` (F9 T-MOUSE T7) rides the same spread.
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -371,7 +385,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -881,20 +895,171 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // cover it — so the row map underneath a dialog is CURRENT, not stale. The question is ownership, and this
   // is the whole of the answer to it.
   const hitmapRef = useRef<ViewportHitmap>(null);
+  // F9 T-MOUSE Task 4 — the composer's own click seam, on the same ref-channel family as `hitmapRef` and for
+  // the same reason (ComposerCaret's own doc: geometry current only for the render that produced it).
+  const composerRef = useRef<ComposerCaret>(null);
   const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
+  // F9 T-MOUSE Task 6 — MULTI-CLICK WINDOWING. Canon's own `clickCount` (R1 §2.2): the LAST press's cell,
+  // timestamp AND resolved anchor, so the NEXT press can tell "is this a continuation of the same click
+  // sequence" — 500 ms AND within 1 cell in BOTH axes (plan Global Constraints) AND, beyond canon (which
+  // never faces a buffer that moves under it), the SAME anchor — T10's own "the anchor is the cluster, not
+  // the cell" rule (`fold-click.test.tsx` (d′)), reapplied here: a stream that slides a DIFFERENT cluster
+  // under the identical coordinates within the window must not read as a double-click on it. A ref, not
+  // state: like `tapAnchorRef`, nothing on screen renders differently for it, only the NEXT press's own
+  // decision reads it.
+  const lastPressRef = useRef<{ col: number; row: number; time: number; count: number; anchor: string | undefined } | null>(null);
   const clickable = fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching;
-  const discardTap = useCallback(() => { tapAnchorRef.current = null; }, []);
+  // F9 T-MOUSE Task 3 — the wheel already discards a pending tap (T10's own reasoning: the document moved
+  // under a held button); a hover has the SAME problem for the SAME reason — the cell under a stale
+  // `hoveredKey` may now belong to a different cluster or none — so one signal clears both.
+  //   F9 T-MOUSE Task 6 — a live sweep has the SAME problem, for the SAME reason: the document moving under a
+  // held button invalidates whichever rows the anchor/focus cells used to name, so the wheel discards the
+  // selection too (spec's own "wheel during drag discards cleanly" cell).
+  //   A wheel tick ALSO breaks multi-click continuity, for the identical reason: scrolling between two clicks
+  // that happen to land back on the same coordinates is not a rapid double-click by any real definition, and
+  // `fold-click.test.tsx`'s own (d) case does exactly this (two ticks, one each way, landing the cursor back
+  // on the SAME cluster) — without this reset that case's "control" tap reads as a continuation and its
+  // second click resolves to a text selection instead of the fold toggle the test expects.
+  // F9 T-MOUSE Task 7 — the auto-copy LATCH (canon's `Lts`, R1 §2.5): fires exactly once per completed
+  // selection, reset by a fresh drag step, a new press, the selection going empty, or a key-lifetime clear.
+  // A ref, not state — nothing on screen renders differently for it, only the next selection-change decides
+  // off it, exactly `tapAnchorRef`'s own shape.
+  const copyLatchRef = useRef(false);
+  // The actual copy: reads the CURRENT selection's text off the viewport (`selectedText()` re-derives it
+  // from THIS frame's rows on every call, never a stale copy), shows canon's toast keyed by whichever
+  // channel `copyText` resolved, and only THEN writes the OSC 52 half to stdout — `copyText`'s own contract
+  // is "the caller writes `oscBytes`", and sequencing the write after the toast keeps the escape bytes from
+  // racing the notification onto the same repaint. Latches immediately even for an empty/whitespace-only
+  // selection (canon's own `if (!u || !u.trim()) { latch = true; return; }`): a selection that copies to
+  // nothing must not retry on every subsequent repaint.
+  const performAutoCopy = () => {
+    const text = hitmapRef.current?.selectedText() ?? "";
+    copyLatchRef.current = true;
+    if (!text.trim()) return;
+    void copyText(text).then((result) => {
+      notify({ key: "copy-toast", text: copyToastText(result.channel, text.length, process.env.TERM_PROGRAM), priority: "immediate", timeoutMs: COPY_TOAST_MS });
+      if (result.oscBytes) write(result.oscBytes);
+    });
+  };
+  // The subscriber itself (canon's `Lts`). `dragging` is passed by the CALLER rather than read off a
+  // `hitmapRef.isDragging()` this track never needed to add: every call site already knows which case it is
+  // — a drag step is always "still dragging", a release or a multi-click press is always "not" — so the
+  // early-return ordering below matches canon's exactly without a second imperative query.
+  const checkAutoCopy = (dragging: boolean) => {
+    if (dragging) { copyLatchRef.current = false; return; }
+    if (!(hitmapRef.current?.hasSelection() ?? false)) { copyLatchRef.current = false; return; }
+    if (copyLatchRef.current) return;
+    if (!state.copyOnSelect) return;
+    performAutoCopy();
+  };
+  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }, []);
   useMouseSink((e: MouseInputEvent) => {
+    // F9 T-MOUSE Task 3 — HOVER, ANSWERED BEFORE THE TAP GATE. Un-dimming a row is a pure paint effect (it
+    // mutates nothing a later gesture could act on wrongly), so it does NOT share the tap machine's
+    // `clickable` gate below — that gate exists to keep a CLICK from acting on a transcript a dialog or
+    // overlay currently owns, and a row lighting up under the pointer behind a permission consult is not that
+    // kind of action; canon's own hover sites keep firing under its dialogs too. The gate here is the plan's
+    // own, narrower pair: `fullscreen` (mouse reporting is armed by the alt-screen enter sequence, and
+    // `hitmapRef` has nothing attached at all under classic) and `mouseMode() === "full"` — REDUNDANT with the
+    // dispatch gate that already drops motion in every other mode (KeymapProvider.tsx), and kept here anyway
+    // for the reason that gate's own `fullscreen` term is kept: "hover does nothing off `full`" should be true
+    // by construction at the consumer, not only by a coincidence one layer up a later refactor could remove.
+    if (e.action === "motion") { if (fullscreen && mouseMode() === "full") hitmapRef.current?.hoverAt(e.col, e.row); }
     const at = tapAnchorRef.current;
     tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
     if (!clickable) return;
+    // F9 T-MOUSE Task 6 — DRAG extends the in-flight sweep. `clickable` (not a redundant `mouseMode()` check,
+    // matching this file's own click-to-caret precedent below) is enough: `scroll`/`off` already drop every
+    // drag report before it reaches this sink (KeymapProvider's dispatch gate, T2), so there is nothing further
+    // to gate here — a drag this component ever sees is already a `full`-mode one. A non-left drag (right/
+    // middle button) is nobody's gesture in this track and is dropped exactly like a modified click below.
+    if (e.action === "drag") { if (e.button === 0) { hitmapRef.current?.dragSelectionTo(e.col, e.row); checkAutoCopy(true); } return; }
+    // F9 T-MOUSE task 2 widened the union: motion now reaches every mouse sink once `altScreen.ts` arms
+    // `?1003` by default. This tap machine only ever knew press/release, and `action` was the only other
+    // value a non-press report could hold — a hover crossing the pending cell would otherwise fall straight
+    // through to the "does this match the press?" check below and read as that press's release. Treated
+    // exactly like the existing modified-click case: kill the tap (already done above), do nothing.
+    if (e.action === "motion") return;
     // Modified clicks are canon's own no-op, and a non-primary button is somebody else's gesture. Both land
     // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
     if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;
-    if (e.action === "press") { tapAnchorRef.current = { col: e.col, row: e.row, anchor: hitmapRef.current?.anchorAt(e.col, e.row) }; return; }
+    if (e.action === "press") {
+      const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
+      tapAnchorRef.current = { col: e.col, row: e.row, anchor };
+      // F9 T-MOUSE Task 6 — clickCount against the LAST PRESS (not the last release): within 500 ms, within
+      // 1 cell in both axes, AND the same resolved anchor (see `lastPressRef`'s own doc) extends the run;
+      // anything else (too slow, too far, or a different cluster) restarts it at 1. `count >= 2` is canon's
+      // own multi-click branch (a double OR triple click both fire on the SECOND/THIRD PRESS, never waiting
+      // for a release) — `count === 2` selects the word, anything higher stays a line select (canon never
+      // resets past triple; neither does this).
+      const last = lastPressRef.current;
+      const withinWindow = last !== null && e.col - last.col >= -1 && e.col - last.col <= 1 && e.row - last.row >= -1 && e.row - last.row <= 1 && Date.now() - last.time <= 500 && anchor === last.anchor;
+      const count = withinWindow ? last!.count + 1 : 1;
+      lastPressRef.current = { col: e.col, row: e.row, time: Date.now(), count, anchor };
+      // F9 T-MOUSE Task 7 — a fresh press is canon's own "isDragging=true" edge (`Eka`, R1 §2.4), which is
+      // exactly what `Lts`'s subscriber treats as "wait for mouse-up": reset the latch BEFORE deciding what
+      // kind of press this is, so a second selection after an already-copied one starts clean.
+      checkAutoCopy(true);
+      if (count >= 2) {
+        hitmapRef.current?.multiClickSelectionAt(e.col, e.row, count === 2 ? 2 : 3);
+        // A double/triple click IS a complete selection at press time — no drag follows, so nothing else
+        // would ever call `checkAutoCopy(false)` for it (canon: "no drag required for hasSelection to
+        // answer true").
+        checkAutoCopy(false);
+      } else hitmapRef.current?.startSelectionAt(e.col, e.row);
+      return;
+    }
+    // F9 T-MOUSE Task 6 — THE CLICK/SWEEP DISCRIMINANT, read BEFORE anything else on release: canon's own
+    // `!yze(r) && r.anchor` (R1 §2.2), negated. `hasSelection()` answers `true` the moment a real sweep (a
+    // drag whose focus differs from its anchor) or a multi-click span exists; a plain press+release with no
+    // drag in between never sets `focus`, so it reads `false` here and falls through to the EXACT SAME fold/
+    // caret logic this tap machine has always run — the selection path adds a new outcome, it does not
+    // change the old one. `endSelectionDrag()` always runs (every press set `isDragging`, regardless of
+    // whether it grew into a sweep), matching canon's own "release always stops the drag" branch.
+    const sweeping = hitmapRef.current?.hasSelection() ?? false;
+    hitmapRef.current?.endSelectionDrag();
+    // F9 T-MOUSE Task 7 — release is the mouse-up `Lts` waits for: not dragging any more, so this either
+    // fires the auto-copy (a real sweep just completed, latch still false) or resets the latch to false (a
+    // plain click with no selection at all) — read AFTER `endSelectionDrag()` so `hasSelection()` here sees
+    // the settled state, and BEFORE the `sweeping` early-return so a swallowed sweep still gets its copy.
+    checkAutoCopy(false);
+    if (sweeping) return;                           // a completed sweep does not toggle a fold or move the caret
     if (!at || at.col !== e.col || at.row !== e.row) return;
     const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
-    if (anchor !== undefined && anchor === at.anchor) toggleFold(anchor);
+    if (anchor !== undefined && anchor === at.anchor) { toggleFold(anchor); return; }
+    // F9 T-MOUSE Task 4 — click-to-caret, on the SAME press/release pairing as the fold toggle above rather
+    // than a second registration (the registry resolves only the innermost sink — `registry.ts:98-100` — so a
+    // second `useMouseSink` here would simply never fire). Falls through from the fold check above, which
+    // already proves press and release named the SAME cell; a fold anchor at that cell wins (the `return`
+    // above), and this is reached only when there was none. `caretAt` is its own complete gate: it answers
+    // `false` for any cell outside the composer's published, addressable buffer rows (above the transcript,
+    // past the last painted line, or the origin unpublished — off `fullscreen`, no dock grant yet), so a
+    // press+release pair that never touched the composer is a safe no-op here, exactly like `anchorAt`'s own
+    // `undefined` is above.
+    composerRef.current?.caretAt(e.col, e.row);
+  });
+  // F9 T-MOUSE Task 7 — SELECTION LIFETIME KEYS (canon's `Kjh`, R1 §2.5), pre-table (`useSelectionLifetime`'s
+  // own doc): a no-op the instant there is no selection to act on. Ctrl+C is CONSUMED — it must never also
+  // reach `app:interrupt`'s exit/interrupt arm while a selection is live — and chooses copy or clear by
+  // `copyOnSelect`'s own polarity (already-copied-on-release when it's on, so Ctrl+C only needs to clear;
+  // never auto-copied when it's off, so Ctrl+C is the FIRST copy). Every other key clears but is NOT
+  // consumed — it still runs whatever it would have (typing, scrolling, a bound command) — except the
+  // allow-list, canon's own selection-extension chords, which do nothing here at all.
+  useSelectionLifetime((e: KeyEvent | TextEvent) => {
+    if (!(hitmapRef.current?.hasSelection() ?? false)) return false;
+    if (e.kind === "key" && e.ctrl && !e.shift && !e.alt && e.name === "c") {
+      if (state.copyOnSelect) { hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }
+      else performAutoCopy();
+      return true;
+    }
+    if (e.kind === "key") {
+      if (SELECTION_CLEAR_EXEMPT_BARE.has(e.name)) return false;
+      if ((e.name === "home" || e.name === "end") && e.ctrl) return false;
+      if (SELECTION_EXTEND_KEYS.has(e.name) && (e.shift || e.alt || e.super)) return false;
+    }
+    hitmapRef.current?.discardSelection();
+    copyLatchRef.current = false;
+    return false;
   });
   // Live-feedback fix (2026-08-06, ctrl+o flood): the pager box alone is `rows - 6` lines (rows-10 content
   // + border 2 + header + footer), so ANY other transient chrome mounted beside it — spinner, task panel,
@@ -1384,6 +1549,21 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
     return Math.max(0, dockCap(size.rows, true) - others);
   };
+  // F9 T-MOUSE TASK 4 FIX (task review Critical) — the exact conditions that gate `TaskPanel` and the
+  // live-turn slot in `dock` below (`todosOpen && !paneOwned`, `(state.busy || state.compacting) && !paneOwned`),
+  // reused rather than re-derived, so a future dock member added to one automatically reads correctly here —
+  // matching `dockDialogRows` above, which already sums these same two occupants' row counts for the same
+  // reason. `state.tasks.length > 0` alongside `todosOpen`: `TaskPanel` itself renders NULL on an empty task
+  // list (its own header: "no empty state"), so `todosOpen` alone — true by DEFAULT (`initialTodosOpen`) —
+  // would flag a session with zero tasks as crowded when the panel paints nothing at all (caught by the
+  // pre-existing idle-composer tests, which mount with an empty task list and would otherwise go
+  // not-addressable for no on-screen reason). `!paneOwned` is always true wherever this reaches
+  // `ChatComposer` (the composer itself only mounts when `paneOwned` is false — see the final arm of
+  // `overlayChain`), kept anyway so this stays a direct transcription of `dock`'s own JSX conditions rather
+  // than a fact this file would have to re-verify by hand if that invariant ever changed. Threaded into
+  // `ChatComposer` as `dockCrowded`, which suppresses the composer's published click-to-caret origin — see
+  // `ChatComposer.tsx`'s `originExact`.
+  const dockCrowded = !paneOwned && ((todosOpen && state.tasks.length > 0) || state.busy || Boolean(state.compacting));
   /** THE OVERLAY CHAIN — every surface that replaces the composer, in precedence order. Extracted from the
    *  dock in FSW T13 so ONE list of elements can be handed to either slot (see `seamActive` above): on the
    *  main screen and for a parked decision it renders where it always did, directly above the footer; in
@@ -1501,6 +1681,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     reduceMotion={state.prefersReducedMotion} setReduceMotion={setPrefersReducedMotion}
                     progressBarEnabled={state.terminalProgressBarEnabled} setProgressBarEnabled={setTerminalProgressBarEnabled}
                     promptSuggestionEnabled={state.promptSuggestionEnabled} setPromptSuggestionEnabled={setPromptSuggestionEnabled}
+                    copyOnSelect={state.copyOnSelect} setCopyOnSelect={setCopyOnSelect}
                     onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
                     fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
                     // WAVE S t5: the Config list is windowed now, so this dialog joins the set that is handed
@@ -1588,7 +1769,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // FSW T14 — D10 (hoist the palette out of here) and D11 (drop the notification block).
                       // Both are subtractions from what the composer paints; the destinations are the dock's
                       // `PaletteSlot` and the footer's right region, and both are above this element.
-                      fullscreen={fullscreen} />
+                      fullscreen={fullscreen} originRef={composerRef} dockCrowded={dockCrowded} />
   );
   const dock = (
     <>

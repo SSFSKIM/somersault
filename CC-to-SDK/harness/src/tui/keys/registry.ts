@@ -18,6 +18,13 @@ export interface ActionEntry { seq: number; handlers: Record<string, ActionHandl
 export interface FallbackEntry { seq: number; handler: (e: KeyEvent | TextEvent) => void; active: boolean }
 export interface SwallowEntry { seq: number; active: boolean }
 export interface SuspendEntry { seq: number; handler: () => void }
+/** F9 T-MOUSE task 7 — the selection-lifetime pre-table hook (Ctrl+C copy/clear, "any other key clears"),
+ *  registered by ChatApp (the `ViewportHitmap` selection state's owner) exactly like `SuspendEntry` above and
+ *  for the identical reason: it has to run BEFORE the table resolves the key, not after. The handler answers
+ *  whether the event was fully CONSUMED (`true` — Ctrl+C while a selection is live, which must never also run
+ *  `app:interrupt`); `false` means dispatch continues exactly as it would have, whatever side effect (clearing
+ *  the highlight) the handler already applied. */
+export interface SelectionKeyEntry { seq: number; handler: (e: KeyEvent | TextEvent) => boolean }
 /** The mouse slot (task 7). A button report has no action to match and no fallback to fall through to, so this
  *  ONE entry is the whole delivery path — hence a sink rather than a handler table. `active` is the fallback's
  *  option and means the same thing here (registered, invisible to resolution), for the same owner-stays-mounted
@@ -26,12 +33,12 @@ export interface MouseEntry { seq: number; handler: (e: MouseInputEvent) => void
 
 export interface Registry {
   scopes: Set<ScopeEntry>; actions: Set<ActionEntry>; fallbacks: Set<FallbackEntry>; swallows: Set<SwallowEntry>;
-  suspends: Set<SuspendEntry>; mouseSinks: Set<MouseEntry>;
+  suspends: Set<SuspendEntry>; mouseSinks: Set<MouseEntry>; selectionKeys: Set<SelectionKeyEntry>;
 }
 
 export const createRegistry = (): Registry =>
   ({ scopes: new Set(), actions: new Set(), fallbacks: new Set(), swallows: new Set(), suspends: new Set(),
-    mouseSinks: new Set() });
+    mouseSinks: new Set(), selectionKeys: new Set() });
 
 let seqCounter = 0;
 /** Stamped once per hook instance (in a ref initializer), never re-stamped on re-render. */
@@ -104,4 +111,11 @@ export function mouseHandler(reg: Registry): ((e: MouseInputEvent) => void) | un
  *  provider could construct). Undefined falls back to `KeymapDeps.suspend`. */
 export function suspendHandler(reg: Registry): (() => void) | undefined {
   return newestFirst(reg.suspends)[0]?.handler;
+}
+
+/** The innermost registered selection-lifetime handler (F9 T-MOUSE task 7: ChatApp). Undefined — no
+ *  selection surface mounted, or no track built on this registry at all — means every key resolves exactly
+ *  as it did before this track, the same "absent is a no-op" shape as `suspendHandler`. */
+export function selectionKeyHandler(reg: Registry): ((e: KeyEvent | TextEvent) => boolean) | undefined {
+  return newestFirst(reg.selectionKeys)[0]?.handler;
 }

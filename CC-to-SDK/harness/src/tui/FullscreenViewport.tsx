@@ -86,7 +86,13 @@ import { applyAnchor, type AnchorState } from "./scrollAnchor.js";
 import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type RenderItemSlice } from "./pager.js";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
-import { remapRowOffset, wrapItemsToWidth } from "./wrapItems.js";
+import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
+import { linkRangesOf, type HitRow } from "./mouse/hitmap.js";
+import { HoverContext } from "./mouse/hoverContext.js";
+import { createSelectionState, dragTo, hasSelection as computeHasSelection, multiClick, selectedSpans, startSelection, type Cell, type RowSpan, type SelectionState } from "./mouse/selection.js";
+import { charRangeOf, extractText } from "./mouse/extract.js";
+import type { LineSelection } from "./Line.js";
+import { stripSgr } from "./sgrFoldRow.js";
 import { useRegionRows, useRegionTop } from "./FullscreenFrame.js";
 import { useKeyActions, useKeyScope } from "./keys/KeymapProvider.js";
 import { JumpPill } from "./JumpPill.js";
@@ -112,6 +118,49 @@ export interface ViewportHitmap {
    *  gives them (`keys/types.ts`) — or `undefined` where nothing clickable is. Task 10 turns a press and a
    *  release on the same answer into a tap. */
   anchorAt(col: number, row: number): string | undefined;
+  /** F9 T-MOUSE Task 3 — resolve a motion report's cell to the row-cluster's `itemKey` (same bound `anchorAt`
+   *  uses: past the window or past a row's own painted width answers "hover nothing") and set it HOVERED for
+   *  the next repaint. Owned here rather than duplicated as ChatApp state: the row list this resolves against
+   *  is the SAME one `anchorAt` reads, off the SAME frame just painted — a second copy one layer up would
+   *  drift from what is actually on screen, exactly `anchorAt`'s own doc's reasoning. */
+  hoverAt(col: number, row: number): void;
+  /** Explicit clear — a wheel tick (the document moved under the pointer; ChatApp wires this to the same
+   *  `onWheelTick` signal that already discards a pending tap for the identical reason). Idempotent. */
+  clearHover(): void;
+  /** F9 T-MOUSE Task 6 — canon's `Eka`: a fresh left press starts a sweep at this cell, discarding whatever
+   *  selection (drag OR multi-click span) was live before it — a second press always RE-ARMS rather than
+   *  extending, exactly `startSelection`'s (`mouse/selection.ts`) own contract. `(col, row)` are 1-based
+   *  terminal coordinates, exactly as an SGR mouse report gives them, matching `anchorAt`/`hoverAt`. */
+  startSelectionAt(col: number, row: number): void;
+  /** Canon's `y0p`: extend the in-flight sweep to this cell. A drag landing back on the anchor's own cell
+   *  UN-selects (`dragTo`'s own contract) — the mechanism that keeps a press-then-release-on-the-same-cell a
+   *  plain click even though a drag event or two crossed the cell in between. Harmless (and a documented
+   *  no-op, per `selectedSpans`' own priority order) once a multi-click span is already live. */
+  dragSelectionTo(col: number, row: number): void;
+  /** Canon's `b0p`: a double (`count: 2`, word) or triple (`count: 3`, line) click sets the span directly —
+   *  no drag required for `hasSelection()` to answer `true`. Resolves its own `HitRow` off THIS frame's
+   *  painted rows (the same array `anchorAt`/`hoverAt` read), so a stale row from a since-scrolled frame is
+   *  never consulted. */
+  multiClickSelectionAt(col: number, row: number, count: 2 | 3): void;
+  /** Release: flips `isDragging` false. The paint and `hasSelection()` both read `anchor`/`focus`/
+   *  `anchorSpan` regardless of this flag, so calling it has no visible effect on its own — it exists so the
+   *  NEXT gesture (a stray drag event arriving after the button already lifted, Task 7's copy-latch reset)
+   *  sees an honest "not dragging" state, matching canon's own release-always-stops-the-drag branch. */
+  endSelectionDrag(): void;
+  /** `true` once a real sweep (a drag whose focus differs from its anchor) or a multi-click span exists —
+   *  the release branch's click/sweep discriminant (canon's `!yze(r) && r.anchor`, negated): ChatApp reads
+   *  this on every release to decide whether the gesture was a selection (swallow — no fold toggle, no
+   *  caret move) or a plain click (fall through to the existing targets, unchanged). */
+  hasSelection(): boolean;
+  /** The document moved under a live sweep (a wheel tick) — clears the whole selection state and repaints so
+   *  the highlight disappears on the SAME frame, not the next content event. Idempotent on an already-empty
+   *  selection. */
+  discardSelection(): void;
+  /** F9 T-MOUSE Task 7 — the current selection's plain text, painted-extent to painted-extent (the SAME
+   *  `selectedSpans`/`extractText` geometry that lights up on screen), for the auto-copy latch and the
+   *  Ctrl+C key-lifetime arm. `""` for no selection — never `undefined`, so a caller can hand it straight to
+   *  `copyText` without a branch. */
+  selectedText(): string;
 }
 
 export interface FullscreenViewportProps {
@@ -160,12 +209,14 @@ export interface FullscreenViewportProps {
   hitmapRef?: React.Ref<ViewportHitmap>;
 }
 
-/** One PAINTED row's clickable identity: the cluster it belongs to, and how far its text reaches. Absent is
- *  a row that is not part of a cluster — kept in the array rather than skipped, because the index IS the
- *  row number and a compacted list would resolve every row below the first cluster to the wrong one. */
-type HitRow = { anchor: string; width: number } | undefined;
-/** THE COLUMN BOUND (spec §3.3). A click past the end of a row's text is not a click on that row — canon
- *  drops blank-cell clicks (549361) — so the width is the row's PAINTED extent: its plain text, plus the
+/** ONE HIT ROW, FULLY POPULATED (F9 T-MOUSE Task 1; `HitRow` is `mouse/hitmap.ts`'s own widened type). Every
+ *  painted row gets a real object now — `anchor` absent is "not a cluster", never a hole in the array — which
+ *  is what lets a later task's `columnToChar`/`linkRangesOf` query an ORDINARY line exactly the way they
+ *  query a fold row; `anchorAt` below still reads only `.anchor`/`.width` and cannot tell the difference from
+ *  before this task.
+ *
+ *  THE COLUMN BOUND (spec §3.3, unchanged). A click past the end of a row's text is not a click on that row —
+ *  canon drops blank-cell clicks (549361) — so `width` is the row's PAINTED extent: its plain text, plus the
  *  gutter columns ahead of it, measured in terminal cells rather than characters (a fold row's leader is
  *  `⏺`, two columns and one character). Clamped to the region's width, which is where a `truncate-end`
  *  header — the one row that can be wider than the pane — actually stops.
@@ -173,20 +224,44 @@ type HitRow = { anchor: string; width: number } | undefined;
  *  either measure back and an all-ASCII fixture stays green while the last cell of every ACTIVE cluster row
  *  goes inert — the blinking-leader row, the one most likely to be clicked mid-turn. `fold-hitmap.test.tsx`
  *  therefore carries a document whose painted extent DIFFERS from its character count (a `⏺` leader, a CJK
- *  hint body, a gutter-bearing line); those cells are the defence, and both call sites here are covered.
+ *  hint body, a gutter-bearing line); those cells are the defence, and both call sites below are covered.
  *  The line arm's gutter term has no tagged producer today — a cluster row is never an assistant bullet —
- *  and is the `RenderLine` contract rather than dead weight; the fixture pins it as such. */
-const hitRow = (anchor: string | undefined, width: number, columns: number): HitRow =>
-  anchor === undefined ? undefined : { anchor, width: Math.min(width, columns) };
+ *  and is the `RenderLine` contract rather than dead weight; the fixture pins it as such.
+ *
+ *  `itemKey` is `wrapItems.ts`'s `sourceId(item.id)` — the source item's own durable id with any wrap-row
+ *  suffix stripped — never this loop's position, so it survives a re-wrap or an item streaming in above it
+ *  unchanged (`hitmap.ts`'s own doc states why a slice INDEX cannot be used here). `softWrap` reads
+ *  `RenderLine.continuation` (`wrapItems.ts`'s `wrapLine`, set on every row a wrap produced past the first) —
+ *  present on `item.line` for a wrapped LINE item and on `item.body[row]` for a gutter block's wrapped body,
+ *  which is why this one helper covers both arms despite their very different shapes below. `text` is
+ *  defensively `stripSgr`'d again even though every producer already hands `RenderLine.text` plain
+ *  (`toolRenderer.tsx` strips a `preStyled` run at publish) — cheap, idempotent, and the honest reading of
+ *  "plain text via the existing stripSgr" rather than a second contract nothing enforces. */
+const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, columns: number): HitRow => {
+  const gutterWidth = l.gutter ? stringWidth(l.gutter.text) : 0;
+  const linkRanges = linkRangesOf(l);
+  return { itemKey, anchor, kind: "line", gutterWidth, text: stripSgr(l.text), softWrap: l.continuation === true ? "continuation" : "hard",
+    width: Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
+};
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
  *  the map cannot describe a frame other than the one on screen. A gutter block contributes one entry per
  *  BODY row it paints (its five-column connector column is a sibling Box, blank on continuations but still
- *  occupying the cells), a line item exactly one. */
-function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): readonly HitRow[] {
+ *  occupying the cells), a line item exactly one — the body arm builds off `hitRowOfLine` too (each body row
+ *  is its own `RenderLine`) and only overrides `kind`/`gutterWidth`/`width` for the block's fixed connector. */
+// Exported for `test/tui/hitmap.test.ts` (F9 T-MOUSE Task 1): that file pins the widened `HitRow` shape
+// against the REAL publish path (`wrapItemsToWidth` → `pageItemSlices` → this function) without mounting a
+// React tree — the component-level cases (`fold-hitmap.test.tsx`) keep proving the `anchorAt`/frame-origin
+// wiring this function's caller owns.
+export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): readonly HitRow[] {
   const out: HitRow[] = [];
   for (const { item, start, end } of slices) {
-    if (item.kind === "line") { out.push(hitRow(item.foldAnchor, (item.line.gutter ? stringWidth(item.line.gutter.text) : 0) + stringWidth(item.line.text), columns)); continue; }
-    for (let row = start; row < end; row++) out.push(hitRow(item.foldAnchor, item.gutter.length + stringWidth(item.body[row]!.text), columns));
+    const itemKey = sourceId(item.id);
+    if (item.kind === "line") { out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, columns)); continue; }
+    for (let row = start; row < end; row++) {
+      const body = item.body[row]!;
+      out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, columns), kind: "gutter-block",
+        gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
+    }
   }
   return out;
 }
@@ -204,6 +279,9 @@ const EMPTY_ITEMS: readonly RenderItem[] = [];
  *  no reader. The walk is one `stringWidth` per painted row and costs nothing; the guard is here for the
  *  file's own memoisation discipline, which is "derive what is consumed". */
 const NO_HIT_ROWS: readonly HitRow[] = [];
+/** A stable empty lookup for "no selection this frame" — F9 T-MOUSE Task 6, the same "derive what is
+ *  consumed" discipline `NO_HIT_ROWS` states: a `new Map()` per idle render would be free but pointless. */
+const EMPTY_SPAN_MAP: ReadonlyMap<number, RowSpan> = new Map();
 
 export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, onWheelTick, scrollRef, hitmapRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
@@ -259,7 +337,81 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const at = painted[row - top];
     return at !== undefined && col >= 1 && col <= at.width ? at.anchor : undefined;
   }, []);
-  useImperativeHandle(hitmapRef, () => ({ anchorAt }), [anchorAt]);
+  // F9 T-MOUSE Task 3 — HOVER STATE. Plain `useState`, not a ref: unlike the tap anchor (which rides the NEXT
+  // click's own comparison, nothing else painting differently for it meanwhile) a hovered row IS the paint —
+  // nothing else in this render would otherwise change to reflect the pointer having moved, so this state
+  // update IS the "targeted invalidation" the brief asks for: it re-renders this ONE component (a normal frame
+  // paint this file already does on every content event), not the document, not `useChat`, not ChatApp's tree.
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const hoverAt = useCallback((col: number, row: number): void => {
+    const { top, rows: painted } = hit.current;
+    if (top <= 0) { setHoveredKey(null); return; }
+    const at = painted[row - top];
+    setHoveredKey(at !== undefined && col >= 1 && col <= at.width ? at.itemKey : null);
+  }, []);
+  const clearHover = useCallback(() => setHoveredKey(null), []);
+
+  // F9 T-MOUSE Task 6 — THE SELECTION STATE. A mutable ref, not React state: `mouse/selection.ts`'s own
+  // functions (`startSelection`/`dragTo`/`multiClick`) MUTATE their `SelectionState` argument in place and
+  // return void, so there is no new object for a `useState` setter to receive — exactly the shape
+  // `tapAnchorRef` (ChatApp) already uses for the identical reason. `selectedSpans` re-reads this ref EVERY
+  // render against THAT render's own `hit.current.rows` (below), never a stale copy — a window that
+  // scrolled or re-wrapped between two mouse events must not paint a span against rows no longer on screen.
+  //   `paintTick` is the one thing that turns a ref mutation — made from a stdin listener, outside React —
+  // into a repaint: the state itself lives in the ref, so React has no other way to learn it changed. This is
+  // the same problem `hoveredKey`'s `useState` solves for hover; selection needs its own trigger because the
+  // VALUE React would otherwise track is sitting outside React entirely.
+  const selectionStateRef = useRef<SelectionState>(createSelectionState());
+  const [, setPaintTick] = useState(0);
+  const repaint = useCallback(() => setPaintTick((n) => n + 1), []);
+  // `hit.current.top` is read at CALL TIME, not at the time this closure was created — `hit` is a stable ref
+  // across the component's whole life, so every one of the callbacks below sees the LATEST frame's origin
+  // regardless of which render's closure ends up being the one `useImperativeHandle` still holds.
+  const cellAt = (col: number, row: number): Cell | undefined => {
+    const { top } = hit.current;
+    return top <= 0 ? undefined : { row: row - top + 1, col };
+  };
+  const startSelectionAt = useCallback((col: number, row: number) => {
+    const cell = cellAt(col, row);
+    if (!cell) return;
+    startSelection(selectionStateRef.current, cell);
+    repaint();
+  }, [repaint]);
+  const dragSelectionTo = useCallback((col: number, row: number) => {
+    const cell = cellAt(col, row);
+    if (!cell) return;
+    dragTo(selectionStateRef.current, cell);
+    repaint();
+  }, [repaint]);
+  const multiClickSelectionAt = useCallback((col: number, row: number, count: 2 | 3) => {
+    const { top, rows: painted } = hit.current;
+    if (top <= 0) return;
+    const rowIndex = row - top;
+    const hitRow = painted[rowIndex];
+    if (!hitRow) return;
+    multiClick(selectionStateRef.current, { row: rowIndex + 1, col }, count, hitRow);
+    repaint();
+  }, [repaint]);
+  const endSelectionDrag = useCallback(() => { selectionStateRef.current.isDragging = false; }, []);
+  const hasSelectionHandle = useCallback(() => computeHasSelection(selectionStateRef.current), []);
+  const discardSelection = useCallback(() => {
+    const s = selectionStateRef.current;
+    s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
+    repaint();
+  }, [repaint]);
+  // F9 T-MOUSE Task 7 — the auto-copy latch's own read: the SAME geometry the paint path derives
+  // (`selectedSpans` against `hit.current.rows`, T6's own invariant that the map painted IS the map
+  // extracted) run through `extract.ts`'s `extractText` — the identical function `/copy`-adjacent code in
+  // this track already uses, so a selection copies exactly the text it visibly highlights, never a second,
+  // independently-derived string. Called on demand (release, Ctrl+C) rather than cached: a selection's rows
+  // and the DOCUMENT under them can both move between two mouse events, and this always reads the CURRENT
+  // frame's own map, matching every other imperative read on this ref.
+  const selectedText = useCallback(() => extractText(selectedSpans(selectionStateRef.current, hit.current.rows), hit.current.rows), []);
+
+  useImperativeHandle(hitmapRef, () => ({
+    anchorAt, hoverAt, clearHover,
+    startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelection: hasSelectionHandle, discardSelection, selectedText,
+  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no
@@ -336,10 +488,56 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // so the map is the paint by construction — including the row the pill takes, which `body` has already
   // removed from the window and which therefore has no entry to be clicked.
   hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS };
+  // F9 T-MOUSE Task 3 — a repaint that no longer paints the hovered cluster (it scrolled off, its fold state
+  // flipped, the document swapped under a session resume) must not leave a stale `itemKey` haunting a cell
+  // that now belongs to something else, or nothing. Checked against THIS render's own rows, never a stale
+  // copy, and applied DURING render for the same reason `settled`/`anchor` above are (:274) — an effect would
+  // paint one frame with a hover nothing on screen answers to before correcting itself.
+  if (hoveredKey !== null && !hit.current.rows.some((row) => row.itemKey === hoveredKey)) setHoveredKey(null);
+
+  // F9 T-MOUSE Task 6 — SELECTION PAINT. `selectedSpans` reads exactly the rows array just published above —
+  // the region-bounds scope `selection.ts` documents ("every row this module ever sees IS the region") — so
+  // a span can never describe a row this frame did not paint, even mid-drag while the window is scrolling.
+  // Off `hitmapRef` (classic, or any test that does not care) `hit.current.rows` is `NO_HIT_ROWS` and
+  // `selectedSpans` answers `[]` against it, same as an idle selection would.
+  const paintSpans: readonly RowSpan[] = selectedSpans(selectionStateRef.current, hit.current.rows);
+  const spanByRow = paintSpans.length ? new Map(paintSpans.map((s) => [s.row - 1, s] as const)) : EMPTY_SPAN_MAP;
+  // One entry per SLICE, parallel to `slices` below — the per-ROW selection (if any) for the physical rows
+  // that one slice paints, in the SAME order `hitRowsOf` flattened them: a `"line"` slice contributes one
+  // row, a `"gutter-block"` slice contributes `end - start` (its own body-row count) — exactly the counts
+  // `hitRowsOf`'s own loop pushes, so `rowCursor` walks the flattened array in lock-step with `slices`. This
+  // is what lets a drag that only touches SOME of a multi-row tool result's body highlight exactly those
+  // rows, and none of the ones above or below it in the same block.
+  let rowCursor = 0;
+  const sliceSelections: readonly (readonly (LineSelection | undefined)[] | undefined)[] = spanByRow.size === 0
+    ? slices.map(() => undefined)
+    : slices.map((s) => {
+        const rowCount = s.item.kind === "line" ? 1 : s.end - s.start;
+        const entries: (LineSelection | undefined)[] = [];
+        for (let k = 0; k < rowCount; k++) {
+          const row = hit.current.rows[rowCursor + k];
+          const span = spanByRow.get(rowCursor + k);
+          entries.push(row && span ? charRangeOf(row, span) ?? undefined : undefined);
+        }
+        rowCursor += rowCount;
+        return entries.some((e) => e !== undefined) ? entries : undefined;
+      });
   // Keyed by item id AND slice index: one item can contribute at most one slice to a window, but the index
   // keeps the key stable when the same block is re-sliced at a different offset.
   return <>
-    {slices.map((s, i) => <RenderItemView key={`${s.item.id}:${i}`} item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} />)}
+    {slices.map((s, i) => (
+      // F9 T-MOUSE Task 3 — every slice gets a Provider (even `false` ones): the row list `hit.current` was
+      // just built from is per-SLICE (one `itemKey` per item, `hitRowsOf`), so the hovered flag is exactly as
+      // granular as a slice already is — no finer test is possible without the layout tree canon has and ccx
+      // does not (R1's structural premise).
+      //   `!s.item.expanded` (review Critical fix): canon's own provider is `hovered && !expanded` (bundle
+      // L562783), not `hovered` alone — an already-expanded cluster member (`toolRenderer.tsx`'s
+      // `expandedMemberItems`, which tags every item it produces `expanded: true`) must do nothing on hover,
+      // dim included, whether or not THIS particular member happens to carry dim/banded content.
+      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && sourceId(s.item.id) === hoveredKey && s.item.expanded !== true}>
+        <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} rowSelections={sliceSelections[i]} />
+      </HoverContext.Provider>
+    ))}
     {/* AMENDMENT 2: the pill names `v` exactly when `v` is registered above — one derivation, `showPill &&
         onDumpTranscript`, read twice, so the affordance and the key cannot drift apart. `editorDisplayName`
         answers null with neither `$VISUAL` nor `$EDITOR` set, where canon prints its bare `open in editor`. */}

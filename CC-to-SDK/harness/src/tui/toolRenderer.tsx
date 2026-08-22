@@ -8,7 +8,7 @@
 // Status colour and the running dim ride on the header SEGMENTS, never on the line: `Transcript.Line` renders
 // `l.segments` when present and ignores `l.color`/`l.dim`/`l.bold`/`l.italic` entirely in that branch, so a
 // line-level colour on a segmented header would silently render as plain text.
-import React from "react";
+import React, { useContext } from "react";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Box, Text } from "ink";
@@ -18,7 +18,7 @@ import { renderMessage } from "./render.js";
 import { classifyUserText, compactSummaryLines, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, INTERRUPT_CANCELLED, INTERRUPT_PLAIN, INTERRUPT_TOOL, PLAN_REJECTED_TEXT, TOOL_RESULT_GUTTER, teammateCollapsedLine, teammateLifecycleLine, teammateMessageLines, type TeammateIdleReason } from "./species.js";
 import { displayPath } from "./paths.js";
 import { formatDuration } from "./format.js";
-import { Line } from "./Line.js";
+import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
@@ -28,6 +28,7 @@ import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
+import { HoverContext } from "./mouse/hoverContext.js";
 import { osc8Open, OSC8_CLOSE } from "./osc8.js";
 import type { ToolEvent, TranscriptDocument, TranscriptEntry } from "./transcriptModel.js";
 
@@ -56,13 +57,20 @@ const HINT_MAX_LINES = 10;
  *  membership, so it changes every time the run absorbs another call AND every time settlement reorders it,
  *  while the anchor — the earliest-issued call — never moves.
  *  Absent on everything else, and absent is not a cluster. It must survive `wrapItems` (a hit test reads
- *  PAINTED rows, not projected items) — see `wrapOne`, where three of the four paths carried it for free. */
+ *  PAINTED rows, not projected items) — see `wrapOne`, where three of the four paths carried it for free.
+ *
+ *  `expanded` (F9 T-MOUSE Task 3, review Critical fix) is set true on every item `expandedMemberItems` below
+ *  produces — an OPENED cluster's own re-rendered members, as opposed to the single collapsed summary row
+ *  `groupItems` emits for the same `foldAnchor` while closed (the two never coexist for one anchor). Canon's
+ *  hover provider is `hovered && !expanded` (bundle L562783): an already-expanded member must not un-dim on
+ *  hover, and `foldAnchor` alone cannot say which case a row is in, since both wear it. Like `foldAnchor` it
+ *  must survive `wrapItems` — it does, for the same reason: every `wrapOne` arm spreads the source item. */
 export type RenderItem =
-  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string }
+  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean }
   // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
   // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
-  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string };
+  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
  *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
@@ -851,7 +859,7 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
     const items = normalized.status === "suppressed"
       ? suppressedHeaderItems(event, event.result === undefined ? "running" : event.result.isError ? "error" : "success", detail)
       : renderToolEvent(event, normalized, detail);
-    for (const item of reid(items, event.id, event.result ? event.result.resultSequence : "pending")) out.push({ ...item, foldAnchor: anchorId });
+    for (const item of reid(items, event.id, event.result ? event.result.resultSequence : "pending")) out.push({ ...item, foldAnchor: anchorId, expanded: true });
   }
   return out;
 }
@@ -1335,17 +1343,27 @@ export function projectPending(document: TranscriptDocument, options: Projection
 }
 
 /** The sole gutter owner. `start`/`end` slice the body (the Ctrl-O pager scrolls a long result without re-projecting
- *  it); `showGutter={false}` keeps the five-column indent while dropping the connector for a continuation page. */
-export function RenderItemView({ item, start, end, showGutter = true }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean }): React.ReactElement {
+ *  it); `showGutter={false}` keeps the five-column indent while dropping the connector for a continuation page.
+ *  `rowSelections` (F9 T-MOUSE Task 6) is one entry per row THIS call paints, in the SAME order — length 1 for
+ *  a `"line"` item, `body.length` for a `"gutter-block"` one — mirroring `FullscreenViewport.hitRowsOf`'s own
+ *  per-slice row count exactly, since it is built from that identical flattening. `undefined` (every call site
+ *  outside `FullscreenViewport`, and any frame with no live selection) paints nothing, matching every row's
+ *  behaviour before this task existed. */
+export function RenderItemView({ item, start, end, showGutter = true, rowSelections }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean; rowSelections?: readonly (LineSelection | undefined)[] }): React.ReactElement {
   // LT10: a tool header truncates at the terminal edge (upstream `wrap:"truncate-end"`) — an MCP-length name
   // must never wrap one header into several transcript rows. Ordinary line items (assistant text, local
   // notices, dividers) carry no `wrap` and keep wrapping; body rows keep wrapping, fold already sized them.
-  if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} />;
+  if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} selection={rowSelections?.[0]} />;
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
+  // F9 T-MOUSE Task 3 — the gutter-block's own LEADING connector column (`⎿`) is the one dimmed run this
+  // component paints OUTSIDE `Line.tsx` (every body row already goes through it, and un-dims there). Read
+  // straight off the same context `FullscreenViewport` provides around the whole slice, so a hovered block's
+  // connector brightens with its body rather than staying dim beside un-dimmed text underneath it.
+  const hovered = useContext(HoverContext);
   return (
     <Box flexDirection="row">
-      <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
-      <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} />)}</Box>
+      <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={hovered ? false : item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
+      <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} selection={rowSelections?.[i]} />)}</Box>
     </Box>
   );
 }

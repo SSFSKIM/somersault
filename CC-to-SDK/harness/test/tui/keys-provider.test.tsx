@@ -670,6 +670,90 @@ describe("KeymapProvider — useMouseSink", () => {
   });
 });
 
+// F9 T-MOUSE task 2 — THE MODE GATE + MOTION DEDUPE. Arming widened to `MOUSE_ON_FULL` (altScreen.ts's new
+// default), so this dispatch site is now the one place that turns the two env escape hatches into dropped
+// events, and the one place that dedupes 1003's per-cell motion flood before a sink ever sees it. Neither env
+// var is set anywhere else in this file, so every OTHER describe block above ran (and keeps running) under the
+// implicit default, `"full"` — which is why none of those cells needed to change for this task.
+describe("KeymapProvider — mouse mode gate and motion dedupe", () => {
+  const PRESS = "\x1b[<0;12;5M", RELEASE = "\x1b[<0;12;5m", RIGHT_PRESS = "\x1b[<2;12;5M";
+  const DRAG = "\x1b[<32;12;5M", MOTION = "\x1b[<35;12;5M", MOTION_2 = "\x1b[<35;20;9M";
+  const WHEEL_UP = "\x1b[<64;10;5M";
+  function MouseProbe(props: { sink: (e: MouseInputEvent) => void }) {
+    useMouseSink(props.sink);
+    return <Text>sink</Text>;
+  }
+
+  it("off drops press/release/drag/motion; a wheel tick still resolves in the table (it is a KEY, not this gate's concern)", async () => {
+    vi.stubEnv("CLAUDE_CODE_DISABLE_MOUSE", "1");
+    try {
+      const sink = vi.fn(), lineUp = vi.fn();
+      const h = renderWithKeymap(<><Probe scope="Scroll" actions={{ "scroll:lineUp": lineUp }} /><MouseProbe sink={sink} /></>);
+      await tick();
+      h.stdin.write(PRESS); h.stdin.write(RELEASE); h.stdin.write(DRAG); h.stdin.write(MOTION);
+      expect(sink).not.toHaveBeenCalled();
+      h.stdin.write(WHEEL_UP);
+      expect(lineUp).toHaveBeenCalledTimes(1);
+      h.unmount();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  // canon L199637: `getMouseMode() === "scroll" && (button & 3) === 0` drops a LEFT press/release only —
+  // right/middle still reach the sink, and motion/drag drop unconditionally (there is no consumer at this
+  // width for either, same reasoning `MOUSE_ON_SCROLL` itself never arms 1002/1003).
+  it("scroll drops left press/release and all motion/drag, but passes a right press and the wheel", async () => {
+    vi.stubEnv("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1");
+    try {
+      const sink = vi.fn(), lineUp = vi.fn();
+      const h = renderWithKeymap(<><Probe scope="Scroll" actions={{ "scroll:lineUp": lineUp }} /><MouseProbe sink={sink} /></>);
+      await tick();
+      h.stdin.write(PRESS); h.stdin.write(RELEASE); h.stdin.write(DRAG); h.stdin.write(MOTION);
+      expect(sink).not.toHaveBeenCalled();
+      h.stdin.write(RIGHT_PRESS);
+      expect(sink).toHaveBeenCalledTimes(1);
+      expect(sink.mock.calls[0][0]).toMatchObject({ action: "press", button: 2 });
+      h.stdin.write(WHEEL_UP);
+      expect(lineUp).toHaveBeenCalledTimes(1);
+      h.unmount();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("full (the implicit default, no env var set) passes press, release, drag and motion all through", async () => {
+    const sink = vi.fn();
+    const h = renderWithKeymap(<><Probe scope="Chat" /><MouseProbe sink={sink} /></>);
+    await tick();
+    h.stdin.write(PRESS); h.stdin.write(RELEASE); h.stdin.write(DRAG); h.stdin.write(MOTION);
+    expect(sink).toHaveBeenCalledTimes(4);
+    h.unmount();
+  });
+
+  // canon `lastHoverCol/lastHoverRow` (L199673-199676). A repeat at the SAME cell is dropped before the sink; a
+  // different cell — including moving back to a cell already seen — is always delivered.
+  it("dedupes same-cell motion; a different cell, or a return to a prior one, is not deduped", async () => {
+    const sink = vi.fn();
+    const h = renderWithKeymap(<><Probe scope="Chat" /><MouseProbe sink={sink} /></>);
+    await tick();
+    h.stdin.write(MOTION);
+    h.stdin.write(MOTION);                                     // same cell as the one just delivered: dropped
+    expect(sink).toHaveBeenCalledTimes(1);
+    h.stdin.write(MOTION_2);                                   // a different cell: delivered
+    expect(sink).toHaveBeenCalledTimes(2);
+    h.stdin.write(MOTION);                                     // back to the first cell: new again, not stale
+    expect(sink).toHaveBeenCalledTimes(3);
+    h.unmount();
+  });
+
+  it("a drag at the same cell as the last motion is not deduped — the dedupe is motion-only", async () => {
+    const sink = vi.fn();
+    const h = renderWithKeymap(<><Probe scope="Chat" /><MouseProbe sink={sink} /></>);
+    await tick();
+    h.stdin.write(MOTION);                                     // arms the dedupe at (12,5)
+    h.stdin.write(DRAG);                                        // same (12,5), but a DRAG — must still deliver
+    expect(sink).toHaveBeenCalledTimes(2);
+    h.unmount();
+  });
+});
+
 // F5 task 3. PROVENANCE is what the editor's chip path keys off first (size is only the untagged fallback, see
 // paste-chips.test.ts): a marked paste collapses into `[Pasted text #N]` at any size. parse.ts sees one chunk
 // and cannot answer the provenance question — the markers can be torn across reads and the overflow latch emits

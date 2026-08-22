@@ -714,6 +714,7 @@ describe("F2 final review — a custom rebind drives the dialogs' semantic ops, 
     fetchStatus: async () => [], fetchUsage: async () => [], fetchStats: async () => [],
     onOpenModelPicker: () => {}, savePrefs: () => {}, showTurnDuration: true, setShowTurnDuration: () => {}, reduceMotion: false, setReduceMotion: () => {},
     progressBarEnabled: true, setProgressBarEnabled: () => {}, promptSuggestionEnabled: false, setPromptSuggestionEnabled: () => {},
+    copyOnSelect: true, setCopyOnSelect: () => {},
   });
   const permProps = () => ({
     tab: "Allow", onTabChange: () => {}, denials: [], cwd: "/tmp",
@@ -817,7 +818,8 @@ describe("F6 task 2 — Settings/Permissions adopt <Tabs> with no behavioural ch
       onDone={() => {}} applyMode={async () => {}} setThink={async () => {}} applyOutputStyle={async () => {}}
       fetchStatus={async () => [{ text: "status-row" }]} fetchUsage={async () => []} fetchStats={async () => []}
       onOpenModelPicker={() => {}} savePrefs={() => {}} showTurnDuration setShowTurnDuration={() => {}} reduceMotion={false} setReduceMotion={() => {}}
-      progressBarEnabled={true} setProgressBarEnabled={() => {}} promptSuggestionEnabled={false} setPromptSuggestionEnabled={() => {}} />;
+      progressBarEnabled={true} setProgressBarEnabled={() => {}} promptSuggestionEnabled={false} setPromptSuggestionEnabled={() => {}}
+      copyOnSelect={true} setCopyOnSelect={() => {}} />;
   }
   function PermissionsHost() {
     const [tab, setTab] = React.useState("Allow");

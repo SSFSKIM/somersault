@@ -48,8 +48,15 @@ import type { RenderItem } from "./toolRenderer.js";
 
 /** Ink's own wrap, verbatim (`wrapAnsi(text, width, { trim: false, hard: true })`, ink/build/wrap-text.js) —
  *  the same call `streamingItems`, `render.wrapRows`, `species.wrapBody` and `rowBudget.paintedRows` make.
- *  `hard` breaks an unbreakable token rather than letting it overflow the width we just promised. */
-const wrapRows = (text: string, width: number): string[] => text.split("\n").flatMap((line) => wrapAnsi(line, width, { trim: false, hard: true }).split("\n"));
+ *  `hard` breaks an unbreakable token rather than letting it overflow the width we just promised.
+ *
+ *  EXPORTED for F9 T-MOUSE Task 4's composer inverse map (`editor.ts`'s `offsetFromPosition` /
+ *  `caretFromLocalPosition`): `ChatComposer` paints each buffer line as its own `<Text>{line}</Text>`, relying
+ *  on Ink's implicit wrap — no explicit wrap call anywhere in that file — so the click math has nothing of its
+ *  own to diverge from EXCEPT this primitive, which is the one every other painted-row producer in this tree
+ *  already proves equal to Ink's own algorithm. Reusing the SAME function (not a second `wrapAnsi` call site
+ *  with the same arguments typed twice) is what keeps that guarantee transitive. */
+export const wrapRows = (text: string, width: number): string[] => text.split("\n").flatMap((line) => wrapAnsi(line, width, { trim: false, hard: true }).split("\n"));
 
 /** One line as the rows it PAINTS at `width`. Returns the input line itself — same object, `segments` and all
  *  — whenever it already fits, which is what keeps a settled frame byte-identical to the unwrapped one.
@@ -64,13 +71,18 @@ export function wrapLine(line: RenderLine, width: number): readonly RenderLine[]
   const gutterWidth = line.gutter ? stringWidth(line.gutter.text) : 0;
   const rows = wrapRows(line.text, Math.max(1, full - gutterWidth));
   if (rows.length === 1 && rows[0] === line.text) return [line];
-  const { segments, gutter, ...style } = line;
+  const { segments, gutter, continuation: _continuation, ...style } = line;
   const cut = cutSegments(segments, line.text, rows);
   const pad = " ".repeat(gutterWidth);
+  // `continuation` (F9 T-MOUSE Task 1, render.ts): row 0 is this line's own hard start — never re-tagged, even
+  // when the SOURCE line was itself already a continuation of something wider (the id suffix in `wrapOne`
+  // below is what strings a whole wrapped item back together; this flag is per-ROW, not per-item) — every row
+  // after it is one this call produced by breaking the text, so it carries the flag the hit map reads.
   return rows.map((text, row) => ({
     ...style,
     text: row === 0 ? text : pad + text,
     ...(row === 0 && gutter ? { gutter } : {}),
+    ...(row > 0 ? { continuation: true as const } : {}),
     ...(cut?.[row]?.length ? { segments: row === 0 ? cut[row]! : indentSegments(cut[row]!, pad) } : {}),
   }));
 }
