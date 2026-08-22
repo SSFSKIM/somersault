@@ -822,7 +822,7 @@ Discoveries executed A1–A15 as written — 15 pass, A13 in its documented S5 f
 keyless tier of 209 passed / 0 skipped and a live tier of 8 passed / 0 skipped. Nothing is
 carried forward as failing.
 
-**Open residuals at close (the full ledger).** Nine behaviors ship recorded-but-unclosed —
+**Open residuals at close (the full ledger).** Ten behaviors ship recorded-but-unclosed —
 each proven only against a fake, or not proven at all, and each written up in its own section
 above. None is an acceptance failure:
 
@@ -868,6 +868,16 @@ above. None is an acceptance failure:
    that a marketplace install now starts rests on that structural test plus the
    `${CLAUDE_PLUGIN_ROOT}`-relative manifests; no live `claude plugin install` against a
    marketplace has been performed (needs a logged-in CLI, same tier as the live suite).
+
+10. **A host-side kill cannot reach codex's detached tool children.** codex detaches shell-tool
+    processes into their own sessions (`codex-rs/core/src/spawn.rs`) and its parent-death
+    SIGTERM is Linux-only, so on macOS `ptc kill`/`ptc restart` from another process cannot
+    enumerate or signal those grandchildren. r13 added the kernel-side half — TTL/watchdog
+    exits release agent backends (interrupt + close, bounded grace) before `os._exit`, a
+    path that exists because ipykernel keeps its loop serving ZMQ between cells (verified
+    live) — and even there, a subtree a tool spawned inside its own further session is
+    reachable only by codex's own group-kill branches. Recorded in source at the
+    `kill_process_tree` call site; never faked as enforcement.
 
 Distinct from these, and not counted as residuals: the declared **Non-goals** (Codex-side
 installation testing, Windows, dill/state snapshots, Workflow-tool replication) and the
@@ -1221,6 +1231,24 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   foreground result arriving whole now sees an elision notice; the full text was never
   written to disk on the foreground path, so the notice is honest about the loss.
   Date/Author: 2026-08-23 / r12 fix wave, controller-adopted.
+
+- Decision: a kernel's runtime build identity is the hash of the venv's own `.ptc-version`
+  stamp FILE, not of the launcher's live `stamp_payload()`. On attach, a mismatch between
+  the identity recorded at spawn and the stamp now on disk recycles the kernel with an
+  expiry-style notice; no stamp on either side attaches as before (dev runs).
+  Rationale: r13 finding 4 asked for a live-payload comparison, but `stamp_payload()`
+  changes the moment package SOURCES change, rebuilt or not — that would destroy a live
+  namespace on every source edit. `.ptc-version` changes exactly when the venv under a
+  running kernel was actually replaced, which is the stranding the finding describes.
+  Fixer deviation, controller-adopted.
+  Date/Author: 2026-08-23 / r13 fix wave.
+
+- Decision: registry rows whose kernel died mid-turn reconcile at bootstrap to a NEW status
+  `orphaned` (vocabulary was running/done/error/interrupted), session id preserved for
+  resume.
+  Rationale: nobody interrupted those turns — the kernel died under them; a reader of the
+  row is owed the distinction. Fixer choice, controller-adopted.
+  Date/Author: 2026-08-23 / r13 fix wave.
 
 ## Surprises & Discoveries
 
@@ -1704,6 +1732,10 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   Evidence: r11 finding 1 (P1); commit 818c573297; `test_the_plugin_root_contains_everything_the_launcher_hashes`. No live marketplace install has been performed — recorded as residual 9.
   Date: 2026-08-22.
 
+- Observation: on Linux a dead kernel could pass every liveness check as a zombie — `/proc/<pid>/stat` keeps serving the original start ticks and `kill(pid, 0)` succeeds, and `_start_ticks` never read the STATE field; the spawning adapter holds no `Popen`, so nothing reaps it. macOS had been answering "dead" for such pids only BY ACCIDENT (libproc refuses the read, and the `ps lstart` fallback string can never equal a `btime=` record) — the r13 fix makes both platforms answer for the right reason, the macOS half measured live against a real zombie rather than assumed from headers.
+  Evidence: r13 finding 1; commit 6996c5c64e; fabricated zombie stat line RED test + live macOS probe in the r13 fix report.
+  Date: 2026-08-23.
+
 ## Outcomes & Retrospective
 
 Written 2026-08-22 at finish.
@@ -1754,6 +1786,8 @@ background wrappers; a self-owned tmux session with file-polled output is the re
 detachment.
 
 ## Revision Notes
+
+- 2026-08-23 (r13): round 13 confirmed all seven findings (5 P1). Zombie-state-aware identity (6996c5c64e); SUB-handshake race closed two-layer — wait_for_ready plus disk-derived cell id (ce79e4c024); interrupt fallback bound to its entry incarnation (294d74586b); expiry notice survives failed respawns (7fcadffff3); venv-upgrade recycle via .ptc-version identity — Decision Log (05219fe77e); bootstrap reconciles orphaned registry rows — Decision Log (2763c81ac1); codex-teardown kernel-side release + residual 10 (f5a2cd6fc8).
 
 - 2026-08-23 (r12): round 12 confirmed all seven findings (3 P1). Admission/settlement decisions now use the settled tri-state identity (unknown discharges nothing and settles nothing, a3e42a70b8); unregistered background handles signal their own child only (a571561bd3); foreground output bounded — Decision Log entry above (c62946d354); `ptc kill` reports the signal not the record (b2956f9220); child key entropy 24→48 bits and `live` derived from real session state (a0158eb270); UTF-8 straddle at the read boundary preserved (0a9a78ce9c).
 
