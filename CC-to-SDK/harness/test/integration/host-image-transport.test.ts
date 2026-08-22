@@ -4,7 +4,7 @@
 // a REAL `SessionHost` + `HostServer` listening on a real UDS, driven by a hand-written fake `session`
 // (the ENGINE half only; the HOST half — staging, validation, correlation — is entirely real code under
 // test here, unlike `test/helpers/fakeHost.ts`'s modelled-host suites).
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:net";
 import { mkdtempSync, rmSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -369,6 +369,65 @@ describe("F9 T-IMAGE Task 5 (I3b) — the negotiated stageImage transport, real 
       session.finish({ result: "ok" });   // release the held-open first turn so teardown does not hang
       await stopQuietly(host);
     }
+  });
+
+  it("final-review finding 2: an image-only prompt (no text block at all) round-trips over the real loopback", async () => {
+    const session = drivable();
+    const { host, path } = await startHost(session);
+    const adapter = remoteChatSession(path);
+    try {
+      const png = fakePng(4, 4, 64);
+      const content: UserTurnInput = [imageBlock(png)];      // no text block at all
+      const submitPromise = adapter.submit(content, () => {});
+      await waitFor(() => session.submittedContents.length === 1);
+      session.emit({ type: "assistant", n: 1 });
+      session.finish({ result: "ok" });
+      await submitPromise;
+      const assembled = session.submittedContents[0] as UserContentBlock[];
+      expect(assembled[0]).toEqual({ type: "text", text: "" });
+      expect(assembled[1]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } });
+    } finally { adapter.detach(); await stopQuietly(host); }
+  });
+
+  it("final-review finding 3: an unreadable image block degrades to the failure text CLIENT-SIDE — no stageImageOp call at all", async () => {
+    const session = drivable();
+    const { host, path } = await startHost(session);
+    const adapter = remoteChatSession(path);
+    const stageSpy = vi.spyOn(RemoteChatSession.prototype, "stageImageOp");
+    try {
+      const garbage: UserContentBlock = { type: "image", source: { type: "base64", media_type: "image/png", data: Buffer.from("not a real image, no PNG/JPEG header").toString("base64") } };
+      const content: UserTurnInput = [{ type: "text", text: "hi" }, garbage];
+      const submitPromise = adapter.submit(content, () => {});
+      await waitFor(() => session.submittedContents.length === 1);
+      session.emit({ type: "assistant", n: 1 });
+      session.finish({ result: "ok" });
+      await submitPromise;
+      expect(stageSpy).not.toHaveBeenCalled();
+      // Nothing survived to stage at all — the wire `prompt` carries pure text (no images claim), so the
+      // host never enters `assembleStagedContent` and the turn's content is the plain string it always was.
+      expect(session.submittedContents[0]).toBe("hi[Image could not be processed: unreadable image data]");
+    } finally { adapter.detach(); await stopQuietly(host); stageSpy.mockRestore(); }
+  });
+
+  it("final-review finding 4: MAX_IMAGES_PER_PROMPT is enforced CLIENT-SIDE before staging — the 21st block never reaches stageImageOp", async () => {
+    const session = drivable();
+    const { host, path } = await startHost(session);
+    const adapter = remoteChatSession(path);
+    const stageSpy = vi.spyOn(RemoteChatSession.prototype, "stageImageOp");
+    try {
+      const blocks: UserContentBlock[] = Array.from({ length: 21 }, () => imageBlock(fakePng(4, 4, 64)));
+      const content: UserTurnInput = [{ type: "text", text: "hi" }, ...blocks];
+      const submitPromise = adapter.submit(content, () => {});
+      await waitFor(() => session.submittedContents.length === 1);
+      session.emit({ type: "assistant", n: 1 });
+      session.finish({ result: "ok" });
+      await submitPromise;
+      expect(stageSpy).toHaveBeenCalledTimes(20);
+      const assembled = session.submittedContents[0] as UserContentBlock[];
+      expect(assembled.filter((b) => b.type === "image")).toHaveLength(20);
+      const textBlocks = assembled.filter((b) => b.type === "text") as { type: "text"; text: string }[];
+      expect(textBlocks.some((b) => b.text.includes("too many images"))).toBe(true);
+    } finally { adapter.detach(); await stopQuietly(host); stageSpy.mockRestore(); }
   });
 
   it("a second client on the same socket (attach-shaped, real remoteChatSession) stages and submits successfully", async () => {

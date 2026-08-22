@@ -10,6 +10,7 @@ import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 import type { UserTurnInput } from "../session/turnInput.js";
 import { pngDimensions, jpegDimensions } from "../tui/clipboardImage.js";
+import { MAX_IMAGES_PER_PROMPT } from "../host/imageStaging.js";
 
 /** F9 T-IMAGE Task 5 (I3b), spec v3.1: "version skew is LOUD" — the exact message a caller (`useChat.ts`)
  *  matches on to render this as a capability NOTICE rather than a turn-failure error line. Shared as one
@@ -138,16 +139,34 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
         // defensively rather than assumed, so a future multi-text-block caller degrades to concatenation
         // instead of silently dropping every block past the first.
         text = prompt.filter((b) => b.type === "text").map((b) => b.text).join("");
+        // Final-review finding 4: the host's own MAX_IMAGES_PER_PROMPT cap must also gate HERE, before
+        // the staging loop — staging every block first and only discovering the excess at the host means
+        // this client already paid for (and must then clean up) staged files the host was always going to
+        // refuse. Excess blocks degrade the same way an unreadable one does (finding 3): the failure text
+        // appended, no `stageImageOp` call at all.
+        let imageOrdinal = 0;
         for (const block of prompt) {
           if (block.type !== "image") continue;
+          imageOrdinal++;
+          if (imageOrdinal > MAX_IMAGES_PER_PROMPT) {
+            text += `[Image could not be processed: too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})]`;
+            continue;
+          }
           const buf = Buffer.from(block.source.data, "base64");
           // Header-decode, not caller-trust — same posture `session/turnInput.ts`'s builder takes: the
           // wire's `UserContentBlock` carries no dimensions field, so this is the only place a REMOTE
-          // submit can report one at all. `?? { width: 0, height: 0 }` is a last resort for bytes that
-          // decode as neither PNG nor JPEG; the host's own header-decode (normalizeTurnInput) is what
-          // actually enforces the dimension cap and degrades an unreadable image regardless of what this
-          // adapter reported staging it with.
-          const dims = pngDimensions(buf) ?? jpegDimensions(buf) ?? { width: 0, height: 0 };
+          // submit can report one at all.
+          const dims = pngDimensions(buf) ?? jpegDimensions(buf);
+          if (!dims) {
+            // Final-review finding 3: degrade CLIENT-SIDE, before ever staging. `ops.ts`'s `stageImage`
+            // schema requires POSITIVE dimensions — sending a 0x0 sentinel for an unreadable image used
+            // to reach that schema, get rejected, and have this adapter misread the rejection as version
+            // skew (the "unknown op"-vs-"invalid payload" honesty fix lives in server.ts's `dispatch`).
+            // Never stage what the schema was never going to accept; degrade to the same failure text
+            // block `session/turnInput.ts`'s authoritative normalizer would produce for the same reason.
+            text += "[Image could not be processed: unreadable image data]";
+            continue;
+          }
           const sha256 = createHash("sha256").update(buf).digest("hex");
           let stageReply: { ok: boolean; path?: string; error?: string };
           try { stageReply = await r.stageImageOp({ mediaType: block.source.media_type, dimensions: dims, size: buf.length, sha256 }); }
@@ -155,10 +174,11 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
           if (!stageReply.ok || !stageReply.path) {
             await cleanupStaged();
             turnSink = undefined;
-            // "unknown op" is server.ts's own literal for a discriminated-union parse failure — an old
-            // host's schema does not know the `stageImage` literal at all. That IS version skew, by
-            // construction: a host that recognizes the op but fails it some other way would say so with
-            // a different message, and only the unknown-op case means "this host predates image paste".
+            // "unknown op" is server.ts's own literal for a discriminated-union parse failure where the OP
+            // LITERAL ITSELF is unrecognized — an old host's schema does not know the `stageImage` literal
+            // at all. That IS version skew, by construction; a host that recognizes the op but rejects its
+            // payload for some OTHER reason now answers "invalid op payload" instead (server.ts), so this
+            // check no longer collapses the two together.
             throw new Error(stageReply.error === "unknown op" ? IMAGE_VERSION_SKEW_NOTICE : (stageReply.error ?? "image staging failed"));
           }
           try { await writeFile(stageReply.path, buf); }

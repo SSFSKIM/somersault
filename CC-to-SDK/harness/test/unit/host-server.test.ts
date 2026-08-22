@@ -77,6 +77,22 @@ describe("HostServer", () => {
     expect(bad.ok).toBe(false);
     expect(await ask(sock, { op: "status" })).toMatchObject({ ok: true, state: "working" });
   });
+  // Final-review finding 3: `chatAdapter.ts` treats the exact string "unknown op" as its ONLY version-skew
+  // signal. Before this fix, EVERY schema parse failure — a truly unrecognized op literal, or a RECOGNIZED
+  // literal whose payload just failed some other check — answered that identical string, so a validation
+  // failure could misreport as "this host predates image paste". They must now read apart.
+  it('answers "unknown op" for a literal this schema has never heard of, and something ELSE for a recognized op with an invalid payload', async () => {
+    const sock = sockPath();
+    srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);
+    await srv.listen();
+    const trulyUnknown = await ask(sock, { op: "nonsense" });
+    expect(trulyUnknown).toEqual({ ok: false, error: "unknown op" });
+    // "prompt" IS a recognized literal — this payload (no text, no images) fails only the schema's own
+    // `.refine`, never the discriminant itself.
+    const badPayload = await ask(sock, { op: "prompt", text: "" });
+    expect(badPayload.ok).toBe(false);
+    expect(badPayload.error).not.toBe("unknown op");
+  });
   it("serves further ops on the SAME connection after rejecting one", async () => {
     const sock = sockPath();
     srv = new HostServer({ ...stub, status: () => ({ state: "working", status: "busy" }), stop: async () => {} }, sock);

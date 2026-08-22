@@ -84,6 +84,18 @@ export interface HostHandlers {
  *  constant (see client/remote.ts's `MAX_FRAME` for why reusing this one broke a legitimate stream). */
 const MAX_FRAME = 256 * 1024;
 
+/** Final-review finding 3: every op literal `hostOp`'s discriminated union recognizes, read off the
+ *  schema itself (`_zod.propValues.op`, the same Set the union's own fast-path discriminator uses) so
+ *  this can never drift from the literals actually listed in `ops.ts`. What this buys: `dispatch` below
+ *  can now tell "this host's schema has never heard of this op at all" (a genuinely OLDER host — the
+ *  wire's own version-skew signal, `chatAdapter.ts`'s `IMAGE_VERSION_SKEW_NOTICE`) apart from "this host
+ *  knows the op but the payload failed some OTHER check" (a bad dimension, an empty prompt with no
+ *  images) — both used to collapse to the identical "unknown op" string, which is what let a validation
+ *  rejection misreport as skew. */
+const KNOWN_OPS: ReadonlySet<string> = new Set(
+  [...(hostOp._zod.propValues?.op ?? [])].filter((v): v is string => typeof v === "string"),
+);
+
 /** One UDS listener per SESSION (not per fleet). NDJSON frames, one op per line; the connection stays
  *  open so A2 can add a long-lived `follow` stream over the same socket. */
 export class HostServer {
@@ -153,7 +165,14 @@ export class HostServer {
   private async dispatch(frame: HostFrame | undefined, sock: Socket): Promise<Record<string, unknown>> {
     if (!frame) return { ok: false, error: "bad json" };
     const op = hostOp.safeParse(frame);
-    if (!op.success) return { ok: false, error: "unknown op" };
+    if (!op.success) {
+      // "unknown op" is reserved for a literal this schema has NEVER heard of — the real version-skew
+      // signal. A recognized literal whose payload failed some OTHER check (a refine, a field bound)
+      // gets its own honest reason instead of reusing that string (final-review finding 3).
+      const literal = (frame as Record<string, unknown>)["op"];
+      const recognized = typeof literal === "string" && KNOWN_OPS.has(literal);
+      return { ok: false, error: recognized ? "invalid op payload" : "unknown op" };
+    }
     switch (op.data.op) {
       case "status": return { ok: true, ...this.handlers.status() };
       case "stop": await this.handlers.stop(); return { ok: true };
@@ -176,7 +195,10 @@ export class HostServer {
       // the roster while turn two is still going.
       case "prompt": {
         if (this.handlers.busy()) return { ok: false, error: "busy" };
-        void this.handlers.prompt(op.data.text, op.data.uuid, op.data.images).catch(() => {});
+        // `text` is optional on the wire now (finding 2: an image-only prompt sends none) — the schema's
+        // own `.refine` already guarantees at least one image is present when it is absent, so `""` here
+        // is never a silently-empty turn.
+        void this.handlers.prompt(op.data.text ?? "", op.data.uuid, op.data.images).catch(() => {});
         // runTask increments its seq synchronously before its first await, so it is readable here — the
         // client correlates its submit() to THIS turn's end event by it (adapter, Task 5). This holds
         // EVEN with staged images attached: runTask reserves the seq before it ever touches the

@@ -107,6 +107,28 @@ describe("hostOp schema — stageImage + prompt.images", () => {
     const r = hostOp.safeParse({ op: "notARealOp" });
     expect(r.success).toBe(false);
   });
+
+  // Final-review finding 2: an image-only submit (`assembleUserContent("", images)` via the remote
+  // `chatSession`) sends NO text at all — `text: z.string().min(1)` refused it outright as an
+  // unknown/invalid op before this fix. Text may be empty/absent when at least one image is claimed.
+  describe("finding 2 — image-only prompts (text may be empty when images is non-empty)", () => {
+    it("accepts an empty text with a non-empty images array", () => {
+      const r = hostOp.safeParse({ op: "prompt", text: "", images: [{ stagedId: "/x/y", sha256: "deadbeef" }] });
+      expect(r.success).toBe(true);
+    });
+    it("accepts an ABSENT text field entirely, with images present", () => {
+      const r = hostOp.safeParse({ op: "prompt", images: [{ stagedId: "/x/y", sha256: "deadbeef" }] });
+      expect(r.success).toBe(true);
+    });
+    it("still rejects a truly empty prompt — no text AND no images", () => {
+      expect(hostOp.safeParse({ op: "prompt", text: "" }).success).toBe(false);
+      expect(hostOp.safeParse({ op: "prompt" }).success).toBe(false);
+      expect(hostOp.safeParse({ op: "prompt", text: "", images: [] }).success).toBe(false);
+    });
+    it("non-empty text with no images is unaffected (the pre-existing text-only path)", () => {
+      expect(hostOp.safeParse({ op: "prompt", text: "hi" }).success).toBe(true);
+    });
+  });
 });
 
 describe("HostServer dispatch — stageImage + prompt.images wiring", () => {

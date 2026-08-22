@@ -92,11 +92,15 @@ export const hostOp = z.discriminatedUnion("op", [
   // (not re-validated as a path shape here): the host treats it as an opaque key into its own staged map
   // (`ImageStaging`), so a claim for an id it never minted simply reads back as "missing" rather than a
   // schema rejection — one failure path instead of two.
+  // final-review finding 2: `text` alone is no longer `.min(1)` — an image-only submit
+  // (`assembleUserContent("", images)` via the remote `chatSession`) has nothing to put there. The
+  // `.refine` below is what still refuses a truly empty prompt (no text AND no images): text may be
+  // empty/absent ONLY when at least one image is claimed.
   z.object({
-    op: z.literal("prompt"), text: z.string().min(1), uuid: z.string().min(1).optional(),
+    op: z.literal("prompt"), text: z.string().optional(), uuid: z.string().min(1).optional(),
     images: z.array(z.object({ stagedId: z.string().min(1), sha256: z.string().min(1) })).optional(),
     ...withId,
-  }),
+  }).refine((v) => (v.text?.length ?? 0) > 0 || (v.images?.length ?? 0) > 0, { message: "prompt requires text or at least one image" }),
   z.object({ op: z.literal("interrupt"), ...withId }),
   z.object({ op: z.literal("follow"), ...withId }),
   z.object({ op: z.literal("unfollow"), ...withId }),
