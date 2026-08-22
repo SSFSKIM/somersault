@@ -658,7 +658,32 @@ from user/policy scope, L106111-106121). Gated on an unwritten probe: whether th
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped 2026-08-22, all five tracks merged to main, all gates green** (typecheck + build clean;
+tui 4171 passed; unit 3325 passed; live cells on subscription). Overall parity 78.1% → 79.2%
+(§1 87.5%, §2 71.4%). Merge order held (I4 → T-RESUME); the T-MOUSE merge's union conflicts
+(hookOpts, ChatComposer imports/signature) and one semantic conflict (the live image test on the
+deleted `previewItems` API) were the only assembly frictions.
+
+**Review economics:** three Codex design rounds before any code (10 + 13 + 9 findings — every
+verified claim held), 20 task reviews with reviewer-run mutations, 7 fix waves, and a final
+whole-branch review whose 8 ccx findings (schema/adapter contract splits, budget clips, a
+decode-before-limit allocation, stale selection indices, unquoted shell paths) were all fixed in
+one wave. Three P1/P2 findings in `ptc-surface/` belong to the concurrent session and were relayed,
+untouched.
+
+**What the process caught that would have shipped broken:** silent image loss under version skew
+(Zod strips unknown keys); the editor flattening chips before `onSubmit` (no structural path
+existed); hover un-dimming expanded members' dim rows; caret clicks mis-positioning during every
+busy turn; the resume `failed` state being unreachable in production; `resolveAutoModel` silently
+swapping aliased models; a fifth stale arming literal T2's own audit missed (bisected by the T7
+reviewer).
+
+**Residues, recorded:** caret clicks fail safe (no-op) under dock co-occupants — occupant-height
+accounting is the follow-up; per-widget hover (CM33) still needs a layout tree; scrolled-off-row
+selection capture, selection remap-on-shift (v1 clears), the sharp/BMP ladder off darwin, the
+ambient clipboard hint, non-REPL image surfaces (appserver/daemon/fleet/harness.run), and the SDK
+`listSessions` image-only exclusion (upstream of ccx) are all named follow-ups. The Minor roll-up
+lives in `.doperpowers/sdd/2026-08-22-f9-wave/round.md`.
 
 ## Revision Notes
 
