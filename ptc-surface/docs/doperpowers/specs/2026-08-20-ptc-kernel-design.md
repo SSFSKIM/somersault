@@ -1681,7 +1681,52 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+Written 2026-08-22 at finish.
+
+**What was achieved against the purpose.** The feature shipped whole: every Claude Code
+session can now get a detached, persistent IPython kernel — provisioned on first use by the
+plugin launcher, discovered through the hook run-file → env → adapter-local chain, driven
+through the five MCP tools (`mcp__plugin_ptc_ptc__exec/wait/interrupt/restart/kernels`) and
+the `ptc` CLI, with `read/write/edit`, `bash()`, the `agent` namespace (Claude and Codex
+backends, fork/resume), `llm()`, `web_fetch`/`web_search`, `history()`, and the `workflow`
+helpers pre-bound in the kernel namespace, and the skill teaching agents to route bulk work
+there unprompted. All six spikes (S1–S6) returned PROMOTE in qualified forms recorded in
+this tail. The acceptance section was executed as written: A1–A15 all pass (A13 in S5's
+qualified form), with 12 of 15 cells independently re-derived from on-disk artifacts by the
+task-28 reviewer.
+
+**How it was built and verified.** 28 tasks under subagent-driven execution, each with a
+fresh executor and a two-stage review; every task closed review-clean (most after one fix
+round, T20 after two). The external whole-branch review (codex, gpt-5.6-sol) then ran nine
+rounds against a scoped synthetic base, yielding 77 further findings fixed in nine
+single-fixer waves — none of them ever recurred once fixed, and severity declined
+monotonically from architecture-class (unbounded model-visible output, event-loop
+monopolization, orphaned process trees, a fail-open admission marker) to peripheral
+precision items, at which point convergence was declared. The keyless suite grew from 209
+at task close to 370 at campaign end, all green with zero skips; the live tier (8 tests)
+passed under PTC_LIVE=1.
+
+**What remains.** The residual ledger above is the authoritative list (eight recorded
+residuals, including the codex-transcript `history()` v1 boundary, the no-session
+`interrupt()` contract being fake-proven only, and the prose-fallback path never having run
+on real data). Three operational notes from the final round: a stale `uv.lock` is now a
+hard provisioning failure by design; the macOS process-birth identity is PTC's one C-ABI
+dependency (it degrades to an explicit refusal, never a guess); and `_EOF_GRACE_S` for
+codex shutdown is a judgment value pending one live measurement. The adjudicated
+instrument-mismatch family (the reviewer's repo-local token ceiling vs PTC's spec-recorded
+output caps) is documented in the Decision Log and should be cited rather than re-litigated.
+
+**Lessons.** (1) Controller carry-forward claims about shipped code must be repo-verified
+before binding executors — the one wrong premise this plan issued (T13's predicate) was
+caught only because the executor read `git log -p` first. (2) Honesty rounds pay for
+themselves: the reviews that attacked evidence quality (T12's "model saw pixels", T18's
+derivable marker, T19's absence claims) repeatedly turned testimony into mechanical proof.
+(3) An external reviewer that cannot be steered will re-derive its own house rules every
+round; adjudicate once in the Decision Log and extend that entry on recurrence instead of
+re-arguing. (4) Merge-base tooling needs the synthetic scoped base to be an ancestor —
+build base-then-replay, not base-from-head. (5) Long external jobs outlive harness
+background wrappers; a self-owned tmux session with file-polled output is the reliable
+detachment.
 
 ## Revision Notes
 
