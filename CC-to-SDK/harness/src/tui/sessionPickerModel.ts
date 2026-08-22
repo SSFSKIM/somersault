@@ -248,11 +248,22 @@ export function transcriptItems(messages: readonly unknown[], opts: { width: num
   ];
   const painted = wrapItemsToWidth(projected, opts.width);
   // A backward walk over PAINTED rows (not logical items): the final item always survives even if it alone
-  // overflows the budget — a window that renders nothing is worse than one that renders a row too many.
+  // overflows the budget — a window that renders nothing is worse than one that renders nothing at all.
+  // Final-review finding 6: "survives" no longer meant "renders whole" — `rows > 0` guarded every check
+  // below it, so the FIRST item this loop ever looks at (the final one, `rows` still 0) was admitted
+  // unconditionally regardless of its own height, and a single huge `gutter-block` could blow the budget
+  // by however many rows its body carried. A `"line"` item can never trip this (`itemRows` gives it
+  // height 1, so it only reaches here when `opts.budget` is itself 0); a `"gutter-block"` whose OWN body
+  // is taller than the budget is sliced to its own tail rows instead of admitted whole — tail-anchored,
+  // same as the window itself.
   let start = painted.length, rows = 0;
   for (let i = painted.length - 1; i >= 0; i--) {
-    const height = itemRows(painted[i]!);
+    const item = painted[i]!;
+    const height = itemRows(item);
     if (rows > 0 && rows + height > opts.budget) break;
+    if (rows === 0 && height > opts.budget && item.kind === "gutter-block") {
+      return { items: [{ ...item, body: item.body.slice(-opts.budget) }] };
+    }
     rows += height; start = i;
   }
   return { items: painted.slice(start) };

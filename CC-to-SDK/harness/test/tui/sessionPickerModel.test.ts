@@ -92,6 +92,26 @@ describe("transcriptItems — canon's full-screen /resume window (T-RESUME T1, D
     expect(JSON.stringify(items)).not.toMatch(/more above/i);
   });
 
+  // Final-review finding 6: the backward walk exempted the FINAL projected item from the row cap whenever
+  // `rows` was still 0 (its own first iteration) — so a single huge `gutter-block` at the tail (an
+  // unbounded detail-all tool result, exactly what the FIRST test above proves this projection produces)
+  // was admitted WHOLE regardless of its own body's row count, blowing the budget open. The fix slices
+  // that one block's body to its own tail rows instead.
+  it("a single 500-row gutter block at the tail is sliced to fit the budget, not admitted whole", () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `line ${i}`);
+    const msgs = [call("x-1", "DoSomething", {}), result("x-1", lines.join("\n"))];
+    const budget = 20;
+    const { items } = transcriptItems(msgs, { width: 80, budget });
+    expect(paintedRows(items)).toBeLessThanOrEqual(budget);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.kind).toBe("gutter-block");
+    const body = (items[0] as Extract<RenderItem, { kind: "gutter-block" }>).body;
+    expect(body).toHaveLength(budget);
+    // Tail-anchored: the LAST 20 lines survive (line 480..499), never the first 20.
+    expect(body[0]!.text).toBe("line 480");
+    expect(body[body.length - 1]!.text).toBe("line 499");
+  });
+
   it("returns just { items } — no hidden/truncated count, unlike the in-pane PreviewPane shape", () => {
     const { items, ...rest } = transcriptItems([assistantText("hi")], { width: 60, budget: 200 });
     expect(items.length).toBeGreaterThan(0);
