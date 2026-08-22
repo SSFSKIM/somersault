@@ -23,8 +23,12 @@ export interface HostHandlers {
   pending(): PendingEntry[];
   answer(toolUseID: string, outcome: DecisionOutcome, by: string): { ok: boolean; alreadyAnsweredBy?: string; error?: string };
   /** `uuid` (M3 §1a-b) is the caller's id for the user item this turn starts from — forwarded verbatim to
-   *  the session's submit opts, never invented here: a host-minted id would stitch to nothing. */
-  prompt(text: string, uuid?: string): Promise<void>;
+   *  the session's submit opts, never invented here: a host-minted id would stitch to nothing.
+   *  `images` (F9 T-IMAGE Task 5/I3b) is the claim list from the `prompt` op's own `images` field —
+   *  staged-file ids the client has already written bytes to. Validating/reading/assembling them into
+   *  the turn's content and deleting every claimed file afterward is entirely `runTask`'s job (host.ts);
+   *  this signature only has to carry the claim through. */
+  prompt(text: string, uuid?: string, images?: { stagedId: string; sha256: string }[]): Promise<void>;
   interrupt(): Promise<void>;
   /** Register ONE sink for ONE connection; the returned function unregisters it. The sink is what the
    *  server writes to that socket — fan-out lives in the host's follower set, never here. */
@@ -65,6 +69,11 @@ export interface HostHandlers {
   // WAVE C TASK 11 (EP-C6): the effort flip. Same flag-layer group, same no-busy-gate rule — it touches the
   // dynamic settings layer, never the engine conversation, so it is safe mid-turn.
   setEffort(level: "low" | "medium" | "high" | "xhigh" | "max"): Promise<void>;
+  // F9 T-IMAGE Task 5 (I3b): mint a staging file. Synchronous by contract (`ImageStaging.stage` is a
+  // cheap mkdir+empty-write, never busy-gated — like the flag-layer ops above, it touches only the
+  // staging directory, not the engine conversation) — never awaited by dispatch, so this can never be the
+  // thing that delays a status reply mid-turn.
+  stageImage(descriptor: { mediaType: string; dimensions: { width: number; height: number }; size: number; sha256: string }): { path: string };
 }
 
 /** A frame with no newline in sight past this is a runaway peer, not an op. Same-user only (the socket
@@ -167,11 +176,15 @@ export class HostServer {
       // the roster while turn two is still going.
       case "prompt": {
         if (this.handlers.busy()) return { ok: false, error: "busy" };
-        void this.handlers.prompt(op.data.text, op.data.uuid).catch(() => {});
+        void this.handlers.prompt(op.data.text, op.data.uuid, op.data.images).catch(() => {});
         // runTask increments its seq synchronously before its first await, so it is readable here — the
-        // client correlates its submit() to THIS turn's end event by it (adapter, Task 5).
+        // client correlates its submit() to THIS turn's end event by it (adapter, Task 5). This holds
+        // EVEN with staged images attached: runTask reserves the seq before it ever touches the
+        // filesystem to read them back (host.ts's runTask, load-bearing per spec v3.1 "Turn correlation").
         return { ok: true, accepted: true, seq: this.handlers.turnSeq() };
       }
+      // F9 T-IMAGE Task 5 (I3b): synchronous mint, never awaited — see HostHandlers.stageImage's doc.
+      case "stageImage": return { ok: true, ...this.handlers.stageImage({ mediaType: op.data.mediaType, dimensions: op.data.dimensions, size: op.data.size, sha256: op.data.sha256 }) };
       case "interrupt": await this.handlers.interrupt(); return { ok: true };
       case "follow": {
         // Idempotent per connection: a client that sends `follow` twice must not end up with two

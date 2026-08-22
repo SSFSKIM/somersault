@@ -7,6 +7,7 @@ import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
+import type { ComposerSubmission, PastedMap } from "../../src/tui/editor.js";
 import { needsModelConfirm } from "../../src/tui/modelConfirmModel.js";
 import type { PermissionDecision } from "../../src/index.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
@@ -21,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendHistory } from "../../src/tui/promptHistory.js";
 import { savePrefs } from "../../src/tui/prefs.js";
+import { IMAGE_VERSION_SKEW_NOTICE } from "../../src/client/chatAdapter.js";
 
 // Ink hard-wraps a long single-line <Text> at the terminal width, inserting a real "\n" at whichever word
 // boundary the reflow lands on — a boundary that shifts whenever earlier content in the SAME joined line
@@ -142,6 +144,21 @@ describe("useChat: the host event stream is the single rendering source", () => 
     await waitFor(() => frame(lastFrame).includes("connection lost"));
     expect(frame(lastFrame)).toContain("host connection closed");
     expect(frame(lastFrame)).toContain("IDLE");   // busy untouched — it was already false
+  });
+
+  // F9 T-IMAGE Task 5 (I3b) fix wave: the review's third finding — IMAGE_VERSION_SKEW_NOTICE →
+  // notice() rendering was untested at the useChat layer (only proven indirectly by the adapter-level
+  // integration test, which never reaches useChat.ts's own `runTurn` catch arm at all). Pins that a
+  // submit() rejection carrying exactly this message renders as a capability notice, not the generic
+  // "✗ <message>" error line runTurn uses for every other submit failure.
+  it("a submit() rejection carrying IMAGE_VERSION_SKEW_NOTICE renders via notice(), not the generic '✗' error line", async () => {
+    const fake = fakeRemote({ submit: async () => { throw new Error(IMAGE_VERSION_SKEW_NOTICE); } });
+    const { lastFrame } = render(<Host makeSession={() => fake} prompt="hi with an image" />);
+    // `flat`, not `frame`: Ink hard-wraps this notice line at a word boundary inside the message, and
+    // `flat` is the helper that collapses the resulting whitespace run back to single spaces.
+    await waitFor(() => flat(lastFrame).includes(IMAGE_VERSION_SKEW_NOTICE));
+    expect(flat(lastFrame)).not.toContain(`✗ ${IMAGE_VERSION_SKEW_NOTICE}`);
+    expect(frame(lastFrame)).toContain("IDLE");
   });
 });
 
@@ -636,6 +653,83 @@ describe("useChat", () => {
     release();           await waitFor(() => submits === 2);                           // turn ends → drains "second"
     expect(frame(lastFrame)).not.toContain("q:second");
     release();           // release the drained turn so it settles cleanly
+  });
+
+  // F9 T-IMAGE (I2), the plan's required "queue: submit-while-busy enqueues the structural entry, drain
+  // hands it back intact" cell. Before this task `submit` only ever saw a flattened string — an image entry
+  // could not reach the queue at all. `submit`'s widened signature (`ComposerSubmission | string`) is what
+  // makes this reachable; `popQueueToComposer` is the SAME seam ChatComposer's Up-arrow reads (queue.ts's
+  // `joinQueuedForComposer`), proven here at the useChat boundary rather than through a rendered composer.
+  it("a structural submit while busy enqueues the image entry, and the queue hands it back intact", async () => {
+    let release = () => {}; let submits = 0;
+    let fake!: FakeRemote;
+    fake = fakeRemote({ submit: async (_p, onMessage) => {
+      submits++;
+      fake.pushEvent({ kind: "turn", phase: "start", seq: submits });
+      const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "reply" }] } };
+      onMessage(m); fake.pushEvent({ kind: "message", data: m });
+      await new Promise<void>((res) => { release = res; });
+      fake.pushEvent({ kind: "turn", phase: "end", seq: submits });
+      return { result: "done" };
+    } });
+    const api: { run?: (s: ComposerSubmission | string) => void; pop?: () => { text: string; pastedContents?: PastedMap } | null } = {};
+    function H() {
+      const c = useChat(() => fake);
+      api.run = c.submit; api.pop = (c as any).popQueueToComposer;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} q:{c.state.queue.length}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("first turn"); await waitFor(() => frame(lastFrame).includes("BUSY"));
+    const imageEntry = { id: 1, type: "image" as const, content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } };
+    api.run!({ display: "look [Image #1]", submitText: "look [Image #1]", pastedContents: { 1: imageEntry } });
+    await waitFor(() => frame(lastFrame).includes("q:1"));
+    // ENQUEUE + DRAIN in one read: `popQueueToComposer` is the exact seam ChatComposer's Up-arrow calls
+    // (`queuePop`), so if the entry survived the enqueue it survives here too.
+    const popped = api.pop!();
+    expect(popped).not.toBeNull();
+    expect(popped!.text).toBe("look [Image #1]");
+    // DRAIN: `joinQueuedForComposer` hands the SAME image entry back, not just its label.
+    expect(popped!.pastedContents).toBeDefined();
+    const backId = Number(Object.keys(popped!.pastedContents!)[0]);
+    expect(popped!.pastedContents![backId]).toEqual({ ...imageEntry, id: backId });
+    release();            // release the running turn so it settles cleanly
+    await waitFor(() => !frame(lastFrame).includes("BUSY"));
+  });
+
+  // F9 T-IMAGE Task 5 (I3b), the plan's required "queue: an image turn queued while busy drains and
+  // submits with its block intact" cell. The previous test proves the map survives the ROUND TRIP back
+  // to the composer (queue.ts's `joinQueuedForComposer`); this one proves the OTHER drain destination —
+  // `drainNext` → `dispatch` → `runTurn` → `session.submit` — which before this task pulled only
+  // `q[0].value` (the flattened text) and dropped `pastedContents` on the floor, so a queued image never
+  // reached the model at all even though `makeQueueEntry` had carried it this far.
+  it("a queued image turn drains and reaches session.submit with the image block intact, not just its label", async () => {
+    let release = () => {};
+    const submitted: unknown[] = [];
+    let fake!: FakeRemote;
+    fake = fakeRemote({ submit: async (p, onMessage) => {
+      submitted.push(p);
+      const seq = submitted.length;
+      fake.pushEvent({ kind: "turn", phase: "start", seq });
+      if (submitted.length === 1) await new Promise<void>((res) => { release = res; });   // hold turn 1 open so turn 2 queues
+      const m = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "ok" }] } };
+      onMessage(m); fake.pushEvent({ kind: "message", data: m });
+      fake.pushEvent({ kind: "turn", phase: "end", seq });
+      return { result: "done" };
+    } });
+    const api: { run?: (s: ComposerSubmission | string) => void } = {};
+    function H() { const c = useChat(() => fake); api.run = c.submit; return <Text>{c.state.busy ? "BUSY" : "IDLE"}</Text>; }
+    const { lastFrame } = render(<H />);
+    await new Promise((r) => setTimeout(r, 10));
+    api.run!("first turn"); await waitFor(() => frame(lastFrame).includes("BUSY"));
+    const imageEntry = { id: 1, type: "image" as const, content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } };
+    api.run!({ display: "look [Image #1]", submitText: "look [Image #1]", pastedContents: { 1: imageEntry } });   // queues while busy
+    release();                                              // turn 1 ends → the queued image turn drains
+    await waitFor(() => submitted.length === 2);
+    const second = submitted[1] as { type: string; text?: string; source?: { type: string; media_type: string; data: string } }[];
+    expect(Array.isArray(second)).toBe(true);               // NOT the flattened string the pre-task drain sent
+    expect(second[0]).toEqual({ type: "text", text: "look [Image #1]" });
+    expect(second[1]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: "QkFTRTY0" } });
   });
 
   it("drains PAST a queued unknown command (no stall) to a following turn", async () => {

@@ -31,3 +31,10 @@ export function runDir(env: NodeJS.ProcessEnv = process.env): string { return jo
 export function hostSocketPath(pid: number, env: NodeJS.ProcessEnv = process.env): string {
   return join(runDir(env), `${pid}.sock`);
 }
+/** F9 T-IMAGE Task 5 (I3b): the host's OWN scratch dir for staged clipboard images, sibling to its socket
+ *  file and keyed the same way (by pid, immutable for the host's life) — `ImageStaging` (host/imageStaging.ts)
+ *  mints one file per staged image inside it. Per-host, not a shared fleet-wide `img/` dir: two hosts'
+ *  staged files must never collide or be swept by the wrong process's timer. */
+export function hostImageStagingDir(pid: number, env: NodeJS.ProcessEnv = process.env): string {
+  return join(runDir(env), `${pid}.img`);
+}

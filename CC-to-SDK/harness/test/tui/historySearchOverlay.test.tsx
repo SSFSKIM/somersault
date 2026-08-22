@@ -142,6 +142,7 @@ describe("CM59 — the picker's preview pane", () => {
     const r = render(<HistorySearchOverlay load={async () => withPaste} onAccept={(e) => got.push(e)} onExecute={() => {}} onCancel={() => {}} />);
     await tick();
     r.stdin.write("\x1b"); await tick();
-    expect(got[0].pastedContents?.[1].content).toBe("a\nb\nc");
+    const entry = got[0].pastedContents?.[1];
+    expect(entry?.type === "text" ? entry.content : undefined).toBe("a\nb\nc");
   });
 });

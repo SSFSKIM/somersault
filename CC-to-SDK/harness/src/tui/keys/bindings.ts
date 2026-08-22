@@ -68,6 +68,11 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+d": "app:exit",               // handler registered by ChatComposer with the empty-buffer gate + 800 ms arm (ChatComposer.tsx:173-180) — NOT by ChatApp
     "alt+p": "chat:modelPicker",        // NEW (KB8) — upstream meta+p
     "alt+t": "chat:thinkingToggle",     // NEW (KB8) — upstream meta+t
+    // F9 T-IMAGE (I2), canon L174817: `ctrl+v` mac/linux, `alt+v` windows, BOTH under wsl — and since this
+    // table has no platform axis (ccx targets darwin first; see RESERVED_KEYS's own unconditional macOS
+    // block for the same call made once already), both bind unconditionally rather than growing one. A
+    // terminal that never delivers one of the two costs nothing for having it bound.
+    "ctrl+v": "chat:imagePaste", "alt+v": "chat:imagePaste",
   }},
   { context: "Autocomplete", bindings: {   // pushed by ChatComposer while a / or @ popup is open (state.command || state.mention)
     "escape": "autocomplete:dismiss",
@@ -394,7 +399,7 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
  *  (final review): an action that validates and resolves but reaches nobody is a rebind that silently does nothing. */
 export const VALID_ACTIONS: readonly string[] = [
   "app:interrupt", "app:exit", "app:toggleTranscript", "app:toggleTodos", "history:search", "task:background",
-  "chat:cancel", "chat:clearInput", "chat:cycleMode", "chat:killAgents", "chat:externalEditor", "chat:modelPicker", "chat:thinkingToggle",
+  "chat:cancel", "chat:clearInput", "chat:cycleMode", "chat:killAgents", "chat:externalEditor", "chat:modelPicker", "chat:thinkingToggle", "chat:imagePaste",
   "autocomplete:dismiss", "autocomplete:accept",
   "help:dismiss", "help:show",
   "transcript:exit", "transcript:toggleShowAll",

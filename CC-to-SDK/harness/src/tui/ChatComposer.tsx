@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { readdir } from "node:fs/promises";
-import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, suggestPopupShown, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, insertImageChip, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, suggestPopupShown, type ComposerSubmission, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
@@ -14,13 +14,15 @@ import { composerMode } from "./promptMode.js";
 import { collectEntries, mentionWalkRoot, type AsyncReaddirFn, type DirEnt } from "./fileComplete.js";
 import { commandKind, type CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
+// F9 T-IMAGE (I2): the Ctrl-V handler's one dependency — see `readClipboardImage`'s own prop doc above.
+import { defaultClipboardDeps, pasteClipboardImage, type ClipboardPasteOutcome } from "./clipboardImage.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor } from "./composerFrame.js";
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
 import { NotificationSlot } from "./NotificationSlot.js";
 import { usePaletteHoist } from "./paletteSlot.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
-import { expandHintText, formatBindings } from "./keys/hints.js";
+import { expandHintText, formatBindings, noImageInClipboardText } from "./keys/hints.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
@@ -63,6 +65,12 @@ export const ESC_CLEAR_KEY = "escape-again-to-clear";
 const ESC_CLEAR_HINT_MS = 1000;
 /** L395652, verbatim. */
 export const YANK_HINT_TEXT = "Ctrl+Y to paste deleted text";
+/** F9 T-IMAGE (I2), canon L607379's own key. Ctrl-V with neither an image nor pasteable text on the
+ *  clipboard: the toast, not a chip and not an insert. `NO_IMAGE_TOAST_MS` is the brief's "~1s" — shorter
+ *  than every other hint here, because this one answers a keypress that just happened rather than
+ *  advertising a gesture the user has not tried yet. */
+export const NO_IMAGE_TOAST_KEY = "no-image-in-clipboard";
+const NO_IMAGE_TOAST_MS = 1000;
 /** WAVE C TASK 4 — the ← agents gesture (annex §C1.6's `left-arrow-again-for-agents` at L395758, the outcome
  *  list at annex §C7.8/L395750). Upstream's `Press ← again`, verbatim.
  *
@@ -282,7 +290,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false }: { onSubmit: (text: string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Two of canon's surface
    *  deltas land on this component, and both are SUBTRACTIONS from what it paints rather than new content:
    *  D10 hoists the suggestion popup out of here into the band above the dock (`usePaletteHoist` below), and
@@ -314,6 +322,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   waitingForPermission?: boolean; inputOwnerRef?: React.MutableRefObject<InputOwner>; editorStateRef?: React.MutableRefObject<EditorState>; consumedPrefillTokenRef?: React.MutableRefObject<number>;
   /** CM56's once-only guard, owned by ChatApp so it outlives this component's remounts (see below). */
   searchHintFiredRef?: React.MutableRefObject<boolean>; prefill?: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; onPrefillApplied?: () => void; editExternal?: ComposerEditExternal;
+  /** F9 T-IMAGE (I2). Overrides the real `pasteClipboardImage(defaultClipboardDeps())` — the SAME DI shape
+   *  `editExternal` uses just above, and for the same reason: a unit test drives Ctrl-V's four outcomes
+   *  (image / image-failed / text / none) without ever shelling out to `osascript`/`sips`. */
+  readClipboardImage?: () => Promise<ClipboardPasteOutcome>;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
@@ -522,6 +534,7 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const suggestionRef = useRef(suggestion); suggestionRef.current = suggestion;
   const onSuggestionAcceptRef = useRef(onSuggestionAccept); onSuggestionAcceptRef.current = onSuggestionAccept;
   const editExternalRef = useRef(editExternal); editExternalRef.current = editExternal;
+  const readClipboardImageRef = useRef(readClipboardImage); readClipboardImageRef.current = readClipboardImage;
   const providerSuspend = useSuspendInput();
   const suspendInputRef = useRef<SuspendInput | null>(null); suspendInputRef.current = suspendInput ?? providerSuspend;
   const onPrefillAppliedRef = useRef(onPrefillApplied); onPrefillAppliedRef.current = onPrefillApplied;
@@ -889,7 +902,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     }
     if (s.lines.length === 1 && s.lines[0] === "" && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
     if (r.historyAppend) persistHistory(r.historyAppend);
-    if (r.submit != null) onSubmitRef.current(r.submit); commitState(r.state);
+    // F9 T-IMAGE (I2): `r.submission` — set only by a real `submitTurn` — carries the structural object so an
+    // image/image-failed entry rides to `onSubmit` intact; `r.submit` alone (a `/command` autocomplete accept,
+    // which never sets `.submission`) still passes its bare string through exactly as before this task.
+    if (r.submission) onSubmitRef.current(r.submission);
+    else if (r.submit != null) onSubmitRef.current(r.submit);
+    commitState(r.state);
   };
   submitBufferRef.current = () => handleKey(ENTER);
   // The gate that matters most (F6 t5): the fallback is where every printable character, digit and unbound key
@@ -951,6 +969,39 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // below, and `search.handleKey` drops it (a ctrl key is not query text). An inert ctrl+s inside the
     // inline search IS upstream's behaviour, and it costs nothing to reproduce.
     "chat:killAgents": () => { if (interceptChord()) onKillAgentsRef.current?.(); },
+    // F9 T-IMAGE (I2): the Ctrl-V cascade — image → chip (ready or `image-failed`, either way a chip: the
+    // turn still submits, degrading at BUILD time, canon L231262); text → the ORDINARY paste path (the same
+    // chip-or-insert decision a bracketed paste makes, via `applyKey`'s own `key.paste` arm); neither → the
+    // toast. `ended` is captured SYNCHRONOUSLY, like `chat:externalEditor`'s own async flight just below —
+    // the read is a subprocess round trip, and by the time it resolves `stateRef.current` may have moved on;
+    // basing the mint on the snapshot taken the moment the key fired is the same accepted race that flight
+    // already lives with, not a new one.
+    "chat:imagePaste": () => {
+      const ended = interceptChord();
+      if (!ended) return;
+      const wasEmpty = isEmptyBuffer(ended);
+      void (async () => {
+        const read = readClipboardImageRef.current ?? (() => pasteClipboardImage(defaultClipboardDeps()));
+        const outcome = await read();
+        if (disposed.current) return;
+        if (outcome.kind === "image" || outcome.kind === "image-failed") {
+          commitState(insertImageChip(ended, outcome));
+          if (wasEmpty) onDraftStartRef.current?.();
+          return;
+        }
+        if (outcome.kind === "text") {
+          const r = applyKey(ended, outcome.text, { paste: true }, Date.now(), rowsRef.current?.());
+          commitState(r.state);
+          if (wasEmpty && !(r.state.lines.length === 1 && r.state.lines[0] === "")) onDraftStartRef.current?.();
+          return;
+        }
+        // "none": canon's own copy, SSH-aware (SSH_CONNECTION — renderer.ts's own marker set, narrowed to
+        // this ONE of its three env vars per the brief; a plain read rather than a DI seam, matching how
+        // `process.platform` is already read directly a few lines below for the search hint).
+        const text = noImageInClipboardText(bindings("chat:imagePaste"), !!process.env.SSH_CONNECTION);
+        storeRef.current.add({ key: NO_IMAGE_TOAST_KEY, text, priority: "immediate", timeoutMs: NO_IMAGE_TOAST_MS });
+      })();
+    },
     // K6 (F2 task 10): `"ctrl+k": "command:clear"` in the user's keybindings.json runs `/clear` exactly as if
     // it had been typed here — same submit seam, so local commands, catalog commands and the unknown-name
     // notice all behave identically to typing them. The buffer is deliberately left alone: the key ran a

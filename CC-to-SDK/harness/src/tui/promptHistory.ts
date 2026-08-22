@@ -48,18 +48,25 @@ export const PASTE_INLINE_MAX = 1024;
 
 /** One persisted paste. Exactly one of `content` / `contentHash` is present (the `nu_` split); the reader
  *  must go through `resolvePastedContent`, never `.content` directly. `mediaType`/`filename` are upstream's
- *  and pass through untouched — our composer never sets them (editor.ts's `PastedEntry` is text-only), but
- *  they cost nothing and keep the line shape honest. `lineCount` is OURS, the same addition editor.ts made,
- *  so re-rendering a `[Pasted text #N +K lines]` label after a recall never re-walks the body. */
+ *  own fields, kept optional here for the on-disk shape's sake, though nothing in this port ever writes
+ *  them — F9 T-IMAGE (I2) gave the image species its OWN dedicated `PastedEntry` arm (excluded from
+ *  persistence entirely, see `appendHistory`), so this pair stays permanently unset rather than becoming
+ *  reachable. `lineCount` is OURS, the same addition editor.ts made, so re-rendering a `[Pasted text #N +K
+ *  lines]` label after a recall never re-walks the body. */
 export interface HistoryPaste { id: number; type: "text"; content?: string; contentHash?: string; mediaType?: string; filename?: string; lineCount?: number }
 /** A line of the file. `timestamp` is a MILLISECOND EPOCH — `Date.now()` at `uu_`:L317606, not an ISO
  *  string; the dedup key upstream builds (`${timestamp}\0${sessionId}`) depends on that. */
 export interface HistoryEntry { display: string; timestamp: number; project?: string; sessionId?: string; pastedContents?: Record<number, HistoryPaste> }
 /** What a submit site hands us: the FULL paste bodies straight off `EditorState.pastedContents`. The
- *  `nu_` split happens in here, not at the call site, so `appendHistory` is the single cache-write site. */
+ *  `nu_` split happens in here, not at the call site, so `appendHistory` is the single cache-write site.
+ *
+ *  F9 T-IMAGE (I2): `pastedContents` widened to the editor's own `PastedMap` (was a text-only inline type)
+ *  because `submitTurn`'s `historyAppend.pastedContents` now legitimately carries image/image-failed entries
+ *  too — `appendHistory` itself is what drops them (see its own header), so the type here just has to admit
+ *  what a real submit hands it, not pre-filter at the call site. */
 export interface HistoryAppend {
   display: string; project?: string; sessionId?: string; timestamp?: number;
-  pastedContents?: Record<number, { id: number; type: "text"; content: string; lineCount?: number; mediaType?: string; filename?: string }>;
+  pastedContents?: PastedMap;
 }
 
 export function historyPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "history.jsonl"); }
@@ -88,11 +95,20 @@ export function appendHistory(e: HistoryAppend, env: NodeJS.ProcessEnv = process
   if (envTruthy(env.CLAUDE_CODE_SKIP_PROMPT_HISTORY)) return;
   const pastedContents: Record<number, HistoryPaste> = {};
   for (const [key, p] of Object.entries(e.pastedContents ?? {})) {
-    // Upstream also skips `type === "image" | "audio"` here; our PastedMap is text-only by construction
-    // (editor.ts:16), so that arm would be unreachable code. Restore it the day images land.
+    // F9 T-IMAGE (I2): the day this comment warned about. Upstream also skips `type === "image" | "audio"`
+    // here (its own analogue of this guard) — an image payload is never written to `history.jsonl` OR the
+    // paste cache (`storePaste` below is reached only past this line), so a restored history line has
+    // nothing but the literal `[Image #N]` label to submit. `image-failed` is skipped the same way: its
+    // `reason` is not a `content` a re-read could resolve, and the label alone is exactly what a lost text
+    // paste already degrades to (`lostPasteLabel`) — no entry is honest here too.
+    if (p.type !== "text") continue;
     const inline = p.content.length <= PASTE_INLINE_MAX;
     const contentHash = inline ? undefined : pasteHash(p.content);
-    pastedContents[Number(key)] = { id: p.id, type: p.type, ...(inline ? { content: p.content } : { contentHash }), mediaType: p.mediaType, filename: p.filename, lineCount: p.lineCount };
+    // `mediaType`/`filename` are no longer read off `p` here: editor.ts's TEXT `PastedEntry` never carried
+    // them (a vestige of upstream's audio/image species, which now have their OWN dedicated arms — and are
+    // filtered out above, never reaching this line at all). `HistoryPaste` keeps both fields optional for
+    // the on-disk shape's own sake; this write simply leaves them unset.
+    pastedContents[Number(key)] = { id: p.id, type: p.type, ...(inline ? { content: p.content } : { contentHash }), lineCount: p.lineCount };
     // `DUd` (L317608) — the ONLY paste-cache write in the product, and it lives inside the skip gate.
     if (!inline) storePaste(p.content, env);
   }

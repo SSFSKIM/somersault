@@ -69,6 +69,10 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   setOutputStyle: async () => {}, setEffort: async () => {},
   addRule: async () => {},
   removeRule: async () => {},
+  // F9 T-IMAGE Task 5 (I3b): a fixed stub path is fine here — this suite's own stageImage cells assert
+  // the DISPATCH wiring (schema round-trip, reply shape), not real staging behaviour, which lives in
+  // `test/unit/stageImage.test.ts` and the real-socket suite against `SessionHost`.
+  stageImage: () => ({ path: "/fake/staged/path" }),
   ...over,
 });
 

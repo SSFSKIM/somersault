@@ -54,6 +54,18 @@ type HostAnswerKind = Exclude<DecisionOutcome["kind"], `elicitation_${string}`>;
 type _HostAnswerKindsCovered = AssertType<ExactType<z.infer<typeof structuredAnswer>["kind"], HostAnswerKind>>;
 type _HostAnswerFieldsMatch = AssertType<ExactType<z.infer<typeof structuredAnswer>, Extract<DecisionOutcome, { kind: HostAnswerKind }>>>;
 const withId = { id: z.number().int().nonnegative().optional() };
+// F9 T-IMAGE Task 5 (I3b): the small DESCRIPTOR the client sends to mint a staging file — never the
+// image bytes themselves, which stay off this socket entirely (server.ts's MAX_FRAME bounds client→host
+// traffic to 256 KiB; a real screenshot's base64 would blow through it). `dimensions`/`size` travel here
+// even though the host does not enforce the pixel/byte caps itself at THIS op — that is
+// `session/turnInput.ts`'s job at the message builder, which re-decodes the header rather than trusting
+// any caller's claim — they exist so `ImageStaging.stage`'s bookkeeping has a full descriptor to keep.
+const imageDescriptor = {
+  mediaType: z.string().min(1),
+  dimensions: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
+  size: z.number().int().nonnegative(),
+  sha256: z.string().min(1),
+};
 export const hostOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("status"), ...withId }),
   z.object({ op: z.literal("stop"), ...withId }),
@@ -61,12 +73,30 @@ export const hostOp = z.discriminatedUnion("op", [
   // Exactly one of `decision`/`answer` is required — dispatch (server.ts) rejects both-or-neither; the
   // schema itself only bounds the SHAPE of each, not their mutual exclusivity.
   z.object({ op: z.literal("answer"), toolUseID: z.string().min(1), by: z.string().min(1), decision: decisionKind.optional(), answer: structuredAnswer.optional(), ...withId }),
+  // F9 T-IMAGE Task 5 (I3b): mint a staging file for ONE image. The reply carries the path the client
+  // then writes the actual bytes to (over the filesystem, never this socket) before claiming it in a
+  // `prompt` op's `images` array. Deliberately its OWN op rather than folded into `prompt`'s schema — the
+  // whole point of the negotiated protocol (spec v3.1) is that an OLD host's discriminated union does not
+  // recognize this literal at all and answers "unknown op" (zod's own safeParse failure, server.ts's
+  // dispatch), which is the LOUD version-skew signal the client keys its notice off of. A bare extra field
+  // on `prompt` (v3's rejected design) would instead be silently STRIPPED by an old host's `prompt` schema
+  // and run a text-only turn with nobody told.
+  z.object({ op: z.literal("stageImage"), ...imageDescriptor, ...withId }),
   // M3 §1a-b: `uuid` is the CALLER's id for the user item this turn starts from, handed straight to
   // Session.submit's existing `{uuid}` opt so the pushed SDKUserMessage carries it. An orchestrating client
   // (the app server's fleet threads) mints item ids before it sends the prompt and must be able to stitch
   // its own item to the persisted row; an unstamped prompt makes that impossible. `.min(1)`, so a client
   // that computed an empty id is refused here rather than stamping the turn with nothing.
-  z.object({ op: z.literal("prompt"), text: z.string().min(1), uuid: z.string().min(1).optional(), ...withId }),
+  // `images` (F9 T-IMAGE Task 5/I3b) is the CLAIM list — every entry names a file this same client already
+  // staged via `stageImage` and has since written bytes to. `stagedId` is deliberately just `z.string()`
+  // (not re-validated as a path shape here): the host treats it as an opaque key into its own staged map
+  // (`ImageStaging`), so a claim for an id it never minted simply reads back as "missing" rather than a
+  // schema rejection — one failure path instead of two.
+  z.object({
+    op: z.literal("prompt"), text: z.string().min(1), uuid: z.string().min(1).optional(),
+    images: z.array(z.object({ stagedId: z.string().min(1), sha256: z.string().min(1) })).optional(),
+    ...withId,
+  }),
   z.object({ op: z.literal("interrupt"), ...withId }),
   z.object({ op: z.literal("follow"), ...withId }),
   z.object({ op: z.literal("unfollow"), ...withId }),

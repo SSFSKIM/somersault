@@ -96,7 +96,9 @@ export interface FakeHostControls {
   settle(toolUseID: string, by: string, answer?: DecisionOutcome): void;
   setStatus(patch: Partial<HostStatus>): void;
   emitRewound(p: { sessionId?: string; prevUuid?: string; cleared?: true }): void;
-  promptCalls: Array<{ text: string; uuid?: string }>;
+  // F9 T-IMAGE Task 5 (I3b): `images` rides along when a caller sent one, same optional-key discipline
+  // as `uuid` above — a plain-text prompt call still records exactly `{text}`.
+  promptCalls: Array<{ text: string; uuid?: string; images?: { stagedId: string; sha256: string }[] }>;
   /** Every op name the server dispatched, in order. NB `unfollow` is recorded from the unregister
    *  callback, which a socket CLOSE also fires — assert with `toContain`/filters on a case that
    *  disconnects. */
@@ -163,7 +165,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
   const patch: Partial<HostStatus> = { ...opts.status };
   const ops: string[] = [];
   const opCalls: Array<{ op: string; args: unknown[] }> = [];
-  const promptCalls: Array<{ text: string; uuid?: string }> = [];
+  const promptCalls: Array<{ text: string; uuid?: string; images?: { stagedId: string; sha256: string }[] }> = [];
   const replies: Record<string, unknown> = {};
   const refuse: Record<string, string> = {};
   // Recorded FIRST, then refused: a planted refusal is a host that took the op and said no, so the op log
@@ -277,8 +279,8 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     answer: (toolUseID, outcome, by) => { record("answer", toolUseID, outcome, by); return answer(toolUseID, outcome, by); },
     // runTask bumps the seq and emits `start` SYNCHRONOUSLY, before its first await — which is what makes
     // the seq the server puts in the prompt reply (read after this call) this turn's own.
-    prompt: async (text, uuid) => {
-      record("prompt", text, uuid); promptCalls.push({ text, ...(uuid ? { uuid } : {}) });
+    prompt: async (text, uuid, images) => {
+      record("prompt", text, uuid, images); promptCalls.push({ text, ...(uuid ? { uuid } : {}), ...(images ? { images } : {}) });
       // F6: the host dies before the reply — destroy the connection synchronously (server.close() runs its
       // socket-destroy synchronously), so the server's about-to-be-written prompt reply reaches a dead socket
       // and the client sees the death with the op unanswered. Runs before beginTurn: no turn ever starts.
@@ -356,6 +358,10 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     addRule: async (behavior, rule) => { record("add_rule", behavior, rule); },
     removeRule: async (behavior, rule) => { record("remove_rule", behavior, rule); },
     setEffort: async (level) => { record("set_effort", level); },
+    // F9 T-IMAGE Task 5 (I3b): the fleet suites this fake serves never exercise real image staging (that
+    // lives in `test/unit/stageImage.test.ts` and the real-socket suite against `SessionHost`) — a fixed
+    // stub path is enough to satisfy the dispatch wiring and keep the op observable in `ops`/`opCalls`.
+    stageImage: (descriptor) => { record("stageImage", descriptor); return { path: `${socketPath}.fake-staged` }; },
   };
 
   const server = new HostServer(handlers, socketPath);

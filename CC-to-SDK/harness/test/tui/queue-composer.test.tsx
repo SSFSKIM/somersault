@@ -15,8 +15,8 @@ import { join } from "node:path";
 import { renderWithKeymap } from "./keysTestUtil.js";
 import { ChatComposer, type PlaceholderMemo } from "../../src/tui/ChatComposer.js";
 import { applyQueueDrain, isEditableQueueEntry, joinQueuedForComposer, type QueueEntry } from "../../src/tui/queue.js";
-import { initialEditorState, setBuffer, type EditorState, type PastedMap } from "../../src/tui/editor.js";
-import { chipLabel } from "../../src/tui/pasteChips.js";
+import { initialEditorState, setBuffer, type EditorState, type PastedEntry, type PastedMap } from "../../src/tui/editor.js";
+import { chipLabel, imageChipLabel } from "../../src/tui/pasteChips.js";
 import { appendHistory } from "../../src/tui/promptHistory.js";
 import { savePrefs, loadPrefs } from "../../src/tui/prefs.js";
 import { QUEUED_UP_HINT } from "../../src/tui/placeholder.js";
@@ -24,6 +24,12 @@ import type { CommandEntry } from "../../src/tui/commandComplete.js";
 
 const q = (value: string, over: Partial<QueueEntry> = {}): QueueEntry => ({ value, mode: "prompt", priority: "now", origin: "user", ...over });
 const text = (s: EditorState) => s.lines.join("\n");
+// F9 T-IMAGE (I2) widened `PastedEntry` to a 3-arm union; this file's own maps are text-only, so this
+// narrows the read side rather than casting blindly at each call site (see paste-chips.test.ts's twin).
+const textEntry = (e: PastedEntry | undefined): Extract<PastedEntry, { type: "text" }> => {
+  if (e?.type !== "text") throw new Error(`expected a text pasted entry, got ${JSON.stringify(e)}`);
+  return e;
+};
 
 // ————————————————————————— CM51: the record and its editable predicate —————————————————————————
 
@@ -59,10 +65,36 @@ describe("joinQueuedForComposer (the useChat half of V, L149093)", () => {
     ])!;
     const ids = Object.keys(popped.pastedContents!).map(Number).sort((a, b) => a - b);
     expect(ids).toEqual([1, 2]);
-    expect(popped.pastedContents![1].content).toBe("FIRST");
-    expect(popped.pastedContents![2].content).toBe("SECOND");
+    expect(textEntry(popped.pastedContents![1]).content).toBe("FIRST");
+    expect(textEntry(popped.pastedContents![2]).content).toBe("SECOND");
     // …and the LABELS in the joined text were rewritten to match, so neither points at the other's payload.
     expect(popped.text).toBe(`look at ${chipLabel(1, 0)}\nand ${chipLabel(2, 0)}`);
+  });
+  // F9 T-IMAGE (I2), the plan's "queue round-trip structural" cell: `rebuildChips` only re-mints TEXT ids
+  // (editorHistory.ts's own scope), so an image/image-failed entry must ride through THIS join under its
+  // own id instead of being silently dropped — the gap this task's own header calls out.
+  it("carries an image entry through under its own id — rebuildChips never touches it", () => {
+    const image = { 1: { id: 1, type: "image" as const, content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } } };
+    const popped = joinQueuedForComposer([q(`see ${imageChipLabel(1)}`, { pastedContents: image })])!;
+    expect(popped.text).toBe(`see ${imageChipLabel(1)}`);           // no text chip to remint, so no relabel
+    expect(popped.pastedContents![1]).toEqual(image[1]);
+  });
+  it("carries an image-failed entry through the same way", () => {
+    const failed = { 1: { id: 1, type: "image-failed" as const, reason: "too large" } };
+    const popped = joinQueuedForComposer([q(imageChipLabel(1), { pastedContents: failed })])!;
+    expect(popped.pastedContents![1]).toEqual(failed[1]);
+  });
+  it("bumps the running counter past a carried image id, so a LATER entry's text remint cannot collide", () => {
+    const image = { 5: { id: 5, type: "image" as const, content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } } };
+    const textMap = (id: number, content: string) => ({ [id]: { id, type: "text" as const, content, lineCount: 0 } });
+    const popped = joinQueuedForComposer([
+      q(imageChipLabel(5), { pastedContents: image }),
+      q(chipLabel(1, 0), { pastedContents: textMap(1, "AFTER") }),
+    ])!;
+    const ids = Object.keys(popped.pastedContents!).map(Number).sort((a, b) => a - b);
+    expect(ids).toEqual([5, 6]);                                    // the text remint landed ABOVE 5, not on it
+    expect(popped.pastedContents![5]).toEqual(image[5]);
+    expect(textEntry(popped.pastedContents![6]).content).toBe("AFTER");
   });
 });
 
@@ -88,14 +120,38 @@ describe("applyQueueDrain (the composer half of GU, L495786)", () => {
     const draftChip: PastedMap = { 1: { id: 1, type: "text", content: "DRAFT", lineCount: 0 } };
     const s = { ...setBuffer(initialEditorState(), `d ${chipLabel(1, 0)}`), pastedContents: draftChip, pasteCounter: 1 };
     const out = applyQueueDrain(s, { text: `q ${chipLabel(1, 0)}`, pastedContents: { 1: { id: 1, type: "text", content: "QUEUED", lineCount: 0 } } });
-    expect(out.pastedContents[1].content).toBe("DRAFT");
-    expect(out.pastedContents[2].content).toBe("QUEUED");
+    expect(textEntry(out.pastedContents[1]).content).toBe("DRAFT");
+    expect(textEntry(out.pastedContents[2]).content).toBe("QUEUED");
     expect(text(out)).toBe(`q ${chipLabel(2, 0)}\nd ${chipLabel(1, 0)}`);
     expect(out.pasteCounter).toBe(2);
   });
   it("ends any history walk — the drained text is not a recalled entry", () => {
     const s = { ...initialEditorState([{ display: "old" }]), histIndex: 0, histRecalled: "old" };
     expect(applyQueueDrain(s, { text: "a" }).histIndex).toBeNull();
+  });
+  // F9 T-IMAGE (I2): the SECOND remap pass this function runs (`rebuildChips` again, against the LIVE
+  // buffer's counter) only ever returns the ids it re-minted — a non-text entry `joinQueuedForComposer`
+  // already carried through under its own id would otherwise vanish HERE, one hop later than the join. This
+  // is the "drain hands it back intact… all the way to the live buffer" half of the plan's cell.
+  it("carries an image entry ALL THE WAY into the live buffer, bumping the counter past it", () => {
+    const out = applyQueueDrain(initialEditorState(), {
+      text: `see ${imageChipLabel(1)}`,
+      pastedContents: { 1: { id: 1, type: "image", content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } } },
+    });
+    expect(text(out)).toBe(`see ${imageChipLabel(1)}`);
+    expect(out.pastedContents[1]).toEqual({ id: 1, type: "image", content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } });
+    expect(out.pasteCounter).toBe(1);                                // a later live paste cannot collide with #1
+  });
+  it("an image carried in survives ALONGSIDE the draft's own text chip", () => {
+    const draftChip: PastedMap = { 1: { id: 1, type: "text", content: "DRAFT", lineCount: 0 } };
+    const s = { ...setBuffer(initialEditorState(), `d ${chipLabel(1, 0)}`), pastedContents: draftChip, pasteCounter: 1 };
+    const out = applyQueueDrain(s, {
+      text: `q ${imageChipLabel(9)}`,
+      pastedContents: { 9: { id: 9, type: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } } },
+    });
+    expect(textEntry(out.pastedContents[1]).content).toBe("DRAFT");  // the draft's own chip, untouched
+    expect(out.pastedContents[9]).toEqual({ id: 9, type: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } });
+    expect(out.pasteCounter).toBe(9);
   });
 });
 

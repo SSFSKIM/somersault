@@ -5,10 +5,16 @@ import type { DecisionOutcome } from "../permissions/types.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { HostEvent } from "../host/wire.js";
 import type { BackgroundTaskInfo } from "./session.js";
+import type { UserTurnInput } from "./turnInput.js";
 
-/** The subset of a session the REPL drives (the lib Session satisfies this structurally). */
+/** The subset of a session the REPL drives (the lib Session satisfies this structurally).
+ *  `submit`'s prompt widened to `UserTurnInput` (F9 T-IMAGE Task 4/I3a) to match `Session.submit` —
+ *  a REMOTE implementer (`RemoteChatSession`/`chatAdapter.ts`) is free to keep taking only `string`
+ *  today (method-signature parameters are bivariant, so a narrower implementer still satisfies this
+ *  interface); actually wiring the array form through the remote/host transport is Task 5 (I3b)'s
+ *  negotiated staging protocol, not this one. */
 export interface ChatSession {
-  submit(prompt: string, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
+  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void): Promise<{ result: unknown }>;
   setPermissionMode(mode: string): Promise<void>;
   setModel(model?: string): Promise<void>;
   setMaxThinkingTokens(maxTokens: number | null): Promise<void>;

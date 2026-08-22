@@ -16,7 +16,7 @@ import { renderWithKeymap as render } from "./keysTestUtil.js";
 import { Box, Text } from "ink";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import { ChatComposer } from "../../src/tui/ChatComposer.js";
-import { initialEditorState, type EditorState } from "../../src/tui/editor.js";
+import { initialEditorState, type ComposerSubmission, type EditorState } from "../../src/tui/editor.js";
 import { ShortcutsOverlay } from "../../src/tui/ShortcutsOverlay.js";
 import { fakeRemote, type FakeRemoteOpts } from "./helpers/fakeRemote.js";
 import type { RewindAnchor, RewindDryRun, RewindScope } from "../../src/session/chatSession.js";
@@ -61,7 +61,7 @@ function DurableHarness({ editorStateRef, consumedPrefillTokenRef, consumedClear
   consumedClearTokenRef?: React.MutableRefObject<number>;
   prefill?: { text: string; token: number } | null;
   api: DurableApi;
-  onSubmit?: (text: string) => void;
+  onSubmit?: (sub: ComposerSubmission | string) => void;
 }) {
   const [overlayOpen, setOverlayOpen] = React.useState(false);
   // ChatApp's own `clearDraftToken` state, mirrored here: Ctrl-C's first press bumps it from wherever the
@@ -110,7 +110,7 @@ describe("app-scoped durable editor state across overlay remounts", () => {
     const editorStateRef = { current: initialEditorState() };
     const api: DurableApi = {};
     const submitted: string[] = [];
-    const { stdin, lastFrame } = render(<DurableHarness editorStateRef={editorStateRef} api={api} onSubmit={(text) => submitted.push(text)} />);
+    const { stdin, lastFrame } = render(<DurableHarness editorStateRef={editorStateRef} api={api} onSubmit={(sub) => submitted.push(typeof sub === "string" ? sub : sub.submitText)} />);
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("rescued prompt");
     await waitFor(() => frame(lastFrame).includes("rescued prompt"));
@@ -255,12 +255,12 @@ describe("composer prefill: prepend mode merges with an existing draft (Task 3, 
   it("a prepend-mode prefill retains a whitespace-only draft and submits exact bytes", async () => {
     const submitted: string[] = [];
     const { stdin, lastFrame, rerender } = render(
-      <ChatComposer onSubmit={(value) => submitted.push(value)} cwd={process.cwd()} commandCatalog={[]} prefill={null} />,
+      <ChatComposer onSubmit={(value) => submitted.push(typeof value === "string" ? value : value.submitText)} cwd={process.cwd()} commandCatalog={[]} prefill={null} />,
     );
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("   ");
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
-    rerender(<ChatComposer onSubmit={(value) => submitted.push(value)} cwd={process.cwd()} commandCatalog={[]} prefill={{ text: "queued", token: 1, mode: "prepend" }} />);
+    rerender(<ChatComposer onSubmit={(value) => submitted.push(typeof value === "string" ? value : value.submitText)} cwd={process.cwd()} commandCatalog={[]} prefill={{ text: "queued", token: 1, mode: "prepend" }} />);
     await waitFor(() => frame(lastFrame).includes("queued"));
     stdin.write("\r");
     await waitFor(() => submitted.length === 1);

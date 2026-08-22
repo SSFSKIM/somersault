@@ -3,11 +3,18 @@
 // (L317378) for what counts as a line, `agr` (L317383) for the placeholder grammar, `KF` (L317394) for the
 // recognizer and `fSe` (L317403) for the submit-time expansion.
 import { describe, it, expect } from "vitest";
-import { applyKey, clearToHistory, initialEditorState, type EditorState } from "../../src/tui/editor.js";
+import { applyKey, clearToHistory, initialEditorState, insertImageChip, type EditorState, type PastedEntry } from "../../src/tui/editor.js";
 import { CHIP_CHARS, CHIP_RE, chipLabel, chipSpans, deleteTokenBefore, ingestPaste, newlineCount, newlineThreshold, normalizePaste, snapOut, stripANSI, substituteChips } from "../../src/tui/pasteChips.js";
 
 const text = (s: EditorState) => s.lines.join("\n");
 const paste = (s: EditorState, raw: string, rows?: number) => applyKey(s, raw, { paste: true }, Date.now(), rows);
+// F9 T-IMAGE (I2) widened `PastedEntry` to a 3-arm union; every entry this file mints is still `type:"text"`
+// (its own subject), so this narrows the read side rather than casting blindly at each call site — a test
+// that somehow got handed an image/image-failed entry fails LOUD here instead of silently reading `undefined`.
+const textEntry = (e: PastedEntry | undefined): Extract<PastedEntry, { type: "text" }> => {
+  if (e?.type !== "text") throw new Error(`expected a text pasted entry, got ${JSON.stringify(e)}`);
+  return e;
+};
 
 describe("normalizePaste — k0's three steps, in k0's order", () => {
   it("strips SGR colour runs", () => { expect(normalizePaste("\x1b[31mred\x1b[0m")).toBe("red"); });
@@ -87,8 +94,8 @@ describe("ingestPaste — CM21's threshold", () => {
   it("chips a 3-newline paste at rows 24 with a +3 lines label", () => {
     const s = ingestPaste(initialEditorState(), "a\nb\nc\nd", 24);
     expect(text(s)).toBe("[Pasted text #1 +3 lines]");
-    expect(s.pastedContents[1].content).toBe("a\nb\nc\nd");
-    expect(s.pastedContents[1].lineCount).toBe(3);
+    expect(textEntry(s.pastedContents[1]).content).toBe("a\nb\nc\nd");
+    expect(textEntry(s.pastedContents[1]).lineCount).toBe(3);
   });
   it("inserts a 2-newline short paste verbatim and burns no id", () => {
     const s = ingestPaste(initialEditorState(), "a\r\nb\nc", 24);
@@ -105,7 +112,7 @@ describe("ingestPaste — CM21's threshold", () => {
   });
   it("stores the NORMALIZED content, so a submit round-trip is what the model reads", () => {
     const s = ingestPaste(initialEditorState(), "\x1b[32ma\r\n\tb\r\nc\r\nd", 24);
-    expect(s.pastedContents[1].content).toBe("a\n    b\nc\nd");
+    expect(textEntry(s.pastedContents[1]).content).toBe("a\n    b\nc\nd");
   });
   it("inserts the chip at the cursor as ONE token in the current line", () => {
     let s = initialEditorState(); s = { ...s, lines: ["see  here"], cursor: { row: 0, col: 4 } };
@@ -136,7 +143,7 @@ describe("applyKey routing — a PASTE-TAGGED event at any size, or an untagged 
     const r = applyKey(initialEditorState(), "z".repeat(900), {}, Date.now(), 24);
     expect(text(r.state)).toBe("[Pasted text #1]");
     expect(r.state.pasteCounter).toBe(1);
-    expect(r.state.pastedContents[1].content).toBe("z".repeat(900));
+    expect(textEntry(r.state.pastedContents[1]).content).toBe("z".repeat(900));
   });
   it("compares the RAW length, before normalisation (upstream's `T.key.length`)", () => {
     // 900 raw characters that normalise to NOTHING still take the paste path — where `ingestPaste` discards an
@@ -222,7 +229,7 @@ describe("deleteTokenBefore — the atomic one-keystroke chip delete", () => {
     const r = bksp(s);
     expect(text(r.state)).toBe("");
     expect(r.state.cursor).toEqual({ row: 0, col: 0 });
-    expect(r.state.pastedContents[1].content).toBe("a\nb\nc\nd");   // inert, not collected (t4-fix2)
+    expect(textEntry(r.state.pastedContents[1]).content).toBe("a\nb\nc\nd");   // inert, not collected (t4-fix2)
     expect(r.state.pasteCounter).toBe(1);                   // ids stay monotonic — the counter is not a live count
   });
   it("ctrl+h takes the same path (bundle L395676: `h` → `deleteTokenBefore() ?? backspace()`)", () => {
@@ -281,7 +288,7 @@ describe("deleteTokenBefore — the atomic one-keystroke chip delete", () => {
     expect(gone.undo.length).toBe(pasted.undo.length + 1);
     const back = applyKey(gone, "\x1f", {}, 9001).state;
     expect(text(back)).toBe(LABEL3);
-    expect(back.pastedContents[1].content).toBe("a\nb\nc\nd");
+    expect(textEntry(back.pastedContents[1]).content).toBe("a\nb\nc\nd");
   });
 });
 
@@ -385,7 +392,7 @@ describe("the map lives until submit — a deleted label's entry is inert, never
     expect(up.stash).toEqual({ display: LABEL3, pastedContents: draftMap, mode: "normal" });   // parked with the draft
     const down = applyKey(up, "", { downArrow: true }).state;
     expect(text(down)).toBe(LABEL3);
-    expect(down.pastedContents[1].content).toBe("a\nb\nc\nd");
+    expect(textEntry(down.pastedContents[1]).content).toBe("a\nb\nc\nd");
     expect(applyKey(down, "", { return: true }).submit).toBe("a\nb\nc\nd");
   });
   it("ctrl+w right after a chip kills the WHOLE label into the ring", () => {
@@ -441,5 +448,102 @@ describe("substituteChips — fSe directly", () => {
   });
   it("skips a non-text entry", () => {
     expect(substituteChips("[Image #1]", {})).toBe("[Image #1]");
+  });
+  // F9 T-IMAGE (I2): strengthened from the empty-map cell above — now that `PastedEntry` genuinely HAS
+  // image/image-failed arms, prove the label survives literal against a map that actually holds one, not
+  // just an absent id. This is what makes an image entry ride to the wire as `submitText` unexpanded.
+  it("leaves an image entry's label literal even though its id names a real entry", () => {
+    const map = { 1: { id: 1, type: "image" as const, content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 2, height: 2 } } };
+    expect(substituteChips("see [Image #1]", map)).toBe("see [Image #1]");
+  });
+  it("leaves an image-failed entry's label literal too", () => {
+    const map = { 1: { id: 1, type: "image-failed" as const, reason: "too large" } };
+    expect(substituteChips("[Image #1]", map)).toBe("[Image #1]");
+  });
+});
+
+// ═══════════════════════════ F9 T-IMAGE Task 3 (I2): the image chip arms ═══════════════════════════
+
+describe("insertImageChip — the Ctrl-V mint (ready and image-failed alike)", () => {
+  const READY = { kind: "image" as const, content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 4, height: 4 } };
+  it("mints `[Image #1]` and a matching image entry", () => {
+    const s = insertImageChip(initialEditorState(), READY);
+    expect(text(s)).toBe("[Image #1]");
+    expect(s.pasteCounter).toBe(1);
+    expect(s.pastedContents[1]).toEqual({ id: 1, type: "image", content: "QkFTRTY0", mediaType: "image/png", dimensions: { width: 4, height: 4 } });
+  });
+  it("a ladder-exhausted/unreadable outcome still mints a chip — `image-failed`, not a no-op", () => {
+    const s = insertImageChip(initialEditorState(), { kind: "image-failed", reason: "too large" });
+    expect(text(s)).toBe("[Image #1]");                          // SAME label grammar as a ready image
+    expect(s.pastedContents[1]).toEqual({ id: 1, type: "image-failed", reason: "too large" });
+  });
+  it("the failed entry still rides through a submit — the turn degrades at BUILD time, never here", () => {
+    const s = insertImageChip(initialEditorState(), { kind: "image-failed", reason: "too large" });
+    const r = applyKey(s, "", { return: true });
+    expect(r.submit).toBe("[Image #1]");                         // substituteChips leaves it literal
+    expect(r.submission?.pastedContents[1]).toEqual({ id: 1, type: "image-failed", reason: "too large" });
+  });
+  it("mints at the cursor, advancing the SAME counter a text paste shares", () => {
+    let s = ingestPaste(initialEditorState(), "a\nb\nc\nd", 24);           // text chip takes #1
+    s = insertImageChip(s, READY);                                        // image chip takes #2
+    expect(text(s)).toBe("[Pasted text #1 +3 lines][Image #2]");
+    expect(s.pastedContents[2].type).toBe("image");
+  });
+});
+
+describe("atomic delete on an image chip — deleteTokenBefore, unmodified by I2", () => {
+  it("backspace right after `[Image #N]` deletes the WHOLE label in one keystroke", () => {
+    const s = insertImageChip(initialEditorState(), { kind: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } });
+    const r = applyKey(s, "", { backspace: true });
+    expect(text(r.state)).toBe("");
+    // The label is gone from the buffer; the orphan sweep (below) is what then drops the dead entry.
+  });
+});
+
+describe("sweepOrphanImages — the image/image-failed species' own live GC (I2 restores upstream's other half)", () => {
+  it("drops an image entry whose label was torn apart by a non-atomic kill", () => {
+    let s = insertImageChip(initialEditorState(), { kind: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } });
+    expect(s.pastedContents[1]).toBeDefined();
+    // Ctrl-U from mid-label: kills raw characters back to column 0, slicing the label rather than deleting
+    // it atomically — the one shape `deleteTokenBefore` cannot produce, and exactly what orphans a payload.
+    s = { ...s, cursor: { row: 0, col: 5 } };                             // "[Imag" | "e #1]"
+    const r = applyKey(s, "u", { ctrl: true });
+    expect(text(r.state)).toBe("e #1]");
+    expect(r.state.pastedContents[1]).toBeUndefined();                   // swept — the label naming it is gone
+  });
+  it("a text-only session never pays for the scan (no non-text entry, no-op)", () => {
+    const s = ingestPaste(initialEditorState(), "a\nb\nc\nd", 24);
+    const r = applyKey(s, "", { leftArrow: true });
+    expect(r.state.pastedContents).toBe(s.pastedContents);               // same object — sweep short-circuited
+  });
+  it("an INTACT image chip elsewhere in the buffer survives an unrelated edit", () => {
+    let s = insertImageChip(initialEditorState(), { kind: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } });
+    s = applyKey(s, " tail", {}).state;
+    expect(text(s)).toBe("[Image #1] tail");
+    const r = applyKey(s, "", { backspace: true });                      // deletes only the trailing "l"
+    expect(text(r.state)).toBe("[Image #1] tai");
+    expect(r.state.pastedContents[1]).toBeDefined();                     // still present — its label is untouched
+  });
+});
+
+describe("Ctrl-S stash and Ctrl-_ undo retain an image entry (volatile in-memory state, I2)", () => {
+  it("stash parks and restores the image entry, not just its label", () => {
+    let s = insertImageChip(initialEditorState(), { kind: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } });
+    s = applyKey(s, "s", { ctrl: true }).state;                          // park
+    expect(s.lines).toEqual([""]);
+    expect(s.pastedContents).toEqual({});                                // upstream's `x({})` on the way out
+    s = applyKey(s, "s", { ctrl: true }).state;                          // restore
+    expect(text(s)).toBe("[Image #1]");
+    expect(s.pastedContents[1]).toEqual({ id: 1, type: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } });
+  });
+  it("undo brings the image entry back along with the text it belonged to", () => {
+    let s = insertImageChip(initialEditorState(), { kind: "image", content: "x", mediaType: "image/png", dimensions: { width: 1, height: 1 } });
+    const withChip = s;
+    const r = applyKey(s, "", { backspace: true });                      // delete the whole chip atomically
+    expect(text(r.state)).toBe("");
+    expect(r.state.pastedContents[1]).toBeUndefined();
+    const undone = applyKey(r.state, "\x1f", {}).state;                  // Ctrl-_ / Ctrl-- (bare C0 byte)
+    expect(text(undone)).toBe(text(withChip));
+    expect(undone.pastedContents[1]).toEqual(withChip.pastedContents[1]);
   });
 });

@@ -1,6 +1,9 @@
 import { HostServer } from "./server.js";
 import type { ControlOp, HostStatus } from "./ops.js";
-import { fleetRoot, hostSocketPath } from "../fleet/paths.js";
+import { fleetRoot, hostSocketPath, hostImageStagingDir } from "../fleet/paths.js";
+import { ImageStaging, MAX_IMAGES_PER_PROMPT } from "./imageStaging.js";
+import { assembleUserContent, type UserTurnInput } from "../session/turnInput.js";
+import { POST_PROCESS_BYTE_BUDGET } from "../tui/clipboardImage.js";
 import { TERMINAL, finalizeRoster, readRoster, writeRoster } from "../fleet/roster.js";
 import { removeArchiveMarker } from "../appserver/archive.js";
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
@@ -55,7 +58,11 @@ export interface HostSession {
   // Stays `unknown` even though §1a-f now READS the resolved value as `{result?}`: the real Session resolves
   // a `TurnOutcome`, but a dozen HostSession fakes declare `Promise<unknown>` outright, and narrowing here
   // would reject every one of them. runTask asserts the shape at the single point it reads it.
-  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<unknown>;
+  // `prompt` widened to `UserTurnInput` (F9 T-IMAGE Task 5/I3b): the real `Session.submit` has taken an
+  // array since Task 4, and `runTask` now builds one when a prompt carries staged images. Method-shorthand
+  // params are checked BIVARIANTLY by TS, so every existing `string`-only `HostSession` fake still
+  // satisfies this — only the real Session, and any fake that wants to inspect an array, needs to widen.
+  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<unknown>;
   readonly sessionId: string | undefined;
   dispose(): Promise<void>;
   // `unknown`, not `void` — the real Session.interrupt() returns Promise<unknown>, and a Promise<void>
@@ -215,6 +222,10 @@ export class SessionHost {
   /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
   readonly finished: Promise<void> = new Promise((r) => { this.finishedResolve = r; });
 
+  // F9 T-IMAGE Task 5 (I3b): this host's own staging area — constructed in start() once the host's
+  // per-pid directory is known, so it exists before the FIRST `stageImage` op could possibly arrive.
+  private imageStaging?: ImageStaging;
+  private stopImageSweep?: () => void;
   private idleTimer?: ReturnType<typeof setTimeout>;
   /** Arm (or re-arm) the idle stop. Only ever configured for detachable hosts; a parked turn never idles
    *  out because turnInFlight spans the park, and the timer is only armed when a turn is NOT in flight.
@@ -236,7 +247,20 @@ export class SessionHost {
        *  grace period in a suite that runs on every commit. */
       disposeGraceMs?: number;
       /** Test seam for rewindAnchors' transcript read — defaults to the real getSessionMessages. */
-      getMessages?: (id: string, opts: { cwd?: string }) => Promise<any[]> }
+      getMessages?: (id: string, opts: { cwd?: string }) => Promise<any[]>;
+      /** F9 T-IMAGE Task 5 (I3b) test seam: overrides `ImageStaging`'s file read. The sequence-race test
+       *  needs a staged-file read that stays pending PAST the instant `turnSeq()` has already been read
+       *  off this host (server.ts calls it synchronously, right after firing `prompt` and NOT awaiting
+       *  it) — there is no way to force that timing against the real filesystem without this hook. */
+      readStagedImage?: (path: string) => Promise<Buffer>;
+      /** F9 T-IMAGE Task 5 (I3b) fix-wave test seam: fires once per claim in `assembleStagedContent`'s
+       *  loop, immediately AFTER `readAndValidate` returns a success verdict. `readAndValidate` never
+       *  throws on its own (a missing/unreadable/corrupt file is a caught-internally `{ok:false}`
+       *  verdict, by design), so nothing in that loop can raise a genuine exception today — a review
+       *  found the "claimed files are deleted in a finally" test was vacuous against a removed `finally`
+       *  for exactly that reason. This hook is the injectable seam that lets a test force a real throw
+       *  PAST a successful validation, so the mutation actually discriminates. */
+      afterImageValidated?: (stagedId: string) => void }
       = { openSession: realOpenSession }) {
     this.short = opts.short;
     this.env = opts.env ?? process.env;
@@ -271,6 +295,13 @@ export class SessionHost {
     this.mode = resolvedPermissionMode(this.opts.config);
     this.model = resolvedModel(this.opts.config);
     this.thinkingTokens = this.opts.config.maxThinkingTokens;
+    // F9 T-IMAGE Task 5 (I3b): the staging area exists BEFORE the server starts listening, so there is
+    // no window in which a connected client's `stageImage` could race an unconstructed ImageStaging. The
+    // orphan sweep runs once here (spec v3.1 "at host start") — a predecessor that crashed between mint
+    // and claim left files this host inherits the cleanup of — then on a coarse periodic timer.
+    this.imageStaging = new ImageStaging(hostImageStagingDir(process.pid, this.env), this.deps.readStagedImage);
+    this.imageStaging.sweepOrphans();
+    this.stopImageSweep = this.imageStaging.startPeriodicSweep();
     try {
       this.session = this.deps.openSession(this.engineConfig());
       this.offFrame = this.session.onFrame?.((m) => this.onSessionFrame(m));
@@ -280,7 +311,8 @@ export class SessionHost {
         stop: () => this.stop("stopped"),
         pending: () => this.pending(),
         answer: (id, d, by) => this.answer(id, d, by),
-        prompt: (text, uuid) => this.runTask(text, uuid),
+        prompt: (text, uuid, images) => this.runTask(text, uuid, images),
+        stageImage: (descriptor) => this.imageStaging!.stage(descriptor),
         interrupt: () => this.interrupt(),
         // One follower per connection, delivering to that connection's sink. The server owns the
         // sockets and counts them (the deny rule reads THAT count, not the follower set — see broker()).
@@ -309,6 +341,7 @@ export class SessionHost {
       // The row is already on disk and nothing reaps a row whose host never came up, so a failure here
       // (a stale socket file is the obvious `listen` trigger) would otherwise strand a permanent
       // `working` row plus, on the listen path, an opened session whose dispose never runs.
+      this.stopImageSweep?.();                    // the sweep timer must not outlive a host that never came up
       await this.session?.dispose().catch(() => {});
       finalizeRoster(this.opts.short, "error", this.env);
       throw e;
@@ -328,7 +361,7 @@ export class SessionHost {
    *  would reset() the turn buffer out from under a turn that is still delivering messages to followers —
    *  a client attaching afterwards would be replayed zero messages, the exact regression the buffer
    *  exists to prevent. */
-  async runTask(prompt: string, uuid?: string): Promise<void> {
+  async runTask(prompt: string, uuid?: string, images?: { stagedId: string; sha256: string }[]): Promise<void> {
     if (this.turnInFlight) throw new Error(`host ${this.short} is already running a turn`);
     clearTimeout(this.idleTimer);   // a turn (including any park inside it) must never idle out
     this.turnInFlight = true; this.state = "working";
@@ -336,6 +369,14 @@ export class SessionHost {
     this.turnBuffer.reset(); this.settledBy.clear();
     this.parentOf.clear(); this.subagentOf.clear();   // attribution is per-turn (spec §attribution)
     this.emit({ kind: "turn", phase: "start", seq });
+    // F9 T-IMAGE Task 5 (I3b), spec v3.1 "Turn correlation": everything ABOVE this line is synchronous —
+    // no `await` has run yet, so `turnSeq()` already reads THIS turn's seq the instant server.ts calls it
+    // (immediately after firing this method without awaiting it — see server.ts's `prompt` dispatch arm).
+    // Only NOW does the first await happen, in `assembleStagedContent`'s staged-file reads. Reordering
+    // this — validating/reading images before the seq bump — is exactly the sequence-race the spec calls
+    // out: a slow disk read would desynchronize a fast client's own `turnSeq()` read from the turn it is
+    // actually about to correlate against.
+    const content: UserTurnInput = images && images.length ? await this.assembleStagedContent(prompt, images) : prompt;
     // Stamp the roster the MOMENT the engine's session id materializes — it arrives in the init frame
     // near the start of the turn, and Session sets .sessionId before dispatching that frame here. Waiting
     // for the turn to end (all syncRoster ever did) left `agents` printing sessionId "" for the session's
@@ -379,7 +420,7 @@ export class SessionHost {
       // The opts object exists ONLY when a uuid was actually given (M3 §1a-b): `{uuid: undefined}` is not
       // the same offer as no opts at all to a session that reads the key, and this host must never invent
       // an id — an unstamped prompt is a caller declining to stitch, not a caller that forgot.
-      outcome = await this.session!.submit(prompt, onMessage, uuid ? { uuid } : undefined);
+      outcome = await this.session!.submit(content, onMessage, uuid ? { uuid } : undefined);
       // Turn-end belt: an approved plan that settled but never saw the CLI's own post-approval status
       // frame (e.g. the turn ended before the CLI emitted one) must still upgrade — never leave an
       // approved upgrade silently unapplied (spec §mode-sync ordering).
@@ -412,6 +453,38 @@ export class SessionHost {
     // a failed outcome still has a result value.
     const failure = (outcome as { error?: TurnFailure } | undefined)?.error;
     this.emit({ kind: "turn", phase: "end", seq, ...(result === undefined ? {} : { result }), ...(failure === undefined ? {} : { failure }) });
+  }
+
+  /** F9 T-IMAGE Task 5 (I3b): turn a prompt's staged-image CLAIMS into wire content. Every claimed file
+   *  is released (unclaimed + deleted) in the `finally` below regardless of outcome — spec v3.1's "the
+   *  host deletes every claimed file in a finally around assembly" — whether its bytes validated
+   *  cleanly, failed validation (missing/oversized/hash-mismatched), or a claim was refused outright for
+   *  landing past `MAX_IMAGES_PER_PROMPT` (ccx's own count guard; the claimed file is still released,
+   *  because the client DID write bytes for it). A failed claim degrades to canon's own failure text
+   *  block — `[Image could not be processed: <reason>]` — appended AFTER the real content rather than
+   *  in-place: this transport layer has no per-position slot to replace (a claim is just an id in an
+   *  array, not a block sitting in the text), unlike `normalizeTurnInput` one layer up, which DOES
+   *  replace in place because it walks an already-built content array. That builder still re-validates
+   *  every image that read cleanly here against the real dimension/byte caps, independent of anything
+   *  this transport-level pass already checked — defence in depth, not redundant trust. */
+  private async assembleStagedContent(text: string, images: { stagedId: string; sha256: string }[]): Promise<UserTurnInput> {
+    const staging = this.imageStaging!;
+    const ok: { data: string; mediaType: string }[] = [];
+    const failures: string[] = [];
+    try {
+      for (let i = 0; i < images.length; i++) {
+        if (i >= MAX_IMAGES_PER_PROMPT) { failures.push(`[Image could not be processed: too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})]`); continue; }
+        const claim = images[i];
+        const verdict = await staging.readAndValidate(claim.stagedId, claim.sha256, POST_PROCESS_BYTE_BUDGET);
+        if (!verdict.ok) { failures.push(`[Image could not be processed: ${verdict.reason}]`); continue; }
+        this.deps.afterImageValidated?.(claim.stagedId);
+        ok.push({ data: verdict.data, mediaType: verdict.mediaType });
+      }
+    } finally {
+      for (const claim of images) staging.release(claim.stagedId);
+    }
+    const content = assembleUserContent(text, ok);
+    return failures.length ? [...content, ...failures.map((t) => ({ type: "text" as const, text: t }))] : content;
   }
 
   /** Dispatch one A2b control op onto the underlying session. Every member is OPTIONAL on HostSession,
@@ -1038,6 +1111,7 @@ export class SessionHost {
   private async teardown(final?: FleetState): Promise<void> {
     try {
       clearTimeout(this.idleTimer);          // going away on our own terms — the reaper must not also fire
+      this.stopImageSweep?.();               // same discipline for the F9 T-IMAGE sweep timer
       if (final) this.state = final;
       this.offFrame?.();
       this.settleParkedForSystem();

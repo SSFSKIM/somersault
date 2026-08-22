@@ -7,6 +7,7 @@ import { withContextTool, type QueryHolder, type RawContextUsage } from "../cont
 import { withCompactTool, parseCompactOutcome, type CompactHolder, type CompactOutcome } from "../compaction/server.js";
 import { classifyLimitMessage, type LimitState } from "../limits/classify.js";
 import { turnFailureOf, type TurnFailure } from "./turnResult.js";
+import { normalizeTurnInput, type UserTurnInput } from "./turnInput.js";
 
 /** One live background task, as carried by system/background_tasks_changed frames. */
 export interface BackgroundTaskInfo { task_id: string; task_type: string; description: string; }
@@ -23,8 +24,18 @@ type UserMessageUUID = NonNullable<SDKUserMessage["uuid"]>;
 type SubmittedOrigin = "human" | "auto-continuation";
 type TurnKind = "normal" | "compact";
 
-function userTurn(text: string, uuid: UserMessageUUID, origin: SubmittedOrigin): SDKUserMessage {
-  return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, origin: { kind: origin }, uuid };
+/** THE authoritative builder seam (F9 T-IMAGE Task 4/I3a, spec v3.1 "Authoritative validation lives
+ *  at the Session message-builder boundary"): every turn — human, auto-continuation, steer, compact —
+ *  passes through here, so this is the one place normalization can never be bypassed regardless of
+ *  which public method a caller used. An array is run through `normalizeTurnInput` (which enforces
+ *  every image cap by re-decoding each block's own bytes, never trusting the caller); a string is
+ *  sent as-is, since `normalizeTurnInput` has nothing to check on plain text. The SDK's own
+ *  `MessageParam.content` narrows `media_type` to its literal union where `UserContentBlock` keeps it
+ *  a bare string (library ergonomics — no caller needs the Anthropic SDK's types just to build a
+ *  turn), so the assembled content is cast at the wire boundary, not loosened upstream of it. */
+function userTurn(input: UserTurnInput, uuid: UserMessageUUID, origin: SubmittedOrigin): SDKUserMessage {
+  const content = Array.isArray(input) ? normalizeTurnInput(input) : input;
+  return { type: "user", message: { role: "user", content: content as SDKUserMessage["message"]["content"] }, parent_tool_use_id: null, origin: { kind: origin }, uuid };
 }
 
 /** What one turn settles to. `error` (Wave T Task 14) is ADDITIVE — a turn that reached a terminal result
@@ -90,7 +101,7 @@ export class Session implements ControllableSession {
    *  EngineSession.submit doc): a caller-minted id stamped onto the pushed SDKUserMessage in place of the
    *  fresh mint — result correlation by `user_message_uuid` works identically, and the live userMessage
    *  item's id equals the persisted transcript id. Undefined for every other caller. */
-  private enqueueTurn(prompt: string, onMessage: (m: unknown) => void, origin: SubmittedOrigin, kind: TurnKind = "normal", uuid?: string): Promise<TurnOutcome> {
+  private enqueueTurn(prompt: UserTurnInput, onMessage: (m: unknown) => void, origin: SubmittedOrigin, kind: TurnKind = "normal", uuid?: string): Promise<TurnOutcome> {
     const turnUuid = (uuid ?? randomUUID()) as UserMessageUUID;
     return new Promise((resolve, reject) => { this.waiters.push({ uuid: turnUuid, origin, kind, compactLifecycle: false, onMessage, resolve, reject }); this.input.push(userTurn(prompt, turnUuid, origin)); });
   }
@@ -128,8 +139,13 @@ export class Session implements ControllableSession {
    *  `error` tag (Task 14): it has a session id, usage, cost and an error text, which a rejection would
    *  throw away. Only a genuine transport exception — the query dying with no terminal frame — rejects.
    *  Rejects immediately if the underlying query has already ended (else the waiter would never drain).
-   *  `opts.uuid` is optional and additive (Task 6/gap 6) — every existing 1/2-arg caller is unaffected. */
-  submit(prompt: string, onMessage: (m: unknown) => void = () => {}, opts?: { uuid?: string }): Promise<TurnOutcome> {
+   *  `opts.uuid` is optional and additive (Task 6/gap 6) — every existing 1/2-arg caller is unaffected.
+   *  `prompt` widened to `UserTurnInput` (F9 T-IMAGE Task 4/I3a): an array reaches `userTurn`'s builder
+   *  and is normalized there UNCONDITIONALLY — this is the one submit surface library callers reach
+   *  directly, so it is the one that has to accept the array form at all. Every other submit path
+   *  (`submitAutomatic`, `steer`, `/compact`) stays string-only; nothing about them needed to carry
+   *  an image. */
+  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void = () => {}, opts?: { uuid?: string }): Promise<TurnOutcome> {
     if (this.ended) return Promise.reject(new Error(`${this.label} is not running`));
     return this.enqueueTurn(prompt, onMessage, "human", "normal", opts?.uuid);
   }
