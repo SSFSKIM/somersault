@@ -160,6 +160,18 @@ describe("normalizeTurnInput — base64 input cap (5 MiB), exact boundary + prec
     expect(out[0].type).toBe("text");
     expect(asText(out[0])).toMatch(/base64 input exceeds the 5242880-byte limit/);
   });
+  // Final-review finding 1: the cap must fire on `data.length` BEFORE `Buffer.from` ever decodes the
+  // string — checking it on the decoded buffer instead defeats the memory-safety intent (the
+  // allocation the cap exists to bound would already have happened). This is reorder-proof rather
+  // than boundary-proof: `data` here has no PNG/JPEG signature at all, so if the header were ever
+  // decoded and read BEFORE this length check, the reason would be "unreadable image data" instead —
+  // that would only be possible if the checks ran in the pre-fix order.
+  it("garbage bytes over the base64 cap are rejected by length alone — the header is never read first", () => {
+    const garbage = "A".repeat(MAX_BASE64 + 1); // valid base64 alphabet, no PNG/JPEG signature
+    const out = normalizeTurnInput([{ type: "image", source: { type: "base64", media_type: "image/png", data: garbage } }]) as UserContentBlock[];
+    expect(out[0].type).toBe("text");
+    expect(asText(out[0])).toBe(`[Image could not be processed: base64 input exceeds the ${MAX_BASE64}-byte limit]`);
+  });
 });
 
 describe("normalizeTurnInput — post-processing byte ceiling (512,000 decoded bytes), exact boundary", () => {

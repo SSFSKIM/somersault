@@ -78,6 +78,13 @@ const MAX_AGGREGATE_BYTES = 5 * 1024 * 1024;
  *  reason attributable to the boundary that actually produced it. */
 function checkImageBlock(block: UserContentBlock & { type: "image" }, aggregateSoFar: number): { ok: true; bytes: number } | { ok: false; reason: string } {
   const data = block.source.data;
+  // ORDERING CONSTRAINT (final-review finding 1): this length check MUST run BEFORE `Buffer.from`
+  // below, and nothing may move it after. `Buffer.from(data, "base64")` allocates a buffer the size of
+  // the DECODED bytes — checking the cap on that buffer instead of on `data.length` first would mean
+  // the allocation this cap exists to bound has already happened by the time it fires. A base64
+  // string's length is always ≥ its decoded byte count, so bounding the STRING costs nothing to check
+  // and bounds the allocation `Buffer.from` is about to make.
+  if (data.length > MAX_BASE64_INPUT_BYTES) return { ok: false, reason: `base64 input exceeds the ${MAX_BASE64_INPUT_BYTES}-byte limit` };
   // Header-decode, not caller-trust: read the ACTUAL bytes' own PNG IHDR / JPEG SOF, ignoring both
   // `media_type` and any dimensions a caller might have supplied elsewhere. This is what defeats the
   // "library-bypass" case — a small, cheaply-constructed buffer whose header claims oversized pixel
@@ -89,7 +96,6 @@ function checkImageBlock(block: UserContentBlock & { type: "image" }, aggregateS
   if (dims.width > MAX_DIMENSION || dims.height > MAX_DIMENSION) {
     return { ok: false, reason: `dimensions ${dims.width}x${dims.height} exceed the ${MAX_DIMENSION}x${MAX_DIMENSION}px limit` };
   }
-  if (data.length > MAX_BASE64_INPUT_BYTES) return { ok: false, reason: `base64 input exceeds the ${MAX_BASE64_INPUT_BYTES}-byte limit` };
   if (decoded.length > POST_PROCESS_BYTE_BUDGET) return { ok: false, reason: `image data exceeds the ${POST_PROCESS_BYTE_BUDGET}-byte limit` };
   if (aggregateSoFar + decoded.length > MAX_AGGREGATE_BYTES) return { ok: false, reason: `turn's total image size exceeds the ${MAX_AGGREGATE_BYTES}-byte limit` };
   return { ok: true, bytes: decoded.length };
