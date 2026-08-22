@@ -39,7 +39,7 @@ export interface ChatClientOpts {
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -699,6 +699,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     initialPrefersReducedMotion: opts.hookOpts?.initialPrefersReducedMotion ?? (prefs.prefersReducedMotion ?? false),
     // T-CH34: and the `Terminal progress bar` row from the same read — DEFAULT TRUE, canon's own polarity.
     initialTerminalProgressBarEnabled: opts.hookOpts?.initialTerminalProgressBarEnabled ?? (prefs.terminalProgressBarEnabled ?? true),
+    // F9 T-MOUSE Task 7: and the `Copy on select` row from the same read — DEFAULT TRUE, canon's own polarity.
+    initialCopyOnSelect: opts.hookOpts?.initialCopyOnSelect ?? (prefs.copyOnSelect ?? true),
     // W-C T10 (EP-C2): the ONE place ccx reads a settings file for its own UI, and the one place it can be:
     // canon L154558 honours `statusLine` from the USER file only (a checked-out project may not install a
     // command on the machine that checks it out), and every layer below this is a pure function or a hook a

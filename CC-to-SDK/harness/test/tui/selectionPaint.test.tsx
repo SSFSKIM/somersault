@@ -9,14 +9,31 @@
 // NO key-lifetime rules, NO copyOnSelect anything here (Task 7 owns everything that setting gates) — this
 // file only proves the highlight appears, stays, and moves correctly, and that the existing click targets
 // (fold toggle, composer caret) are untouched by a gesture that never became a sweep.
+//
+// F9 T-MOUSE TASK 7 ADDED THE MOCK BELOW, retroactively. Task 7 wires a REAL selection release to a REAL
+// `copyText()` call (the auto-copy latch, default `copyOnSelect: true`) — a call this file's own scenarios
+// now reach (T6 (f)'s triple-click, T6 (h)'s re-press-after-a-sweep) without ever intending to exercise it.
+// Unmocked, that call spawns a REAL native clipboard tool and then writes a REAL OSC 52 escape sequence
+// through Ink's `useStdout().write` — a raw, out-of-band write `ink-testing-library`'s `lastFrame()` cannot
+// tell apart from the frame it renders, so it corrupts every assertion below that runs after a release. The
+// mock keeps this file's own claims (paint, gesture wiring) independent of Task 7's — exactly as
+// `copyChannels.test.ts`/`autoCopy.test.tsx` keep Task 7's independent of this file's.
 import React from "react";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
 import { themeTokens, setTheme } from "../../src/tui/theme.js";
+import type { CopyResult } from "../../src/tui/copy.js";
+
+const copyTextMock = vi.fn<(text: string, deps?: unknown) => Promise<CopyResult>>();
+vi.mock("../../src/tui/copy.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/tui/copy.js")>();
+  return { ...actual, copyText: (text: string, deps?: unknown) => copyTextMock(text, deps) };
+});
+beforeEach(() => { copyTextMock.mockReset(); copyTextMock.mockResolvedValue({ channel: "native", oscBytes: null }); });
 
 afterEach(() => { setTheme("auto"); vi.unstubAllEnvs(); });
 

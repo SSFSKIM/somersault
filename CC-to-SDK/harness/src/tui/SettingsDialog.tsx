@@ -317,7 +317,7 @@ export function settingsWrapRows(columns?: number): number {
 export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24, columns?: number, thinkingTouched: boolean = false): number =>
   Math.max(1, rows - SETTINGS_CHROME_ROWS - (thinkingTouched ? settingsWrapRows(columns) : 0));
 
-export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, showTurnDuration, reduceMotion, progressBarEnabled, promptSuggestionEnabled, onDone, applyMode, setThink, setShowTurnDuration, setReduceMotion, setProgressBarEnabled, setPromptSuggestionEnabled, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
+export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, showTurnDuration, reduceMotion, progressBarEnabled, promptSuggestionEnabled, copyOnSelect, onDone, applyMode, setThink, setShowTurnDuration, setReduceMotion, setProgressBarEnabled, setPromptSuggestionEnabled, setCopyOnSelect, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
   tab: string;
   onTabChange: (tab: string) => void;
   model?: string;
@@ -339,6 +339,11 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   /** W-C T12: the `Prompt suggestions` row's live value and its toggle — the row above's shape exactly, and
    *  required for the same reason. */
   promptSuggestionEnabled: boolean;
+  /** F9 T-MOUSE task 7: the `Copy on select` row's live value and its toggle — `progressBarEnabled`'s shape
+   *  exactly, and required for the same reason: this row is a claim about a persisted pref (`copyOnSelect`,
+   *  default true), and a component that quietly renders `true` while the file says otherwise would be
+   *  lying in the one place `/config` exists to tell the truth. */
+  copyOnSelect: boolean;
   onDone: () => void;
   applyMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
@@ -346,6 +351,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   setReduceMotion: (next: boolean) => void;
   setProgressBarEnabled: (next: boolean) => void;
   setPromptSuggestionEnabled: (next: boolean) => void;
+  setCopyOnSelect: (next: boolean) => void;
   applyOutputStyle: (id: string) => Promise<void>;
   fetchStatus: () => Promise<RenderLine[]>;
   fetchUsage: () => Promise<RenderLine[]>;
@@ -379,7 +385,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     return () => { cancelled = true; };
   }, [activeTab]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, reduceMotion, progressBar: progressBarEnabled, promptSuggestionEnabled };
+  const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, reduceMotion, progressBar: progressBarEnabled, promptSuggestionEnabled, copyOnSelect };
   // NOT `rows` any more (Wave S t5): that name is the TERMINAL HEIGHT prop now, and two things called `rows`
   // in one component is how a geometry bug hides.
   const configRows = buildRows(ctx);
@@ -432,6 +438,7 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
     else if (row.id === "reduceMotion") setReduceMotion(row.value !== "true");
     else if (row.id === "progressBar") setProgressBarEnabled(row.value !== "true");
     else if (row.id === "promptSuggestionEnabled") setPromptSuggestionEnabled(row.value !== "true");
+    else if (row.id === "copyOnSelect") setCopyOnSelect(row.value !== "true");
     else if (row.type === "enum") { void applyMode(cycleEnum(row)); }
     else if (row.id === "theme") setSub("theme");
     else if (row.id === "model") onOpenModelPicker();

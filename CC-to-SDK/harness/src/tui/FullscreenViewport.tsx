@@ -90,7 +90,7 @@ import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
 import { linkRangesOf, type HitRow } from "./mouse/hitmap.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { createSelectionState, dragTo, hasSelection as computeHasSelection, multiClick, selectedSpans, startSelection, type Cell, type RowSpan, type SelectionState } from "./mouse/selection.js";
-import { charRangeOf } from "./mouse/extract.js";
+import { charRangeOf, extractText } from "./mouse/extract.js";
 import type { LineSelection } from "./Line.js";
 import { stripSgr } from "./sgrFoldRow.js";
 import { useRegionRows, useRegionTop } from "./FullscreenFrame.js";
@@ -156,6 +156,11 @@ export interface ViewportHitmap {
    *  the highlight disappears on the SAME frame, not the next content event. Idempotent on an already-empty
    *  selection. */
   discardSelection(): void;
+  /** F9 T-MOUSE Task 7 — the current selection's plain text, painted-extent to painted-extent (the SAME
+   *  `selectedSpans`/`extractText` geometry that lights up on screen), for the auto-copy latch and the
+   *  Ctrl+C key-lifetime arm. `""` for no selection — never `undefined`, so a caller can hand it straight to
+   *  `copyText` without a branch. */
+  selectedText(): string;
 }
 
 export interface FullscreenViewportProps {
@@ -394,11 +399,19 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
     repaint();
   }, [repaint]);
+  // F9 T-MOUSE Task 7 — the auto-copy latch's own read: the SAME geometry the paint path derives
+  // (`selectedSpans` against `hit.current.rows`, T6's own invariant that the map painted IS the map
+  // extracted) run through `extract.ts`'s `extractText` — the identical function `/copy`-adjacent code in
+  // this track already uses, so a selection copies exactly the text it visibly highlights, never a second,
+  // independently-derived string. Called on demand (release, Ctrl+C) rather than cached: a selection's rows
+  // and the DOCUMENT under them can both move between two mouse events, and this always reads the CURRENT
+  // frame's own map, matching every other imperative read on this ref.
+  const selectedText = useCallback(() => extractText(selectedSpans(selectionStateRef.current, hit.current.rows), hit.current.rows), []);
 
   useImperativeHandle(hitmapRef, () => ({
     anchorAt, hoverAt, clearHover,
-    startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelection: hasSelectionHandle, discardSelection,
-  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection]);
+    startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelection: hasSelectionHandle, discardSelection, selectedText,
+  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no

@@ -4,12 +4,25 @@
 import { describe, it, expect } from "vitest";
 import { buildRows, filterRows, cycleEnum, summarizeChanges, THINKING_WARNING, type SettingsRowCtx } from "../../src/tui/settingsRows.js";
 
-const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false, progressBar: true };
+const BASE_CTX: SettingsRowCtx = { theme: "dark", model: "claude-opus-4-8", outputStyle: "default", mode: "default", thinkLevel: "off", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false, progressBar: true, copyOnSelect: true };
 
 describe("settingsRows.ts", () => {
-  it("buildRows returns the 9 rows in the pinned order, progressBar directly below reduceMotion and above promptSuggestionEnabled", () => {
+  it("buildRows returns the 10 rows in the pinned order, copyOnSelect last below promptSuggestionEnabled", () => {
     const rows = buildRows(BASE_CTX);
-    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration", "reduceMotion", "progressBar", "promptSuggestionEnabled"]);
+    expect(rows.map((r) => r.id)).toEqual(["theme", "model", "outputStyle", "permissionMode", "thinking", "showTurnDuration", "reduceMotion", "progressBar", "promptSuggestionEnabled", "copyOnSelect"]);
+  });
+
+  // F9 T-MOUSE Task 7 — the `copyOnSelect` row itself: default TRUE (canon's own polarity, research
+  // r1-mouse.md §2.5), label "Copy on select", a plain boolean row like every other setting here.
+  it("the copyOnSelect row is present, boolean, and defaults to true", () => {
+    const rows = buildRows(BASE_CTX);
+    const row = rows.find((r) => r.id === "copyOnSelect")!;
+    expect(row).toBeDefined();
+    expect(row.label).toBe("Copy on select");
+    expect(row.type).toBe("boolean");
+    expect(row.value).toBe("true");
+    const off = buildRows({ ...BASE_CTX, copyOnSelect: false }).find((r) => r.id === "copyOnSelect")!;
+    expect(off.value).toBe("false");
   });
 
   it("row labels + hints match the Global Constraints table (theme/model carry a hint, the rest don't)", () => {

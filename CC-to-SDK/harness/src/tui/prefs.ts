@@ -67,7 +67,12 @@ import { isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
  *  (T-EFFORT R2 §2.2). Read back at `cli/main.ts`'s `initialEffort` seed, re-filtered through the SAME
  *  persistable-level gate (`isPersistableEffortLevel`) canon's read-back applies (`Qdt`, R2 §2.5) — a
  *  hand-edited `"max"` here is exactly as inert as an attempted write of it would have been. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[]; terminalProgressBarEnabled?: boolean; effort?: EffortLevel }
+/** `copyOnSelect` is F9 T-MOUSE Task 7's setting and canon's own key (research r1-mouse.md §2.5: `ar().
+ *  copyOnSelect ?? !0`) — DEFAULT TRUE, canon's own polarity. It rides `terminalProgressBarEnabled`'s exact
+ *  shape: a plain boolean, no closed-set validation below (read only as a truthy/falsy gate in ChatApp's
+ *  auto-copy latch, never indexed or `.trim()`-called, so a hand-edited non-boolean has no crash to guard
+ *  against). Read live, never captured once — the same reason `terminalProgressBarEnabled` is. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[]; terminalProgressBarEnabled?: boolean; effort?: EffortLevel; copyOnSelect?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 

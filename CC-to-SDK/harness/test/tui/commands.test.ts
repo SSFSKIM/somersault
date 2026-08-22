@@ -219,7 +219,7 @@ describe("/detach (F0 KB5 — detach moved off Ctrl-Z)", () => {
 });
 
 describe("/config key=value (W3 T6)", () => {
-  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false, progressBar: true };
+  const FRESH_CTX: SettingsRowCtx = { theme: "dark", model: undefined, outputStyle: "default", mode: "default", thinkLevel: "default", showTurnDuration: true, reduceMotion: false, promptSuggestionEnabled: false, progressBar: true, copyOnSelect: true };
   const freshRows = () => buildRows(FRESH_CTX);
 
   it("no arg → open", () => {

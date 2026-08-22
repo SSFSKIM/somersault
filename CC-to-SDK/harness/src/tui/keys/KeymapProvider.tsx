@@ -25,8 +25,8 @@ import { DEFAULT_BINDINGS, type ContextBindings } from "./bindings.js";
 import { bindingFor, bindingsFor, compileBindings, resolveKey, type CompiledTable } from "./resolver.js";
 import { defaultLookup, type BindingLookupOpts } from "./hints.js";
 import type { KeySpec } from "./normalize.js";
-import { activeContexts, createRegistry, fallbackHandler, handlerFor, mouseHandler, nextSeq, suspendHandler, swallowContexts,
-  type ActionEntry, type ActionHandler, type FallbackEntry, type MouseEntry, type Registry, type ScopeEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
+import { activeContexts, createRegistry, fallbackHandler, handlerFor, mouseHandler, nextSeq, selectionKeyHandler, suspendHandler, swallowContexts,
+  type ActionEntry, type ActionHandler, type FallbackEntry, type MouseEntry, type Registry, type ScopeEntry, type SelectionKeyEntry, type SuspendEntry, type SwallowEntry } from "./registry.js";
 
 export interface KeymapDeps {
   /** The wheel guard's clock (`wheelGuard.ts`) — injected so its 75 ms window is drivable rather than slept
@@ -181,6 +181,17 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
     // ctrl+z is handled ABOVE the table, like upstream's raw input loop: it must suspend even while Help
     // swallows everything and even mid-chord (F0 contract).
     if (ev.kind === "key" && ev.ctrl && ev.name === "z") { (suspendHandler(reg) ?? depsRef.current?.suspend)?.(); return; }
+    // F9 T-MOUSE task 7 — selection lifetime, PRE-TABLE like ctrl+z immediately above and for the identical
+    // reason: Ctrl+C must never reach `app:interrupt` while a selection is live (a POST-table hook could not
+    // stop that), and an ordinary key must clear the highlight even though the SAME key still has to run its
+    // usual action afterward — typing, scrolling, a bound command (a fallback-only hook never sees a key the
+    // table resolves, and the table resolves most of them). `selectionKeyHandler` returns `true` only for
+    // its own Ctrl+C branch, treated exactly like ctrl+z: consumed, dispatch stops here. Every other event —
+    // an allow-listed key, an ordinary one that already cleared as a side effect, or no selection at all —
+    // answers `false` and falls through to whichever branch below already owns it, unchanged. `ev.kind ===
+    // "text"` is here too: a single fast-typed run never touches the table (dispatch's own text branch,
+    // below), so this is the only place in the file that ever sees it before the composer does.
+    if ((ev.kind === "key" || ev.kind === "text") && selectionKeyHandler(reg)?.(ev)) return;
     const swallowed = swallowContexts(reg);
     // A button report is not a keybinding and never will be (canon's clicks aren't bindings either), so it
     // leaves the table's path here for the mouse slot (task 7). Two deliberate choices live on these lines:
@@ -506,6 +517,16 @@ export function useMouseSink(handler: (e: MouseInputEvent) => void, opts?: { act
 export function useKeySuspend(handler: () => void): void {
   const ctx = useContext(KeymapCtx);
   useRegistration<SuspendEntry>(ctx?.reg.suspends, () => ({ seq: nextSeq(), handler }), (e) => { e.handler = handler; });
+}
+
+/** F9 T-MOUSE task 7 — selection lifetime keys (Ctrl+C copy/clear; every other key clears a live selection),
+ *  pre-table like `useKeySuspend` above and for the same reason (see the registry's own doc and the dispatch
+ *  site). `handler` returns `true` to consume the event entirely (only the Ctrl+C branch does), `false` to
+ *  let normal dispatch continue. Innermost registration wins; with none, every key behaves exactly as it did
+ *  before this track. */
+export function useSelectionLifetime(handler: (e: KeyEvent | TextEvent) => boolean): void {
+  const ctx = useContext(KeymapCtx);
+  useRegistration<SelectionKeyEntry>(ctx?.reg.selectionKeys, () => ({ seq: nextSeq(), handler }), (e) => { e.handler = handler; });
 }
 
 /** The terminal handoff for anything that gives fd 0 to a child process (today: the composer's external

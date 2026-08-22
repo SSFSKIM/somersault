@@ -38,7 +38,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { useChat, type ChatSession } from "./useChat.js";
 import { suspendProcess } from "./suspend.js";
-import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useMouseSink, useSuspendInput, useSwallowKeys } from "./keys/KeymapProvider.js";
+import { useBindingLookup, useKeyActions, useKeyScope, useKeySuspend, useMouseSink, useSelectionLifetime, useSuspendInput, useSwallowKeys } from "./keys/KeymapProvider.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { formatBindings, UNBOUND } from "./keys/hints.js";
 import type { InitialResume } from "./commands.js";
@@ -47,7 +47,8 @@ import { Transcript } from "./Transcript.js";
 import { FullscreenFrame, dockCap, seamCap } from "./FullscreenFrame.js";
 import { todoPanelRows } from "./taskPanelModel.js";
 import { FullscreenViewport, type ViewportHitmap } from "./FullscreenViewport.js";
-import type { MouseInputEvent } from "./keys/types.js";
+import type { KeyEvent, MouseInputEvent, TextEvent } from "./keys/types.js";
+import { copyText, copyToastText } from "./copy.js";
 import { mouseMode } from "./altScreen.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
@@ -139,10 +140,22 @@ export const TYPING_IDLE_MS = 1500;
  *  (L549357), which is half the notification slot's default: the sentence names a path the user either acts on
  *  immediately or does not need. */
 const TRANSCRIPT_DUMP_NOTICE_MS = 4000;
+// F9 T-MOUSE Task 7 — the copy toast rides the transcript-dump notice's exact shape: a `priority:"immediate"`
+// post (`Footer.tsx`'s `footerNotice` draws ONLY `"immediate"` entries in fullscreen — the mode this feature
+// exists in — so anything lower would silently never paint) with a short, self-clearing timeout.
+const COPY_TOAST_MS = 4000;
 /** Stable empties for the transient region while the pager owns the screen — fresh `[]` literals per render
  *  would remount the (empty) region every frame for nothing. */
 const EMPTY_ITEMS: readonly RenderItem[] = [];
 const EMPTY_LINES: readonly RenderLine[] = [];
+
+// F9 T-MOUSE Task 7 — the selection-lifetime allow-list (canon's `oNw`, R1 §2.5): keys that do NOT clear a
+// live selection because they are the keyboard's own selection-extension/navigation chords, not "ordinary"
+// typing or commands. `SELECTION_CLEAR_EXEMPT_BARE` never clears regardless of modifiers; `ctrl+home`/
+// `ctrl+end` and a shift/meta/super arrow-or-home-or-end are the other two halves, checked inline (they need
+// the event's own modifier flags, which a flat name set cannot encode).
+const SELECTION_CLEAR_EXEMPT_BARE = new Set(["escape", "pageup", "pagedown"]);
+const SELECTION_EXTEND_KEYS = new Set(["up", "down", "left", "right", "home", "end"]);
 
 /** Physical rows a run of ALREADY-WRAPPED items occupies — one item per row by construction, which is what
  *  `streamingItems` returns and the only thing this may be pointed at. */
@@ -204,7 +217,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  open since the panel existed, so an absent pref keeps our default rather than silently hiding a panel
    *  users already rely on. */
   initialTodosOpen?: boolean;
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -369,7 +382,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -904,7 +917,39 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // `fold-click.test.tsx`'s own (d) case does exactly this (two ticks, one each way, landing the cursor back
   // on the SAME cluster) — without this reset that case's "control" tap reads as a continuation and its
   // second click resolves to a text selection instead of the fold toggle the test expects.
-  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); hitmapRef.current?.discardSelection(); }, []);
+  // F9 T-MOUSE Task 7 — the auto-copy LATCH (canon's `Lts`, R1 §2.5): fires exactly once per completed
+  // selection, reset by a fresh drag step, a new press, the selection going empty, or a key-lifetime clear.
+  // A ref, not state — nothing on screen renders differently for it, only the next selection-change decides
+  // off it, exactly `tapAnchorRef`'s own shape.
+  const copyLatchRef = useRef(false);
+  // The actual copy: reads the CURRENT selection's text off the viewport (`selectedText()` re-derives it
+  // from THIS frame's rows on every call, never a stale copy), shows canon's toast keyed by whichever
+  // channel `copyText` resolved, and only THEN writes the OSC 52 half to stdout — `copyText`'s own contract
+  // is "the caller writes `oscBytes`", and sequencing the write after the toast keeps the escape bytes from
+  // racing the notification onto the same repaint. Latches immediately even for an empty/whitespace-only
+  // selection (canon's own `if (!u || !u.trim()) { latch = true; return; }`): a selection that copies to
+  // nothing must not retry on every subsequent repaint.
+  const performAutoCopy = () => {
+    const text = hitmapRef.current?.selectedText() ?? "";
+    copyLatchRef.current = true;
+    if (!text.trim()) return;
+    void copyText(text).then((result) => {
+      notify({ key: "copy-toast", text: copyToastText(result.channel, text.length, process.env.TERM_PROGRAM), priority: "immediate", timeoutMs: COPY_TOAST_MS });
+      if (result.oscBytes) write(result.oscBytes);
+    });
+  };
+  // The subscriber itself (canon's `Lts`). `dragging` is passed by the CALLER rather than read off a
+  // `hitmapRef.isDragging()` this track never needed to add: every call site already knows which case it is
+  // — a drag step is always "still dragging", a release or a multi-click press is always "not" — so the
+  // early-return ordering below matches canon's exactly without a second imperative query.
+  const checkAutoCopy = (dragging: boolean) => {
+    if (dragging) { copyLatchRef.current = false; return; }
+    if (!(hitmapRef.current?.hasSelection() ?? false)) { copyLatchRef.current = false; return; }
+    if (copyLatchRef.current) return;
+    if (!state.copyOnSelect) return;
+    performAutoCopy();
+  };
+  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }, []);
   useMouseSink((e: MouseInputEvent) => {
     // F9 T-MOUSE Task 3 — HOVER, ANSWERED BEFORE THE TAP GATE. Un-dimming a row is a pure paint effect (it
     // mutates nothing a later gesture could act on wrongly), so it does NOT share the tap machine's
@@ -925,7 +970,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // drag report before it reaches this sink (KeymapProvider's dispatch gate, T2), so there is nothing further
     // to gate here — a drag this component ever sees is already a `full`-mode one. A non-left drag (right/
     // middle button) is nobody's gesture in this track and is dropped exactly like a modified click below.
-    if (e.action === "drag") { if (e.button === 0) hitmapRef.current?.dragSelectionTo(e.col, e.row); return; }
+    if (e.action === "drag") { if (e.button === 0) { hitmapRef.current?.dragSelectionTo(e.col, e.row); checkAutoCopy(true); } return; }
     // F9 T-MOUSE task 2 widened the union: motion now reaches every mouse sink once `altScreen.ts` arms
     // `?1003` by default. This tap machine only ever knew press/release, and `action` was the only other
     // value a non-press report could hold — a hover crossing the pending cell would otherwise fall straight
@@ -948,8 +993,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       const withinWindow = last !== null && e.col - last.col >= -1 && e.col - last.col <= 1 && e.row - last.row >= -1 && e.row - last.row <= 1 && Date.now() - last.time <= 500 && anchor === last.anchor;
       const count = withinWindow ? last!.count + 1 : 1;
       lastPressRef.current = { col: e.col, row: e.row, time: Date.now(), count, anchor };
-      if (count >= 2) hitmapRef.current?.multiClickSelectionAt(e.col, e.row, count === 2 ? 2 : 3);
-      else hitmapRef.current?.startSelectionAt(e.col, e.row);
+      // F9 T-MOUSE Task 7 — a fresh press is canon's own "isDragging=true" edge (`Eka`, R1 §2.4), which is
+      // exactly what `Lts`'s subscriber treats as "wait for mouse-up": reset the latch BEFORE deciding what
+      // kind of press this is, so a second selection after an already-copied one starts clean.
+      checkAutoCopy(true);
+      if (count >= 2) {
+        hitmapRef.current?.multiClickSelectionAt(e.col, e.row, count === 2 ? 2 : 3);
+        // A double/triple click IS a complete selection at press time — no drag follows, so nothing else
+        // would ever call `checkAutoCopy(false)` for it (canon: "no drag required for hasSelection to
+        // answer true").
+        checkAutoCopy(false);
+      } else hitmapRef.current?.startSelectionAt(e.col, e.row);
       return;
     }
     // F9 T-MOUSE Task 6 — THE CLICK/SWEEP DISCRIMINANT, read BEFORE anything else on release: canon's own
@@ -961,6 +1015,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // whether it grew into a sweep), matching canon's own "release always stops the drag" branch.
     const sweeping = hitmapRef.current?.hasSelection() ?? false;
     hitmapRef.current?.endSelectionDrag();
+    // F9 T-MOUSE Task 7 — release is the mouse-up `Lts` waits for: not dragging any more, so this either
+    // fires the auto-copy (a real sweep just completed, latch still false) or resets the latch to false (a
+    // plain click with no selection at all) — read AFTER `endSelectionDrag()` so `hasSelection()` here sees
+    // the settled state, and BEFORE the `sweeping` early-return so a swallowed sweep still gets its copy.
+    checkAutoCopy(false);
     if (sweeping) return;                           // a completed sweep does not toggle a fold or move the caret
     if (!at || at.col !== e.col || at.row !== e.row) return;
     const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
@@ -975,6 +1034,29 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // press+release pair that never touched the composer is a safe no-op here, exactly like `anchorAt`'s own
     // `undefined` is above.
     composerRef.current?.caretAt(e.col, e.row);
+  });
+  // F9 T-MOUSE Task 7 — SELECTION LIFETIME KEYS (canon's `Kjh`, R1 §2.5), pre-table (`useSelectionLifetime`'s
+  // own doc): a no-op the instant there is no selection to act on. Ctrl+C is CONSUMED — it must never also
+  // reach `app:interrupt`'s exit/interrupt arm while a selection is live — and chooses copy or clear by
+  // `copyOnSelect`'s own polarity (already-copied-on-release when it's on, so Ctrl+C only needs to clear;
+  // never auto-copied when it's off, so Ctrl+C is the FIRST copy). Every other key clears but is NOT
+  // consumed — it still runs whatever it would have (typing, scrolling, a bound command) — except the
+  // allow-list, canon's own selection-extension chords, which do nothing here at all.
+  useSelectionLifetime((e: KeyEvent | TextEvent) => {
+    if (!(hitmapRef.current?.hasSelection() ?? false)) return false;
+    if (e.kind === "key" && e.ctrl && !e.shift && !e.alt && e.name === "c") {
+      if (state.copyOnSelect) { hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }
+      else performAutoCopy();
+      return true;
+    }
+    if (e.kind === "key") {
+      if (SELECTION_CLEAR_EXEMPT_BARE.has(e.name)) return false;
+      if ((e.name === "home" || e.name === "end") && e.ctrl) return false;
+      if (SELECTION_EXTEND_KEYS.has(e.name) && (e.shift || e.alt || e.super)) return false;
+    }
+    hitmapRef.current?.discardSelection();
+    copyLatchRef.current = false;
+    return false;
   });
   // Live-feedback fix (2026-08-06, ctrl+o flood): the pager box alone is `rows - 6` lines (rows-10 content
   // + border 2 + header + footer), so ANY other transient chrome mounted beside it — spinner, task panel,
@@ -1596,6 +1678,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     reduceMotion={state.prefersReducedMotion} setReduceMotion={setPrefersReducedMotion}
                     progressBarEnabled={state.terminalProgressBarEnabled} setProgressBarEnabled={setTerminalProgressBarEnabled}
                     promptSuggestionEnabled={state.promptSuggestionEnabled} setPromptSuggestionEnabled={setPromptSuggestionEnabled}
+                    copyOnSelect={state.copyOnSelect} setCopyOnSelect={setCopyOnSelect}
                     onDone={closeSettings} applyMode={applyMode} setThink={setThink} applyOutputStyle={applyOutputStyle}
                     fetchStatus={fetchSettingsStatus} fetchUsage={fetchSettingsUsage} fetchStats={fetchSettingsStats}
                     // WAVE S t5: the Config list is windowed now, so this dialog joins the set that is handed
