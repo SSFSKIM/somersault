@@ -238,3 +238,76 @@ describe("T6 (g): dead under scroll/off — a drag paints nothing", () => {
     r.unmount();
   });
 });
+
+// ── TASK REVIEW IMPORTANT FINDING ───────────────────────────────────────────────────────────────────────
+//
+// Constraint #2 ("release with `hasSelection()===true` does not fold-toggle or caret-move") is implemented
+// correctly in `ChatApp.tsx` (`if (sweeping) return;`, read before the fold/caret fall-through) but was
+// UNPINNED: disabling that line left the entire 4026-test suite green. The gap is specific, not general —
+// every existing drag test (T6 a/c/d/e above) already releases SAFELY regardless of this line, because
+// `ChatApp`'s tap machine clears its own `tapAnchorRef` (`at`) on every "drag" report and only a "press"
+// ever re-arms it; by the time a real drag's release fires, `at` is already `null`, so the PRE-EXISTING
+// `if (!at || at.col !== e.col || …) return;` guard below it refuses the fold/caret branch on its own — the
+// line under test never gets a chance to matter. The one shape that reaches it is a completed sweep whose
+// FINAL press (not drag) lands on the addressable cell being released: `multiClickSelectionAt` (fired from
+// the press branch) both sets `hasSelection()` true AND re-arms `tapAnchorRef` at that exact cell, so a
+// release there is the one case where the mutated line's absence is actually observable — a real drag away
+// and back (or a double-click) is what does this in practice, but no such gesture existed here for a fold
+// row or the composer. Both cases below drive: press → drag to a different cell (a genuine sweep) → a
+// SECOND press back on the original cell (which resolves as a multi-click continuation, not a fresh press,
+// re-arming `at` there while leaving the sweep's `hasSelection()===true` state untouched) → release on that
+// same cell — the exact shape the mutation escapes without.
+describe("T6 (h): review Important — a swallowed sweep does not toggle a fold it lands back on", () => {
+  it("press, drag away, re-press the fold cell, release there: stays collapsed and still paints", async () => {
+    const DOC = [prose("hello there", "a"), ...CLUSTER, prose("all done", "b")];
+    const r = await mount(DOC);
+    const row = rowOfIncluding(r.lastFrame(), COLLAPSED);
+    r.stdin.write(press(COL, row));
+    await tick();
+    r.stdin.write(drag(COL + 10, row));                 // a real sweep away from the fold cell
+    await tick();
+    r.stdin.write(press(COL, row));                      // re-press the SAME cell within the multi-click
+    // window — reads as a double-click continuation (re-arms `at`, leaves the sweep's `hasSelection()` true)
+    // rather than a fresh press, which would instead wipe the sweep via `startSelectionAt`.
+    await settle();
+    r.stdin.write(release(COL, row));
+    await settle();
+    // The fold must NOT have toggled...
+    expect(clean(r.lastFrame())).toContain(COLLAPSED);
+    expect(clean(r.lastFrame())).not.toContain(MEMBER_BODY);
+    // ...and the completed sweep must still be visibly painted.
+    expect(rawLineIncluding(r.lastFrame(), COLLAPSED)).toContain(SEL_BG);
+    r.unmount();
+  });
+});
+
+function composerOrigin(frame: string | undefined, needle: string): { row: number; textCol: number } {
+  const rows = rowsOf(frame);
+  const idx = rows.findIndex((l) => l.includes(needle));
+  expect(idx, `"${needle}" is not painted in:\n${clean(frame)}`).toBeGreaterThanOrEqual(0);
+  return { row: idx + 1, textCol: rows[idx]!.indexOf(needle) + 1 };
+}
+
+describe("T6 (i): review Important — a swallowed sweep does not move the composer caret it lands back on", () => {
+  it("press, drag away, re-press the composer cell, release there: typing still appends at the end", async () => {
+    const r = await mount([]);
+    r.stdin.write("abcdef");
+    await waitFor(() => clean(r.lastFrame()).includes("abcdef"));
+    await settle();
+    const { row, textCol } = composerOrigin(r.lastFrame(), "abcdef");
+    const col = textCol + 3;                            // would read "abc|def" if the caret actually moved
+    r.stdin.write(press(col, row));
+    await tick();
+    r.stdin.write(drag(col + 10, row));
+    await tick();
+    r.stdin.write(press(col, row));
+    await settle();
+    r.stdin.write(release(col, row));
+    await settle();
+    r.stdin.write("X");
+    await waitFor(() => clean(r.lastFrame()).includes("abcdefX"));
+    expect(clean(r.lastFrame())).toContain("abcdefX");
+    expect(clean(r.lastFrame())).not.toContain("abcXdef");
+    r.unmount();
+  });
+});
