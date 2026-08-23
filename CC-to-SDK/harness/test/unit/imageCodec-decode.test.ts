@@ -129,6 +129,9 @@ describe("I5a hostile input — the deadline is stubbed to NEVER expire, so only
   it.each(["forged-bmp-offset.bmp", "forged-bmp-stride.bmp"])("a forged BMP %s fails `malformed`", (f) => {
     expect(decodeBmp(fixture(f), NEVER_EXPIRES)).toMatchObject({ ok: false, code: "malformed" });
   });
+  it("a 58-byte BITMAPV5HEADER BMP whose buffer ends exactly where the color masks would start fails `malformed`, not a RangeError crash", () => {
+    expect(decodeBmp(fixture("short-v5-masks.bmp"), NEVER_EXPIRES)).toMatchObject({ ok: false, code: "malformed" });
+  });
 
   it("SABOTAGE GUARD: dropping maxOutputLength must turn the bomb cell red", () => {
     const src = readFileSync(new URL("../../src/media/imageCodec.ts", import.meta.url), "utf8");

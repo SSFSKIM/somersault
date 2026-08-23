@@ -273,6 +273,12 @@ export function decodeBmp(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
 
   let maskR = 0x00ff0000, maskG = 0x0000ff00, maskB = 0x000000ff, maskA = 0xff000000;
   if (compression === 3 && dibHeaderSize >= 108) {
+    // The masks live at offsets 54-70 (4 fields x 4 bytes) — a region the earlier `buf.length < 54`
+    // signature check does NOT cover. Bound it against the ACTUAL buffer length before reading, same
+    // as every other read in this function, rather than trusting `dibHeaderSize`'s own claim.
+    if (buf.length < 70) {
+      return { ok: false, code: "malformed", reason: "BMP declares a BITMAPV5HEADER but the buffer ends before its color masks" };
+    }
     maskR = buf.readUInt32LE(54);
     maskG = buf.readUInt32LE(58);
     maskB = buf.readUInt32LE(62);

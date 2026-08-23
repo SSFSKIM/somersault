@@ -327,6 +327,26 @@ function buildForgedOffsetBmp() {
   buf.writeUInt32LE(0xff000000, 66);
   return buf;
 }
+/** 58 bytes: a valid signature, `dibHeaderSize`=124 (BITMAPV5HEADER) and `compression`=3
+ *  (BI_BITFIELDS) — so the decoder's mask read (offsets 54-70) fires — but `dataOffset`=54 and a
+ *  1x1/32bpp `stride`=4 make the pixel-data bound (`dataOffset + stride*absHeight <= buf.length`,
+ *  i.e. 54+4=58<=58) pass cleanly with the buffer ending exactly where the masks would start. The
+ *  buffer holds ONLY maskR's 4 bytes (54-57); maskG's read at offset 58 has nothing left to read from
+ *  a 58-byte buffer, which is the exact hole this fixture pins: the mask region was never bounds-
+ *  checked before being read. */
+function buildShortV5MasksBmp() {
+  const buf = Buffer.alloc(58);
+  buf.write("BM", 0, "ascii");
+  buf.writeUInt32LE(buf.length, 2);
+  buf.writeUInt32LE(54, 10); // dataOffset — lands right where the (absent) masks would start
+  buf.writeUInt32LE(124, 14); // dibHeaderSize — BITMAPV5HEADER, >=108 triggers the mask read
+  buf.writeInt32LE(1, 18); // width
+  buf.writeInt32LE(1, 22); // height (bottom-up; irrelevant — the mask read crashes first)
+  buf.writeUInt16LE(1, 26); // planes
+  buf.writeUInt16LE(32, 28); // bitsPerPixel
+  buf.writeUInt32LE(3, 30); // compression — BI_BITFIELDS
+  return buf;
+}
 function buildForgedStrideBmp() {
   const dibHeaderSize = 124;
   const dataOffset = 14 + dibHeaderSize; // valid offset...
@@ -380,6 +400,7 @@ async function main() {
   writeFileSync(out("huge-header.png"), buildHugeHeaderPng());
   writeFileSync(out("forged-bmp-offset.bmp"), buildForgedOffsetBmp());
   writeFileSync(out("forged-bmp-stride.bmp"), buildForgedStrideBmp());
+  writeFileSync(out("short-v5-masks.bmp"), buildShortV5MasksBmp());
   writeFileSync(out("oversized-3200x1800.png"), buildOversizedPng(3200, 1800));
   writeFileSync(out("tiny.jpg"), buildTinyJpeg(8, 8));
 
