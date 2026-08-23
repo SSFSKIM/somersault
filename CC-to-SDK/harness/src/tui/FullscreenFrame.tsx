@@ -139,6 +139,23 @@ export function useRegionTop(): number { return useContext(RegionTopContext); }
  *  frame, or on the `seam` arm (where the composer is unmounted), there is nothing to address. */
 const DockTopContext = createContext(0);
 export function useDockTop(): number { return useContext(DockTopContext); }
+
+/** THE FRAME'S LAST TERMINAL ROW (F10 S1), published beside `DockTopContext` and on the identical contract:
+ *  arithmetic over what this file already knows, `0` meaning "not addressable". The dock is bottom-anchored
+ *  by construction — the frame is `frameHeight(rows)` tall, the region is `flexGrow: 1` and the dock slot is
+ *  `flexShrink: 0` — so the dock's last painted row IS the frame's last row, and a composer that knows the
+ *  footer's height can compute its own position from BELOW with no term for any occupant ABOVE it. That is
+ *  the whole reason this context exists: `DockTopContext` cannot answer where the composer is once a task
+ *  panel or a spinner paints above it, and canon does not do that arithmetic at all (L200134-200163 walks a
+ *  layout tree; L606604 shows the only gate on its caret handler is the reverse-search flag, never busy).
+ *    IT GOES TO 0 WHEN THE BAND OVERFLOWS, and that is the watchdog half of S1's dual refusal. If the dock
+ *  outgrows its cap the frame's root clip eats the bottom of the dock — the FOOTER included — and bottom-up
+ *  arithmetic would then point at rows that are not on screen. The effect below measures the slot every
+ *  commit and latches that fact here. The composer's own `bufferTop < dockTop` check is the other half: this
+ *  effect cannot see a re-render that happens entirely inside a slot's children (see the header, and
+ *  `:29-36`), which is exactly how a composer-local `setState` grows the dock. */
+const DockBottomContext = createContext(0);
+export function useDockBottom(): number { return useContext(DockBottomContext); }
 /** The frame's own first terminal row. `enter()` writes `\x1b[2J\x1b[H` (altScreen.ts `ENTER_ALT`) and Ink
  *  paints from the home position, so the frame starts at row 1 and the row it does NOT own is the last one —
  *  the same arithmetic `frameHeight` states from the other end. */
@@ -273,6 +290,12 @@ export function FullscreenFrame({ mode = "fullscreen", rows, regionChildren, doc
   // fires on exactly the frame it needs to and the re-measure lands on the next.
   const [measured, setMeasured] = useState({ height, cap, slot: bottomSlot, rows: regionFloor });
   const regionRows = measured.height === height && measured.cap === cap && measured.slot === bottomSlot ? measured.rows : regionFloor;
+  // S1's watchdog latch, STAMPED THE SAME WAY `regionRows` IS — a resize changes `height`/`cap` a full render
+  // before the effect below can re-measure against the new geometry, and a stale `true` here would zero
+  // `useDockBottom()` at a geometry where the dock no longer overflows. Falling back to `false` (no overflow)
+  // while the stamp is stale is the safe direction, exactly as `regionFloor` is for `regionRows`.
+  const [dockOverflowState, setDockOverflowState] = useState(false);
+  const dockOverflow = measured.height === height && measured.cap === cap && measured.slot === bottomSlot ? dockOverflowState : false;
   // Measured, not predicted. `contentRef` is an unshrinkable box, so its computed height is what the children
   // WANTED; `regionRef` is what they were given. An effect is the only place both are true — Yoga has laid out
   // by then — and the latch keeps a standing overflow from repeating the diagnostic on every keystroke.
@@ -301,6 +324,11 @@ export function FullscreenFrame({ mode = "fullscreen", rows, regionChildren, doc
     if (bottom) {
       const bottomGot = measureElement(bottom).height;
       report(bottomOverflowing, bottomGot > cap, () => `fullscreen frame: ${bottomSlot} content ${bottomGot} rows > its ${cap}-row cap — Overflow clipped.`);
+      // S1's watchdog. `REGION_TOP_ROW === FRAME_TOP_ROW`, so `dockTop + bottomGot - 1 > frameLastRow`
+      // reduces to this comparison; keep it in the frame's own terms so the two published contexts cannot
+      // disagree about which rows the frame owns.
+      const over = regionRows + bottomGot > height;
+      if (over !== dockOverflow) setDockOverflowState(over);
     }
   });
   // THE THREE CONSTRAINT SETS, HOISTED (T15) — every one of them is the FRAME's, and the classic arm is the
@@ -333,13 +361,19 @@ export function FullscreenFrame({ mode = "fullscreen", rows, regionChildren, doc
           `seamActive` is false on the main screen, so the classic arm always takes the dock branch.) */}
       {/* F9 T-MOUSE Task 4 — `DockTopContext` wraps BOTH tenants at the same tree position (the header's own
           rule for `bottomRef`: one element position, not two code paths). Harmless on the `seam` arm — the
-          composer is unmounted there, so nothing reads it — and cheap enough not to special-case out. */}
-      <DockTopContext.Provider value={bounded ? REGION_TOP_ROW + regionRows : 0}>
-        {seamUp
-          ? <Box ref={bottomRef} flexDirection="column" {...slotStyle}
-              borderStyle={SEAM_RULE} borderColor={seamRuleColor()} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
-          : <Box ref={bottomRef} flexDirection="column" {...slotStyle}>{dock}</Box>}
-      </DockTopContext.Provider>
+          composer is unmounted there, so nothing reads it — and cheap enough not to special-case out.
+            F10 S1 — `DockBottomContext` wraps the SAME pair, outermost: the frame's last row is a fact about
+          the whole band, seam included, so the nesting order does not matter for correctness — it is placed
+          outside `DockTopContext` only so the two providers read top-to-bottom as "the band's extent, then
+          its start". `0` while `dockOverflow` is latched — see the context's own header for why. */}
+      <DockBottomContext.Provider value={bounded && !dockOverflow ? FRAME_TOP_ROW + height - 1 : 0}>
+        <DockTopContext.Provider value={bounded ? REGION_TOP_ROW + regionRows : 0}>
+          {seamUp
+            ? <Box ref={bottomRef} flexDirection="column" {...slotStyle}
+                borderStyle={SEAM_RULE} borderColor={seamRuleColor()} borderBottom={false} borderLeft={false} borderRight={false}>{seam}</Box>
+            : <Box ref={bottomRef} flexDirection="column" {...slotStyle}>{dock}</Box>}
+        </DockTopContext.Provider>
+      </DockBottomContext.Provider>
     </Box>
   );
 }

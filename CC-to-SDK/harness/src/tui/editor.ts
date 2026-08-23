@@ -731,7 +731,12 @@ export function offsetFromPosition(text: string, prefixWidth: number, innerWidth
   const rowIndex = Math.max(0, Math.min(Math.floor(line), rows.length - 1));
   const row = rows[rowIndex] ?? "";
   const before = rows.slice(0, rowIndex).reduce((sum, r) => sum + r.length, 0);
-  const hit: HitRow = { itemKey: "", anchor: undefined, width: stringWidth(row), text: row, gutterWidth: 0, softWrap: "hard", kind: "line" };
+  // F10 S4 — `charStart`/`charEnd`/`textStart` are required on every `HitRow` now. This one is not a
+  // transcript row: it exists only so `columnToChar` can resolve a grapheme for the composer's inverse map,
+  // and `offsetFromPosition` reads nothing but `cell.charStart` back out of it. So the range is this
+  // wrapped row's own text, whole, with no continuation pad — inert here, and honest.
+  const hit: HitRow = { itemKey: "", anchor: undefined, width: stringWidth(row), text: row, gutterWidth: 0,
+    softWrap: "hard", kind: "line", charStart: 0, charEnd: row.length, textStart: 0 };
   const cell = columnToChar(hit, column);
   const charStart = cell ? cell.charStart : (column <= hit.gutterWidth ? 0 : row.length);
   return Math.max(0, Math.min(text.length, before + charStart - Math.max(0, prefixWidth)));

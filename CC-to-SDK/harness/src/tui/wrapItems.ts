@@ -58,6 +58,51 @@ import type { RenderItem } from "./toolRenderer.js";
  *  with the same arguments typed twice) is what keeps that guarantee transitive. */
 export const wrapRows = (text: string, width: number): string[] => text.split("\n").flatMap((line) => wrapAnsi(line, width, { trim: false, hard: true }).split("\n"));
 
+/** F10 S4 — one row's SOURCE-character range within its item's CANONICAL text, plus `pad`: the cosmetic
+ *  continuation indent's length (`0` for a hard row, `stringWidth(gutter)` for a wrapped row under a
+ *  gutter-carrying line). See `sourceRowRanges` for the range's own contract. */
+export interface LineSource { start: number; end: number; pad: number }
+
+/** THE SOURCE RANGE OF EACH ROW A WRAP PRODUCES, minted here because here is where the split points are
+ *  known and BEFORE any cosmetic padding is added. Contiguous and half-open over the whole of `text`, so
+ *  nothing a wrap did to the painted string can leave a source character unaddressed.
+ *    IT WALKS HARD LINES, NOT PAINTED ROWS, and that is the correctness claim. `wrapRows` is
+ *  `split("\n").flatMap(wrapAnsi…)`, so each `\n` is a boundary the painted rows no longer contain — and
+ *  the rule this whole address space rests on is that a hard line's terminating `\n` belongs to the LAST
+ *  painted row of THAT line. A cursor walking the flat row list cannot honour that around blanks: for
+ *  `"one\n\ntwo"` it hands both separators to the empty row and leaves `one` owning neither; for
+ *  `"one\n"` it puts the separator on the trailing blank. Both mis-point every endpoint near a blank line
+ *  (plan review). Re-deriving the per-line wrap with the SAME primitive `wrapRows` uses keeps the row
+ *  counts identical by construction, and the second wrap is paid once per (item, width) behind
+ *  `wrapItem`'s cache — never per frame.
+ *    NEVER re-derivable from painted lengths downstream either: `wrapLine` indents continuations, `wrapOne`
+ *  splits a line item into separate `#wN` items, and a gutter block's body rows are joined by `\n` in the
+ *  canonical text but by nothing on screen. */
+export function sourceRowRanges(text: string, width: number): { start: number; end: number }[] {
+  const w = Math.max(1, Math.floor(width));
+  const out: { start: number; end: number }[] = [];
+  const hard = text.split("\n");
+  let base = 0;
+  for (let h = 0; h < hard.length; h++) {
+    const line = hard[h]!;
+    const sep = h + 1 < hard.length ? 1 : 0;                   // the `\n` that TERMINATES this hard line
+    const rows = wrapAnsi(line, w, { trim: false, hard: true }).split("\n");
+    const starts: number[] = [];
+    let cursor = 0;
+    for (const row of rows) {
+      const at = row.length === 0 ? cursor : line.indexOf(row, cursor);
+      const start = at < 0 ? cursor : at;                      // a row wrap-ansi rewrote: keep it monotonic
+      starts.push(start);
+      cursor = start + row.length;
+    }
+    for (let i = 0; i < starts.length; i++)
+      out.push({ start: base + starts[i]!,
+        end: i + 1 < starts.length ? base + starts[i + 1]! : base + line.length + sep });
+    base += line.length + sep;
+  }
+  return out;
+}
+
 /** One line as the rows it PAINTS at `width`. Returns the input line itself — same object, `segments` and all
  *  — whenever it already fits, which is what keeps a settled frame byte-identical to the unwrapped one.
  *
@@ -69,8 +114,13 @@ export const wrapRows = (text: string, width: number): string[] => text.split("\
 export function wrapLine(line: RenderLine, width: number): readonly RenderLine[] {
   const full = Math.max(1, Math.floor(width));
   const gutterWidth = line.gutter ? stringWidth(line.gutter.text) : 0;
-  const rows = wrapRows(line.text, Math.max(1, full - gutterWidth));
+  const inner = Math.max(1, full - gutterWidth);
+  const rows = wrapRows(line.text, inner);
+  // Leave the identity arm untouched: an unwrapped line's range is `[0, text.length)` with pad 0 — exactly
+  // the consumer's `l.source ?? fallback` default — and minting a new object here would break
+  // `wrapItemsToWidth`'s `changed` shortcut (F10 S4, plan review).
   if (rows.length === 1 && rows[0] === line.text) return [line];
+  const ranges = sourceRowRanges(line.text, inner);
   const { segments, gutter, continuation: _continuation, ...style } = line;
   const cut = cutSegments(segments, line.text, rows);
   const pad = " ".repeat(gutterWidth);
@@ -84,6 +134,7 @@ export function wrapLine(line: RenderLine, width: number): readonly RenderLine[]
     ...(row === 0 && gutter ? { gutter } : {}),
     ...(row > 0 ? { continuation: true as const } : {}),
     ...(cut?.[row]?.length ? { segments: row === 0 ? cut[row]! : indentSegments(cut[row]!, pad) } : {}),
+    source: { ...ranges[row]!, pad: row === 0 ? 0 : pad.length },
   }));
 }
 
@@ -162,8 +213,24 @@ function wrapOne(item: RenderItem, width: number): readonly RenderItem[] {
     // ONE ITEM, A TALLER BODY. The five-column connector column is a sibling Box (`RenderItemView`), so the
     // body wraps at `width − gutter`; splitting the block into one item per row would print the `⎿` on each.
     const inner = Math.max(1, Math.max(1, Math.floor(width)) - item.gutter.length);
-    const body = item.body.flatMap((line) => wrapLine(line, inner));
-    return body.length === item.body.length && body.every((line, i) => line === item.body[i]) ? [item] : [{ ...item, body }];
+    // F10 S4 — the block's CANONICAL text is its body lines joined with `\n`, so each source line's range is
+    // offset by everything before it plus one separator per boundary. Computed here because `wrapLine` is a
+    // leaf that sees one line and cannot know its position in the block.
+    //   THE DELIBERATE ASYMMETRY: when nothing wrapped, the arm returns `[item]` below with the ORIGINAL body
+    // rows (no `source`), and `hitRowsOf` computes the same cumulative base itself — the two agree by
+    // construction because in that case every body row IS an original source line.
+    let base = 0, changed = false;
+    const body: RenderLine[] = [];
+    for (const src of item.body) {
+      const rows = wrapLine(src, inner);
+      if (rows.length !== 1 || rows[0] !== src) changed = true;
+      for (const row of rows) {
+        const local = row.source ?? { start: 0, end: src.text.length, pad: 0 };
+        body.push({ ...row, source: { start: base + local.start, end: base + local.end, pad: local.pad } });
+      }
+      base += src.text.length + 1;                                   // the `\n` between hard rows
+    }
+    return changed ? [{ ...item, body }] : [item];
   }
   // A truncating header is one row BY CONSTRUCTION (`wrap: "truncate-end"`, upstream's rule for an
   // MCP-length tool name): Ink cuts it at the edge, so there is nothing to wrap and its height was never a lie.

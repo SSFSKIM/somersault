@@ -197,33 +197,29 @@ describe("T4: a press on the transcript and a release on the composer does nothi
   });
 });
 
-// ── TASK REVIEW CRITICAL FINDING — FAIL SAFE UNDER A DOCK CO-OCCUPANT ───────────────────────────────────
+// ── F10 S1 — A DOCK OCCUPANT NO LONGER SUPPRESSES THE CARET ORIGIN ──────────────────────────────────────
 //
-// `DockTopContext` publishes the DOCK BAND's first row (`REGION_TOP_ROW + regionRows`), not the COMPOSER's —
-// whenever a `TaskPanel`, the live-turn spinner/retry/compaction row, or a hoisted suggestion palette paints
-// above it inside `dock` (ChatApp.tsx), the composer's real screen row is that published row PLUS however
-// many rows the earlier occupant took, and the origin arithmetic used to have no term for that. A click then
-// resolved against the WRONG row rather than failing safe — the same "wrong logical position" the review
-// reproduced, not a mere no-op.
+// This block used to pin the OPPOSITE claim (task review Critical, fix round): `DockTopContext` publishes
+// the DOCK BAND's first row, not the composer's, so a `TaskPanel` or the live-turn spinner painting above it
+// left the old top-down origin stale, and `dockCrowded` refused every click while either was up rather than
+// resolve against a wrong row. Canon does neither: L606604 shows the composer's caret handler has exactly
+// ONE early return (the reverse-search flag), never busy or an open task list; L200134-200163 hit-tests a
+// layout tree and recomputes the click fresh every time, so a busy turn or a task panel repositions the
+// caret exactly like an idle composer would. S1's bottom-up origin (`composerOriginRow`, computed from
+// `useDockBottom()` — the frame's LAST row — rather than the dock band's first) needs no term for either
+// occupant at all, so there is nothing left for a "crowded" flag to gate: same fixtures, inverted claim.
 //
 // FIVE SHORT LOGICAL LINES, joined with Ctrl-J ("\x0a" — `editorAdapter.ts`'s own newline binding, not
-// Enter), one digit per line ("0000000000" … "4444444444"). `renderBuffer` (ChatComposer.tsx) paints ONE
-// `<Text>` PER LOGICAL LINE, so each is its own real screen row independent of exactly where Ink itself
-// would word-wrap a longer string — no dependency on the composer's assumed inner width matching Ink's
-// actual measured one, which a wrapped-single-line fixture could not avoid. A click aimed at line 0's own
-// screen row that resolves against the WRONG row (shifted down by however many rows the occupant painted —
-// 1 for the spinner, 3 for the task panel) lands on a DIFFERENT line than the one clicked, which is what
-// makes the fixture prove a wrong-position bug rather than an accidental out-of-bounds no-op. The click
-// lands on the LAST line ("4444444444") — measured (see the comment below), the region only partly absorbs
-// the dock's growth once the composer itself grows past one line, and it is the LAST line whose miscomputed
-// local row lands INSIDE the buffer's other lines rather than off either end. The safe (fixed) behaviour is
-// checked positively: appending "X" after a refused click must still land right after "4444444444" — the
-// buffer's own true end, where the cursor already was, untouched by the click.
-describe("T4 fix — caret clicks fail safe when a dock occupant renders above the composer (review Critical)", () => {
+// Enter), one digit per line ("0000000000" … "4444444444"), kept from the original fixture: `renderBuffer`
+// (ChatComposer.tsx) paints ONE `<Text>` per logical line, so each is its own real screen row independent of
+// exactly where Ink itself would word-wrap a longer string. The click aims at the FIRST line's own screen
+// row and types "X" there — a caret that is still refusing (or resolving against the wrong line) leaves
+// "00000X00000" unreachable, either appending past the buffer's true end or landing on some other digit run.
+describe("F10 S1 — a dock occupant no longer suppresses the caret origin", () => {
   const NL = "\x0a";                                                     // Ctrl-J: insert newline, not submit
   const digitLines = (n: number) => Array.from({ length: n }, (_, i) => String(i).repeat(10)).join(NL);
 
-  it("busy: true (the spinner row is rendered above the composer) — a composer click does not move the caret", async () => {
+  it("busy: true (the spinner row is rendered above the composer) — a composer click still moves the caret", async () => {
     const submitted: string[] = [];
     let fake: ReturnType<typeof fakeRemote>;
     fake = fakeRemote({
@@ -240,22 +236,19 @@ describe("T4 fix — caret clicks fail safe when a dock occupant renders above t
     r.stdin.write("\r");
     await waitFor(() => submitted.length === 1);           // the spinner row now paints above the composer
     await settle();
-    // Five logical lines: the composer growing from one row to five is what pushes the dock's own growth
-    // past however many rows the region still had to give back (measured — see the describe block's header).
     r.stdin.write(digitLines(5));
     await waitFor(() => plain(r.lastFrame()).includes("4444444444"));
     await settle();
-    const { row, textCol } = composerOrigin(r.lastFrame(), "4444444444");   // the LAST line's real screen row
-    await tap(r, textCol + 9, row);                         // aimed at the line's own end — where the cursor already is
+    const { row, textCol } = composerOrigin(r.lastFrame(), "0000000000");   // the FIRST line's real screen row
+    await tap(r, textCol + 5, row);
     r.stdin.write("X");
     await waitFor(() => plain(r.lastFrame()).includes("X"));
-    // Safe: "X" landed right after the buffer's true end ("4444444444X"). A wrong origin instead resolves
-    // this click against an EARLIER logical line, so "X" never reaches here at all.
-    expect(plain(r.lastFrame())).toContain("4444444444X");
+    // The caret MOVED to the clicked line — canon's own behaviour during a busy turn.
+    expect(plain(r.lastFrame())).toContain("00000X00000");
     r.unmount();
   });
 
-  it("an open task panel (rendered above the composer) — a composer click does not move the caret", async () => {
+  it("an open task panel (rendered above the composer) — a composer click still moves the caret", async () => {
     let fake: ReturnType<typeof fakeRemote>;
     fake = fakeRemote({});
     const r = renderWithKeymap(
@@ -275,11 +268,11 @@ describe("T4 fix — caret clicks fail safe when a dock occupant renders above t
     r.stdin.write(digitLines(5));
     await waitFor(() => plain(r.lastFrame()).includes("4444444444"));
     await settle();
-    const { row, textCol } = composerOrigin(r.lastFrame(), "4444444444");
-    await tap(r, textCol + 9, row);
+    const { row, textCol } = composerOrigin(r.lastFrame(), "0000000000");
+    await tap(r, textCol + 5, row);
     r.stdin.write("X");
     await waitFor(() => plain(r.lastFrame()).includes("X"));
-    expect(plain(r.lastFrame())).toContain("4444444444X");
+    expect(plain(r.lastFrame())).toContain("00000X00000");
     r.unmount();
   });
 });

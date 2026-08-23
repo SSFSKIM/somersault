@@ -838,6 +838,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // KB8 (alt+t): the Settings Thinking-mode row's flow — setThink is /think's own mechanism
     // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.
     "chat:thinkingToggle": () => { void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
+    // F10 S3 — the bindable half of the selection's copy/clear pair. The pre-table ctrl+c hook below
+    // (`useSelectionLifetime`) is unchanged and canon keeps both too (L551764-551772 beside L174817).
+    // Registered unconditionally: `handlerFor` resolves by ACTION across the whole stack, so the `Scroll`
+    // context's chords reach these, and with no selection live both are a no-op rather than a fall-through
+    // (neither chord means anything else here).
+    "selection:copy": () => { if (hitmapRef.current?.hasSelection() ?? false) performAutoCopy(); },
+    "selection:clear": () => { hitmapRef.current?.discardSelection(); copyLatchRef.current = false; },
   });
 
   // ── TOOL-STREAM T10 — THE TAP: PRESS + RELEASE ON ONE CELL, TURNED INTO ONE FOLD TOGGLE ──────────────────
@@ -1057,6 +1064,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       if (SELECTION_CLEAR_EXEMPT_BARE.has(e.name)) return false;
       if ((e.name === "home" || e.name === "end") && e.ctrl) return false;
       if (SELECTION_EXTEND_KEYS.has(e.name) && (e.shift || e.alt || e.super)) return false;
+      // F10 T-SELECT Task 7 fix — canon L551764-551772: the pre-table plain-ctrl+c intercept above (line
+      // 1057, gated on `!e.shift`) coexists with the two BINDABLE copy chords (`ctrl+shift+c`, `cmd+c` →
+      // `selection:copy`, Task 3/S3, bindings.ts:192) rather than shadowing them. Without this exemption
+      // both chords fall through to the discard below before the table's own `hasSelection()`-gated
+      // handler ever runs, so neither chord could ever copy anything — the exact cross-task defect this
+      // fix closes.
+      if (e.name === "c" && ((e.ctrl && e.shift) || e.super)) return false;
     }
     hitmapRef.current?.discardSelection();
     copyLatchRef.current = false;
@@ -1550,21 +1564,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
     return Math.max(0, dockCap(size.rows, true) - others);
   };
-  // F9 T-MOUSE TASK 4 FIX (task review Critical) — the exact conditions that gate `TaskPanel` and the
-  // live-turn slot in `dock` below (`todosOpen && !paneOwned`, `(state.busy || state.compacting) && !paneOwned`),
-  // reused rather than re-derived, so a future dock member added to one automatically reads correctly here —
-  // matching `dockDialogRows` above, which already sums these same two occupants' row counts for the same
-  // reason. `state.tasks.length > 0` alongside `todosOpen`: `TaskPanel` itself renders NULL on an empty task
-  // list (its own header: "no empty state"), so `todosOpen` alone — true by DEFAULT (`initialTodosOpen`) —
-  // would flag a session with zero tasks as crowded when the panel paints nothing at all (caught by the
-  // pre-existing idle-composer tests, which mount with an empty task list and would otherwise go
-  // not-addressable for no on-screen reason). `!paneOwned` is always true wherever this reaches
-  // `ChatComposer` (the composer itself only mounts when `paneOwned` is false — see the final arm of
-  // `overlayChain`), kept anyway so this stays a direct transcription of `dock`'s own JSX conditions rather
-  // than a fact this file would have to re-verify by hand if that invariant ever changed. Threaded into
-  // `ChatComposer` as `dockCrowded`, which suppresses the composer's published click-to-caret origin — see
-  // `ChatComposer.tsx`'s `originExact`.
-  const dockCrowded = !paneOwned && ((todosOpen && state.tasks.length > 0) || state.busy || Boolean(state.compacting));
   /** THE OVERLAY CHAIN — every surface that replaces the composer, in precedence order. Extracted from the
    *  dock in FSW T13 so ONE list of elements can be handed to either slot (see `seamActive` above): on the
    *  main screen and for a parked decision it renders where it always did, directly above the footer; in
@@ -1770,7 +1769,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // FSW T14 — D10 (hoist the palette out of here) and D11 (drop the notification block).
                       // Both are subtractions from what the composer paints; the destinations are the dock's
                       // `PaletteSlot` and the footer's right region, and both are above this element.
-                      fullscreen={fullscreen} originRef={composerRef} dockCrowded={dockCrowded} />
+                      fullscreen={fullscreen} originRef={composerRef} footerRows={footerRows(footerStatusInput())} />
   );
   const dock = (
     <>

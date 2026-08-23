@@ -11,7 +11,7 @@ import stringWidth from "string-width";
 import { wrapItemsToWidth } from "../../src/tui/wrapItems.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
 import { hitRowsOf } from "../../src/tui/FullscreenViewport.js";
-import { columnToChar, charToColumn, type HitRow } from "../../src/tui/mouse/hitmap.js";
+import { columnToChar, charToColumn, sourceEndpointAt, columnOfSourceChar, type HitRow } from "../../src/tui/mouse/hitmap.js";
 import { GROUP_HINT_GUTTER, TOOL_RESULT_GUTTER, projectCompact, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
@@ -120,8 +120,48 @@ describe("hitRowsOf publishes the widened HitRow", () => {
   });
 });
 
+describe("F10 S4 — HitRow carries the SOURCE range, minted at wrap time (or its fallback)", () => {
+  it("an unwrapped line: charStart 0, charEnd is the whole source length, textStart 0", () => {
+    const [row] = publish([plainLine("p1", "hello")], 40);
+    expect(row).toMatchObject({ charStart: 0, charEnd: "hello".length, textStart: 0 });
+  });
+
+  it("a line wrapped into three rows: contiguous ranges, last charEnd is the source length", () => {
+    const rows = publish([plainLine("w1", "x".repeat(25))], 10);
+    expect(rows.length).toBe(3);
+    expect(rows[0]).toMatchObject({ charStart: 0, charEnd: 10 });
+    expect(rows[1]).toMatchObject({ charStart: 10, charEnd: 20 });
+    expect(rows[2]).toMatchObject({ charStart: 20, charEnd: 25 });
+  });
+
+  it("a gutter block with two body lines: the second's range starts one past the first's length", () => {
+    const item: RenderItem = { kind: "gutter-block", id: "b1", gutter: TOOL_RESULT_GUTTER,
+      body: [{ text: "x".repeat(20) }, { text: "second" }] };
+    const rows = publish([item], 40);
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toMatchObject({ charStart: 0, charEnd: 20 });
+    expect(rows[1]).toMatchObject({ charStart: 21, charEnd: 21 + "second".length });
+  });
+
+  it("the same gutter block sliced from row 1 keeps its surviving rows' true source positions", () => {
+    const item: RenderItem = { kind: "gutter-block", id: "b2", gutter: TOOL_RESULT_GUTTER,
+      body: [{ text: "aaaa" }, { text: "bbbbb" }, { text: "cc" }] };
+    const wrapped = wrapItemsToWidth([item], 40);
+    const full = hitRowsOf(pageItemSlices(wrapped, 0, 3).slices, 40);
+    const { slices } = pageItemSlices(wrapped, 1, 2);          // cuts the first body row ("aaaa") away
+    const sliced = hitRowsOf(slices, 40);
+    expect(sliced.length).toBe(2);
+    // Unchanged by the slice: the surviving rows name the SAME source positions as in the unsliced publish.
+    expect(sliced[0]).toMatchObject({ charStart: full[1]!.charStart, charEnd: full[1]!.charEnd });
+    expect(sliced[1]).toMatchObject({ charStart: full[2]!.charStart, charEnd: full[2]!.charEnd });
+    expect(sliced[0]).toMatchObject({ charStart: 5, charEnd: 10 });     // 4 + 1 ("aaaa" + \n)
+    expect(sliced[1]).toMatchObject({ charStart: 11, charEnd: 13 });    // 5 + 1 + 5 + 1 ("bbbbb" + \n)
+  });
+});
+
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
-  itemKey: "k", width: stringWidth(overrides.text), gutterWidth: 0, softWrap: "hard", kind: "line", ...overrides,
+  itemKey: "k", width: stringWidth(overrides.text), gutterWidth: 0, softWrap: "hard", kind: "line",
+  charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides,
 });
 
 describe("columnToChar / charToColumn — grapheme-snapped column addressing", () => {
@@ -162,5 +202,39 @@ describe("columnToChar / charToColumn — grapheme-snapped column addressing", (
     expect(charToColumn(row, 0)).toBe(3);                 // 'a', right after the two gutter columns
     expect(charToColumn(row, 1)).toBe(4);                 // '你' leading edge
     expect(charToColumn(row, 2)).toBe(6);                 // 'b', past the CJK char's two cells
+  });
+});
+
+describe("F10 S4 — sourceEndpointAt: the grapheme's REAL bounds, not a probe at col+1", () => {
+  const wide = mkRow({ text: "a你b", charStart: 100, charEnd: 104, textStart: 0 });   // a@1, 你@2-3, b@4
+  it("both halves of a CJK cluster answer the SAME half-open source range", () => {
+    expect(sourceEndpointAt(wide, 2)).toEqual({ charOffset: 101, charEnd: 102, where: "text" });
+    expect(sourceEndpointAt(wide, 3)).toEqual({ charOffset: 101, charEnd: 102, where: "text" });
+  });
+  it("the cluster's leading cell does NOT swallow the rest of the row", () =>
+    expect(sourceEndpointAt(wide, 2).charEnd).not.toBe(wide.charEnd));
+  it("an emoji ZWJ sequence is one grapheme", () => {
+    const e = mkRow({ text: "x👩‍💻y", charStart: 0, charEnd: "x👩‍💻y".length, textStart: 0 });
+    const at = sourceEndpointAt(e, 2);
+    expect(at.where).toBe("text");
+    expect(e.text.slice(at.charOffset, at.charEnd)).toBe("👩‍💻");
+  });
+  it("a combining mark rides its base character", () => {
+    const c = mkRow({ text: "éf", charStart: 0, charEnd: 3, textStart: 0 });   // e + U+0301, then f
+    expect(sourceEndpointAt(c, 1)).toEqual({ charOffset: 0, charEnd: 2, where: "text" });
+  });
+  it("a gutter column addresses the row's OPENING edge, flagged as such", () =>
+    expect(sourceEndpointAt(mkRow({ text: "hi", gutterWidth: 2, charStart: 7, charEnd: 9, textStart: 0 }), 1))
+      .toEqual({ charOffset: 7, charEnd: 7, where: "gutter" }));
+  it("a column past the last painted cell addresses the CLOSING edge, flagged as such", () =>
+    expect(sourceEndpointAt(mkRow({ text: "hi", charStart: 7, charEnd: 9, textStart: 0 }), 40))
+      .toEqual({ charOffset: 9, charEnd: 9, where: "eol" }));
+  it("a continuation row's cosmetic pad consumes no source offsets", () => {
+    const cont = mkRow({ text: "   tail", softWrap: "continuation", charStart: 50, charEnd: 54, textStart: 3 });
+    expect(sourceEndpointAt(cont, 4)).toEqual({ charOffset: 50, charEnd: 51, where: "text" });
+  });
+  it("columnOfSourceChar round-trips a hit to the cluster's LEADING cell", () => {
+    for (const col of [1, 2, 4]) expect(columnOfSourceChar(wide, sourceEndpointAt(wide, col).charOffset)).toBe(col);
+    expect(columnOfSourceChar(wide, sourceEndpointAt(wide, 3).charOffset)).toBe(2);   // trailing half → leading cell
   });
 });
