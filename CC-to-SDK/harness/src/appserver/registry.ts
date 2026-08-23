@@ -5,6 +5,7 @@ import type { Peer } from "./peer.js";
 import type { ItemEvent } from "./items/types.js";
 import type { QueuedTurn } from "./queue.js";
 import type { PlanGrantMode } from "../permissions/types.js";
+import type { UserTurnInput } from "../session/turnInput.js";
 import type { TurnFailure } from "../session/turnResult.js";
 import { ERR, type RpcError } from "./rpc.js";
 
@@ -30,8 +31,13 @@ export interface EngineSession {
    *  `error` is Wave T Task 14's additive failure tag: a turn that reached a terminal result frame and
    *  reported failure RESOLVES carrying it (only a transport exception rejects), so turns.ts's success
    *  path has to read it to keep broadcasting `turn/completed{status:"failed"}` for a failed turn.
-   *  Both are optional — a DI fake returning a bare `{result}` still satisfies this. */
-  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
+   *  Both are optional — a DI fake returning a bare `{result}` still satisfies this.
+   *  `prompt` is the whole `UserTurnInput` union (spec 2026-08-23 "Item → engine delivery"): the array form
+   *  is the ONLY way an image reaches a turn, and each engine carries it its own way — the in-process one
+   *  hands the blocks to the SDK message builder, the fleet one stages their bytes onto the host's disk and
+   *  claims them by path. Declared HERE rather than on the fleet engine alone because `turns.ts` submits
+   *  through this shared contract and must not care which origin it is driving. */
+  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   /** `replay` is additive and OPTIONAL — only an engine that can hand back buffered history ever passes it

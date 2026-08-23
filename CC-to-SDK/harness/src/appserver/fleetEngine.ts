@@ -37,7 +37,9 @@ import type { HostStatus } from "../host/ops.js";
 import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
+import type { UserTurnInput } from "../session/turnInput.js";
 import type { TurnFailure } from "../session/turnResult.js";
+import { stageBlocks } from "../client/stagedSubmit.js";
 import type { EngineSession } from "./registry.js";
 import { ERR } from "./rpc.js";
 
@@ -123,7 +125,7 @@ export interface FleetEngineSession extends EngineSession, FleetEngineEvents {
    *  reply named, before the first frame of that turn is delivered. It is the only race-free seq channel a
    *  caller has: deriving the seq from "the next turn-start we saw" is wrong on the refusal path, where a
    *  FOREIGN turn's start can land between the op leaving and the busy reply coming back. */
-  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }>;
+  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }>;
   /** `replay` is the host's own mark (wire.ts:16-19), passed BESIDE the frame rather than on it: the frame
    *  stays byte-for-byte what the SDK produced, and a consumer that clocks arrival can still tell buffered
    *  history from news instead of fabricating a duration for work that finished before it connected. */
@@ -156,6 +158,12 @@ class FleetEngine implements FleetEngineSession {
   private deathQueued = false;
   private sid?: string;
   private turnSink?: (m: unknown) => void;
+  /** THE RESERVATION. Taken SYNCHRONOUSLY at the top of `submit` and released by its `finally`, so it is
+   *  true across every await the submit contains. `turnSink` and `waiter` are both set only AFTER the
+   *  staging round trip an array prompt now opens with, which left the older guard passable by two
+   *  concurrent array submits — both staging, the second clobbering the first's sink (spec 2026-08-23,
+   *  plan-review finding 3). This flag is the one that is already true before the first await. */
+  private submitInFlight = false;
   private waiter?: { seq: number; resolve: (e: FleetTurnEvent) => void; reject: (e: Error) => void };
   private ends = new Map<number, FleetTurnEvent>();
   private turnCbs: Fan<FleetTurnEvent> = new Set();
@@ -318,11 +326,30 @@ class FleetEngine implements FleetEngineSession {
   cancelExpectDeath(): void { this.expectedDeath = false; }
 
   // ── the EngineSession contract ──────────────────────────────────────────────────────────────────
-  async submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }> {
+  async submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }> {
     // One in-flight submit per engine: a second would clobber the sink and the waiter under the first.
     // The host refuses a concurrent prompt anyway (busy), but this engine must not depend on that to
-    // keep its own bookkeeping straight.
-    if (this.turnSink || this.waiter) throw new Error("a submit is already in flight on this fleet engine");
+    // keep its own bookkeeping straight — and an array prompt spends a whole staging round trip before
+    // either of those is set, so the reservation is taken HERE, ahead of the first await, and released on
+    // every terminal path the body can take (success, throw, busy refusal, socket death).
+    if (this.submitInFlight || this.turnSink || this.waiter) throw new Error("a submit is already in flight on this fleet engine");
+    this.submitInFlight = true;
+    try { return await this.runSubmit(prompt, onMessage, opts); }
+    finally { this.submitInFlight = false; }
+  }
+
+  private async runSubmit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }> {
+    // A string prompt takes the exact path it always did, down to the absent `images` key. An array's
+    // images cannot travel on the host wire at all (M3 §1b's op set) — they travel as BYTES ON THE HOST'S
+    // DISK, staged through the same helper the socket-owning REPL adapter uses (client/stagedSubmit.ts)
+    // and claimed by path on the prompt op. Version skew — an old host that never heard of `stageImage` —
+    // throws out of here, the helper having already deleted whatever it had staged.
+    let staged: Awaited<ReturnType<typeof stageBlocks>> | undefined;
+    let body: Record<string, unknown> = { text: prompt };
+    if (typeof prompt !== "string") {
+      staged = await stageBlocks(prompt, { stageImageOp: (d) => this.sendOp({ op: "stageImage", ...d }) });
+      body = { text: staged.text, ...(staged.images.length ? { images: staged.images } : {}) };
+    }
     // QUARANTINE, not delivery. A sink is open before the op leaves — the turn's own first frames are on
     // the wire ahead of the reply that names its seq, and dropping them is worse than delaying them — but
     // until that reply says `ok` there is no evidence any of those frames are OURS. On a busy refusal they
@@ -332,11 +359,15 @@ class FleetEngine implements FleetEngineSession {
     const pending: unknown[] = [];
     this.turnSink = (m) => { pending.push(m); };
     let rep: { ok: boolean; accepted?: boolean; seq?: number; error?: string };
-    try { rep = await this.sendOp({ op: "prompt", text: prompt, ...(opts?.uuid ? { uuid: opts.uuid } : {}) }); }
-    catch (e) { this.turnSink = undefined; this.discardWindowEnds(); throw e; }
+    try { rep = await this.sendOp({ op: "prompt", ...body, ...(opts?.uuid ? { uuid: opts.uuid } : {}) }); }
+    catch (e) { this.turnSink = undefined; this.discardWindowEnds(); await staged?.cleanup(); throw e; }
     if (!rep.ok || rep.seq === undefined) {
       this.turnSink = undefined;
       this.discardWindowEnds();
+      // Staged bytes are OURS until the host accepts the prompt (stagedSubmit.ts's ownership contract), and
+      // a refusal is not an acceptance: taken back here, they never wait on the orphan sweep. Past this
+      // point the host owns them, so `cleanup` is deliberately dropped uncalled.
+      await staged?.cleanup();
       // The host's ONE refusal token, matched exactly (host/server.ts:169) — not a message heuristic:
       // every other failure is a real error and must not read as a retryable busy.
       if (rep.error === "busy") throw new FleetBusyError();
