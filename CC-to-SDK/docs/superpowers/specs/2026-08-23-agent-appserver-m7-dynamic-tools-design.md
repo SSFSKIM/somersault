@@ -100,14 +100,18 @@ actually work).
 server instances (review finding 6: an MCP `Server` instance rejects a second transport, so an instance
 stored in config and inherited anywhere — a review thread, a rewind replacement — is a landmine; and
 config is exactly what `review/start` copies and `extraOptions.mcpServers` can clobber). At every
-engine build (thread/start, rewind/clear/reopen swaps), the config assembly constructs **fresh**
-`createSdkMcpServer` instances from the declarations and merges them into the engine's `mcpServers` as
-an **immutable overlay**:
+engine build (thread/start, thread/resume, rewind/clear/reopen swaps), the config assembly constructs
+**fresh LOW-LEVEL MCP `Server` instances** (rev 3 — `createSdkMcpServer`/`tool()` are NOT used anywhere:
+Surprises records the measurement; ListTools returns the declared JSON Schema verbatim, CallTool
+validates via the conversion subset then parks) and hands them to the engine on the server-owned
+transient carrier as an **immutable overlay**:
 
 - one server per namespace (server name = namespace name); un-namespaced functions under the reserved
-  **`dyn`**; the namespace `description` becomes the server's `instructions`
-  (`CreateSdkMcpServerOptions.instructions` — "surfaced to the model as an MCP instructions block",
-  sdk.d.ts, so Codex's model-visible namespace description has a real home, not a dropped field);
+  **`dyn`**; the namespace `description` rides the low-level server's `instructions` construction
+  option, so Codex's model-visible namespace description has a real home, not a dropped field;
+- **`review/start` deliberately does NOT inherit declarations** (rev 3): a review thread is a derived
+  analysis engine, not the client's tool runtime — declarations living outside config is precisely what
+  makes the exclusion structural, and an acceptance row pins it;
 - **`mcpServer/set` refuses on a declaring thread** (rev 2p — supersedes rev 2's merge-into-every-set):
   whether the SDK's runtime `setMcpServers` control frame can carry an in-process server INSTANCE is
   unverifiable keylessly, and an accepted set that silently dropped the declarations would erase
