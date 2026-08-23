@@ -5,16 +5,22 @@
 // decoded bytes, the per-turn aggregate ± one whole block — plus the header-decode "library-bypass"
 // cell and the `Session.submit` seam proof that normalization cannot be skipped by any caller.
 import { describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
 import { deflateSync } from "node:zlib";
 import { z } from "zod/v4";
 import {
   flattenForDisplay, assembleUserContent, normalizeTurnInput, syntheticImageLabel, isStrandedTurn,
+  normalizeValidatedBlocks, validateImageBlock,
+  MAX_BASE64_INPUT_BYTES, MAX_AGGREGATE_BYTES, MAX_CONTENT_BLOCKS, MAX_TOTAL_TEXT,
+  SENTINEL_TEXT_RESERVE, TRUNCATION_SUFFIX_RESERVE, TRUNCATION_SUFFIX,
   type UserContentBlock, type UserTurnInput,
 } from "../../src/session/turnInput.js";
+import { MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../../src/media/imageDims.js";
 import { Session } from "../../src/session/session.js";
 import type { Harness } from "../../src/harness.js";
 import type { DaemonClient } from "../../src/daemon/connect.js";
 import { turnStartParams } from "../../src/appserver/schema/turns.js";
+import { triple } from "./boundaryTriple.js";
 
 // -------------------------------------------------------------------------------------------------
 // PNG fixtures — two DELIBERATELY different generators.
@@ -112,11 +118,11 @@ describe("normalizeTurnInput — dimension boundary, exact 2000x2000 (real PNGs,
   // rule"; these boundary cells stay about the cap, not about stranding.
   it("passes a 1999x1999 image through untouched", () => {
     const block = imageBlock(solidPng(1999));
-    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toEqual(block);
   });
   it("passes a 2000x2000 image through untouched — AT the cap is not OVER it", () => {
     const block = imageBlock(solidPng(2000));
-    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toEqual(block);
   });
   it("degrades a 2001x2001 image", () => {
     const out = normalizeTurnInput([imageBlock(solidPng(2001))]) as UserContentBlock[];
@@ -183,11 +189,11 @@ describe("normalizeTurnInput — post-processing byte ceiling (512,000 decoded b
   // check from I1's stranding rule, which a LONE passing image (no text) now legitimately triggers.
   it("passes at exactly 512,000 decoded bytes", () => {
     const block = imageBlock(fakePng(4, 4, 512_000));
-    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toEqual(block);
   });
   it("still passes one byte under (511,999)", () => {
     const block = imageBlock(fakePng(4, 4, 511_999));
-    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toEqual(block);
   });
   it("degrades one byte over (512,001)", () => {
     const out = normalizeTurnInput([imageBlock(fakePng(4, 4, 512_001))]) as UserContentBlock[];
@@ -208,13 +214,13 @@ describe("normalizeTurnInput — per-turn aggregate ceiling (5 MiB decoded bytes
     // otherwise pick up a synthetic label, which is not what this cell is testing.
     const out = normalizeTurnInput([textBlock("hi"), ...blocks]) as UserContentBlock[];
     expect(out[0]).toEqual({ type: "text", text: "hi" });
-    blocks.forEach((b, i) => expect(out[i + 1]).toBe(b));
+    blocks.forEach((b, i) => expect(out[i + 1]).toEqual(b));
   });
   it("one more block (any size) pushes the running total over — THAT block degrades, the rest survive", () => {
     const sizes = [...atCapSizes, 24]; // the smallest legal block this file can build
     const blocks = sizes.map((n) => imageBlock(fakePng(4, 4, n)));
     const out = normalizeTurnInput(blocks) as UserContentBlock[];
-    for (let i = 0; i < atCapSizes.length; i++) expect(out[i]).toBe(blocks[i]); // untouched
+    for (let i = 0; i < atCapSizes.length; i++) expect(out[i]).toEqual(blocks[i]); // untouched (content-equal: canonical re-encode allocates a new object)
     expect(out[atCapSizes.length].type).toBe("text");
     expect(asText(out[atCapSizes.length])).toMatch(/total image size exceeds the 5242880-byte limit/);
   });
@@ -226,7 +232,7 @@ describe("normalizeTurnInput — mixed turns: violations degrade in place, every
     const bad = imageBlock(fakePng(2001, 2001, 1_000));
     const out = normalizeTurnInput([textBlock("hi"), good, bad]) as UserContentBlock[];
     expect(out[0]).toEqual({ type: "text", text: "hi" });
-    expect(out[1]).toBe(good);
+    expect(out[1]).toEqual(good);
     expect(out[2].type).toBe("text");
     expect(asText(out[2])).toContain("2001x2001");
   });
@@ -376,5 +382,249 @@ describe("normalizeTurnInput — I1 stranding rule", () => {
   it("I1: the label form does not drift from the composer's chip label", async () => {
     const { imageChipLabel } = await import("../../src/tui/pasteChips.js");
     expect(syntheticImageLabel(2)).toBe(`${imageChipLabel(1)} ${imageChipLabel(2)}`);
+  });
+});
+
+// =====================================================================================================
+// F10 T-IMGREACH Task 2 (I2) — canonicalization + the shared caps + one output-accounting algorithm.
+
+describe("I2: canonical base64 re-encode", () => {
+  it("I2: a passing image's data is re-encoded canonically — padding/whitespace never survive", () => {
+    const canonical = PNG_1X1; // 68-byte 1x1 PNG, canonical base64
+    const noisy = canonical.replace(/(.{20})/g, "$1\n"); // same bytes, whitespace-padded
+    const out = normalizeTurnInput([
+      { type: "text", text: "x" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: noisy } },
+    ]) as UserContentBlock[];
+    expect((out[1] as any).source.data).toBe(canonical);
+  });
+});
+
+describe("I2: MAX_IMAGES_PER_PROMPT binds at the normalizer", () => {
+  it("20 pass, the 21st degrades", () => {
+    const twenty = Array.from({ length: 20 }, () => img());
+    expect((normalizeTurnInput([{ type: "text", text: "x" }, ...twenty]) as UserContentBlock[]).filter((b) => b.type === "image")).toHaveLength(20);
+    const out = normalizeTurnInput([{ type: "text", text: "x" }, ...twenty, img()]) as UserContentBlock[];
+    expect(out.filter((b) => b.type === "image")).toHaveLength(20);
+    expect(out.at(-1)).toEqual({ type: "text", text: "[Image could not be processed: too many images in one turn (limit 20)]" });
+  });
+
+  it("the excess-images literal matches the client's own (no drift)", async () => {
+    const src = await readFile(new URL("../../src/client/chatAdapter.ts", import.meta.url), "utf8");
+    expect(src).toContain("too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})");
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+const textBlocks = (n: number) => Array.from({ length: n }, (_, i) => ({ type: "text", text: `b${i}` }) as const);
+
+describe("I2: MAX_CONTENT_BLOCKS, cap−1 / cap / cap+1", () => {
+  it("63 blocks pass untouched", () => { expect(normalizeTurnInput(textBlocks(63))).toHaveLength(63); });
+  it("64 blocks pass untouched — the cap is inclusive", () => { expect(normalizeTurnInput(textBlocks(64))).toHaveLength(64); });
+  it("65 blocks → 63 survivors + ONE sentinel = 64 out, never 2 fragments", () => {
+    const out = normalizeTurnInput(textBlocks(65)) as UserContentBlock[];
+    expect(out).toHaveLength(64);
+    expect(out[62]).toEqual({ type: "text", text: "b62" });
+    expect((out[63] as any).text).toMatch(/^\[\+2 more blocks dropped: /);
+  });
+  it("200 blocks still collapse to exactly one sentinel", () => {
+    const out = normalizeTurnInput(textBlocks(200)) as UserContentBlock[];
+    expect(out).toHaveLength(64);
+    expect((out[63] as any).text).toMatch(/^\[\+137 more blocks dropped: /);
+    expect((out[63] as any).text.length).toBeLessThanOrEqual(SENTINEL_TEXT_RESERVE);
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+const s = (n: number) => "x".repeat(n);
+
+describe("I2: MAX_TOTAL_TEXT, cap−1 / cap / cap+1, string AND array form", () => {
+  it("TRUNCATION_SUFFIX fits its reserve", () => { expect(TRUNCATION_SUFFIX.length).toBeLessThanOrEqual(TRUNCATION_SUFFIX_RESERVE); });
+
+  it("a bare string at cap−1 / cap is untouched; cap+1 truncates to ceiling−suffix reserve", () => {
+    expect(normalizeTurnInput(s(MAX_TOTAL_TEXT - 1))).toBe(s(MAX_TOTAL_TEXT - 1));
+    expect(normalizeTurnInput(s(MAX_TOTAL_TEXT))).toBe(s(MAX_TOTAL_TEXT));
+    const out = normalizeTurnInput(s(MAX_TOTAL_TEXT + 1)) as string;
+    expect(out).toBe(s(MAX_TOTAL_TEXT - TRUNCATION_SUFFIX_RESERVE) + TRUNCATION_SUFFIX);
+    expect(out.length).toBeLessThanOrEqual(MAX_TOTAL_TEXT);
+  });
+
+  it("array text sums across blocks; truncation eats the LAST block first", () => {
+    const out = normalizeTurnInput([{ type: "text", text: s(MAX_TOTAL_TEXT - 100) }, { type: "text", text: s(200) }]) as UserContentBlock[];
+    expect((out[0] as any).text).toHaveLength(MAX_TOTAL_TEXT - 100); // untouched
+    const total = out.reduce((n, b) => n + (b.type === "text" ? b.text.length : 0), 0);
+    expect(total).toBeLessThanOrEqual(MAX_TOTAL_TEXT);
+    expect((out[1] as any).text.endsWith(TRUNCATION_SUFFIX)).toBe(true);
+  });
+
+  it("THE JOINT BOUNDARY — 65 blocks whose 63 survivors already sit at exactly the ceiling", () => {
+    // 63 blocks summing to exactly MAX_TOTAL_TEXT, plus 2 more so a sentinel is emitted. Without the
+    // reserved budgets the sentinel would push the output past the ceiling (round-3 F4).
+    const per = Math.floor(MAX_TOTAL_TEXT / 63), rem = MAX_TOTAL_TEXT - per * 63;
+    const blocks = Array.from({ length: 63 }, (_, i) => ({ type: "text", text: s(i === 0 ? per + rem : per) }) as const);
+    const out = normalizeTurnInput([...blocks, { type: "text", text: "a" }, { type: "text", text: "b" }]) as UserContentBlock[];
+    expect(out).toHaveLength(64);
+    const total = out.reduce((n, b) => n + (b.type === "text" ? b.text.length : 0), 0);
+    expect(total).toBeLessThanOrEqual(MAX_TOTAL_TEXT);
+    expect((out[63] as any).text).toMatch(/^\[\+2 more blocks dropped: /); // the sentinel survived intact
+    expect((out[62] as any).text.endsWith(TRUNCATION_SUFFIX)).toBe(true); // the USER text gave, not it
+  });
+
+  it("images are never dropped by the text ceiling", () => {
+    const out = normalizeTurnInput([{ type: "text", text: s(MAX_TOTAL_TEXT + 1) }, img()]) as UserContentBlock[];
+    expect(out.filter((b) => b.type === "image")).toHaveLength(1);
+  });
+});
+
+// =====================================================================================================
+// Step 3b: THE NORMALIZER'S FULL BOUNDARY MATRIX — every cap this module owns, indexed off its own
+// constant (plan-review r2 F-BOUNDS: a cap tested only on its rejecting side is a cap whose comparison
+// operator is untested). No literal numbers: every row is derived from the exported constant, so a
+// constant change moves the test with it.
+
+function crc32(buf: Buffer): number {
+  let c = ~0;
+  for (const byte of buf) { c ^= byte; for (let i = 0; i < 8; i++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); }
+  return ~c >>> 0;
+}
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+  const td = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const c = Buffer.alloc(4); c.writeUInt32BE(crc32(td));
+  return Buffer.concat([len, td, c]);
+}
+/** A real, header-readable PNG of EXACTLY `totalBytes` decoded bytes: a genuine 1x1 `solidPng`, padded
+ *  with a `tEXt` chunk sized to land on the exact target, so the byte-length cap under test is what
+ *  fires (or doesn't) rather than "unreadable image data". */
+function pngOfExactSize(totalBytes: number): Buffer {
+  const base = solidPng(1);
+  const CHUNK_OVERHEAD = 12; // tEXt framing: length(4) + type(4) + crc(4); data IS the padding
+  const needed = totalBytes - base.length - CHUNK_OVERHEAD;
+  if (needed < 0) throw new Error(`target ${totalBytes} smaller than the base PNG's own ${base.length} bytes`);
+  const iendStart = base.length - 12; // IEND is always exactly 12 bytes: len(4)+type(4)+crc(4), no data
+  const padded = Buffer.concat([base.subarray(0, iendStart), pngChunk("tEXt", Buffer.alloc(needed, 0x20)), base.subarray(iendStart)]);
+  if (padded.length !== totalBytes) throw new Error(`padding arithmetic off: got ${padded.length}, wanted ${totalBytes}`);
+  return padded;
+}
+function imageBlockOfDecodedBytes(n: number): UserContentBlock { return imageBlock(pngOfExactSize(n)); }
+/** A base64 STRING of EXACTLY `n` characters that still decodes to a tiny, fully-legal 1x1 PNG: grown
+ *  with trailing NEWLINE filler, which the canonicalization cell above already proves the decoder
+ *  ignores — so only the base64 STRING-LENGTH check (`data.length`, before decode) can be what fires. */
+function imageBlockOfBase64Length(n: number): UserContentBlock {
+  if (n < PNG_1X1.length) throw new Error(`target ${n} shorter than the base image's own base64 length ${PNG_1X1.length}`);
+  return { type: "image", source: { type: "base64", media_type: "image/png", data: PNG_1X1 + "\n".repeat(n - PNG_1X1.length) } };
+}
+
+describe("I2 boundary matrix — fixture guard", () => {
+  it("imageBlockOfDecodedBytes produces a block that actually validates (the byte cap fires, not a header error)", () => {
+    const r = validateImageBlock(imageBlockOfDecodedBytes(1000) as UserContentBlock & { type: "image" });
+    expect(r.ok).toBe(true);
+  });
+});
+
+const survives = (out: UserContentBlock[]) => out.some((b) => b.type === "image");
+const failureText = (out: UserContentBlock[]) =>
+  out.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+
+describe.each([
+  // ── source base64 STRING length. Trailing-newline filler is padding-safe: only the LENGTH check
+  //    can be what fires; reason must name THIS limit, not a later one.
+  { name: "MAX_BASE64_INPUT_BYTES", cap: MAX_BASE64_INPUT_BYTES,
+    mk: (n: number) => [imageBlockOfBase64Length(n)], reasonAtOver: /base64 input exceeds/ },
+  // ── decoded bytes of ONE image
+  { name: "POST_PROCESS_BYTE_BUDGET", cap: POST_PROCESS_BYTE_BUDGET,
+    mk: (n: number) => [imageBlockOfDecodedBytes(n)], reasonAtOver: /image data exceeds/ },
+  // ── declared PIXEL dimension on the long side (real PNG headers, probe-113 pattern)
+  { name: "MAX_DIMENSION", cap: MAX_DIMENSION,
+    mk: (n: number) => [imageBlock(solidPng(n))], reasonAtOver: /exceed the .*px limit/ },
+])("I2 boundary: $name", ({ cap, mk, reasonAtOver }) => {
+  it.each(triple(cap))("$label", ({ at, passes }) => {
+    const out = normalizeTurnInput(mk(at)) as UserContentBlock[];
+    expect(survives(out)).toBe(passes);
+    if (!passes) expect(failureText(out)).toMatch(reasonAtOver);
+  });
+});
+
+it.each(triple(MAX_AGGREGATE_BYTES))("I2 boundary: MAX_AGGREGATE_BYTES $label", ({ at, passes }) => {
+  // EVERY image in this row must be INDIVIDUALLY LEGAL, or the aggregate cap is never what fires
+  // (re-review r3): two images of `at/2` are ~2.5 MiB each and trip POST_PROCESS_BYTE_BUDGET (512,000)
+  // first, so the cap+1 row would go red for the wrong reason and cap−1/cap could not retain both.
+  // Distribute instead: N images at exactly the per-image budget, plus one residual that carries the
+  // ±1. At MAX_AGGREGATE_BYTES = 5,242,880 and POST_PROCESS_BYTE_BUDGET = 512,000 that is ten full
+  // images (5,120,000 B) + a residual of 122,879 / 122,880 / 122,881 — all eleven under the per-image
+  // budget, and eleven is inside MAX_IMAGES_PER_PROMPT (20). Derived, never typed as literals.
+  const full = Math.floor(MAX_AGGREGATE_BYTES / POST_PROCESS_BYTE_BUDGET); // 10
+  const residual = at - full * POST_PROCESS_BYTE_BUDGET; // 122,879 / 122,880 / 122,881
+  expect(residual).toBeGreaterThan(0);
+  expect(residual).toBeLessThanOrEqual(POST_PROCESS_BYTE_BUDGET); // guard: the row is legal per-image
+  // A leading text block, same reason as elsewhere in this suite: an all-image array with no text is
+  // I1's "stranded turn" shape and would otherwise pick up a synthetic `[Image #N]` label, which is not
+  // what this cell is testing — "nothing else fired" means nothing beyond this marker.
+  const blocks: UserContentBlock[] = [
+    { type: "text", text: "x" },
+    ...Array.from({ length: full }, () => imageBlockOfDecodedBytes(POST_PROCESS_BYTE_BUDGET)),
+    imageBlockOfDecodedBytes(residual),
+  ];
+  const out = normalizeTurnInput(blocks) as UserContentBlock[];
+  // The LAST block is the one that either fits or does not: the walk is in order and the running
+  // total is only crossed by the residual.
+  expect(out.filter((b) => b.type === "image")).toHaveLength(passes ? full + 1 : full);
+  if (!passes) expect(failureText(out)).toMatch(/turn's total image size exceeds/);
+  else expect(failureText(out)).toBe("x"); // nothing else fired
+});
+
+it.each(triple(MAX_IMAGES_PER_PROMPT))("I2 boundary: MAX_IMAGES_PER_PROMPT $label", ({ at, passes }) => {
+  const out = normalizeTurnInput([{ type: "text", text: "x" }, ...Array.from({ length: at }, () => img())]) as UserContentBlock[];
+  expect(out.filter((b) => b.type === "image")).toHaveLength(passes ? at : MAX_IMAGES_PER_PROMPT);
+  if (!passes) expect(failureText(out)).toContain(`too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})`);
+});
+
+it.each(triple(MAX_CONTENT_BLOCKS))("I2 boundary: MAX_CONTENT_BLOCKS $label", ({ at, passes }) => {
+  const out = normalizeTurnInput(textBlocks(at)) as UserContentBlock[];
+  expect(out).toHaveLength(passes ? at : MAX_CONTENT_BLOCKS);
+  // The sentinel reserves its OWN slot (round-3 F4): at cap+1, kept = cap−1 survivors, so the dropped
+  // count is always 2 here (the one true overflow block PLUS the slot the sentinel itself displaced),
+  // never 1 — matching the "65 blocks → +2 dropped" cells proven above under the same construction.
+  if (!passes) expect((out.at(-1) as { text: string }).text).toMatch(/^\[\+2 more blocks dropped: /);
+});
+
+it.each(triple(MAX_TOTAL_TEXT))("I2 boundary: MAX_TOTAL_TEXT $label (bare string)", ({ at, passes }) => {
+  const out = normalizeTurnInput("x".repeat(at)) as string;
+  expect(out.length <= MAX_TOTAL_TEXT).toBe(true);
+  expect(out.endsWith(TRUNCATION_SUFFIX)).toBe(!passes);
+  if (passes) expect(out).toHaveLength(at);
+});
+
+it.each(triple(MAX_TOTAL_TEXT))("I2 boundary: MAX_TOTAL_TEXT $label (array form, summed)", ({ at, passes }) => {
+  const half = Math.floor(at / 2);
+  const out = normalizeTurnInput([{ type: "text", text: "x".repeat(half) }, { type: "text", text: "x".repeat(at - half) }]) as UserContentBlock[];
+  const total = out.reduce((n, b) => n + (b.type === "text" ? b.text.length : 0), 0);
+  expect(total).toBeLessThanOrEqual(MAX_TOTAL_TEXT);
+  expect((out.at(-1) as { text: string }).text.endsWith(TRUNCATION_SUFFIX)).toBe(!passes);
+});
+
+// =====================================================================================================
+// Step 3c: the two new entry points share one implementation.
+
+describe("I2: normalizeValidatedBlocks and validateImageBlock — the staged path shares one implementation", () => {
+  it("normalizeValidatedBlocks == normalizeTurnInput minus the decode", () => {
+    const blocks = [{ type: "text", text: "" }, img()] as UserContentBlock[];
+    const pre = blocks.map((b) => (b.type === "image" ? (validateImageBlock(b) as { ok: true; block: UserContentBlock }).block! : b));
+    expect(normalizeValidatedBlocks(pre)).toEqual(normalizeTurnInput(blocks));
+  });
+
+  it("normalizeValidatedBlocks does NOT decode — a block whose data is nonsense passes through", () => {
+    // The staged path guarantees its blocks were already validated; this function must therefore not
+    // re-check them. A cell that asserts the opposite would let an implementation re-decode and still pass.
+    const bogus = { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } } as const;
+    expect(normalizeValidatedBlocks([{ type: "text", text: "x" }, bogus])).toEqual([{ type: "text", text: "x" }, bogus]);
+  });
+
+  it("validateImageBlock returns the CANONICAL block and its decoded byte count", () => {
+    const noisy = PNG_1X1.replace(/(.{20})/g, "$1\n");
+    const r = validateImageBlock({ type: "image", source: { type: "base64", media_type: "image/png", data: noisy } });
+    expect(r.ok).toBe(true);
+    expect((r as any).block.source.data).toBe(PNG_1X1);
+    expect((r as any).decodedBytes).toBe(Buffer.from(PNG_1X1, "base64").length);
   });
 });
