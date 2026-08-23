@@ -494,17 +494,31 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     **The v1 bound, stated because a client has to plan around it.** `image.url` admits `data:` URLs only
     — Codex parity, not a shortfall: Codex's own app-server refuses remote image URLs
     (`codex-rs/app-server/src/request_processors/turn_processor.rs`, `validate_user_input_image_urls` →
-    `REMOTE_IMAGE_URL_ERROR`) — and this server caps an inbound frame at 256 KiB (`appserver/peer.ts`
-    `MAX_IN`), so the schema caps one data: URL at `MAX_DATA_URL_CHARS` = 240,000 characters, **≈190 KB
-    decoded** once the JSON envelope is paid for. A larger image reaches the model over `localImage`, an
-    ABSOLUTE path on a filesystem the server shares — so a LOCAL client has no ceiling worth naming, and
-    **a REMOTE client with an image over ~190 KB has no v1 path at all.** That is the reason this gap
-    closes with a bound rather than as a flat "images work": the remaining case is named as the open
-    follow-up (a staged or chunked upload — the D-M4-8 bridge family), not quietly scored away. The rest
-    of the published caps, so no client has to learn them by refusal: `MAX_INPUT_ITEMS` = 64 items per
-    turn and the data-URL length are SHAPE errors (`-32602`); `MAX_IMAGES_PER_PROMPT` = 20, counted over
-    the DECLARED items before a byte is read, plus a 512,000-byte per-image budget and a 5 MiB per-turn
-    aggregate, degrade the offending image to an appended text note and let the turn run.
+    `REMOTE_IMAGE_URL_ERROR`) — and its length is capped in the schema at `MAX_DATA_URL_CHARS` =
+    240,000 characters, **which is exactly 180,000 bytes ≈ 180 KB decoded**. That is THE number a client
+    builds to. The 256 KiB inbound frame cap (`appserver/peer.ts` `MAX_IN`) is the reason the schema cap
+    exists, but it is not the binding one: a full 256 KiB frame is 256 KiB × ¾ ≈ 192 KiB of decoded image
+    at most, before the JSON envelope is paid for, and the 240,000-character cap deliberately undercuts
+    that. Sizing to the FRAME is therefore how a client gets a `-32602` it did not expect — 190 KB of
+    image is a ~253,000-character data: URL, and the schema refuses it. A larger image reaches the model
+    over `localImage`, an ABSOLUTE path on a filesystem the server shares — so a LOCAL client has no
+    ceiling worth naming, and **a REMOTE client with an image over ~180 KB has no v1 path at all.** That
+    is the reason this gap closes with a bound rather than as a flat "images work": the remaining case is
+    named as the open follow-up (a staged or chunked upload — the D-M4-8 bridge family), not quietly
+    scored away. The rest of the published caps, so no client has to learn them by refusal:
+    `MAX_INPUT_ITEMS` = 64 items per turn and the data-URL length are SHAPE errors (`-32602`);
+    `MAX_IMAGES_PER_PROMPT` = 20, counted over the DECLARED items before a byte is read, plus a
+    512,000-byte per-image budget (`POST_PROCESS_BYTE_BUDGET`) and a 5 MiB per-turn aggregate, degrade
+    the offending image to an appended text note and let the turn run. Two more bounds bite on the BYTES
+    and degrade the same way, and they apply to `localImage` as much as to a data: URL, so a LOCAL
+    client's "no ceiling" is about length, not about content: **`MAX_DIMENSION` = 2000 px**
+    (`src/tui/clipboardImage.ts`, enforced in `turnItems.ts`'s `admitBytes`) drops any image wider or
+    taller than that — an ordinary retina screenshot exceeds it — and **only PNG and JPEG are readable
+    at all**, because `admitBytes` derives the media type by sniffing (`pngDimensions`, then
+    `jpegDimensions`) rather than trusting the declaration, so a GIF or WebP degrades with
+    `unreadable image data`. Neither is expressible in the published JSON Schema — `image.url`'s
+    `.describe` says "a base64 `data:` URL" and nothing about format or size — which is exactly why they
+    are written out here.
 
     Two things were worth separating, because only one of them was catchable — and that half outlives the
     gap. The MISSING ROW went red on the registry-coverage gate the moment the op landed — correctly, and
@@ -516,8 +530,8 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     further down. Closing THAT means walking op SHAPES, not op names — still unbuilt, and still named here
     rather than assumed. This landing is the same blindness from the other side: it widened `turn/start`'s
     own params without moving a single walked token, so nothing generated could report it. Which is why
-    the `prompt` and `turn/start` rows now spell the union out in prose — the only instrument that can see
-    a field is a sentence.
+    the `prompt` row — whose protocol-method cell IS `turn/start` — spells the union out in prose, here
+    and in the registration-order list above: the only instrument that can see a field is a sentence.
 
 **Since M3 Task 10 the `both` in this table is literal, not forward-looking — and since Task 11 that
 holds for the four swap-family rows too (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), whose

@@ -19,11 +19,12 @@
 // its OWN thread, so leg 1's image is not in its context and cannot be answered from memory.
 //
 // ── THE TWO ITEM KINDS, BOTH LIVE ──────────────────────────────────────────────────────────────────
-// LEG 1 sends a `data:` URL — the path bounded by the 256 KiB inbound frame (~190 KB decoded), the one a
-// REMOTE client has. LEG 2 sends a `localImage` absolute path — the unbounded path, resolved by the
-// one-descriptor bounded read, and the only way a client gets a large image to the model in v1. They are
-// different resolution routes in `appserver/turnItems.ts` and a green run on one says nothing about the
-// other.
+// LEG 1 sends a `data:` URL — the path bounded by `MAX_DATA_URL_CHARS` (240,000 chars = 180 KB decoded,
+// which binds before the 256 KiB inbound frame does), the one a REMOTE client has. LEG 2 sends a
+// `localImage` absolute path — the length-unbounded path (the byte, dimension and format caps still
+// apply), resolved by the one-descriptor bounded read, and the only way a client gets a large image to
+// the model in v1. They are different resolution routes in `appserver/turnItems.ts` and a green run on
+// one says nothing about the other.
 //
 // Contract assertions (these test OUR code and fail only if we broke something): `turn/start` reports an
 // in-flight turn, the turn completes, nothing parks on a `bypassPermissions` thread, and the `userMessage`
@@ -157,7 +158,6 @@ live("app-server image input — an items turn delivers real pixels to a real en
   let listener: { port: number; close(): Promise<void> };
   let ws: WebSocket;
   let a: RpcClient;
-  let leg1Text = "";       // leg 2's cross-leg discriminator
   const held = new Set<string>();
 
   /** A thread configured as every other app-server live acceptance configures one: `settingSources: []`
@@ -205,7 +205,15 @@ live("app-server image input — an items turn delivers real pixels to a real en
 
   afterAll(async () => {
     try {
+      // The session ids must be read BEFORE the records go: `thread/delete` addresses the STORE, and the
+      // registry row is the only thing that maps a thread id to it.
+      const sessions = [...held].map((id) => server?.registry.get(id)?.sessionId).filter((s): s is string => !!s);
       for (const id of [...held]) { try { await a?.call("thread/close", { threadId: id }, 30_000); } catch { /* already closed */ } }
+      // The one thing a KEYED run leaves in a real store: these threads ran at a temp `cwd`, so their
+      // transcripts land in the operator's own `~/.claude/projects/<slug of that cwd>`. Removed here
+      // rather than left as litter (`appserver-m5-acceptance.test.ts`'s precedent) — `thread/delete`
+      // refuses BUSY on a live thread, which is why it follows the closes rather than replacing them.
+      for (const sessionId of sessions) { try { await a?.call("thread/delete", { threadId: sessionId }, 30_000); } catch { /* best-effort */ } }
       try { await server?.shutdown(); } catch { /* best-effort */ }
       ws?.close();
       try { await listener?.close(); } catch { /* best-effort */ }
@@ -228,7 +236,6 @@ live("app-server image input — an items turn delivers real pixels to a real en
     // MODEL-DEPENDENT — the point of the whole file: the reply is about the pixels.
     expect(text, `the reply did not name the left band: ${JSON.stringify(text)}`).toContain("red");
     expect(text, `the reply did not name the right band: ${JSON.stringify(text)}`).toContain("blue");
-    leg1Text = text;
   }, 600_000);
 
   it("LEG 2 — a `localImage` item on its own thread: a different pair, read off the filesystem", async () => {
@@ -242,13 +249,18 @@ live("app-server image input — an items turn delivers real pixels to a real en
     ], "leg 2");
 
     expect(userEcho, "the user echo did not carry the canonical [Image #N] marker").toContain("[Image #1]");
+    // Same ordering claim as leg 1's, on the OTHER resolution route — the canonical shape is a property of
+    // `resolveInputItems`, not of how the bytes were obtained, so checking it once would leave half of it
+    // unpinned.
+    expect(userEcho.indexOf("[Image #1]"), "the image echo must follow the text fold, not precede it").toBeGreaterThan(0);
 
     // MODEL-DEPENDENT. Magenta is named several ways by different models; the alternation admits the
-    // synonyms and nothing else — "red"/"blue" would not satisfy it.
+    // synonyms and nothing else — "red"/"blue" would not satisfy it. These two ARE the cross-leg
+    // discriminator: no string that satisfies them could have satisfied leg 1's `red` + `blue`, so a model
+    // answering from the prompt alone rather than the pixels cannot pass both legs with one reply. (A
+    // literal `not.toEqual(leg1Text)` was dropped: it adds nothing here and passes vacuously whenever
+    // leg 1 is filtered out with `-t`, which a quota-bounded keyed run has every reason to do.)
     expect(text, `the reply did not name the left band: ${JSON.stringify(text)}`).toContain("yellow");
     expect(text, `the reply did not name the right band: ${JSON.stringify(text)}`).toMatch(/magenta|purple|pink/);
-    // The discriminator across legs: two different images, two different answers. A model answering from
-    // the prompt alone would have no reason to change its reply between them.
-    expect(text, "both legs produced the same answer — the images are not being read").not.toEqual(leg1Text);
   }, 600_000);
 });

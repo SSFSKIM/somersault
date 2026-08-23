@@ -20,8 +20,11 @@ image URLs (`codex-rs/app-server/src/request_processors/turn_processor.rs`,
 `validate_user_input_image_urls` → `REMOTE_IMAGE_URL_ERROR`).
 
 **The honest v1 bound, published rather than hidden:** the app-server wire caps inbound frames at
-256 KiB (`peer.ts` MAX_IN), so a `data:` image tops out around ~190 KB decoded. Bigger images reach the
-model via `localImage` (shared filesystem). A REMOTE client with a >190 KB image has NO v1 path — named
+256 KiB (`peer.ts` MAX_IN) — 256 KiB × ¾ ≈ 192 KiB of decoded image at best — and the SCHEMA caps one
+`data:` URL tighter still, at `MAX_DATA_URL_CHARS = 240_000` characters = **exactly 180,000 bytes
+(≈180 KB) decoded**. The schema cap is the binding one, so 180 KB is the number a client builds to;
+sizing to the frame instead earns a `-32602`. Bigger images reach the
+model via `localImage` (shared filesystem). A REMOTE client with a >180 KB image has NO v1 path — named
 as the follow-up (a staged/chunked upload, the D-M4-8 bridge family), and the scorecard row says so
 instead of scoring the gap fully closed.
 
@@ -138,8 +141,9 @@ path.
 ## Scorecard closure (same change, not a follow-up)
 
 `docs/parity/appserver.md`: gap 11 closes **with the bound stated** — the app-server's image surface is
-turn-input items; remote images are bounded by the frame cap (~190 KB decoded) with larger-remote named
-as open follow-up; `stageImage`'s row moves `unscored → N/A` ("host-local transport by design; the
+turn-input items; remote images are bounded by the schema's data-URL cap (240,000 chars = 180 KB decoded,
+which binds before the 256 KiB frame does) with larger-remote named as open follow-up;
+`stageImage`'s row moves `unscored → N/A` ("host-local transport by design; the
 app-server bridges to it as a staging CLIENT on the fleet path"); the `prompt` row's gap-11 note and
 the `turn/start` row update (the row now names the input union so the name-level walker's blindness to
 field shapes is at least written down); the per-landing sweep restates. `node scripts/drift-check.mjs`
@@ -188,8 +192,9 @@ Keyed (quota-gated — run after 2026-08-26 1pm):
   makes the skew a -32602 by construction. Rejected: capability advertisement (heavier, and the union
   already guarantees loudness).
 - **data:-only, bounded, published.** Codex refuses remote URLs too (turn_processor.rs — the rev-1 claim
-  that Codex passes them to the model was WRONG and is corrected); the frame cap makes the real remote
-  bound ~190 KB decoded, and the spec publishes it instead of discovering it in production. Rejected:
+  that Codex passes them to the model was WRONG and is corrected); the 256 KiB frame would carry ≈192 KiB
+  decoded and the schema's 240,000-character cap undercuts it, making the real remote bound 180 KB
+  decoded, and the spec publishes it instead of discovering it in production. Rejected:
   server-side http fetch (SSRF surface, and not even parity); raising the frame cap (a protocol-wide
   knob moved for one field); v1 chunked upload (real, but its own design — named follow-up).
 - **Resolution inside the execution slot; admission on raw input.** The M6 stale-check lesson applied
@@ -294,7 +299,8 @@ subscriber. None was a rewrite; each was a property the code did not yet state.
 
 **Gaps left open, each deliberately:**
 
-- **A REMOTE client with an image over ~190 KB has no v1 path.** The named follow-up (staged or chunked
+- **A REMOTE client with an image over ~180 KB has no v1 path** (the schema's 240,000-character data-URL
+  cap, which binds before the 256 KiB frame does)**.** The named follow-up (staged or chunked
   upload, the D-M4-8 bridge family). This is the one place the closure is a bound rather than a "yes".
 - **`turn/steer` stays text-only** — an X-gated surface, per the decision log.
 - **No end-to-end staging-window test** (see Surprises): the host's synchronous `stageImage` dispatch

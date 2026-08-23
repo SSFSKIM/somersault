@@ -218,7 +218,7 @@ describe("resolveInputItems — data: URLs", () => {
 // =====================================================================================================
 describe("resolveInputItems — localImage bounded reads", () => {
   it("reads a real file and emits it as a sniffed block", async () => {
-    // (f) Happy path. The 190 KB frame cap makes `localImage` the only route for a real screenshot, so
+    // (f) Happy path. The 180 KB data-URL cap makes `localImage` the only route for a real screenshot, so
     // this is the path that carries most of the feature's actual traffic.
     const png = solidPng(4);
     const path = join(root, "shot.png");
