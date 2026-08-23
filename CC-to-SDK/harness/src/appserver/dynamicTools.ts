@@ -27,7 +27,13 @@
 //   `mcp__ops__Read` to the model and can never shadow the real `Read` — but it reads as `Read` in a
 //   client's own tool list, and that is worth refusing. See `RUNTIME_ONLY_NATIVE` for what that means for
 //   the catalog's completeness.
+//
+// THE RESULT SIDE LIVES HERE TOO (bottom of the file): `toCallResult` turns a client's answer into the MCP
+// content blocks the model sees. It is here because it enforces the RESULT caps, and the caps live in one
+// file — the registry that holds the parked call is `dynamicCalls.ts`.
 import { jsonSchemaToZod } from "./schemaToZod.js";
+import { parseDataUrl } from "./turnItems.js";
+import type { CallToolResultLike, ToolCallContentItem } from "./dynamicCalls.js";
 
 /** Total declared functions across every namespace plus the bare ones. */
 export const MAX_DYNAMIC_TOOLS = 32;
@@ -37,7 +43,8 @@ export const MAX_TOOL_DESCRIPTION_CHARS = 2_000;
  *  and total JSON values. Measured BEFORE conversion — see `measureSchema`.
  *
  *  THE NODE CAP IS SET TO STAY CO-BINDING WITH THE BYTE CAP. `walk` counts every JSON value, so an
- *  ordinary described property costs ~2 nodes for ~22 bytes; at the plan's original 64 a fifteen-property
+ *  ordinary described property costs ~4 nodes for ~90 bytes (the property object, its `type`, its
+ *  `description`, and its entry in `required`); at the plan's original 64 a fifteen-property
  *  search tool was refused at 1,449 bytes — 18% of the byte cap — which made the node count the only
  *  effective limit and put it inside the range of tools people actually write. 256 nodes is ≈5,600 bytes
  *  at that density (~63 described properties), so the byte cap goes back to being the real ceiling and the
@@ -202,12 +209,13 @@ type Measurement = { bytes: number; depth: number; nodes: number };
  *  smallest one-property schema measures depth 3 (root → `properties` → the property).
  *
  *  WHAT KEEPS THIS RECURSION SAFE IS NOT THE BYTE CAP — that is compared afterwards, in `checkFunction`.
- *  It is the `JSON.stringify` ahead of it in `measureSchema`: its recursion is the heavier of the two, so
- *  a pathologically deep blob overflows THERE first, the `catch` returns `null`, and the caller answers
- *  `inputSchema is not serializable` without this function ever running. The margin was measured, not
- *  assumed — `stringify` gave way at ~8k levels of nesting where this walk still returned, and the
- *  crossover moves with the host's stack but keeps its order. Every outcome is a refusal carrying a
- *  message; nothing on this path may throw, or the method answers -32603 instead of naming the offender. */
+ *  It is that `measureSchema` runs this walk INSIDE the same `try` as the `JSON.stringify`, so a
+ *  pathologically deep blob overflowing either one returns `null` and the caller answers `inputSchema is
+ *  not serializable`. In practice `stringify` gives way first — its recursion is the heavier of the two,
+ *  measured at ~8k levels of nesting where this walk still returned — but that is a MARGIN, and a margin
+ *  moves with the host's stack. The guarantee is the enclosing `try`, not the margin. Every outcome is a
+ *  refusal carrying a message; nothing on this path may throw, or the method answers -32603 instead of
+ *  naming the offender. */
 function walk(value: unknown): { depth: number; nodes: number } {
   if (typeof value !== "object" || value === null) return { depth: 0, nodes: 1 };
   let depth = 0;
@@ -223,15 +231,16 @@ function walk(value: unknown): { depth: number; nodes: number } {
 /** `null` when the schema cannot even be serialized — the one non-measurable input, reported as its own
  *  refusal rather than crashing the walk. */
 function measureSchema(schema: Record<string, unknown>): Measurement | null {
-  let serialized: string;
   try {
-    serialized = JSON.stringify(schema);
+    const serialized = JSON.stringify(schema);
+    // `undefined` when the blob serializes to nothing (a lone `undefined`, a function) — not a string, and
+    // nothing downstream can measure it.
+    if (typeof serialized !== "string") return null;
+    const { depth, nodes } = walk(schema);
+    return { bytes: Buffer.byteLength(serialized, "utf8"), depth, nodes };
   } catch {
     return null;
   }
-  if (typeof serialized !== "string") return null;
-  const { depth, nodes } = walk(schema);
-  return { bytes: Buffer.byteLength(serialized, "utf8"), depth, nodes };
 }
 
 export type ValidationResult = { ok: true } | { ok: false; message: string };
@@ -322,4 +331,77 @@ export function validateDeclarations(specs: DynamicToolSpec[], occupiedServerNam
   }
 
   return { ok: true };
+}
+
+// -------------------------------------------------------------------------------------------------
+// THE RESULT SIDE. A client's `tool/callResult` carries wire items; the model needs MCP content blocks.
+// This is that conversion, and it is the LAST place a dynamic tool call can be judged — which decides
+// everything about how it fails:
+//
+//   IT SETTLES, IT NEVER REFUSES. An over-cap or malformed result is a bad ANSWER, not a bad REQUEST. The
+//   method still returns `{}`; the model is handed an `isError` result naming what went wrong. A -32602
+//   here would leave the call parked with the client believing it had answered.
+//
+//   IT NEVER THROWS (D-M4-9). Same reason, one step further: a throw would surface as -32603 AND leave the
+//   call parked. The item shapes below are zod-validated at the wire, so nothing here is expected to fail
+//   — the enclosing `try` is what makes "expected" unnecessary.
+
+/** One converted block plus what it costs the budget. */
+type BlockVerdict = { ok: true; block: Record<string, unknown>; bytes: number } | { ok: false; reason: string };
+
+const errorResult = (note: string): CallToolResultLike => ({ content: [{ type: "text", text: note }], isError: true });
+
+/** Wire item → MCP block. The media branches keep the DECLARED media type (`parseDataUrl`) rather than
+ *  sniffing it the way the image-input resolver does: an MCP image/audio block carries a `mimeType`, and
+ *  audio has no sniffer to derive one from. What is left checkable is the FAMILY, and that check is worth
+ *  making here — an `inputImage` declaring `text/plain` reaches the model as an image block the API will
+ *  reject, failing the whole request instead of this one tool call. */
+function toBlock(item: ToolCallContentItem): BlockVerdict {
+  if (item.type === "inputText") {
+    return { ok: true, block: { type: "text", text: item.text }, bytes: Buffer.byteLength(item.text, "utf8") };
+  }
+  const [url, family, blockType] = item.type === "inputImage"
+    ? [item.imageUrl, "image/", "image"]
+    : [item.audioUrl, "audio/", "audio"];
+  const parsed = parseDataUrl(url);
+  if (!parsed.ok) return { ok: false, reason: parsed.reason };
+  if (!parsed.mimeType.toLowerCase().startsWith(family)) {
+    return { ok: false, reason: `declared MIME type "${parsed.mimeType}" is not ${family}*` };
+  }
+  return {
+    ok: true,
+    block: { type: blockType, data: parsed.payload, mimeType: parsed.mimeType },
+    // The base64 payload is charged VERBATIM — it is what travels, and it is ~4/3 of the bytes it decodes
+    // to. Nothing here decodes anything: this layer never needs the bytes, only their cost.
+    bytes: Buffer.byteLength(parsed.payload, "utf8") + Buffer.byteLength(parsed.mimeType, "utf8"),
+  };
+}
+
+/** The client's answer, as the model will see it. `success:false` is the client's own tool error and keeps
+ *  its content; every cap violation replaces the content with a note naming the cap.
+ *
+ *  THE BUDGET IS UTF-8 BYTES OF THE EMITTED BLOCKS — every block's `text`/`data`/`mimeType` summed. Not
+ *  characters (60_000 Hangul characters are 180_000 bytes), and not the request's own size: the 256 KiB
+ *  inbound frame is a separate, larger bound the peer enforces before this is ever reached. */
+export function toCallResult(items: ToolCallContentItem[], success: boolean): CallToolResultLike {
+  try {
+    if (items.length > MAX_RESULT_ITEMS) {
+      return errorResult(`tool result has ${items.length} content items (max ${MAX_RESULT_ITEMS})`);
+    }
+    const content: Array<Record<string, unknown>> = [];
+    let bytes = 0;
+    for (const [index, item] of items.entries()) {
+      const verdict = toBlock(item);
+      // The index, because a note naming only the reason cannot say WHICH of sixteen items to fix.
+      if (!verdict.ok) return errorResult(`tool result content item ${index}: ${verdict.reason}`);
+      content.push(verdict.block);
+      bytes += verdict.bytes;
+    }
+    if (bytes > MAX_RESULT_PAYLOAD_BYTES) {
+      return errorResult(`tool result is ${bytes} bytes (max ${MAX_RESULT_PAYLOAD_BYTES})`);
+    }
+    return { content, isError: !success };
+  } catch (e) {
+    return errorResult(`tool result could not be converted: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }

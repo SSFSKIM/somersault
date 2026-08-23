@@ -34,7 +34,7 @@ import { MAX_IMAGES_PER_PROMPT } from "../host/imageStaging.js";
  *  degrade: an array this long is a malformed request, not a request with a bad image in it. */
 export const MAX_INPUT_ITEMS = 64;
 /** Bound on ONE `image.url`, in characters — Task 4's schema rejects a longer one as a shape error, and
- *  `decodeDataUrl` enforces it AGAIN on the payload it is about to decode, so the decode is bounded for
+ *  `parseDataUrl` enforces it AGAIN on the payload it is about to decode, so the decode is bounded for
  *  every caller and not only for the ones that came in through the schema. THIS cap is the binding number:
  *  240,000 base64 characters decode to exactly 180,000 bytes. The app-server's 256 KiB inbound frame cap
  *  (`peer.ts` MAX_IN) is the REASON the cap sits where it does — one framed image plus its JSON envelope
@@ -77,9 +77,21 @@ type ByteVerdict = { ok: true; buf: Buffer } | { ok: false; reason: string };
  *  to decode to this image". */
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 
-/** `data:<mediaType>;base64,<payload>` → bytes. The declared media type is READ PAST, never used: it is
- *  a claim, and `admitBytes` derives the real one from the header bytes. */
-function decodeDataUrl(url: string): ByteVerdict {
+export type DataUrlParse = { ok: true; payload: string; mimeType: string } | { ok: false; reason: string };
+
+/** `data:<mediaType>;base64,<payload>` → the still-encoded payload and the DECLARED media type, validated
+ *  but not decoded. Two callers with opposite needs for that media type, which is why the split exists:
+ *
+ *    THIS MODULE READS PAST IT (`decodeDataUrl` below). A declared type is a claim, and `admitBytes`
+ *    derives the real one from the header bytes — a PNG labelled `application/pdf` would otherwise fail
+ *    the WHOLE engine request against the SDK's media-type union.
+ *
+ *    M7's TOOL RESULTS KEEP IT (`dynamicTools.ts`'s `toCallResult`). An MCP image/audio block carries a
+ *    `mimeType`, and audio has no sniffer here to derive one from — so the declaration is all there is,
+ *    and the check that can still be made is the FAMILY (`image/*` vs `audio/*`), which lives there.
+ *
+ *  Everything else is shared and unchanged, including the payload bound below. */
+export function parseDataUrl(url: string): DataUrlParse {
   const comma = url.indexOf(",");
   const header = comma < 0 ? "" : url.slice(0, comma);
   if (comma < 0 || !header.startsWith("data:") || !/;base64$/i.test(header)) return { ok: false, reason: "not a base64 data: URL" };
@@ -90,10 +102,19 @@ function decodeDataUrl(url: string): ByteVerdict {
   // bounding the payload's LENGTH costs nothing and bounds that allocation. Measured on the payload
   // rather than the whole URL — laxer than Task 4's schema bound on `image.url` by exactly the `data:`
   // header, so nothing the schema admits is refused here, and a caller reaching this module directly
-  // still cannot hand it an unbounded string.
+  // still cannot hand it an unbounded string. (M7's result caps bind long before this one does: the
+  // payload is charged to `MAX_RESULT_PAYLOAD_BYTES` verbatim, character for byte.)
   if (payload.length > MAX_DATA_URL_CHARS) return { ok: false, reason: `data: URL exceeds the ${MAX_DATA_URL_CHARS}-character limit` };
   if (payload.length % 4 !== 0 || !BASE64.test(payload)) return { ok: false, reason: "malformed base64 payload" };
-  return { ok: true, buf: Buffer.from(payload, "base64") };
+  // `data:` … `;base64` — everything between is the declared type, parameters and all, verbatim.
+  return { ok: true, payload, mimeType: header.slice("data:".length, header.length - ";base64".length) };
+}
+
+/** `data:<mediaType>;base64,<payload>` → bytes. */
+function decodeDataUrl(url: string): ByteVerdict {
+  const parsed = parseDataUrl(url);
+  if (!parsed.ok) return parsed;
+  return { ok: true, buf: Buffer.from(parsed.payload, "base64") };
 }
 
 /** The ONE-DESCRIPTOR bounded read (`appserver/workspace.ts`'s `fs/read` established it): open once,
