@@ -16,6 +16,7 @@ import { TMUX_CC_NOTICE, makeTmuxProbe, selectRenderer, type RendererChoice, typ
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
+import type { AccountBridge } from "./accountBridge.js";
 import { turnDurationEnabled } from "./durationRow.js";
 import { promptSuggestionEnabled } from "./suggester.js";
 import { refreshExampleFiles } from "./placeholder.js";
@@ -43,7 +44,10 @@ export interface ChatClientOpts {
   // main.ts already runs for the welcome banner's billing label — a second consumer of one fact, not a
   // second round-trip. Absent on `ccx attach` and on a resume/continue launch (main.ts's `runChatClient`
   // callers), which is the notice's unknown arm. `initialCopyOnSelect` (F9 T-MOUSE T7) rides the same bag.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
+  // `accountBridge` (F10 T-MAINT item 1): the LATE channel for that same fact — the LIVE, unraced
+  // `accountInfo()` promise, so a cold handshake that missed the banner's budget can still reach the
+  // auto-mode notice before its own later deadline.
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; accountBridge?: AccountBridge };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;

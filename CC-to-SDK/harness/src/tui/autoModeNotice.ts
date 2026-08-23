@@ -38,3 +38,12 @@ export function shouldShowAutoModeNotice(prefs: CcxPrefs): boolean { return pref
 
 /** L547955. */
 export const AUTO_MODE_NOTICE_DELAY_MS = 800;
+
+/** F10 T-MAINT item 1 (spec review F17), NORMATIVE: the total budget the notice may spend learning the
+ *  launch's token source, measured from the instant its effect armed. `AUTO_MODE_NOTICE_DELAY_MS` of it
+ *  is already spent by the time the callback runs, so the callback waits the difference. Sized against
+ *  the two real numbers it sits behind: main.ts's 1500 ms banner budget plus this 800 ms delay is
+ *  ~2300 ms of cover for a measured ~1152 ms cold handshake, and 3000 leaves the tail some room without
+ *  ever letting a mute engine hold the notice open. Past it the notice takes the unknown arm — which
+ *  SHOWS the cost sentence, because silence about billing is worse than a sentence that may not apply. */
+export const ACCOUNT_NOTICE_DEADLINE_MS = 3000;
