@@ -393,6 +393,25 @@ describe("I3e: the positive mid-turn cell", () => {
   });
 });
 
+describe("I3e (Task 11 fix wave): the per-turn aggregate cap — steer path, rollback", () => {
+  it("a steer reservation whose decodedBytes exceed MAX_AGGREGATE_BYTES is refused and aborted, the stage staying reservable", async () => {
+    // Mirrors I3d's own aggregate-cap cell above (line ~290), but drives a real `turn/steerContent`
+    // against a thread genuinely mid-turn: `prepareStagedContent`'s gate 8 (the aggregate-cap abort) is
+    // shared BYTE-FOR-BYTE between the two callers, so a reviewer who diverges that abort along caller
+    // identity (skip it when the capability check is `requireSteerContent`) would leave a steer-path
+    // reservation LEAKED — the full suite stays green because nothing else exercises this combination.
+    const validate = vi.fn((b: UserContentBlock & { type: "image" }) => ({ ok: true as const, block: b, decodedBytes: MAX_AGGREGATE_BYTES + 1 }));
+    const registry = new ImageStageRegistry({ validate });
+    const engine = parkedContentEngine();
+    const { client, threadId } = await realPeerPair({ session: engine.session, deps: { imageStages: registry } });
+    await client.call("turn/start", { threadId, input: "first" }); // now busy WITH A TURN — gate 4 passes
+    await client.call("image/stage", { stageId: "s1", seq: 0, last: true, bytesTotal: 4, mediaType: "image/png", data: "AAAA" });
+    await expect(client.call("turn/steerContent", { threadId, stagedImageIds: ["s1"] })).rejects.toThrow(/exceeds the/);
+    expect(registry.stats()).toMatchObject({ stageCount: 1, reservedCount: 0 }); // the abort fired — still reservable
+    expect(engine.steerContent).not.toHaveBeenCalled(); // refused before ever reaching the capability call
+  });
+});
+
 describe("I3e: gate 4 — eligibility is a property of the thread, not the engine build", () => {
   it("on an idle thread, turn/steerContent answers \"no turn in flight\" and the stage stays reservable", async () => {
     const engine = contentEngine();
