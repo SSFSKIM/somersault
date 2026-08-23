@@ -190,6 +190,14 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     // users (L174997) — and the pre-table ctrl+c hook (`useSelectionLifetime`) stays: canon keeps both, its
     // own interception at L551764-551772 sitting beside these bindable actions.
     "ctrl+shift+c": "selection:copy", "cmd+c": "selection:copy",
+    // F10 S5 — canon's own six keyboard extend chords for this context (L174817): `moveSelectionFocus`/
+    // `E0p` (L203359-203396 / L198799-198803) move the selection focus one cell within the scope, wrapping
+    // left/right across row bounds and downgrading a word/line span to a plain two-endpoint one. RECORDED
+    // DIVERGENCE: ccx's scope is each row's OWN `[gutterWidth+1, width+1]` bounds (the region-bounds v1
+    // scope this whole module already documents), not canon's uniform scope column.
+    "shift+left": "selection:extendLeft", "shift+right": "selection:extendRight",
+    "shift+up": "selection:extendUp", "shift+down": "selection:extendDown",
+    "shift+home": "selection:extendLineStart", "shift+end": "selection:extendLineEnd",
   }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",
@@ -430,6 +438,8 @@ export const VALID_ACTIONS: readonly string[] = [
   "settings:search",
   "tabs:next", "tabs:previous",
   "selection:copy", "selection:clear",   // F10 S3 — canon L174817 (bound) / L174997 (declared, unbound)
+  "selection:extendLeft", "selection:extendRight", "selection:extendUp", "selection:extendDown",
+  "selection:extendLineStart", "selection:extendLineEnd",   // F10 S5 — canon L174817
 ];
 
 /** Keys a USER may not rebind (upstream `vQr`/`d_s`/`p_s`, 06 §1.4), keyed by the canonical spec string — so

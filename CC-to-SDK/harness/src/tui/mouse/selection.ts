@@ -163,6 +163,68 @@ export function dragToSpanned(state: SelectionState, cell: Cell, rows: readonly 
   state.anchor = span.lo; state.focus = null;      // inside: collapse back to the span, which paints it again
 }
 
+/** F10 S5 — the six keyboard extend directions (canon's `Scroll` block, L174817: shift+left/right/up/down/
+ *  home/end → extendLeft/Right/Up/Down/LineStart/LineEnd). */
+export type ExtendDir = "left" | "right" | "up" | "down" | "lineStart" | "lineEnd";
+
+/** One grapheme forward / back within a row, in COLUMNS, via the same two helpers every other feature in
+ *  this module uses — so a wide cell, a combining mark and a gutter column all step exactly as a click on
+ *  them would resolve. `undefined` means "there is no next/previous cell in THIS row"; the caller wraps. */
+function nextColumn(row: HitRow, col: number): number | undefined {
+  const hit = columnToChar(row, Math.max(row.gutterWidth + 1, col));
+  if (!hit) return undefined;                                    // already at or past the row's end
+  const to = charToColumn(row, hit.charEnd);
+  return to <= row.width + 1 ? to : undefined;
+}
+function prevColumn(row: HitRow, col: number): number | undefined {
+  if (col <= row.gutterWidth + 1) return undefined;
+  const hit = columnToChar(row, col - 1);
+  return hit ? charToColumn(row, hit.charStart) : undefined;
+}
+
+/** Canon's `moveSelectionFocus` (L203359-203396) + `E0p` (L198799-198803): move `focus` one cell within the
+ *  region scope (ccx's own row-bounds scope — a recorded divergence from canon's uniform scope column, see
+ *  this module's own header). `left`/`right` wrap across row bounds at the row's own `[gutterWidth+1,
+ *  width+1]`. A live `anchorSpan` is CLEARED — canon's own deliberate downgrade of a word/line selection to
+ *  a plain two-endpoint one, transcribed rather than "improved" (a shift+arrow after a double-click that
+ *  kept the span would behave inconsistently with every later step of the same gesture). Returns `false`
+ *  when there is nothing to extend or nowhere to go, which is what lets the key fall through to the
+ *  composer (`FullscreenViewport.tsx`'s `moveFocus` wrapper). */
+export function moveSelectionFocus(state: SelectionState, dir: ExtendDir, rows: readonly HitRow[]): boolean {
+  // `E0p` (L198799-198803): a keyboard extend downgrades a word/line span to a plain two-endpoint
+  // selection. Deliberate in canon and transcribed rather than improved — a shift+arrow after a
+  // double-click that kept the span would behave inconsistently with every later step of the same gesture.
+  if (state.anchorSpan) { const s = state.anchorSpan; state.anchor = s.lo; state.focus = s.hi; state.anchorSpan = null; }
+  const from = state.focus ?? state.anchor;
+  if (!state.anchor || !from) return false;
+  const row = rows[from.row - 1];
+  if (!row) return false;
+  let next: Cell | undefined;
+  switch (dir) {
+    case "lineStart": next = { row: from.row, col: row.gutterWidth + 1 }; break;
+    case "lineEnd":   next = { row: from.row, col: row.width + 1 }; break;
+    case "up":        next = from.row > 1 ? { row: from.row - 1, col: from.col } : undefined; break;
+    case "down":      next = from.row < rows.length ? { row: from.row + 1, col: from.col } : undefined; break;
+    case "left": {
+      const within = prevColumn(row, from.col);
+      if (within !== undefined) { next = { row: from.row, col: within }; break; }
+      const above = rows[from.row - 2];
+      next = above ? { row: from.row - 1, col: above.width + 1 } : undefined;   // wrap across the row bound
+      break;
+    }
+    case "right": {
+      const within = nextColumn(row, from.col);
+      if (within !== undefined) { next = { row: from.row, col: within }; break; }
+      const below = rows[from.row];
+      next = below ? { row: from.row + 1, col: below.gutterWidth + 1 } : undefined;
+      break;
+    }
+  }
+  if (!next) return false;
+  state.focus = next;
+  return true;
+}
+
 /** Per-row highlighted COLUMN range — `colStart` inclusive, `colEnd` exclusive, both 1-based terminal
  *  columns, mirroring `CellAddress`'s own half-open `charStart`/`charEnd` convention (T1) rather than
  *  inventing a second one. `row` is the SAME 1-based index into the `rows` array `Cell.row` already uses. */

@@ -84,6 +84,14 @@ press()   { send_sgr "$1" 0  "$2" "$3" M; }   # left button down
 drag()    { send_sgr "$1" 32 "$2" "$3" M; }   # motion with button 0 held
 release() { send_sgr "$1" 0  "$2" "$3" m; }
 row_of()  { LC_ALL=C grep -n -- "$2" "$1" | head -1 | cut -d: -f1; }   # 1-based pane row of a needle
+# F10 S5 — a raw CSI sequence AFTER the leading ESC (e.g. "[1;2C" for shift+right), same hex-encoding trick
+# as `send_sgr` above (no shell quoting of ESC, exact bytes a terminal would deliver).
+send_csi() {                                # send_csi <session> <csi-text-without-ESC>
+  local s="$1" text="$2" hex="1b" i ch
+  for (( i=0; i<${#text}; i++ )); do printf -v ch '%02x' "'${text:$i:1}"; hex="$hex $ch"; done
+  # shellcheck disable=SC2086
+  tmux -L "$TM" send-keys -t "$s" -H $hex
+}
 # THE GESTURE ITSELF, WITH ZERO SLEEP INSIDE IT (see the header) — press, release, then whatever the caller
 # wants typed next, back to back in ONE call so nothing can land between the press and the completing key.
 tap_and_type() {                            # tap_and_type <session> <col> <row> <text>
@@ -373,6 +381,140 @@ run_word_drag_cell() {
   record "word-drag" "$rc"
 }
 
+# ── cell: extend-chords (keyless) — F10 S5 acceptance cell 4: the six keyboard extend chords ────────────
+# Stages "alpha beta gamma" through `!echo`, sweeps part of `alpha`, extends it with shift+right and reaches
+# the row's end with shift+end, proves the fall-through (no selection → shift+left reaches the composer),
+# and drives a `keybindings.json` override to prove the rebinding mechanism reaches a real handler.
+#   THE REBOUND KEY IS `alt+right`, NOT THE BRIEF'S OWN `ctrl+shift+y` EXAMPLE, AND THAT SUBSTITUTION IS
+# DELIBERATE — LIVE-VERIFIED, NOT ASSUMED. `useSelectionLifetime`'s pre-table hook (ChatApp.tsx, the same
+# hook `SELECTION_CLEAR_EXEMPT_BARE`/`SELECTION_EXTEND_KEYS` gate) discards ANY live selection on ANY key
+# whose raw NAME is not one of a short exempt list (escape/pageup/pagedown, ctrl+home/ctrl+end, or an
+# arrow/home/end carrying shift/alt/super) — checked by KEY NAME, not by which ACTION the table resolves it
+# to. `ctrl+shift+y` is not in that list, so pressing it discards the selection BEFORE `selection:copy`'s own
+# handler (`hitmapRef.current?.hasSelection()` gate) ever runs, and copies nothing — measured with a live
+# `ChatApp` mount and a mocked `copyText`: canon's OWN default `ctrl+shift+c` chord (F10 S3) hits the exact
+# same gap and also copies nothing (0 calls). This is a pre-existing S3-era interaction, not introduced by
+# this task and out of this task's scope to fix — recorded here and in the task report for the track owner.
+# `alt+right`'s raw name IS `right`, which IS in `SELECTION_EXTEND_KEYS` and carries `alt`, so it is EXEMPT
+# from the pre-table discard — the same reason this track's own six shift+arrow chords work at all — which
+# is what lets this cell prove the keybindings.json override mechanism itself without tripping the gap.
+EXTEND_CHORDS_B64="Z2FtbWE="   # `printf '%s' "gamma" | base64`
+run_extend_chords_cell() {
+  local s="ec-$RUN_ID" rc=0
+  local home="$SELECT_ROOT/$s-home"
+  echo "  cell extend-chords (keyless): !echo stages 'alpha beta gamma'; shift+right/shift+end; fall-through; keybindings.json override"
+  mkdir -p "$home/.claude/ccx"
+  # The override: `alt+right` (see the header above for why, not the brief's own `ctrl+shift+y` example) →
+  # `selection:copy`, merged on top of the default Scroll table by the `~/.claude/keybindings.json` loader.
+  # THE SHAPE IS `{"bindings": [{"context", "bindings"}]}` (`userBindings.ts`'s own `validate()`) — the
+  # brief's own literal example (`{"Scroll": {...}}`, no `bindings` array) silently loads as ZERO layers
+  # under the real validator (an object with no "bindings" key "contributes nothing, and says nothing" —
+  # userBindings.ts:102), measured live: that exact shape produced no override at all.
+  cat > "$home/.claude/keybindings.json" << 'KBJSON'
+{"bindings": [{"context": "Scroll", "bindings": {"alt+right": "selection:copy"}}]}
+KBJSON
+  # `copyOnSelect: false` so the release itself does NOT auto-copy — the only copy in this cell is the one
+  # the rebound chord fires, so its OSC 52 write is unambiguous evidence the override reached a real handler.
+  cat > "$home/.claude/ccx/prefs.json" << 'PREFSJSON'
+{"copyOnSelect": false}
+PREFSJSON
+  launch "$s" 100 24 "node $BIN" >/dev/null || { record "extend-chords" 1; kill_cell "$s"; return; }
+  wait_ready "$s" || { record "extend-chords" 1; kill_cell "$s"; return; }
+  tmux -L "$TM" send-keys -t "$s" -l "!echo alpha beta gamma"
+  tmux -L "$TM" send-keys -t "$s" Enter
+  local i=0
+  while [ "$i" -lt 40 ]; do frame "$s" | grep -qE '^  alpha beta gamma$' && break; sleep 0.25; i=$((i+1)); done
+  local cap="$SELECT_ROOT/ec-cap"; frame "$s" > "$cap"
+  local row; row=$(LC_ALL=C awk '/^  alpha beta gamma$/ {print NR; exit}' "$cap")
+  if [ -z "$row" ]; then
+    echo "      FAIL extend-chords: the command's own output line never painted"
+    cat "$cap" | sed 's/^/      | /'
+    kill_cell "$s"; record "extend-chords" 1; return
+  fi
+  local col_a esc frame_e
+  col_a=$(LC_ALL=C awk -v n="$row" 'NR==n {print index($0, "alpha")}' "$cap")
+  esc=$(printf '\033')
+
+  # sweep "alph" (cols col_a..col_a+3) — leaving 'a' out, so shift+right's growth to "alpha" is one column.
+  press   "$s" "$col_a" "$row"
+  drag    "$s" "$((col_a+3))" "$row"
+  release "$s" "$((col_a+3))" "$row"
+  sleep 0.5
+  frame_e=$(tmux -L "$TM" capture-pane -t "$s" -p -e)
+  if printf '%s' "$frame_e" | grep -aqE "${esc}\[48;2;[0-9]+;[0-9]+;[0-9]+malph${esc}\[(0|49)m"; then
+    echo "      ok   extend-chords: the initial sweep covers exactly 'alph'"
+  else
+    echo "      FAIL extend-chords: the initial sweep did not cover exactly 'alph'"
+    printf '%s' "$frame_e" | sed 's/^/      | /'
+    kill_cell "$s"; record "extend-chords" 1; return
+  fi
+
+  send_csi "$s" "[1;2C"   # shift+right
+  sleep 0.5
+  frame_e=$(tmux -L "$TM" capture-pane -t "$s" -p -e)
+  if printf '%s' "$frame_e" | grep -aqE "${esc}\[48;2;[0-9]+;[0-9]+;[0-9]+malpha${esc}\[(0|49)m"; then
+    echo "      ok   extend-chords: shift+right grew the span by exactly one column ('alph' -> 'alpha')"
+  else
+    echo "      FAIL extend-chords: shift+right did not grow the span to exactly 'alpha'"
+    printf '%s' "$frame_e" | sed 's/^/      | /'
+    rc=1
+  fi
+
+  send_csi "$s" "[1;2F"   # shift+end
+  sleep 0.5
+  frame_e=$(tmux -L "$TM" capture-pane -t "$s" -p -e)
+  if printf '%s' "$frame_e" | grep -aqE "${esc}\[48;2;[0-9]+;[0-9]+;[0-9]+malpha beta gamma${esc}\[(0|49)m"; then
+    echo "      ok   extend-chords: shift+end reached the row's own end"
+  else
+    echo "      FAIL extend-chords: shift+end did not reach the row's own end"
+    printf '%s' "$frame_e" | sed 's/^/      | /'
+    rc=1
+  fi
+
+  # Clear, then the fall-through: escape, type ab, shift+left, type X — the composer must read "aXb", proving
+  # the key reached the editor (no handler registered with no selection live).
+  tmux -L "$TM" send-keys -t "$s" Escape
+  tmux -L "$TM" send-keys -t "$s" -l "ab"
+  send_csi "$s" "[1;2D"   # shift+left
+  tmux -L "$TM" send-keys -t "$s" -l "X"
+  sleep 0.5
+  if frame "$s" | grep -qF "aXb"; then
+    echo "      ok   extend-chords: shift+left with no selection fell through to the composer ('aXb')"
+  else
+    echo "      FAIL extend-chords: composer did not read 'aXb' after the fall-through sequence"
+    frame "$s" | sed 's/^/      | /'
+    rc=1
+  fi
+
+  # The keybindings.json override: sweep "gamma" (copyOnSelect is off, so release copies nothing on its
+  # own), then fire the rebound `alt+right` and check the OSC 52 log for exactly gamma's own payload.
+  # RE-CAPTURED, not the earlier `row`/`col_g`: the composer typing above (`ab`/`X`) can change the
+  # composer's own row count and shift the transcript above it by exactly that many rows.
+  local cap2="$SELECT_ROOT/ec-cap2"; frame "$s" > "$cap2"
+  local row2; row2=$(LC_ALL=C awk '/^  alpha beta gamma$/ {print NR; exit}' "$cap2")
+  if [ -z "$row2" ]; then
+    echo "      FAIL extend-chords: 'alpha beta gamma' is no longer on screen before the rebind check"
+    cat "$cap2" | sed 's/^/      | /'
+    kill_cell "$s"; record "extend-chords" 1; return
+  fi
+  local col_g2; col_g2=$(LC_ALL=C awk -v n="$row2" 'NR==n {print index($0, "gamma")}' "$cap2")
+  press   "$s" "$col_g2" "$row2"
+  drag    "$s" "$((col_g2+4))" "$row2"
+  release "$s" "$((col_g2+4))" "$row2"
+  sleep 0.3
+  send_csi "$s" "[1;3C"   # alt+right, rebound to selection:copy
+  sleep 0.5
+  if grep -aqF "$EXTEND_CHORDS_B64" "$SELECT_ROOT/$s.log"; then
+    echo "      ok   extend-chords: the rebound alt+right chord copied exactly 'gamma' (keybindings.json override reached a real handler)"
+  else
+    echo "      FAIL extend-chords: no OSC 52 payload for 'gamma' after the rebound chord fired"
+    frame "$s" | sed 's/^/      | /'
+    rc=1
+  fi
+  kill_cell "$s"
+  record "extend-chords" "$rc"
+}
+
 # ── cell: stream-shift (keyless) — F10 T-SELECT S4c acceptance cell 3's pty half, two arms in one cell ────
 # Both arms share the same claim (a HELD sweep survives the document moving under it) but from opposite
 # directions: arm 1 scrolls the STICKY window under an ordinary two-endpoint drag; arm 2 lands a delta
@@ -594,6 +736,7 @@ want_cell caret-wrap      && run_caret_wrap_cell
 want_cell caret-busy      && run_caret_busy_cell
 want_cell caret-busy-live && run_caret_busy_live_cell
 want_cell word-drag       && run_word_drag_cell
+want_cell extend-chords   && run_extend_chords_cell
 want_cell stream-shift    && run_stream_shift_cell
 
 echo

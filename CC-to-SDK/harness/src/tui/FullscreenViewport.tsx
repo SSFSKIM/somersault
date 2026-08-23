@@ -90,7 +90,7 @@ import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
 import { linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
 import { remapSelection, type SelectionAddresses, type SelectionEndpoint } from "./mouse/address.js";
 import { HoverContext } from "./mouse/hoverContext.js";
-import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, multiClick, selectedSpans, startSelection, type Cell, type RowSpan, type SelectionState } from "./mouse/selection.js";
+import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, moveSelectionFocus, multiClick, selectedSpans, startSelection, type Cell, type ExtendDir, type RowSpan, type SelectionState } from "./mouse/selection.js";
 import { charRangeOf, extractText } from "./mouse/extract.js";
 import type { LineSelection } from "./Line.js";
 import { stripSgr } from "./sgrFoldRow.js";
@@ -162,6 +162,11 @@ export interface ViewportHitmap {
    *  Ctrl+C key-lifetime arm. `""` for no selection — never `undefined`, so a caller can hand it straight to
    *  `copyText` without a branch. */
   selectedText(): string;
+  /** F10 S5 — canon's `moveSelectionFocus`/`E0p` (`mouse/selection.ts`), wired through the wrapper that
+   *  also re-records the durable addresses (Task 6) so the very next repaint does not remap them back to
+   *  the pre-extend position. Returns `false` when no selection is live (the caller then leaves the key to
+   *  the composer). */
+  moveSelectionFocus(dir: ExtendDir): boolean;
 }
 
 export interface FullscreenViewportProps {
@@ -511,11 +516,25 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // and the DOCUMENT under them can both move between two mouse events, and this always reads the CURRENT
   // frame's own map, matching every other imperative read on this ref.
   const selectedText = useCallback(() => selectionOffscreenRef.current ? "" : extractText(selectedSpans(selectionStateRef.current, hit.current.rows), hit.current.rows), []);
+  /** F10 S5 — the wrapper every extend chord goes through. Three things, in this order, and the middle one
+   *  is the one the first draft of this plan omitted: move the focus, RE-RECORD the durable addresses, then
+   *  repaint. `recordSelectionAddresses` (Task 6) is not a mouse-path detail — it is how `SelectionState`
+   *  and the address ref stay the same selection. Skip it and the remap that runs during the very next
+   *  render restores the pre-extend endpoints from the stale mouse-era address, so the chord looks
+   *  ineffective, or works until the first rewrap/scroll and then snaps back.
+   *    Returns the mover's own `false` unchanged, so a caller that wants to fall through still can. */
+  const moveFocus = useCallback((dir: ExtendDir): boolean => {
+    if (!moveSelectionFocus(selectionStateRef.current, dir, hit.current.rows)) return false;
+    recordSelectionAddresses();
+    repaint();
+    return true;
+  }, [repaint]);
 
   useImperativeHandle(hitmapRef, () => ({
     anchorAt, hoverAt, clearHover,
     startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelection: hasSelectionHandle, discardSelection, selectedText,
-  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText]);
+    moveSelectionFocus: moveFocus,
+  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText, moveFocus]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no
@@ -541,6 +560,11 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // type. That is the trade the escape hatch is worth, and ctrl+end takes it back in one keystroke.
   const atEnd = settled.offset >= total - height;
   const showPill = !settled.sticky && !atEnd && !historySearchOpen;
+  // F10 S5 — computed DURING render, off the same ref the paint already derives its own answer from
+  // (`paintSpans` below): "will this render show a highlight" and "should the six extend chords be live"
+  // are the same question. Every selection mutation calls `repaint()`, so this render (and therefore this
+  // memo) is re-run whenever the answer changes.
+  const selectionLive = computeHasSelection(selectionStateRef.current);
   useKeyScope("Scroll", { active: !historySearchOpen });
   useKeyActions(useMemo(() => ({
     "scroll:halfPageUp": () => scroll(PAGER_ACTIONS["scroll:halfPageUp"]!),
@@ -554,7 +578,19 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     "scroll:top": () => scroll(PAGER_ACTIONS["scroll:top"]!),
     "scroll:bottom": () => stickBottom(),
     ...(showPill && onDumpTranscript ? { "scroll:dumpTranscript": () => onDumpTranscript() } : {}),
-  }), [scroll, stickBottom, showPill, onDumpTranscript, onWheelTick]));
+    // F10 S5 — registered only while a selection is live, which IS the fall-through: `KeymapProvider`
+    // (:177-180) hands a matched action with no handler to the composer, exactly as `scroll:dumpTranscript`
+    // relies on while the jump pill is down. Canon reaches the same place from the other side — its
+    // handlers return false with no selection (L551746).
+    ...(selectionLive ? {
+      "selection:extendLeft": () => { moveFocus("left"); },
+      "selection:extendRight": () => { moveFocus("right"); },
+      "selection:extendUp": () => { moveFocus("up"); },
+      "selection:extendDown": () => { moveFocus("down"); },
+      "selection:extendLineStart": () => { moveFocus("lineStart"); },
+      "selection:extendLineEnd": () => { moveFocus("lineEnd"); },
+    } : {}),
+  }), [scroll, stickBottom, showPill, onDumpTranscript, onWheelTick, selectionLive, moveFocus]));
 
   // ── THE JUMP PILL, AND THE ROW IT COSTS ─────────────────────────────────────────────────────────────────
   // `qqH` (455869-455878): shown only when the viewport is neither sticky nor at the end. The second half is

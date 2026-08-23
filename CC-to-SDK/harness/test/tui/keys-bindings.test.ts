@@ -140,6 +140,17 @@ describe("F10 S3 — the Scroll context's selection actions (canon L174817 / L17
   });
 });
 
+it("F10 S5 — the Scroll context carries canon's six extend chords (L174817)", () => {
+  expect(block("Scroll").bindings).toMatchObject({
+    "shift+left": "selection:extendLeft", "shift+right": "selection:extendRight",
+    "shift+up": "selection:extendUp", "shift+down": "selection:extendDown",
+    "shift+home": "selection:extendLineStart", "shift+end": "selection:extendLineEnd",
+  });
+  for (const a of ["selection:extendLeft", "selection:extendRight", "selection:extendUp",
+                   "selection:extendDown", "selection:extendLineStart", "selection:extendLineEnd"])
+    expect(VALID_ACTIONS).toContain(a);
+});
+
 describe("no key is bound twice inside one context", () => {
   it("the real table is clean", () => expect(duplicateKeys(DEFAULT_BINDINGS)).toEqual([]));
   it("the check compares CANONICAL chords, so aliased spellings are caught", () => {
@@ -292,13 +303,17 @@ describe("overlay gating, expressed as null bindings", () => {
   // `?1000h ?1006h` a wheel tick IS produced, as the key `wheelup`/`wheeldown` (canon `RUu`, L169140), and
   // one tick is one LINE (canon L181212 dispatches a ±1 delta). Selection-extension and copy stay unbound.
   // F10 S3 adds the copy pair (canon L174817) — the whole-object pin below grows by exactly those two keys.
-  it("Scroll binds the four keyboard scroll keys, the two wheel ticks, the v dump and the copy pair, and nothing else", () => {
+  // F10 S5 adds the six extend chords (same canon line) — grown by exactly those six.
+  it("Scroll binds the four keyboard scroll keys, the two wheel ticks, the v dump, the copy pair and the six extend chords, and nothing else", () => {
     expect(block("Scroll").bindings).toEqual({
       "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
       "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
       "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",
       "v": "scroll:dumpTranscript",
       "ctrl+shift+c": "selection:copy", "cmd+c": "selection:copy",
+      "shift+left": "selection:extendLeft", "shift+right": "selection:extendRight",
+      "shift+up": "selection:extendUp", "shift+down": "selection:extendDown",
+      "shift+home": "selection:extendLineStart", "shift+end": "selection:extendLineEnd",
     });
   });
   // The wheel is bound in BOTH reading surfaces, and it has to be: the fullscreen tree SWAPS them rather than

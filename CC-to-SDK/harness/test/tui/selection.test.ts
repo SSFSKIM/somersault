@@ -14,6 +14,7 @@ import {
   multiClick,
   hasSelection,
   selectedSpans,
+  moveSelectionFocus,
   type SelectionState,
 } from "../../src/tui/mouse/selection.js";
 import { extractText } from "../../src/tui/mouse/extract.js";
@@ -354,5 +355,105 @@ describe("F10 S2 — dragToSpanned: canon's w0p, the pivot on a live multi-click
     multiClick(s, { row: 1, col: 8 }, 2, one);
     dragToSpanned(s, { row: 9, col: 2 }, rows);
     expect(s.focus).toBeNull();
+  });
+});
+
+describe("F10 S5 — moveSelectionFocus (canon L203359-203396) + E0p's span downgrade", () => {
+  it("right then left move one grapheme forward then back within a row", () => {
+    const row = mkRow({ text: "abc" });
+    const s = createSelectionState();
+    s.anchor = { row: 1, col: 1 };
+    expect(moveSelectionFocus(s, "right", [row])).toBe(true);
+    expect(s.focus).toEqual({ row: 1, col: 2 });
+    expect(moveSelectionFocus(s, "left", [row])).toBe(true);
+    expect(s.focus).toEqual({ row: 1, col: 1 });
+  });
+
+  it("a CJK cluster steps as ONE column, not two", () => {
+    const row = mkRow({ text: "a你b" });
+    const s = createSelectionState();
+    s.anchor = { row: 1, col: 1 };                              // 'a'
+    expect(moveSelectionFocus(s, "right", [row])).toBe(true);
+    expect(s.focus).toEqual({ row: 1, col: 2 });                // 你's own leading column
+    expect(moveSelectionFocus(s, "right", [row])).toBe(true);
+    expect(s.focus).toEqual({ row: 1, col: 4 });                // past BOTH of 你's columns, to 'b'
+  });
+
+  it("right at the row's own end wraps to the next row's gutterWidth+1", () => {
+    const a = mkRow({ text: "abc" });
+    const b = mkRow({ text: "def", gutterWidth: 2 });
+    const s = createSelectionState();
+    s.anchor = { row: 1, col: a.width + 1 };                    // already at row a's own end
+    expect(moveSelectionFocus(s, "right", [a, b])).toBe(true);
+    expect(s.focus).toEqual({ row: 2, col: b.gutterWidth + 1 });
+  });
+
+  it("left at the row's own start wraps to the previous row's width+1", () => {
+    const a = mkRow({ text: "abc" });
+    const b = mkRow({ text: "def", gutterWidth: 2 });
+    const s = createSelectionState();
+    s.anchor = { row: 2, col: b.gutterWidth + 1 };              // already at row b's own start
+    expect(moveSelectionFocus(s, "left", [a, b])).toBe(true);
+    expect(s.focus).toEqual({ row: 1, col: a.width + 1 });
+  });
+
+  it("right past the LAST row's own end returns false and leaves state untouched", () => {
+    const row = mkRow({ text: "abc" });
+    const s = createSelectionState();
+    s.anchor = { row: 1, col: row.width + 1 };
+    const before = { ...s.anchor };
+    expect(moveSelectionFocus(s, "right", [row])).toBe(false);
+    expect(s.focus).toBeNull();
+    expect(s.anchor).toEqual(before);
+  });
+
+  it("left past the FIRST row's own start returns false and leaves state untouched", () => {
+    const row = mkRow({ text: "abc" });
+    const s = createSelectionState();
+    s.anchor = { row: 1, col: 1 };
+    expect(moveSelectionFocus(s, "left", [row])).toBe(false);
+    expect(s.focus).toBeNull();
+  });
+
+  it("up/down keep the column", () => {
+    const top = mkRow({ text: "top row text here" });
+    const bottom = mkRow({ text: "bottom row text!!" });
+    const twoRows = [top, bottom];
+    const down = createSelectionState();
+    down.anchor = { row: 1, col: 5 };
+    expect(moveSelectionFocus(down, "down", twoRows)).toBe(true);
+    expect(down.focus).toEqual({ row: 2, col: 5 });
+    const up = createSelectionState();
+    up.anchor = { row: 2, col: 5 };
+    expect(moveSelectionFocus(up, "up", twoRows)).toBe(true);
+    expect(up.focus).toEqual({ row: 1, col: 5 });
+  });
+
+  it("lineStart/lineEnd jump to the row's own gutter-relative bounds", () => {
+    const gRow = mkRow({ text: "body only", gutterWidth: 5 });
+    const start = createSelectionState();
+    start.anchor = { row: 1, col: 8 };
+    expect(moveSelectionFocus(start, "lineStart", [gRow])).toBe(true);
+    expect(start.focus).toEqual({ row: 1, col: gRow.gutterWidth + 1 });
+    const end = createSelectionState();
+    end.anchor = { row: 1, col: 8 };
+    expect(moveSelectionFocus(end, "lineEnd", [gRow])).toBe(true);
+    expect(end.focus).toEqual({ row: 1, col: gRow.width + 1 });
+  });
+
+  it("a live anchorSpan is CLEARED by the first extend, and the anchor becomes the span's low end", () => {
+    const row = mkRow({ text: "alpha beta gamma" });
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 8 }, 2, row);                  // double-click `beta`: lo col7, hi col11
+    expect(s.anchorSpan).toEqual({ lo: { row: 1, col: 7 }, hi: { row: 1, col: 11 }, kind: "word" });
+    expect(moveSelectionFocus(s, "right", [row])).toBe(true);
+    expect(s.anchorSpan).toBeNull();
+    expect(s.anchor).toEqual({ row: 1, col: 7 });               // the span's low end
+    expect(s.focus).toEqual({ row: 1, col: 12 });               // one step right of the span's hi (the space)
+  });
+
+  it("with no anchor at all, the call returns false", () => {
+    const s = createSelectionState();
+    expect(moveSelectionFocus(s, "right", [])).toBe(false);
   });
 });
