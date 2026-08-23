@@ -423,7 +423,14 @@ filtering** (the 193× fact). **Hostile-input bounds are normative (review F9c):
   before use.
 - Explicit fallback arm for palette/16-bit/interlaced PNGs: pass through if under budget, else
   fail with a real reason.
-- Processing budget: a single wall-clock guard (2 s) around the whole pipeline, failure not hang.
+- Processing budget, amended at plan review (a synchronous `inflateSync` cannot be interrupted by
+  a wall clock, so a cooperative-only deadline would be theater): **the binding CPU/allocation
+  bound is structural** — every inflate call passes `maxOutputLength` = the exact expected
+  scanline total, so a hostile stream's work is bounded by the output cap and one byte over
+  throws (this is also the zip-bomb arm); the **2 s wall guard is a cooperative belt** checked
+  between pipeline stages and every 64 scanlines, documented as such. The hostile-fixture tests
+  assert the structural cap fires (output-capped bomb → typed failure), not wall-clock
+  interruption.
 
 Wire into `pasteClipboardImage`'s non-darwin arms (Linux dead ends `clipboardImage.ts:222-223,357`
 and Windows' `:357`). Darwin keeps `sips` (unchanged); unification + the opportunistic
@@ -484,6 +491,26 @@ Research: r4. Seven code items + one evidence-only record.
    pre-agreed.
 
 ---
+
+## Wave assembly (binding — added at plan review; no track plan owns the merged tree)
+
+- **Merge order: T-MAINT → T-SELECT → T-HOVER → T-IMGREACH**, sequential `--no-ff`, assembled
+  gates after every merge.
+- **`f10-imgreach` branches from `f10-maint`'s head after its Task 1 commit** (the media-module
+  substrate), not from bare main — this is what makes `src/media/imageDims.ts` a single-owner
+  file instead of an add/add conflict. The other three branch from main.
+- **One shared `HitRow` end-state**: after all merges, `charStart`, `charEnd`, `textStart`
+  (T-SELECT) and `ownerKey` (T-HOVER) are ALL present and required. T-SELECT lands its three as
+  required; T-HOVER (merging after) adds `ownerKey` as required and fills the union in every
+  constructor its merge touches — including the direct constructor at `editor.ts:734` and every
+  test constructor (each plan inventories the constructors it must update at its own merge).
+- **Per-file resolution checklist for the known overlaps** (`ChatApp.tsx`, `ChatComposer.tsx`,
+  `FullscreenViewport.tsx`, `mouse/hitmap.ts`, `toolRenderer.tsx`, parity docs): at each merge
+  the controller resolves as a union (both tracks' fields/props/handlers survive), then runs the
+  full four gates PLUS the already-merged tracks' pty cells before the next merge — a resolution
+  that drops source ranges, owner keys, popup routing, or caret geometry must fail a re-run
+  cell, not survive to the wave end.
+- The final assembled tree runs the complete acceptance matrix (cells 1–13) before close-out.
 
 ## Acceptance (behavior-phrased; each cell names its evidence)
 
@@ -548,7 +575,9 @@ flags; swarm/kairos seed widening; Segmenter memoization (watch-item); §2/§4 b
   probe 100's C cell proved to be the library shape, not the REPL's — the composer keeps
   `[Image #N]` in `submitText`. Rejected: builder-level fix (misses the exact surfaces this wave
   widens).
-- **SelectionAddr = `{itemKey, charOffset}` + `HitRow.itemRow`** (review round): v1's
+- **SelectionAddr = `{itemKey, charOffset}` + `HitRow.itemRow`** *(SUPERSEDED by round-2 F1:
+  `itemRow` was still painted-run geometry; the shipping contract is `HitRow.charStart`/`charEnd`
+  wrap-time source ranges — see the round-2 decisions section)* (review round): v1's
   `{itemKey, innerRow, col}` was screen geometry — broken by partial slices and re-wrap. Rejected:
   painted-run innerRow (v1), verbatim canon `C0p` port (needs a scroll-delta wire ccx lacks),
   keep-clearing.
@@ -661,6 +690,13 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- v4.1 (2026-08-23): plan-review round (26 findings over the four track plans) fed three
+  contract amendments back into the spec: the codec's 2 s guard re-stated as cooperative belt
+  over a structural `maxOutputLength` inflate bound; the stale round-1 `HitRow.itemRow` Decision
+  Log entry marked superseded; and a binding **Wave assembly** section added (merge order,
+  imgreach-branches-from-maint, the shared required `HitRow` end-state, per-merge union
+  checklists + gate re-runs). Plan headers corrected to `subagent-driven-execution` (the plugin
+  renamed the skill). Per-plan amendments dispatched separately.
 - v4 (2026-08-23): round 3 (v3 deltas only) returned 5 findings, all adopted: dual overflow
   checks (composer-local + frame watchdog); side-specific endpoint containment with gap/EOF
   rules; base64 canonicalization in the normalizer + daemon client-side normalize/preflight +
