@@ -16,13 +16,15 @@
 // The ONE real subprocess cell lives in the test file, gated `runIf(darwin)`.
 //
 // This module is a LEAF: no composer, no transport, no chip minting. Task 3/4 call
-// `readClipboardImage`/`reencodeDarwin`/`pngDimensions`/`jpegDimensions` from the paste handler and the
-// authoritative turn-input builder, respectively.
+// `readClipboardImage`/`reencodeDarwin` from the paste handler and the authoritative turn-input
+// builder, respectively; the header-decoding readers and shared budgets now live in
+// `../media/imageDims.js` (F10 T-MAINT item 3) and this module is one of their consumers.
 import { mkdir, chmod, writeFile, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { tmpdir as osTmpdir } from "node:os";
+import { MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, jpegDimensions, pngDimensions } from "../media/imageDims.js";
 
 // ---------------------------------------------------------------------------------------------
 // Public result + DI types.
@@ -56,49 +58,6 @@ export function defaultClipboardDeps(): ClipboardDeps {
       });
     }),
   };
-}
-
-// ---------------------------------------------------------------------------------------------
-// Header-decoding dimension readers. Exported for reuse by Task 4's authoritative builder, which
-// re-decodes every image block's OWN bytes rather than trusting a caller-supplied dimension (the
-// "library-bypass" cell in that task's plan: a tiny PNG can lie about huge IHDR dimensions, so the
-// builder must read the header itself — these two functions are that read).
-
-/** PNG: 8-byte signature, then the IHDR chunk — length(4) + "IHDR"(4) + width(4 BE) + height(4 BE) at
- *  bytes 16-24. IHDR is always the first chunk in a well-formed PNG, so no chunk walk is needed. */
-export function pngDimensions(buf: Buffer): { width: number; height: number } | null {
-  if (buf.length < 24) return null;
-  const sig = [137, 80, 78, 71, 13, 10, 26, 10];
-  for (let i = 0; i < 8; i++) if (buf[i] !== sig[i]) return null;
-  if (buf.toString("ascii", 12, 16) !== "IHDR") return null;
-  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
-}
-
-/** JPEG: walk markers from the SOI until a Start-Of-Frame segment (0xC0-0xCF, excluding the
- *  non-frame DHT/JPG/DAC markers 0xC4/0xC8/0xCC), whose payload is precision(1) + height(2) + width(2).
- *  Standalone markers (RST0-7, SOI/EOI, TEM) carry no length field and are skipped as bare 2 bytes;
- *  every other marker's segment is skipped by its own declared length. */
-export function jpegDimensions(buf: Buffer): { width: number; height: number } | null {
-  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
-  let offset = 2;
-  while (offset + 1 < buf.length) {
-    if (buf[offset] !== 0xff) { offset++; continue; } // resync on stray fill bytes
-    const marker = buf[offset + 1];
-    if (marker === 0xff) { offset++; continue; } // padding fill byte before the real marker
-    const isStandalone = marker === 0x01 || marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7);
-    if (isStandalone) { offset += 2; continue; }
-    if (offset + 3 >= buf.length) return null;
-    const length = buf.readUInt16BE(offset + 2);
-    const isSOF = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-    if (isSOF) {
-      if (offset + 9 >= buf.length) return null;
-      const height = buf.readUInt16BE(offset + 5);
-      const width = buf.readUInt16BE(offset + 7);
-      return { width, height };
-    }
-    offset += 2 + length;
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -281,11 +240,6 @@ export async function readClipboardImage(deps: ClipboardDeps): Promise<Clipboard
 // The darwin re-encode ladder. `v$r` (canon L174695) is the shared post-resize byte budget; `2000` is
 // canon's per-model `image_limits.maxWidth/maxHeight` (canon L8503 — universal across the current
 // catalog, so a single constant here is faithful, not a simplification of something that varies).
-
-/** canon `v$r`, L174695: the byte ceiling every resized image block must fit under. */
-export const POST_PROCESS_BYTE_BUDGET = 512_000;
-/** canon's per-model `image_limits` (L8503), universal across the current model catalog. */
-export const MAX_DIMENSION = 2000;
 
 const JPEG_QUALITY_LADDER = [80, 60, 40, 20];
 

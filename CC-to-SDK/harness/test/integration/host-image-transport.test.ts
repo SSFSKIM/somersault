@@ -15,7 +15,7 @@ import type { HostSession } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
 import { remoteChatSession, IMAGE_VERSION_SKEW_NOTICE } from "../../src/client/chatAdapter.js";
 import { hostSocketPath, hostImageStagingDir } from "../../src/fleet/paths.js";
-import { POST_PROCESS_BYTE_BUDGET } from "../../src/tui/clipboardImage.js";
+import { POST_PROCESS_BYTE_BUDGET } from "../../src/media/imageDims.js";
 import type { UserTurnInput, UserContentBlock } from "../../src/session/turnInput.js";
 
 const fleets: string[] = [];

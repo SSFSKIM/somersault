@@ -10,15 +10,13 @@
 // read.
 //
 // Reused, not reinvented: `pngDimensions`/`jpegDimensions` (the header-only readers) and the two
-// shared budget constants (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`) come straight from
-// `tui/clipboardImage.ts` — Task 2's paste-time ladder and this builder enforce the identical
-// per-image ceiling from ONE source of truth, so a raw library submit can never be held to a looser
-// bar than a paste went through. Importing a `tui/` leaf from `session/` (core) does invert the
-// usual layering, but it is already established precedent in this tree (appserver/workspace.ts,
-// sessions/rows.ts, cli/*.ts all import tui/* leaves the same way) and both readers are pure
-// Buffer-in/dims-out functions with no UI dependency, so there is no real coupling to avoid by
-// duplicating them into a third leaf.
-import { pngDimensions, jpegDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET } from "../tui/clipboardImage.js";
+// shared budget constants (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`) come from `../media/imageDims.js`
+// — a neutral leaf with no imports of its own (F10 T-MAINT item 3 ends the `session/` → `tui/`
+// inversion this paragraph used to argue for: Task 2's paste-time ladder and this builder enforce the
+// identical per-image ceiling from ONE source of truth, and neither now reaches into the other's
+// layer to get it). This builder still re-decodes each block's OWN bytes rather than trusting
+// anything a caller claims about them.
+import { pngDimensions, jpegDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET } from "../media/imageDims.js";
 
 /** The wire shape canon itself sends (spot-verified at `cli.pretty.js` L371395-371427 and re-proven
  *  live by probe 113): a base64 image block, `media_type` a bare string here (not the Anthropic SDK's
