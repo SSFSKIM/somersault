@@ -2,23 +2,26 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use doperpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Plan rev 2** — the adversarial plan review's findings folded in (19 accepted after verification, 1 rejected — Revision Notes at the bottom). **Review base for every M7 review is `781683b4cf`** (the branch point off the images round), NOT main — the images stack is a separate milestone under its own PR #8.
+
 **Goal:** A client declares tools at `thread/start`/`thread/resume` and IS the tool runtime — the model's call parks and travels to thread subscribers as `tool/callRequested`, the client's `tool/callResult` settles it — with zero wire-grammar change (the park trio), closing the largest capability gap vs Codex's app-server.
 
-**Architecture:** The spec is `CC-to-SDK/docs/superpowers/specs/2026-08-23-agent-appserver-m7-dynamic-tools-design.md` (rev 2) — read it first; on any conflict the spec wins. Built bottom-up: the pure schema→zod converter, then declaration validation + thread state, then the DynamicCalls registry + the wire trio (notification/method/replay), then per-engine server building + the immutable overlay, then the in-memory MCP exchange + scorecard closure. Declarations are serializable thread state (NEVER config); fresh `createSdkMcpServer` instances are built per engine construction and ride a dedicated server-owned config field merged LAST in `resolveOptions` — structurally immune to `extraOptions` and `mcpServers` replacement.
+**Architecture:** The spec is `CC-to-SDK/docs/superpowers/specs/2026-08-23-agent-appserver-m7-dynamic-tools-design.md` (rev 2 + the rev 2p planning amendments) — read it first; on any conflict the spec wins. Six tasks, bottom-up: the pure schema→zod converter; the declaration module (types/caps/validation, wire-SILENT — nothing public until it can work); the DynamicCalls registry + result conversion (pure); the wire trio + lifecycle (params exposure, handler with subscriber authority, notification, replay, every teardown seam); per-engine server building + the overlay carried on a TRANSIENT engine config (`record.config` never holds runtime handles); the in-memory MCP exchange crossing the PRODUCTION wiring + scorecard closure. `mcpServer/set` ships the conservative fallback: REFUSED on declaring threads until the keyed survival row proves the SDK carries instances on a runtime set.
 
-**Tech Stack:** TypeScript ESM (imports end `.js`), zod v4, vitest, `@anthropic-ai/claude-agent-sdk` (`createSdkMcpServer`/`tool`), `@modelcontextprotocol/sdk` (in-memory client for the exchange rows). Dense hand-style, no Prettier. All commands run from `CC-to-SDK/harness` unless stated.
+**Tech Stack:** TypeScript ESM (imports end `.js`), zod v4, vitest, `@anthropic-ai/claude-agent-sdk` (`createSdkMcpServer`/`tool`), `@modelcontextprotocol/sdk` (in-memory client). Dense hand-style, no Prettier. All commands run from `CC-to-SDK/harness` unless stated.
 
 ## Global Constraints
 
-- **Caps (exact values, named in one place — `src/appserver/dynamicTools.ts`):** `MAX_DYNAMIC_TOOLS = 32` functions total across namespaces; per-tool `inputSchema` ≤ 8_192 bytes serialized, ≤ 8 levels deep, ≤ 64 schema nodes; `MAX_TOOL_DESCRIPTION_CHARS = 2_000`; result ≤ 16 content items, ≤ 131_072 total payload chars (over-cap settles the call `isError` with a cap-naming note — it never refuses the method).
-- **Names:** `toolName` regex `/^[A-Za-z][A-Za-z0-9_-]{0,63}$/`; namespace `dyn` is RESERVED; declaration refusals are `-32602` with a message naming the offender (the colliding name, the unsupported keyword, the cap exceeded).
-- **Delivery is subscribers-only.** `tool/callRequested` goes through `srv.broadcast` (server.ts:960 — `record.subscribers`), NEVER `broadcastToWatchers`/`broadcastServer`. A watcher-only peer must observe neither arguments nor a settleable `callId`.
-- **Errors:** unknown `callId` → `-32602` "no such pending tool call"; already-settled/previous-generation → `-33002 ALREADY_SETTLED` (`ERR` at `src/appserver/rpc.ts:12`). Settled-tombstone ring size 128.
-- **`alwaysLoad: spec.deferLoading !== true`** — Codex's polarity: omitted and `false` load directly, only explicit `true` defers.
-- **Declarations are never part of `config`.** `ThreadRecord.dynamicTools` (serializable specs) is the only store; `record.config` is never rewritten; the config identity guard (`sessionIdentity.ts`) is untouched.
-- **Content items are camelCase** (`inputText`/`inputImage`/`inputAudio`, media as `data:` URLs); conversion to MCP blocks: `inputText`→`{type:"text",text}`, `inputImage`→`{type:"image",data,mimeType}`, `inputAudio`→`{type:"audio",data,mimeType}`; `success:false` → `isError:true`.
+- **Caps (exact values, named once in `src/appserver/dynamicTools.ts`):** `MAX_DYNAMIC_TOOLS = 32` functions total; per-tool `inputSchema` ≤ 8_192 **UTF-8 bytes** (`Buffer.byteLength(JSON.stringify(schema), "utf8")`), ≤ 8 levels deep, ≤ 64 schema nodes; `MAX_TOOL_DESCRIPTION_CHARS = 2_000`; result `MAX_RESULT_ITEMS = 16`, `MAX_RESULT_PAYLOAD_CHARS = 131_072` — an over-cap result **settles the call `isError` with a cap-naming note, never refuses the method** (the wire schema puts NO count bound on `contentItems`; the 256 KiB frame is the only pre-handler bound).
+- **Names:** `toolName` regex `/^[A-Za-z][A-Za-z0-9_-]{0,63}$/`; namespace `dyn` RESERVED; duplicate namespace names across the declaration set refused; collisions checked against the EFFECTIVE client MCP map — `Object.keys(config.mcpServers ?? {})` ∪ `Object.keys((config.extraOptions?.mcpServers as object) ?? {})` — and `NATIVE_TOOL_NAMES`; every declaration refusal is `-32602` naming the offender.
+- **Settlement authority is subscribers-only, enforced twice:** `tool/callResult` refuses a peer not in `record.subscribers` (before any registry lookup), AND `callId`s are opaque (`dyncall:<randomUUID()>`), never guessable counters.
+- **Errors:** unknown `callId` → `-32602` "no such pending tool call"; already-settled/previous-generation → `-33002 ALREADY_SETTLED` (`ERR`, `src/appserver/rpc.ts:12`); non-subscriber settlement attempt → `-32602` "only a subscriber of this thread can settle its tool calls". Tombstone ring 128.
+- **`alwaysLoad: spec.deferLoading !== true`** — Codex's polarity.
+- **`record.config` NEVER holds runtime handles.** Live `createSdkMcpServer` instances ride only a TRANSIENT engine config (`{...cfg, dynamicToolServers}`) handed to the factory; `record.config` stays the serializable base (review/start inherits it — spec finding 6). Serializable truth: `ThreadRecord.dynamicTools`.
+- **`mcpServer/set` on a declaring thread refuses** (`-32602`, message naming the dynamic declaration) — the conservative fallback, relaxed only after the keyed survival row passes (spec Decision Log, rev 2p).
+- **Content items camelCase** (`inputText`/`inputImage`/`inputAudio`, media `data:` URLs); conversion: `inputText`→`{type:"text",text}`, `inputImage`→`{type:"image",data,mimeType}`, `inputAudio`→`{type:"audio",data,mimeType}`; `success:false` → `isError:true`; **malformed media settles `isError`** (a throw would leave the call parked — the callback always answers, D-M4-9).
 - **Regenerate the published schema artifact in the same change** that touches `schema/index.ts` (`npm run emit-schema`; `test/unit/schemaGen.test.ts` byte-compares).
-- Never run keyed/live tests (quota until 2026-08-26 1pm); live suites must skip cleanly keyless; never read/print `CC-to-SDK/.env`. Never edit `scripts/drift-check.mjs`. NO Co-Authored-By trailers; `git add` explicit paths only.
+- Never run keyed/live tests (quota until 2026-08-26 1pm); live suites skip cleanly keyless; never read/print `CC-to-SDK/.env`. Never edit `scripts/drift-check.mjs`. NO Co-Authored-By trailers; `git add` explicit paths only.
 
 ---
 
@@ -30,7 +33,7 @@
 
 **Interfaces:**
 - Consumes: `zod/v4` only.
-- Produces (Tasks 2 and 4 rely on these exact names):
+- Produces (Tasks 2 and 5 rely on these exact names):
 
 ```ts
 export type ConvertOk = { ok: true; schema: z.ZodTypeAny; strict: boolean };
@@ -38,7 +41,11 @@ export type ConvertErr = { ok: false; keyword: string };  // the unsupported key
 export function jsonSchemaToZod(schema: Record<string, unknown>): ConvertOk | ConvertErr;
 ```
 
-`ConvertOk.schema` is a fully-built `z.object(...)` — `.strict()` when `additionalProperties === false`, `.passthrough()` when absent or `true` (JSON Schema's own default admits extra keys; a stripping object would silently rewrite valid client arguments). Probe 115's measured error ("inputSchema must be a Zod schema or raw shape") admits a built schema, so a ZodObject is what Task 4 hands to `tool()` (with a cast past its `AnyZodRawShape` generic).
+`ConvertOk.schema` is a built `z.object(...)` — `.strict()` when `additionalProperties === false`, `.passthrough()` when absent or `true`. Probe 115's measured error ("inputSchema must be a Zod schema or raw shape") admits a built schema; Task 5 hands it to `tool()` with a cast.
+
+**Root allowlist (review finding 16):** the root may carry ONLY `type`, `properties`, `required`, `additionalProperties`, `description`. Any other root key (`oneOf`, `$ref`, `patternProperties`, …) → `{ok:false, keyword}`. `additionalProperties` must be absent or a BOOLEAN (a schema-valued one refuses `additionalProperties:<schema>`); `required` must be an array of strings each present in `properties` (else refuse `required:<name> not in properties`). Root `type` must be `"object"`.
+
+**Field allowlist:** per-field handled keys are `type`, `description`, `enum`, `const`, `minLength`, `maxLength`, `minimum`, `maximum`, `items`; the first unknown key on a field refuses naming it. Types: `string` (+`minLength`/`maxLength`), `number`/`integer` (+`minimum`/`maximum`, integer via `.int()`), `boolean`, `array`+`items` (items recurse through the FIELD walker; an items of `type:"object"` refuses `type:object (nested objects unsupported)`), `enum` of strings/numbers, `const` (`z.literal`), `description` via `.describe`. A field of `type:"object"` refuses `type:object (nested objects unsupported)`.
 
 - [ ] **Step 1: Write the failing tests** — `test/unit/schemaToZod.test.ts`:
 
@@ -51,6 +58,14 @@ describe("jsonSchemaToZod", () => {
     expect(jsonSchemaToZod({ type: "string" })).toEqual({ ok: false, keyword: "type:string (root must be object)" });
     expect(jsonSchemaToZod({})).toEqual({ ok: false, keyword: "type (root must be object)" });
   });
+  it("refuses unknown ROOT keywords, schema-valued additionalProperties, and dangling required", () => {
+    expect(jsonSchemaToZod({ type: "object", properties: {}, oneOf: [] })).toEqual({ ok: false, keyword: "oneOf" });
+    expect(jsonSchemaToZod({ type: "object", properties: {}, $ref: "#/x" })).toEqual({ ok: false, keyword: "$ref" });
+    expect(jsonSchemaToZod({ type: "object", properties: {}, additionalProperties: { type: "string" } }))
+      .toEqual({ ok: false, keyword: "additionalProperties:<schema>" });
+    expect(jsonSchemaToZod({ type: "object", properties: { a: { type: "string" } }, required: ["b"] }))
+      .toEqual({ ok: false, keyword: "required:b not in properties" });
+  });
   it("converts the full field subset and honors required", () => {
     const r = jsonSchemaToZod({ type: "object", properties: {
       s: { type: "string", minLength: 1, maxLength: 10, description: "a string" },
@@ -60,8 +75,8 @@ describe("jsonSchemaToZod", () => {
     }, required: ["s", "n"] });
     if (!r.ok) throw new Error(r.keyword);
     expect(r.schema.safeParse({ s: "a", n: 1 }).success).toBe(true);
-    expect(r.schema.safeParse({ n: 1 }).success).toBe(false);           // required s missing
-    expect(r.schema.safeParse({ s: "a", n: 9 }).success).toBe(false);   // maximum
+    expect(r.schema.safeParse({ n: 1 }).success).toBe(false);                 // required s missing
+    expect(r.schema.safeParse({ s: "a", n: 9 }).success).toBe(false);         // maximum
     expect(r.schema.safeParse({ s: "a", n: 1, i: 1.5 }).success).toBe(false); // integer
   });
   it("passthrough by default: extra keys SURVIVE parsing", () => {
@@ -76,7 +91,7 @@ describe("jsonSchemaToZod", () => {
     expect(r.strict).toBe(true);
     expect(r.schema.safeParse({ t: "x", extra: 1 }).success).toBe(false);
   });
-  it("out-of-subset keywords refuse naming themselves", () => {
+  it("out-of-subset FIELD keywords refuse naming themselves", () => {
     expect(jsonSchemaToZod({ type: "object", properties: { u: { oneOf: [{ type: "string" }] } } }))
       .toEqual({ ok: false, keyword: "oneOf" });
     expect(jsonSchemaToZod({ type: "object", properties: { u: { type: "object" } } }))
@@ -88,105 +103,109 @@ describe("jsonSchemaToZod", () => {
 ```
 
 - [ ] **Step 2: Run to verify failure** — `npx vitest run test/unit/schemaToZod.test.ts` → FAIL (module not found).
-
-- [ ] **Step 3: Implement** — `src/appserver/schemaToZod.ts`. Field walker: `string` (+`minLength`/`maxLength`), `number`/`integer` (+`minimum`/`maximum`), `boolean`, `array`+`items` (items recurse through the same FIELD walker — arrays of scalars/enums; an `items` of type object refuses `type:object (nested objects unsupported)`), `enum` of strings/numbers (`z.enum`/`z.union` of literals), `const` (`z.literal`), `description` via `.describe`. Any OTHER keyword present on a field (`oneOf`, `anyOf`, `allOf`, `$ref`, `pattern`, `format`, `not`, nested `object`, …) returns `{ok:false, keyword}` — detect by allowlisting the handled keys per field and naming the first unknown one. Root: require `type:"object"`; walk `properties`; wrap required/optional off the `required` array; finish `.strict()` or `.passthrough()` per `additionalProperties`.
-
-- [ ] **Step 4: Run to verify pass** — `npx vitest run test/unit/schemaToZod.test.ts` → PASS.
-
-- [ ] **Step 5: Commit** — `git add src/appserver/schemaToZod.ts test/unit/schemaToZod.test.ts && git commit -m "feat(appserver): the M7 schema conversion subset — object root, passthrough by default"`
+- [ ] **Step 3: Implement** per the allowlists above.
+- [ ] **Step 4: Run to verify pass** → PASS.
+- [ ] **Step 5: Commit** — `git add src/appserver/schemaToZod.ts test/unit/schemaToZod.test.ts && git commit -m "feat(appserver): the M7 schema conversion subset — allowlisted root and fields, passthrough by default"`
 
 ---
 
-### Task 2: Declarations — wire param, validation, thread state
+### Task 2: The declaration module — types, caps, validation (wire-SILENT)
 
 **Files:**
-- Modify: `src/appserver/schema/threads.ts` (params), `src/appserver/registry.ts` (record field), `src/appserver/server.ts:423-460` + `:722-733` + `:757-799` (handler reads + record stamping)
-- Create: `src/appserver/dynamicTools.ts` (types, caps, `validateDeclarations`)
-- Test: `test/unit/appserver/dynamic-tools.test.ts` (declaration half)
+- Create: `src/appserver/dynamicTools.ts`
+- Test: `test/unit/appserver/dynamic-tools-validate.test.ts`
+
+Nothing in this task touches the wire, the schema registry, or `ThreadRecord` — a deliberately internal commit (review finding 11: exposing acceptance before tools can RUN ships a lying surface). Task 4 wires the params; Task 5 makes them work; both land before anything is externally visible.
 
 **Interfaces:**
 - Consumes: `jsonSchemaToZod` (Task 1).
-- Produces (Tasks 3–5 rely on these exact names):
+- Produces (Tasks 3–6 rely on these exact names):
 
 ```ts
 // src/appserver/dynamicTools.ts
 export const MAX_DYNAMIC_TOOLS = 32;
 export const MAX_TOOL_DESCRIPTION_CHARS = 2_000;
 export const MAX_SCHEMA_BYTES = 8_192; export const MAX_SCHEMA_DEPTH = 8; export const MAX_SCHEMA_NODES = 64;
+export const MAX_RESULT_ITEMS = 16; export const MAX_RESULT_PAYLOAD_CHARS = 131_072;
 export const RESERVED_NAMESPACE = "dyn";
+export const NATIVE_TOOL_NAMES: readonly string[];  // items/types.ts:48-57's switch list, with a comment naming that source
 export type DynamicToolFunction = { type: "function"; name: string; description: string; inputSchema: Record<string, unknown>; deferLoading?: boolean };
 export type DynamicToolSpec = DynamicToolFunction | { type: "namespace"; name: string; description: string; tools: DynamicToolFunction[] };
-/** Validate the whole declaration set against caps, names, collisions, and the conversion subset.
- *  `mcpServerNames` = Object.keys(config.mcpServers ?? {}). Returns the -32602 message on failure. */
-export function validateDeclarations(specs: DynamicToolSpec[], mcpServerNames: string[]): { ok: true } | { ok: false; message: string };
-export const NATIVE_TOOL_NAMES: readonly string[];  // the harness's own native enumeration (items/types.ts's switch list)
+/** Validate the whole declaration set. `clientMcpNames` = the EFFECTIVE client MCP map keys
+ *  (config.mcpServers ∪ extraOptions.mcpServers — the latter WINS in resolveOptions, so a collision
+ *  there is just as real). Returns the -32602 message on failure, naming the offender. */
+export function validateDeclarations(specs: DynamicToolSpec[], clientMcpNames: string[]): { ok: true } | { ok: false; message: string };
 ```
 
-- `schema/threads.ts` gains (exact shapes from the spec):
+Checks, in order (each message names the offending tool/namespace/keyword/cap): flattened function count ≤ 32; per-tool schema `Buffer.byteLength(JSON.stringify(inputSchema), "utf8") ≤ 8_192`, depth ≤ 8, nodes ≤ 64; `jsonSchemaToZod(inputSchema).ok` (else name the keyword and the tool); **namespace names unique across the set** (finding 17), none equal to `RESERVED_NAMESPACE` or ∈ `clientMcpNames`; bare-function names unique within `dyn`, per-namespace function names unique within their namespace; no function name ∈ `NATIVE_TOOL_NAMES`. (Name FORMAT and description length are the zod schema's job in Task 4 — validateDeclarations assumes shape-valid input and owns only the semantic checks.)
 
-```ts
-const toolName = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/);
-const dynamicToolFunction = z.object({
-  name: toolName, description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
-  inputSchema: z.record(z.string(), z.unknown()), deferLoading: z.boolean().optional(),
-});
-export const dynamicToolSpec = z.discriminatedUnion("type", [
-  dynamicToolFunction.extend({ type: z.literal("function") }),
-  z.object({ type: z.literal("namespace"), name: toolName, description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
-    tools: z.array(dynamicToolFunction.extend({ type: z.literal("function") })).min(1) }),
-]);
-```
-
-`threadStartParams` AND `threadResumeParams` gain `dynamicTools: z.array(dynamicToolSpec).optional()` — resume included because declarations are in-memory thread state: a resumed thread otherwise has NO path to tools (planning amendment; spec Revision Notes updated in this task). Mid-TURN/mid-thread re-declaration stays impossible — these are the only two minting methods.
-
-- `ThreadRecord` gains `dynamicTools?: DynamicToolSpec[]` (registry.ts, beside `config` at :194, with a comment: serializable specs, never instances — spec finding 6).
-
-- [ ] **Step 1: Failing tests** — declaration rows in `test/unit/appserver/dynamic-tools.test.ts`, using the per-file boot idiom copied from `test/unit/appserver/decisions.test.ts` (mkSink/boot/connect/req/waitReply). Rows, each asserting the -32602 message NAMES the offender:
-  - over `MAX_DYNAMIC_TOOLS` (33 functions, one per namespace + bare mix) → message contains `"32"`;
-  - description over 2_000 chars → schema-level -32602 (zod max);
-  - schema over 8_192 bytes / depth 9 / 65 nodes (three rows) → message names the cap and the tool;
-  - name colliding with `NATIVE_TOOL_NAMES[0]`; namespace colliding with a configured `mcpServers` key (pass `config.mcpServers = { shadowed: {} }`); duplicate function name within `dyn`; namespace literally `dyn` → each message names the name;
-  - out-of-subset schema (`oneOf`) → message contains `oneOf`;
-  - a CANONICAL Codex-shaped namespace fixture (tagged `type:"function"` children) parses and `thread/start` succeeds, `record.dynamicTools` stamped (assert via a follow-up `thread/start` reply success + the Task-3 wire rows will exercise state; here assert the reply is a clean `{threadId}`);
-  - the same declaration set accepted at `thread/resume` (DI `listSessions`/store fake per `server.test.ts`'s boot).
-- [ ] **Step 2: Run** — `npx vitest run test/unit/appserver/dynamic-tools.test.ts` → FAIL.
-- [ ] **Step 3: Implement.** `validateDeclarations`: flatten namespaces → count functions; per-tool: serialized `JSON.stringify(inputSchema).length ≤ MAX_SCHEMA_BYTES`, depth ≤ 8 (recursive walk), node count ≤ 64 (objects+arrays+leaves), `jsonSchemaToZod` must return ok (else `-32602` naming the keyword and the tool); names: no duplicates within a namespace (and within `dyn`'s bare set), no namespace named `dyn` or colliding with `mcpServerNames`, no function name in `NATIVE_TOOL_NAMES`. `NATIVE_TOOL_NAMES` = the `toolView` switch list (`items/types.ts:48-57`) exported as a const from `dynamicTools.ts` with a comment naming its source. Handler (`server.ts:437-451` region): after `safeParse`, if `parsed.data.dynamicTools`, call `validateDeclarations(specs, Object.keys((parsed.data.config?.mcpServers as object) ?? {}))`; on failure `replyError(id, ERR.INVALID_PARAMS, message)`; on success pass specs into `createThread`/`startThread` opts and stamp `record.dynamicTools` in the record literals (`server.ts:729`, `:786`).
-- [ ] **Step 4: Run** — suite green; also `npx vitest run test/unit/appserver/server.test.ts` (handler region touched).
-- [ ] **Step 5: Spec Revision Note** — append to the spec's `## Revision Notes`: `- rev 2 planning amendment (2026-08-24): dynamicTools accepted at thread/resume too — declarations are in-memory thread state, so a resumed thread otherwise has no path to tools; validation identical.`
-- [ ] **Step 6: Commit** — `git add src/appserver/dynamicTools.ts src/appserver/schema/threads.ts src/appserver/registry.ts src/appserver/server.ts test/unit/appserver/dynamic-tools.test.ts CC-to-SDK/docs/superpowers/specs/2026-08-23-agent-appserver-m7-dynamic-tools-design.md && git commit -m "feat(appserver): dynamicTools declarations — wire param, caps, collisions, thread state"` (spec path relative to repo root — adjust when running from harness).
+- [ ] **Step 1: Failing tests** — `test/unit/appserver/dynamic-tools-validate.test.ts` calls `validateDeclarations` DIRECTLY (no wire). Rows: 33 functions → message contains `32`; schema of 8_193 UTF-8 bytes via a multibyte description (e.g. 2_100 × `"힣"` — 3 bytes each; assert a same-CHAR-count ASCII schema passes — finding 15's boundary); depth 9; 65 nodes; `oneOf` schema → message names `oneOf` and the tool; namespace `dyn`; two namespaces both named `ns1` (finding 17); namespace colliding with `clientMcpNames`; duplicate function in `dyn`; duplicate function within one namespace; function named `NATIVE_TOOL_NAMES[0]`; a clean Codex-shaped fixture (namespace with tagged `type:"function"` children) → `{ok:true}`.
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS.
+- [ ] **Step 5: Commit** — `git add src/appserver/dynamicTools.ts test/unit/appserver/dynamic-tools-validate.test.ts && git commit -m "feat(appserver): dynamic-tool declaration semantics — caps, collisions, the effective MCP map"`
 
 ---
 
-### Task 3: DynamicCalls registry + the wire trio
+### Task 3: `DynamicCalls` registry + result conversion (pure)
 
 **Files:**
 - Create: `src/appserver/dynamicCalls.ts`
-- Modify: `src/appserver/dynamicTools.ts` (result conversion + caps), `src/appserver/schema/index.ts` (+`tool/callResult` registry entry), new `toolCallResultParams` in `src/appserver/schema/threads.ts` (or a new `schema/dynamicTools.ts` — one schema file per domain matches the codebase; create `schema/dynamicTools.ts`), `src/appserver/server.ts` (handler entry + `dynamicCalls` map beside `decisions` :382, mint beside `makeDecisions` :943, release in `closeRecord` :886), `src/appserver/subscribe.ts:131-133` (replay), `src/appserver/rewind.ts` (`swapEngine` settle + `threadReopen` reset), `src/appserver/settingsOps.ts` (`threadClear` settle via its swap)
-- Test: `test/unit/appserver/dynamic-tools.test.ts` (wire rows)
+- Modify: `src/appserver/dynamicTools.ts` (`toCallResult` + the shared data-URL parse), `src/appserver/turnItems.ts` (EXPORT the bounded data-URL parser — see below)
+- Test: `test/unit/appserver/dynamic-calls.test.ts`
 
 **Interfaces:**
-- Consumes: `ERR` (rpc.ts), `srv.broadcast` (server.ts:960), record epoch (registry.ts:289).
-- Produces (Task 4 relies on these exact names):
+- Consumes: nothing wire-side; `decodeDataUrl` semantics from `turnItems.ts`.
+- Produces (Tasks 4–6 rely on these exact names):
 
 ```ts
-// src/appserver/dynamicCalls.ts — explicitly mirrors ThreadDecisions (broker.ts:42), see its header
+// src/appserver/dynamicCalls.ts — explicitly mirrors ThreadDecisions (broker.ts:42); say so in the header
 export type ToolCallContentItem = { type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string } | { type: "inputAudio"; audioUrl: string };
 export type PendingToolCall = { callId: string; threadId: string; turnId?: string; namespace?: string; tool: string; arguments: Record<string, unknown>; epoch: number };
 export type CallToolResultLike = { content: Array<Record<string, unknown>>; isError?: boolean };
 export class DynamicCalls {
   constructor(emit: (ev: { kind: "requested"; entry: PendingToolCall } | { kind: "settled"; callId: string }) => void);
-  /** Park one call; resolves with the MCP-shaped result. `signal` aborts → settle cancelled. */
+  /** Park one call; resolves with the MCP-shaped result. callId = `dyncall:${randomUUID()}` — OPAQUE
+   *  (settlement authority must not be guessable; review finding 5). `signal` abort → settle cancelled. */
   park(entry: Omit<PendingToolCall, "callId">, signal?: AbortSignal): Promise<CallToolResultLike>;
   respond(callId: string, epochNow: number, result: CallToolResultLike): { ok: true } | { ok: false; code: "unknown" | "alreadySettled" };
   pending(): PendingToolCall[];
   reset(): void;      // reopen/engine-swap: settle all as cancelled, NO latch
-  teardown(): void;   // close/shutdown: settle + latch (new parks refuse immediately)
+  teardown(): void;   // close/shutdown: settle + latch — a park() after teardown resolves cancelled IMMEDIATELY
 }
 ```
 
-`park` mints `callId = \`dyncall:${++seq}\``, stamps the caller-provided `epoch`, stores the FULL entry (subscribe replay needs it), emits `requested`, returns the settlement promise. Cancelled settles resolve `{content:[{type:"text",text:"Tool call cancelled: <reason>"}], isError:true}` (D-M4-9: the callback always answers). `respond`: unknown id → check the tombstone ring (`string[]` max 128 + a `Set`) — tombstoned → `alreadySettled`, else `unknown`; a live entry whose `epoch !== epochNow` is settled-as-cancelled by the swap path BEFORE respond can see it, but the check stays as a belt (treat mismatch as `alreadySettled`, never apply to current state).
+`respond` on a live entry whose `epoch !== epochNow` → `alreadySettled` (never applied — the swap's `reset()` normally beats it; the check is the belt for the in-flight race). Tombstone ring: `string[]` max 128 + a `Set` mirror. Cancelled settles resolve `{content:[{type:"text",text:"Tool call cancelled: <reason>"}], isError:true}` — the callback always answers (D-M4-9).
 
-- `tool/callResult` params (`schema/dynamicTools.ts`):
+**The shared media parser (review finding 10):** `turnItems.ts`'s `decodeDataUrl` is module-private and deliberately DISCARDS the declared media type (the images round sniffs bytes instead — right for the SDK image union, wrong here: M7's audio blocks cannot be sniffed by the harness). Export from `turnItems.ts` a bounded parser
+`export function parseDataUrl(url: string): { ok: true; payload: string; mimeType: string } | { ok: false; reason: string }`
+— header split + base64 validation + the same `MAX_DATA_URL_CHARS` payload bound reused from `decodeDataUrl`'s internals (refactor `decodeDataUrl` to call it; the images-round suites `test/unit/turn-items.test.ts` MUST stay green untouched). `mimeType` comes from the header (declared), because M7 hands it to MCP blocks verbatim.
+
+```ts
+// dynamicTools.ts
+/** Wire items → MCP blocks under the result caps. Over-cap (items > MAX_RESULT_ITEMS or total
+ *  text+payload chars > MAX_RESULT_PAYLOAD_CHARS) → an isError text block NAMING the cap.
+ *  Malformed media (parseDataUrl not-ok) → isError naming the item index and reason — NEVER a throw
+ *  (a throw before respond would leave the call parked forever). */
+export function toCallResult(items: ToolCallContentItem[], success: boolean): CallToolResultLike;
+```
+
+- [ ] **Step 1: Failing tests** — `test/unit/appserver/dynamic-calls.test.ts`, registry-direct (no wire): park→respond resolves the promise with the result; first answer wins, second → `alreadySettled`; fabricated id → `unknown`; tombstone ring forgets entry 1 after 130 settles (1→`unknown`, 129/130→`alreadySettled`); epoch-mismatch respond → `alreadySettled` and the promise resolves via `reset()` not the stale result; pre-aborted signal parks-and-immediately-cancels; abort mid-park cancels; `teardown()` settles all AND a subsequent `park()` resolves cancelled immediately (post-teardown re-park — finding 9); `reset()` settles all without latching (a park after reset works); `toCallResult`: 3-kind conversion, 17 items → isError naming `16`, 132_000 chars → isError naming the payload cap, malformed `data:` audio → isError naming the reason (no throw); `parseDataUrl` unit rows incl. the payload bound; `npx vitest run test/unit/turn-items.test.ts` stays 21/21 after the refactor.
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → both suites PASS.
+- [ ] **Step 5: Commit** — `git add src/appserver/dynamicCalls.ts src/appserver/dynamicTools.ts src/appserver/turnItems.ts test/unit/appserver/dynamic-calls.test.ts && git commit -m "feat(appserver): DynamicCalls registry — opaque ids, tombstones, every settle path answers"`
+
+---
+
+### Task 4: The wire trio + lifecycle seams
+
+**Files:**
+- Create: `src/appserver/schema/dynamicTools.ts`
+- Modify: `src/appserver/schema/threads.ts` (declaration shapes + params), `src/appserver/schema/index.ts` (+`tool/callResult`), `src/appserver/registry.ts` (`dynamicTools` field), `src/appserver/server.ts` (handler + validation at thread/start & thread/resume + `dynamicCalls` map/mint/release + `parkToolCall`/`pendingToolCalls` seams), `src/appserver/subscribe.ts:131-133` (replay), `src/appserver/rewind.ts` (`swapEngine` reset + `threadReopen` reset), shutdown path (`AppServer.close` — find where decisions tear down)
+- Test: `test/unit/appserver/dynamic-tools.test.ts` (NEW — the wire matrix)
+
+**Interfaces:**
+- Consumes: T2's `validateDeclarations` + types; T3's `DynamicCalls`/`toCallResult`.
+- Produces (Tasks 5–6 rely on): `srv.parkToolCall(threadId: string, call: { namespace?: string; tool: string; arguments: Record<string, unknown> }, signal?: AbortSignal): Promise<CallToolResultLike>` — **stamps `turnId` (`activeTurnId(record)`), `epoch` (`record.epoch`), and `threadId` INTERNALLY at call time** (review finding 12 — callers cannot mis-declare identity); `srv.pendingToolCalls(threadId): PendingToolCall[]` (same visibility as `pendingDecisions`, server.ts:990). `ThreadRecord.dynamicTools?: DynamicToolSpec[]` stamped at create/start.
+
+Schema (`schema/threads.ts` gains the spec's exact `dynamicToolSpec` shapes with `MAX_TOOL_DESCRIPTION_CHARS` imported from `dynamicTools.ts`; `threadStartParams` AND `threadResumeParams` gain `dynamicTools: z.array(dynamicToolSpec).optional()` — resume per spec rev 2p). `schema/dynamicTools.ts`:
 
 ```ts
 export const toolCallResultParams = z.object({
@@ -195,107 +214,107 @@ export const toolCallResultParams = z.object({
     z.object({ type: z.literal("inputText"), text: z.string() }),
     z.object({ type: z.literal("inputImage"), imageUrl: z.string().startsWith("data:") }),
     z.object({ type: z.literal("inputAudio"), audioUrl: z.string().startsWith("data:") }),
-  ])).max(64),  // hard schema bound; the 16-item RESULT cap settles isError instead (Global Constraints)
+  ])),  // NO count bound here — over-cap SETTLES isError (Global Constraints); the frame cap backstops
   success: z.boolean(),
 });
 ```
 
-Registry entry `"tool/callResult": { params: toolCallResultParams }` in `schema/index.ts` → emit-schema regenerates.
+Handler `toolCallResult` (dispatch beside `decision/respond`, server.ts:511 region): resolve record (`-33004`); **subscriber check FIRST**: `if (!record.subscribers.has(ctx.peer)) → -32602 "only a subscriber of this thread can settle its tool calls"` (review finding 5); then `respond(callId, record.epoch, toCallResult(items, success))` → `unknown` → `-32602` "no such pending tool call"; `alreadySettled` → `-33002`; ok → `{}`.
 
-- Result conversion + caps in `dynamicTools.ts`:
+Declaration wiring at `thread/start`/`thread/resume` (server.ts:423-460 + the resume handler): after `safeParse`, `validateDeclarations(specs, effectiveNames)` where `effectiveNames = [...Object.keys(cfg?.mcpServers ?? {}), ...Object.keys((cfg?.extraOptions as {mcpServers?: object} | undefined)?.mcpServers ?? {})]` (finding 14); failure → `-32602`; success → pass specs to `createThread`/`startThread`, stamp `record.dynamicTools` in the record literals (server.ts:729/:786). The DynamicCalls registry mints beside `makeDecisions` (:943 pattern), releases in `closeRecord` (:886 — `teardown()` + map delete), resets in `threadReopen` AND in `swapEngine` (rewind.ts:205 — so rewind and `threadClear` both inherit), tears down in the server shutdown path beside decisions.
 
-```ts
-export const MAX_RESULT_ITEMS = 16; export const MAX_RESULT_PAYLOAD_CHARS = 131_072;
-/** Convert wire items → MCP blocks, applying the result caps: over-cap converts to an isError
- *  text block NAMING the cap, never a refusal. data: URLs are parsed with the images round's
- *  decodeDataUrl (turnItems.ts) for media type + payload. */
-export function toCallResult(items: ToolCallContentItem[], success: boolean): CallToolResultLike;
-```
-
-- Handler `toolCallResult` (in `dynamicTools.ts`, dispatch entry in server.ts beside `decision/respond` :511): resolve record (`-33004` unknown thread), `dynamicCalls.respond(callId, record.epoch, toCallResult(items, success))`; `unknown` → `-32602` "no such pending tool call"; `alreadySettled` → `-33002`; ok → reply `{}`.
-- Notification: `emit` handler (minted in server.ts beside `makeDecisions`) broadcasts `tool/callRequested` `{threadId, callId, turnId?, namespace?, tool, arguments}` via `srv.broadcast` — subscribers only.
-- Replay: `subscribe.ts` between the pending-decision loop (:131-132) and `thread/status/changed` (:133): `for (const call of srv.pendingToolCalls(record.id)) ctx.peer.notify("tool/callRequested", {...})`.
-- Lifecycle: `closeRecord` (:886 region) → `teardown()` + map delete (mirror decisions); `threadReopen` (rewind.ts:576+) → `reset()` beside the decisions reset; `swapEngine` (rewind.ts:205, so rewind AND `threadClear`'s swap both inherit) → `reset()` before dispose; server shutdown path (find where decisions teardown on close — `AppServer.close`) → teardown.
-
-- [ ] **Step 1: Failing wire rows** in `dynamic-tools.test.ts` (drive the REAL wire per the boot idiom; park by invoking the registered park path — Task 4 wires the SDK handler, so HERE park via a test seam: export `srv.parkToolCall(threadId, entry, signal?)` on AppServer (same visibility as `pendingDecisions` :990) and note in its doc comment that Task 4's server handlers are its production caller):
-  - park → subscriber receives `tool/callRequested` with full shape; a watcher-only peer (initialize `{watchThreads:true}`, no subscribe) receives NOTHING;
-  - zero-subscriber park waits; `thread/subscribe` replays the full pending request; answer settles it (`disconnect-then-reattach`: close the first conn, connect+subscribe a second, replay arrives, `tool/callResult` from the second settles);
-  - first answer wins; duplicate → `-33002`; fabricated `callId` → `-32602`;
-  - over-cap result (17 items; 132_000-char text) settles the park promise `isError` with the cap named, method still replies `{}`;
-  - abort signal → park resolves cancelled; `thread/close` (teardown), `thread/reopen` (reset), rewind's `swapEngine` (reset) each settle pending as cancelled — assert the park promise resolution and that a late `tool/callResult` earns `-33002`;
-  - tombstone ring bounded: settle 130 calls, the first two callIds now answer `unknown` (`-32602`) — the ring forgot them; 129th/130th → `-33002`.
-- [ ] **Step 2: Run** → FAIL. **Step 3: Implement** per the interfaces above. **Step 4: Run** → suite green + `npx vitest run test/unit/appserver` (subscribe/rewind/settingsOps touched) + `npm run emit-schema` + `npx vitest run test/unit/schemaGen.test.ts`.
-- [ ] **Step 5: Commit** — `git add src/appserver/dynamicCalls.ts src/appserver/dynamicTools.ts src/appserver/schema/dynamicTools.ts src/appserver/schema/index.ts src/appserver/server.ts src/appserver/subscribe.ts src/appserver/rewind.ts src/appserver/settingsOps.ts test/unit/appserver/dynamic-tools.test.ts schema/json/stable/appserver.json && git commit -m "feat(appserver): DynamicCalls registry + the tool/callRequested-callResult park trio"`
+- [ ] **Step 1: Failing wire rows** — `test/unit/appserver/dynamic-tools.test.ts` (boot idiom from `decisions.test.ts`; park via `srv.parkToolCall`):
+  - declaration refusals THROUGH the wire: each T2 semantic row's message arrives as `-32602` (spot-check three: cap, collision incl. an `extraOptions.mcpServers` collision, `oneOf`); shape refusals (bad name format, description over 2_000) → schema `-32602`; the Codex fixture accepted at `thread/start` AND at `thread/resume` (DI store fake); resume with an INVALID set refuses (finding 13's resume-rejection row);
+  - park → subscriber receives `tool/callRequested` (full shape, `callId` matches `/^dyncall:[0-9a-f-]{36}$/`); watcher-only peer receives NOTHING;
+  - **a watcher (and a second initialized-but-unsubscribed conn) sending `tool/callResult` with the REAL callId → the non-subscriber refusal, park still pending** (finding 5's authority row);
+  - zero-subscriber park waits; subscribe replays the full pending request; disconnect-then-reattach settlement;
+  - first-answer-wins; duplicate → `-33002`; fabricated → `-32602`; 17-item result settles isError (method replies `{}`); **65-item result ALSO settles isError** (finding 6 — no schema count bound);
+  - lifecycle: abort signal; `thread/close` with a park OPEN — **the fake session's `dispose()` resolves only after the park settles** (finding 9's deadlock-shaped fake: `dispose: () => pendingSettled`), assert close COMPLETES and the park resolved cancelled; server `close()` (shutdown row); `thread/reopen` reset; rewind `swapEngine` reset; old-generation reuse: park → rewind swap (epoch bump) → new park → answer the OLD callId → `-33002`, the NEW park untouched (finding 12);
+  - replay ordering: pending-decision replay first, then `tool/callRequested`, then `thread/status/changed` (subscribe.ts:131-133 slot).
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → suite + full `test/unit/appserver` + `npm run emit-schema` + `npx vitest run test/unit/schemaGen.test.ts` + `npx tsc --noEmit`.
+- [ ] **Step 5: Commit** — `git add src/appserver/schema/dynamicTools.ts src/appserver/schema/threads.ts src/appserver/schema/index.ts src/appserver/registry.ts src/appserver/server.ts src/appserver/subscribe.ts src/appserver/rewind.ts src/appserver/dynamicCalls.ts test/unit/appserver/dynamic-tools.test.ts schema/json/stable/appserver.json && git commit -m "feat(appserver): the tool/callRequested-callResult trio — subscriber authority, replay, every teardown answers"`
 
 ---
 
-### Task 4: Per-engine server building + the immutable overlay
+### Task 5: Per-engine server building + the transient overlay
 
 **Files:**
 - Create: `src/appserver/dynamicServers.ts`
-- Modify: `src/config/types.ts` (`OpenSessionConfig`/`HarnessConfig` gains `dynamicToolServers?: Record<string, unknown>`), `src/config/resolveOptions.ts` (merge LAST, after :133-134), `src/appserver/server.ts:722-733` + `:757-799` (build at create/start), `src/appserver/rewind.ts` (`swapBaseConfig` :120 or the three factories — attach fresh instances from `record.dynamicTools`), `src/appserver/mcp.ts:115-158` (overlay guard + merge into every push), `src/appserver/rewind.ts:298` (repush merge)
-- Test: `test/unit/appserver/dynamic-tools.test.ts` (overlay rows), `test/unit/resolve-options.test.ts` (merge-last row — find the existing resolveOptions suite name first; `grep -rl resolveOptions test/unit | head -3`)
+- Modify: `src/config/types.ts` (`dynamicToolServers?: Record<string, unknown>` on the config type `resolveOptions` reads), `src/config/resolveOptions.ts`, `src/appserver/server.ts:722-733` + `:757-799`, `src/appserver/rewind.ts` (`swapBaseConfig`/factories), `src/appserver/mcp.ts:115-158` (the refusal)
+- Test: `test/unit/appserver/dynamic-tools.test.ts` (overlay rows), the existing resolveOptions suite (find it: `grep -rl "resolveOptions" test/unit | head -3`)
 
 **Interfaces:**
-- Consumes: `DynamicToolSpec` (T2), `DynamicCalls` via `srv.parkToolCall` (T3), `jsonSchemaToZod` (T1), `createSdkMcpServer`/`tool` from `@anthropic-ai/claude-agent-sdk`.
+- Consumes: T2 types, T4's `srv.parkToolCall`, T1's converter, `createSdkMcpServer`/`tool` (SDK).
 - Produces:
 
 ```ts
 // src/appserver/dynamicServers.ts
-/** Declarations → FRESH SDK server instances, one per namespace + `dyn` for bare functions.
- *  Never cached, never stored on the record (an MCP Server instance rejects a second transport —
- *  spec finding 6): call this at EVERY engine construction. */
+/** Declarations → FRESH SDK server instances, one per namespace + `dyn` for bare functions. Never
+ *  cached on the record, never in record.config (instances are single-transport — spec finding 6):
+ *  call at EVERY engine construction, hand the result ONLY to the transient engine config. */
 export function buildDynamicServers(
   specs: DynamicToolSpec[],
   park: (call: { namespace?: string; tool: string; arguments: Record<string, unknown>; signal?: AbortSignal }) => Promise<CallToolResultLike>,
-): Record<string, unknown>;  // name → McpSdkServerConfigWithInstance
-export function overlayServerNames(specs: DynamicToolSpec[]): string[];
+): Record<string, unknown>;
+export function overlayServerNames(specs: DynamicToolSpec[]): string[];  // namespaces + ("dyn" iff bare functions exist)
 ```
 
-Per tool: `tool(name, description, converted, handler, { alwaysLoad: spec.deferLoading !== true })` where `converted = jsonSchemaToZod(spec.inputSchema)` (already validated ok at declaration — throw on !ok as an invariant). `tool()`'s generic wants a raw shape; pass the built ZodObject with an `as never` cast and a comment citing probe 115's runtime acceptance of schemas. Handler: `(args, extra) => park({ namespace, tool: name, arguments: args as Record<string, unknown>, signal: (extra as { signal?: AbortSignal } | undefined)?.signal })` — the MCP `RequestHandlerExtra` carries an AbortSignal; verify the field exists in the vendored `@modelcontextprotocol/sdk` types and note the finding in the task report. Namespace `description` → `createSdkMcpServer({ name, version: "1.0.0", instructions: description, tools })`.
+Per tool: `tool(name, description, converted.schema as never, handler, { alwaysLoad: spec.deferLoading !== true })` — cast past the `AnyZodRawShape` generic with a comment citing probe 115's runtime acceptance; handler `(args, extra) => park({ namespace, tool: name, arguments: args as Record<string, unknown>, signal: (extra as { signal?: AbortSignal } | undefined)?.signal })` (verify the vendored `@modelcontextprotocol/sdk` `RequestHandlerExtra` carries `signal`; report the finding). Namespace `description` → `createSdkMcpServer({ name, version: "1.0.0", instructions: description, tools })`.
 
-**Config carriage (the structural immunity):** `resolveOptions.ts`, AFTER the `extraOptions` spread and `SERVER_OWNED` re-assertion (:133-134):
+**The transient engine config (review finding 4 — the load-bearing correction):** `record.config` must NEVER hold instances. At `createThread`/`startThread`:
 
 ```ts
-if (config.dynamicToolServers) options.mcpServers = { ...(options.mcpServers as Record<string, unknown> ?? {}), ...config.dynamicToolServers };
+const specs = opts.dynamicTools;                       // validated by Task 4's handler
+const cfg = buildConfig(parsed, broker, onElicitation); // the serializable base — this is what record.config stores
+const engineCfg = specs?.length
+  ? { ...cfg, dynamicToolServers: buildDynamicServers(specs, parkFn) }   // transient — factory-only
+  : cfg;
+const session = factory(engineCfg);
+// record literal: config: cfg  (NOT engineCfg — assert in tests)
 ```
 
-Build sites: in `createThread`/`startThread`, after minting the DynamicCalls registry (T3) and before the factory call, `cfg.dynamicToolServers = buildDynamicServers(specs, parkFn)` where `parkFn` is the closure that fills the thread-side fields AT CALL TIME (turnId/epoch must be read when the model calls, not when the engine is built):
+with `parkFn = (call) => srv.parkToolCall(threadId, { namespace: call.namespace, tool: call.tool, arguments: call.arguments }, call.signal)` (identity stamped inside `parkToolCall` — T4). Swap paths: `swapBaseConfig(record)` (rewind.ts:120) stays instance-free; each factory (`defaultReopenFactory`, `defaultFreshFactory`, `defaultResumeAtFactory`) wraps its config the same transient way from `record.dynamicTools` — verify all three flow through one helper (`withDynamicServers(srv, record, cfg)`) and say so in the report.
+
+**`resolveOptions` merge-last (review finding 3 — operate on the RETURNED object):** the function builds and returns a merged object after the `extraOptions` spread + `SERVER_OWNED` re-assertion (:133-134). Whatever that final local is named, add IMMEDIATELY BEFORE the return, on THAT object:
 
 ```ts
-const parkFn = (call: { namespace?: string; tool: string; arguments: Record<string, unknown>; signal?: AbortSignal }) =>
-  srv.parkToolCall(threadId, { threadId, turnId: activeTurnId(record), namespace: call.namespace,
-    tool: call.tool, arguments: call.arguments, epoch: record.epoch }, call.signal);
+if (config.dynamicToolServers) merged.mcpServers = { ...(merged.mcpServers as Record<string, unknown> ?? {}), ...config.dynamicToolServers };
 ```
 
-(`srv.parkToolCall(threadId, entry, signal?)` is Task 3's AppServer seam — same visibility as `pendingDecisions` at server.ts:990; Task 3's rows call it directly, this closure is its production caller. At `createThread` the record literal is built after the factory, so bind `record` via a `let` the same way `makeDecisions`' emit closure resolves late — follow the decisions wiring's exact pattern at server.ts:722-733.) Swap paths: `swapBaseConfig` (rewind.ts:120) re-derives from `record.config` — add, at its END: attach `dynamicToolServers` freshly built from `record.dynamicTools` (park closure over the record's registry). ALL THREE factories (`defaultReopenFactory`, `defaultFreshFactory`, `defaultResumeAtFactory`) flow through it — verify each does and say so in the report.
+(read the function first; if the final object is `options` itself the review's concern is moot — pin it with the test either way). Test row: `extraOptions.mcpServers = {clobber:{}}` + `dynamicToolServers` → the RETURNED options' `mcpServers` carries both `clobber` and the overlay keys, overlay winning on collision.
 
-**`mcpServer/set` guard (mcp.ts):** before the engine push: `const overlay = overlayServerNames(record.dynamicTools ?? [])`; if any incoming key ∈ overlay → `-32602` `` `"${name}" is a dynamic-tool server owned by this thread's declaration and cannot be set` ``; else push `{...servers, ...buildDynamicServers?}` — NO: pushing rebuilt INSTANCES over the runtime wire is the SDK unknown (the engine's `setMcpServers` receipt suggests replace semantics; whether an in-process instance survives the control frame is unverifiable keylessly). Implement the spec's merge at OUR layer: merge the CURRENT overlay entries into the pushed map (`{...incoming, ...record's built overlay instances}` — hold the instances built at the LAST engine construction on a non-serialized record field `record.dynamicServerInstances` (typed `Record<string, unknown>`, stamped at every build, comment: runtime handle cache, NOT thread state — the serializable truth stays `record.dynamicTools`)), assert in unit tests (against the fake engine's captured `setMcpServers` arg) that the pushed map carries the overlay keys, and leave a `⚠️ live-row` note: whether the SDK honors instance entries on a runtime set is the keyed row's question; the declared fallback if it does not is to refuse `mcpServer/set` entirely on declaring threads (decision recorded in the spec Decision Log by Task 5).
-**Repush (rewind.ts:298):** same merge on the repushed `record.mcpServersSet` map.
+**`mcpServer/set` refuses on declaring threads (review finding 7 — the conservative fallback):** in `mcpSet` (mcp.ts:115), before the chain: `if (record.dynamicTools?.length) → -32602 "this thread declares dynamic tools; mcpServer/set is unavailable on it until dynamic-declaration survival across a runtime set is verified (see the M7 spec Decision Log)"`. No merge attempt, no repush change (the repush map never contains overlay entries — the BUILD config carries them). Relaxation is gated on the keyed survival row (Task 6) and is EXPLICITLY out of this plan.
 
-- [ ] **Step 1: Failing rows** — overlay rows in `dynamic-tools.test.ts` (fake engine captures `config` at factory + `setMcpServers` args): thread/start with one namespace + one bare function → factory config's `dynamicToolServers` has keys `[ns, "dyn"]`; `mcpServer/set` naming `ns` → `-32602` naming it; a set naming only `other` → pushed map carries `other` AND the overlay keys; rewind swap → factory called again with FRESH `dynamicToolServers` (different object identity, same keys) and repush map carries overlay keys; `resolveOptions` row: `config.extraOptions.mcpServers = {clobber:{}}` + `dynamicToolServers` → resolved `options.mcpServers` contains BOTH `clobber` and the overlay keys (overlay wins on collision).
-- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → suite + full `test/unit/appserver` + the resolveOptions suite + `npx tsc --noEmit`.
-- [ ] **Step 5: Commit** — `git add src/appserver/dynamicServers.ts src/config/types.ts src/config/resolveOptions.ts src/appserver/server.ts src/appserver/rewind.ts src/appserver/mcp.ts src/appserver/registry.ts test/unit/appserver/dynamic-tools.test.ts <the resolveOptions suite file you extended in Step 1> && git commit -m "feat(appserver): dynamic-tool servers — fresh per engine build, merged last, immutable vs mcpServer/set"`
+- [ ] **Step 1: Failing rows** — fake factory captures its config; fake engine captures `setMcpServers`: thread/start with ns+bare → factory config's `dynamicToolServers` keys `[ns,"dyn"]` AND `record.config` has NO `dynamicToolServers` key (finding 4's assertion); a `review/start`-style config copy (drive the real `review/start` if cheap, else assert `record.config` serializes clean via `JSON.stringify` not throwing and containing no `instance`); `mcpServer/set` on the declaring thread → the refusal; on a NON-declaring thread → unchanged behavior (existing mcp suite stays green); swap rows for ALL THREE paths — rewind, `thread/clear`, `thread/reopen` (finding 18) — each: factory re-called, fresh `dynamicToolServers` object AND fresh NESTED instance identity (`captured1.dynamicToolServers[ns] !== captured2.dynamicToolServers[ns]`); resolveOptions merge-last row (above); `overlayServerNames` unit rows.
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → suite + full `test/unit/appserver` + the resolveOptions suite + the existing mcp suite + `npx tsc --noEmit`.
+- [ ] **Step 5: Commit** — `git add src/appserver/dynamicServers.ts src/config/types.ts src/config/resolveOptions.ts src/appserver/server.ts src/appserver/rewind.ts src/appserver/mcp.ts test/unit/appserver/dynamic-tools.test.ts <the resolveOptions suite file you extended> && git commit -m "feat(appserver): dynamic-tool servers — transient overlay, merge-last, set refused on declaring threads"`
 
 ---
 
-### Task 5: The in-memory MCP exchange, live test, scorecard closure
+### Task 6: The exchange across the production wiring, live test, scorecard closure
 
 **Files:**
 - Test: `test/unit/appserver/dynamic-tools-exchange.test.ts` (NEW), `test/live/appserver-dynamic-tools.test.ts` (NEW, keyless-skip)
 - Modify: `CC-to-SDK/docs/parity/appserver.md`, the spec's living tail
 
-**Interfaces:** consumes `buildDynamicServers` (T4). The MCP in-memory client: `import { Client } from "@modelcontextprotocol/sdk/client/index.js"; import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";` — resolve the package through the agent-sdk's own dependency tree; if it is not importable from the harness, add it as a devDependency at the version the agent-sdk vendors (check `node_modules/@anthropic-ai/claude-agent-sdk/package.json` dependencies) and record the choice.
+**Interfaces:** consumes everything. MCP client: `import { Client } from "@modelcontextprotocol/sdk/client/index.js"; import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";` — resolve through the agent-sdk's dependency tree; if not importable, add a devDependency at the agent-sdk's vendored version and record the choice.
 
-- [ ] **Step 1: Exchange rows** (`dynamic-tools-exchange.test.ts`): build servers from a declaration with all subset field kinds + `additionalProperties` absent; connect the built instance (`McpSdkServerConfigWithInstance.instance`) over `InMemoryTransport.createLinkedPair()`; `client.listTools()` → the advertised JSON Schema carries every declared property, `required`, bounds, and the description (fidelity — compare structurally, not byte-wise: zod's emitter owns formatting); `client.callTool({name, arguments: {declared…, extra: 1}})` → the park callback receives `arguments` WITH the `extra` key (passthrough proof at the real MCP boundary); answer through the park's resolve with each of the three content kinds → `callTool` result carries `text`/`image`/`audio` blocks; `deferLoading` mapping: tools' `_meta["anthropic/alwaysLoad"]` is `true` for omitted/false and ABSENT/false for `deferLoading:true` (read the built definitions or the tools/list `_meta` — measure which surface carries it and pin that).
-- [ ] **Step 2: Live test** (`test/live/appserver-dynamic-tools.test.ts`): copy the key-gating pattern from `test/live/appserver-image-input.test.ts` (header: quota-gated, first keyed run after 2026-08-26 1pm). One thread, one declared tool (probe 115's shape: `{ticket: string}`), prompt instructs calling it; assert IN ORDER: `decision/requested` for the `mcp__dyn__…` tool (answer allow over the wire) → `tool/callRequested` (answer `tool/callResult` `{contentItems:[{type:"inputText",text:"42"}], success:true}`) → an `mcp`-species `item/completed` on the stream → the model's reply contains `42`. Also the `mcpServer/set`-carries-instances question: after the tool answered once, `mcpServer/set {servers:{}}` then a second turn calling the tool again — if it still parks, the overlay survived (the ⚠️ from Task 4 resolves); if not, record the fallback decision in the spec Decision Log. Run keyless NOW → clean skip; do not source any env.
-- [ ] **Step 3: Scorecard** — `docs/parity/appserver.md`: rows in the server-origin section (table at :739): `tool/callResult` (method, inProcess, shipped(M7)), `tool/callRequested` (notification row), a `thread/start`/`thread/resume` `dynamicTools` note in their rows; prose inventories at :55/:285/:306; totals section. From `CC-to-SDK/`: `node scripts/drift-check.mjs` → exit 0 (never edit the gate).
-- [ ] **Step 4: Full acceptance** — run the spec's keyless rows 1–5 verbatim (spec `## Acceptance`); all green; `npx tsc --noEmit`; full `npx vitest run test/unit/appserver`.
-- [ ] **Step 5: Spec retro** — replace `## Outcomes & Retrospective`'s Pending line; Surprises for anything planning/execution overturned (the resume amendment is already in Revision Notes).
-- [ ] **Step 6: Commit** — explicit paths (tests, scorecard, spec) — `git commit -m "feat(appserver): M7 acceptance — in-memory MCP exchange, quota-gated live row, scorecard rows"`
+- [ ] **Step 1: Exchange rows** (`dynamic-tools-exchange.test.ts`) — TWO layers:
+  - *Instance-direct* (fidelity): `buildDynamicServers` with a synthetic park; `client.listTools()` advertises every declared property/required/bounds/description (structural compare); passthrough extras reach the park's `arguments`; three content kinds round-trip; `deferLoading` mapping — measure which surface carries `_meta["anthropic/alwaysLoad"]` (tools/list `_meta` or the built definitions) and pin `true` for omitted/false, absent-or-false for `deferLoading:true`.
+  - ***Production-wiring*** (review finding 8 — the seam-crossing row): boot a REAL `AppServer` with a factory that CAPTURES its engine config; `thread/start` declares one tool; take `capturedConfig.dynamicToolServers[ns].instance`, connect it over `InMemoryTransport.createLinkedPair()`; `client.callTool(...)` → the wire subscriber observes `tool/callRequested`; answer via the REAL `tool/callResult` method → `callTool` resolves with the text block. This crosses T5's `parkFn` closure, T4's identity stamping, and T3's registry in one keyless row.
+- [ ] **Step 2: Live test** (`test/live/appserver-dynamic-tools.test.ts`, key-gated header per `test/live/appserver-image-input.test.ts`; quota note: first keyed run after 2026-08-26 1pm): one thread, the probe-115 `{ticket: string}` tool; assert IN ORDER: `decision/requested` for the `mcp__dyn__…` tool (allow over the wire) → `tool/callRequested` (answer `inputText` "42") → `mcp`-species `item/completed` → model reply contains `42`. Second scenario: the `mcpServer/set` refusal on the declaring thread (this stays keyed-observable but is also unit-pinned; the SURVIVAL experiment that would justify relaxing the refusal is future work, NOT this file). Keyless run now → clean skip.
+- [ ] **Step 3: Scorecard** — `docs/parity/appserver.md`: server-origin section rows (table at :739): `tool/callResult` (method, inProcess, shipped(M7)), `tool/callRequested` (notification), `thread/start`/`thread/resume` `dynamicTools` notes, the `mcpServer/set` row gains the declaring-thread refusal sentence; prose inventories :55/:285/:306; totals. From `CC-to-SDK/`: `node scripts/drift-check.mjs` → exit 0.
+- [ ] **Step 4: Full acceptance** — the spec's keyless rows 1–5 verbatim (its `## Acceptance` — note row 1's file list maps onto the split test files; run all of them), full `npx vitest run test/unit/appserver`, `npx tsc --noEmit`.
+- [ ] **Step 5: Spec retro** — replace the Pending line; Surprises for anything execution overturned.
+- [ ] **Step 6: Commit** — explicit paths — `git commit -m "feat(appserver): M7 acceptance — the exchange crosses production wiring; scorecard rows"`
 
 ---
 
-### Final verification (inside Task 5, restated)
+### Final verification (inside Task 6, restated)
 
-The spec's acceptance rows 1–5 ARE the verification; rows 6–7 (keyed) are deferred to after 2026-08-26 1pm and the live file must skip cleanly keyless. Full unit suite green before the final commit.
+Spec acceptance rows 1–5 keyless, all green; rows 6–7 keyed, deferred past 2026-08-26 1pm with the live file skipping cleanly. Full unit suite green before the final commit.
+
+## Revision Notes (plan)
+
+- rev 1 (2026-08-24): five tasks.
+- rev 2 (2026-08-24): the adversarial plan review — 20 findings, 19 accepted after verification, 1 rejected (the "10K-token repository maximum" it cited for the result cap does not exist; the spec's approved 128 KiB stands). Accepted: transient engine config so `record.config` never holds instances; merge-last applied to the RETURNED options object; subscriber-only settlement authority + opaque callIds; no schema count bound on contentItems (over-cap always settles); `mcpServer/set` conservative refusal on declaring threads; a production-wiring exchange row; deadlock-shaped dispose fakes + shutdown + post-teardown re-park rows; the shared `parseDataUrl` extraction (declared MIME, not sniffed); Task 2 made wire-silent (params exposed only when tools can run); identity stamped inside `parkToolCall`; effective-MCP-map collisions (extraOptions included); UTF-8 byte caps; root keyword allowlist; duplicate-namespace refusal; all three swap paths + nested identity; Task 3 split (registry/conversion vs wire/lifecycle). Review base for M7 reviews: `781683b4cf`.

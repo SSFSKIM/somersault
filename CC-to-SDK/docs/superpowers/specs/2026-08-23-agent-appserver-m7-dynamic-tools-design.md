@@ -22,7 +22,7 @@ matching elicitation).
 
 ## Wire design
 
-### Declaration — `thread/start` gains `dynamicTools`
+### Declaration — `thread/start` (and `thread/resume`, rev 2p) gain `dynamicTools`
 
 A typed param BESIDE `config`, so the config identity guard is untouched — and so the declarations are
 **never part of config at all**: they live in dedicated thread state (below), which is what keeps
@@ -86,8 +86,11 @@ unsupported keyword).
 
 Delivered to subscribers; first `tool/callResult` with the key wins — the decision registry's trust
 model (any SUBSCRIBER can already answer a permission park; watchers never could and still cannot).
-Rejected: binding calls to the declaring CONNECTION (threads outlive connections; reattach is the fleet
-model — and the replay above is what makes reattach actually work).
+Enforced twice (rev 2p): the method refuses a peer that is not in the thread's subscriber set, and
+`callId`s are OPAQUE (`dyncall:<uuid>`) — a guessable counter would hand settlement authority to any
+initialized peer that knows a threadId. Rejected: binding calls to the declaring CONNECTION (threads
+outlive connections; reattach is the fleet model — and the replay above is what makes reattach
+actually work).
 
 ## Runtime design
 
@@ -105,9 +108,13 @@ an **immutable overlay**:
   **`dyn`**; the namespace `description` becomes the server's `instructions`
   (`CreateSdkMcpServerOptions.instructions` — "surfaced to the model as an MCP instructions block",
   sdk.d.ts, so Codex's model-visible namespace description has a real home, not a dropped field);
-- **`mcpServer/set` cannot remove or replace them** (review finding 5): the overlay is merged into
-  every set the server accepts and every repush after an engine swap; a set naming an overlay server
-  refuses with a message naming it. Tested against each swap path.
+- **`mcpServer/set` refuses on a declaring thread** (rev 2p — supersedes rev 2's merge-into-every-set):
+  whether the SDK's runtime `setMcpServers` control frame can carry an in-process server INSTANCE is
+  unverifiable keylessly, and an accepted set that silently dropped the declarations would erase
+  thread-lifetime state. Conservative-first: a declaring thread answers `mcpServer/set` with `-32602`
+  naming the dynamic declaration; the refusal is relaxed only after a keyed survival row proves
+  instances ride a runtime set. Non-declaring threads are untouched. The overlay itself needs no
+  runtime set: every engine BUILD carries it (fresh instances on the transient engine config).
 - model-visible names are `mcp__<ns>__<name>` — an SDK naming constraint, noted as a Codex-parity
   nuance, not hidden.
 
@@ -245,3 +252,10 @@ Pending — written at finish.
   `mcpServer/set`; declaration and result caps; object-root passthrough conversion; tagged namespace
   children + `instructions` mapping; acceptance rebuilt around the in-memory MCP exchange plus a keyed
   end-to-end row. Process: M7 lands as its own isolated branch/diff (finding 12).
+- rev 2p (2026-08-24, the planning pass — three amendments before execution): (1) `dynamicTools` is
+  accepted at `thread/resume` too — declarations are in-memory thread state, so a resumed thread
+  otherwise has no path to tools; validation identical. (2) `mcpServer/set` on a declaring thread
+  REFUSES (conservative-first) — rev 2's merge-into-every-set assumed the SDK's runtime control frame
+  can carry in-process instances, which is unverifiable keylessly; relaxation gates on a keyed survival
+  row. (3) Settlement authority made enforceable: the method checks the subscriber set and `callId`s
+  are opaque UUIDs — rev 2 granted the authority but nothing enforced it against a guessed counter.
