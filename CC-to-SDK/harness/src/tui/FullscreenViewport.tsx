@@ -595,13 +595,51 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
    *  and the address ref stay the same selection. Skip it and the remap that runs during the very next
    *  render restores the pre-extend endpoints from the stale mouse-era address, so the chord looks
    *  ineffective, or works until the first rewrap/scroll and then snaps back.
-   *    Returns the mover's own `false` unchanged, so a caller that wants to fall through still can. */
+   *    Returns the mover's own `false` unchanged, so a caller that wants to fall through still can.
+   *
+   *  F10 S6 (Task 7 step 7.9, shipped once S4 AND S6 both landed) — canon's `S()` wrapper
+   *  (L551745-551761): an up/down extend that would leave the WINDOW (not the document) scrolls by ONE row
+   *  first and keeps the focus at that same clamped row, letting S4's remap — which `scroll()` below
+   *  already triggers, being a synchronous render (S6's own auto-scroll driver relies on the identical
+   *  fact) — carry the endpoint onto whatever now paints there. `from` mirrors `moveSelectionFocus`'s own
+   *  "where a span downgrades to" (`E0p`): a live span's `hi` end, otherwise the plain focus-or-anchor. */
   const moveFocus = useCallback((dir: ExtendDir): boolean => {
-    if (!moveSelectionFocus(selectionStateRef.current, dir, hit.current.rows)) return false;
+    const s = selectionStateRef.current;
+    const rows = hit.current.rows;
+    const from = s.anchorSpan ? s.anchorSpan.hi : (s.focus ?? s.anchor);
+    const atWindowEdge = from !== null && rows.length > 0 &&
+      ((dir === "up" && from.row <= 1) || (dir === "down" && from.row >= rows.length));
+    if (atWindowEdge) {
+      const before = anchorRef.current.offset;
+      scroll(PAGER_ACTIONS[dir === "up" ? "scroll:lineUp" : "scroll:lineDown"]!);
+      if (anchorRef.current.offset !== before) {
+        // The window shifted by exactly one row. The downgrade `moveSelectionFocus` itself performs
+        // (`E0p`) is transcribed here so this arm leaves the SAME two-endpoint shape an ordinary
+        // (non-edge) extend would, then the focus is re-applied at the SAME clamped row/col `from` already
+        // named (S4's remap, already run by `scroll()` above, is what makes that row now the newly
+        // revealed content rather than whatever `from` used to point at).
+        const prevAddr = selectionAddrRef.current;
+        if (s.anchorSpan) { const span = s.anchorSpan; s.anchor = span.lo; s.anchorSpan = null; }
+        s.focus = { row: from.row, col: from.col };
+        // `recordAutoScrollFocus`'s own reasoning applies here verbatim: only FOCUS is freshly re-derived
+        // from the (now post-scroll) row content — the anchor's address is carried over UNCHANGED, reusing
+        // the span's own STORED `lo` address directly when downgrading rather than re-deriving it from a
+        // numeric cell the remap may already have clamped to a virtual position (`endpointAt` has no
+        // notion of "virtual" and would misread whatever real row now sits there).
+        const focusAddr = endpointAt(s.focus);
+        if (prevAddr && focusAddr)
+          selectionAddrRef.current = { anchor: prevAddr.span ? prevAddr.span.lo : prevAddr.anchor, focus: focusAddr, span: null };
+        repaint();
+        return true;
+      }
+      // Already at the document's own edge — nothing to scroll into. Fall through to `moveSelectionFocus`,
+      // which returns `false` for the identical "nowhere to go" reason.
+    }
+    if (!moveSelectionFocus(s, dir, rows)) return false;
     recordSelectionAddresses();
     repaint();
     return true;
-  }, [repaint]);
+  }, [repaint, scroll]);
 
   useImperativeHandle(hitmapRef, () => ({
     anchorAt, hoverAt, clearHover,

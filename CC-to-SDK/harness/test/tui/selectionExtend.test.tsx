@@ -25,7 +25,7 @@ import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js"
 import { themeTokens, setTheme } from "../../src/tui/theme.js";
 import type { CopyResult } from "../../src/tui/copy.js";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
-import { FullscreenViewport, type ViewportHitmap } from "../../src/tui/FullscreenViewport.js";
+import { FullscreenViewport, type ViewportHitmap, type ViewportScroll } from "../../src/tui/FullscreenViewport.js";
 import { Transcript } from "../../src/tui/Transcript.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
@@ -176,12 +176,12 @@ const colOf = (rowText: string, word: string): number => {
 };
 const item = (tag: string): RenderItem => ({ kind: "line", id: tag, line: { text: tag } });
 const dock = (n: number) => <Box flexDirection="column">{Array.from({ length: n }, (_, i) => <Text key={i}>{`D${i}`}</Text>)}</Box>;
-interface RemapSceneOpts { items: readonly RenderItem[]; columns?: number; hitmap: React.Ref<ViewportHitmap>; }
+interface RemapSceneOpts { items: readonly RenderItem[]; columns?: number; hitmap: React.Ref<ViewportHitmap>; scroll?: React.Ref<ViewportScroll>; }
 const remapScene = (opts: RemapSceneOpts) => (
   <FullscreenFrame rows={FRAME_ROWS} dock={dock(3)} regionChildren={<>
     <Transcript staticItems={NO_ITEMS} pendingItems={NO_ITEMS} streaming={NO_LINES} />
     <FullscreenViewport finalizedItems={opts.items} pendingItems={NO_ITEMS} streaming={NO_LINES}
-      columns={opts.columns ?? COLS} hitmapRef={opts.hitmap} />
+      columns={opts.columns ?? COLS} hitmapRef={opts.hitmap} scrollRef={opts.scroll} />
   </>} />
 );
 const remapSettle = async () => { for (let i = 0; i < 4; i++) await tick(); };
@@ -272,5 +272,51 @@ describe("F10 S5 — persistence: an extend survives a repaint the same way a mo
     await remapSettle();
     expect(hitmap.current!.hasSelection()).toBe(true);
     expect(hitmap.current!.selectedText()).toBe(extended);
+  });
+});
+
+
+// ── Task 7 step 7.9 (shipped from Task 8, once S4 AND S6 both landed): an up/down extend at the WINDOW's
+// own edge — not the document's — scrolls by ONE row and keeps the focus at that same clamped row, canon's
+// `S()` wrapper (L551745-551761). Same harness as the persistence block above, plus a `ViewportScroll` ref
+// to put the window somewhere with room both above and below before the extend runs.
+describe("F10 S6 — Task 7 step 7.9: an up/down extend at the window's own edge scrolls by one", () => {
+  it("shift+up from the window's own top row scrolls the window by one and the selection grows by one row; at the document's own top it does nothing and returns false", async () => {
+    const DOC_ = Array.from({ length: 20 }, (_, i) => item(`ROW${i}`));
+    const hitmap = React.createRef<ViewportHitmap>();
+    const scroll = React.createRef<ViewportScroll>();
+    const { lastFrame } = render(remapScene({ items: DOC_, hitmap, scroll }));
+    await remapSettle();
+    scroll.current!.scroll({ kind: "top" });
+    await remapSettle();
+    scroll.current!.scroll({ kind: "lines", n: 5 }); // "scrolled mid-way" — 5 rows of room above the window
+    await remapSettle();
+
+    const topLabelBefore = stripAnsi(remapRowsOf(lastFrame())[0]).trim(); // the window's own first painted row
+    hitmap.current!.startSelectionAt(1, 1);
+    hitmap.current!.dragSelectionTo(3, 1);
+    await remapSettle();
+    const before = hitmap.current!.selectedText();
+    expect(before.length).toBeGreaterThan(0);
+
+    expect(hitmap.current!.moveSelectionFocus("up")).toBe(true);
+    await remapSettle();
+    // The window scrolled by exactly one row: the label that used to be at the top is now one row down.
+    expect(stripAnsi(remapRowsOf(lastFrame())[1]).trim()).toBe(topLabelBefore);
+    const extended = hitmap.current!.selectedText();
+    // The selection now spans TWO rows (the newly-revealed one plus the original), not merely a longer
+    // slice of the same row — `before` was a same-row partial selection; a strict substring/suffix
+    // comparison against it does not hold once the anchor/focus document-order roles swap (the anchor's
+    // own endpoint now contributes its UPPER bound instead of its lower one), so the row COUNT is what
+    // this asserts instead.
+    expect(extended.length).toBeGreaterThan(before.length); // the selection grew — a new row joined it
+    expect(extended.split("\n").length).toBe(2);            // exactly one row joined the original one
+
+    // Walk to the document's own top (however many more "up"s that takes), then confirm one more is a no-op.
+    let steps = 0;
+    while (hitmap.current!.moveSelectionFocus("up") && steps < 20) { await remapSettle(); steps++; }
+    expect(steps).toBeGreaterThan(0);
+    expect(remapRowsOf(lastFrame()).some((l) => stripAnsi(l).trim() === "ROW0")).toBe(true); // truly at the top
+    expect(hitmap.current!.moveSelectionFocus("up")).toBe(false); // nothing left to scroll into
   });
 });
