@@ -488,6 +488,18 @@ describe("Session — I1 stranding rule at the builder boundary", () => {
     } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
   });
 
+  it("I1: an image-only Session.submitContent reaches query() as a LABELLED user message (Task 9/I3c: submitContent is a one-line delegation into submit, not a second builder path)", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submitContent([imgBlock()], () => {});
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });   // INSERTED — there was no text block
+      expect(content[1]!.type).toBe("image");
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+
   it("I1: the REPL wire shape — [{text:''},{image}] — reaches query() with the empty block SUBSTITUTED", async () => {
     // This is the array the host assembles (assembleUserContent always emits one text block, even empty),
     // i.e. exactly what test/integration/host-image-transport.test.ts:374-388 captures one layer up. That
@@ -508,6 +520,18 @@ describe("Session — I1 stranding rule at the builder boundary", () => {
     const { frames, turns, query } = framedQuery();
     const s = new Session({ query }, {});
     s.steer([imgBlock()]);
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });   // INSERTED — there was no text block
+      expect(content[1]!.type).toBe("image");
+    } finally { frames.close(); await s.dispose(); }
+  });
+
+  it("I1: a steerContent with an image-only array is labelled too — one builder, one rule (Task 9/I3c: steerContent is a one-line delegation into steer, not a second builder path)", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    s.steerContent([imgBlock()]);
     await waitFor(() => turns.length === 1);
     try {
       const content = turns[0].message.content as UserContentBlock[];
