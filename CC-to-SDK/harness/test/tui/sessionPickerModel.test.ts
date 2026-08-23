@@ -2,8 +2,10 @@
 // (session-picker.test.tsx owns that component and the in-pane `previewItems` it still calls). This file
 // is T-RESUME T1's own: canon's full-screen `/resume` view (`yvc` L583551) needs a DIFFERENT projection
 // (detail-all, not the in-pane's compact fold) and a DIFFERENT window (a row budget the caller supplies,
-// not the fixed `PREVIEW_ROWS` the pane still uses) — `transcriptItems` below is that, plus the tagged
-// `PreviewLoad` the picker's loader now resolves.
+// not a fixed row count — the in-pane preview window this once contrasted against was retired at
+// T-RESUME T2, and the picker's preview stage is `ResumeTranscriptView` now (session-picker.test.tsx:100-
+// 101 records the retirement)) — `transcriptItems` below is that, plus the tagged `PreviewLoad` the
+// picker's loader now resolves.
 import { describe, it, expect } from "vitest";
 import { transcriptItems, type PreviewLoad } from "../../src/tui/sessionPickerModel.js";
 import { projectCompact, projectPending } from "../../src/tui/toolRenderer.js";
@@ -22,7 +24,7 @@ const prose = (text: string, id = `t-${text}`) =>
 const assistantText = (text: string) =>
   ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } });
 
-/** The itemRows arithmetic `transcriptItems` and `previewTail` both run: a line is one physical row, a
+/** The itemRows arithmetic `transcriptItems` runs: a line is one physical row, a
  *  gutter block is its (already-wrapped) body's row count. */
 const paintedRows = (items: readonly RenderItem[]): number =>
   items.reduce((n, i) => n + (i.kind === "line" ? 1 : Math.max(1, i.body.length)), 0);

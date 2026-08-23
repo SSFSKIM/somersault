@@ -41,6 +41,17 @@ describe("hitRowsOf publishes the widened HitRow", () => {
     expect(row!.anchor).toBe("read-1");
   });
 
+  // F10 T-MAINT item 6 (F9 mouse/T1 Minor): the OTHER arm. `kind` is directly asserted for
+  // `gutter-block` above and nowhere for the ordinary line, so the `hitRowsOf` branch that handles the
+  // overwhelming majority of painted rows (`FullscreenViewport.tsx:259`) had no direct pin at all —
+  // swapping the two arms' `kind` would have left this file green.
+  it("an ordinary line row is kind `line`, with no gutter", () => {
+    const [row] = publish([plainLine("p1", "plain row")], 40);
+    expect(row!.kind).toBe("line");
+    expect(row!.gutterWidth).toBe(0);
+    expect(row!.text).toBe("plain row");
+  });
+
   it("marks soft-wrap continuations", () => {
     const item = plainLine("long", "x".repeat(50));
     const rows = publish([item], 20);

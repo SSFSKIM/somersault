@@ -147,7 +147,17 @@ const fail = (text: string, code: number): number => { console.error(`ccx: ${tex
 
 /** Returns the exit code; never throws for an operator error. Everything a consumer script reads —
  *  the banner on stdout, the refusal on stderr, the code — is decided here. */
-export async function main(argv: string[], deps: MainDeps = defaults): Promise<number> {
+export async function main(argv: string[], rawDeps: MainDeps = defaults): Promise<number> {
+  // F10 T-MAINT item 2 (F9 ledger Minor): ONE prefs read per launch. Four consumers ask for the same
+  // file on the run arm — `unconsentedBypassLaunch`, `needsBypassConsent`, the `--detachable` model
+  // materialization and `runForegroundImpl`'s model/effort resolution — and an ordinary interactive
+  // launch used to hit `readFileSync` twice for it. MEMOISED RATHER THAN HOISTED, deliberately: every
+  // one of those consumers has its own short-circuit, and an eager read at the top of the arm would put
+  // a disk read on `-p`/`--bg` launches that ask nothing of prefs at all. `main` runs once per process,
+  // so the memo's lifetime IS the launch's; nothing in this function re-reads prefs expecting to see a
+  // write the REPL made mid-session (the REPL's own writers go through `tui/prefs.js` directly).
+  let prefsOnce: CcxPrefs | undefined;
+  const deps: MainDeps = { ...rawDeps, loadPrefs: () => (prefsOnce ??= rawDeps.loadPrefs()) };
   // POSITIONAL, matching parseHostArgv's own contract. `argv.includes("--__host")` reads a marker out of
   // any position, so `ccx --bg --model --__host task` — a legitimate run whose model value repeats the
   // word — was routed to the child entry point, where it throws because the marker is not first.
