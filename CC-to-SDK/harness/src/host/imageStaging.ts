@@ -106,16 +106,28 @@ export class ImageStaging {
   /** Delete every file in the staging dir older than `maxAgeMs`, reading mtime off the FILESYSTEM rather
    *  than the in-memory `staged` map — a process restart loses the map but not the files on disk, and a
    *  crash between mint and claim is exactly the case this exists to clean up after. Safe to call before
-   *  the directory exists (a fresh host with no prior staging activity ever). */
+   *  the directory exists (a fresh host with no prior staging activity ever).
+   *
+   *  TWO LOOPS, because the file and its map entry can outlive each other independently. The DIRECTORY
+   *  loop is authoritative for the bytes — it sees files this process never minted, which is the whole
+   *  point of reading the filesystem — and prunes the map entry of every file it deletes. But the client
+   *  owns a staged file until the host claims it, and on an aborted turn deletes it ITSELF over the
+   *  shared filesystem (`client/stagedSubmit.ts`'s `cleanup`), leaving a map entry whose file the
+   *  directory loop will never meet again: repeated aborted image turns would grow this map without
+   *  bound. The MAP loop is that entry's only reaper. It is age-gated by the SAME cutoff, which is what
+   *  protects the mint→client-write window — a just-minted entry has to survive every sweep until the
+   *  client has had its chance to write the bytes and claim them. */
   sweepOrphans(maxAgeMs: number = ORPHAN_MAX_AGE_MS): void {
-    if (!existsSync(this.dir)) return;
     const cutoff = Date.now() - maxAgeMs;
-    for (const name of readdirSync(this.dir)) {
-      const path = join(this.dir, name);
-      let mtime: number;
-      try { mtime = statSync(path).mtimeMs; } catch { continue; }   // vanished between readdir and stat
-      if (mtime < cutoff) { this.staged.delete(path); try { unlinkSync(path); } catch { /* already gone */ } }
+    if (existsSync(this.dir)) {
+      for (const name of readdirSync(this.dir)) {
+        const path = join(this.dir, name);
+        let mtime: number;
+        try { mtime = statSync(path).mtimeMs; } catch { continue; }   // vanished between readdir and stat
+        if (mtime < cutoff) { this.staged.delete(path); try { unlinkSync(path); } catch { /* already gone */ } }
+      }
     }
+    for (const [path, descriptor] of this.staged) if (descriptor.mintedAt < cutoff) this.staged.delete(path);
   }
 
   /** Arm the periodic sweep. Returns the disarm function (the same timer-handle discipline `host.ts`'s

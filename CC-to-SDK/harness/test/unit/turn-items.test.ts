@@ -213,6 +213,21 @@ describe("resolveInputItems — data: URLs", () => {
     atCap.writeUInt32BE(MAX_DIMENSION, 16); atCap.writeUInt32BE(MAX_DIMENSION, 20);
     expect(blocks(await resolveInputItems([img(atCap)]))).toHaveLength(2);   // the cap itself passes
   });
+
+  it("degrades a PNG whose IHDR declares a ZERO dimension", async () => {
+    // Round-3 finding: only the UPPER bound was checked, so a header claiming width 0 was ADMITTED —
+    // and on the FLEET origin those dimensions ride the `stageImage` op, whose schema (host/ops.ts)
+    // requires a positive int for each, so the op is refused as invalid payload and the ENTIRE
+    // `turn/start` fails -32603 where this one image should have degraded to a note. Asserted as the
+    // whole array: the turn's text has to survive with no image block beside it.
+    const zeroWide = fakePng(0, 100);
+    expect(pngDimensions(zeroWide)).toEqual({ width: 0, height: 100 });        // the sniffer itself is happy with it
+    expect(await resolveInputItems([txt("A"), img(zeroWide)]))
+      .toEqual([{ type: "text", text: `A${note("dimensions 0x100 are below the 1x1px minimum")}` }]);
+    expect(foldText(await resolveInputItems([img(fakePng(100, 0))])))          // …and the same for a zero HEIGHT
+      .toBe(note("dimensions 100x0 are below the 1x1px minimum"));
+    expect(blocks(await resolveInputItems([img(fakePng(1, 1))]))).toHaveLength(2);   // 1x1, the least admissible image, passes
+  });
 });
 
 // =====================================================================================================

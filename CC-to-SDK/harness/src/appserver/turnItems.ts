@@ -152,6 +152,15 @@ function admitBytes(buf: Buffer, aggregateSoFar: number): { ok: true; data: stri
   const png = pngDimensions(buf);
   const dims = png ?? jpegDimensions(buf);
   if (!dims) return { ok: false, reason: "unreadable image data" };
+  // BOTH bounds, not only the upper one. A crafted header declaring width or height 0 sniffs perfectly
+  // well and looks like an ordinary small image from here on — but on the fleet origin those same
+  // dimensions ride the `stageImage` op, whose schema (host/ops.ts) requires a POSITIVE int for each, so
+  // the op is refused as invalid payload and the WHOLE turn fails where ONE image should have degraded.
+  // A dims-specific reason rather than the sniffer's "unreadable image data": these bytes DID parse, and
+  // naming the offending numbers is what a client can act on — the same shape the over-limit reason has.
+  if (dims.width < 1 || dims.height < 1) {
+    return { ok: false, reason: `dimensions ${dims.width}x${dims.height} are below the 1x1px minimum` };
+  }
   if (dims.width > MAX_DIMENSION || dims.height > MAX_DIMENSION) {
     return { ok: false, reason: `dimensions ${dims.width}x${dims.height} exceed the ${MAX_DIMENSION}x${MAX_DIMENSION}px limit` };
   }
