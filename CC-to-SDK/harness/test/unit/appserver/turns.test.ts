@@ -1,8 +1,13 @@
 // test/unit/appserver/turns.test.ts — Task 8: turn lifecycle + item streaming. Copies Task 6's
 // mkSink/send/parsed helpers (test/unit/appserver/server.test.ts) so this file reads standalone.
 import { describe, it, expect } from "vitest";
+import { z } from "zod/v4";
 import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { MAX_QUEUED_BYTES } from "../../../src/appserver/queue.js";
+import { MAX_DATA_URL_CHARS, MAX_INPUT_ITEMS } from "../../../src/appserver/turnItems.js";
+import { turnStartParams } from "../../../src/appserver/schema/turns.js";
+import type { UserTurnInput } from "../../../src/session/turnInput.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -489,5 +494,180 @@ describe("appserver turns (Task 8)", () => {
 
     // and the wire projection a picker sorts on carries it, not just the record
     expect(threadView(srv, record).updatedAt).toBe(record.updatedAt);
+  });
+});
+
+// =====================================================================================================
+// `turn/start {input: InputItem[]}` — the public wire's items array (spec 2026-08-23 rev 3, "Wire
+// design" / "Admission and the queue" / "Canonical ordering"). Driven through the real dispatch, because
+// what these rows are about is exactly the seam between the SCHEMA (which refuses) and the RESOLVER
+// (which degrades): a bound moved from one to the other changes nothing a resolver-level test can see.
+describe("turn/start input items (spec 2026-08-23)", () => {
+  /** Header-only PNG — `pngDimensions` never reads past byte 24, so this is the cheapest buffer that
+   *  sniffs as a real image (the fixture fleet-engine.test.ts and client-chat-adapter.test.ts share). */
+  const png = (width = 4, height = 4): Buffer => {
+    const buf = Buffer.alloc(24);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(buf, 0);
+    buf.write("IHDR", 12, "ascii");
+    buf.writeUInt32BE(width, 16);
+    buf.writeUInt32BE(height, 20);
+    return buf;
+  };
+  const PNG_B64 = png().toString("base64");
+  const PNG_URL = `data:image/png;base64,${PNG_B64}`;
+  const imageBlock = (data = PNG_B64) => ({ type: "image", source: { type: "base64", media_type: "image/png", data } });
+  const note = (reason: string) => `[Image could not be processed: ${reason}]`;
+
+  /** Records what the engine was handed, verbatim — the whole point of every row below. The gated
+   *  `factory` holds a turn genuinely in flight (the window the queue exists for); `instantFactory`
+   *  settles by itself, for the rows that are not about the queue. */
+  function mkRecorder() {
+    const submits: UserTurnInput[] = [];
+    const pending: Array<() => void> = [];
+    return {
+      submits,
+      release: () => { for (const r of pending.splice(0)) r(); },
+      factory: () => ({
+        submit: async (prompt: UserTurnInput) => { submits.push(prompt); await new Promise<void>((r) => pending.push(r)); return { result: {} }; },
+        interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+      }),
+      instantFactory: () => ({
+        submit: async (prompt: UserTurnInput) => { submits.push(prompt); return { result: {} }; },
+        interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
+      }),
+    };
+  }
+
+  it("(a) items reach the engine as the canonical block array — ONE text fold, then the images in declaration order", async () => {
+    const rec = mkRecorder();
+    const { c, threadId } = await bootThread(rec.instantFactory);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: [{ type: "text", text: "A" }, { type: "image", url: PNG_URL }, { type: "text", text: "B" }] } });
+    await tick();
+    // The interleave is DEFINED, not origin-dependent: text A and text B fold into one leading block and
+    // the image follows, which is the one shape the host wire can also carry (spec "Canonical ordering").
+    expect(rec.submits).toEqual([[{ type: "text", text: "AB" }, imageBlock()]]);
+  });
+
+  it("(b) a mixed-success turn folds the notes into that SAME text block, in image order, and still delivers the good image", async () => {
+    const rec = mkRecorder();
+    const { c, threadId } = await bootThread(rec.instantFactory);
+    // "AAAA" is legal base64 that decodes to three bytes no sniffer recognizes — a degrade, never a refusal.
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: [
+      { type: "text", text: "A" },
+      { type: "image", url: "data:image/png;base64,AAAA" },
+      { type: "text", text: "B" },
+      { type: "image", url: PNG_URL },
+    ] } });
+    await tick();
+    expect(rec.submits).toEqual([[{ type: "text", text: `AB${note("unreadable image data")}` }, imageBlock()]]);
+  });
+
+  it("(c) the schema refuses -32602: an https: url, an over-cap data: URL, a relative localImage path, an empty array, and 65 items", async () => {
+    const rec = mkRecorder();
+    const { s, c, threadId } = await bootThread(rec.instantFactory);
+    const bad: Array<[number, unknown]> = [
+      [10, [{ type: "image", url: "https://example.com/cat.png" }]],
+      [11, [{ type: "image", url: `data:image/png;base64,${"A".repeat(MAX_DATA_URL_CHARS)}` }]],
+      [12, [{ type: "localImage", path: "relative/cat.png" }]],
+      [13, []],
+      [14, Array.from({ length: MAX_INPUT_ITEMS + 1 }, () => ({ type: "text", text: "x" }))],
+    ];
+    for (const [id, input] of bad) send(c, { id, method: "turn/start", params: { threadId, input } });
+    await tick();
+    for (const [id] of bad) expect(parsed(s.lines).find((f) => f.id === id)?.error?.code, `frame ${id}`).toBe(ERR.INVALID_PARAMS);
+    // A refusal is not a turn: nothing reached the engine, and the thread is still idle.
+    expect(rec.submits).toEqual([]);
+  });
+
+  it("(d) the 21st image degrades against the host's own per-turn image cap while the first 20 survive", async () => {
+    const rec = mkRecorder();
+    const { c, threadId } = await bootThread(rec.instantFactory);
+    const items = [
+      ...Array.from({ length: 20 }, () => ({ type: "image", url: PNG_URL })),
+      // A localImage the count gate never gets to read: its note names the CAP, not this path — the
+      // syscall-level proof that no descriptor was opened lives in turn-items.test.ts's fs-spy row.
+      { type: "localImage", path: "/nonexistent/twenty-first.png" },
+    ];
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: items } });
+    await tick();
+    const blocks = rec.submits[0] as { type: string; text?: string }[];
+    expect(blocks[0]).toEqual({ type: "text", text: note("too many images in one turn (limit 20)") });
+    expect(blocks.filter((b) => b.type === "image")).toHaveLength(20);
+    expect(blocks[0].text).not.toContain("twenty-first");
+  });
+
+  it("(e) a QUEUED items turn is stored RAW and resolved at drain — the drained blocks are byte-for-byte a direct start's", async () => {
+    const rec = mkRecorder();
+    const { srv, s, c, threadId } = await bootThread(rec.factory);
+    const items = [{ type: "text", text: "A" }, { type: "image", url: PNG_URL }];
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "first" } });
+    await tick();
+    send(c, { id: 4, method: "turn/start", params: { threadId, input: items, queue: true } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 4)?.result?.queued).toBe(true);
+    // RAW: admission and queueing are synchronous, so no resolution may have happened yet (an await on
+    // this side of admission is the M6 stranding — every check before it goes stale).
+    expect(srv.registry.get(threadId)!.queue.map((q) => q.input)).toEqual([items]);
+    expect(rec.submits).toEqual(["first"]);
+
+    rec.release();
+    for (let i = 0; i < 6; i++) await tick();
+    // …and what the drain finally submits is exactly what a direct start submits.
+    const direct = mkRecorder();
+    const other = await bootThread(direct.instantFactory);
+    send(other.c, { id: 5, method: "turn/start", params: { threadId: other.threadId, input: items } });
+    await tick();
+    expect(rec.submits[1]).toEqual(direct.submits[0]);
+    expect(rec.submits[1]).toEqual([{ type: "text", text: "A" }, imageBlock()]);
+  });
+
+  it("(f) the queue's byte cap counts an items array by its RAW JSON — exactly at the remaining cap enqueues, one byte more is refused", async () => {
+    // Four fillers rather than one: the peer's inbound frame cap (256 KiB) is smaller than the queue's
+    // byte cap (1 MiB), so the boundary is only reachable across several frames.
+    const FILL = 250_000;
+    const overhead = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]), "utf8");
+    const remaining = MAX_QUEUED_BYTES - 4 * FILL;
+    const exact = [{ type: "text", text: "a".repeat(remaining - overhead) }];
+    expect(Buffer.byteLength(JSON.stringify(exact), "utf8")).toBe(remaining);
+
+    const fill = async (c: { feed(ch: string): void }, threadId: string) => {
+      send(c, { id: 3, method: "turn/start", params: { threadId, input: "running" } });
+      await tick();
+      for (let i = 0; i < 4; i++) send(c, { id: 10 + i, method: "turn/start", params: { threadId, input: "f".repeat(FILL), queue: true } });
+      await tick();
+    };
+
+    const a = await bootThread(mkRecorder().factory);
+    await fill(a.c, a.threadId);
+    send(a.c, { id: 20, method: "turn/start", params: { threadId: a.threadId, input: exact, queue: true } });
+    await tick();
+    expect(parsed(a.s.lines).find((f) => f.id === 20)?.result?.queued).toBe(true);
+
+    const b = await bootThread(mkRecorder().factory);
+    await fill(b.c, b.threadId);
+    const oneMore = [{ type: "text", text: "a".repeat(remaining - overhead + 1) }];
+    send(b.c, { id: 20, method: "turn/start", params: { threadId: b.threadId, input: oneMore, queue: true } });
+    await tick();
+    const refusal = parsed(b.s.lines).find((f) => f.id === 20);
+    expect(refusal.error.code).toBe(ERR.BUSY);
+    expect(refusal.error.message).toContain("MiB queued input");
+  });
+
+  it("(g) the live user item echoes the RESOLVED input — an image reads as its [Image #N] placeholder", async () => {
+    const rec = mkRecorder();
+    const { s, c, threadId } = await bootThread(rec.instantFactory);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: [{ type: "text", text: "look" }, { type: "image", url: PNG_URL }] } });
+    await tick();
+    const userEvent = parsed(s.lines).find((f) => f.method === "item/completed" && f.params.item.type === "userMessage");
+    expect(userEvent.params.item.text).toBe("look[Image #1]");
+  });
+
+  it("(h) version skew is LOUD BY SHAPE — an OLD server's string-only schema refuses today's array outright", () => {
+    // The F9 lesson, pinned rather than described: this is the pre-widening shape, inline, so the row
+    // keeps asserting it after the real one has moved on. A new client's images can never be silently
+    // stripped by a server that never heard of them — it gets -32602 instead.
+    const legacy = z.object({ threadId: z.string().min(1), input: z.string(), queue: z.boolean().optional() });
+    expect(legacy.safeParse({ threadId: "t", input: [{ type: "text", text: "hi" }] }).success).toBe(false);
+    expect(turnStartParams.safeParse({ threadId: "t", input: [{ type: "text", text: "hi" }] }).success).toBe(true);
   });
 });

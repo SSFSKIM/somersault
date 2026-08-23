@@ -17,8 +17,19 @@
 // than a race (turn/start's enqueue arm refuses a `closing` thread, turns.ts).
 import { mintTurnId, type ThreadRecord } from "./registry.js";
 import type { AppServer } from "./server.js";
+import type { InputItem } from "./turnItems.js";
 
-export interface QueuedTurn { id: string; input: string }
+/** `input` is stored RAW — the items array exactly as it came off the wire, never the resolved blocks
+ *  (spec 2026-08-23 rev 3, "Admission and the queue"). Resolution is async and reads the filesystem; it
+ *  belongs in the turn's own execution slot, on the far side of admission, so that a queued items turn is
+ *  byte-for-byte the turn it would have been had the client sent it when the thread was idle — and so
+ *  that no admission decision ends up sitting behind an await (the M6 stranding). */
+export interface QueuedTurn { id: string; input: string | InputItem[] }
+
+/** What one entry costs the queue: its UTF-8 bytes for a string, its raw JSON's for an items array. Raw
+ *  items are bounded by the 256 KiB frame they arrived in, so this is exact and small — and it is the
+ *  same number for a turn whether it is measured here or at the moment it was received. */
+const inputBytes = (input: string | InputItem[]): number => Buffer.byteLength(typeof input === "string" ? input : JSON.stringify(input), "utf8");
 
 /** The queue's ADMISSION CAPS (fix wave 1). The queue is this server's own memory, held for as long as the
  *  running turn takes — so a client that keeps a thread busy could otherwise stack unlimited turns of
@@ -37,13 +48,13 @@ export type EnqueueResult = { ok: true; id: string; position: number } | { ok: f
  *  Both caps are checked BEFORE the mint, and that order is the invariant this module opens with: every
  *  minted id gets a terminal event, and a refused enqueue has none — so an id burned on a refusal would be
  *  a gap in the sequence that no client could ever account for. */
-export function enqueueTurn(record: ThreadRecord, input: string): EnqueueResult {
+export function enqueueTurn(record: ThreadRecord, input: string | InputItem[]): EnqueueResult {
   if (record.queue.length >= MAX_QUEUED_TURNS) return { ok: false, reason: "entries" };
   // The candidate counts against what is already queued, in BYTES (a UTF-16 length under-counts the
   // memory an emoji-heavy prompt actually holds). Accepted asymmetry: a NON-queued `turn/start` is not
   // size-capped — this cap protects THIS server's buffer, not the engine's input path.
-  const queued = record.queue.reduce((n, q) => n + Buffer.byteLength(q.input, "utf8"), 0);
-  if (queued + Buffer.byteLength(input, "utf8") > MAX_QUEUED_BYTES) return { ok: false, reason: "bytes" };
+  const queued = record.queue.reduce((n, q) => n + inputBytes(q.input), 0);
+  if (queued + inputBytes(input) > MAX_QUEUED_BYTES) return { ok: false, reason: "bytes" };
   const id = mintTurnId(record);
   record.queue.push({ id, input });
   return { ok: true, id, position: record.queue.length };

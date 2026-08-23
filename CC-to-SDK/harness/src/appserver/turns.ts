@@ -17,9 +17,27 @@ import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, MAX_QUEUED_BYTES, MAX_QUEUED_TURNS, type QueuedTurn } from "./queue.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams } from "./schema/turns.js";
+import { resolveInputItems, type InputItem } from "./turnItems.js";
+import { flattenForDisplay, type UserTurnInput } from "../session/turnInput.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/settings.ts — registry.ts's `updatedAt` is unix seconds, not ms
+
+/** The terminal status a turn reports when it never reached an engine at all. */
+type TurnStopped = "cancelled" | "interrupted";
+/** What a runner hands back to `beginTurn`: the engine's own outcome (Wave T t14's additive `error` tag
+ *  rides on it), `stopped` when it refused to call the engine at all, or nothing (compact). */
+type TurnOutcome = { error?: { message: string }; stopped?: TurnStopped } | void;
+
+/** THE TWO LATCHES, spelled once and read at every point a turn is about to touch an engine. `closing`
+ *  wins when both hold, matching threadBusyReason's precedence (registry.ts).
+ *
+ *  Read more than once per turn on purpose. `beginTurn`'s chain callback reads them after waiting on the
+ *  chain; `submitRunner` and `fleetTurnStart` read them AGAIN on the far side of the item resolution
+ *  (spec 2026-08-23, "Admission and the queue"; plan-review finding 2) — an await added between a check
+ *  and the call it guards turns that check stale, which is the M6 lesson stated as code. */
+const stoppedBy = (record: ThreadRecord): TurnStopped | undefined =>
+  record.closing ? "cancelled" : record.interruptRequested ? "interrupted" : undefined;
 
 /** TurnMapper mutates its Items IN PLACE (`item.text += delta`, a tool's status/result filled in when its
  *  tool_result lands, `aborted` stamped by finalize), so buffering the ItemEvent by reference means the
@@ -161,7 +179,9 @@ export function beginTurn(
   // The runner resolves with the engine's own outcome when it has one — turnStart returns submit()'s
   // resolve so onSuccess below can read Wave T t14's additive `error` tag. A runner with no outcome to
   // report (compact) resolves void; onSuccess treats that as a clean completion.
-  runner: (turnId: string, mapper: TurnMapper) => Promise<{ error?: { message: string } } | void>,
+  // `stopped` is the runner's own way of saying it never called the engine (submitRunner's post-resolution
+  // latch re-check) — onSuccess reports it verbatim rather than deriving a terminal it cannot know.
+  runner: (turnId: string, mapper: TurnMapper) => Promise<TurnOutcome>,
   presetTurnId?: string, // M2b's queue drain passes the id minted at enqueue; otherwise mintTurnId()
 ): boolean {
   // Gate synchronously, at request-arrival time — NOT deferred inside the chain callback below. A
@@ -211,7 +231,7 @@ export function beginTurn(
     // turn/start (or compact) caller likewise gets `{turn:{id,status}}` — an error would leave it holding
     // no id to correlate the turn/completed below with, and a caller that DID get its id (the drain) is
     // already served by the broadcast alone.
-    const stopped = record.closing ? "cancelled" : record.interruptRequested ? "interrupted" : undefined;
+    const stopped = stoppedBy(record);
     if (stopped) {
       const turn0 = { id: turnId, status: stopped };
       settleTurn(srv, record); // clears busy and drains the next queued turn (a no-op under the closing latch)
@@ -250,12 +270,19 @@ export function beginTurn(
     //    ONE-SHOT broadcast that nothing later overwrites, so dropping the tag here permanently tells every
     //    subscriber a dead API completed the turn — and finalizes its open tool items `completed` too.
     // Interrupt wins when both hold: the client's own abort is the more specific cause of the failure.
-    const onSuccess = (outcome: { error?: { message: string } } | void) => {
-      const interrupted = record.interruptRequested;
-      const failure = interrupted ? undefined : outcome?.error;
-      emitItems(srv, record, turnId, mapper.finalize(interrupted || failure !== undefined));
+    //  - a STOPPED runner: it re-checked these same latches on the far side of an await of its own (the
+    //    item resolution) and refused to call the engine. It names its own terminal because this callback
+    //    cannot derive one — a `closing` stop reads "cancelled" here exactly as it does in the pre-runner
+    //    guard above, and reporting "completed" for a turn that never ran is the one lie this spine
+    //    cannot afford. It outranks the flag read below: `interruptRequested` is only ONE of the two
+    //    latches, and a close that raced an interrupt must still read as the withdrawal it was.
+    const onSuccess = (outcome: TurnOutcome) => {
+      const stopped = outcome?.stopped;
+      const interrupted = !stopped && record.interruptRequested;
+      const failure = stopped || interrupted ? undefined : outcome?.error;
+      emitItems(srv, record, turnId, mapper.finalize(stopped !== undefined || interrupted || failure !== undefined));
       settleTurn(srv, record);
-      const turn2: Record<string, unknown> = { id: turnId, status: interrupted ? "interrupted" : failure ? "failed" : "completed" };
+      const turn2: Record<string, unknown> = { id: turnId, status: stopped ?? (interrupted ? "interrupted" : failure ? "failed" : "completed") };
       if (failure) turn2.error = failure.message;
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: turn2 });
       statusChanged(srv, record);
@@ -303,15 +330,32 @@ export function beginTurn(
  *  reportFailed (which always reports "failed") — a real divergence for a turn/interrupt landing the same
  *  tick as a synchronously-throwing submit(). The submit promise is returned AS-IS so beginTurn's
  *  onSuccess can read Wave T t14's additive `error` tag off the resolve. */
-function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
-  return (turnId: string, mapper: TurnMapper) => {
-    // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
-    // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
-    // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
-    // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
-    const userUuid = randomUUID();
-    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(input, userUuid) }]);
-    return record.session.submit(input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
+function submitRunner(srv: AppServer, record: ThreadRecord, input: string | InputItem[]) {
+  return (turnId: string, mapper: TurnMapper): Promise<TurnOutcome> => {
+    const drive = (resolved: UserTurnInput): Promise<TurnOutcome> => {
+      // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
+      // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
+      // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
+      // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
+      const userUuid = randomUUID();
+      // Echoed from the RESOLVED input, so an image reads as its `[Image #N]` placeholder rather than as
+      // the base64 that carried it — and so the echo describes what the model was actually handed,
+      // degrade notes and all.
+      emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(flattenForDisplay(resolved), userUuid) }]);
+      return record.session.submit(resolved, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
+    };
+    // A STRING takes the exact path it always did, synchronously — see the header on why this function is
+    // not `async`. Only the items form has an await to put anything on the far side of.
+    if (typeof input === "string") return drive(input);
+    // The items form resolves HERE, in the turn's own ordered execution slot: a queued turn that drains
+    // into this runner is byte-for-byte the turn a direct start would have produced.
+    return resolveInputItems(input).then((resolved) => {
+      // …and the latches are re-read before anything reaches the engine. Resolution opens files and can
+      // take real time; a thread/close disposing this very engine, or a turn/interrupt, can land inside
+      // it, and every check that admitted this turn ran before it.
+      const stopped = stoppedBy(record);
+      return stopped ? { stopped } : drive(resolved);
+    });
   };
 }
 
@@ -332,7 +376,7 @@ function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
  *  would itemize every own turn twice. The uuid is minted and stamped anyway (§1a-b): it is what keeps the
  *  live user item's id equal to the row the host will persist, so the two join under the normal id-dedup
  *  stitch instead of appearing twice in a client's transcript. */
-function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord, input: string): void {
+function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: ThreadRecord, input: string | InputItem[]): void {
   const userUuid = randomUUID();
   let replied = false;
   // SYNCHRONOUS ADMISSION RESERVATION (final review R3), set at request arrival BEFORE the chained submit
@@ -363,19 +407,54 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   let releaseAck!: () => void;
   const ack = new Promise<void>((r) => { releaseAck = r; });
   const clearAck = (): void => { if (record.fleetStartAck === ack) record.fleetStartAck = undefined; releaseAck(); };
-  const onAccepted = (seq: number): void => {
-    const turnId = fleetTurnId(record, seq);
-    replied = true;
-    clearReservation();   // the host has the turn; `record.busy` (set by the event layer's turn-start) now owns busy
-    ctx.peer.reply(id, { turn: { id: turnId, status: "inProgress" } });
-    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(input, userUuid) }]);
-    clearAck();   // the reply is out — release any completed edge (and own-turn items, R4) the event layer deferred onto it
-  };
+  // The ONE refusal both this turn's awaits answer with — the chain wait below, and the item resolution
+  // after it. A fleet turn has no id until the host's seq arrives, so it cannot broadcast a synthesized
+  // turn/completed the way beginTurn does; the honest terminal is the same -33001 the busy gate gives,
+  // with the reason named. Handed to the ENGINE too (`opts.aborted`), which owns a third await of its
+  // own — the staging round trip an image prompt opens with.
+  const refusal = (): string | undefined =>
+    record.closing ? "Thread is busy (closing)" : record.interruptRequested ? "Turn interrupted before it started" : undefined;
+  const refuse = (message: string): void => { clearReservation(); ctx.peer.replyError(id, ERR.BUSY, message); };
   // Cast, not a widened `EngineSession`: `onAccepted` is a FLEET engine's member (fleetEngine.ts widens
   // submit for it), and declaring it on the shared interface would promise a callback the in-process
   // engine never fires. `record.origin === "fleet"` is the guarantee behind it — fleet.ts is the only
   // writer of that pair.
   const engine = record.session as unknown as FleetEngineSession;
+  /** Everything from `fleetStartAck` to the host's reply, for whichever prompt this turn ended up with —
+   *  the resolved blocks for an items turn, the string itself otherwise. `onAccepted` lives in here
+   *  because the user item it echoes is the RESOLVED input's flat preview (an image reads as its
+   *  `[Image #N]` placeholder), which does not exist until the prompt does. */
+  const dispatch = (prompt: UserTurnInput): void => {
+    const onAccepted = (seq: number): void => {
+      const turnId = fleetTurnId(record, seq);
+      replied = true;
+      clearReservation();   // the host has the turn; `record.busy` (set by the event layer's turn-start) now owns busy
+      ctx.peer.reply(id, { turn: { id: turnId, status: "inProgress" } });
+      emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(flattenForDisplay(prompt), userUuid) }]);
+      clearAck();   // the reply is out — release any completed edge (and own-turn items, R4) the event layer deferred onto it
+    };
+    record.fleetStartAck = ack;   // bracket only THIS turn's reply window (see the ack note above)
+    engine.submit(prompt, () => {}, { uuid: userUuid, onAccepted, aborted: refusal }).catch((e: unknown) => {
+      clearReservation();
+      clearAck();   // the reply will never come — don't strand a deferred turn/completed (F2)
+      // Once the reply is out, this turn's outcome belongs to `turn/completed` off the host's own turn end
+      // — a rejection here (the connection died mid-turn) is §1f's death sequence, not a second answer.
+      if (replied) return;
+      // The host's busy refusal, carrying the code the turns spine answers with (FleetBusyError). Read off
+      // the value rather than by class, so any engine that refuses the same way answers the same way —
+      // which is also how the engine's OWN `aborted` refusal (a latch that came up inside the staging
+      // round trip) arrives here reading exactly like the pre-submit one.
+      const code = (e as { code?: unknown } | null)?.code;
+      if (code === ERR.BUSY) { ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)"); return; }
+      // F6: a socket death after dispatch but before the prompt ack rejects submit with the engine's
+      // connection-closed error, which carries no `code`. `isEnded()` is the death latch dispatch's own
+      // -33005 gate reads (fleetEngine.ts), so a rejection from a dead engine maps to ENGINE_GONE — the same
+      // reconnectable-host-loss signal every other fleet op answers — while a genuine unexpected throw on a
+      // LIVE engine stays INTERNAL, so a client can tell a server bug from a host it can recover by re-attach.
+      if (engine.isEnded()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, e instanceof Error ? e.message : String(e)); return; }
+      ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+    });
+  };
   // THROUGH record.chain (final review R2): the prompt now orders BEHIND any prior chain mutation
   // (thread/model/set, thread/clear), so it reaches the host after the forwarded op instead of racing
   // ahead of it — the app server's own ordering, which the pre-fix immediate submit bypassed. The
@@ -389,28 +468,25 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
     // synthesized turn/completed the way beginTurn does; the honest answer is the same -33001 the busy gate
     // gives, exactly as the `closing` branch already documents. `fleetStartAck` is assigned AFTER this guard,
     // so no ack cleanup is owed on either path.
-    if (record.closing || record.interruptRequested) {
+    const stopped = refusal();
+    if (stopped) { refuse(stopped); return; }
+    if (typeof input === "string") { dispatch(input); return; }
+    // The items form resolves in THIS turn's slot, and the chain holds until it finishes — so the prompt
+    // still leaves for the host behind any prior chain mutation (R2) rather than out of a callback that
+    // escaped the ordering. The RETURNED promise is what keeps that true.
+    return resolveInputItems(input).then((resolved) => {
+      // RE-CHECKED, on the far side of the read: a thread/close (which is about to dispose this engine) or
+      // a turn/interrupt can land inside a resolution that opened files, and every check that admitted
+      // this turn ran before it.
+      const late = refusal();
+      if (late) { refuse(late); return; }
+      dispatch(resolved);
+    }, (e: unknown) => {
+      // The resolver degrades rather than throwing, so reaching here is a bug or an out-of-memory — but an
+      // unhandled rejection HERE would reject record.chain and wedge this thread forever (every later
+      // chain-scoped request for it, thread/close included, silently never replies). So it is caught, the
+      // reservation released, and the caller told.
       clearReservation();
-      ctx.peer.replyError(id, ERR.BUSY, record.closing ? "Thread is busy (closing)" : "Turn interrupted before it started");
-      return;
-    }
-    record.fleetStartAck = ack;   // bracket only THIS turn's reply window (see the ack note above)
-    engine.submit(input, () => {}, { uuid: userUuid, onAccepted }).catch((e: unknown) => {
-      clearReservation();
-      clearAck();   // the reply will never come — don't strand a deferred turn/completed (F2)
-      // Once the reply is out, this turn's outcome belongs to `turn/completed` off the host's own turn end
-      // — a rejection here (the connection died mid-turn) is §1f's death sequence, not a second answer.
-      if (replied) return;
-      // The host's busy refusal, carrying the code the turns spine answers with (FleetBusyError). Read off
-      // the value rather than by class, so any engine that refuses the same way answers the same way.
-      const code = (e as { code?: unknown } | null)?.code;
-      if (code === ERR.BUSY) { ctx.peer.replyError(id, ERR.BUSY, e instanceof Error ? e.message : "Thread is busy (turn)"); return; }
-      // F6: a socket death after dispatch but before the prompt ack rejects submit with the engine's
-      // connection-closed error, which carries no `code`. `isEnded()` is the death latch dispatch's own
-      // -33005 gate reads (fleetEngine.ts), so a rejection from a dead engine maps to ENGINE_GONE — the same
-      // reconnectable-host-loss signal every other fleet op answers — while a genuine unexpected throw on a
-      // LIVE engine stays INTERNAL, so a client can tell a server bug from a host it can recover by re-attach.
-      if (engine.isEnded()) { ctx.peer.replyError(id, ERR.ENGINE_GONE, e instanceof Error ? e.message : String(e)); return; }
       ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
     });
   });

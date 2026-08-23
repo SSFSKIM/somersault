@@ -273,13 +273,26 @@ function _scopeCutTypePins(): void {
   // @ts-expect-error — daemon connect submit stays string-only (F9 T-IMAGE v3.1 scope cut).
   void daemon.submit("id", [{ type: "text", text: "hi" }], () => {});
 
+  // The appserver's `turn/start` is the ONE surface that came back inside the scope line: spec
+  // 2026-08-23 widens its `input` to the items union, so the pin here inverts from "this must not
+  // typecheck" to "this must". The two above are untouched — the cut still holds for them.
   type TurnStartParams = z.infer<typeof turnStartParams>;
   const params: TurnStartParams = {
     threadId: "t",
-    // @ts-expect-error — the appserver turn/start schema's `input` stays string-only (v3.1 scope cut).
-    input: [{ type: "text", text: "hi" }],
+    input: [{ type: "text", text: "hi" }, { type: "image", url: "data:image/png;base64,AAAA" }, { type: "localImage", path: "/tmp/a.png" }],
   };
   void params;
+  // …and the union is still a UNION: a string is the overwhelmingly common turn and stays free.
+  const stringParams: TurnStartParams = { threadId: "t", input: "hi" };
+  void stringParams;
+  // The item shapes are CLOSED — a fourth kind, or a field the schema never declared, is still a type
+  // error, which is what keeps the widening from having quietly become `unknown[]`.
+  const bad: TurnStartParams = {
+    threadId: "t",
+    // @ts-expect-error — `video` is not an input item kind (spec 2026-08-23 "Wire design").
+    input: [{ type: "video", url: "data:video/mp4;base64,AAAA" }],
+  };
+  void bad;
 }
 void _scopeCutTypePins;
 

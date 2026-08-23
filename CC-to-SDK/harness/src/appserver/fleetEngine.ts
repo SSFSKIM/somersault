@@ -125,7 +125,13 @@ export interface FleetEngineSession extends EngineSession, FleetEngineEvents {
    *  reply named, before the first frame of that turn is delivered. It is the only race-free seq channel a
    *  caller has: deriving the seq from "the next turn-start we saw" is wrong on the refusal path, where a
    *  FOREIGN turn's start can land between the op leaving and the busy reply coming back. */
-  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }>;
+  /** `opts.aborted` is the CALLER'S latch, read on the far side of the staging round trip an image prompt
+   *  opens with and before the prompt op is written. That round trip is a real window: an interrupt the
+   *  client sends inside it reaches the HOST first, where it cancels nothing — or cancels a FOREIGN turn —
+   *  and the prompt then starts a turn the client already stopped. It returns the REFUSAL MESSAGE rather
+   *  than a bare boolean so the engine can reject with the caller's own wording, and a turn stopped inside
+   *  the window reads exactly like one stopped just before it. */
+  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void; aborted?: () => string | undefined }): Promise<{ result: unknown; error?: TurnFailure }>;
   /** `replay` is the host's own mark (wire.ts:16-19), passed BESIDE the frame rather than on it: the frame
    *  stays byte-for-byte what the SDK produced, and a consumer that clocks arrival can still tell buffered
    *  history from news instead of fabricating a duration for work that finished before it connected. */
@@ -326,7 +332,7 @@ class FleetEngine implements FleetEngineSession {
   cancelExpectDeath(): void { this.expectedDeath = false; }
 
   // ── the EngineSession contract ──────────────────────────────────────────────────────────────────
-  async submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }> {
+  async submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void; aborted?: () => string | undefined }): Promise<{ result: unknown; error?: TurnFailure }> {
     // One in-flight submit per engine: a second would clobber the sink and the waiter under the first.
     // The host refuses a concurrent prompt anyway (busy), but this engine must not depend on that to
     // keep its own bookkeeping straight — and an array prompt spends a whole staging round trip before
@@ -338,7 +344,7 @@ class FleetEngine implements FleetEngineSession {
     finally { this.submitInFlight = false; }
   }
 
-  private async runSubmit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void }): Promise<{ result: unknown; error?: TurnFailure }> {
+  private async runSubmit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string; onAccepted?: (seq: number) => void; aborted?: () => string | undefined }): Promise<{ result: unknown; error?: TurnFailure }> {
     // A string prompt takes the exact path it always did, down to the absent `images` key. An array's
     // images cannot travel on the host wire at all (M3 §1b's op set) — they travel as BYTES ON THE HOST'S
     // DISK, staged through the same helper the socket-owning REPL adapter uses (client/stagedSubmit.ts)
@@ -350,6 +356,14 @@ class FleetEngine implements FleetEngineSession {
       staged = await stageBlocks(prompt, { stageImageOp: (d) => this.sendOp({ op: "stageImage", ...d }) });
       body = { text: staged.text, ...(staged.images.length ? { images: staged.images } : {}) };
     }
+    // THE LAST CHECK BEFORE THE WIRE. Staging is one host round trip per image, and the caller's admission
+    // decisions were all taken before it; an interrupt or a close landing inside that window would
+    // otherwise be followed by our own prompt, starting a turn the client already stopped. The staged
+    // bytes are still OURS here (ownership transfers only on an accepted prompt), so they go back with the
+    // refusal rather than waiting on the orphan sweep. For a STRING prompt this runs in the caller's own
+    // tick — no window, no cost, and one rule instead of two.
+    const stopped = opts?.aborted?.();
+    if (stopped) { await staged?.cleanup(); throw new FleetBusyError(stopped); }
     // QUARANTINE, not delivery. A sink is open before the op leaves — the turn's own first frames are on
     // the wire ahead of the reply that names its seq, and dropping them is worse than delaying them — but
     // until that reply says `ok` there is no evidence any of those frames are OURS. On a busy refusal they

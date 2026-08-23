@@ -180,7 +180,76 @@
           "minLength": 1
         },
         "input": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "text"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "text"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "image"
+                      },
+                      "url": {
+                        "type": "string",
+                        "maxLength": 240000,
+                        "pattern": "^data:.*",
+                        "description": "A base64 `data:` URL. Remote URLs are refused."
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "url"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "localImage"
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "An ABSOLUTE path on the server's filesystem. A relative path is refused (-32602)."
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "path"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          ]
         },
         "queue": {
           "type": "boolean"

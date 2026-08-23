@@ -667,6 +667,28 @@ describe("FleetEngineSession", () => {
       await expect(first).resolves.toEqual({ result: "done" });
     });
 
+    it("an interrupt landing DURING the staging round trip stops the turn: no prompt reaches the host, and the staged bytes go back", async () => {
+      // THE STAGING WINDOW (Task 2 review). Staging is one or more host round trips, and an interrupt
+      // that lands inside it reaches the HOST FIRST — where it cancels nothing, or cancels a FOREIGN
+      // turn — and our prompt then starts a turn the client already stopped, while turns.ts reports it
+      // interrupted. `opts.aborted` is the caller's own latch, read on the far side of that window.
+      sh = await startStagingHost({ holdStage: true });
+      const s = await liveRaw(sh.socketPath);
+      let stop: string | undefined;
+      const p = s.submit([imageBlock(fakePng(4, 4))], () => {}, { aborted: () => stop });
+      await waitFor(() => expect(sh!.staged).toHaveLength(1));      // the stage op is out and its reply is held
+      stop = "Turn interrupted before it started";                  // …the interrupt lands right here
+      sh.release();
+      // Rejected with the code the turns spine answers -33001 with, so an interrupted-before-it-started
+      // fleet turn reads identically whichever side of the staging window the latch went up on.
+      await expect(p).rejects.toBeInstanceOf(FleetBusyError);
+      await expect(p).rejects.toThrow("Turn interrupted before it started");
+      expect(sh.ops).not.toContain("prompt");
+      expect(existsSync(sh.staged[0])).toBe(false);                 // ownership never transferred — nothing to sweep
+      // and the reservation cleared with it: the engine is not wedged by a turn that never started.
+      await expect(s.submit("go", () => {})).resolves.toEqual({ result: "done" });
+    });
+
     it("leaves a plain-string submit byte-identical on the wire — no `images` key at all", async () => {
       sh = await startStagingHost();
       const s = await liveRaw(sh.socketPath);
