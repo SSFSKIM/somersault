@@ -379,12 +379,15 @@ were all real and all structural — an interrupt arriving mid-staging reaching 
 own row, the fleet items happy path being unpinned, and a stopped turn reporting `completed` to every
 subscriber. None was a rewrite; each was a property the code did not yet state.
 
-The final whole-branch review (codex, base `e7777bf9be`) found what no per-task review could: three
-defects living in the SEAMS between tasks — the pending-turn cancellation clobbered by a foreign turn's
-lifecycle, staged-file cleanup on an indeterminate ack, and a zero-content array our wire admitted but
-the host's refused (all three in Surprises). Fixed in one wave with per-finding sabotage proofs; the
-per-task reviews were each scoped to their own diff, and every one of these needed two tasks' code in
-view at once.
+The final whole-branch review became a five-round codex campaign (base `e7777bf9be`): 3 → 3 → 2 → 1 → 0
+findings, nine defects total, every one controller-verified before its wave and closed with a
+per-finding sabotage proof. What no per-task review could see was the SEAMS: pending-turn cancellation
+clobbered by a foreign turn's lifecycle, staged-file ownership across an indeterminate ack (then its
+never-sent fourth way), the execution slot that released before dispatch, the cap measured on two
+different strings, the missing lower bound, the sweep that never walked its own map, and the ack barrier
+whose armed window the items path had silently stretched (each in Surprises). Every per-task review was
+scoped to its own diff; all nine needed two or more tasks' code in view at once. Closure: full unit
+suite 3403/3403 across 241 files after round 5 came back clean.
 
 A second whole-branch round over the fixed tree found three more, and they rhyme: each was a property
 that had been TRUE before this milestone added an await or a prefix, and stayed written down as though
