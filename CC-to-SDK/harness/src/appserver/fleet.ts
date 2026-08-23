@@ -192,6 +192,11 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
       mapper = new TurnMapper();
       record.busy = true;
       record.buffer = [];               // the bounded PER-TURN window (registry.ts), reset every turn
+      // RECORD-WIDE ONLY, and deliberately not the pending fleet turn's own latch (registry.ts's
+      // PendingFleetStop). This runs for FOREIGN turns too — any client of this host starting a turn — so
+      // anything cleared here is cleared by a stranger. A turn of ours still parked in item resolution or
+      // image staging keeps its cancellation in `record.fleetPendingStop`, which only its own settlement
+      // takes down.
       record.interruptRequested = false;
       record.currentTurnId = turnId;
       record.updatedAt = nowSec();

@@ -202,6 +202,30 @@ describe("post-resolution latch re-check — fleet", () => {
     expect(frame(lines, 10).error).toEqual({ code: ERR.BUSY, message: "Turn interrupted before it started" });
   });
 
+  // A FOREIGN TURN'S WHOLE LIFECYCLE, run inside the window the row above opens (whole-branch review P1).
+  // A fleet thread's turn edges belong to the HOST, and every client of that host produces them: the event
+  // layer's turn-start clears `record.interruptRequested` for a turn that is not ours at all. While the
+  // cancellation of a pending turn rode that record-wide flag, a stranger starting and ending a turn in
+  // this window erased it, `refusal()` then read a clean record, and the prompt this client had explicitly
+  // stopped went out to the host anyway. The turn's OWN latch is what survives the stranger.
+  it("a foreign turn's start+end inside the resolution window does NOT revive an interrupted pending turn", async () => {
+    const { fh, conn, lines, threadId } = await bootAttached();
+    gate.hold();
+    send(conn, { id: 10, method: "turn/start", params: { threadId, input: ITEMS } });
+    await tick();
+    send(conn, { id: 11, method: "turn/interrupt", params: { threadId } });
+    await settle();
+    // …and NOW the ccx terminal owner (or any other client of this host) runs a turn of their own, start
+    // to finish, while ours is still parked in resolution.
+    fh.beginTurn(7);
+    fh.endTurn(7, { result: "someone else's turn" });
+    await settle();
+    gate.release();
+    await settle();
+    expect(fh.ops.filter((op) => op === "prompt" || op === "stageImage")).toEqual([]);
+    expect(frame(lines, 10).error).toEqual({ code: ERR.BUSY, message: "Turn interrupted before it started" });
+  });
+
   it("a thread/close landing DURING resolution refuses the start and never puts a prompt on the host wire", async () => {
     const { fh, conn, lines, threadId } = await bootAttached();
     gate.hold();

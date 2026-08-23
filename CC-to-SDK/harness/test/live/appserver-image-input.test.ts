@@ -256,8 +256,10 @@ live("app-server image input — an items turn delivers real pixels to a real en
 
     // MODEL-DEPENDENT. Magenta is named several ways by different models; the alternation admits the
     // synonyms and nothing else — "red"/"blue" would not satisfy it. These two ARE the cross-leg
-    // discriminator: no string that satisfies them could have satisfied leg 1's `red` + `blue`, so a model
-    // answering from the prompt alone rather than the pixels cannot pass both legs with one reply. (A
+    // discriminator: no ANSWER TO THIS PROMPT that satisfies them could have satisfied leg 1's `red` +
+    // `blue` — a verbose enough reply naming all four colours would satisfy both assertion sets, which is
+    // why the claim is about answering the question rather than about the strings — so a model answering
+    // from the prompt alone rather than the pixels cannot pass both legs with one reply. (A
     // literal `not.toEqual(leg1Text)` was dropped: it adds nothing here and passes vacuously whenever
     // leg 1 is filtered out with `-t`, which a quota-bounded keyed run has every reason to do.)
     expect(text, `the reply did not name the left band: ${JSON.stringify(text)}`).toContain("yellow");

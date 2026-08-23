@@ -122,6 +122,17 @@ export interface EngineSession {
   readonly sessionId?: string;
 }
 
+/** ONE pending fleet turn's own stop latch — a per-turn object precisely because the record-wide
+ *  `interruptRequested` cannot serve here. A fleet thread's turn edges are the HOST's, and every host
+ *  turn-start clears that flag (fleet.ts) — including a FOREIGN turn a different client of the same host
+ *  starts. A turn/interrupt aimed at a pending own turn (one whose item resolution or image staging is
+ *  still running, so it has not reached the host at all) would then be erased by a stranger's turn
+ *  starting and ending in that window, and the prompt the client already stopped would go out anyway.
+ *  So the interrupt is latched HERE instead: `turns.ts`'s fleet arm installs one at request arrival,
+ *  `requestInterrupt` raises it, and only that turn's own settlement takes it down. `closing` stays on
+ *  the record — it is monotonic, so no event can clear it. */
+export type PendingFleetStop = { interrupted: boolean };
+
 export interface ThreadRecord {
   id: string;
   origin: ThreadOrigin;
@@ -249,6 +260,9 @@ export interface ThreadRecord {
                                  // completed edge onto this promise; onAccepted resolves and clears it the
                                  // moment the reply is out. Absent for foreign turns (no reply is owed) and
                                  // once the reply has been published — so a normal completion stays synchronous.
+  fleetPendingStop?: PendingFleetStop; // FLEET ONLY: the PENDING (accepted here, not yet dispatched to the
+                                 // host) own turn's OWN interrupt latch — see PendingFleetStop.
+
   short?: string;               // FLEET ONLY (M3 §1b): the roster row's 8-hex id — the handle `ccx` itself
                                  // addresses a session by, so a client can name the same session both here
                                  // and at the CLI. Filled at attach (Task 7); never set on inProcess.

@@ -641,12 +641,17 @@ describe("FleetEngineSession", () => {
       await expect(s.submit("go", () => {})).resolves.toEqual({ result: "done" });
     });
 
-    it("cleans the staged files when the connection dies between the stage and the prompt", async () => {
+    it("LEAVES the staged files when the connection dies across the prompt op — an indeterminate ack is not a refusal", async () => {
+      // THE THIRD OWNERSHIP CASE (whole-branch review P2). A rejection from the prompt op says only that
+      // no reply came back — not that no prompt arrived. The host's `runTask` survives a client
+      // disconnect and reads the claimed files lazily as the turn runs, so unlinking on this path makes
+      // every later image of a turn the host DID accept degrade as missing. The files stay; if the prompt
+      // truly never landed, the host's own orphan sweep takes them.
       sh = await startStagingHost({ prompt: "die" });
       const s = await liveRaw(sh.socketPath);
       await expect(s.submit([imageBlock(fakePng(4, 4))], () => {})).rejects.toThrow(/closed/);
       expect(sh.staged).toHaveLength(1);                                  // it really did stage before the death
-      expect(existsSync(sh.staged[0])).toBe(false);
+      expect(existsSync(sh.staged[0])).toBe(true);                        // …and the bytes are still there for it
       eng = undefined;                                                    // the socket is gone; no unfollow to send
     });
 

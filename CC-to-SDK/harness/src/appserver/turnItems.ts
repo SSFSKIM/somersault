@@ -35,9 +35,11 @@ import { MAX_IMAGES_PER_PROMPT } from "../host/imageStaging.js";
 export const MAX_INPUT_ITEMS = 64;
 /** Bound on ONE `image.url`, in characters — Task 4's schema rejects a longer one as a shape error, and
  *  `decodeDataUrl` enforces it AGAIN on the payload it is about to decode, so the decode is bounded for
- *  every caller and not only for the ones that came in through the schema. ≈180 KB decoded, which is what
- *  the app-server's 256 KiB inbound frame cap (`peer.ts` MAX_IN) actually carries once the JSON envelope
- *  is paid for. The honest v1 bound, published rather than discovered in production — a bigger image travels by
+ *  every caller and not only for the ones that came in through the schema. THIS cap is the binding number:
+ *  240,000 base64 characters decode to exactly 180,000 bytes. The app-server's 256 KiB inbound frame cap
+ *  (`peer.ts` MAX_IN) is the REASON the cap sits where it does — one framed image plus its JSON envelope
+ *  has to fit — not itself a measure of what an image may weigh.
+ *  The honest v1 bound, published rather than discovered in production — a bigger image travels by
  *  `localImage` (shared filesystem), and a REMOTE client with one has no v1 path (named follow-up). */
 export const MAX_DATA_URL_CHARS = 240_000;
 /** Per-turn ceiling on the SUM of surviving images' decoded bytes. Deliberately the same value as

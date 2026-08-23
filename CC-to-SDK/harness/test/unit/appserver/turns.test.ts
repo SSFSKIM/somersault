@@ -670,4 +670,27 @@ describe("turn/start input items (spec 2026-08-23)", () => {
     expect(legacy.safeParse({ threadId: "t", input: [{ type: "text", text: "hi" }] }).success).toBe(false);
     expect(turnStartParams.safeParse({ threadId: "t", input: [{ type: "text", text: "hi" }] }).success).toBe(true);
   });
+
+  it("(i) an items array with no content at all is -32602 at OUR wire, not a -32603 from the host's refine", async () => {
+    // `text: z.string()` admits "", so an all-empty-text array used to parse, resolve to one empty text
+    // block with no images, and reach the fleet bridge as a host prompt `{text:""}` — refused by the
+    // host's own op schema ("prompt requires text or at least one image") and surfaced as INTERNAL for a
+    // request our schema had just called valid. The rule mirrors the host's, so the two cannot disagree.
+    const rec = mkRecorder();
+    const { s, c, threadId } = await bootThread(rec.instantFactory);
+    const bad: Array<[number, unknown]> = [
+      [10, [{ type: "text", text: "" }]],
+      [11, [{ type: "text", text: "" }, { type: "text", text: "" }]],
+    ];
+    for (const [id, input] of bad) send(c, { id, method: "turn/start", params: { threadId, input } });
+    await tick();
+    for (const [id] of bad) expect(parsed(s.lines).find((f) => f.id === id)?.error?.code, `frame ${id}`).toBe(ERR.INVALID_PARAMS);
+    expect(rec.submits).toEqual([]);                                   // a refusal is not a turn
+    // THE CONTROL, and the reason the rule is stated at the ARRAY level rather than per item: an empty
+    // text item beside an image is a perfectly ordinary turn, and it is admitted.
+    send(c, { id: 12, method: "turn/start", params: { threadId, input: [{ type: "text", text: "" }, { type: "image", url: PNG_URL }] } });
+    await tick();
+    expect(parsed(s.lines).find((f) => f.id === 12)?.result?.turn?.status).toBe("inProgress");
+    expect(rec.submits).toEqual([[{ type: "text", text: "" }, imageBlock()]]);
+  });
 });

@@ -516,9 +516,10 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     taller than that — an ordinary retina screenshot exceeds it — and **only PNG and JPEG are readable
     at all**, because `admitBytes` derives the media type by sniffing (`pngDimensions`, then
     `jpegDimensions`) rather than trusting the declaration, so a GIF or WebP degrades with
-    `unreadable image data`. Neither is expressible in the published JSON Schema — `image.url`'s
-    `.describe` says "a base64 `data:` URL" and nothing about format or size — which is exactly why they
-    are written out here.
+    `unreadable image data`. Neither is expressible in the published JSON Schema — `image.url` carries a
+    `maxLength` of 240000 and a `data:` `pattern`, and a `.describe` that reads in full "A base64 `data:`
+    URL. Remote URLs are refused.", so the artifact says nothing about format or pixel dimensions — which
+    is exactly why they are written out here.
 
     Two things were worth separating, because only one of them was catchable — and that half outlives the
     gap. The MISSING ROW went red on the registry-coverage gate the moment the op landed — correctly, and

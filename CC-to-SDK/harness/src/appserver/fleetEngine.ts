@@ -359,9 +359,9 @@ class FleetEngine implements FleetEngineSession {
     // THE LAST CHECK BEFORE THE WIRE. Staging is one host round trip per image, and the caller's admission
     // decisions were all taken before it; an interrupt or a close landing inside that window would
     // otherwise be followed by our own prompt, starting a turn the client already stopped. The staged
-    // bytes are still OURS here (ownership transfers only on an accepted prompt), so they go back with the
-    // refusal rather than waiting on the orphan sweep. For a STRING prompt this runs in the caller's own
-    // tick — no window, no cost, and one rule instead of two.
+    // bytes are still OURS here — no `prompt` op has left at all, so this is the one cleanup with nothing
+    // indeterminate about it — and they go back with the refusal rather than waiting on the orphan sweep.
+    // For a STRING prompt this runs in the caller's own tick — no window, no cost, and one rule instead of two.
     const stopped = opts?.aborted?.();
     if (stopped) { await staged?.cleanup(); throw new FleetBusyError(stopped); }
     // QUARANTINE, not delivery. A sink is open before the op leaves — the turn's own first frames are on
@@ -373,14 +373,24 @@ class FleetEngine implements FleetEngineSession {
     const pending: unknown[] = [];
     this.turnSink = (m) => { pending.push(m); };
     let rep: { ok: boolean; accepted?: boolean; seq?: number; error?: string };
+    // THE STAGED BYTES SPLIT THREE WAYS HERE, on what this one op came back as — not two (whole-branch
+    // review P2). A REFUSAL and an ACCEPTANCE are both definite answers and are handled below. A
+    // REJECTION is neither: the socket can die AFTER the host accepted the prompt and BEFORE its reply
+    // reached us, and the host's `runTask` survives a client disconnect and reads the claimed files
+    // lazily as the turn runs. So the files are LEFT STANDING — unlinking them would make every later
+    // image of an accepted turn degrade as missing, while leaving them costs nothing when the prompt
+    // really never arrived: the host's own orphan sweep reaps them (host/imageStaging.ts,
+    // ORPHAN_MAX_AGE_MS), and a file the sweep already took is exactly the "missing" verdict
+    // `readAndValidate` already tolerates.
     try { rep = await this.sendOp({ op: "prompt", ...body, ...(opts?.uuid ? { uuid: opts.uuid } : {}) }); }
-    catch (e) { this.turnSink = undefined; this.discardWindowEnds(); await staged?.cleanup(); throw e; }
+    catch (e) { this.turnSink = undefined; this.discardWindowEnds(); throw e; }
     if (!rep.ok || rep.seq === undefined) {
       this.turnSink = undefined;
       this.discardWindowEnds();
-      // Staged bytes are OURS until the host accepts the prompt (stagedSubmit.ts's ownership contract), and
-      // a refusal is not an acceptance: taken back here, they never wait on the orphan sweep. Past this
-      // point the host owns them, so `cleanup` is deliberately dropped uncalled.
+      // A REAL REPLY SAYING NO. Staged bytes are OURS until the host accepts the prompt (stagedSubmit.ts's
+      // ownership contract), and an explicit refusal is a definite non-acceptance: taken back here, they
+      // never wait on the orphan sweep. Past this point the prompt was ACCEPTED and the host owns them, so
+      // `cleanup` is deliberately dropped uncalled.
       await staged?.cleanup();
       // The host's ONE refusal token, matched exactly (host/server.ts:169) — not a message heuristic:
       // every other failure is a real error and must not read as a retryable busy.

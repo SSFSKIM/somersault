@@ -10,7 +10,7 @@ import { ERR } from "./rpc.js";
 import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
 import { fleetTurnId, mintTurnId, threadBusyReason, threadStatus, ORIGIN_REFUSAL_MESSAGE } from "./registry.js";
-import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
+import type { ThreadRecord, BufferedItemEvent, PendingFleetStop } from "./registry.js";
 import type { FleetEngineSession } from "./fleetEngine.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
@@ -35,9 +35,15 @@ type TurnOutcome = { error?: { message: string }; stopped?: TurnStopped } | void
  *  Read more than once per turn on purpose. `beginTurn`'s chain callback reads them after waiting on the
  *  chain; `submitRunner` and `fleetTurnStart` read them AGAIN on the far side of the item resolution
  *  (spec 2026-08-23, "Admission and the queue"; plan-review finding 2) — an await added between a check
- *  and the call it guards turns that check stale, which is the M6 lesson stated as code. */
-const stoppedBy = (record: ThreadRecord): TurnStopped | undefined =>
-  record.closing ? "cancelled" : record.interruptRequested ? "interrupted" : undefined;
+ *  and the call it guards turns that check stale, which is the M6 lesson stated as code.
+ *
+ *  WHICH interrupt latch is read is the caller's to say, and only the interrupt half moves: `closing` is
+ *  monotonic on the record, so nothing can clear it out from under a parked turn. A caller that hands in
+ *  a `PendingFleetStop` reads THAT turn's own interrupt instead of the record-wide flag — the fleet arm's
+ *  case, where a foreign turn's start clears the record-wide one (registry.ts's PendingFleetStop, and the
+ *  clear itself at fleet.ts's turn-start). The precedence between the two latches stays spelled once. */
+const stoppedBy = (record: ThreadRecord, pending?: PendingFleetStop): TurnStopped | undefined =>
+  record.closing ? "cancelled" : (pending ? pending.interrupted : record.interruptRequested) ? "interrupted" : undefined;
 
 /** The same two latches as WIRE MESSAGES, for the one origin that cannot broadcast a terminal at all: a
  *  fleet turn has no id until the host's seq arrives, so it answers -33001 with the reason named instead
@@ -398,17 +404,25 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // the event layer's turn-start ahead of the prompt reply, now owns busy) or when the submit fails before
   // it accepted a seq.
   record.fleetTurnPending = true;
-  // Reset at arrival, exactly as beginTurn does (turns.ts:168) and for the same same-tick reason: a
-  // turn/interrupt landing in this same tick — before the chain callback below runs — sets
-  // interruptRequested, and the callback's skip guard reads it to refuse a turn the client already
-  // cancelled. It must be reset HERE, not left to the event layer's turn-start (fleet.ts), which only runs
-  // AFTER this turn's own submit reaches the host: a prior interrupted turn leaves the latch standing (its
-  // onTurn 'end' does not clear it), and without this reset the callback would read that stale flag and
-  // wrongly refuse this fresh turn. Safe because turn/start only reaches here when the thread is idle (the
-  // busy gate refuses -33001 before the origin branch, turns.ts:415-435), so no in-flight turn's latch is
-  // clobbered.
+  // Reset at arrival, exactly as beginTurn does (turns.ts:168) and for the same same-tick reason: a prior
+  // interrupted turn leaves the record-wide latch standing (its onTurn 'end' does not clear it), and a
+  // stale flag must not describe this fresh turn. Safe because turn/start only reaches here when the
+  // thread is idle (the busy gate refuses -33001 before the origin branch), so no in-flight turn's latch
+  // is clobbered.
   record.interruptRequested = false;
-  const clearReservation = (): void => { record.fleetTurnPending = false; };
+  // THIS TURN'S OWN STOP LATCH, and the only interrupt signal the guards below read (whole-branch review
+  // P1). The record-wide flag above cannot carry a PENDING fleet turn's cancellation: `fleet.ts` clears it
+  // on EVERY host turn-start, foreign ones included, so a stranger's turn starting and ending inside this
+  // turn's resolution/staging window erased the interrupt and the prompt the client had already stopped
+  // went out anyway. Installed at arrival so `turn/interrupt` can find it (requestInterrupt raises it),
+  // and taken down only by this turn's own settlement — the guards keep reading the object itself, so an
+  // uninstall can never blind a check that is still owed one.
+  const pending: PendingFleetStop = { interrupted: false };
+  record.fleetPendingStop = pending;
+  const clearReservation = (): void => {
+    record.fleetTurnPending = false;
+    if (record.fleetPendingStop === pending) record.fleetPendingStop = undefined;   // identity-guarded, like clearAck
+  };
   // F2: the promise the event layer (fleet.ts) holds a trivially-fast turn's turn/completed edge (and, for
   // R4, this turn's own item emissions) behind until the inProgress reply is out. Set on the chain right
   // before submit (NOT at arrival): set at arrival it would sit armed while a slow prior chain item ran and
@@ -423,8 +437,9 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // with the reason named. Handed to the ENGINE too (`opts.aborted`), which owns a third await of its
   // own — the staging round trip an image prompt opens with.
   // DERIVED from `stoppedBy`, never a second reading of the record: which latch wins when both hold is
-  // that function's answer, and this arm only names it (see STOPPED_REFUSAL).
-  const refusal = (): string | undefined => { const stopped = stoppedBy(record); return stopped && STOPPED_REFUSAL[stopped]; };
+  // that function's answer, and this arm only names it (see STOPPED_REFUSAL). The interrupt half is read
+  // off `pending`, this turn's own latch, and never off the record-wide flag a foreign turn can clear.
+  const refusal = (): string | undefined => { const stopped = stoppedBy(record, pending); return stopped && STOPPED_REFUSAL[stopped]; };
   const refuse = (message: string): void => { clearReservation(); ctx.peer.replyError(id, ERR.BUSY, message); };
   // Cast, not a widened `EngineSession`: `onAccepted` is a FLEET engine's member (fleetEngine.ts widens
   // submit for it), and declaring it on the shared interface would promise a callback the in-process
@@ -627,6 +642,11 @@ export const turnSteer: Handler = (srv, ctx, id, params) => {
  *  turn as "completed" and finalizes its open items as completed rather than failed. */
 export async function requestInterrupt(record: ThreadRecord): Promise<void> {
   record.interruptRequested = true;
+  // …and the PENDING fleet turn's own latch, if one is installed (registry.ts's PendingFleetStop). The
+  // flag above is cleared by every host turn-start, a FOREIGN client's included, so it alone cannot carry
+  // a stop for a turn that has not reached the host yet. Raised here rather than in `turnInterrupt` so
+  // `decision/respond`'s abortTurn — the other caller of this one interrupt path — stops such a turn too.
+  if (record.fleetPendingStop) record.fleetPendingStop.interrupted = true;
   await record.session.interrupt(); // zero-arg (see file header) — turn/interrupt's cancelQueued accepted, unused
 }
 
