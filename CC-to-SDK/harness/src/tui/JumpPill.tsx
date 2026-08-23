@@ -21,12 +21,13 @@
 // Canon's `(click)` and `: <chord> to scroll` forms are the macOS-with-mouse branch of the LONGEST variant
 // (456156-456165), not extra lengths; this wave is keyboard-only, so only the bound-chord arm of that branch
 // is reachable and the three lengths below are canon's whole ladder.
-import React from "react";
+import React, { useContext } from "react";
 import { Box, Text } from "ink";
 import { formatBindingLower } from "./keys/hints.js";
 import { useBindingLookup } from "./keys/KeymapProvider.js";
 import { preferredKey } from "./keys/resolver.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
+import { HoverContext } from "./mouse/hoverContext.js";
 
 /** The action the pill advertises and the pill's own gesture: canon's `scrollToBottom()`, which re-STICKS as
  *  well as re-deriving — "follow the tail again", not merely "show me the tail once". */
@@ -88,12 +89,20 @@ export function JumpPill({ newRows, columns, dumpEditor }: JumpPillProps): React
   const lookup = useBindingLookup();
   const chord = formatBindingLower(preferredKey(lookup(JUMP_PILL_ACTION, { live: true })));
   const dumpChord = formatBindingLower(preferredKey(lookup(DUMP_PILL_ACTION, { live: true })));
+  // F10 T-HOVER: the band swap `Line.tsx` used to run for every transcript row, re-homed here — canon's
+  // transcript hover never touches a background at all (`Line.tsx`'s header); the swap canon DOES have is
+  // chrome's (`Psc`/`O6w`), and this pill is ccx's `O6w`. ONE RECORDED DELTA: canon's `O6w` puts the
+  // handlers on the BADGE box, so only the badge's own cells are the target there; ccx's pill has no
+  // `HitRow` of its own (the viewport removes the pill's row from the window by construction, `body =
+  // height - 1`), so the whole pill ROW is the target instead — deliberate, and strictly a superset.
+  const hovered = useContext(HoverContext);
+  const bg = resolveThemeColor(hovered ? themeTokens().userMessageBackgroundHover : themeTokens().userMessageBackground);
   return (
     <Box justifyContent="center" flexShrink={0}>
       {/* `truncate-end` is canon's own prop (456186) and load-bearing here rather than cosmetic: the shortest
           variant is returned even when it does not fit, and an Ink `Text` that wrapped it instead of clipping
           would make the pill two rows and eat a transcript row the viewport already paid for. */}
-      <Text wrap="truncate-end" backgroundColor={resolveThemeColor(themeTokens().userMessageBackground)}>{jumpPillText(newRows, chord, columns, dumpEditor, dumpChord)}</Text>
+      <Text wrap="truncate-end" backgroundColor={bg}>{jumpPillText(newRows, chord, columns, dumpEditor, dumpChord)}</Text>
     </Box>
   );
 }

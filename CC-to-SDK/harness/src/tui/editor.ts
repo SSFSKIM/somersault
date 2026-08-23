@@ -731,7 +731,7 @@ export function offsetFromPosition(text: string, prefixWidth: number, innerWidth
   const rowIndex = Math.max(0, Math.min(Math.floor(line), rows.length - 1));
   const row = rows[rowIndex] ?? "";
   const before = rows.slice(0, rowIndex).reduce((sum, r) => sum + r.length, 0);
-  const hit: HitRow = { itemKey: "", anchor: undefined, width: stringWidth(row), text: row, gutterWidth: 0, softWrap: "hard", kind: "line" };
+  const hit: HitRow = { itemKey: "", ownerKey: "", anchor: undefined, width: stringWidth(row), text: row, gutterWidth: 0, softWrap: "hard", kind: "line" };
   const cell = columnToChar(hit, column);
   const charStart = cell ? cell.charStart : (column <= hit.gutterWidth ? 0 : row.length);
   return Math.max(0, Math.min(text.length, before + charStart - Math.max(0, prefixWidth)));

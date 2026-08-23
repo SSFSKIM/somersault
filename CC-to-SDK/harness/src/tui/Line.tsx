@@ -15,19 +15,13 @@ import { stripSgr } from "./sgrFoldRow.js";
  *  so producers that already resolved (all of ours do) are unaffected. */
 const ink = (color?: string) => (color === undefined ? undefined : resolveThemeColor(color));
 
-// F9 T-MOUSE Task 3 — the two hover-brighten halves (spec M3, canon §2.3), both applied ONLY when
-// `HoverContext` reads `true` for this row:
-//   (a) DIM IS DROPPED, not recolored — canon's own `QmS` (L203979) does the same: `dimColor && !hovered`
-//       reads straight through to the undimmed color when hovered, it does not pick a brighter color.
-//   (b) THE BAND SWAPS, not every background — canon's pair is keyed to ONE specific token
-//       (`userMessageBackground` ⇄ `userMessageBackgroundHover`, L562653/562668/562779 etc.), so a diff
-//       row's red/green band or a rule's dim title band must NOT light up just because its row is hovered.
-//       Comparing the RESOLVED colors (both sides go through `resolveThemeColor`) is what makes this an
-//       identity check on the TOKEN rather than a guess at which raw hex a producer happened to pass.
-const hoverBand = (bg: string | undefined, hovered: boolean): string | undefined => {
-  if (!hovered || bg === undefined) return bg;
-  return bg === resolveThemeColor(themeTokens().userMessageBackground) ? resolveThemeColor(themeTokens().userMessageBackgroundHover) : bg;
-};
+// F9 T-MOUSE Task 3 — hover un-dims a row (spec M3, canon §2.3's `QmS`, L203979): `dimColor && !hovered`
+// reads straight through to the undimmed color when hovered, it does not pick a brighter color.
+//   F10 T-HOVER (H1) REMOVED THE BAND SWAP THAT USED TO LIVE HERE. It cited L562779 as its source, which is
+// canon's *expanded*-cluster marker, not its hover one — canon's transcript hover never touches a
+// background at all (`Ssi`'s sole consumer is `QmS` at L203977-203979; `Text`'s backgroundColor path at
+// L203984 does not read it). The swap IS real, but on chrome, not the transcript: `Psc` (L562667-562684) and
+// `O6w` (L562653-562661) are the jump pill's own hover, and `JumpPill.tsx` owns it now.
 // A `preStyled` segment's dim is BAKED INTO ITS BYTES (F3 Task 1's exact-bytes contract — it renders through
 // a bare `<Text>` with no style props at all, so there is no `dimColor` to flip). Un-dimming it hovered is
 // therefore a literal `\x1b[2m` strip rather than a re-style — the brief's own phrasing for this row shape.
@@ -61,12 +55,14 @@ function splitBySelection(text: string, runStart: number, sel: LineSelection | u
   if (hi < runEnd) pieces.push({ text: text.slice(hi - runStart), selected: false });
   return pieces;
 }
-/** A selected piece's background always wins over the hover band — dragging a selection across an
- *  already-hovered row is the one case both can be live at once, and the selection is the more specific,
- *  more transient state (Task 7's own auto-copy latch reads selection as the "something is happening"
- *  signal, never hover). */
-const pieceBg = (bg: string | undefined, hovered: boolean, selected: boolean): string | undefined =>
-  selected ? selectionBg() : hoverBand(bg, hovered);
+/** A selected piece's background always wins; hover NEVER touches a background (F10 T-HOVER — see the
+ *  header). Canon's `Ssi` reaches only the colour resolution (L203977-203979) — `Text`'s backgroundColor
+ *  path (L203984) does not read it, and the one thing that paints `userMessageBackgroundHover` in canon's
+ *  transcript does so because the item is EXPANDED (`K6w` L562779), the same condition that suppresses
+ *  hover. The swap is a CHROME behaviour (`Psc` L562667-562684, `O6w` L562653-562661); ccx's `O6w` is
+ *  `JumpPill.tsx`, which owns it now. */
+const pieceBg = (bg: string | undefined, selected: boolean): string | undefined =>
+  selected ? selectionBg() : bg;
 
 /** `\x1b[48;2;r;g;bm` … `\x1b[49m` wrapped around a `preStyled` segment's RAW bytes — the one shape this file
  *  cannot reach with an ordinary `backgroundColor` prop, because a preStyled segment is a bare `<Text>`
@@ -104,8 +100,8 @@ function renderSegment(s: Segment, key: number, runStart: number, hovered: boole
   }
   const pieces = splitBySelection(s.text, runStart, sel);
   const node = pieces.length === 1
-    ? <Text key={key} color={ink(s.color)} backgroundColor={pieceBg(ink(s.bg), hovered, pieces[0]!.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{s.text}</Text>
-    : <Text key={key}>{pieces.map((p, i) => <Text key={i} color={ink(s.color)} backgroundColor={pieceBg(ink(s.bg), hovered, p.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{p.text}</Text>)}</Text>;
+    ? <Text key={key} color={ink(s.color)} backgroundColor={pieceBg(ink(s.bg), pieces[0]!.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{s.text}</Text>
+    : <Text key={key}>{pieces.map((p, i) => <Text key={i} color={ink(s.color)} backgroundColor={pieceBg(ink(s.bg), p.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{p.text}</Text>)}</Text>;
   return { node, length: s.text.length };
 }
 
@@ -132,8 +128,8 @@ export const Line = ({ l, wrap, selection }: { l: RenderLine; wrap?: "wrap" | "t
     <Text wrap={wrap}>
       {l.gutter ? <Text color={ink(l.gutter.color)} dimColor={hovered ? false : l.gutter.dim} italic={l.gutter.italic}>{l.gutter.text}</Text> : null}
       {segmentNodes ?? (plainPieces!.length === 1
-        ? <Text color={ink(l.color)} backgroundColor={pieceBg(ink(l.bg), hovered, plainPieces![0]!.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{plainPieces![0]!.text}</Text>
-        : plainPieces!.map((p, i) => <Text key={i} color={ink(l.color)} backgroundColor={pieceBg(ink(l.bg), hovered, p.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{p.text}</Text>))}
+        ? <Text color={ink(l.color)} backgroundColor={pieceBg(ink(l.bg), plainPieces![0]!.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{plainPieces![0]!.text}</Text>
+        : plainPieces!.map((p, i) => <Text key={i} color={ink(l.color)} backgroundColor={pieceBg(ink(l.bg), p.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{p.text}</Text>))}
     </Text>
   );
 };

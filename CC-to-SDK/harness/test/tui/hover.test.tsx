@@ -11,7 +11,10 @@
 //     `Line.tsx`'s context read).
 import React from "react";
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
+import { JumpPill } from "../../src/tui/JumpPill.js";
+import { HoverContext } from "../../src/tui/mouse/hoverContext.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
@@ -156,17 +159,12 @@ async function tap(r: { stdin: { write(s: string): void } }, col: number, row: n
   await settle();
 }
 
-describe("T3 (a): motion over a dim, banded row un-dims it and swaps the hover bg; moving off restores both", () => {
-  it("un-dims the fold rule's title span and swaps its band on hover, and restores both once the pointer leaves", async () => {
+describe("T3 (a): motion over a dim, banded row un-dims it and NEVER touches its background", () => {
+  it("un-dims the fold rule's title span on hover and NEVER touches its background, restoring the dim once the pointer leaves", async () => {
     const DOC = [prose("hello there", "a"), longUser("long"), prose("all done", "b")];
     const r = await mount(DOC);
     await scrollUntilVisible(r, "hidden)");
     const ruleRow = rowOfIncluding(r.lastFrame(), "hidden)");
-    // A row immediately beside the rule — still on screen once it is — but a SEPARATE `RenderItem`: every
-    // line of a rendered message block gets its own id (`toolRenderer.tsx`'s `projectMessageEntry`,
-    // `block:<i>:<lineIndex>`), so a head row of the SAME echoed prompt is already a different `itemKey`
-    // from the rule row, exactly as a wholly different message would be.
-    const otherRow = ruleRow > 1 ? ruleRow - 1 : ruleRow + 1;
 
     // PREMISE: the row really is dim-and-banded before any hover, so the test can fail for the right reason.
     const before = rawLineIncluding(r.lastFrame(), "hidden)");
@@ -178,11 +176,14 @@ describe("T3 (a): motion over a dim, banded row un-dims it and swaps the hover b
     await settle();
     const hovered = rawLineIncluding(r.lastFrame(), "hidden)");
     expect(hovered).not.toContain("\x1b[2m");
-    expect(hovered).toContain(HOVER_BAND);
-    expect(hovered).not.toContain(BAND);
+    expect(hovered).toContain(BAND);
+    expect(hovered).not.toContain(HOVER_BAND);
 
-    // Moving to the DIFFERENT row restores the first.
-    r.stdin.write(motion(COL, otherRow));
+    // Moving OFF the row restores the dim; the band never moved. A neighbouring row of the SAME message
+    // (H1: the fold rule and the rest of this one huge prompt share ONE ownerKey) would stay un-dimmed
+    // together — that grouping is proven separately below — so the genuine "moved away" probe here is a
+    // column past this row's own painted width, which `hoverAt` treats as hovering nothing.
+    r.stdin.write(motion(300, ruleRow));
     await settle();
     const restored = rawLineIncluding(r.lastFrame(), "hidden)");
     expect(restored).toContain("\x1b[2m");
@@ -266,7 +267,7 @@ describe("T3 (b, review Critical): a Bash cluster member's DIM body row is unaff
 describe("T3 (review Important): a wheel tick clears an active hover", () => {
   // Mutation (a) in the review removed `clearHover()` from `discardTap` and NOTHING failed — the wiring
   // (`ChatApp.tsx`'s `discardTap`, wired to `FullscreenViewport`'s `onWheelTick`) was correct but unproven.
-  it("removes the hover paint from the currently-hovered row when the wheel turns", async () => {
+  it("restores the dim on the currently-hovered row when the wheel turns; HOVER_BAND is absent throughout", async () => {
     const DOC = [prose("hello there", "a"), longUser("long"), prose("all done", "b")];
     const r = await mount(DOC);
     await scrollUntilVisible(r, "hidden)");
@@ -276,16 +277,96 @@ describe("T3 (review Important): a wheel tick clears an active hover", () => {
     await settle();
     const hovered = rawLineIncluding(r.lastFrame(), "hidden)");
     // Premise: the hover really landed, so the assertion below can fail for the right reason.
-    expect(hovered).toContain(HOVER_BAND);
     expect(hovered).not.toContain("\x1b[2m");
+    expect(hovered).not.toContain(HOVER_BAND);
 
     // The wheel tick's cell is irrelevant (dispatched as a KEY, not resolved against the pointer's last
     // position) — only that a wheel event reached `onWheelTick` while a row was hovered.
     r.stdin.write(WHEEL_UP);
     await settle();
     const afterWheel = rawLineIncluding(r.lastFrame(), "hidden)");
-    expect(afterWheel).not.toContain(HOVER_BAND);
     expect(afterWheel).toContain("\x1b[2m");
+    expect(afterWheel).not.toContain(HOVER_BAND);
+    r.unmount();
+  });
+});
+
+// ══ F10 T-HOVER H1 — the band leaves the transcript and lands on the pill ═════════════════════════════
+describe("H1: no transcript row ever changes background on hover", () => {
+  it("no transcript row changes background on hover — canon's Ssi never reaches a background (L203984)", async () => {
+    const DOC = [prose("hello there", "a"), longUser("long"), prose("all done", "b")];
+    const r = await mount(DOC);
+    for (let row = 1; row <= 20; row++) {
+      r.stdin.write(motion(COL, row));
+      await settle();
+      expect(r.lastFrame()).not.toContain(HOVER_BAND);
+    }
+    r.unmount();
+  });
+});
+
+describe("H1: the hover band is re-homed on JumpPill (chrome, not transcript)", () => {
+  it("swaps JumpPill's own band on hover and restores it off hover, in isolation", () => {
+    const hovered = render(<HoverContext.Provider value={true}><JumpPill newRows={0} columns={40} /></HoverContext.Provider>);
+    expect(hovered.lastFrame()).toContain(HOVER_BAND);
+    expect(hovered.lastFrame()).not.toContain(BAND);
+    hovered.unmount();
+
+    const idle = render(<HoverContext.Provider value={false}><JumpPill newRows={0} columns={40} /></HoverContext.Provider>);
+    expect(idle.lastFrame()).toContain(BAND);
+    expect(idle.lastFrame()).not.toContain(HOVER_BAND);
+    idle.unmount();
+  });
+
+  it("a motion report on the live pill's row swaps its band; one row above does not", async () => {
+    const DOC = [prose("hello there", "a"), longUser("long"), prose("all done", "b")];
+    const r = await mount(DOC);
+    r.stdin.write(PAGE_UP);
+    await settle();
+    const pillRow = rowOfIncluding(r.lastFrame(), "Jump to bottom");
+    const before = rawLineIncluding(r.lastFrame(), "Jump to bottom");
+    expect(before).toContain(BAND);
+    expect(before).not.toContain(HOVER_BAND);
+
+    r.stdin.write(motion(COL, pillRow));
+    await settle();
+    const onPill = rawLineIncluding(r.lastFrame(), "Jump to bottom");
+    expect(onPill).toContain(HOVER_BAND);
+    expect(onPill).not.toContain(BAND);
+
+    r.stdin.write(motion(COL, pillRow - 1));
+    await settle();
+    const oneAbove = rawLineIncluding(r.lastFrame(), "Jump to bottom");
+    expect(oneAbove).toContain(BAND);
+    expect(oneAbove).not.toContain(HOVER_BAND);
+    r.unmount();
+  });
+});
+
+describe("H1: message-level hover grouping over a multi-line local event", () => {
+  it("hovering ANY line of a multi-line message un-dims EVERY dim line of it and none of its neighbors", async () => {
+    const statusA: TranscriptBootstrapEntry = { kind: "local", identity: "status-a", event: { kind: "visual", lines: [
+      { text: "Status" },
+      { text: "  model: opus-a", dim: true },
+      { text: "  cwd: /work-a", dim: true },
+      { text: "  branch: main-a", dim: true },
+    ] } };
+    const statusB: TranscriptBootstrapEntry = { kind: "local", identity: "status-b", event: { kind: "visual", lines: [
+      { text: "  neighbor: dim-b", dim: true },
+    ] } };
+    const DOC = [prose("hello there", "a"), statusA, statusB, prose("all done", "b")];
+    const r = await mount(DOC);
+    const midRow = rowOfIncluding(r.lastFrame(), "cwd: /work-a");   // hover the MIDDLE line of the block
+
+    // premise: every named line really is dim before any hover.
+    for (const needle of ["model: opus-a", "cwd: /work-a", "branch: main-a", "neighbor: dim-b"])
+      expect(rawLineIncluding(r.lastFrame(), needle)).toContain("\x1b[2m");
+
+    r.stdin.write(motion(COL, midRow));
+    await settle();
+    for (const needle of ["model: opus-a", "cwd: /work-a", "branch: main-a"])
+      expect(rawLineIncluding(r.lastFrame(), needle), `${needle} should have un-dimmed`).not.toContain("\x1b[2m");
+    expect(rawLineIncluding(r.lastFrame(), "neighbor: dim-b"), "the neighbor message must keep its dim").toContain("\x1b[2m");
     r.unmount();
   });
 });
