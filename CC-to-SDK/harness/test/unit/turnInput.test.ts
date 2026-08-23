@@ -332,6 +332,9 @@ describe("isStrandedTurn", () => {
   it("true for an image with only an empty text block", () => {
     expect(isStrandedTurn([textBlock(""), imageBlock(fakePng(4, 4, 40))])).toBe(true);
   });
+  it("false for an all-text array — no image present, so never stranded", () => {
+    expect(isStrandedTurn([textBlock("")])).toBe(false);
+  });
 });
 
 describe("normalizeTurnInput — I1 stranding rule", () => {

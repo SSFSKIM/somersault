@@ -25,19 +25,23 @@
 //       whatever gate A trips, or is an empty string just as unextractable as no string at all? A and
 //       C differ by exactly that one block, so the answer is attributable to it alone.
 //
-//   Q5 (Task 1). C was built BY HAND to match the composer's output — is the SHIPPED REPL, driven end
-//       to end through its real transport, actually exposed to this? And does the DIRECT library shape
-//       `Session.submit([image])` (no text block) hit the same wall as bare-array A?
+//   Q5 (Task 1). C was built BY HAND to match the composer's output — does the TRANSPORT layer (a REAL
+//       `SessionHost` + `remoteChatSession` socket loopback) rescue an already-empty-text array once one
+//       is handed to it? (This does NOT test the REPL's actual paste-and-send gesture, which never
+//       produces an empty-text array in the first place — see the corrected VERDICT below.) And does the
+//       DIRECT library shape `Session.submit([image])` (no text block) hit the same wall as bare-array A?
 //
 // Method: five sessions in ONE fresh tmp project dir, so the listing has a positive control.
 //   · Session A — first (and only) user turn is `[{type:"image",...}]` with NO text block at all.
 //   · Session B — first turn is ordinary text. If B is listed and A is not, the exclusion is real and
 //     specific to A's shape rather than to the tmp dir, the model, or persistence being off.
 //   · Session C — `[{type:"text",text:""}, {type:"image",...}]`: ccx's own builder output verbatim.
-//   · Session D — the SAME shape as C, but produced by `assembleUserContent` and carried over a REAL
-//     `SessionHost` + `remoteChatSession` loopback (the socket transport `chatMain.tsx`'s `buildSession`
-//     uses) rather than handed to `query()` directly — settles whether the shipped REPL is exposed
-//     TODAY, not just the library.
+//   · Session D — the SAME shape as C, but produced by a hand-built `assembleUserContent("", …)` call
+//     (an empty text argument passed directly — NOT what the composer's real paste-and-send gesture
+//     produces, see the corrected VERDICT below) and carried over a REAL `SessionHost` +
+//     `remoteChatSession` loopback (the socket transport `chatMain.tsx`'s `buildSession` uses) rather
+//     than handed to `query()` directly — settles only whether the TRANSPORT layer rescues an
+//     already-empty-text array; it does not.
 //   · Session E — the direct library shape: `new Session({query}).submit([{type:"image",...}])`, no
 //     text block at all — an existing supported call shape (pinned by
 //     test/integration/host-image-transport.test.ts) that a library caller can reach without ever
@@ -168,8 +172,11 @@ let idD: string | undefined;
   const socketPath = hostSocketPath(process.pid, hostEnv);
   const adapterD = remoteChatSession(socketPath);
   try {
-    // Exactly what the composer's `assembleSubmission` (tui/pasteChips.ts) produces for "paste a
-    // screenshot, press enter without typing" — one call down, `assembleUserContent` itself.
+    // NOT what the composer's real paste-and-send gesture produces (review, 2026-08-23): the editor
+    // inserts the literal `[Image #N]` label as text, and `sweepOrphanImages` prunes the image entry the
+    // moment its label stops matching — so no interactive path calls `assembleUserContent` with an empty
+    // string here. This is a hand-built empty-text call, one call down from `assembleSubmission`
+    // (tui/pasteChips.ts), used only to test whether the TRANSPORT rescues an already-empty-text array.
     const contentD = assembleUserContent("", [{ data: PNG_1X1, mediaType: "image/png" }]);
     await adapterD.submit(contentD, () => {});
     idD = adapterD.sessionId;
@@ -305,15 +312,19 @@ else {
 // cells D and E added to settle the two questions the original A/B/C run left open (both against the
 // REAL topologies, not a hand-built array):
 //
-//   D. THE SHIPPED REPL IS EXPOSED TODAY, not just the library. Cell D built its content with the
-//      composer's own `assembleUserContent` (one call down from `assembleSubmission`,
-//      tui/pasteChips.ts) and carried it over a REAL `SessionHost` + `remoteChatSession` loopback —
-//      the exact socket transport `chatMain.tsx`'s `buildSession` uses in the shipped `ccx` binary,
-//      not `query()` called directly. D's session (a7c3dd85…) is ABSENT from `listSessions()`,
-//      agreeing exactly with hand-built C. The socket hop, the staging round-trip, and the host's
-//      `assembleStagedContent` reassembly change nothing: whatever a caller hands `query()` under the
-//      hood is what the SDK's extractor judges, and the REPL hands it the identical shape a script
-//      would. There is no rescue hiding in the transport layer.
+//   D. CORRECTED (review, 2026-08-23) — the original wording here claimed "THE SHIPPED REPL IS EXPOSED
+//      TODAY, not just the library." That overstates cell D. Cell D calls `assembleUserContent("", …)`
+//      DIRECTLY, by hand, with a literal empty-string text argument — it does not exercise the
+//      composer's actual paste-and-send gesture. Verified fact: the shipped REPL's default
+//      paste-and-send gesture was NEVER stranded — the editor inserts the literal `[Image #N]` label as
+//      text, and `sweepOrphanImages` prunes the image entry the moment its label stops matching, so no
+//      interactive path produces an empty-text image submission. What D actually proves: D's session
+//      (a7c3dd85…) is ABSENT from `listSessions()`, agreeing exactly with hand-built C, so the
+//      TRANSPORT (a real `SessionHost` + `remoteChatSession` socket loopback, the staging round-trip,
+//      and the host's `assembleStagedContent` reassembly) does not rescue an ALREADY-EMPTY-TEXT array
+//      once one is handed to it — it changes nothing about what the SDK's extractor judges. The
+//      live-proven stranding paths are the direct library call (cell E) and any caller handing an
+//      already-empty-text array to the transport — not the shipped REPL's own composer path.
 //
 //   E. `new Session({query}, opts).submit([image])` — a bare image array, no text block at all, the
 //      one call shape a LIBRARY caller can reach without ever touching the composer (and the shape
@@ -322,9 +333,11 @@ else {
 //      into (`isStrandedTurn` + the INSERT branch of `normalizeTurnInput`), and this run is the
 //      "before" baseline the fix's unit tests (turnInput.test.ts, session.test.ts) key off of.
 //
-//   Net: this is not a library-only or REPL-only defect — every reachable path that lets a first turn
-//   go out with no extractable text hits the same wall. The Task 1 fix (a synthetic `[Image #N]` label
-//   substituted into the first text block, or inserted at index 0 when none exists) is applied at the
-//   Session message-builder boundary (`normalizeTurnInput`), which is upstream of ALL FOUR shapes this
-//   probe has now exercised (A, C, D, E) — the REPL and the library both pass through it.
+//   Net: the LIVE-PROVEN stranding paths are the direct library call (E) and any caller handing an
+//   already-empty-text array to the transport (A, C, D) — not the shipped REPL's own composer path,
+//   which never produces one (see D's correction above). The Task 1 fix (a synthetic `[Image #N]` label
+//   substituted into the first text block, or inserted at index 0 when none exists) is applied
+//   defensively at the shared Session message-builder boundary (`normalizeTurnInput`), which is upstream
+//   of ALL FOUR shapes this probe has exercised (A, C, D, E) — so it also covers the REPL should its
+//   composer's guarantee ever change, even though today's composer keeps the REPL out of reach of this.
 // ==================================================================================================
