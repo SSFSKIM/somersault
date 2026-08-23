@@ -21,11 +21,11 @@ import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import {
-  pngDimensions, jpegDimensions, isBinaryGarbage, readClipboardImage, reencodeDarwin,
+  isBinaryGarbage, readClipboardImage, reencodeDarwin,
   linuxCheckImageCommand, linuxSaveImageCommand, windowsCheckImageCommand, windowsSaveImageCommand,
-  POST_PROCESS_BYTE_BUDGET, MAX_DIMENSION,
   type ClipboardDeps, type ClipboardImageResult,
 } from "../../src/tui/clipboardImage.js";
+import { pngDimensions, jpegDimensions, POST_PROCESS_BYTE_BUDGET, MAX_DIMENSION } from "../../src/media/imageDims.js";
 
 // ---------------------------------------------------------------------------------------------
 // Fixture builders. `solidPng` is copied verbatim (mechanism, not just shape) from probe 113's

@@ -25,6 +25,8 @@ import { mergeHooks } from "../hooks/merge.js";
 // Value import, and safe: prefs.ts is plain fs + the theme table, no React (main.ts stays React-free).
 import { loadPrefs as realLoadPrefs } from "../tui/prefs.js";
 import type { CcxPrefs } from "../tui/prefs.js";
+// Value import, and safe for the same reason: accountBridge.ts is React-free (a closure over a promise).
+import { createAccountBridge } from "../tui/accountBridge.js";
 // Value import, and safe for the same reason, deliberately: bypassAccepted.ts holds ONLY the acceptance
 // predicate and has no runtime imports at all, which is why the canon reader could be split out of the
 // `.tsx` dialog and shared with this file instead of re-implemented here as a raw prefs read.
@@ -145,7 +147,17 @@ const fail = (text: string, code: number): number => { console.error(`ccx: ${tex
 
 /** Returns the exit code; never throws for an operator error. Everything a consumer script reads —
  *  the banner on stdout, the refusal on stderr, the code — is decided here. */
-export async function main(argv: string[], deps: MainDeps = defaults): Promise<number> {
+export async function main(argv: string[], rawDeps: MainDeps = defaults): Promise<number> {
+  // F10 T-MAINT item 2 (F9 ledger Minor): ONE prefs read per launch. Four consumers ask for the same
+  // file on the run arm — `unconsentedBypassLaunch`, `needsBypassConsent`, the `--detachable` model
+  // materialization and `runForegroundImpl`'s model/effort resolution — and an ordinary interactive
+  // launch used to hit `readFileSync` twice for it. MEMOISED RATHER THAN HOISTED, deliberately: every
+  // one of those consumers has its own short-circuit, and an eager read at the top of the arm would put
+  // a disk read on `-p`/`--bg` launches that ask nothing of prefs at all. `main` runs once per process,
+  // so the memo's lifetime IS the launch's; nothing in this function re-reads prefs expecting to see a
+  // write the REPL made mid-session (the REPL's own writers go through `tui/prefs.js` directly).
+  let prefsOnce: CcxPrefs | undefined;
+  const deps: MainDeps = { ...rawDeps, loadPrefs: () => (prefsOnce ??= rawDeps.loadPrefs()) };
   // POSITIONAL, matching parseHostArgv's own contract. `argv.includes("--__host")` reads a marker out of
   // any position, so `ccx --bg --model --__host task` — a legitimate run whose model value repeats the
   // word — was routed to the child entry point, where it throws because the marker is not first.
@@ -501,10 +513,24 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // never gets to cost the user their first paint. Skipped entirely on a resume/continue launch, which
   // prints no banner at all. `?.` covers a host that does not implement it (a non-promise loses the race
   // instantly, which is the right answer: there is nothing to wait for).
-  const account = (resume || inv.continue ? undefined : await Promise.race([
-    host.accountInfo?.().catch(() => undefined),
-    deps.delay(ACCOUNT_LABEL_BUDGET_MS).then(() => undefined),
-  ])) as AccountFacts | undefined;
+  //
+  // F10 T-MAINT item 1: ONE `accountInfo()` call, TWO consumers with different deadlines. The banner keeps
+  // the race exactly as tuned above — chrome never costs first paint, and `undefined` simply omits the
+  // segment. The SAME promise, unraced, also goes to the REPL through the bridge, so the auto-mode notice
+  // can still learn the truth after the banner has already given up on it (before this, the raced value
+  // WAS the only channel and a slow cold boot destroyed the fact outright). The bridge swallows rejection
+  // at `offer`, so a credential-less host produces no unhandled rejection on the path nobody awaits.
+  // Skipped on resume/continue exactly as before: no banner is printed there, no handshake is started,
+  // and the notice keeps its documented unknown arm — the same answer `ccx attach` gets.
+  const accountBridge = createAccountBridge();
+  const liveAccount = resume || inv.continue ? undefined : (host.accountInfo?.() as Promise<AccountFacts | undefined> | undefined);
+  if (liveAccount) accountBridge.offer(liveAccount);
+  const account = (liveAccount
+    ? await Promise.race([
+        liveAccount.catch(() => undefined),
+        deps.delay(ACCOUNT_LABEL_BUDGET_MS).then(() => undefined),
+      ])
+    : undefined) as AccountFacts | undefined;
   try {
     await deps.runChatClient({
       socketPath: hostSocketPath(process.pid), client: { kind: "loopback" }, cwd,
@@ -564,7 +590,7 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // second path so the auto-mode notice's variant selector sees it too. `account` is already undefined
       // on a resume/continue launch (the banner race is skipped there), which lands the notice on its
       // documented unknown arm exactly like `ccx attach` does below.
-      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), initialTokenSource: account?.tokenSource, promptLatch },
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), initialTokenSource: account?.tokenSource, promptLatch, accountBridge },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);

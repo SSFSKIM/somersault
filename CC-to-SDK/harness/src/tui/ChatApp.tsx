@@ -104,6 +104,7 @@ import type { ProgressBar } from "./progressBar.js";
 import { suggestionText } from "./suggester.js";
 import type { RenderItem } from "./toolRenderer.js";
 import type { RenderLine } from "./render.js";
+import type { AccountBridge } from "./accountBridge.js";
 
 /** The rewind hold — the one surface in the tree with no keys of its own. A confirmed rewind is a multi-second
  *  file restore + engine swap, and anything that acted during it (Ctrl-R opening history search, Ctrl-O the
@@ -220,7 +221,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // `initialTokenSource` (T2, F9 T-AUTO §A2): see chatMain.tsx's `ChatClientOpts.hookOpts` for provenance —
   // this component's own contribution to the chain is only to spread `hookOpts` into `useChat` below
   // unmodified, which it already does. `initialCopyOnSelect` (F9 T-MOUSE T7) rides the same spread.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice; accountBridge?: AccountBridge };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];

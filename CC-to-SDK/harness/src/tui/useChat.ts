@@ -20,7 +20,9 @@ import type { RendererChoice } from "./renderer.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
 import { isInterruptSentinelFrame, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
 import { createSuggester as realCreateSuggester, formatTranscriptTail, markSuggestionAccepted, suggestionRenderStep, suggestionSuppression, EMPTY_SUGGESTION, TAIL_MESSAGE_CHARS, type PromptSuggestion, type Suggester, type TailMessage } from "./suggester.js";
-import { AUTO_MODE_NOTICE_DELAY_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "./autoModeNotice.js";
+import { AUTO_MODE_NOTICE_DELAY_MS, ACCOUNT_NOTICE_DEADLINE_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "./autoModeNotice.js";
+import type { AccountBridge } from "./accountBridge.js";
+import type { AccountFacts } from "./banner.js";
 import { hasAcceptedBypass } from "./bypassConsent.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
 import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
@@ -195,6 +197,10 @@ export function useChat(
      *  `runForegroundImpl`, which builds the host config — so `ccx attach` passes none and both keys stay
      *  absent. See `hooks/promptLatch.ts` for why a hook is the only route. */
     promptLatch?: PromptLatch;
+    /** F10 T-MAINT item 1: the LATE channel for the same fact `initialTokenSource` carries early — the
+     *  LIVE, unraced `accountInfo()` promise, so a cold handshake that missed the banner's 1500 ms budget
+     *  can still reach the auto-mode notice before ITS OWN (later, normative) deadline. See accountBridge.ts. */
+    accountBridge?: AccountBridge;
     /** FSW TASK 5 (F9): the renderer decided ONCE at boot, with the reason word `/status` prints. RESOLVED BY
      *  THE CALLER (`chatMain.tsx`), like `initialOutputStyle` and `statusLine`, and for the stronger version
      *  of the same reason: the decision reads the real TTY, the real env and the prefs file, and re-deciding
@@ -1835,24 +1841,43 @@ export function useChat(
   const autoNoticeShown = useRef(false);
   useEffect(() => {
     if (mode !== "auto" || autoNoticeShown.current) return;
-    const id = setTimeout(() => {
+    // F10 T-MAINT item 1 — THE COLD-START RACE. `opts.initialTokenSource` is a value main.ts may have
+    // LOST: its banner race is bounded at 1500 ms and a cold handshake measured ~1152 ms on average, so
+    // a slow boot left it undefined and this notice told a subscription user their sessions cost extra,
+    // for the whole session, with nothing to correct it. `opts.accountBridge` carries the SAME
+    // `accountInfo()` promise unraced; the callback awaits it under the wave's second, normative
+    // deadline. The 800 ms already spent in the delay counts against ACCOUNT_NOTICE_DEADLINE_MS, so the
+    // remaining budget is the difference and the two together are exactly 3000 ms from this arming.
+    // The banner's own budget is untouched — chrome still never costs first paint.
+    let raceTimer: ReturnType<typeof setTimeout> | undefined;
+    let settleRace: ((f: AccountFacts | undefined) => void) | undefined;
+    const id = setTimeout(async () => {
       if (disposed.current) return;
       autoNoticeShown.current = true;
       if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) return;
-      // T2: oauth is true iff the launch's token source is LITERALLY the subscription one — false and
-      // unknown (attach, resume/continue) both fall through to the cost-sentence variant. See
-      // autoModeNotice.ts's header for the canon citation.
-      notice(autoModeNoticeText({ oauth: opts.initialTokenSource === "CLAUDE_CODE_OAUTH_TOKEN" }));
-      // Best-effort, mirrors theme's/output-style's own silent persistence (:1094). savePrefs does a mkdir + a
-      // file write, and THIS is a bare timer callback: no promise chain, no error boundary, and the tree
-      // installs no uncaughtException handler — so on a read-only home or a full disk an unguarded throw here
-      // would take down an interactive session over a cosmetic flag. That "a throw from a timer/fire-and-forget
-      // callback has nothing above it" shape is a recurring defect class in this codebase (an independent review
-      // caught the identical pattern in an earlier wave); every such write is wrapped. The per-process
-      // `autoNoticeShown` ref above is what still holds the notice to once when this write is the thing failing.
+      const facts = await new Promise<AccountFacts | undefined>((resolve) => {
+        settleRace = resolve;
+        const bridge = opts.accountBridge;
+        if (!bridge) { resolve(undefined); return; }        // `ccx attach`: no launch handshake to wait for
+        raceTimer = setTimeout(() => resolve(undefined), ACCOUNT_NOTICE_DEADLINE_MS - AUTO_MODE_NOTICE_DELAY_MS);
+        // The bridge never rejects (it swallows at `offer`), so a credential-less engine simply arrives
+        // as `undefined` — the same unknown arm a missed deadline lands on.
+        bridge.read().then((f) => { clearTimeout(raceTimer); resolve(f); });
+      });
+      // Unmounted while we waited: the cleanup already settled the race so nothing is parked, and this
+      // is what keeps the append out of a disposed tree.
+      if (disposed.current) return;
+      // T2's rule, unchanged: oauth is true iff the token source is LITERALLY the subscription one, and
+      // both false and UNKNOWN keep the cost sentence. The bridge is only ever a LATER, better answer
+      // than the launch value — when the banner won its race the two agree by construction.
+      const tokenSource = facts?.tokenSource ?? opts.initialTokenSource;
+      notice(autoModeNoticeText({ oauth: tokenSource === "CLAUDE_CODE_OAUTH_TOKEN" }));
+      // Best-effort, mirrors theme's/output-style's own silent persistence (:1094) — see the F9 comment
+      // this replaces: a bare timer callback has no error boundary above it, and on a read-only home an
+      // unguarded throw here would take down an interactive session over a cosmetic flag.
       try { savePrefsFn({ hasSeenAutoModeEntryWarning: true }, historyEnv); } catch { /* best-effort */ }
     }, AUTO_MODE_NOTICE_DELAY_MS);
-    return () => clearTimeout(id);
+    return () => { clearTimeout(id); clearTimeout(raceTimer); settleRace?.(undefined); };
   }, [mode]);   // eslint-disable-line react-hooks/exhaustive-deps
   /** /export, /files and /stats all read the PERSISTED transcript, which the SDK does not write mid-turn
    *  (probes 62-64). Local commands dispatch immediately even while busy, so running one during a turn

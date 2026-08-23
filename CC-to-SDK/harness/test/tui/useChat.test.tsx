@@ -551,6 +551,31 @@ describe("useChat", () => {
     await waitFor(() => (lastFrame() ?? "").includes("launch prompt"));
     expect(lastFrame() ?? "").toContain("resumed here · live");
   });
+  // F10 T-MAINT item 7 (F9 resume/T2 Minor, pre-existing gap): the guard that keeps a launch `--resume`
+  // out of a half-swapped session. `resumeInto` reads the transcript FIRST and refuses before touching
+  // `session`, so the warning line is the only observable evidence the refusal happened at all — and it
+  // had zero coverage. Both arms of the refusal, because they reach the same line by different routes:
+  // an empty read, and a THROWING one (the `catch { msgs = [] }` at :2316).
+  it("initialResume with no history found warns and does not swap the session", async () => {
+    let made = 0;
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [], getSessionMessages: async () => [] };
+    function H() { const c = useChat((_r?: string) => { made++; return fakeRemote(); }, { initialResume: { kind: "id", id: "abc12345-and-more" } }, deps); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => flat(lastFrame).includes("couldn't resume"));
+    expect(flat(lastFrame)).toContain("abc12345");                 // the 8-char prefix, not the full id
+    expect(flat(lastFrame)).toContain("no history found");
+    expect(flat(lastFrame)).not.toContain("resumed here · live");  // the success line the sibling cell asserts
+    expect(made).toBe(1);                                          // the original session, never a swap
+  });
+
+  it("a REJECTING transcript read lands on the same refusal, never on a half-swapped session", async () => {
+    const deps = { hasWorktrees: async () => false, listSessions: async () => [], getSessionMessages: async () => { throw new Error("EACCES"); } };
+    function H() { const c = useChat((_r?: string) => fakeRemote(), { initialResume: { kind: "id", id: "def67890-and-more" } }, deps); return <Text>{allText(c)}</Text>; }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => flat(lastFrame).includes("couldn't resume"));
+    expect(flat(lastFrame)).toContain("def67890");
+    expect(flat(lastFrame)).not.toContain("EACCES");               // the reason never leaks into the transcript
+  });
   it("/continue resumes the most-recent session", async () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "recent work" }] }, timestamp: "2026-06-19T15:56:00.000Z" }];
     const deps = { hasWorktrees: async () => false, listSessions: async () => [{ sessionId: "s-old", summary: "", lastModified: 1 }, { sessionId: "s-new", summary: "", lastModified: 9 }], getSessionMessages: async (id: string) => (id === "s-new" ? msgs : []) };

@@ -9,8 +9,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 import type { UserTurnInput } from "../session/turnInput.js";
-import { pngDimensions, jpegDimensions } from "../tui/clipboardImage.js";
-import { MAX_IMAGES_PER_PROMPT } from "../host/imageStaging.js";
+import { MAX_IMAGES_PER_PROMPT, jpegDimensions, pngDimensions } from "../media/imageDims.js";
 
 /** F9 T-IMAGE Task 5 (I3b), spec v3.1: "version skew is LOUD" — the exact message a caller (`useChat.ts`)
  *  matches on to render this as a capability NOTICE rather than a turn-failure error line. Shared as one
