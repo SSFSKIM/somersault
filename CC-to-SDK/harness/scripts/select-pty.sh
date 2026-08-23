@@ -147,9 +147,17 @@ self_test() {
 # buffer's true end. Verified by SUBMITTING and reading the echoed prompt back (see the header on why the
 # mid-edit frame is the wrong instrument for this one claim).
 run_caret_wrap_cell() {
-  local s="cw-$RUN_ID" home rc=0
+  local s="cw-$RUN_ID" rc=0
   echo "  cell caret-wrap (keyless): 100x30, a 140-char draft wraps, click the continuation, submit, check the echo"
-  home=$(launch "$s" 100 30 "node $BIN") || { record "caret-wrap" 1; kill_cell "$s"; return; }
+  # NOT `home=$(launch ...)`: every other cell in this file calls `launch`/`tmux new-session` DIRECTLY so its
+  # `SESSIONS="$SESSIONS $s"` line lands in the CURRENT shell — command substitution instead runs the whole
+  # function (that assignment included) in a SUBSHELL, whose `SESSIONS` update is discarded the instant the
+  # subshell exits. That silently emptied `SESSIONS` for this cell only (the sole `$(launch …)` call site in
+  # the file), so `kill_cell` below could never find "$s" in it and never ran `tmux kill-session` at all —
+  # every run of this cell alone leaked its live Ink/Node pane on this script's fixed, non-random `-L f10select`
+  # socket. `home`'s echoed path is unused here (measured — nothing downstream reads it), so there is nothing
+  # this cell needs FROM the subshell; calling `launch` directly restores real `SESSIONS` tracking.
+  launch "$s" 100 30 "node $BIN" >/dev/null || { record "caret-wrap" 1; kill_cell "$s"; return; }
   wait_ready "$s" || { record "caret-wrap" 1; kill_cell "$s"; return; }
   # 90 a's then 50 b's: the wrap boundary falls inside the b run, so the continuation's own content ("b"s
   # only) is what a correct click resolves into — a wrong (end-of-buffer) resolution instead lands the typed
@@ -171,8 +179,18 @@ run_caret_wrap_cell() {
   tap_and_type "$s" 5 "$cont_row" "Z"
   sleep 0.5
   tmux -L "$TM" send-keys -t "$s" Enter
+  # Poll for one of the two SETTLED shapes below, not the bare `b{3,}Z` a settled echo also contains: the
+  # header's own documented cursor-wrapped-row glitch (a THIRD, mid-edit row that is bare content with no
+  # indent) can — mid-transition, before Enter's clear-and-echo has actually landed — paint a frame whose text
+  # also happens to contain 3+ b's directly followed by Z (e.g. "...bbbbbbbbbbZ" before the indent, spaces,
+  # and tail the header describes). A loose exit here let that transient frame satisfy the wait, so the two
+  # checks right below ran against a scrollback that hadn't received the real settled echo YET — a race whose
+  # odds worsen under load (measured: this cell's flake rate tracked system load directly, and the "FAIL"
+  # dump's own tail routinely showed the correct settled echo sitting just above the glitch, proving it HAD
+  # rendered, only moments too late for the loose check). Waiting for either settled shape directly removes
+  # that race instead of just narrowing it.
   i=0
-  while [ "$i" -lt 40 ]; do scrollback "$s" | grep -qE 'b{3,}Z' && break; sleep 0.25; i=$((i+1)); done
+  while [ "$i" -lt 40 ]; do scrollback "$s" | grep -qE 'b{3,}Zb|b{3,}Z[[:space:]]*$' && break; sleep 0.25; i=$((i+1)); done
   if scrollback "$s" | grep -qE 'b{3,}Zb'; then
     echo "      ok   caret-wrap: Z landed inside the wrapped continuation's own content"
   elif scrollback "$s" | grep -qE 'b{3,}Z *$'; then
