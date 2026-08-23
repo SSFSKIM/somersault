@@ -122,7 +122,14 @@ async function realDaemon(opts: { logger?: (m: string) => void; timers?: DaemonS
   let closedCount = 0;
   (server as unknown as { server: import("node:net").Server }).server.on("connection", (sock) => sock.on("close", () => { closedCount++; }));
   const id = (await daemonRequest(path, { op: "spawn" }))[0].id as string;
-  return { path, id, supervisor: { submitted }, closed: () => closedCount };
+  // The setup spawn above opens and closes its OWN connection as part of that request — counted by the
+  // listener attached above it. Baseline it out here (after a real tick, so an async close on that same
+  // connection has already landed) so `closed()` reports only connections the TEST itself opens, never
+  // this helper's own plumbing. A raw `=== 1` check against `closedCount` would spuriously pass on the
+  // setup connection alone, before the test ever opens a socket.
+  await nextTick();
+  const baseline = closedCount;
+  return { path, id, supervisor: { submitted }, closed: () => closedCount - baseline };
 }
 
 /** A well-formed `submit_content` op, padded with a plain-ASCII text block until `JSON.stringify` is
@@ -136,14 +143,30 @@ function opOfExactSerializedSize(bytes: number, id = "i"): unknown {
   if (actual !== bytes) throw new Error(`padding arithmetic off: got ${actual}, wanted ${bytes}`);
   return op;
 }
+/** Writes `buf` to an already-connected `sock` as several delayed sub-cap chunks rather than one shot.
+ *  On a fast loopback UDS (especially macOS) a single giant `.write()` can be delivered to the reader
+ *  as ONE huge `data` event — which would make a server check against the ACCUMULATED byte total
+ *  indistinguishable from one that only looks at each chunk's own length. The real delay between writes
+ *  forces the server to drain each piece as its own event before the next one lands, so a test built on
+ *  this helper is actually exercising "many chunks summing over the cap," not a single lucky read. */
+async function writeChunked(sock: Socket, buf: Buffer, chunkBytes = 4 * 1024 * 1024, delayMs = 20): Promise<void> {
+  for (let i = 0; i < buf.length; i += chunkBytes) {
+    sock.write(buf.subarray(i, Math.min(i + chunkBytes, buf.length)));
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+}
 /** Writes a well-formed op of exactly `bytes` (the LINE, excluding the trailing newline) directly to
- *  the socket — bypassing the client entirely, for the SERVER's own bound. */
-function writeRawOpOfExactSize(path: string, bytes: number, id = "i"): void {
+ *  the socket — bypassing the client entirely, for the SERVER's own bound. Content goes out first, in
+ *  many delayed sub-cap chunks (see `writeChunked`), and the terminating newline only once every content
+ *  byte is already out — so an over-cap frame necessarily crosses the cap while still newline-free. */
+async function writeRawOpOfExactSize(path: string, bytes: number, id = "i"): Promise<void> {
   const line = JSON.stringify(opOfExactSerializedSize(bytes, id));
   if (Buffer.byteLength(line, "utf8") !== bytes) throw new Error("writeRawOpOfExactSize: size assertion failed");
   const sock = connect(path);
-  sock.on("connect", () => sock.write(line + "\n"));
   sock.on("error", () => {});
+  await new Promise<void>((r) => sock.once("connect", r));
+  await writeChunked(sock, Buffer.from(line, "utf8"));
+  sock.write("\n");
 }
 
 // =====================================================================================================
@@ -335,12 +358,15 @@ describe("I4: the server's frame cap and partial-line deadline", () => {
   });
 
   it("I4: a frame over the cap, written RAW, drops the connection", async () => {
-    // raw, because the client preflight would refuse it — this is the SERVER's own bound under test
+    // raw, because the client preflight would refuse it — this is the SERVER's own bound under test.
+    // Sent as many delayed sub-cap chunks (never one giant write) — see `writeChunked`'s comment for why
+    // that distinction matters: a single huge write can arrive as a single huge read on a fast UDS.
     const { path, closed } = await realDaemon();
     const sock = connect(path);
-    sock.on("connect", () => sock.write("x".repeat(DAEMON_MAX_FRAME_BYTES + 1)));
     sock.on("error", () => {});
-    await waitFor(() => closed() === 1);
+    await new Promise<void>((r) => sock.once("connect", r));
+    void writeChunked(sock, Buffer.from("x".repeat(DAEMON_MAX_FRAME_BYTES + 1)));
+    await waitFor(() => closed() === 1, 5_000);
   });
 
   it("I4: a held-open UNDER-CAP partial line is dropped after the 10s deadline, with a logged reason", async () => {
@@ -365,8 +391,10 @@ describe("I4: the server's frame cap and partial-line deadline", () => {
     expect(supervisor.submitted).toHaveLength(0);
   });
 
-  it("I4: a multi-byte UTF-8 character split across two chunks survives (StringDecoder)", async () => {
-    // A naive `chunk.toString("utf8")` accumulator corrupts this — the cell must FAIL against that.
+  it("I4: a multi-byte UTF-8 character split across two chunks survives (raw-buffer accumulation, decoded once)", async () => {
+    // The server scans each RAW chunk for the newline byte-safely and only decodes once, on the fully-
+    // assembled line (see server.ts's onConnection comment — no StringDecoder involved). A naive
+    // `chunk.toString("utf8")` accumulator corrupts this — the cell must FAIL against that.
     const { path, supervisor, id } = await realDaemon();
     const multi = Buffer.from("日", "utf8");                 // 3 bytes
     const line = Buffer.from(JSON.stringify({ op: "submit_content", id, input: [{ type: "text", text: "日" }] }) + "\n", "utf8");
@@ -387,7 +415,7 @@ describe("I4: the server's frame cap and partial-line deadline", () => {
 describe("I4 boundary matrix", () => {
   it.each(triple(DAEMON_MAX_FRAME_BYTES))("I4 boundary: raw frame of $label bytes", async ({ at, passes }) => {
     const { path, supervisor, closed, id } = await realDaemon();
-    writeRawOpOfExactSize(path, at, id);
+    void writeRawOpOfExactSize(path, at, id);
     // A ~24 MiB write/read/JSON.parse round-trip is real work — the default 2s poll window is tuned for
     // small ops, not this one.
     if (passes) await waitFor(() => supervisor.submitted.length === 1, 15_000);
