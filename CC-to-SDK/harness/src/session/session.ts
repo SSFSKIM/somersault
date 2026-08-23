@@ -27,15 +27,31 @@ type TurnKind = "normal" | "compact";
 /** THE authoritative builder seam (F9 T-IMAGE Task 4/I3a, spec v3.1 "Authoritative validation lives
  *  at the Session message-builder boundary"): every turn — human, auto-continuation, steer, compact —
  *  passes through here, so this is the one place normalization can never be bypassed regardless of
- *  which public method a caller used. An array is run through `normalizeTurnInput` (which enforces
- *  every image cap by re-decoding each block's own bytes, never trusting the caller); a string is
- *  sent as-is, since `normalizeTurnInput` has nothing to check on plain text. The SDK's own
- *  `MessageParam.content` narrows `media_type` to its literal union where `UserContentBlock` keeps it
- *  a bare string (library ergonomics — no caller needs the Anthropic SDK's types just to build a
+ *  which public method a caller used. Both forms run through `normalizeTurnInput` UNCONDITIONALLY
+ *  (F10 T-IMGREACH Task 3/I2, re-review r3): an array gets every image cap enforced by re-decoding
+ *  each block's own bytes, never trusting the caller; a string gets MAX_TOTAL_TEXT enforced and comes
+ *  back a string — `normalizeTurnInput` preserves the wire form, it only bounds the length. The SDK's
+ *  own `MessageParam.content` narrows `media_type` to its literal union where `UserContentBlock` keeps
+ *  it a bare string (library ergonomics — no caller needs the Anthropic SDK's types just to build a
  *  turn), so the assembled content is cast at the wire boundary, not loosened upstream of it. */
 function userTurn(input: UserTurnInput, uuid: UserMessageUUID, origin: SubmittedOrigin): SDKUserMessage {
-  const content = Array.isArray(input) ? normalizeTurnInput(input) : input;
+  // UNCONDITIONAL (re-review r3). This line used to read
+  //   Array.isArray(input) ? normalizeTurnInput(input) : input
+  // which meant MAX_TOTAL_TEXT bound array turns only, and every bare-string surface — submit, steer,
+  // and stream through them — was uncapped. `normalizeTurnInput` returns a STRING for a string input,
+  // so the wire form is untouched; only the length is now bounded.
+  const content = normalizeTurnInput(input);
   return { type: "user", message: { role: "user", content: content as SDKUserMessage["message"]["content"] }, parent_tool_use_id: null, origin: { kind: origin }, uuid };
+}
+
+/** ONE normalized user message for the streaming-input form. `harness.run`/`stream`'s array arm builds
+ *  its turn HERE rather than assembling an SDKUserMessage of its own, so a library array turn is
+ *  normalized by the same builder — and therefore under the same caps — as every Session turn. The
+ *  SDK's `query()` takes `string | AsyncIterable<SDKUserMessage>` and nothing else (sdk.d.ts), so a
+ *  library array turn has to adopt the streaming-input form regardless — this is the seam that keeps
+ *  it honest: one `SDKUserMessage`, built by the SAME builder every Session turn goes through. */
+export function oneShotUserTurn(input: UserTurnInput): SDKUserMessage {
+  return userTurn(input, randomUUID() as UserMessageUUID, "human");
 }
 
 /** What one turn settles to. `error` (Wave T Task 14) is ADDITIVE — a turn that reached a terminal result
@@ -185,7 +201,7 @@ export class Session implements ControllableSession {
    *  when it resolves error-tagged. The tag is the SAME failure a rejection used to be (Task 14 changed how
    *  it settles, not whether it failed), so this public generator must not report it as a result: the
    *  terminal shape is what a `stream()` consumer branches on. Sugar over submit. */
-  async *stream(prompt: string): AsyncGenerator<unknown> {
+  async *stream(prompt: UserTurnInput): AsyncGenerator<unknown> {
     const out = new AsyncQueue<unknown>();
     const done = this.submit(prompt, (m) => out.push(m)).then(
       (r) => out.push(r.error ? { type: "error", error: r.error.message } : { type: "result", result: r.result }),

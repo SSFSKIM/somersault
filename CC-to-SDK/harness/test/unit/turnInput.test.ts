@@ -274,15 +274,17 @@ describe("Session.submit — the builder normalizes regardless of caller (librar
 });
 
 // =====================================================================================================
-// Type-level scope-cut pins (plan Task 4, spec v3.1 acceptance 6): every non-REPL surface stays
-// string-only. These lines are never EXECUTED (the enclosing function is never called — only `tsc`
-// reads it, via `npm run typecheck`); each `@ts-expect-error` is itself the assertion: if the array
-// literal below it ever stopped being a type error, `tsc` would fail on an "unused directive" instead,
-// which is what makes this a real, enforced pin rather than a comment.
+// Type-level scope-cut pins (plan Task 4, spec v3.1 acceptance 6). `harness.run`/`stream` WIDENED to
+// `UserTurnInput` in F10 T-IMGREACH Task 3 (I2) — that pin is lifted; the array literal below is now a
+// legitimate call, kept here as a positive type-level check rather than a `@ts-expect-error`. The
+// daemon-connect and appserver turn/start surfaces are unchanged by Task 3 and stay string-only. These
+// lines are never EXECUTED (the enclosing function is never called — only `tsc` reads it, via `npm run
+// typecheck`); each remaining `@ts-expect-error` is itself the assertion: if the array literal below it
+// ever stopped being a type error, `tsc` would fail on an "unused directive" instead, which is what
+// makes this a real, enforced pin rather than a comment.
 function _scopeCutTypePins(): void {
   const harness = null as unknown as Harness;
-  // @ts-expect-error — harness.run/stream stay string-only (F9 T-IMAGE v3.1 scope cut).
-  void harness.run([{ type: "text", text: "hi" }]);
+  void harness.run([{ type: "text", text: "hi" }]); // widened, F10 T-IMGREACH Task 3 (I2)
 
   const daemon = null as unknown as DaemonClient;
   // @ts-expect-error — daemon connect submit stays string-only (F9 T-IMAGE v3.1 scope cut).
@@ -299,7 +301,7 @@ function _scopeCutTypePins(): void {
 void _scopeCutTypePins;
 
 describe("scope-cut type pins (F9 T-IMAGE v3.1 acceptance 6)", () => {
-  it("documents that harness.run/stream, the appserver turn schema, and daemon connect stay string-only", () => {
+  it("documents that the appserver turn schema and daemon connect stay string-only (harness.run/stream widened, F10 T-IMGREACH Task 3)", () => {
     // The actual enforcement is `_scopeCutTypePins`'s `@ts-expect-error` lines above, checked by
     // `npm run typecheck`; this runtime case exists only so the suite carries a visible assertion.
     expect(typeof _scopeCutTypePins).toBe("function");
