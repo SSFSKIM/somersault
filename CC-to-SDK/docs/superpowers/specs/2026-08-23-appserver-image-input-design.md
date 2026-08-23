@@ -284,6 +284,22 @@ Found during execution (T1–T5):
   died at the host's "text or at least one image" refine as -32603 INTERNAL. Our array refine now mirrors
   the host's rule and answers -32602 — the general rule: every reachable downstream refusal of a
   request SHAPE must have an admission-time counterpart, or schema-valid input reads as a server bug.
+- **"In the turn's execution slot" was a claim the chain did not enforce** (review round 2, P1). The
+  chain callback fired the runner and returned, so the slot released the moment the runner was INVOKED —
+  which held for strings (submit dispatches synchronously inside the runner) and silently broke for
+  items (the resolution await put the submit on the far side of the release): a `thread/model/set`
+  enqueued after the turn reached the engine first. The slot now spans preparation through DISPATCH
+  (`releaseSlot`, called the moment the engine call is made; fleet holds to acceptance/refusal) and
+  never the turn itself. The lesson generalizes: an ordering contract stated in a comment is only as
+  true as the promise the chain actually awaits.
+- **Staged-file ownership needed a FOURTH way** (review round 2, P2a): round 1's indeterminate-ack rule
+  ("a rejection across the prompt op leaves the files") over-applied to `sendOp`'s PRE-WRITE closed
+  rejection, where the op was definitely never written and the dead host's sweeper died with it. The
+  death latch is sampled in the same tick as the send; never-sent cleans, in-flight leaves.
+- **A cap measured on two different strings is two different caps** (review round 2, P2b): the schema
+  bounded the whole URL while the resolver bounded the payload, so an image at the published 180,000-byte
+  bound was refused by the 22-character prefix. The cap now binds the payload at both layers; the
+  emitted `maxLength` (240,064) is a backstop, not the build-to number.
 - **A serialization slot must cover the work it was taken for, not the call that opens it** (final review
   round 2, P1). `turn/start` takes an ordered slot on the thread's chain so its prompt reaches the engine
   behind anything the client sent first — and the slot released the moment the runner was INVOKED, which
