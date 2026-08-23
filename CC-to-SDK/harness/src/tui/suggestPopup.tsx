@@ -397,6 +397,46 @@ function GeneralRow({ item, columns, nameCol, selected, allowWrap }: { item: Sug
   );
 }
 
+/** F10 T-HOVER Task 2 (CM33) — the popup's own hit region, same shape family as `ViewportHitmap`
+ *  (F9 T-MOUSE). `PALETTE_PADDING_X` is the popup's own horizontal padding: `SuggestPopup`'s Box is
+ *  `paddingX={2}` and the hoisted slot (`paletteSlot.tsx`) adds nothing of its own — canon's
+ *  `paddingX:2` already lives inside the popup. */
+const PALETTE_PADDING_X = 2;
+
+/** ONE suggestion row as a hit target. `colStart`/`colEnd` are 1-based INCLUSIVE terminal columns (an
+ *  SGR report's own coordinates); `lines` is the row's painted height, 1 or 2, straight off `rowLines`
+ *  (canon `OSw`). Rows are in WINDOW order, so the index of a hit is `P` and the absolute suggestion
+ *  index is `windowStart + P` (canon's `onSelect(I)`, L536295). */
+export interface PopupHitRow { id: string; colStart: number; colEnd: number; lines: number }
+/** `top` is the region's FIRST terminal row — `useDockTop()`, because the hoisted palette is the dock's
+ *  first child (ChatApp.tsx). `0` = not addressable, the same contract `RegionTopContext` and
+ *  `DockTopContext` state (FullscreenFrame.tsx). */
+export interface PopupHitRegion { top: number; rows: readonly PopupHitRow[] }
+
+/** Builds the region for the WINDOW slice already on screen (`items.slice(start, end)` and its matching
+ *  line counts). `top <= 0` (not addressable) or a pane too narrow for the padding both publish no rows —
+ *  never an inverted `colEnd < colStart` range. */
+export function popupHitRegion(
+  windowItems: readonly SuggestItem[], windowLineCounts: readonly number[], top: number, columns: number,
+): PopupHitRegion {
+  const colStart = PALETTE_PADDING_X + 1, colEnd = columns - PALETTE_PADDING_X;
+  if (top <= 0 || colEnd < colStart) return { top: 0, rows: [] };
+  return { top, rows: windowItems.map((it, i) => ({ id: it.id, colStart, colEnd, lines: windowLineCounts[i] ?? 1 })) };
+}
+/** The WINDOW-relative index of the row a cell lands on, derived FORWARD from `region.top` — each row
+ *  consuming its own `lines`. `undefined` for any cell outside the region (including the row ABOVE
+ *  `top`, which belongs to the transcript, never the popup — see the module doc's origin note). */
+export function popupRowAt(region: PopupHitRegion, col: number, row: number): number | undefined {
+  if (region.top <= 0) return undefined;
+  let y = region.top;
+  for (let i = 0; i < region.rows.length; i++) {
+    const r = region.rows[i]!;
+    if (row >= y && row < y + r.lines) return col >= r.colStart && col <= r.colEnd ? i : undefined;
+    y += r.lines;
+  }
+  return undefined;
+}
+
 /** A run of blank rows. `<Text> </Text>` and not `<Text/>`, because Ink collapses a genuinely empty Text and
  *  the whole point of the padding is to occupy a line. Upstream writes the same literal (`h, { children: " " }`,
  *  L432436 for the empty-message pad, L432452 for the list pad). */
