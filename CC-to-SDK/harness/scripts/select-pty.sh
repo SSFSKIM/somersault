@@ -716,6 +716,90 @@ run_stream_shift_cell() {
   record "stream-shift" "$rc"
 }
 
+# ── cell: autoscroll-capture (keyless) — F10 T-SELECT S6 acceptance cell 5: auto-scroll drag + off-window
+# capture. `!seq 1 120` stages a document far taller than the region (`formatBashOutput`'s own 40-line cap
+# still leaves a header + 40 numbered rows + a "… more lines" trailer — comfortably deeper than an 8-row
+# region). `ctrl+home` (`scroll:top`) jumps to the document's absolute top, leaving most of those 40 numbers
+# off the window; pressing mid-window and dragging into the dock band below the region starts S6's own
+# auto-scroll driver, and HOLDING for ~1.5s (no release — the header's own "nothing between press and the
+# completing gesture" rule does not apply here since the interval fires entirely on its own timer, not from
+# a second keystroke) scrolls it well past whatever was on screen at press time. Both observable halves are
+# checked: the row lands on screen (`capture-pane`) and the release's auto-copy latch captured it too (the
+# OSC 52 log, decoded — this is what proves the copy walked the DOCUMENT, `documentSelectionText`, and not
+# merely the painted window `extractText` alone could ever reach).
+run_autoscroll_capture_cell() {
+  local s="ac-$RUN_ID" home rc=0
+  echo "  cell autoscroll-capture (keyless): !seq 1 120, jump to the top, drag past the bottom edge and hold ~1.5s"
+  home=$(launch "$s" 100 13 "node $BIN") || { record "autoscroll-capture" 1; kill_cell "$s"; return; }
+  wait_ready "$s" || { record "autoscroll-capture" 1; kill_cell "$s"; return; }
+  tmux -L "$TM" send-keys -t "$s" -l "!seq 1 120"
+  tmux -L "$TM" send-keys -t "$s" Enter
+  local i=0
+  while [ "$i" -lt 40 ]; do frame "$s" | grep -qE '^  40$' && break; sleep 0.25; i=$((i+1)); done
+  if ! frame "$s" | grep -qE '^  40$'; then
+    echo "      FAIL autoscroll-capture: seq output never settled (looking for its own last line, '  40')"
+    frame "$s" | sed 's/^/      | /'
+    kill_cell "$s"; record "autoscroll-capture" 1; return
+  fi
+  # ctrl+home -> `scroll:top` (the `Scroll` context, bindings.ts:183) — the document's own absolute top,
+  # leaving numbers well into the 30s/40s off this window entirely.
+  send_csi "$s" "[1;5H"
+  sleep 0.3
+  local pre="$SELECT_ROOT/ac-pre"; frame "$s" > "$pre"
+  local pre_max; pre_max=$(LC_ALL=C grep -oE '^  [0-9]+$' "$pre" | tr -d ' ' | sort -n | tail -1)
+  if [ -z "$pre_max" ]; then
+    echo "      FAIL autoscroll-capture: no numbered seq row visible after jumping to the top"
+    cat "$pre" | sed 's/^/      | /'
+    kill_cell "$s"; record "autoscroll-capture" 1; return
+  fi
+  local target=$((pre_max + 10)); if [ "$target" -gt 40 ]; then target=40; fi
+  local press_row; press_row=$(LC_ALL=C awk -v v="  $pre_max" '$0==v {print NR; exit}' "$pre")
+  if [ -z "$press_row" ]; then
+    echo "      FAIL autoscroll-capture: could not locate row $pre_max's own screen row"
+    kill_cell "$s"; record "autoscroll-capture" 1; return
+  fi
+  # Press on the highest currently-visible number, drag into the dock band below the 8-row region (row 10
+  # of a 13-row pane), and HOLD — no release — for ~1.5s (30 ticks at S6's own 50ms cadence).
+  press "$s" 3 "$press_row"
+  drag  "$s" 30 10
+  sleep 1.5
+  release "$s" 30 10
+  sleep 0.5
+  # A 1.5s hold (~30 ticks) can easily overshoot a nearby `target` clear past the document's own tail (only
+  # 40 numbered rows exist) before this capture runs, so the on-screen half of the claim is checked
+  # generically — SOME row later than everything visible at press time is now painted — rather than pinned
+  # to `target` itself; the OSC 52 check below is what pins the SPECIFIC number.
+  local post="$SELECT_ROOT/ac-post"; frame "$s" > "$post"
+  local post_max; post_max=$(LC_ALL=C grep -oE '^  [0-9]+$' "$post" | tr -d ' ' | sort -n | tail -1)
+  if [ -n "$post_max" ] && [ "$post_max" -gt "$pre_max" ]; then
+    echo "      ok   autoscroll-capture: row $post_max is now painted — off-screen at press time (max visible then was $pre_max)"
+  else
+    echo "      FAIL autoscroll-capture: no row later than $pre_max is on screen after the held drag (post_max=${post_max:-none})"
+    cat "$post" | sed 's/^/      | /'
+    rc=1
+  fi
+  # The OSC 52 payload, decoded — `word-drag`'s own base64-substring technique generalised: here the
+  # expected text is data-dependent (it depends on exactly how far the hold scrolled), so this decodes the
+  # actual payload rather than matching a precomputed constant. Base64 never contains the ESC bytes tmux's
+  # `$TMUX`-forced DCS passthrough doubles (word-drag's own header note), so the substring survives intact.
+  local b64; b64=$(LC_ALL=C grep -aoE $'\x1b\\]52;c;[A-Za-z0-9+/=]+' "$SELECT_ROOT/$s.log" | tail -1 | sed 's/^.*52;c;//')
+  if [ -z "$b64" ]; then
+    echo "      FAIL autoscroll-capture: no OSC 52 payload found in the raw log"
+    rc=1
+  else
+    local decoded; decoded=$(printf '%s' "$b64" | base64 -d 2>/dev/null)
+    if printf '%s' "$decoded" | grep -qE "(^|[^0-9])${target}([^0-9]|\$)"; then
+      echo "      ok   autoscroll-capture: the OSC 52 clipboard contains $target — off-screen at press time, absent from the pre-press snapshot (max was $pre_max)"
+    else
+      echo "      FAIL autoscroll-capture: the OSC 52 clipboard does not contain $target"
+      echo "      decoded: $decoded"
+      rc=1
+    fi
+  fi
+  kill_cell "$s"
+  record "autoscroll-capture" "$rc"
+}
+
 # ── run ──────────────────────────────────────────────────────────────────────────────────────────────────
 echo "F10 T-SELECT S1 — the caret-origin pty harness (FULLSCREEN renderer, CLAUDE_CODE_NO_FLICKER=1)"
 self_test || { echo "SELF-TEST FAILED — aborting before any session is launched"; exit 1; }
@@ -738,6 +822,7 @@ want_cell caret-busy-live && run_caret_busy_live_cell
 want_cell word-drag       && run_word_drag_cell
 want_cell extend-chords   && run_extend_chords_cell
 want_cell stream-shift    && run_stream_shift_cell
+want_cell autoscroll-capture && run_autoscroll_capture_cell
 
 echo
 echo "select-pty: $pass_count passed, $fail_count failed"

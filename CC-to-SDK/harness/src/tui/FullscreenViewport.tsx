@@ -80,7 +80,7 @@
 // that takes the seam is rendered INSTEAD of the dock, never over it (spec, and `FullscreenFrame`'s header).
 // A published row map is therefore always current, and the question "is something drawn over this cell" has
 // no meaning here. Which surface owns the input while a dialog is up is ChatApp's gate, one layer up.
-import React, { useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
 import { applyAnchor, type AnchorState } from "./scrollAnchor.js";
 import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type RenderItemSlice } from "./pager.js";
@@ -91,7 +91,8 @@ import { linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
 import { remapSelection, type SelectionAddresses, type SelectionEndpoint } from "./mouse/address.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, moveSelectionFocus, multiClick, selectedSpans, startSelection, type Cell, type ExtendDir, type RowSpan, type SelectionState } from "./mouse/selection.js";
-import { charRangeOf, extractText } from "./mouse/extract.js";
+import { charRangeOf } from "./mouse/extract.js";
+import { documentSelectionText } from "./mouse/documentText.js";
 import type { LineSelection } from "./Line.js";
 import { stripSgr } from "./sgrFoldRow.js";
 import { useRegionRows, useRegionTop } from "./FullscreenFrame.js";
@@ -306,6 +307,15 @@ const NO_HIT_ROWS: readonly HitRow[] = [];
  *  consumed" discipline `NO_HIT_ROWS` states: a `new Map()` per idle render would be free but pointless. */
 const EMPTY_SPAN_MAP: ReadonlyMap<number, RowSpan> = new Map();
 
+// F10 S6 — canon's constants, verbatim (L551562): two rows a tick, a tick every 50 ms, 200 ticks maximum.
+// The cap is the second belt — the first is that every path out of a drag clears the timer — because a
+// timer that outlives the gesture re-scrolls the transcript under an idle reader. Exported so the driver
+// test can index its own boundary assertions off these names rather than a hand-typed 200/2/50, which is
+// the drift a cap without an accounting point always suffers.
+export const AUTOSCROLL_ROWS = 2;        // canon `Yjh`
+export const AUTOSCROLL_MS = 50;         // canon `Jjh`
+export const AUTOSCROLL_MAX_TICKS = 200; // canon `iNw`
+
 export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, onWheelTick, scrollRef, hitmapRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
   const regionTop = useRegionTop();
@@ -333,6 +343,11 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     return m;
   }, [items]);
   const ordinalsRef = useRef(ordinals); ordinalsRef.current = ordinals;
+  // F10 S6 — the WHOLE document's own projection, for `selectedText`'s document walk (below): a copy costs
+  // one document wrap per COPY (release, Ctrl+C), never per frame, so this is written every render but read
+  // only on demand. Mirrored into a ref for the same reason `ordinalsRef`/`hit` are: `selectedText` is an
+  // imperative read from outside React and must see the LATEST render's document, not a stale closure's.
+  const docRef = useRef({ items, columns, total }); docRef.current = { items, columns, total };
 
   const [anchor, setAnchor] = useState<AnchorState>(START);
   // A WIDTH CHANGE RE-NUMBERS THE ROWS, so the retained offset is translated by the document position it
@@ -473,6 +488,51 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const span = spanLo && spanHi ? { lo: spanLo, hi: spanHi, kind: s.anchorSpan!.kind } : null;
     selectionAddrRef.current = { anchor, focus, span };
   };
+  /** F10 S6 — the auto-scroll tick's OWN, narrower address update: only `focus` moved. The general
+   *  `recordSelectionAddresses` above re-derives EVERY endpoint from its numeric `SelectionState` cell — the
+   *  right thing for a real mouse event, where the anchor's cell still names whatever row the gesture
+   *  actually started on. Mid-auto-scroll that is no longer true: the render-time remap (below) has already
+   *  rewritten `state.anchor` to a VIRTUAL, clamped cell (row 1 or the window's last row) the moment the
+   *  anchor's own item scrolls off the window, and `endpointAt` has no notion of "virtual" — it would read
+   *  whatever REAL row now happens to sit at that clamped position and silently rebind the anchor's address
+   *  to it, dragging the recorded start of the sweep forward with the window instead of leaving it exactly
+   *  where the press landed (measured: without this, a hold long enough to scroll the anchor's own row off
+   *  screen loses everything before the CURRENT window from the copy, the opposite of what auto-scroll
+   *  capture exists for). `anchor`/`span` are carried over UNCHANGED from the address already on record. */
+  const recordAutoScrollFocus = (): void => {
+    const prev = selectionAddrRef.current;
+    if (!prev) return;
+    const focus = endpointAt(selectionStateRef.current.focus);
+    if (focus) selectionAddrRef.current = { ...prev, focus };
+  };
+  // ── F10 S6 — AUTO-SCROLL ON DRAG (canon's `Epo`/`sNw`, L551475-551561) ──────────────────────────────
+  // Canon's constants, verbatim (L551562): two rows a tick, a tick every 50 ms, 200 ticks maximum. The cap
+  // is the second belt — the first is that every path out of a drag clears the timer — because a timer that
+  // outlives the gesture re-scrolls the transcript under an idle reader.
+  const autoScrollRef = useRef<{ timer: ReturnType<typeof setInterval>; dir: -1 | 1; ticks: number; col: number } | null>(null);
+  const stopAutoScroll = useCallback(() => {
+    const live = autoScrollRef.current;
+    if (live) { clearInterval(live.timer); autoScrollRef.current = null; }
+  }, []);
+  useEffect(() => stopAutoScroll, [stopAutoScroll]);
+  const startAutoScroll = useCallback((dir: -1 | 1, col: number) => {
+    const live = autoScrollRef.current;
+    if (live?.dir === dir) { live.col = col; return; }          // canon's latch: same direction keeps going
+    stopAutoScroll();
+    const entry = { dir, ticks: 0, col, timer: setInterval(() => {
+      const before = anchorRef.current.offset;
+      for (let i = 0; i < AUTOSCROLL_ROWS; i++) scroll(PAGER_ACTIONS[dir < 0 ? "scroll:lineUp" : "scroll:lineDown"]!);
+      entry.ticks += 1;
+      // Re-apply the drag at the CLAMPED edge so the focus keeps tracking the pointer that is no longer
+      // over a row. The row count is this frame's; it does not change under a scroll.
+      const edgeRow = dir < 0 ? 1 : Math.max(1, hit.current.rows.length);
+      dragTo(selectionStateRef.current, { row: edgeRow, col: entry.col });
+      recordAutoScrollFocus();
+      repaint();
+      if (entry.ticks >= AUTOSCROLL_MAX_TICKS || anchorRef.current.offset === before) stopAutoScroll();
+    }, AUTOSCROLL_MS) };
+    autoScrollRef.current = entry;
+  }, [scroll, repaint, stopAutoScroll]);
   const startSelectionAt = useCallback((col: number, row: number) => {
     const cell = cellAt(col, row);
     if (!cell) return;
@@ -489,7 +549,14 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     else dragTo(selectionStateRef.current, cell);
     recordSelectionAddresses();
     repaint();
-  }, [repaint]);
+    // F10 S6 — canon's `sNw` (L551551-551561): a direction only while the ANCHOR is inside the window and
+    // the focus is outside it. `cellAt` happily answers for a row past either end — that out-of-window
+    // signal has reached this function since F9 and nothing acted on it.
+    const anchor = selectionStateRef.current.anchor;
+    const inside = anchor !== null && anchor.row >= 1 && anchor.row <= hit.current.rows.length;
+    const dir = cell.row < 1 ? -1 : cell.row > hit.current.rows.length ? 1 : 0;
+    if (inside && dir !== 0) startAutoScroll(dir, cell.col); else stopAutoScroll();
+  }, [repaint, startAutoScroll, stopAutoScroll]);
   const multiClickSelectionAt = useCallback((col: number, row: number, count: 2 | 3) => {
     const { top, rows: painted } = hit.current;
     if (top <= 0) return;
@@ -500,22 +567,28 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     recordSelectionAddresses();
     repaint();
   }, [repaint]);
-  const endSelectionDrag = useCallback(() => { selectionStateRef.current.isDragging = false; }, []);
+  const endSelectionDrag = useCallback(() => { selectionStateRef.current.isDragging = false; stopAutoScroll(); }, [stopAutoScroll]);
   const hasSelectionHandle = useCallback(() => computeHasSelection(selectionStateRef.current), []);
   const discardSelection = useCallback(() => {
     const s = selectionStateRef.current;
     s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
     selectionAddrRef.current = null;
+    stopAutoScroll();
     repaint();
-  }, [repaint]);
-  // F9 T-MOUSE Task 7 — the auto-copy latch's own read: the SAME geometry the paint path derives
-  // (`selectedSpans` against `hit.current.rows`, T6's own invariant that the map painted IS the map
-  // extracted) run through `extract.ts`'s `extractText` — the identical function `/copy`-adjacent code in
-  // this track already uses, so a selection copies exactly the text it visibly highlights, never a second,
-  // independently-derived string. Called on demand (release, Ctrl+C) rather than cached: a selection's rows
-  // and the DOCUMENT under them can both move between two mouse events, and this always reads the CURRENT
-  // frame's own map, matching every other imperative read on this ref.
-  const selectedText = useCallback(() => selectionOffscreenRef.current ? "" : extractText(selectedSpans(selectionStateRef.current, hit.current.rows), hit.current.rows), []);
+  }, [repaint, stopAutoScroll]);
+  // F10 S6 — the copy latch's read now walks the DOCUMENT, not the painted window: an auto-scrolled sweep
+  // (above) can carry the focus past rows this frame no longer paints, and S4's durable addresses are
+  // exactly what makes their content still reachable. `selectionOffscreenRef`'s window-clamped "paint
+  // nothing" verdict is deliberately NOT consulted here — it answers "is this on screen", which is no
+  // longer the question copy asks. Called on demand (release, Ctrl+C) rather than cached: one document wrap
+  // per copy, never per frame, matching `docRef`'s own header. */
+  const selectedText = useCallback(() => {
+    const addrs = selectionAddrRef.current;
+    if (!addrs) return "";
+    const { items: docItems, columns: docCols, total: docTotal } = docRef.current;
+    const { slices } = pageItemSlices(docItems, 0, docTotal);
+    return documentSelectionText(hitRowsOf(slices, docCols), addrs, (k) => ordinalsRef.current.get(k));
+  }, []);
   /** F10 S5 — the wrapper every extend chord goes through. Three things, in this order, and the middle one
    *  is the one the first draft of this plan omitted: move the focus, RE-RECORD the durable addresses, then
    *  repaint. `recordSelectionAddresses` (Task 6) is not a mouse-path detail — it is how `SelectionState`
