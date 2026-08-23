@@ -390,6 +390,9 @@ describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
         extraArgs: {
           resume: "other-1", "resume-session-at": "other-anchor", "resume-drops-turn": "other-drop",
           "fork-session": null, "session-id": "other-chosen", continue: null,
+          // …plus the three the CLI has and the SDK's typed Options do not, each of which names an EXISTING
+          // conversation by value: a PR-linked session, a teleport session, a cloud session by id/URL.
+          "from-pr": "4321", teleport: "other-teleport", cloud: "other-cloud",
           "append-system-prompt": "stay",   // the hatch's legitimate half, which must still ride across
         },
       },
@@ -403,7 +406,8 @@ describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
 
     expect(factoryConfigs).toHaveLength(1);
     const args = factoryConfigs[0].extraArgs as Record<string, unknown>;
-    for (const flag of ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue"]) {
+    for (const flag of ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue",
+                        "from-pr", "teleport", "cloud"]) {
       expect(flag in args, `extraArgs.${flag} must not survive into the rewind swap`).toBe(false);
     }
     expect(args["append-system-prompt"]).toBe("stay");

@@ -17,6 +17,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } fro
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 // ── Part A: runtime argv order ─────────────────────────────────────────────────────────────────────
@@ -56,8 +57,16 @@ if (existsSync(argvFile)) {
 // ── Part B: does the real CLI adopt the last occurrence? ───────────────────────────────────────────
 // The native binary ships as one per-host package, so the path is composed from THIS host rather than
 // pinned to the one that first ran the probe — otherwise part B silently measures nothing off darwin/arm64.
-const nativePkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
-const bin = new URL(`../node_modules/${nativePkg}/claude`, import.meta.url).pathname;
+// Three host facts go into it: the package is `-<platform>-<arch>`, but linux ALSO ships musl-suffixed
+// variants (only one of the two is installed, so try both rather than re-deriving the SDK's libc sniff);
+// the file inside is `claude.exe` on win32; and the URL→path conversion must go through fileURLToPath,
+// since `.pathname` keeps percent-escapes (a repo under "…/my repo/…" yields "%20") and prefixes the drive
+// letter with a slash on Windows.
+const exe = process.platform === "win32" ? "claude.exe" : "claude";
+const nativePkgs = [`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`,
+  ...(process.platform === "linux" ? [`@anthropic-ai/claude-agent-sdk-linux-${process.arch}-musl`] : [])];
+const candidates = nativePkgs.map((pkg) => fileURLToPath(new URL(`../node_modules/${pkg}/${exe}`, import.meta.url)));
+const bin = candidates.find((p) => existsSync(p)) ?? candidates[0];
 console.log(`B: binary: ${bin} exists=${existsSync(bin)}`);
 function adoptedSession(first: string, second: string, label: string): void {
   const cfg = mkdtempSync(join(tmpdir(), "p114cfg-"));
@@ -89,7 +98,8 @@ if (existsSync(bin)) {
   adoptedSession(A, B, "A-then-B");
   adoptedSession(B, A, "B-then-A (control)");
 } else {
-  // Said out loud, because an absent binary is an UNMEASURED part B — not a passing one.
-  console.log(`B: binary not installed for this platform (${nativePkg} on ${process.platform}/${process.arch}) — part B NOT measured`);
+  // Said out loud, because an absent binary is an UNMEASURED part B — not a passing one. The candidates
+  // are printed too: on a host where none matched, the list is the whole of what was looked for.
+  console.log(`B: binary not installed for this platform (${process.platform}/${process.arch}); tried ${JSON.stringify(candidates)} — part B NOT measured`);
 }
 console.log("done");

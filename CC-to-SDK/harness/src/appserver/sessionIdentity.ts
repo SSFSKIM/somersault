@@ -11,15 +11,32 @@ export const SESSION_IDENTITY = ["resume", "resumeAt", "droppedTurnUuid", "forkS
  *  Kept as a second list rather than one mapping because they are two different wires, and a rename on
  *  either side should fail loudly here rather than silently stop stripping. */
 export const SESSION_IDENTITY_OPTIONS = ["resume", "resumeSessionAt", "resumeDropsTurn", "forkSession", "sessionId", "continue"] as const;
-/** And the same six on the THIRD wire: the spawned CLI's own argv (probe 114). `extraArgs` entries are
- *  appended AFTER every typed identity flag the SDK pushes, and the CLI adopts the LAST occurrence of a
- *  repeated flag — measured in both orders, with the result envelope and the transcript filename naming
- *  the same winner — so an unstripped `extraArgs.resume` overrules the typed field exactly as the
- *  options hatch could. The CLI hyphenates four of the six; same rule as above: a rename on the CLI side
- *  should fail loudly here rather than silently stop stripping. */
-export const SESSION_IDENTITY_ARGS = ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue"] as const;
+/** The THIRD wire: the spawned CLI's own argv (probe 114) — and the only one of the three that is LONGER
+ *  than six. `extraArgs` entries are appended AFTER every typed identity flag the SDK pushes, and the CLI
+ *  adopts the LAST occurrence of a repeated flag — measured in both orders, with the result envelope and
+ *  the transcript filename naming the same winner — so an unstripped `extraArgs.resume` overrules the typed
+ *  field exactly as the options hatch could. The leading six are the SDK-typed knobs in the CLI's own
+ *  spellings, which hyphenate four of them; same rule as above: a rename on the CLI side should fail loudly
+ *  here rather than silently stop stripping.
+ *
+ *  The trailing THREE mirror no typed `Options` field at all — they live on this wire and nowhere else, so
+ *  only a sweep of the wire itself finds them. Found by reading the installed native CLI's WHOLE option
+ *  list (`claude --help`) for flags whose VALUE can name an existing conversation, which is this module's
+ *  one test for identity:
+ *    `--from-pr [value]`                    "Resume a session linked to a PR by PR number/URL".
+ *    `--teleport [session]`                 "Resume a teleport session, optionally specify session ID".
+ *    `--cloud [description|session_id|url]` "Create a cloud session with the given description, or attach
+ *      to an existing one by session ID or claude.ai/code URL" — the VALUE SHAPE decides, and only the
+ *      caller's string says which it is. Stripped anyway: a swap or "detached" review silently continuing
+ *      the target's cloud conversation is a worse failure than a passthrough cloud description going
+ *      missing.
+ *  Considered by that same sweep and deliberately NOT identity: `--environment <environment_id>` creates a
+ *  NEW cloud session on a self-hosted environment — it names infrastructure, never a conversation — and
+ *  `--worktree [name]` names a directory. */
+export const SESSION_IDENTITY_ARGS = ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue",
+  "from-pr", "teleport", "cloud"] as const;
 
-/** Whether an `extraArgs` KEY is one of the six above — matched on the part BEFORE any `=`, because the SDK
+/** Whether an `extraArgs` KEY is one of the argv spellings above — matched on the part BEFORE any `=`, because the SDK
  *  pushes a null-valued key literally as `--<key>`: `{"resume=<id>": null}` reaches the CLI as the perfectly
  *  valid `--resume=<id>` under a key that never equals `"resume"`, so whole-key deletion alone lets the flag
  *  through in the one encoding that needs no value at all. */

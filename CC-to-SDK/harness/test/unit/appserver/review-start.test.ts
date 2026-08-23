@@ -267,12 +267,16 @@ describe("review/start — read-only by policy, not only by prompt", () => {
     const t = addRecord(srv, "/repo", "inProcess", { cwd: "/repo", extraArgs: {
       resume: "sess-target", "resume-session-at": "uuid-7", "resume-drops-turn": "uuid-8",
       "fork-session": null, "session-id": "11111111-2222-3333-4444-555555555555", continue: null,
+      // …and the three the CLI has that no typed SDK field mirrors, each naming an EXISTING conversation by
+      // value: a PR-linked session, a teleport session, a cloud session by id/URL.
+      "from-pr": "4321", teleport: "sess-teleport", cloud: "sess-cloud",
       "append-system-prompt": "keep",   // an ordinary argv value, which must survive
     } });
     send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
     await settle();
     const args = f.built.at(-1)!.config.extraArgs as Record<string, unknown>;
-    for (const key of ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue"])
+    for (const key of ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue",
+                       "from-pr", "teleport", "cloud"])
       expect(args, key).not.toHaveProperty(key);
     expect(args["append-system-prompt"]).toBe("keep");
     // And the TARGET's own config is not edited on the way past.
