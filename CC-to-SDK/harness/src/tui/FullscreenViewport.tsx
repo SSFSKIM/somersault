@@ -237,10 +237,16 @@ export interface FullscreenViewportProps {
  *  defensively `stripSgr`'d again even though every producer already hands `RenderLine.text` plain
  *  (`toolRenderer.tsx` strips a `preStyled` run at publish) — cheap, idempotent, and the honest reading of
  *  "plain text via the existing stripSgr" rather than a second contract nothing enforces. */
-const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, columns: number): HitRow => {
+// F10 S4 — `fallback` is the `{start, end}` this row's source range takes when `l.source` is absent: the
+// identity arm of `wrapLine`/`wrapOne` mints no `source` at all for a row it never wrapped, so the caller
+// (which knows the row's position — a single `HitRow` does not) supplies the whole-item range instead.
+const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, columns: number, fallback: { start: number; end: number }): HitRow => {
   const gutterWidth = l.gutter ? stringWidth(l.gutter.text) : 0;
   const linkRanges = linkRangesOf(l);
-  return { itemKey, anchor, kind: "line", gutterWidth, text: stripSgr(l.text), softWrap: l.continuation === true ? "continuation" : "hard",
+  const text = stripSgr(l.text);
+  const source = l.source ?? { ...fallback, pad: 0 };
+  return { itemKey, anchor, kind: "line", gutterWidth, text, softWrap: l.continuation === true ? "continuation" : "hard",
+    charStart: source.start, charEnd: source.end, textStart: source.pad,
     width: Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
 };
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
@@ -256,11 +262,22 @@ export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): 
   const out: HitRow[] = [];
   for (const { item, start, end } of slices) {
     const itemKey = sourceId(item.id);
-    if (item.kind === "line") { out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, columns)); continue; }
-    for (let row = start; row < end; row++) {
+    if (item.kind === "line") {
+      out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, columns, { start: 0, end: stripSgr(item.line.text).length }));
+      continue;
+    }
+    // F10 S4 — the cumulative fallback base walks the block's ORIGINAL body order from row 0 regardless of
+    // where the slice starts: a body row cut away by the window still contributes its length plus one `\n`
+    // separator to every surviving row's base, which is what keeps a partially-visible block's rows naming
+    // their TRUE source positions unchanged by the slice. This IS the block's only source of truth when
+    // nothing wrapped it (`wrapOne`'s identity return carries no `source` at all).
+    let base = 0;
+    for (let row = 0; row < end; row++) {
       const body = item.body[row]!;
-      out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, columns), kind: "gutter-block",
-        gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
+      if (row >= start)
+        out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, columns, { start: base, end: base + body.text.length }), kind: "gutter-block",
+          gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
+      base += item.body[row]!.text.length + 1;
     }
   }
   return out;

@@ -12,7 +12,9 @@
 // map so a later selection sweep can join a wrapped paragraph's copy as one line rather than one per painted
 // row. Absent (never `false`) means "this row starts a logical line", which is every producer's own output
 // before it reaches `wrapLine`, and every row that already fit at its painted width.
-export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; gutter?: Gutter; segments?: Segment[]; continuation?: true; }
+// `source` (F10 T-SELECT S4): the SOURCE-character range this row covers, minted by `wrapItems.ts`'s
+// `wrapLine`/`wrapOne` at wrap time — absent on every line before it reaches a wrap (the identity case).
+export interface RenderLine { text: string; color?: string; dim?: boolean; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; bg?: string; gutter?: Gutter; segments?: Segment[]; continuation?: true; source?: LineSource; }
 // `italic` on the gutter: the `∴` thinking gutter (pack §8.3, Task 9) is dim+italic while its line is not.
 export interface Gutter { text: string; color?: string; dim?: boolean; italic?: boolean; }
 // `preStyled` (F3 Task 1, the bold-count mechanism of spec Decision Log 2026-08-04): the segment's `text`
@@ -24,6 +26,7 @@ export interface Segment { text: string; color?: string; dim?: boolean; bold?: b
 import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
 import { renderMarkdown } from "./markdown.js";
+import type { LineSource } from "./wrapItems.js";
 // The one deliberate import CYCLE in the tui layer (F4 Task 10a): species.ts needs `userEchoLines` for the
 // routes upstream renders as an ordinary echo, and this module needs species.ts to route to it. Both sides
 // are `export function` declarations used only inside function bodies, so ESM has them initialised before
