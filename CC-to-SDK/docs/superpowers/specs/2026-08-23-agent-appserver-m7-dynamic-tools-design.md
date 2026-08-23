@@ -192,8 +192,12 @@ Keyless (run from `CC-to-SDK/harness`):
    `additionalProperties` absent/true → extra keys SURVIVE to parsed arguments, false → refused;
    out-of-subset keywords refuse naming themselves.
 3. An **in-memory MCP exchange** row (same file as 1 or its own): the built server's `tools/list`
-   advertises the converted schema faithfully; `tools/call` round-trips through park → wire answer →
-   MCP content result, for all three content kinds.
+   advertises **the declared JSON Schema VERBATIM — deep-equal against the declaration object** (rev 3:
+   advertisement is the low-level Server's, not a conversion); `tools/call` round-trips through park →
+   wire answer → MCP content result, for all three content kinds; **`review/start` on a declaring
+   target inherits NO declarations** (the deliberate exclusion, pinned); **a parked call is visible
+   thread status** (the tool-call waiter, broadcast on park and settlement; decisions win when both
+   pend).
 4. `npx vitest run test/unit/appserver` — full suite green, including `mcpServer/set` vs the overlay
    across thread/rewind, thread/clear, thread/reopen.
 5. `node scripts/drift-check.mjs` — exit 0; the scorecard gains `tool/callResult` (method),
@@ -221,7 +225,9 @@ Keyed (quota-gated — after 2026-08-26 1pm):
   where subscribe replay already has the semantics and the ordering).
 - **Declarations in dedicated thread state; fresh server instances per engine build; immutable overlay
   vs `mcpServer/set`.** Instances are single-transport and config is inherited/clobberable — factories
-  + overlay is what survives rewind/clear/reopen/review without collision or reuse. Rejected: storing
+  + overlay is what survives rewind/clear/reopen without collision or reuse, **and `review/start` is
+  deliberately EXCLUDED** (rev 3: a review thread is a derived analysis engine, not the client's tool
+  runtime; the exclusion is structural because declarations live outside config). Rejected: storing
   instances in config (finding 6's landmine), letting set replace declaration servers (silent
   disappearance of thread-lifetime state).
 - **Caps on declarations AND results.** The wire frame bounds one request; the model's context pays for
@@ -282,7 +288,15 @@ Pending — written at finish.
   Session's in-process built-ins reserve UNCONDITIONALLY (even when flag-gated off); servers the SDK
   discovers from settings/plugins under non-strict MCP config cannot be enumerated at declaration time —
   that residual collision is a PUBLISHED bound, not a refusal. (4) `NATIVE_TOOL_NAMES` is a pinned
-  fixture drift-tested against the vendored sdk.d.ts (45 tool-input interfaces at 0.3.237). (5)
+  fixture drift-tested against the vendored sdk-tools.d.ts `ToolInputSchemas` union (45 `*Input`
+  members at 0.3.237, the trailing `ToolOutputSchemas` reference excluded by the extraction). (5)
   `turn/interrupt` and abortTurn settle pending calls ("turn interrupted") BEFORE awaiting the engine
-  interrupt — the same circular-wait shape as dispose. (6) Scorecard rows enter `probe-gated`; the flip
-  to shipped(M7) requires both keyed acceptance scenarios green after 2026-08-26 1pm.
+  interrupt — the same circular-wait shape as dispose. (6) The `tool/callResult` METHOD row ships with
+  its keyed residual named in prose (the drift gate refuses a registered method's probe-gated row —
+  drift-check.mjs:158); the `tool/callRequested` NOTIFICATION row carries `probe-gated`, flipping after
+  both keyed scenarios pass post-2026-08-26. (7) Planning round 5: a parked tool call is VISIBLE thread
+  status — `waitingOn` gains the tool-call kind, broadcast on park and settlement, decisions winning
+  when both pend; namespace and function names additionally refuse the `__` substring (the SDK's
+  delimiter — `ops`+`prod__run` and `ops__prod`+`run` alias to one model-visible name); collision
+  comparison is on canonical (underscore-normalized) server names; `review/start` exclusion and
+  verbatim advertisement are stated in the sections they govern.
