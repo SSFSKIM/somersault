@@ -1429,7 +1429,15 @@ describe("fix wave G — the shelf's two handlers, and the stores under them", (
    *  missing. After it, 300 of 300 succeeded across all three shapes.
    *
    *  The deep chain is not scenery — it is what turns a microsecond window into a wide one by giving the
-   *  racers forty chances at it, so six trials suffice where the shallow shape would need hundreds. */
+   *  racers forty chances at it, so six trials suffice where the shallow shape would need hundreds.
+   *
+   *  THIRD GENERATION (backlog round 2026-08-23): H2's 300-of-300 did not hold — this row kept going red
+   *  about one run in six, and the reordered assertions below caught the reason H2's fix could not reach:
+   *  `EACCES mkdir …/d0/d1`, the first create under the BOUNDARY level (the deepest dir that already
+   *  existed at the loser's survey, a peer's mkdir still one syscall short of its chmod — outside the
+   *  loser's own missing list, so H2's chmod-before-descend never touched it). Closed by `withBirthGrace`
+   *  (see archive.ts, including the staged-rename approach that measured WORSE — macOS `EINVAL` — and is
+   *  written down there so nobody rebuilds it); re-measured 2026-08-23 at 50 of 50 runs green. */
   it("four processes creating the marker store at once: none is defeated by another's half-made directory", async () => {
     const mod = compileArchiveToJs();
     writeFileSync(join(mod, "umaskChild.mjs"), UMASK_CHILD_SRC);
@@ -1454,10 +1462,12 @@ describe("fix wave G — the shelf's two handlers, and the stores under them", (
       for (let k = 0; k < RACERS; k++) parked.push(readFileSync(join(bar, `r${k}`), "utf8"));
       writeFileSync(go, "");
       expect(await Promise.all(exits)).toEqual(Array.from({ length: RACERS }, () => 0));
-      for (let k = 0; k < RACERS; k++) {
-        const o = readFileSync(join(bar, `o${k}`), "utf8");
-        if (o !== "OK") outcomes.push(o.split(" ")[0]);
-      }
+      const reports = Array.from({ length: RACERS }, (_, k) => readFileSync(join(bar, `o${k}`), "utf8"));
+      for (const [k, o] of reports.entries()) if (o !== "OK") outcomes.push(`t${t}r${k}:${o.split(" ")[0]}`);
+      // Reports before the store: the directory assertions below fire on the SAME defeat (a beaten racer
+      // leaves no marker), but a listing cannot name the errno that beat it, and the temp trees are gone
+      // by the time anyone asks. Asserting the full reports first is what makes a red run diagnosable.
+      expect(`trial ${t}: ${reports.join(" | ")}`).toBe(`trial ${t}: ${reports.map(() => "OK").join(" | ")}`);
       // The store is the last word: every racer's marker is there, and the directory holding them is
       // usable — a run where all four merely FAILED IDENTICALLY would satisfy an outcome count alone.
       expect(readdirSync(join(ccxDir, "archived")).sort()).toEqual(Array.from({ length: RACERS }, (_, k) => `sess-${k}`));
