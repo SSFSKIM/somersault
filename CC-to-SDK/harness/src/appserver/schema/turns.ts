@@ -2,6 +2,7 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import { MAX_INPUT_ITEMS, MAX_DATA_URL_CHARS, type InputItem } from "../turnItems.js";
+import { MAX_IN } from "../peer.js";
 
 /** ONE input item (spec 2026-08-23 rev 3, "Wire design"), mirroring Codex's own `UserInput` list. This
  *  union IS THE WIRE BOUNDARY, and it is where the two bounds the resolver deliberately does not enforce
@@ -37,10 +38,17 @@ void _inputItemMatches;
  *
  *  `input` is a string OR a non-empty items array. LOUD SKEW BY SHAPE (the F9 lesson): an OLD server's
  *  `z.string()` refuses an items array with -32602, so a new client can never have its images silently
- *  stripped by a server that never heard of them. `turn/steer`'s own `input` stays string-only. */
+ *  stripped by a server that never heard of them. `turn/steer`'s own `input` stays string-only.
+ *
+ *  Its `.describe()` states the FRAME bound because the per-item caps multiply straight past it: 64 items
+ *  of MAX_DATA_URL_CHARS each is ~15 MB, and a client that sized a batch off the published per-item caps
+ *  alone would have the whole request die as a -32700 parse error with a NULL id — no method, no threadId,
+ *  nothing to correlate it back to the call. Stated in prose because JSON Schema cannot express a bound on
+ *  the serialized document, so the artifact would otherwise publish only the half that misleads. */
 export const turnStartParams = z.object({
   threadId: z.string().min(1),
-  input: z.union([z.string(), z.array(inputItem).min(1).max(MAX_INPUT_ITEMS)]),
+  input: z.union([z.string(), z.array(inputItem).min(1).max(MAX_INPUT_ITEMS)])
+    .describe(`The per-item caps do NOT multiply: whatever the item count and length bounds allow, the whole request must still fit the ${MAX_IN / 1024} KiB inbound frame cap, and a frame over it is refused as a parse error (-32700) with a null id before any turn starts.`),
   queue: z.boolean().optional(),
 });
 /** `turnId`: address ONE turn. Naming a queued turn cancels just that entry and never touches the engine

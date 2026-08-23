@@ -39,6 +39,16 @@ type TurnOutcome = { error?: { message: string }; stopped?: TurnStopped } | void
 const stoppedBy = (record: ThreadRecord): TurnStopped | undefined =>
   record.closing ? "cancelled" : record.interruptRequested ? "interrupted" : undefined;
 
+/** The same two latches as WIRE MESSAGES, for the one origin that cannot broadcast a terminal at all: a
+ *  fleet turn has no id until the host's seq arrives, so it answers -33001 with the reason named instead
+ *  (fleetTurnStart's `refusal`). Keyed by `stoppedBy`'s OWN terminals rather than re-testing the record,
+ *  so the precedence between the two latches is spelled exactly once — this map only translates the
+ *  verdict it is handed (review minor M-1: the two spellings could otherwise drift). */
+const STOPPED_REFUSAL: Record<TurnStopped, string> = {
+  cancelled: "Thread is busy (closing)",
+  interrupted: "Turn interrupted before it started",
+};
+
 /** TurnMapper mutates its Items IN PLACE (`item.text += delta`, a tool's status/result filled in when its
  *  tool_result lands, `aborted` stamped by finalize), so buffering the ItemEvent by reference means the
  *  buffer no longer holds what it held when the event was live. A client joining mid-turn then got
@@ -412,8 +422,9 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // turn/completed the way beginTurn does; the honest terminal is the same -33001 the busy gate gives,
   // with the reason named. Handed to the ENGINE too (`opts.aborted`), which owns a third await of its
   // own — the staging round trip an image prompt opens with.
-  const refusal = (): string | undefined =>
-    record.closing ? "Thread is busy (closing)" : record.interruptRequested ? "Turn interrupted before it started" : undefined;
+  // DERIVED from `stoppedBy`, never a second reading of the record: which latch wins when both hold is
+  // that function's answer, and this arm only names it (see STOPPED_REFUSAL).
+  const refusal = (): string | undefined => { const stopped = stoppedBy(record); return stopped && STOPPED_REFUSAL[stopped]; };
   const refuse = (message: string): void => { clearReservation(); ctx.peer.replyError(id, ERR.BUSY, message); };
   // Cast, not a widened `EngineSession`: `onAccepted` is a FLEET engine's member (fleetEngine.ts widens
   // submit for it), and declaring it on the shared interface would promise a callback the in-process
