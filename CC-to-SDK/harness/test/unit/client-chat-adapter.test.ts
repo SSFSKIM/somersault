@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionHost } from "../../src/host/host.js";
@@ -8,9 +9,13 @@ import type { HostSession } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
 import { hostSocketPath } from "../../src/fleet/paths.js";
 import { remoteChatSession } from "../../src/client/chatAdapter.js";
+import { stageBlocks, IMAGE_VERSION_SKEW_NOTICE } from "../../src/client/stagedSubmit.js";
+import type { StagedSubmitOps } from "../../src/client/stagedSubmit.js";
+import { MAX_IMAGES_PER_PROMPT } from "../../src/host/imageStaging.js";
 import { hasBgTasks, hasRewind } from "../../src/session/chatSession.js";
 import type { HostEvent } from "../../src/host/wire.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";
+import type { UserContentBlock } from "../../src/session/turnInput.js";
 
 const fleets: string[] = [];
 const tmpFleet = () => { const d = mkdtempSync(join(tmpdir(), "ccx-adapter-")); fleets.push(d); return d; };
@@ -539,5 +544,107 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
         expect(mine.filter((e) => e.kind === "rewound")).toHaveLength(0);
       } finally { resumed.detach(); }
     } finally { watcher.detach(); await stopQuietly(host); }
+  });
+});
+
+// Task 1 (spec rev 3, "fleet threads"): the staging loop moved out of `chatAdapter.submit` into
+// `client/stagedSubmit.ts` so the fleet engine stages through the SAME code the socket adapter does.
+// These rows drive the helper directly, with a fake `StagedSubmitOps` that mints REAL files — which is
+// what makes the repair the extraction carries observable: the minted path is tracked BEFORE the write,
+// so a failed write no longer leaks the file the host just minted (spec rev 2 finding 9).
+describe("stagedSubmit — the shared staging loop", () => {
+  // Header-only PNG: signature + IHDR width/height, zero-padded. `pngDimensions` never reads past byte
+  // 24 (clipboardImage.ts), so this is the cheapest buffer that sniffs as a real image.
+  const fakePng = (width: number, height: number, totalBytes = 64): Buffer => {
+    const buf = Buffer.alloc(Math.max(totalBytes, 24));
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(buf, 0);
+    buf.write("IHDR", 12, "ascii");
+    buf.writeUInt32BE(width, 16);
+    buf.writeUInt32BE(height, 20);
+    return buf;
+  };
+  const imageBlock = (buf: Buffer, mediaType = "image/png"): UserContentBlock =>
+    ({ type: "image", source: { type: "base64", media_type: mediaType, data: buf.toString("base64") } });
+  const sha = (buf: Buffer): string => createHash("sha256").update(buf).digest("hex");
+  // chmod cannot express "unwritable" to root, so the two write-failure rows need a real user (and a
+  // filesystem that enforces mode bits at all — never win32).
+  const noModeEnforcement = process.platform === "win32" || process.getuid?.() === 0;
+
+  /** A `StagedSubmitOps` minting REAL files in a temp dir: cleanup is then observable with `existsSync`
+   *  and the helper's own `writeFile` really lands the decoded bytes. `readOnlyAt` chmods the Nth
+   *  (1-based) minted file 0o400 before handing it back, so the helper's write fails EACCES for real
+   *  rather than against a stubbed rejection. `failWith` refuses the Nth stage call outright. */
+  function fakeStager(opts: { readOnlyAt?: number; failWith?: { at: number; error: string } } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "ccx-staged-"));
+    fleets.push(dir);
+    const calls: { mediaType: string; dimensions: { width: number; height: number }; size: number; sha256: string }[] = [];
+    const minted: string[] = [];
+    const ops = {
+      async stageImageOp(d) {
+        calls.push(d);
+        if (opts.failWith && calls.length === opts.failWith.at) return { ok: false, error: opts.failWith.error };
+        const path = join(dir, `img-${calls.length}.png`);
+        writeFileSync(path, "");
+        minted.push(path);
+        if (opts.readOnlyAt === calls.length) chmodSync(path, 0o400);
+        return { ok: true, path };
+      },
+    } satisfies StagedSubmitOps;
+    return { dir, calls, minted, ops };
+  }
+
+  it("a. two text + two image blocks fold to one string, stage twice, and land the decoded bytes", async () => {
+    const png1 = fakePng(4, 4, 64);
+    const png2 = fakePng(8, 8, 96);
+    const stager = fakeStager();
+    const staged = await stageBlocks([{ type: "text", text: "A" }, imageBlock(png1), { type: "text", text: "B" }, imageBlock(png2)], stager.ops);
+    expect(staged.text).toBe("AB");                                          // the fold, in declaration order
+    expect(stager.calls.map((c) => c.dimensions)).toEqual([{ width: 4, height: 4 }, { width: 8, height: 8 }]);
+    expect(stager.calls.map((c) => c.size)).toEqual([png1.length, png2.length]);
+    expect(stager.calls.map((c) => c.sha256)).toEqual([sha(png1), sha(png2)]);
+    expect(staged.images).toEqual([{ stagedId: stager.minted[0], sha256: sha(png1) }, { stagedId: stager.minted[1], sha256: sha(png2) }]);
+    expect(readFileSync(stager.minted[0]).equals(png1)).toBe(true);
+    expect(readFileSync(stager.minted[1]).equals(png2)).toBe(true);
+    // Success hands `cleanup` to the CALLER unfired — the files must still be there for the host to read.
+    expect(stager.minted.every((p) => existsSync(p))).toBe(true);
+    await staged.cleanup();
+    expect(stager.minted.some((p) => existsSync(p))).toBe(false);
+  });
+
+  it.skipIf(noModeEnforcement)("b. THE REPAIR: a failed write removes the file its own stage call just minted", async () => {
+    const stager = fakeStager({ readOnlyAt: 1 });
+    await expect(stageBlocks([{ type: "text", text: "A" }, imageBlock(fakePng(4, 4))], stager.ops)).rejects.toThrow(/EACCES|permission denied/i);
+    expect(stager.minted).toHaveLength(1);
+    // Discriminating: with the pre-extraction ordering (push AFTER the write) this file was never in
+    // `stagedPaths`, so it survived the throw and leaked until the orphan sweep — spec rev 2 finding 9.
+    expect(existsSync(stager.minted[0])).toBe(false);
+  });
+
+  it.skipIf(noModeEnforcement)("c. a MIDDLE image's write failure also removes the FIRST image's staged file", async () => {
+    const stager = fakeStager({ readOnlyAt: 2 });
+    const blocks: UserContentBlock[] = [{ type: "text", text: "A" }, imageBlock(fakePng(4, 4)), imageBlock(fakePng(8, 8)), imageBlock(fakePng(16, 16))];
+    await expect(stageBlocks(blocks, stager.ops)).rejects.toThrow(/EACCES|permission denied/i);
+    expect(stager.calls).toHaveLength(2);                                    // the third image never reached the stage op
+    expect(stager.minted).toHaveLength(2);
+    expect(stager.minted.some((p) => existsSync(p))).toBe(false);            // BOTH gone, not just the one that failed
+  });
+
+  it("d. an 'unknown op' stage refusal is the version-skew notice, and nothing stays staged", async () => {
+    const stager = fakeStager({ failWith: { at: 2, error: "unknown op" } });
+    await expect(stageBlocks([imageBlock(fakePng(4, 4)), imageBlock(fakePng(8, 8))], stager.ops)).rejects.toThrow(IMAGE_VERSION_SKEW_NOTICE);
+    expect(stager.minted).toHaveLength(1);
+    expect(existsSync(stager.minted[0])).toBe(false);
+  });
+
+  it("e. images past MAX_IMAGES_PER_PROMPT degrade into the fold text with no stage call at all", async () => {
+    const stager = fakeStager();
+    const blocks: UserContentBlock[] = [{ type: "text", text: "many" }];
+    for (let i = 0; i < MAX_IMAGES_PER_PROMPT + 3; i++) blocks.push(imageBlock(fakePng(4, 4)));
+    const staged = await stageBlocks(blocks, stager.ops);
+    expect(stager.calls).toHaveLength(MAX_IMAGES_PER_PROMPT);                // the excess never touched the wire
+    expect(staged.images).toHaveLength(MAX_IMAGES_PER_PROMPT);
+    expect(staged.text.startsWith("many")).toBe(true);
+    expect(staged.text.match(/too many images in one turn/g)).toHaveLength(3);
+    await staged.cleanup();
   });
 });
