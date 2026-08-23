@@ -3,7 +3,8 @@
 **Date:** 2026-08-23 · **Owner approval:** design B of the product-trio presentation, approved verbatim.
 **Grounding:** `docs/superpowers/grounding/2026-08-23-product-trio-ground.md` §2 + its 2026-08-23
 amendment; probe 115 (`probes/probes/115-dynamic-tool-raw-schema.ts`).
-**Sequencing:** executes AFTER the images round (`2026-08-23-appserver-image-input-design.md`).
+**Sequencing:** executes AFTER the images round, on its own branch, reviewed as its own isolated diff.
+**Rev 2** after the adversarial spec review (twelve findings — Revision Notes).
 
 ## Purpose
 
@@ -13,160 +14,220 @@ comes back as the tool result. This milestone ships that, using the D1-preservin
 already runs for elicitation (park + notification + answer method) — **the wire grammar does not
 change**; no server→client request frame exists after this milestone either.
 
-Non-goals, decided: fleet-origin threads (their engine options are fixed at spawn; declaring on one
-refuses `-33006 UNSUPPORTED_FOR_ORIGIN` — the host-wire bridge is D-M4-8's family, later); mid-thread
-re-declaration (`thread/start` only, matching Codex); tool-call timeouts (the turn's own
-interrupt/abort is the bound, matching elicitation).
+Non-goals, decided: fleet threads (structural, not a refusal — `thread/start` creates inProcess records
+only, and the attach paths that mint fleet records carry no `dynamicTools` field, so the surface simply
+does not exist there; the host-wire bridge is D-M4-8's family, later); mid-thread re-declaration
+(`thread/start` only, matching Codex); tool-call timeouts (the turn's own interrupt/abort is the bound,
+matching elicitation).
 
 ## Wire design
 
 ### Declaration — `thread/start` gains `dynamicTools`
 
-A typed param BESIDE `config`, so the config identity guard is untouched:
+A typed param BESIDE `config`, so the config identity guard is untouched — and so the declarations are
+**never part of config at all**: they live in dedicated thread state (below), which is what keeps
+`review/start`'s config inheritance and the `extraOptions` merge structurally unable to carry or
+clobber them.
 
 ```ts
 // appserver/schema/threads.ts
+const toolName = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/);
 const dynamicToolFunction = z.object({
-  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
-  description: z.string(),
-  inputSchema: z.record(z.string(), z.unknown()),   // raw JSON Schema — converted, see below
+  name: toolName,
+  description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
+  inputSchema: z.record(z.string(), z.unknown()),   // raw JSON Schema, object-root, converted — see below
   deferLoading: z.boolean().optional(),
 });
 export const dynamicToolSpec = z.discriminatedUnion("type", [
   dynamicToolFunction.extend({ type: z.literal("function") }),
-  z.object({ type: z.literal("namespace"), name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
-             description: z.string(), tools: z.array(dynamicToolFunction).min(1) }),
+  z.object({
+    type: z.literal("namespace"), name: toolName,
+    description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
+    // Codex's DynamicToolNamespaceTool children are TAGGED (`type:"function"`) — mirrored exactly, so a
+    // canonical Codex declaration cross-parses; an acceptance row pins a Codex-shaped fixture.
+    tools: z.array(dynamicToolFunction.extend({ type: z.literal("function") })).min(1),
+  }),
 ]);
 // thread/start params: { ..., dynamicTools: z.array(dynamicToolSpec).optional() }
 ```
 
-Codex's `DynamicToolSpec` shapes, camelCase (`Function {name, description, inputSchema, deferLoading}`
-| `Namespace {name, description, tools}`). Refused loudly at `thread/start`, each with a message naming
-the offender: a name colliding with the native tool catalog (shadowing would silently eat the tool — the
-measured hazard in [[sdk-mcp-tool-shadowing-and-permission]]); a duplicate name within the declaration;
-an `inputSchema` outside the conversion subset (the message names the unsupported keyword).
+**Declaration caps — the model-context guard the wire cap is not** (review finding 1: peer.ts's 256 KiB
+frame bounds the REQUEST, not what lands in every later model turn):
+`MAX_DYNAMIC_TOOLS = 32` functions total across namespaces; per-tool `inputSchema` ≤ 8 KiB serialized,
+≤ 8 levels deep, ≤ 64 schema nodes; `MAX_TOOL_DESCRIPTION_CHARS = 2_000`. Refused loudly at
+`thread/start`, each with a message naming the offender — as are: a name colliding with the native tool
+catalog or with any configured MCP server name ([[sdk-mcp-tool-shadowing-and-permission]]), a duplicate
+name, the reserved namespace `dyn`, and a schema outside the conversion subset (the message names the
+unsupported keyword).
 
 ### The call — notification out, method back
 
-- **Notification** `tool/callRequested` → subscribers and watchers (fanout.ts's existing helper):
-  `{threadId, callId, turnId, namespace?, tool, arguments}` — Codex's `DynamicToolCallRequest` minus
-  `startedAtMs` (`emittedAtMs` already stamps every notification at the peer layer).
+- **Notification** `tool/callRequested` → **thread SUBSCRIBERS only** — never watchers, which
+  `fanout.ts` defines as thread-EXISTENCE observers, a scope that must not receive tool arguments or a
+  usable settlement key (review finding 2; an acceptance row proves a watcher-only peer sees neither).
+  Shape: `{threadId, callId, turnId, namespace?, tool, arguments}`.
+- **Replay on subscribe** (review finding 3): pending calls are part of the thread's replayable state —
+  `thread/subscribe` replays each pending call as a `tool/callRequested` after the pending-decision
+  replay it already performs. A call parked with ZERO subscribers waits; the first subscriber to attach
+  hears it. This is what makes "the declarer died, a reattaching client answers" true rather than
+  claimed.
 - **Method** `tool/callResult`:
-  `{threadId, callId, contentItems: [...], success: boolean}` where a content item is
-  `{type:"inputText", text}` | `{type:"inputImage", imageUrl}` | `{type:"inputAudio", audioUrl}` —
-  Codex's `DynamicToolCallOutputContentItem` trio, camelCase. `imageUrl`/`audioUrl` admit `data:` URLs
-  only (the images round's rule, same reason). Reply `{ok: true}`.
-  - unknown `callId` → `-32602` with "no such pending tool call";
-  - a second answer for a settled call → `-33002 ALREADY_SETTLED`;
-  - thread mismatch (callId parked under a different thread) → `-33004 THREAD_NOT_FOUND` semantics
-    are wrong here — it is `-32602`, the callId simply is not pending under that thread.
+  `{threadId, callId, contentItems: [...], success: boolean}` — items are
+  `{type:"inputText", text}` | `{type:"inputImage", imageUrl}` | `{type:"inputAudio", audioUrl}`
+  (Codex's trio, camelCase; media as `data:` URLs, the images round's parser reused). Result caps
+  (finding 1's other half): ≤ 16 content items, ≤ 128 KiB total text/media payload — an over-cap result
+  settles the call as `isError` with a cap-naming note rather than entering model context oversized.
+  Errors: unknown `callId` → `-32602` "no such pending tool call"; an already-settled `callId` →
+  `-33002 ALREADY_SETTLED` (distinguishable from unknown via the settled-tombstone ring, below);
+  a `callId` from a PREVIOUS engine generation → `-33002`-class refusal, never applied to the
+  replacement engine's state.
 
 ### Trust and routing
 
-Broadcast + first `tool/callResult` with the key wins — the decision registry's exact trust model (any
-subscriber can already answer a permission park). The declaring client is in practice the answerer; a
-thread reattached after its declarer died can be answered by the new attachee. Rejected: binding calls
-to the declaring CONNECTION (threads outlive connections; reattach is the fleet model).
+Delivered to subscribers; first `tool/callResult` with the key wins — the decision registry's trust
+model (any SUBSCRIBER can already answer a permission park; watchers never could and still cannot).
+Rejected: binding calls to the declaring CONNECTION (threads outlive connections; reattach is the fleet
+model — and the replay above is what makes reattach actually work).
 
 ## Runtime design
 
-### Per-thread in-process MCP servers
+### Declarations are thread state; servers are built per engine
 
-At `thread/start` (inProcess origin, `dynamicTools` present), the server builds one
-`createSdkMcpServer` per namespace — server name = namespace name; un-namespaced functions live under
-the reserved namespace **`dyn`** (`dyn` therefore collides as a declared namespace name → refused).
-Model-visible names are `mcp__<ns>__<name>` — an SDK naming constraint, noted as a Codex-parity nuance
-(Codex shows bare names), not hidden.
+`ThreadRecord` gains `dynamicTools?: DynamicToolDecl[]` — the SERIALIZABLE declarations, never live
+server instances (review finding 6: an MCP `Server` instance rejects a second transport, so an instance
+stored in config and inherited anywhere — a review thread, a rewind replacement — is a landmine; and
+config is exactly what `review/start` copies and `extraOptions.mcpServers` can clobber). At every
+engine build (thread/start, rewind/clear/reopen swaps), the config assembly constructs **fresh**
+`createSdkMcpServer` instances from the declarations and merges them into the engine's `mcpServers` as
+an **immutable overlay**:
+
+- one server per namespace (server name = namespace name); un-namespaced functions under the reserved
+  **`dyn`**; the namespace `description` becomes the server's `instructions`
+  (`CreateSdkMcpServerOptions.instructions` — "surfaced to the model as an MCP instructions block",
+  sdk.d.ts, so Codex's model-visible namespace description has a real home, not a dropped field);
+- **`mcpServer/set` cannot remove or replace them** (review finding 5): the overlay is merged into
+  every set the server accepts and every repush after an engine swap; a set naming an overlay server
+  refuses with a message naming it. Tested against each swap path.
+- model-visible names are `mcp__<ns>__<name>` — an SDK naming constraint, noted as a Codex-parity
+  nuance, not hidden.
 
 ### Schema conversion (probe 115's consequence)
 
-The SDK runtime refuses raw JSON Schema at `registerTool` (`inputSchema must be a Zod schema or raw
-shape` — probe 115, explicit check). New module `appserver/schemaToZod.ts` converts the declared
-subset:
+The SDK runtime refuses raw JSON Schema at `registerTool` (probe 115: explicit check). New module
+`appserver/schemaToZod.ts` converts, with the subset REQUIRING an **object root** (MCP tools take
+object-shaped arguments; a scalar root would advertise `{}` while validating the scalar — finding 7):
 
-- `type`: `object`/`string`/`number`/`integer`/`boolean`/`array`; `enum` (strings/numbers); `const`
-- `properties`/`required`/`additionalProperties:false`/`items`/`description`
-- bounds: `minimum`/`maximum`/`minLength`/`maxLength`
+- root: `type:"object"` with `properties`/`required`; `additionalProperties: false` → strict zod,
+  absent or `true` → **passthrough** zod (JSON Schema's own default admits extra keys; a stripping
+  object would silently rewrite valid client arguments — finding 7);
+- fields: `string`/`number`/`integer`/`boolean`/`array`(+`items`)/`enum`(strings/numbers)/`const`,
+  `description`, bounds `minimum`/`maximum`/`minLength`/`maxLength`.
 
-Anything else (`$ref`, `oneOf`/`anyOf`, `pattern`, formats, nested unions…) refuses the DECLARATION at
-`thread/start`, naming the keyword — a weak silently-converted schema would degrade every call the
-model makes, invisibly. The permissive-shape fallback (schema prose in the description) is deliberately
-NOT taken; revisit only if the subset proves too small against real clients.
+Anything else refuses the DECLARATION at `thread/start`, naming the keyword. Fidelity is asserted
+keylessly by an **in-memory MCP exchange**: drive the built server instance's `tools/list` and compare
+the advertised JSON Schema against the declaration; drive `tools/call` and assert passthrough keys
+survive to the parked call's `arguments`.
 
-### The handler — park, broadcast, settle
+### The handler — park, notify, settle, and the registry that owns it
 
-Each registered tool's handler:
+A dedicated per-thread **DynamicCalls registry**, explicitly mirroring the elicitation/decision
+lifecycle rather than assumed into it (review finding 4):
 
-1. mint `callId` (`toolcall:<uuid>`), park a resolver in the thread record's `toolCalls` map;
-2. broadcast `tool/callRequested`;
-3. await settlement; convert `contentItems` → MCP `CallToolResult` content
-   (`inputText`→`{type:"text"}`; `inputImage`→`{type:"image", data, mimeType}` from the data: URL;
-   `inputAudio`→`{type:"audio", data, mimeType}` — all three MCP block types exist, verified in
-   `@modelcontextprotocol/sdk` types); `success:false` → `isError: true`.
+1. handler mints `callId`, stores the FULL pending request (for subscribe replay), notifies
+   subscribers, awaits settlement;
+2. `tool/callResult` settles atomically (first answer wins; the resolver leaves the pending map and the
+   callId enters a bounded settled-tombstone ring, size 128, which is what lets a duplicate answer earn
+   `-33002` while a fabricated id earns `-32602` without unbounded memory);
+3. **every teardown path settles pending calls as cancelled** (`success:false`, `isError:true`, a note
+   naming why — the callback always answers, D-M4-9): the turn's abort signal (wired the way
+   elicitation attaches `options.signal`), thread close latch (settle + refuse new parks),
+   `thread/reopen`'s non-latching reset, engine swaps (generation stamp: the registry records the
+   engine generation at park time; settlement and teardown check it), and server shutdown;
+4. result conversion: `inputText`→`{type:"text"}`, `inputImage`→`{type:"image", data, mimeType}`,
+   `inputAudio`→`{type:"audio", data, mimeType}` (all three MCP block types verified present);
+   `success:false` → `isError: true`.
 
-**The callback always answers** (elicitation's rule, D-M4-9): turn interrupt/abort, `thread/clear`'s
-engine swap, thread close, and server shutdown each settle every pending call with
-`{success:false, contentItems:[{type:"inputText", text:"tool call cancelled: <why>"}], isError:true}` —
-a rejected or hanging handler would wedge the SDK MCP server exactly as an unanswered elicitation
-would. Settlement hooks ride the same points elicitation's parks already use.
+### deferLoading — Codex's polarity, not the SDK's
 
-### deferLoading
+Codex deserializes an omitted `deferLoading` as `false`, and `false` means DIRECT exposure (verified in
+`dynamic_tools.rs`: `#[serde(default)]` on a `bool`); the SDK's default for MCP tools is deferred
+behind ToolSearch. So the mapping is `alwaysLoad: spec.deferLoading !== true` — omitted and `false`
+load directly (Codex-compatible), only an explicit `true` defers (review finding 9; tested at all three
+values).
 
-SDK MCP tools are deferred behind ToolSearch by default ([[sdk-mcp-tools-deferred-not-inline]]).
-`deferLoading:false` maps to `tool()` extras `alwaysLoad:true`; absent or `true` maps to the default.
+### Items and permissions
 
-### Items and permissions — existing machinery, verified not assumed
-
-- The stream's `tool_use` for `mcp__…` names already classifies as the `mcp` species in
-  `items/types.ts:47` — dynamic tool calls appear as tool items on the thread with no new mapper work.
-  One acceptance row pins it.
-- Dynamic tools ride the normal permission surface under their `mcp__<ns>__<name>` names — broker
-  parks, allow/deny rules, `permissionMode` — with no special-casing. One acceptance row pins that a
-  broker-parked dynamic call still resolves.
+The stream's `tool_use` for `mcp__…` names classifies as the `mcp` species (`items/types.ts:47`), and
+dynamic tools ride the normal permission surface (broker parks, allow/deny, permissionMode) — both
+verified by the KEYED end-to-end row rather than claimed from the keyless seams (review finding 11: a
+directly-invoked handler bypasses registration, canUseTool, and stream mapping, so keyless rows assert
+what the in-memory MCP exchange actually exercises, and the live row owns the rest).
 
 ## Acceptance (behavior-phrased)
 
 Keyless (run from `CC-to-SDK/harness`):
 
-1. `npx vitest run test/unit/appserver/dynamic-tools.test.ts` — declaration validation (collision,
-   duplicate, out-of-subset each refused with its named message; fleet origin → -33006); the park trio
-   driven through the REAL wire (handler invoked directly with DI): callRequested broadcast shape,
-   callResult settles and converts all three content kinds, unknown callId -32602, double answer
-   -33002, abort/close/shutdown each settle pending calls as cancelled.
-2. `npx vitest run test/unit/schemaToZod.test.ts` — subset conversion round-trips (converted zod
-   accepts/rejects what the source schema says); every out-of-subset keyword refuses naming itself.
-3. `npx vitest run test/unit/appserver` — full suite green.
-4. `node scripts/drift-check.mjs` — exit 0; the method count grows by one (`tool/callResult`), the
-   scorecard gains its row plus the `tool/callRequested` notification row and the `thread/start`
-   `dynamicTools` note.
+1. `npx vitest run test/unit/appserver/dynamic-tools.test.ts` — declaration validation (each cap and
+   collision refused with its named message; a canonical Codex-shaped namespace fixture with tagged
+   children parses); the park trio through the REAL wire: `tool/callRequested` reaches a subscriber and
+   NOT a watcher-only peer; zero-subscriber park + replay-on-subscribe delivers the full pending
+   request; disconnect-then-reattach settlement; first-answer-wins; duplicate answer `-33002` vs
+   fabricated id `-32602`; result caps settle as `isError`; abort/close/reopen/shutdown each settle
+   pending calls as cancelled; a previous-generation answer never touches the replacement engine.
+2. `npx vitest run test/unit/schemaToZod.test.ts` — subset round-trips; object-root requirement;
+   `additionalProperties` absent/true → extra keys SURVIVE to parsed arguments, false → refused;
+   out-of-subset keywords refuse naming themselves.
+3. An **in-memory MCP exchange** row (same file as 1 or its own): the built server's `tools/list`
+   advertises the converted schema faithfully; `tools/call` round-trips through park → wire answer →
+   MCP content result, for all three content kinds.
+4. `npx vitest run test/unit/appserver` — full suite green, including `mcpServer/set` vs the overlay
+   across thread/rewind, thread/clear, thread/reopen.
+5. `node scripts/drift-check.mjs` — exit 0; the scorecard gains `tool/callResult` (method),
+   `tool/callRequested` (notification row), and the `thread/start` `dynamicTools` note.
 
 Keyed (quota-gated — after 2026-08-26 1pm):
 
-5. A live test declares one tool (`get_ticket`, the probe-115 schema), lets the model call it, answers
-   over the wire, and asserts the model's reply uses the tool's answer; skips cleanly keyless.
-6. Probe 115's fidelity half: the converted schema is what the model sees (the live call's `arguments`
-   conform; a deliberately missing required field never arrives).
+6. A live test declares one tool (the probe-115 schema), and asserts end to end: the broker parks the
+   call's PERMISSION first (`decision/requested` → answered over the wire), then `tool/callRequested`
+   arrives, is answered over the wire, an `mcp`-species tool item completes on the stream, and the
+   model's reply uses the tool's answer; skips cleanly keyless.
+7. Schema fidelity live: the model's `arguments` conform to the declared schema; a required field is
+   never absent across N calls (the in-memory tools/list row is the deterministic half; this row is the
+   model-behavior half).
 
 ## Decision Log
 
-- **Park trio over a reverse-request frame.** The grounding doc assumed a D1 breach; `elicitation.ts`
-  proves the trio already expresses server-blocks-on-client. Same trust model, same failure semantics,
-  zero wire-grammar change. Rejected: Codex-mirror server→client requests (new frame discipline, id
-  spaces, response routing — all cost, no capability the trio lacks).
-- **Convert-with-bounded-subset over permissive-shape fallback** (probe 115). A tool whose model-visible
-  schema is `{}`-ish degrades every call invisibly; a loud declaration refusal degrades nothing.
-- **`dynamicTools` beside `config`, not inside it.** The config identity guard (sessionIdentity.ts)
-  stays untouched; declarations are not config.
-- **inProcess-only v1, -33006 on fleet.** Fleet engines' SDK options are fixed at spawn; a host-wire
-  dynamic-tools op is D-M4-8's bridge family, designed once for elicitation + tools together, later.
-- **Reserved `dyn` namespace** for un-namespaced functions; declaring a namespace named `dyn` refuses.
-- **No timeouts.** Matching elicitation: the turn's interrupt is the bound; a long-running client tool
-  is legitimate. An operator who wants a bound interrupts the turn.
-- **`data:`-only media in contentItems**, matching the images round's rule and reusing its parser.
+- **Park trio over a reverse-request frame** — unchanged from rev 1 (grounding amendment); zero
+  wire-grammar change.
+- **Subscribers-only delivery; watchers excluded.** Watchers are thread-existence observers
+  (fanout.ts's own definition); tool arguments are execution data and the callId is settlement
+  authority. Rejected: rev 1's subscribers+watchers fan-out (leak + race authority to unrelated peers).
+- **Pending calls are replayable thread state.** Without replay, "a reattaching client can answer" was
+  false (one-shot notification, no discovery). Rejected: a pending-call list METHOD (a second surface
+  where subscribe replay already has the semantics and the ordering).
+- **Declarations in dedicated thread state; fresh server instances per engine build; immutable overlay
+  vs `mcpServer/set`.** Instances are single-transport and config is inherited/clobberable — factories
+  + overlay is what survives rewind/clear/reopen/review without collision or reuse. Rejected: storing
+  instances in config (finding 6's landmine), letting set replace declaration servers (silent
+  disappearance of thread-lifetime state).
+- **Caps on declarations AND results.** The wire frame bounds one request; the model's context pays for
+  every declaration on every turn and every result once — the caps are the context guard. Values are
+  generous for real tools and named in one place.
+- **Object-root + passthrough-by-default conversion.** JSON Schema admits extra keys unless
+  `additionalProperties:false`; a stripping zod object would silently rewrite valid arguments.
+- **`alwaysLoad: deferLoading !== true`** — Codex's polarity (omitted = direct), measured in its serde
+  default, not assumed from the SDK's.
+- **Fleet non-goal restated as structural.** `thread/start` mints inProcess records only; no fleet
+  path carries the field; rev 1's `-33006` refusal was unreachable and is withdrawn.
+- **Reserved `dyn` namespace; no timeouts; `data:`-only media** — unchanged from rev 1.
 
 ## Surprises & Discoveries
 
-Pending — written during execution.
+- **Rev 1 had the deferLoading polarity backwards** — the SDK's deferred-by-default and Codex's
+  direct-by-default pull opposite ways, and only reading Codex's serde default settles which side a
+  Codex-compatible client expects.
+- **Rev 1's fleet refusal was a contract for a wire that doesn't exist** — `thread/start` cannot name a
+  fleet origin at all. A refusal you cannot reach is not a decision; the structural statement is.
 
 ## Outcomes & Retrospective
 
@@ -175,3 +236,12 @@ Pending — written at finish.
 ## Revision Notes
 
 - rev 1 (2026-08-23): initial spec from the approved design-B presentation + probe 115.
+- rev 2 (2026-08-23): adversarial spec review — twelve findings, all accepted after verification
+  (watcher scope read from fanout.ts; deferLoading polarity from dynamic_tools.rs's serde default;
+  `instructions` verified in sdk.d.ts; the fleet refusal confirmed unreachable). Structural changes:
+  subscribers-only delivery; pending-call replay on subscribe; a dedicated DynamicCalls registry with
+  abort-signal wiring, close latch, reopen reset, generation stamps, and settled tombstones;
+  declarations as thread state with per-engine fresh instances and an immutable overlay against
+  `mcpServer/set`; declaration and result caps; object-root passthrough conversion; tagged namespace
+  children + `instructions` mapping; acceptance rebuilt around the in-memory MCP exchange plus a keyed
+  end-to-end row. Process: M7 lands as its own isolated branch/diff (finding 12).
