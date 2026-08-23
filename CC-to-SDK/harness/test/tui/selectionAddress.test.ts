@@ -11,8 +11,9 @@ import {
 } from "../../src/tui/mouse/address.js";
 import { createSelectionState, type SelectionState } from "../../src/tui/mouse/selection.js";
 
-/** F10 S4 — a local factory for the HitRow literals this file builds, mirroring `hitmap.test.ts`'s and
- *  `selection.test.ts`'s own `mkRow` pattern. Kept HERE (not shared) so T-HOVER's merge, which adds a
+/** F10 S4 — a local factory for EVERY HitRow literal this file builds, mirroring `hitmap.test.ts`'s and
+ *  `selection.test.ts`'s own `mkRow` pattern. Kept HERE (not shared), and used for every fixture row below
+ *  (no hand-rolled HitRow object literal anywhere else in this file), so T-HOVER's merge, which adds a
  *  required `ownerKey` field to `HitRow`, has exactly ONE place in this file to extend — this module never
  *  references `ownerKey` itself. */
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
@@ -23,8 +24,8 @@ const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
 describe("F10 S4 — side-specific containment (round-3 F2: one half-open rule loses the trailing grapheme)", () => {
   // One item wrapped into two rows: source [0,10) and [10,20).
   const rows: HitRow[] = [
-    { itemKey: "i1", width: 10, text: "0123456789", gutterWidth: 0, softWrap: "hard", kind: "line", charStart: 0, charEnd: 10, textStart: 0 },
-    { itemKey: "i1", width: 10, text: "abcdefghij", gutterWidth: 0, softWrap: "continuation", kind: "line", charStart: 10, charEnd: 20, textStart: 0 },
+    mkRow({ itemKey: "i1", text: "0123456789" }),
+    mkRow({ itemKey: "i1", text: "abcdefghij", softWrap: "continuation", charStart: 10, charEnd: 20 }),
   ];
   const ord = (k: string) => (k === "i1" ? 0 : undefined);
   const win = { first: 0, last: 0 };
@@ -36,6 +37,9 @@ describe("F10 S4 — side-specific containment (round-3 F2: one half-open rule l
       .toMatchObject({ row: 1, col: 11, virtual: false }));
   it("the UPPER endpoint at item EOF is the last row's end", () =>
     expect(locateEndpoint(rows, { itemKey: "i1", charOffset: 19, charEnd: 20 }, "upper", ord, win))
+      .toMatchObject({ row: 2, col: 11 }));
+  it("an UPPER endpoint whose charEnd overruns the item's current length (past EOF, not just AT it) still snaps to the LAST row's end", () =>
+    expect(locateEndpoint(rows, { itemKey: "i1", charOffset: 98, charEnd: 99 }, "upper", ord, win))
       .toMatchObject({ row: 2, col: 11 }));
   it("an endpoint past the item's current char count clamps into it (the item shrank)", () =>
     expect(locateEndpoint(rows, { itemKey: "i1", charOffset: 99, charEnd: 100 }, "lower", ord, win))
@@ -93,9 +97,7 @@ describe("F10 S4 — orderEndpoints: document position first, source offset seco
 });
 
 describe("F10 S4 — remapSelection: the publish-time remap, mutating a live SelectionState", () => {
-  const rows: HitRow[] = [
-    { itemKey: "i1", width: 20, text: "0".repeat(20), gutterWidth: 0, softWrap: "hard", kind: "line", charStart: 0, charEnd: 20, textStart: 0 },
-  ];
+  const rows: HitRow[] = [mkRow({ itemKey: "i1", text: "0".repeat(20) })];
   const ord = (k: string) => (k === "i1" ? 0 : k === "i0" ? -1 : undefined);
   const win = { first: 0, last: 0 };
 
@@ -159,9 +161,7 @@ describe("F10 S4 — remapSelection: the publish-time remap, mutating a live Sel
 });
 
 describe("F10 S4 — projectSelectionOnto: the same projection onto an arbitrary row array, non-mutating", () => {
-  const rows: HitRow[] = [
-    { itemKey: "i1", width: 20, text: "0".repeat(20), gutterWidth: 0, softWrap: "hard", kind: "line", charStart: 0, charEnd: 20, textStart: 0 },
-  ];
+  const rows: HitRow[] = [mkRow({ itemKey: "i1", text: "0".repeat(20) })];
   const ord = (k: string) => (k === "i1" ? 0 : undefined);
 
   it("returns a FRESH SelectionState when the addresses resolve", () => {
