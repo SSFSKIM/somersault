@@ -98,6 +98,20 @@ Whether to take dynamic tools as the next milestone (M7). If yes, the design pas
 reverse-request frame protocol (shared with elicitation?), disconnect/timeout semantics, permission
 treatment of client tools, and how declarations interact with `thread/start`'s existing config guard.
 
+### Amended by the design pass (2026-08-23, after owner approval)
+
+Two claims above are superseded by measurement and a closer read, recorded here so the doc stays honest:
+
+- **No D1 breach is needed.** The "new frame discipline" paragraph assumed a true server→client request.
+  Reading `elicitation.ts` shows the D1-preserving trio — park + notification + answer method — already
+  implements "the server blocks on the client's answer"; a dynamic tool call is the same trio with a
+  `callId` key (`tool/callRequested` notification, `tool/callResult` method). The approved design takes
+  that shape; the wire grammar does not change.
+- **The zod question is answered, quota-free (probe 115).** The runtime refuses a raw JSON Schema at
+  `createSdkMcpServer` → `registerTool` with `inputSchema must be a Zod schema or raw shape` — an
+  explicit check, not an accident of conversion. M7 therefore converts client-declared JSON Schema to
+  zod over a bounded subset, refusing out-of-subset declarations loudly at `thread/start`.
+
 **Recommendation:** yes, as its own milestone — it is the largest capability gap Codex still holds over
 this server, the SDK runtime mapping is unusually clean, and the reverse channel it forces is the same
 one two other parked features (elicitation bridge, inline review delivery) are queued behind.
