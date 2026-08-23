@@ -14,8 +14,11 @@
 //   ITS callers, but it degrades a failing image IN PLACE — a text block at the image's index, which
 //   would split the canonical text block and make the two origins differ. So this resolver enforces
 //   every cap that seam enforces (strict base64 before decode, sniffed-bytes media type, MAX_DIMENSION,
-//   per-image POST_PROCESS_BYTE_BUDGET, the running per-turn aggregate) using the SAME reason strings,
-//   leaving the downstream seam nothing to find. That is a contract requirement, not an optimization.
+//   per-image POST_PROCESS_BYTE_BUDGET, the running per-turn aggregate) using the SAME reason strings —
+//   plus its own MAX_DATA_URL_CHARS bound on the payload it is about to decode, stricter than the seam's
+//   and so still leaving it nothing to find. That is a contract requirement, not an optimization, and
+//   turn-items.test.ts states it directly: `normalizeTurnInput` on this resolver's own output, with the
+//   aggregate saturated, must return that output unchanged.
 //
 // Runs inside the turn's execution slot, never before admission (see the spec's "Admission and the
 // queue"): everything here is async, and no admission decision may sit on the far side of that await.
@@ -30,9 +33,11 @@ import { MAX_IMAGES_PER_PROMPT } from "../host/imageStaging.js";
  *  wire's cap and the resolver's caps read from one file). A violation is a shape error → -32602, not a
  *  degrade: an array this long is a malformed request, not a request with a bad image in it. */
 export const MAX_INPUT_ITEMS = 64;
-/** Schema-level bound on ONE `image.url`, in characters: ≈180 KB decoded, which is what the app-server's
- *  256 KiB inbound frame cap (`peer.ts` MAX_IN) actually carries once the JSON envelope is paid for. The
- *  honest v1 bound, published rather than discovered in production — a bigger image travels by
+/** Bound on ONE `image.url`, in characters — Task 4's schema rejects a longer one as a shape error, and
+ *  `decodeDataUrl` enforces it AGAIN on the payload it is about to decode, so the decode is bounded for
+ *  every caller and not only for the ones that came in through the schema. ≈180 KB decoded, which is what
+ *  the app-server's 256 KiB inbound frame cap (`peer.ts` MAX_IN) actually carries once the JSON envelope
+ *  is paid for. The honest v1 bound, published rather than discovered in production — a bigger image travels by
  *  `localImage` (shared filesystem), and a REMOTE client with one has no v1 path (named follow-up). */
 export const MAX_DATA_URL_CHARS = 240_000;
 /** Per-turn ceiling on the SUM of surviving images' decoded bytes. Deliberately the same value as
@@ -77,6 +82,14 @@ function decodeDataUrl(url: string): ByteVerdict {
   const header = comma < 0 ? "" : url.slice(0, comma);
   if (comma < 0 || !header.startsWith("data:") || !/;base64$/i.test(header)) return { ok: false, reason: "not a base64 data: URL" };
   const payload = url.slice(comma + 1);
+  // CHECK BEFORE ALLOCATE, the ordering `session/turnInput.ts` documents as load-bearing: `Buffer.from`
+  // allocates the DECODED size, so a cap measured on the decoded buffer fires only once the allocation it
+  // exists to bound has already happened. A base64 string is never shorter than what it decodes to, so
+  // bounding the payload's LENGTH costs nothing and bounds that allocation. Measured on the payload
+  // rather than the whole URL — laxer than Task 4's schema bound on `image.url` by exactly the `data:`
+  // header, so nothing the schema admits is refused here, and a caller reaching this module directly
+  // still cannot hand it an unbounded string.
+  if (payload.length > MAX_DATA_URL_CHARS) return { ok: false, reason: `data: URL exceeds the ${MAX_DATA_URL_CHARS}-character limit` };
   if (payload.length % 4 !== 0 || !BASE64.test(payload)) return { ok: false, reason: "malformed base64 payload" };
   return { ok: true, buf: Buffer.from(payload, "base64") };
 }
@@ -162,11 +175,14 @@ export async function resolveInputItems(items: InputItem[]): Promise<UserTurnInp
     if (imageOrdinal > MAX_IMAGES_PER_PROMPT) { notes.push(noteFor(`too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})`)); continue; }
     const bytes = item.type === "image" ? decodeDataUrl(item.url) : await readLocalImage(item.path, aggregate);
     // A localImage failure names the client's own path — with several files in one turn, "not a regular
-    // file (FIFO)" alone does not say WHICH. A data: URL has no such name to give.
-    const label = item.type === "localImage" ? `${item.path}: ` : "";
-    if (!bytes.ok) { notes.push(noteFor(label + bytes.reason)); continue; }
+    // file (FIFO)" alone does not say WHICH. A data: URL has no such name to give. ONCE, though: an fs
+    // errno message already ends in `open '<path>'`, so labelling THAT would print the path twice in one
+    // note; the kind and cap reasons carry no path at all and need the label.
+    const path = item.type === "localImage" ? item.path : "";
+    const labelled = (reason: string) => (path && !reason.includes(path) ? `${path}: ${reason}` : reason);
+    if (!bytes.ok) { notes.push(noteFor(labelled(bytes.reason))); continue; }
     const verdict = admitBytes(bytes.buf, aggregate);
-    if (!verdict.ok) { notes.push(noteFor(label + verdict.reason)); continue; }
+    if (!verdict.ok) { notes.push(noteFor(labelled(verdict.reason))); continue; }
     // Only a block that cleared EVERY check is charged to the aggregate, so a later, smaller image that
     // still fits in what is left is given its chance rather than dropped behind a bigger one's failure.
     aggregate += verdict.bytes;

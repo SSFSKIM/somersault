@@ -19,9 +19,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 
-// The count gate's "before any I/O" claim is only checkable by watching the syscall: a late gate still
-// emits the same note (it just discards the read's failure), so no assertion on the OUTPUT can catch it.
-// The spy delegates to the real `open`, so every other localImage row below runs against the real fs.
+// Both "before the I/O" claims — the count gate's and the two byte caps' — are checkable ONLY on the
+// syscall: a late gate emits the same note, having simply discarded the read's failure, so no assertion
+// on the OUTPUT can tell the two apart. The spy delegates to the real `open` (every localImage row below
+// runs against the real fs) and tallies `read` calls per path (see `readsOn`).
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, open: vi.fn(actual.open) };
@@ -30,7 +31,7 @@ const opens = open as unknown as Mock;
 import { resolveInputItems, MAX_INPUT_ITEMS, MAX_DATA_URL_CHARS, type InputItem } from "../../src/appserver/turnItems.js";
 import { pngDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET } from "../../src/tui/clipboardImage.js";
 import { MAX_IMAGES_PER_PROMPT } from "../../src/host/imageStaging.js";
-import { flattenForDisplay, type UserContentBlock, type UserTurnInput } from "../../src/session/turnInput.js";
+import { flattenForDisplay, normalizeTurnInput, type UserContentBlock, type UserTurnInput } from "../../src/session/turnInput.js";
 
 // -------------------------------------------------------------------------------------------------
 // Fixtures. `solidPng` is probe 113's hand-rolled encoder (signature + IHDR + deflated IDAT + IEND) —
@@ -98,7 +99,22 @@ function foldText(out: UserTurnInput): string {
 }
 
 let root: string;
-beforeEach(() => { root = mkdtempSync(join(tmpdir(), "ccx-items-")); opens.mockClear(); });
+/** `read` calls the resolver made on each path's own descriptor. A cap that refuses BEFORE the read and
+ *  one that pulls the file and then refuses on the buffer produce a byte-identical note, so this tally is
+ *  the only witness to which of the two actually shipped. */
+const reads = new Map<string, number>();
+const readsOn = (path: string) => reads.get(path) ?? 0;
+beforeEach(async () => {
+  root = mkdtempSync(join(tmpdir(), "ccx-items-"));
+  opens.mockClear(); reads.clear();
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  opens.mockImplementation((async (p: string, flags: number) => {
+    const fh = await actual.open(p, flags);
+    const real = fh.read.bind(fh);
+    (fh as { read: unknown }).read = (...a: unknown[]) => { reads.set(p, readsOn(p) + 1); return (real as (...x: unknown[]) => unknown)(...a); };
+    return fh;
+  }) as unknown as typeof open);
+});
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
 // =====================================================================================================
@@ -170,6 +186,22 @@ describe("resolveInputItems — data: URLs", () => {
     expect(foldText(await resolveInputItems([{ type: "image", url: "data:image/png;base64" }]))).toBe(note("not a base64 data: URL"));
   });
 
+  it("refuses an oversized payload BEFORE decoding it, and admits one exactly at the cap", async () => {
+    // (l) CHECK BEFORE ALLOCATE — the ordering session/turnInput.ts:81-87 documents as load-bearing:
+    // `Buffer.from(payload, "base64")` allocates the DECODED size, so a cap read off the decoded buffer
+    // fires only after the allocation it exists to bound has already happened. The payload below is whole
+    // quanta of legal alphabet, so nothing but its LENGTH can refuse it (a decode would yield "unreadable
+    // image data" instead) — and this is the only place `MAX_DATA_URL_CHARS`, the bound this module
+    // publishes for Task 4's schema, is enforced on the bytes rather than merely declared.
+    const oversized = "A".repeat(MAX_DATA_URL_CHARS + 4);
+    expect(oversized.length % 4).toBe(0);
+    expect(foldText(await resolveInputItems([{ type: "image", url: `data:image/png;base64,${oversized}` }])))
+      .toBe(note(`data: URL exceeds the ${MAX_DATA_URL_CHARS}-character limit`));
+    const atCap = fakePng(2, 2, (MAX_DATA_URL_CHARS / 4) * 3);                // 180,000 bytes → exactly the cap
+    expect(dataUrl(atCap).slice("data:image/png;base64,".length).length).toBe(MAX_DATA_URL_CHARS);
+    expect(blocks(await resolveInputItems([img(atCap)]))).toHaveLength(2);    // the cap itself passes
+  });
+
   it("degrades a PNG whose IHDR declares dimensions over MAX_DIMENSION", async () => {
     // (e) The library-bypass cell: 70 bytes on the wire, a header claiming 2001px. Caught because the
     // resolver reads the IHDR field itself rather than inferring size from byte count.
@@ -210,8 +242,13 @@ describe("resolveInputItems — localImage bounded reads", () => {
   it("degrades a directory and a missing file, naming the client's own path", async () => {
     expect(foldText(await resolveInputItems([{ type: "localImage", path: root }]))).toBe(note(`${root}: not a regular file (directory)`));
     const missing = join(root, "gone.png");
-    expect(foldText(await resolveInputItems([{ type: "localImage", path: missing }]))).toContain(missing);
-    expect(foldText(await resolveInputItems([{ type: "localImage", path: missing }]))).toContain("ENOENT");
+    const text = foldText(await resolveInputItems([{ type: "localImage", path: missing }]));
+    expect(text).toContain(missing);
+    expect(text).toContain("ENOENT");
+    // ONCE, though: the errno message already ends in `open '<path>'`, so a `${path}: ` prefix on top of
+    // it names the client's own path twice in a single note. Only reasons that carry no path take the
+    // label — which is why the directory case above still asserts the prefixed shape.
+    expect(text.split(missing).length - 1).toBe(1);
   });
 
   it("refuses a file over POST_PROCESS_BYTE_BUDGET and admits one exactly at it", async () => {
@@ -228,23 +265,13 @@ describe("resolveInputItems — localImage bounded reads", () => {
   it("never MATERIALIZES an over-budget file — the fstat refusal precedes the first read", async () => {
     // The reason string alone cannot prove this: a resolver that read all 512 KB and then refused on the
     // buffer's length produces the identical note. Count the reads on the descriptor itself.
-    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
-    let reads = 0;
-    const counting = (async (p: string, flags: number) => {
-      const fh = await actual.open(p, flags);
-      const real = fh.read.bind(fh);
-      (fh as { read: unknown }).read = (...a: unknown[]) => { reads++; return (real as (...x: unknown[]) => unknown)(...a); };
-      return fh;
-    }) as unknown as typeof open;
     const over = join(root, "over.png"), at = join(root, "at.png");
     writeFileSync(over, fakePng(2, 2, POST_PROCESS_BYTE_BUDGET + 1));
     writeFileSync(at, fakePng(2, 2, POST_PROCESS_BYTE_BUDGET));
-    opens.mockImplementationOnce(counting);
     await resolveInputItems([{ type: "localImage", path: over }]);
-    expect(reads).toBe(0);
-    opens.mockImplementationOnce(counting);                                    // the control: an admissible file IS read
-    await resolveInputItems([{ type: "localImage", path: at }]);
-    expect(reads).toBeGreaterThan(0);
+    expect(readsOn(over)).toBe(0);
+    await resolveInputItems([{ type: "localImage", path: at }]);                // the control: an admissible file IS read
+    expect(readsOn(at)).toBeGreaterThan(0);
   });
 });
 
@@ -276,12 +303,16 @@ describe("resolveInputItems — turn-wide budgets", () => {
     // (j) Ten at the per-image ceiling sit just under the turn aggregate; the eleventh crosses it and
     // degrades ALONE — a turn is never refused wholesale — and the twelfth, which still fits in what is
     // left, is given its chance. Both halves matter: a bare running total would have dropped it too.
+    // The ceiling images travel as localImage because a data: URL is bounded by MAX_DATA_URL_CHARS
+    // (≈180 KB decoded) and twenty of THOSE never reach the aggregate at all; the crossing one stays a
+    // data: URL so this row keeps asserting the UNLABELLED note — the path-labelled form is the row below.
     const AGGREGATE = 5 * 1024 * 1024;
-    const big = fakePng(2, 2, POST_PROCESS_BYTE_BUDGET);
-    const bigUrl = dataUrl(big);
-    const fits = fakePng(2, 2, AGGREGATE - POST_PROCESS_BYTE_BUDGET * 10);
-    const items: InputItem[] = Array.from({ length: 10 }, () => ({ type: "image", url: bigUrl } as InputItem));
-    items.push({ type: "image", url: bigUrl }, img(fits));
+    const big = join(root, "big.png");
+    writeFileSync(big, fakePng(2, 2, POST_PROCESS_BYTE_BUDGET));
+    const crosses = fakePng(2, 2, (MAX_DATA_URL_CHARS / 4) * 3);                // 180,000 > the 122,880 left
+    const fits = fakePng(2, 2, AGGREGATE - POST_PROCESS_BYTE_BUDGET * 10);      // …which is exactly 122,880
+    const items: InputItem[] = Array.from({ length: 10 }, () => ({ type: "localImage", path: big } as InputItem));
+    items.push(img(crosses), img(fits));
     const out = await resolveInputItems(items);
     expect(blocks(out)).toHaveLength(1 + 11);                                  // ten big + the exact-fit one
     expect(foldText(out)).toBe(note(`turn's total image size exceeds the ${AGGREGATE}-byte limit`));
@@ -289,14 +320,50 @@ describe("resolveInputItems — turn-wide budgets", () => {
   });
 
   it("charges localImage reads against the same aggregate, refusing before the read", async () => {
+    // "Before the read" is a claim about the SYSCALL, and only the tally can hold it: a resolver that
+    // pulled all 512 KB and then refused on the buffer emits this exact note too. The aggregate refusal
+    // takes the same fstat-first path the per-image budget does, so it costs the turn nothing.
     const AGGREGATE = 5 * 1024 * 1024;
-    const bigUrl = dataUrl(fakePng(2, 2, POST_PROCESS_BYTE_BUDGET));
-    const path = join(root, "tail.png");
+    const big = join(root, "big.png"), path = join(root, "tail.png");
+    writeFileSync(big, fakePng(2, 2, POST_PROCESS_BYTE_BUDGET));
     writeFileSync(path, fakePng(2, 2, POST_PROCESS_BYTE_BUDGET));               // 512,000 > the 122,880 left
-    const items: InputItem[] = Array.from({ length: 10 }, () => ({ type: "image", url: bigUrl } as InputItem));
+    const items: InputItem[] = Array.from({ length: 10 }, () => ({ type: "localImage", path: big } as InputItem));
     items.push({ type: "localImage", path });
     const out = await resolveInputItems(items);
     expect(blocks(out)).toHaveLength(1 + 10);
     expect(foldText(out)).toBe(note(`${path}: turn's total image size exceeds the ${AGGREGATE}-byte limit`));
+    expect(readsOn(path)).toBe(0);
+    expect(readsOn(big)).toBeGreaterThan(0);                                    // the control: the ten that FIT were read
+  });
+});
+
+// =====================================================================================================
+describe("resolveInputItems — nothing left for the downstream seam", () => {
+  it("emits blocks normalizeTurnInput passes through untouched, with the aggregate saturated", async () => {
+    // THE CONTRACT ROW, and it holds two things at once.
+    //
+    //   THE SEAM. Everything this resolver emits still crosses `normalizeTurnInput` at the Session
+    //   builder, which degrades a failing image IN PLACE — a text block at the image's own index, which
+    //   splits the single canonical text block and makes an inProcess turn and a fleet turn deliver the
+    //   model different bytes. Deep equality is the only way to say "nothing left to degrade": it goes
+    //   red on any block that seam would rewrite, for ANY of its caps, rather than on a chosen one.
+    //
+    //   THE DRIFT GUARD for the aggregate ceiling, which is duplicated — turnItems.ts's
+    //   MAX_AGGREGATE_BYTES and session/turnInput.ts's module-private one are both 5 MiB today with
+    //   nothing pinning them together. The fixture SATURATES that ceiling exactly (ten images at the
+    //   per-image budget, then one of exactly the remainder), so a DOWNWARD drift of turnInput's private
+    //   copy degrades the last image in place and the equality fails; the length and last-block
+    //   assertions catch a downward drift of this module's copy, which would refuse it here instead.
+    const AGGREGATE = 5 * 1024 * 1024;
+    const big = join(root, "big.png");
+    writeFileSync(big, fakePng(2, 2, POST_PROCESS_BYTE_BUDGET));
+    const saturates = fakePng(2, 2, AGGREGATE - POST_PROCESS_BYTE_BUDGET * 10);
+    const items: InputItem[] = [txt("A"), ...Array.from({ length: 10 }, () => ({ type: "localImage", path: big } as InputItem))];
+    items.push(txt("B"), img(saturates), img(Buffer.from("not an image at all")), txt("C"));
+    const resolved = await resolveInputItems(items);
+    expect(foldText(resolved)).toBe(`ABC${note("unreadable image data")}`);     // interleave folded, note at its end
+    expect(blocks(resolved)).toHaveLength(1 + 11);
+    expect(blocks(resolved).at(-1)).toEqual(imageBlock(saturates));             // the saturating image SURVIVED here…
+    expect(normalizeTurnInput(resolved)).toEqual(resolved);                     // …and the seam finds nothing to degrade
   });
 });
