@@ -1,8 +1,8 @@
 # F10 Wave — Selection Maturity, Hover Truth, Image Reach, Maintenance
 
-**Status:** v2 — owner approved the design 2026-08-23 (composition + two forks; Decision Log);
-v2 folds in the Codex adversarial review's 17 findings (all verified against the tree — see
-Revision Notes). Canon = installed Claude Code **2.1.236**
+**Status:** v3 — owner approved the design 2026-08-23 (composition + two forks; Decision Log);
+v2 folded in Codex round 1's 17 findings, v3 folds in round 2's 11 (all verified — Revision
+Notes). Canon = installed Claude Code **2.1.236**
 (`/Users/new/claude-code-bundle/2.1.236/cli.pretty.js`; all `L…` refs are that file). SDK =
 installed `@anthropic-ai/claude-agent-sdk` **0.3.237**.
 
@@ -73,18 +73,26 @@ bufferBottom   = composerBottom - (inlineSearchOpen ? 1 : 0) - 1   // composer-l
 bufferTop      = bufferBottom - (bufferPhysicalRows - 1)
 ```
 
-- **`bufferPhysicalRows` means PHYSICAL wrapped rows**, computed through the same projection
-  `caretFromLocalPosition` already uses (`wrapRows` per logical line) — never the logical line
-  count (review F12: a long wrapped draft would otherwise shift every click one row per wrap).
+- **`bufferPhysicalRows` means PAINTED rows, not merely wrapped logical lines.** It is a
+  dedicated painted-content-height projection that starts from `caretFromLocalPosition`'s
+  `wrapRows` and additionally accounts for the paint-time runs that can add a row at an exact
+  inner-width boundary: the inverted blank cursor cell at end-of-line, and the ghost-suffix run
+  when it wraps (round-2 F3 — `wrapRows` alone under-counts exactly there). Boundary tests at
+  innerWidth−1 / innerWidth / innerWidth+1 with the cursor at EOL, and with a wrapping ghost,
+  assert the projection equals the frame's actual painted row count.
 - Add `DockBottomContext` to `FullscreenFrame` (same "computed constant, 0 = not addressable"
   contract as `DockTopContext`).
 - Replace the `dockCrowded: boolean` prop with `footerRows: number`; keep `dockTop` as a sanity
   floor and the composer-local `waitingForPermission` term.
-- **Overflow refusal must be reactive**: `FullscreenFrame`'s `bottomGot > cap` effect does not
-  re-run on composer-local growth (its own comment says so) — the origin publisher must refuse
-  based on a signal that updates when the composer's own height changes (e.g. the composer
-  publishes not-addressable whenever `bufferTop < dockTop`, which composer-local growth trips
-  without any frame effect). Add a post-mount-growth cell.
+- **Overflow refusal must be reactive to the WHOLE dock, not just the composer** (round-2 F10:
+  `bufferTop < dockTop` observes composer geometry only — a task panel/palette/live-turn row can
+  push the combined dock over `dockCap` while that comparison stays false, and the clipped footer
+  then invalidates the bottom-up anchor). The frame `measureElement`s the dock slot in an effect
+  that re-runs on every commit (size read is cheap), guarded by the same signature stamp
+  `regionRows` uses; when `dockTop + measuredDockRows - 1 > frameLastRow` (the clip is active),
+  it publishes not-addressable through `DockBottomContext`. One frame of refusal after a height
+  change is the accepted cost (r1's fallback shape, now the overflow watchdog). Cells: composer
+  growth after mount; task panel + spinner + composer growth combined crossing `dockCap`.
 - Delete `dockCrowded` and its threading; do NOT extend `dockDialogRows` (already wrong by one for
   every compaction — r1).
 
@@ -125,18 +133,29 @@ interface SelectionAddr { itemKey: string; charOffset: number }   // grapheme-bo
                                                                   // offset within the ITEM's text
 ```
 
-- `HitRow` gains `itemRow: number` — this painted row's absolute row index **within its item's
-  full wrapped projection** (not within the painted run). `hitRowsOf` computes it from the slice
-  metadata it already receives (the slice knows how many of its item's rows were clipped above the
-  window; carry that through). This is what makes `charOffset` computable from a gesture on a
-  partially-visible gutter block and re-derivable after any scroll.
-- **Write** (gesture time): `charOffset = charsInItemRowsBefore(itemRow) + columnToChar(row, col)`,
-  snapped to a grapheme boundary; recorded for `anchor`, `focus`, and both ends of `anchorSpan`.
+- **The offset space is SOURCE text, minted at wrap time — never cumulative painted-row
+  arithmetic** (round-2 F1: summing `HitRow.text` lengths cannot distinguish a hard-row boundary
+  from a wrap, and `wrapItems` injects synthetic continuation padding and splits lines into
+  separate `#wN` items, so painted lengths are not source lengths). `HitRow` gains
+  `charStart`/`charEnd`: the half-open source-character range this painted row covers within its
+  item's **canonical text** — the pre-wrap, pre-cosmetic-indent text, with a defined `\n`
+  separator between the hard rows of a multi-row (gutter-block) item. `wrapItems` computes the
+  range where it wraps (it knows the split points before it adds padding); slices carry it
+  through unchanged, so a partially-visible item's rows still name true source positions.
+- **Write** (gesture time): `charOffset = row.charStart + sourceCharsAt(row, col)`, where
+  `sourceCharsAt` maps the painted column through the row's gutter/padding to a grapheme
+  boundary in the source range (the existing `columnToChar` machinery, offset-corrected).
+  Recorded for `anchor`, `focus`, and both ends of `anchorSpan`, each with its grapheme's
+  `[charStart, charEnd)` bounds.
+- **Endpoint semantics are DOCUMENT-ORDERED, not role-based** (round-2 F2: anchor-inclusive/
+  focus-exclusive breaks backward drags): at read time the two addresses are ordered by document
+  position first; the **lower** endpoint contributes its grapheme's `charStart`, the **upper**
+  contributes its grapheme's `charEnd` — a half-open source range that is direction-independent.
+  Backward-drag and mid-drag direction-reversal tests are mandatory.
 - **Read** (each publish, during render, before `selectedSpans` — an effect would paint one wrong
-  frame): walk the item's current rows (fresh `itemRow` + per-row char counts) to convert
-  `charOffset` back to `(paintedRow, col)`. Endpoint semantics are explicit: an address is
-  **inclusive on anchor, exclusive on focus's trailing edge**, and the conversion clamps to the
-  item's current char count when the item shrank.
+  frame): binary-search the fresh rows for the row whose `[charStart, charEnd)` contains each
+  ordered endpoint, convert back to `(paintedRow, col)`, clamping to the item's current char
+  count when the item shrank.
 - Endpoint's item scrolled out of window → keep the address, clamp painted position to the window
   edge, mark virtual (canon's `virtualAnchorRow/Col`); restores on scroll back. Both ends off the
   same edge → retain, paint nothing, copy nothing (canon's `ELt`). `itemKey` absent from the new
@@ -147,7 +166,7 @@ Canon translates by scroll delta and never clears (`C0p`/`k0p`, L198804-198853) 
 content changes without a scroll delta; character-identity remap is deliberately better (recorded
 delta). Tests: before/after HitRow pairs for insert-above / **re-wrap-narrower** / fold-toggle /
 **partially-sliced gutter block scrolled out and back** — endpoints land on the same *text* in all
-four; streamed-delta-during-sweep viewport test; explicit inclusive/exclusive boundary cells;
+four; streamed-delta-during-sweep viewport test; ordered half-open endpoint cells incl. backward drag and mid-drag direction reversal;
 `itemKey` stability across streaming deltas pinned; re-point existing clear-on-shift tests at the
 still-clearing cases; sabotage: no-op the remap.
 
@@ -236,8 +255,11 @@ names its accounting.
 surface passes through — NOT `assembleUserContent` (review F2: the REPL's `submitText` already
 carries `[Image #N]` literal, so `assembleUserContent` callers are not the exposed set; direct
 `Session.submit(array)` / widened `harness.run(array)` bypass it entirely). Rule: an image-bearing
-array whose text blocks are all empty gets one bounded synthetic label (the `[Image #N]` chip
-form) substituted into its first text block.
+array whose text blocks are all empty **or that has no text block at all** (round-2 F4:
+`Session.submit([image])` is an existing supported shape, pinned by
+`host-image-transport.test.ts:374-388`) gets one bounded synthetic label (the `[Image #N]` chip
+form): substituted into the first text block when one exists, else **inserted as a new text block
+at index 0** (deterministic position). Tests cover `[image]` and multi-image no-text arrays.
 
 **Pre-task probe (first task of the track):** extend probe 100 with a cell that submits through
 the real REPL topology (the composer's actual submit path) and one through `Session.submit`
@@ -256,12 +278,19 @@ and `Harness.run` entry points. **Owner fork (settled): fix forward only — no 
 
 - `MAX_IMAGES_PER_PROMPT = 20` moves to the neutral media module (T-MAINT item 3's home) and is
   enforced **inside `normalizeTurnInput`** — shared by every surface, not just host staging.
-- New block-count cap (`MAX_CONTENT_BLOCKS = 64`) and a failure-fragment rule: past the caps, the
-  excess tail collapses into **one** bounded sentinel text block (`[+N more blocks dropped: …]`),
-  never N fragments; failure text produced by degraded images counts toward a total-text ceiling.
+- New block-count cap **`MAX_CONTENT_BLOCKS = 64`, counting the normalized OUTPUT including any
+  sentinel** (round-2 F5: the sentinel reserves its slot — at most 63 input blocks survive when a
+  sentinel is emitted; output length never exceeds 64). Past the caps, the excess tail collapses
+  into **one** bounded sentinel text block (`[+N more blocks dropped: …]`), never N fragments.
+- Total-text ceiling: **`MAX_TOTAL_TEXT = 1_048_576` UTF-16 code units**, summed over all text
+  blocks (synthetic failure text included) — and it applies to the **bare-string form too**
+  (a string is one text block). Policy: over-ceiling text is **truncated at the ceiling minus the
+  suffix length**, with a bounded `…[+N chars truncated]` suffix appended — deterministic, never
+  a refusal (matching the normalizer's degrade-don't-throw posture for images).
 - Accounting stated: image caps in decoded bytes (existing), text ceiling in UTF-16 code units,
   block/image caps in block count, all checked **before** decode where the check doesn't need the
-  bytes. Boundary tests cap−1/cap/cap+1 on every cap, on every widened surface.
+  bytes. Boundary tests cap−1/cap/cap+1 on every cap — including 63-vs-64-vs-65 blocks with and
+  without a sentinel, and string/text at the ceiling boundary — on every widened surface.
 
 Tests: unit (array → normalized blocks, all caps), gated live cell (`harness.run` image → model
 names the color), and the I1 presence cell for this entry point.
@@ -274,11 +303,19 @@ names the color), and the I1 presence cell for this entry point.
 like the host's:
 
 - **`image/stage`** (new method): carries base64 **chunks ≤ 128 KiB** with
-  `{stageId, seq, last, bytesTotal}`; the server assembles under normative limits (per-image
-  encoded cap = the normalizer's 5 MiB input ceiling; per-connection concurrent-stage cap 4;
-  stage TTL till turn end or disconnect, then deleted; refusal **before** any allocation when
-  `bytesTotal` exceeds the cap). Old servers answer **METHOD_NOT_FOUND** — the loud-skew signal;
-  the client surfaces the same version-skew notice shape the REPL uses.
+  `{stageId, seq, last, bytesTotal, mediaType}` — **`mediaType` is required and validated against
+  the image allowlist on the FIRST chunk** (round-2 F6: `UserContentBlock` requires
+  `source.media_type`; the host staging path retains it explicitly for the same reason — bytes
+  alone cannot satisfy the contract). Server assembles under normative limits: per-image encoded
+  cap = the normalizer's 5 MiB input ceiling, refusal **before** any allocation when `bytesTotal`
+  exceeds it; per-connection concurrent-stage cap 4; **server-global retained cap 32 MiB / 64
+  stages across all connections** (round-2 F7 — per-connection caps alone are unbounded under
+  unbounded connections); **idle deadline 60 s since last chunk and absolute deadline 10 min per
+  stage**, expiry deletes the stage (a stage exists before any turn does, so "till turn end" is
+  not an expiry); **claims are atomic** — a claim that fails queue admission, capability check,
+  or schema validation releases nothing it didn't take and the stage stays claimable until its
+  deadline; disconnect deletes the connection's stages. Old servers answer **METHOD_NOT_FOUND** —
+  the loud-skew signal; the client surfaces the REPL's version-skew notice shape.
 - **`turn/startContent`** (new method): text + `stagedImageIds`, claims staged images into the
   normalizer path. **`turn/steerContent`** ships beside it (review F15 — v1 widened `steer` in
   place, repeating the exact unnegotiated pattern it rejected for `start`); `Session.steer`
@@ -291,19 +328,28 @@ like the host's:
   onto `flattenForDisplay` (`items/replay.ts:14-18` and live user-item rendering).
   `items/mapper.ts`'s `firstResultLine` is a **tool-result summarizer** and stays separately
   typed and capped, with a mixed-block tool-result regression test.
-- **Engine contract (review F5):** `EngineSession.submit(prompt: string)` stays **unchanged**
-  (public embedder contract). A new **optional** `submitContent?(input: UserTurnInput)` is the
-  capability: absent → the server answers `turn/startContent` with an explicit
-  "engine does not support content submission" error (no silent flatten, no legacy fallback
-  turn). The in-process engine implements it. **Fleet does NOT implement it in F10** — a fleet
-  `turn/startContent` errors unsupported loudly; the fleet staging-client (mint/write/claim +
-  ownership cleanup against the host) is a recorded follow-up ticket.
+- **Engine contract (review F5, round-2 F8):** `EngineSession.submit(prompt: string)` and
+  `steer(prompt: string)` both stay **unchanged** (public embedder contract). Two new
+  **optional** capabilities carry content: `submitContent?(input: UserTurnInput)` and
+  `steerContent?(input: UserTurnInput)` — `turn/steerContent` on an engine without the latter
+  errors "engine does not support content steering" (never feeds an array to a string-only
+  embedder, never mis-routes through `submitContent`, which would start a new turn). Both
+  refusals happen **before** any staged data is claimed. The in-process engine implements both.
+  **Fleet implements neither in F10** — fleet `turn/startContent`/`steerContent` error
+  unsupported loudly; the fleet staging-client (mint/write/claim + ownership cleanup against the
+  host) is a recorded follow-up ticket.
 - `initialize` capability list stays out of scope (own ticket).
 
-Tests: chunk assembly (order, dup, missing-last, over-`bytesTotal` refusal-before-alloc,
-disconnect GC); schema accept/reject; **old-server skew cell** (method absent → loud error, zero
+Tests: chunk assembly (order, dup, missing-last, over-`bytesTotal` refusal-before-alloc, bad/
+missing `mediaType` refusal, disconnect GC); stage lifecycle (idle + absolute expiry,
+held-open-abandoned stage, global-cap refusal, failed-claim-then-successful-reclaim atomicity);
+**one positive end-to-end JSON-RPC cell**: stage a real PNG in chunks → `turn/startContent` →
+assert the **exact normalized `UserContentBlock[]` delivered to `submitContent`**, media type
+included (round-2 F6: assembly + skew tests alone let an implementation invent a MIME type and
+still pass); schema accept/reject; **old-server skew cell** (method absent → loud error, zero
 turns run); queue-cap boundary cells; flattener replay=live for an image turn + mixed-block
-tool-result regression; engine-without-capability cell; fleet-unsupported cell.
+tool-result regression; engine-without-capability cells for BOTH capabilities (submit during
+idle, steer during a live turn); fleet-unsupported cell.
 
 ### I4 — Daemon: `submit_content` op + honest old-peer semantics — M
 
@@ -315,9 +361,18 @@ tool-result regression; engine-without-capability cell; fleet-unsupported cell.
   raises the explicit "daemon does not support image submission (pre-F10 daemon)" notice. Test
   against the **current pre-F10 server implementation over a real socket** (checkout-pinned or
   vendored fixture server), not a simulation.
-- **Inbound frame cap:** the daemon buffers until newline with no limit today — add a byte-exact
-  cap (1 MiB) on the line buffer; over-cap or no-newline input drops the connection with a logged
-  reason. Cap-plus-one and no-newline tests.
+- **Inbound frame cap, derived from the content maximum** (round-2 F9: a 1 MiB cap would reject
+  normalizer-valid submissions — two 512,000-byte images alone serialize to ~1.37 MiB of
+  base64): cap = **16 MiB**, derived as the normalizer's maxima fully serialized (20 images ×
+  ~683 KB base64 ≈ 13.7 MiB, + `MAX_TOTAL_TEXT` at 2 bytes/unit worst case ≈ 2 MiB, + JSON
+  overhead) — the daemon is a same-user unix socket, so a generous derived bound beats a staging
+  protocol here. The derivation is a code comment beside the constant; a real-socket test submits
+  one- and two-maximum-image prompts and both succeed, plus cap-plus-one drops.
+- **No-newline peers get a deadline, not just a byte cap** (round-2 F11: one byte held forever
+  still exhausts connections): a partial line older than **10 s** without a newline drops the
+  connection with a logged reason; EOF with a non-empty partial buffer is a drop, not a parse.
+  Buffering uses `StringDecoder` (split UTF-8 across chunks must not corrupt). Held-open
+  under-cap partial-line test.
 - New op literal on the union (`daemon/types.ts:97`); supervisor hands the array to
   `Session.submit` (already widened); `connect.ts`/CLI passthrough follow.
 
@@ -501,6 +556,32 @@ flags; swarm/kairos seed widening; Segmenter memoization (watch-item); §2/§4 b
   matrix mandatory (review).
 - **Layering cut scoped to flagged sites; Segmenter no-change** (research).
 
+### Round-2 decisions (v3)
+
+- **HitRow carries source `[charStart, charEnd)` minted at wrap time** — cumulative painted-row
+  arithmetic rejected (padding/`#wN`/hard-row ambiguity, round-2 F1); gutter-block canonical text
+  defines `\n` between hard rows.
+- **Endpoints are document-ordered half-open ranges** (lower→`charStart`, upper→`charEnd`) —
+  role-based anchor/focus semantics rejected (breaks backward drags, round-2 F2).
+- **`bufferPhysicalRows` = painted-content-height projection** incl. EOL cursor cell and ghost
+  wrap — bare `wrapRows` rejected (round-2 F3).
+- **Dock overflow watchdog = per-commit `measureElement` of the dock slot** publishing
+  not-addressable — composer-only `bufferTop < dockTop` rejected as the sole guard (round-2 F10).
+- **Image-only arrays get a synthetic text block INSERTED at index 0** — substitute-only rule
+  rejected (no block to substitute into, round-2 F4).
+- **`MAX_TOTAL_TEXT = 1_048_576` UTF-16 units, truncate-with-suffix, applies to bare strings;
+  sentinel reserves a slot inside `MAX_CONTENT_BLOCKS = 64`** (round-2 F5). Refusal-on-oversize
+  rejected (normalizer's posture is degrade-don't-throw).
+- **`image/stage` carries required validated `mediaType`; stages get idle (60 s) + absolute
+  (10 min) deadlines, a 32 MiB/64-stage server-global cap, atomic claims** (round-2 F6/F7).
+  Byte-sniffing-only rejected (host precedent retains mediaType explicitly).
+- **`steerContent` is its own optional engine capability** — widening `steer(string)` rejected
+  (feeds arrays to string-only embedders); routing steer through `submitContent` rejected
+  (starts a new turn) (round-2 F8).
+- **Daemon frame cap = 16 MiB, derived from normalizer maxima** — 1 MiB rejected (rejects valid
+  two-image prompts); daemon staging rejected (same-user unix socket doesn't warrant it)
+  (round-2 F9). **Partial-line deadline 10 s + `StringDecoder`** (round-2 F11).
+
 ## Surprises & Discoveries
 
 Seeded from research + design review; implementation appends here.
@@ -532,6 +613,13 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- v3 (2026-08-23): focused Codex re-review of v2's redesigned parts returned 11 findings (9
+  high); all adopted. S4 rebuilt on wrap-time source ranges (`HitRow.charStart/charEnd`) with
+  document-ordered half-open endpoints; S1's projection now counts paint-time cursor/ghost rows
+  and gains a dock-slot measurement watchdog; I1 covers text-block-less arrays; I2's text ceiling
+  and sentinel slot made numeric; I3 gains stage `mediaType`, expiry/global caps/atomic claims,
+  `steerContent` capability, and a positive end-to-end JSON-RPC cell; I4's cap re-derived at
+  16 MiB from the normalizer maxima plus a partial-line deadline.
 - v2 (2026-08-23): Codex adversarial review (gpt-5.6-sol, xhigh) returned 17 findings (11 high);
   all 17 verified against the tree and adopted, four with load-bearing code verification: the
   REPL `submitText` chip-label fact (F2 — rescoped I1 to the normalizer and flipped probe 100's
