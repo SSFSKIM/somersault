@@ -87,7 +87,8 @@ import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
 import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
-import { linkRangesOf, type HitRow } from "./mouse/hitmap.js";
+import { linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
+import { remapSelection, type SelectionAddresses, type SelectionEndpoint } from "./mouse/address.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, multiClick, selectedSpans, startSelection, type Cell, type RowSpan, type SelectionState } from "./mouse/selection.js";
 import { charRangeOf, extractText } from "./mouse/extract.js";
@@ -316,6 +317,17 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   const queuedRows = useMemo(() => wrapItemsToWidth(queuedItems, columns), [queuedItems, columns]);
   const items = useMemo(() => [...finalRows, ...pendingRows, ...streamRows, ...queuedRows], [finalRows, pendingRows, streamRows, queuedRows]);
   const total = useMemo(() => items.reduce((sum, item) => sum + renderItemHeight(item), 0), [items]);
+  // F10 S4c — which source item is where in the DOCUMENT: the fact that tells "scrolled out of the window"
+  // (keep the address, paint at the edge, mark virtual) apart from "gone from the document" (clear). Memoised
+  // on the projection, so a publish costs a map lookup rather than a walk. Mirrored into a ref for the same
+  // reason `hit` is one: the imperative reads (`selectedText`, Task 8's timer) run outside React and must see
+  // the latest frame's map, not whichever render's closure the handle happens to hold.
+  const ordinals = useMemo(() => {
+    const m = new Map<string, number>();
+    items.forEach((item, i) => { const k = sourceId(item.id); if (!m.has(k)) m.set(k, i); });
+    return m;
+  }, [items]);
+  const ordinalsRef = useRef(ordinals); ordinalsRef.current = ordinals;
 
   const [anchor, setAnchor] = useState<AnchorState>(START);
   // A WIDTH CHANGE RE-NUMBERS THE ROWS, so the retained offset is translated by the document position it
@@ -379,16 +391,32 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // the same problem `hoveredKey`'s `useState` solves for hover; selection needs its own trigger because the
   // VALUE React would otherwise track is sitting outside React entirely.
   const selectionStateRef = useRef<SelectionState>(createSelectionState());
-  // Final-review finding 7: `SelectionState` addresses rows by NUMERIC INDEX into `hit.current.rows`, and
-  // that array is rebuilt from scratch on every publish — a streamed repaint (a new item published above
-  // the selection, a fold toggling, a scroll re-wrapping the window) can leave the same index pointing at
-  // DIFFERENT content than the reader actually dragged over, mis-highlighting and mis-copying. This ref is
-  // the itemKey each row carried at the moment the selection was last set (start/drag/multi-click) — the
-  // one thing a numeric row index cannot tell apart from "the same row, unmoved". Compared against the
-  // FRESH keys below on every publish; a mismatch clears the selection rather than paint (or copy) against
-  // content that is no longer what was selected. Remapping the selection onto its content's new position
-  // is the real fix and a real follow-up — this is the honest v1: never wrong, sometimes just gone.
-  const selectionKeysRef = useRef<readonly string[] | null>(null);
+  // F10 S4c — REMAP, NOT CLEAR. F9 addressed a selection by NUMERIC INDEX into `hit.current.rows` and
+  // cleared it whenever the itemKey at that index changed on a later publish (final-review finding 7: "never
+  // wrong, sometimes just gone"). Canon does the opposite trade: it translates the screen coordinates by the
+  // renderer's own scroll delta and never clears (`C0p`/`k0p`), which survives a scroll but MISPOINTS the
+  // instant content changes without one — an insert above a non-sticky viewport, a fold toggling, a re-wrap.
+  // ccx has what canon does not: the whole document in memory with durable per-item ids, so an endpoint can
+  // name CHARACTER IDENTITY (an item and a source-text offset, `mouse/address.ts`'s `SelectionEndpoint`)
+  // instead of screen geometry — a re-wrap, an insert above, or a fold toggle all become non-events by
+  // construction, and only an item actually LEAVING the document is still a clear. This ref holds the
+  // addresses recorded at the moment the selection was last set or extended (mouse gesture here; Task 7 adds
+  // keyboard extends) — `null` when there is no live selection at all.
+  //   THE REMAP RUNS DURING RENDER, immediately below where `hit.current.rows` is (re)built each publish, for
+  // the same reason the hover-staleness check beside it does: an effect would paint one wrong frame at the
+  // old (or cleared) position before correcting itself on the next tick, which is visible as a highlight
+  // flash or a mis-copy race. `remapSelection` (`mouse/address.ts`) is idempotent against an unchanged
+  // window — the same rows and the same addresses always relocate to the same cells — so re-running it every
+  // render, gesture or not, costs a lookup and never drifts the paint from the record.
+  const selectionAddrRef = useRef<SelectionAddresses | null>(null);
+  // `"offscreen"`'s own half of the contract (`mouse/address.ts`'s `remapSelection` doc): both ends off the
+  // SAME edge retains the address but must paint and copy NOTHING — `remapSelection` deliberately leaves
+  // `SelectionState` untouched in that case (there is nothing sane to write: the item is not in the window
+  // at all), so this ref is what stops the STALE cell coordinates left over from the last "ok" resolution
+  // from being read as if they still named something on the current screen. Set during the remap below (a
+  // ref, not a render-local, because `selectedText` is an imperative read from outside React and needs the
+  // LATEST render's verdict, matching every other ref this file threads through a stable callback).
+  const selectionOffscreenRef = useRef(false);
   const [, setPaintTick] = useState(0);
   const repaint = useCallback(() => setPaintTick((n) => n + 1), []);
   // `hit.current.top` is read at CALL TIME, not at the time this closure was created — `hit` is a stable ref
@@ -398,14 +426,53 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const { top } = hit.current;
     return top <= 0 ? undefined : { row: row - top + 1, col };
   };
-  // The snapshot is the WHOLE current row list, not just the gesture's own span: a drag can extend past
-  // rows it has not touched yet, and every row it might come to cover needs its key on record.
-  const snapshotSelectionKeys = () => { selectionKeysRef.current = hit.current.rows.map((r) => r.itemKey); };
+  /** Gesture-time write (S4). One `sourceEndpointAt` per live cell: the grapheme's absolute source start
+   *  AND its real exclusive end, so the read side can choose per document order which of the two a given
+   *  endpoint contributes. Recorded for `anchor`, `focus` and `anchorSpan.lo` — every one of those is a RAW,
+   *  INCLUSIVE column (a real click, or `wordSpan`/`lineSpan`'s own leading edge), so the grapheme AT `col`
+   *  really is the one the gesture named. */
+  const endpointAt = (cell: Cell | null): SelectionEndpoint | null => {
+    if (!cell) return null;
+    const row = hit.current.rows[cell.row - 1];
+    if (!row) return null;
+    const { charOffset, charEnd } = sourceEndpointAt(row, cell.col);
+    return { itemKey: row.itemKey, charOffset, charEnd };
+  };
+  /** `anchorSpan.hi` ALONE needs the other reading. `wordSpan`/`lineSpan` (`mouse/selection.ts`) hand back an
+   *  EXCLUSIVE column — one PAST the last included grapheme, e.g. the space right after a selected word —
+   *  matching `selectedSpans`' pivoted branch, which consumes it directly with no re-snap. `sourceEndpointAt`
+   *  is built for a RAW click and answers "what grapheme is AT this column": fed that excluded space, it
+   *  hands back the SPACE's own bounds, and recording its `charEnd` (one past the space) rather than its
+   *  `charOffset` (the space's own start — exactly the boundary `wordSpan` meant) bakes the extra grapheme
+   *  into the address permanently. Caught by `selectionPaint.test.tsx`'s T6(f)/(j): a double-click's word
+   *  span, once it rode through one repaint of this remap, painted `"select "` — the trailing space too. */
+  const endpointAtExclusive = (cell: Cell | null): SelectionEndpoint | null => {
+    if (!cell) return null;
+    const row = hit.current.rows[cell.row - 1];
+    if (!row) return null;
+    const { charOffset } = sourceEndpointAt(row, cell.col);
+    return { itemKey: row.itemKey, charOffset, charEnd: charOffset };
+  };
+  // EVERY mutation of `SelectionState` calls this, not just the mouse ones — Task 7's keyboard extends
+  // included. An address left over from the last mouse event is a stale address, and the very next repaint
+  // remaps from it and undoes the move. `anchor` failing to resolve (should not happen — every caller below
+  // sets it via `cellAt`, which only ever names a row `hit.current.rows` actually has) leaves the previous
+  // address on record rather than mint a half-built one.
+  const recordSelectionAddresses = (): void => {
+    const s = selectionStateRef.current;
+    const anchor = endpointAt(s.anchor);
+    if (!anchor) return;
+    const focus = endpointAt(s.focus);
+    const spanLo = s.anchorSpan ? endpointAt(s.anchorSpan.lo) : null;
+    const spanHi = s.anchorSpan ? endpointAtExclusive(s.anchorSpan.hi) : null;
+    const span = spanLo && spanHi ? { lo: spanLo, hi: spanHi, kind: s.anchorSpan!.kind } : null;
+    selectionAddrRef.current = { anchor, focus, span };
+  };
   const startSelectionAt = useCallback((col: number, row: number) => {
     const cell = cellAt(col, row);
     if (!cell) return;
     startSelection(selectionStateRef.current, cell);
-    snapshotSelectionKeys();
+    recordSelectionAddresses();
     repaint();
   }, [repaint]);
   const dragSelectionTo = useCallback((col: number, row: number) => {
@@ -415,7 +482,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     // WORDS (or whole rows), pivoting on that span; anything else is the plain two-endpoint drag.
     if (selectionStateRef.current.anchorSpan) dragToSpanned(selectionStateRef.current, cell, hit.current.rows);
     else dragTo(selectionStateRef.current, cell);
-    snapshotSelectionKeys();
+    recordSelectionAddresses();
     repaint();
   }, [repaint]);
   const multiClickSelectionAt = useCallback((col: number, row: number, count: 2 | 3) => {
@@ -425,7 +492,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const hitRow = painted[rowIndex];
     if (!hitRow) return;
     multiClick(selectionStateRef.current, { row: rowIndex + 1, col }, count, hitRow);
-    snapshotSelectionKeys();
+    recordSelectionAddresses();
     repaint();
   }, [repaint]);
   const endSelectionDrag = useCallback(() => { selectionStateRef.current.isDragging = false; }, []);
@@ -433,7 +500,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   const discardSelection = useCallback(() => {
     const s = selectionStateRef.current;
     s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
-    selectionKeysRef.current = null;
+    selectionAddrRef.current = null;
     repaint();
   }, [repaint]);
   // F9 T-MOUSE Task 7 — the auto-copy latch's own read: the SAME geometry the paint path derives
@@ -443,7 +510,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // independently-derived string. Called on demand (release, Ctrl+C) rather than cached: a selection's rows
   // and the DOCUMENT under them can both move between two mouse events, and this always reads the CURRENT
   // frame's own map, matching every other imperative read on this ref.
-  const selectedText = useCallback(() => extractText(selectedSpans(selectionStateRef.current, hit.current.rows), hit.current.rows), []);
+  const selectedText = useCallback(() => selectionOffscreenRef.current ? "" : extractText(selectedSpans(selectionStateRef.current, hit.current.rows), hit.current.rows), []);
 
   useImperativeHandle(hitmapRef, () => ({
     anchorAt, hoverAt, clearHover,
@@ -532,21 +599,28 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // paint one frame with a hover nothing on screen answers to before correcting itself.
   if (hoveredKey !== null && !hit.current.rows.some((row) => row.itemKey === hoveredKey)) setHoveredKey(null);
 
-  // Final-review finding 7 — SELECTION STALENESS. Same "applied during render" discipline as the hover
-  // check just above, for the same reason: an effect would paint one frame with a highlight (or a copy)
-  // against content the reader never dragged over before correcting itself. `selectedSpans` gives the
-  // rows THIS selection currently claims (against the array just published, so its row-count clamping is
-  // already fresh); each of those rows' itemKey is compared against what that same index carried at
-  // selection time. Any mismatch means the document moved under the sweep — clear it.
-  if (selectionKeysRef.current) {
-    const spans = selectedSpans(selectionStateRef.current, hit.current.rows);
-    const snapshot = selectionKeysRef.current;
-    const shifted = spans.some((span) => hit.current.rows[span.row - 1]?.itemKey !== snapshot[span.row - 1]);
-    if (shifted) {
-      const s = selectionStateRef.current;
-      s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
-      selectionKeysRef.current = null;
-    }
+  // F10 S4c — REMAP, NOT CLEAR (see `selectionAddrRef`'s own header). Ordered by document position first
+  // (never by the anchor/focus role), the lower endpoint contributing its grapheme's start and the upper its
+  // grapheme's end, so a backward drag and a forward one over the same characters produce the identical
+  // half-open range. Applied DURING render for the reason the hover check above is: an effect would paint
+  // one wrong frame.
+  if (selectionAddrRef.current) {
+    const addrs = selectionAddrRef.current;
+    const first = ordinals.get(hit.current.rows[0]?.itemKey ?? "") ?? 0;
+    const last = ordinals.get(hit.current.rows[hit.current.rows.length - 1]?.itemKey ?? "") ?? first;
+    const remapped = remapSelection(selectionStateRef.current, addrs, hit.current.rows,
+      (k) => ordinals.get(k), { first, last });
+    // `"gone"` — the itemKey left the DOCUMENT entirely (a fold collapse, a session swap): `remapSelection`
+    // already nulled `state.anchor`/`focus`/`anchorSpan`, matching exactly what F9's clear did; only the
+    // address record itself is this component's own to drop.
+    if (remapped === "gone") selectionAddrRef.current = null;
+    // `"offscreen"` — both ends off the SAME edge (canon's `ELt`, L198855-198860): retain, paint nothing,
+    // copy nothing. `remapSelection` leaves `state` untouched here, so the flag below is what keeps
+    // `paintSpans`/`selectedText` from reading those stale cell coordinates as if they still named a row in
+    // THIS render's window.
+    selectionOffscreenRef.current = remapped === "offscreen";
+  } else {
+    selectionOffscreenRef.current = false;
   }
 
   // F9 T-MOUSE Task 6 — SELECTION PAINT. `selectedSpans` reads exactly the rows array just published above —
@@ -554,7 +628,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // a span can never describe a row this frame did not paint, even mid-drag while the window is scrolling.
   // Off `hitmapRef` (classic, or any test that does not care) `hit.current.rows` is `NO_HIT_ROWS` and
   // `selectedSpans` answers `[]` against it, same as an idle selection would.
-  const paintSpans: readonly RowSpan[] = selectedSpans(selectionStateRef.current, hit.current.rows);
+  const paintSpans: readonly RowSpan[] = selectionOffscreenRef.current ? [] : selectedSpans(selectionStateRef.current, hit.current.rows);
   const spanByRow = paintSpans.length ? new Map(paintSpans.map((s) => [s.row - 1, s] as const)) : EMPTY_SPAN_MAP;
   // One entry per SLICE, parallel to `slices` below — the per-ROW selection (if any) for the physical rows
   // that one slice paints, in the SAME order `hitRowsOf` flattened them: a `"line"` slice contributes one

@@ -55,11 +55,29 @@ function framesFor(word) {
   return [];
 }
 
+// F10 T-SELECT S4c (step 6.8) — the `stream-shift` pty cell's second arm needs a frame to land AFTER the
+// sweep it is testing is already in progress, which a script fixed at connect time (`FAKE_HOST_SCRIPT`)
+// cannot produce. Every currently-following connection's own `pushEvent` is kept here so a line on THIS
+// process's stdin — the same `word` syntax `FAKE_HOST_SCRIPT` uses, e.g. `message:more text` — can be
+// pushed on demand: `tmux send-keys` into the fake host's own pane delivers it as a normal line, since
+// nothing here puts the tty into raw mode.
+const followers = new Set();
+let stdinBuf = "";
+process.stdin.on("data", (chunk) => {
+  stdinBuf += chunk.toString();
+  for (let nl = stdinBuf.indexOf("\n"); nl >= 0; nl = stdinBuf.indexOf("\n")) {
+    const word = stdinBuf.slice(0, nl).trim(); stdinBuf = stdinBuf.slice(nl + 1);
+    if (!word) continue;
+    for (const ev of framesFor(word)) for (const push of followers) push(ev);
+  }
+});
+
 const server = createServer((sock) => {
   let buf = "";
   let following = false;
   const send = (obj) => { try { sock.write(JSON.stringify(obj) + "\n"); } catch { /* socket already gone */ } };
   const pushEvent = (ev) => send({ t: "event", ...ev });
+  sock.on("close", () => followers.delete(pushEvent));
 
   sock.on("data", (chunk) => {
     buf += chunk.toString();
@@ -83,6 +101,7 @@ const server = createServer((sock) => {
         send(base);
         if (!following) {
           following = true;
+          followers.add(pushEvent);
           // After the FIRST follow ack, push the requested frames with a small delay between them — long
           // enough that the REPL's own effects (spinner mount, task-panel mount) settle between events
           // rather than coalescing into one render the pty cell could not tell apart from a single frame.

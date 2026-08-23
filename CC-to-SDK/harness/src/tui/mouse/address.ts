@@ -79,6 +79,22 @@ function search(rows: readonly HitRow[], run: { lo: number; hi: number }, v: num
 export function locateEndpoint(
   rows: readonly HitRow[], addr: SelectionEndpoint, side: "lower" | "upper",
   documentOrdinal: (itemKey: string) => number | undefined, windowOrdinals: { first: number; last: number },
+  // F10 S4c fix round — two callers want two DIFFERENT numbers out of the same upper boundary, and
+  // `columnOfSourceChar(row, charEnd)` can only ever answer one of them: it is the EXCLUSIVE column, one
+  // PAST the last included grapheme (`wordSpan`/`lineSpan`'s own convention for `anchorSpan.hi`, consumed
+  // directly by `selectedSpans`'s pivoted branch with no further snapping — this is `"exclusive"`, the
+  // default, and every existing caller of this function keeps it, including this module's own span pair).
+  // `remapSelection`'s ORDINARY `state.anchor`/`state.focus` (the non-span two-endpoint case) are a
+  // DIFFERENT consumer: `selectedSpans`'s non-pivoted branch treats those columns as a RAW, INCLUSIVE mouse
+  // click and re-derives the exclusive boundary itself via `snappedColumnRange`. Feeding it the already-
+  // exclusive column double-snaps — `columnToChar` resolves that column onto the NEXT grapheme (whatever the
+  // exclusive boundary sits in front of) and extends one more cluster past it (measured: `"select target
+  // word"`, endpoint at source offset 6 — the space right after "select" — round-tripped through the
+  // exclusive column and painted `"select "`, one character too many). `"inclusive"` asks for the column of
+  // the LAST INCLUDED grapheme instead (`v - 1`, which `containsUpper`'s own contract guarantees still sits
+  // inside the SAME row `search` already chose — `row.charStart < v <= row.charEnd` makes `v - 1 >=
+  // row.charStart` unconditionally), which is exactly the raw-click column `selectedSpans` expects to re-snap.
+  upperBoundary: "exclusive" | "inclusive" = "exclusive",
 ): Located | undefined {
   const ordinal = documentOrdinal(addr.itemKey);
   if (ordinal === undefined) return undefined;                    // gone from the DOCUMENT — the one clear case
@@ -92,7 +108,8 @@ export function locateEndpoint(
   const v = side === "lower" ? addr.charOffset : addr.charEnd;
   const at = search(rows, run, v, side);
   const row = rows[at]!;
-  return { row: at + 1, col: columnOfSourceChar(row, v), virtual: false, edge: 0 };
+  const colValue = side === "upper" && upperBoundary === "inclusive" ? Math.max(row.charStart, v - 1) : v;
+  return { row: at + 1, col: columnOfSourceChar(row, colValue), virtual: false, edge: 0 };
 }
 
 /** Document order for two endpoints: by the item's position in the document first, by source offset
@@ -116,9 +133,10 @@ function cellOf(loc: Located): Cell {
 function locatePair(
   lo: SelectionEndpoint, hi: SelectionEndpoint, rows: readonly HitRow[],
   documentOrdinal: (itemKey: string) => number | undefined, windowOrdinals: { first: number; last: number },
+  upperBoundary: "exclusive" | "inclusive" = "exclusive",
 ): { lo: Located; hi: Located } | undefined {
   const locLo = locateEndpoint(rows, lo, "lower", documentOrdinal, windowOrdinals);
-  const locHi = locateEndpoint(rows, hi, "upper", documentOrdinal, windowOrdinals);
+  const locHi = locateEndpoint(rows, hi, "upper", documentOrdinal, windowOrdinals, upperBoundary);
   if (!locLo || !locHi) return undefined;
   return { lo: locLo, hi: locHi };
 }
@@ -142,7 +160,16 @@ function resolveAddresses(
       })()
     : (() => {
         const [lo, hi] = orderEndpoints(addrs.anchor, addrs.focus, documentOrdinal);
-        const pair = locatePair(lo, hi, rows, documentOrdinal, windowOrdinals);
+        // `"inclusive"` for an ORDINARY sweep — `main` feeds `state.anchor`/`state.focus`, which
+        // `selectedSpans`'s non-pivoted branch re-snaps as a raw click (see `locateEndpoint`'s own header).
+        // BUT a live `addrs.span` means the sweep is PIVOTED (`dragToSpanned`'s own word/line extension —
+        // F10 S2): `selectedSpans`'s pivoted branch reads `state.anchor`/`state.focus` the SAME way it reads
+        // `anchorSpan.lo/hi` — consumed directly, no re-snap — because `dragToSpanned` itself always writes
+        // them from `wordSpan`/`lineSpan`'s own exclusive convention. Using `"inclusive"` here for a pivoted
+        // sweep would under-select by one grapheme the moment it round-trips through a remap (caught by
+        // `selectionPaint.test.tsx`'s own T6(j)/F10 S2 cases, which run real pivoted drags through this
+        // exact path once `recordSelectionAddresses` records them like any other gesture).
+        const pair = locatePair(lo, hi, rows, documentOrdinal, windowOrdinals, addrs.span ? "exclusive" : "inclusive");
         return pair ? { ...pair, hasFocus: true } : undefined;
       })();
   if (!main) return { status: "gone" };

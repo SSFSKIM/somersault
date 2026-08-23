@@ -112,7 +112,14 @@ describe("F10 S4 — remapSelection: the publish-time remap, mutating a live Sel
     const state = createSelectionState();
     expect(remapSelection(state, addrs, rows, ord, win)).toBe("ok");
     expect(state.anchor).toEqual({ row: 1, col: 3 });   // lower endpoint: charOffset 2 → column 3
-    expect(state.focus).toEqual({ row: 1, col: 17 });   // upper endpoint: charEnd 16 → column 17
+    // F10 S4c fix round — corrected from `col: 17`. `state.focus` feeds `selectedSpans`' ORDINARY (non-span)
+    // two-endpoint branch, which treats it as a raw, INCLUSIVE mouse-click column and re-derives the
+    // exclusive boundary itself (`snappedColumnRange`). `col: 17` was the EXCLUSIVE one-past column (right
+    // for `anchorSpan.hi`, which IS consumed directly — see the span case below, unchanged) — feeding that
+    // into the re-snapped path double-snapped onto the NEXT grapheme and painted one character too many
+    // (caught by `selectionRemap.test.tsx`'s real-paint integration cases, not by this pure-function check
+    // alone). `col: 16` is the LAST INCLUDED grapheme's own column (charEnd 16's own char, at index 15).
+    expect(state.focus).toEqual({ row: 1, col: 16 });
     expect(state.anchorSpan).toBeNull();
   });
 
@@ -173,7 +180,7 @@ describe("F10 S4 — projectSelectionOnto: the same projection onto an arbitrary
     const result = projectSelectionOnto(rows, addrs, ord) as SelectionState;
     expect(result).not.toBeNull();
     expect(result.anchor).toEqual({ row: 1, col: 3 });
-    expect(result.focus).toEqual({ row: 1, col: 12 });
+    expect(result.focus).toEqual({ row: 1, col: 11 });   // F10 S4c fix round — see the `remapSelection` test's own note
   });
 
   it("returns null when the addresses do not resolve there at all", () => {

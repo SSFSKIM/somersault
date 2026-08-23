@@ -373,6 +373,207 @@ run_word_drag_cell() {
   record "word-drag" "$rc"
 }
 
+# ── cell: stream-shift (keyless) — F10 T-SELECT S4c acceptance cell 3's pty half, two arms in one cell ────
+# Both arms share the same claim (a HELD sweep survives the document moving under it) but from opposite
+# directions: arm 1 scrolls the STICKY window under an ordinary two-endpoint drag; arm 2 lands a delta
+# GENUINELY ABOVE a sweep on the QUEUED tier (finalized/pending/streaming all paint above `queuedItems`,
+# `FullscreenViewport`'s own order) while a REAL live turn is in progress. Neither releases the button before
+# the shift lands — a release-then-reassert would prove nothing about the HELD case.
+#
+# ARM 1 IS VIA THE FAKE HOST, NOT `!bash-mode` STAGING, and that is a live-probe finding, not a style choice.
+# The plan's first draft staged rows with `!seq` and appended more via a SECOND typed `!seq` command while the
+# sweep was held — probed live, this reliably CLEARED the selection outright, before the append ever ran:
+# `useSelectionLifetime` (F9 T-MOUSE Task 7, `ChatApp.tsx`) is a documented, deliberate rule — "every other key
+# clears [the selection] but is NOT consumed — it still runs whatever it would have" — so the FIRST character
+# typed into `!seq 13 17` fires `discardSelection()` before Enter is ever pressed, regardless of anything this
+# track built. A held sweep and a SECOND typed command in the SAME session are mutually exclusive by design;
+# proving the remap survives a shift therefore needs the shift to arrive from somewhere that sends the swept
+# session no keystrokes at all. The fake host already is exactly that (step 1.21a): pushing `message:<word>`
+# frames into ITS OWN stdin (the S4c stdin extension, `fake-host.mjs`) finalizes new items into the ATTACHED
+# client's document without one byte reaching the attached session's own input stream.
+run_stream_shift_cell() {
+  local rc=0
+  echo "  cell stream-shift (keyless, via fake-host.mjs) arm 1: held sweep on a row, document shifts under it"
+  local s="ss-$RUN_ID" fh="ss-host-$RUN_ID" home short=""
+  home="$SELECT_ROOT/$fh-home"; mkdir -p "$home/.claude/ccx"
+  local fhcmd="env CCX_FLEET_ROOT=$home/.claude/ccx node $HARNESS_DIR/scripts/fake-host.mjs"
+  tmux -L "$TM" new-session -d -s "$fh" -x 100 -y 30 "$fhcmd" || { record "stream-shift" 1; return; }
+  SESSIONS="$SESSIONS $fh"
+  local i=0
+  while [ "$i" -lt 40 ]; do
+    short=$(tmux -L "$TM" capture-pane -t "$fh" -p -S - 2>/dev/null | grep -oE 'SHORT=[0-9a-f]{8}' | cut -d= -f2)
+    [ -n "$short" ] && break
+    sleep 0.25; i=$((i+1))
+  done
+  if [ -z "$short" ]; then
+    echo "      FAIL stream-shift arm1: fake-host.mjs never printed its short id"
+    kill_cell "$fh"; record "stream-shift" 1; return
+  fi
+  mkdir -p "$SELECT_ROOT/$s-proj"
+  # `-y 13`: measured (this run) to grant an 8-row region — eight `LN0N` items fill it exactly, so the ninth
+  # through eleventh pushed below force a real sticky scroll rather than merely appending into empty space.
+  local attachcmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false CLAUDE_CODE_NO_FLICKER=1 node $BIN attach $short"
+  tmux -L "$TM" new-session -d -s "$s" -x 100 -y 13 -c "$SELECT_ROOT/$s-proj" "$attachcmd" || { record "stream-shift" 1; kill_cell "$fh"; return; }
+  SESSIONS="$SESSIONS $s"
+  tmux -L "$TM" pipe-pane -t "$s" -o "cat >> '$SELECT_ROOT/$s.log'"
+  # `"manual mode on"`, not the default needle: `caret-busy`'s own established fact — an ATTACH session's
+  # footer reads "manual mode on · ? for shortcuts", never the fresh-CLI "…(shift+tab to cycle)" text.
+  wait_ready "$s" "manual mode on" || { kill_cell "$s"; kill_cell "$fh"; record "stream-shift" 1; return; }
+  local n
+  for n in 01 02 03 04 05 06 07 08; do
+    tmux -L "$TM" send-keys -t "$fh" -l "message:LN$n"
+    tmux -L "$TM" send-keys -t "$fh" Enter
+    sleep 0.15
+  done
+  local i2=0
+  while [ "$i2" -lt 40 ]; do frame "$s" | grep -qF "LN08" && break; sleep 0.25; i2=$((i2+1)); done
+  sleep 0.5
+  local cap1="$SELECT_ROOT/ss-cap1"; frame "$s" > "$cap1"
+  local row4; row4=$(LC_ALL=C awk '/LN04/ {print NR; exit}' "$cap1")
+  if [ -z "$row4" ]; then
+    echo "      FAIL stream-shift arm1: LN04 never painted"
+    cat "$cap1" | sed 's/^/      | /'
+    kill_cell "$s"; kill_cell "$fh"; record "stream-shift" 1; return
+  fi
+  # `LC_ALL=C index()` is a BYTE offset; `⏺` (the assistant bullet ahead of every message row here) is ONE
+  # character but THREE bytes and TWO terminal columns (`string-width`'s own measure, matching the codebase's
+  # `hitmap.ts` doc comment) — a raw byte-to-column use overshoots by exactly that one-byte deficit.
+  local col4; col4=$(LC_ALL=C awk -v n="$row4" 'NR==n {print index($0, "LN04") - 1}' "$cap1")
+  # Press ON "LN04" and drag three columns further — held, NO release, zero sleep inside the gesture (header's
+  # own rule: nothing may land between press and drag but the drag itself).
+  press "$s" "$col4" "$row4"
+  drag  "$s" "$((col4 + 3))" "$row4"
+  # STILL HELD, and NOT ONE KEYSTROKE into `$s` — the header comment's whole point. Three more items pushed
+  # into the FAKE HOST's stdin scroll the sticky window under the untouched sweep.
+  for n in 09 10 11; do
+    tmux -L "$TM" send-keys -t "$fh" -l "message:LN$n"
+    tmux -L "$TM" send-keys -t "$fh" Enter
+    sleep 0.15
+  done
+  local i3=0
+  while [ "$i3" -lt 40 ]; do frame "$s" | grep -qF "LN11" && break; sleep 0.25; i3=$((i3+1)); done
+  sleep 0.5
+  local cap2="$SELECT_ROOT/ss-cap2"; frame "$s" > "$cap2"
+  local row4after; row4after=$(LC_ALL=C awk '/LN04/ {print NR; exit}' "$cap2")
+  if [ -z "$row4after" ]; then
+    echo "      FAIL stream-shift arm1: LN04 is gone from the frame after the push (scrolled off, not just shifted)"
+    cat "$cap2" | sed 's/^/      | /'
+    kill_cell "$s"; kill_cell "$fh"; record "stream-shift" 1; return
+  fi
+  if [ "$row4after" = "$row4" ]; then
+    echo "      FAIL stream-shift arm1: LN04 did not move — the push did not actually scroll the sticky window, this cell proves nothing"
+    kill_cell "$s"; kill_cell "$fh"; record "stream-shift" 1; return
+  fi
+  local frame_e; frame_e=$(tmux -L "$TM" capture-pane -t "$s" -p -e)
+  local esc; esc=$(printf '\033')
+  local row4line; row4line=$(printf '%s' "$frame_e" | sed -n "${row4after}p")
+  # `word-drag`'s own accepted-closer note applies here too (bare `ESC[0m` on a real terminal, `ESC[49m` on
+  # the virtual-DOM harness) — both accepted.
+  if printf '%s' "$row4line" | grep -aqE "${esc}\[48;2;[0-9]+;[0-9]+;[0-9]+mLN04${esc}\[(0|49)m"; then
+    echo "      ok   stream-shift arm1: the selectionBg run is still on LN04, now at row $row4after (was $row4) — not whatever now occupies row $row4"
+  else
+    echo "      FAIL stream-shift arm1: no selectionBg run found on LN04 at its new position"
+    printf '%s' "$frame_e" | sed -n "$((row4after>1?row4after-1:1)),$((row4after+1))p" | sed 's/^/      | /'
+    rc=1
+  fi
+  release "$s" "$((col4 + 3))" "$row4after"
+  sleep 0.5
+  local LN04_B64; LN04_B64=$(printf '%s' "LN04" | base64)
+  if grep -aqF "$LN04_B64" "$SELECT_ROOT/$s.log"; then
+    echo "      ok   stream-shift arm1: the OSC 52 payload base64-decodes to exactly the swept 'LN04'"
+  else
+    echo "      FAIL stream-shift arm1: no OSC 52 payload for 'LN04' in the raw log"
+    rc=1
+  fi
+  kill_cell "$s"; kill_cell "$fh"
+
+  echo "  cell stream-shift (keyless, via fake-host.mjs) arm 2: a delta lands ABOVE a sweep on a QUEUED row"
+  local s2="ss2-$RUN_ID" fh2="ss2-host-$RUN_ID" short2=""
+  home="$SELECT_ROOT/$fh2-home"; mkdir -p "$home/.claude/ccx"
+  local fhcmd2="env CCX_FLEET_ROOT=$home/.claude/ccx FAKE_HOST_SCRIPT=turn-start node $HARNESS_DIR/scripts/fake-host.mjs"
+  tmux -L "$TM" new-session -d -s "$fh2" -x 100 -y 30 "$fhcmd2" || { record "stream-shift" 1; return; }
+  SESSIONS="$SESSIONS $fh2"
+  local i3=0
+  while [ "$i3" -lt 40 ]; do
+    short2=$(tmux -L "$TM" capture-pane -t "$fh2" -p -S - 2>/dev/null | grep -oE 'SHORT=[0-9a-f]{8}' | cut -d= -f2)
+    [ -n "$short2" ] && break
+    sleep 0.25; i3=$((i3+1))
+  done
+  if [ -z "$short2" ]; then
+    echo "      FAIL stream-shift arm2: fake-host.mjs never printed its short id"
+    kill_cell "$fh2"; record "stream-shift" 1; return
+  fi
+  local attachlog2="$SELECT_ROOT/$s2.log"
+  mkdir -p "$SELECT_ROOT/$s2-proj"
+  local attachcmd2="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false CLAUDE_CODE_NO_FLICKER=1 node $BIN attach $short2"
+  tmux -L "$TM" new-session -d -s "$s2" -x 100 -y 30 -c "$SELECT_ROOT/$s2-proj" "$attachcmd2" || { record "stream-shift" 1; kill_cell "$fh2"; return; }
+  SESSIONS="$SESSIONS $s2"
+  tmux -L "$TM" pipe-pane -t "$s2" -o "cat >> '$attachlog2'"
+  wait_ready "$s2" "manual mode on" || { kill_cell "$s2"; kill_cell "$fh2"; record "stream-shift" 1; return; }
+  local i4=0 spinner_seen=0
+  while [ "$i4" -lt 20 ]; do frame "$s2" | grep -qE '[✻✳✶·].*…' && { spinner_seen=1; break; }; sleep 0.25; i4=$((i4+1)); done
+  if [ "$spinner_seen" != 1 ]; then
+    echo "      FAIL stream-shift arm2: no live-turn spinner ever appeared"
+    kill_cell "$s2"; kill_cell "$fh2"; record "stream-shift" 1; return
+  fi
+  # Submit a prompt WHILE busy: `useChat.ts`'s own "turn while busy → enqueue" — it QUEUES rather than sends,
+  # painting at the document's tail below even the (absent, here) streaming tier. Typed and submitted BEFORE
+  # any sweep begins — `useSelectionLifetime`'s "every other key clears the selection" rule (arm 1's own
+  # header note) is harmless here because there is no selection yet for it to clear.
+  tmux -L "$TM" send-keys -t "$s2" -l "queueword alpha beta gamma"
+  sleep 0.3
+  tmux -L "$TM" send-keys -t "$s2" Enter
+  local i5=0
+  while [ "$i5" -lt 40 ]; do frame "$s2" | grep -qF "queueword" && break; sleep 0.25; i5=$((i5+1)); done
+  local cap3="$SELECT_ROOT/ss2-cap"; frame "$s2" > "$cap3"
+  local qrow; qrow=$(LC_ALL=C awk '/queueword/ {print NR; exit}' "$cap3")
+  if [ -z "$qrow" ]; then
+    echo "      FAIL stream-shift arm2: the queued prompt never painted"
+    cat "$cap3" | sed 's/^/      | /'
+    kill_cell "$s2"; kill_cell "$fh2"; record "stream-shift" 1; return
+  fi
+  # Same byte-vs-column correction as arm 1, for the queued echo's own leading `❯ ` (`USER_GUTTER`, render.ts):
+  # `❯` is ONE column but THREE bytes, a deficit of two.
+  local col_a col_g2; col_a=$(LC_ALL=C awk -v n="$qrow" 'NR==n {print index($0, "alpha") - 2}' "$cap3")
+  col_g2=$((col_a + 4))
+  press "$s2" "$col_a" "$qrow"
+  drag  "$s2" "$col_g2" "$qrow"
+  sleep 0.4
+  local frame2_e; frame2_e=$(tmux -L "$TM" capture-pane -t "$s2" -p -e)
+  # The CLOSER differs from `word-drag`'s own plain-row check: a queued echo (`userEchoLines`) paints its own
+  # band background under the whole row, so the selection's close does not return to "no background" — it
+  # returns to THAT band's own `48;2;…m`, which the third alternative accepts.
+  if ! printf '%s' "$frame2_e" | grep -aqE "${esc}\[48;2;[0-9]+;[0-9]+;[0-9]+malpha${esc}\[(0|49|48;2;[0-9]+;[0-9]+;[0-9]+)m"; then
+    echo "      FAIL stream-shift arm2: 'alpha' was never painted before the delta lands"
+    printf '%s' "$frame2_e" | sed 's/^/      | /'
+    kill_cell "$s2"; kill_cell "$fh2"; record "stream-shift" 1; return
+  fi
+  # STILL HELD, and — exactly arm 1's own point — NOT ONE KEYSTROKE reaches `$s2`: both `message:` frames go
+  # into the FAKE HOST's own stdin (the step 6.8 extension), finalizing ABOVE the queued tier
+  # (finalized/pending/streaming all sit ahead of `queuedItems` in `FullscreenViewport`'s own order), landing
+  # GENUINELY above the sweep, exactly acceptance cell 3's premise.
+  tmux -L "$TM" send-keys -t "$fh2" -l "message:delta one"
+  tmux -L "$TM" send-keys -t "$fh2" Enter
+  sleep 0.3
+  tmux -L "$TM" send-keys -t "$fh2" -l "message:delta two"
+  tmux -L "$TM" send-keys -t "$fh2" Enter
+  local i6=0
+  while [ "$i6" -lt 40 ]; do frame "$s2" | grep -qF "delta two" && break; sleep 0.25; i6=$((i6+1)); done
+  sleep 0.3
+  local frame3_e; frame3_e=$(tmux -L "$TM" capture-pane -t "$s2" -p -e)
+  if printf '%s' "$frame3_e" | grep -aqE "${esc}\[48;2;[0-9]+;[0-9]+;[0-9]+malpha${esc}\[(0|49|48;2;[0-9]+;[0-9]+;[0-9]+)m"; then
+    echo "      ok   stream-shift arm2: the highlight still covers 'alpha' after two deltas land above the queued row"
+  else
+    echo "      FAIL stream-shift arm2: the highlight did NOT survive the delta landing above the queued row"
+    printf '%s' "$frame3_e" | sed 's/^/      | /'
+    rc=1
+  fi
+  release "$s2" "$col_g2" "$qrow"
+  kill_cell "$s2"; kill_cell "$fh2"
+
+  record "stream-shift" "$rc"
+}
+
 # ── run ──────────────────────────────────────────────────────────────────────────────────────────────────
 echo "F10 T-SELECT S1 — the caret-origin pty harness (FULLSCREEN renderer, CLAUDE_CODE_NO_FLICKER=1)"
 self_test || { echo "SELF-TEST FAILED — aborting before any session is launched"; exit 1; }
@@ -393,6 +594,7 @@ want_cell caret-wrap      && run_caret_wrap_cell
 want_cell caret-busy      && run_caret_busy_cell
 want_cell caret-busy-live && run_caret_busy_live_cell
 want_cell word-drag       && run_word_drag_cell
+want_cell stream-shift    && run_stream_shift_cell
 
 echo
 echo "select-pty: $pass_count passed, $fail_count failed"
