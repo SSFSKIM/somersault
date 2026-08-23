@@ -310,6 +310,13 @@ Found during execution (T1–T5):
   the directory — the `staged` map entries for those paths lived forever. The sweep now runs a second,
   `mintedAt`-age-gated loop over the map itself; the same cutoff protects the legitimate mint→write
   window.
+- **A barrier is as wide as its arming point, not its intent** (review round 4): `fleetStartAck` was
+  armed at dispatch and consumed by `afterAck`, whose "a foreign turn sets no ack" reasoning is only
+  true when the ack is unarmed at frame-arrival time. The string path's one-round-trip window made that
+  a non-issue; the items path stretched the armed window across the whole staging sequence, parking a
+  foreign turn's items and completion behind our reply — an event-stream reordering. The ack now arms
+  inside the engine, in the same tick the prompt op is written (`onPromptDispatch`), where no frame of
+  ours can yet exist and every foreign frame flows live.
 - **A serialization slot must cover the work it was taken for, not the call that opens it** (final review
   round 2, P1). `turn/start` takes an ordered slot on the thread's chain so its prompt reaches the engine
   behind anything the client sent first — and the slot released the moment the runner was INVOKED, which
