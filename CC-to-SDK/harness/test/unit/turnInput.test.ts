@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { deflateSync } from "node:zlib";
 import { z } from "zod/v4";
 import {
-  flattenForDisplay, assembleUserContent, normalizeTurnInput,
+  flattenForDisplay, assembleUserContent, normalizeTurnInput, syntheticImageLabel, isStrandedTurn,
   type UserContentBlock, type UserTurnInput,
 } from "../../src/session/turnInput.js";
 import { Session } from "../../src/session/session.js";
@@ -106,13 +106,17 @@ describe("normalizeTurnInput — string input", () => {
 });
 
 describe("normalizeTurnInput — dimension boundary, exact 2000x2000 (real PNGs, probe-113 pattern)", () => {
+  // A leading non-empty text block keeps these cells isolated to the dimension cap alone: a LONE
+  // passing image (no text at all) is exactly the F10 T-IMGREACH I1 "stranded turn" shape and now
+  // legitimately gets a synthetic label — that behavior has its own tests below, under "I1 stranding
+  // rule"; these boundary cells stay about the cap, not about stranding.
   it("passes a 1999x1999 image through untouched", () => {
     const block = imageBlock(solidPng(1999));
-    expect((normalizeTurnInput([block]) as UserContentBlock[])[0]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
   });
   it("passes a 2000x2000 image through untouched — AT the cap is not OVER it", () => {
     const block = imageBlock(solidPng(2000));
-    expect((normalizeTurnInput([block]) as UserContentBlock[])[0]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
   });
   it("degrades a 2001x2001 image", () => {
     const out = normalizeTurnInput([imageBlock(solidPng(2001))]) as UserContentBlock[];
@@ -175,13 +179,15 @@ describe("normalizeTurnInput — base64 input cap (5 MiB), exact boundary + prec
 });
 
 describe("normalizeTurnInput — post-processing byte ceiling (512,000 decoded bytes), exact boundary", () => {
+  // Leading text block, same reason as the dimension-boundary describe above: isolate the byte-ceiling
+  // check from I1's stranding rule, which a LONE passing image (no text) now legitimately triggers.
   it("passes at exactly 512,000 decoded bytes", () => {
     const block = imageBlock(fakePng(4, 4, 512_000));
-    expect((normalizeTurnInput([block]) as UserContentBlock[])[0]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
   });
   it("still passes one byte under (511,999)", () => {
     const block = imageBlock(fakePng(4, 4, 511_999));
-    expect((normalizeTurnInput([block]) as UserContentBlock[])[0]).toBe(block);
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toBe(block);
   });
   it("degrades one byte over (512,001)", () => {
     const out = normalizeTurnInput([imageBlock(fakePng(4, 4, 512_001))]) as UserContentBlock[];
@@ -198,8 +204,11 @@ describe("normalizeTurnInput — per-turn aggregate ceiling (5 MiB decoded bytes
   it(`${atCapSizes.length} blocks summing to exactly the aggregate cap all pass`, () => {
     expect(atCapSizes.reduce((a, b) => a + b, 0)).toBe(5 * 1024 * 1024);
     const blocks = atCapSizes.map((n) => imageBlock(fakePng(4, 4, n)));
-    const out = normalizeTurnInput(blocks) as UserContentBlock[];
-    out.forEach((b, i) => expect(b).toBe(blocks[i]));
+    // Leading text block: an all-image array with no text is I1's "stranded turn" shape and would
+    // otherwise pick up a synthetic label, which is not what this cell is testing.
+    const out = normalizeTurnInput([textBlock("hi"), ...blocks]) as UserContentBlock[];
+    expect(out[0]).toEqual({ type: "text", text: "hi" });
+    blocks.forEach((b, i) => expect(out[i + 1]).toBe(b));
   });
   it("one more block (any size) pushes the running total over — THAT block degrades, the rest survive", () => {
     const sizes = [...atCapSizes, 24]; // the smallest legal block this file can build
@@ -288,5 +297,81 @@ describe("scope-cut type pins (F9 T-IMAGE v3.1 acceptance 6)", () => {
     // The actual enforcement is `_scopeCutTypePins`'s `@ts-expect-error` lines above, checked by
     // `npm run typecheck`; this runtime case exists only so the suite carries a visible assertion.
     expect(typeof _scopeCutTypePins).toBe("function");
+  });
+});
+
+// =====================================================================================================
+// F10 T-IMGREACH Task 1 (I1) — the stranding rule. probe 100 proved (A/C/D/E, all four reachable
+// shapes) that a first turn with NO extractable text is absent from `listSessions()`/`getSessionInfo()`
+// even though its transcript persists intact — a real, non-recoverable-by-the-UI ccx gesture ("paste a
+// screenshot, press enter") stays permanently unfindable. `normalizeTurnInput` is the one seam every
+// shape passes through, so it is where the label goes in.
+//
+// A real 1x1 transparent PNG (68 bytes decoded) — genuinely decodable, well under every cap, so these
+// cells exercise the stranding rule in isolation rather than accidentally tripping a degrade check.
+const PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const img = (data = PNG_1X1) => ({ type: "image", source: { type: "base64", media_type: "image/png", data } }) as const;
+
+describe("syntheticImageLabel", () => {
+  it("numbers ordinals from 1, joined by a single space — imageChipLabel's own form", () => {
+    expect(syntheticImageLabel(1)).toBe("[Image #1]");
+    expect(syntheticImageLabel(3)).toBe("[Image #1] [Image #2] [Image #3]");
+  });
+});
+
+describe("isStrandedTurn", () => {
+  it("false for text-only input — nothing to strand", () => {
+    expect(isStrandedTurn([textBlock("hi")])).toBe(false);
+  });
+  it("false for an image alongside non-empty text", () => {
+    expect(isStrandedTurn([textBlock("look"), imageBlock(fakePng(4, 4, 40))])).toBe(false);
+  });
+  it("true for an image with no text block at all", () => {
+    expect(isStrandedTurn([imageBlock(fakePng(4, 4, 40))])).toBe(true);
+  });
+  it("true for an image with only an empty text block", () => {
+    expect(isStrandedTurn([textBlock(""), imageBlock(fakePng(4, 4, 40))])).toBe(true);
+  });
+});
+
+describe("normalizeTurnInput — I1 stranding rule", () => {
+  it("I1: an image-only array (no text block at all) gets the label INSERTED at index 0", () => {
+    const out = normalizeTurnInput([img()]) as UserContentBlock[];
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({ type: "text", text: "[Image #1]" });
+    expect(out[1]!.type).toBe("image");
+  });
+
+  it("I1: an empty first text block is SUBSTITUTED, never doubled", () => {
+    const out = normalizeTurnInput([{ type: "text", text: "" }, img()]) as UserContentBlock[];
+    expect(out).toHaveLength(2);                       // no insertion — the slot already existed
+    expect(out[0]).toEqual({ type: "text", text: "[Image #1]" });
+  });
+
+  it("I1: multi-image, no text — one label naming every image, at index 0", () => {
+    const out = normalizeTurnInput([img(), img()]) as UserContentBlock[];
+    expect(out[0]).toEqual({ type: "text", text: "[Image #1] [Image #2]" });
+  });
+
+  it("I1: a LATER non-empty text block still counts — nothing is substituted", () => {
+    const out = normalizeTurnInput([{ type: "text", text: "" }, img(), { type: "text", text: "look" }]);
+    expect(out).toEqual([{ type: "text", text: "" }, img(), { type: "text", text: "look" }]);
+  });
+
+  it("I1: an image that FAILED its caps already produced text, so the turn is not stranded", () => {
+    const bad = { type: "image", source: { type: "base64", media_type: "image/png", data: Buffer.from("garbage").toString("base64") } } as const;
+    const out = normalizeTurnInput([bad]) as UserContentBlock[];
+    expect(out).toHaveLength(1);
+    expect(out[0]).toEqual({ type: "text", text: "[Image could not be processed: unreadable image data]" });
+  });
+
+  it("I1: a text-only array and a bare string are untouched", () => {
+    expect(normalizeTurnInput("hi")).toBe("hi");
+    expect(normalizeTurnInput([{ type: "text", text: "" }])).toEqual([{ type: "text", text: "" }]);
+  });
+
+  it("I1: the label form does not drift from the composer's chip label", async () => {
+    const { imageChipLabel } = await import("../../src/tui/pasteChips.js");
+    expect(syntheticImageLabel(2)).toBe(`${imageChipLabel(1)} ${imageChipLabel(2)}`);
   });
 });

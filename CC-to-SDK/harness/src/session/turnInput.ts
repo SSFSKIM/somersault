@@ -99,6 +99,23 @@ function checkImageBlock(block: UserContentBlock & { type: "image" }, aggregateS
   return { ok: true, bytes: decoded.length };
 }
 
+/** The label form is `imageChipLabel`'s (tui/pasteChips.ts:57), spelled here rather than imported: this
+ *  module is `session/` core and pinning the FORM with a test is cheaper than another tui→core import.
+ *  Ordinals count images in the normalized OUTPUT, exactly as `flattenForDisplay` numbers them. */
+export function syntheticImageLabel(imageCount: number): string {
+  return Array.from({ length: imageCount }, (_, i) => `[Image #${i + 1}]`).join(" ");
+}
+
+/** probe 100, SDK 0.3.237: line 0 of a persisted session is a `queue-operation` record whose `content`
+ *  key carries the first prompt's TEXT. With no text — or with an empty string, which is just as
+ *  unextractable — the key is absent entirely and the SDK's metadata extractor declines the session:
+ *  no `listSessions()` row, `getSessionInfo()` undefined, transcript intact. Fix forward only (owner
+ *  fork): this predicate names the shape, `normalizeTurnInput` gives it a label. */
+export function isStrandedTurn(blocks: readonly UserContentBlock[]): boolean {
+  if (!blocks.some((b) => b.type === "image")) return false;
+  return !blocks.some((b) => b.type === "text" && b.text.length > 0);
+}
+
 /** AUTHORITATIVE. The one seam every `UserTurnInput` passes through at the Session builder
  *  regardless of caller (see session.ts's `userTurn`) — a string passes through untouched (there is
  *  nothing to validate); an array is walked block-by-block, and any image block that fails ANY of
@@ -107,15 +124,28 @@ function checkImageBlock(block: UserContentBlock & { type: "image" }, aggregateS
  *  failure text block canon's own copy uses. Every other block — text, or an image that passed —
  *  survives untouched at its original index, and the turn is never refused wholesale: a caller who
  *  sent five images and one deliberately-corrupt one still gets four images and one apology line,
- *  not a thrown error. */
+ *  not a thrown error.
+ *
+ *  F10 T-IMGREACH Task 1 (I1): AFTER that per-block pass, a turn that would persist with no
+ *  extractable first-prompt text (probe 100: excluded from `listSessions()`/`getSessionInfo()` even
+ *  though its transcript survives intact) gets exactly ONE synthetic `[Image #N]` label — substituted
+ *  into the first text block when one exists, else INSERTED at index 0. A deterministic position, not
+ *  "wherever": `Session.submit([image])` with no text block at all is an existing supported shape
+ *  (pinned by test/integration/host-image-transport.test.ts:374-388's HOST-assembled capture one layer
+ *  above this builder), so there may be no block to substitute into. */
 export function normalizeTurnInput(input: UserTurnInput): UserTurnInput {
   if (typeof input === "string") return input;
   let aggregate = 0;
-  return input.map((block): UserContentBlock => {
+  const validated = input.map((block): UserContentBlock => {
     if (block.type !== "image") return block;
     const verdict = checkImageBlock(block, aggregate);
     if (!verdict.ok) return { type: "text", text: `[Image could not be processed: ${verdict.reason}]` };
     aggregate += verdict.bytes;
     return block;
   });
+  if (!isStrandedTurn(validated)) return validated;
+  const label = syntheticImageLabel(validated.filter((b) => b.type === "image").length);
+  const first = validated.findIndex((b) => b.type === "text");
+  if (first === -1) return [{ type: "text", text: label }, ...validated];
+  return validated.map((b, i) => (i === first ? { type: "text", text: label } : b));
 }
