@@ -1,0 +1,23 @@
+#!/bin/sh
+# F10 T-IMGREACH Task 6 (I5c) fake `xclip` — matches linuxCheckImageCommand()/linuxSaveImageCommand()
+# argv shapes exactly (production invokes the literal name `xclip`, resolved through PATH, via
+# `sh -c "xclip ... | grep ..."`/`sh -c "xclip ... > path ..."` — this script is what a private-PATH
+# prepend intercepts). Behaviour is driven entirely by env vars the test sets, so ONE script serves
+# every cell:
+#   CCX_FAKE_CLIPBOARD_MIME     the mimetype this "clipboard" holds (probe answer + save gate)
+#   CCX_FAKE_CLIPBOARD_FIXTURE  path to the bytes a successful save streams to stdout
+#   CCX_FAKE_CLIPBOARD_LOG      if set, each recognized invocation appends one line here
+[ -n "$CCX_FAKE_CLIPBOARD_LOG" ] && printf 'xclip %s\n' "$*" >> "$CCX_FAKE_CLIPBOARD_LOG"
+case "$*" in
+  *TARGETS*)
+    [ -n "$CCX_FAKE_CLIPBOARD_MIME" ] || exit 1
+    echo "$CCX_FAKE_CLIPBOARD_MIME"
+    exit 0 ;;
+  *image/bmp*)
+    [ "$CCX_FAKE_CLIPBOARD_MIME" = "image/bmp" ] && exec cat "$CCX_FAKE_CLIPBOARD_FIXTURE"
+    exit 1 ;;
+  *image/png*)
+    [ "$CCX_FAKE_CLIPBOARD_MIME" = "image/png" ] && exec cat "$CCX_FAKE_CLIPBOARD_FIXTURE"
+    exit 1 ;;
+esac
+exit 1
