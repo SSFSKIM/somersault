@@ -118,11 +118,14 @@ an **immutable overlay**:
 - model-visible names are `mcp__<ns>__<name>` — an SDK naming constraint, noted as a Codex-parity
   nuance, not hidden.
 
-### Schema conversion (probe 115's consequence)
+### Schema conversion (probe 115's consequence; role narrowed by rev 3)
 
-The SDK runtime refuses raw JSON Schema at `registerTool` (probe 115: explicit check). New module
-`appserver/schemaToZod.ts` converts, with the subset REQUIRING an **object root** (MCP tools take
-object-shaped arguments; a scalar root would advertise `{}` while validating the scalar — finding 7):
+The SDK runtime refuses raw JSON Schema at `registerTool` (probe 115: explicit check) — and rev 3's
+measurement showed the zod detour ALSO cannot advertise the declaration (Surprises). So the split is:
+**advertisement is the low-level MCP `Server` returning the declared JSON Schema verbatim; conversion
+is the VALIDATION layer** at CallTool. New module `appserver/schemaToZod.ts` converts, with the subset
+REQUIRING an **object root** (MCP tools take object-shaped arguments; a scalar root would advertise
+`{}` while validating the scalar — finding 7):
 
 - root: `type:"object"` with `properties`/`required`; `additionalProperties: false` → strict zod,
   absent or `true` → **passthrough** zod (JSON Schema's own default admits extra keys; a stripping
@@ -235,6 +238,14 @@ Keyed (quota-gated — after 2026-08-26 1pm):
   Codex-compatible client expects.
 - **Rev 1's fleet refusal was a contract for a wire that doesn't exist** — `thread/start` cannot name a
   fleet origin at all. A refusal you cannot reach is not a decision; the structural statement is.
+- **No zod path can advertise the declared schema** (planning round 3, controller-measured 2026-08-24):
+  a built zod object — v3 and v4 alike — loses descriptions, min/max, AND `.int()` in the MCP
+  `tools/list` advertisement; a raw shape keeps descriptions but still loses every bound. The round-3
+  reviewer claimed v3 preserves them; the measurement refuted the claim while confirming the defect it
+  pointed at, worse. Consequence: rev 3 abandons `createSdkMcpServer`/`tool()` for the LOW-LEVEL MCP
+  `Server` — ListTools returns the client's declared JSON Schema VERBATIM (full Codex parity, exactly
+  testable), CallTool validates with the converted zod (where passthrough/strict semantics live), and
+  `_meta["anthropic/alwaysLoad"]` + `instructions` are set directly.
 
 ## Outcomes & Retrospective
 
@@ -259,3 +270,15 @@ Pending — written at finish.
   can carry in-process instances, which is unverifiable keylessly; relaxation gates on a keyed survival
   row. (3) Settlement authority made enforceable: the method checks the subscriber set and `callId`s
   are opaque UUIDs — rev 2 granted the authority but nothing enforced it against a guessed counter.
+- rev 3 (2026-08-24, planning round 3): (1) advertisement moves to the LOW-LEVEL MCP `Server` with the
+  declared JSON Schema returned VERBATIM (see Surprises — no zod path preserves it); `schemaToZod`
+  becomes the VALIDATION layer only. Fidelity acceptance strengthens from "structural" to deep-equal.
+  (2) `dynamicToolServers` (the transient engine-config carrier) is SERVER-OWNED: client config or
+  extraOptions carrying the key refuses -32602, and `record.config` never contains it. (3) Names the
+  Session's in-process built-ins reserve UNCONDITIONALLY (even when flag-gated off); servers the SDK
+  discovers from settings/plugins under non-strict MCP config cannot be enumerated at declaration time —
+  that residual collision is a PUBLISHED bound, not a refusal. (4) `NATIVE_TOOL_NAMES` is a pinned
+  fixture drift-tested against the vendored sdk.d.ts (45 tool-input interfaces at 0.3.237). (5)
+  `turn/interrupt` and abortTurn settle pending calls ("turn interrupted") BEFORE awaiting the engine
+  interrupt — the same circular-wait shape as dispose. (6) Scorecard rows enter `probe-gated`; the flip
+  to shipped(M7) requires both keyed acceptance scenarios green after 2026-08-26 1pm.
