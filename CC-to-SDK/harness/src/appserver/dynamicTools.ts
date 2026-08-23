@@ -34,10 +34,17 @@ export const MAX_DYNAMIC_TOOLS = 32;
 /** Description length bound. Enforced by TASK 8's zod (shape); named here so the caps live in one file. */
 export const MAX_TOOL_DESCRIPTION_CHARS = 2_000;
 /** Per-tool `inputSchema` bounds: `Buffer.byteLength(JSON.stringify(schema), "utf8")`, containment depth,
- *  and total JSON values. Measured BEFORE conversion — see `measureSchema`. */
+ *  and total JSON values. Measured BEFORE conversion — see `measureSchema`.
+ *
+ *  THE NODE CAP IS SET TO STAY CO-BINDING WITH THE BYTE CAP. `walk` counts every JSON value, so an
+ *  ordinary described property costs ~2 nodes for ~22 bytes; at the plan's original 64 a fifteen-property
+ *  search tool was refused at 1,449 bytes — 18% of the byte cap — which made the node count the only
+ *  effective limit and put it inside the range of tools people actually write. 256 nodes is ≈5,600 bytes
+ *  at that density (~63 described properties), so the byte cap goes back to being the real ceiling and the
+ *  node cap keeps its actual job: refusing node-explosion schemas that stay small on the wire. */
 export const MAX_SCHEMA_BYTES = 8_192;
 export const MAX_SCHEMA_DEPTH = 8;
-export const MAX_SCHEMA_NODES = 64;
+export const MAX_SCHEMA_NODES = 256;
 /** Result bounds, owned by Task 3's `toCallResult`: over-cap results settle `isError` naming the cap,
  *  they never refuse the method. Named here with the rest. */
 export const MAX_RESULT_ITEMS = 16;
@@ -112,14 +119,19 @@ export const NATIVE_TOOL_MAP: Readonly<Record<string, string>> = Object.freeze({
  *  asymmetry also sets the inclusion bar: over-listing refuses declarations for no safety gain, so a name
  *  earns its place only with direct evidence.
  *
- *  Both sources are the shipped 0.3.237 binary. First, four live tools with no union member: `Skill`,
- *  `ToolSearch`, `LSP`, `SendMessage`. Second, the runtime's own legacy-alias table — names it still
- *  resolves to a canonical tool, so they are native identities a client would plausibly reach for. */
+ *  Both sources are the shipped 0.3.237 binary. First, six live tools with no union member: `Skill`,
+ *  `ToolSearch`, `LSP`, `SendMessage`, `ListAgents`, `SendUserMessage` — the last two also being the
+ *  canonical tools the alias keys `ListPeers` and `Brief` below resolve to, and listing a deprecated alias
+ *  while omitting the live name it resolves to is backwards. Second, the runtime's own legacy-alias table
+ *  — names it still resolves to a canonical tool, so they are native identities a client would plausibly
+ *  reach for. */
 export const RUNTIME_ONLY_NATIVE: readonly string[] = Object.freeze([
   "Skill",
   "ToolSearch",
   "LSP",
   "SendMessage",
+  "ListAgents",
+  "SendUserMessage",
   "Task",
   "KillShell",
   "KillBash",
@@ -187,8 +199,15 @@ type Measurement = { bytes: number; depth: number; nodes: number };
 /** Count every JSON value in the schema and the deepest containment level. Deliberately GENERIC — it walks
  *  the blob as JSON rather than as a schema, because it runs before anything has agreed the blob IS a
  *  schema. Scalars are one node at depth 0; a container is one node at `1 + max(child depth)`, so the
- *  smallest one-property schema measures depth 3 (root → `properties` → the property). Recursion is safe
- *  because the byte cap is checked first and bounds the tree. */
+ *  smallest one-property schema measures depth 3 (root → `properties` → the property).
+ *
+ *  WHAT KEEPS THIS RECURSION SAFE IS NOT THE BYTE CAP — that is compared afterwards, in `checkFunction`.
+ *  It is the `JSON.stringify` ahead of it in `measureSchema`: its recursion is the heavier of the two, so
+ *  a pathologically deep blob overflows THERE first, the `catch` returns `null`, and the caller answers
+ *  `inputSchema is not serializable` without this function ever running. The margin was measured, not
+ *  assumed — `stringify` gave way at ~8k levels of nesting where this walk still returned, and the
+ *  crossover moves with the host's stack but keeps its order. Every outcome is a refusal carrying a
+ *  message; nothing on this path may throw, or the method answers -32603 instead of naming the offender. */
 function walk(value: unknown): { depth: number; nodes: number } {
   if (typeof value !== "object" || value === null) return { depth: 0, nodes: 1 };
   let depth = 0;
@@ -260,6 +279,10 @@ export function validateDeclarations(specs: DynamicToolSpec[], occupiedServerNam
     return refuse(`too many dynamic tools: ${total} declared (max ${MAX_DYNAMIC_TOOLS})`);
   }
 
+  // Uniqueness is decided on the CANONICAL name, for the same reason the occupied-slot check below is:
+  // two namespaces are duplicates when they want one server slot, and `ops.a` and `ops_a` want the same
+  // one. Canonicalization is the identity under Task 8's shape regex, but this check does not lean on
+  // another layer's promise. The refusal names the namespace AS DECLARED.
   const namespaces = new Set<string>();
   for (const spec of specs) {
     if (spec.type !== "namespace") continue;
@@ -267,8 +290,9 @@ export function validateDeclarations(specs: DynamicToolSpec[], occupiedServerNam
     if (spec.name === RESERVED_NAMESPACE) {
       return refuse(`namespace "${RESERVED_NAMESPACE}" is reserved for bare tool declarations`);
     }
-    if (namespaces.has(spec.name)) return refuse(`duplicate namespace "${spec.name}"`);
-    namespaces.add(spec.name);
+    const canonical = canonicalServerName(spec.name);
+    if (namespaces.has(canonical)) return refuse(`duplicate namespace "${spec.name}"`);
+    namespaces.add(canonical);
   }
 
   // Canonical on BOTH sides. The declared side is regex-constrained by Task 8's shape gate, where

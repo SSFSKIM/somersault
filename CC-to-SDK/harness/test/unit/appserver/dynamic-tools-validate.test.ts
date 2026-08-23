@@ -19,11 +19,12 @@
 //   these rows drive both of its branches.
 //
 //   THE MODEL'S ATTENTION. Caps bound what one declaration can cost: 32 functions, and per tool an input
-//   schema of 8_192 UTF-8 bytes / 8 levels / 64 nodes. The boundary rows measure the fixture they built
-//   and assert the measured number, so a cap can never drift silently past a fixture that stopped testing
-//   it. The caps run BEFORE `jsonSchemaToZod`, which carries its own (unrelated, tighter-on-one-axis)
-//   `items` recursion limit — the ordering row proves a deep schema reports the DECLARATION cap rather
-//   than the converter's internal one.
+//   schema of 8_192 UTF-8 bytes / 8 levels / 256 nodes. Every boundary row builds a fixture that measures
+//   EXACTLY the cap, asserts that measurement independently of the module, and then asserts the refusal
+//   one unit over — so neither a cap that drifts nor a `>` that becomes a `>=` can slip past a fixture
+//   that stopped testing it. The caps run BEFORE `jsonSchemaToZod`, which carries its own (unrelated,
+//   tighter-on-one-axis) `items` recursion limit — the ordering row proves a deep schema reports the
+//   DECLARATION cap rather than the converter's internal one.
 //
 // THE DRIFT TEST. `NATIVE_TOOL_MAP` is a hand-written interface→runtime-name mapping, and the one thing
 // a hand-written mapping cannot do is notice that the SDK grew a tool. The drift row re-parses the
@@ -94,11 +95,29 @@ function schemaOfItemsDepth(wraps: number): Record<string, unknown> {
   return { type: "object", properties: { a: field } };
 }
 
-/** A flat schema with `count` string properties. Measured node count is `3 + 2 * count`. */
-function schemaOfProperties(count: number): Record<string, unknown> {
+/** The module's node definition, re-derived here: every JSON value counts once, containers included. The
+ *  boundary rows assert against THIS rather than against the fixture builder's arithmetic, the same way
+ *  the byte row asserts `Buffer.byteLength` — a fixture that silently stops sitting on the cap is exactly
+ *  how a boundary row goes quiet. */
+function countNodes(value: unknown): number {
+  if (typeof value !== "object" || value === null) return 1;
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.reduce<number>((n, child) => n + countNodes(child), 1);
+}
+
+/** A flat schema measuring EXACTLY `target` nodes. The empty base is 3 (root, its `type` string, the
+ *  `properties` object) and each string property adds 2 (its schema object and that object's `type`
+ *  string), so the family is odd; `additionalProperties: false` is the single scalar that buys the even
+ *  ones. Without it no fixture could land on an even cap — which is how the original 64 ended up with no
+ *  at-the-boundary accept at all. */
+function schemaOfNodes(target: number): Record<string, unknown> {
+  const needsScalar = (target - 3) % 2 === 1;
+  const count = (target - 3 - (needsScalar ? 1 : 0)) / 2;
   const properties: Record<string, unknown> = {};
   for (let i = 0; i < count; i++) properties[`p${i}`] = { type: "string" };
-  return { type: "object", properties };
+  const schema: Record<string, unknown> = { type: "object", properties };
+  if (needsScalar) schema.additionalProperties = false;
+  return schema;
 }
 
 describe("caps are named once", () => {
@@ -107,7 +126,7 @@ describe("caps are named once", () => {
     expect(MAX_TOOL_DESCRIPTION_CHARS).toBe(2_000);
     expect(MAX_SCHEMA_BYTES).toBe(8_192);
     expect(MAX_SCHEMA_DEPTH).toBe(8);
-    expect(MAX_SCHEMA_NODES).toBe(64);
+    expect(MAX_SCHEMA_NODES).toBe(256);
     expect(MAX_RESULT_ITEMS).toBe(16);
     expect(MAX_RESULT_PAYLOAD_BYTES).toBe(131_072);
     expect(RESERVED_NAMESPACE).toBe("dyn");
@@ -141,14 +160,27 @@ describe("the native tool catalog", () => {
     expect(new Set(Object.keys(NATIVE_TOOL_MAP))).toEqual(new Set(mapped));
   });
 
-  it("pins the three renamed file tools", () => {
+  // Set equality above guards the KEYS only. These seven values are the ones stripping `Input` gets wrong
+  // — precisely the ones a future editor would "correct" into wrongness — so they are pinned here rather
+  // than living only in a report. All seven were read out of the shipped 0.3.237 binary: the file trio
+  // from its legacy-alias table, the three MCP-resource tools from the same table with their `Tool`
+  // suffixes (the bare `ReadMcpResource`/`ListMcpResources` appear there only as alias KEYS, while the
+  // `…Tool` names appear in the live tool roster), and `propose_skills` from that roster too.
+  it("pins the seven mappings that are not the obvious Input-strip", () => {
     expect(NATIVE_TOOL_MAP.FileEditInput).toBe("Edit");
     expect(NATIVE_TOOL_MAP.FileReadInput).toBe("Read");
     expect(NATIVE_TOOL_MAP.FileWriteInput).toBe("Write");
+    expect(NATIVE_TOOL_MAP.ListMcpResourcesInput).toBe("ListMcpResourcesTool");
+    expect(NATIVE_TOOL_MAP.ReadMcpResourceInput).toBe("ReadMcpResourceTool");
+    expect(NATIVE_TOOL_MAP.ReadMcpResourceDirInput).toBe("ReadMcpResourceDirTool");
+    expect(NATIVE_TOOL_MAP.ProposeSkillsInput).toBe("propose_skills");
   });
 
   it("appends the runtime-only natives to the mapped names", () => {
     expect(RUNTIME_ONLY_NATIVE).toEqual(expect.arrayContaining(["Skill", "ToolSearch", "LSP", "SendMessage"]));
+    // The canonical tools the deprecated alias keys `ListPeers` and `Brief` resolve to; both are in the
+    // binary's live roster. Guarding the alias but not its target would be backwards.
+    expect(RUNTIME_ONLY_NATIVE).toEqual(expect.arrayContaining(["ListAgents", "SendUserMessage"]));
     expect(NATIVE_TOOL_NAMES).toEqual([...Object.values(NATIVE_TOOL_MAP), ...RUNTIME_ONLY_NATIVE]);
     expect(new Set(NATIVE_TOOL_NAMES).size).toBe(NATIVE_TOOL_NAMES.length);
   });
@@ -219,9 +251,41 @@ describe("validateDeclarations — the per-tool schema caps", () => {
     expect(message).not.toContain("too deeply nested");
   });
 
-  it("accepts 63 nodes and refuses 65", () => {
-    accepted([fn("narrow", schemaOfProperties(30))]);
-    expect(refusal([fn("wide", schemaOfProperties(31))])).toBe('tool "wide": inputSchema has 65 nodes (max 64)');
+  it("accepts a schema of exactly MAX_SCHEMA_NODES and refuses one node more", () => {
+    const atCap = schemaOfNodes(MAX_SCHEMA_NODES);
+    expect(countNodes(atCap)).toBe(256);
+    // The node fixture must stay well inside the byte cap or it would be refused for the wrong reason —
+    // which is the whole point of the amended 256: the two caps are now roughly co-binding, not wildly
+    // apart, and 256 nodes of ordinary described properties is still only a few thousand bytes.
+    expect(Buffer.byteLength(JSON.stringify(atCap), "utf8")).toBeLessThan(MAX_SCHEMA_BYTES);
+    accepted([fn("narrow", atCap)]);
+
+    const overCap = schemaOfNodes(MAX_SCHEMA_NODES + 1);
+    expect(countNodes(overCap)).toBe(257);
+    expect(refusal([fn("wide", overCap)])).toBe('tool "wide": inputSchema has 257 nodes (max 256)');
+  });
+
+  // A fifteen-property described tool is an ordinary declaration, and under the original cap of 64 it was
+  // refused at 1,449 bytes — 18% of the byte cap. This row is the one that fails if the node cap is ever
+  // tightened back down to where it refuses tools people actually write.
+  it("accepts a fifteen-property described tool", () => {
+    const properties: Record<string, unknown> = {};
+    for (let i = 0; i < 15; i++) {
+      properties[`field${i}`] = { type: "string", description: `what field ${i} is for` };
+    }
+    const schema = { type: "object", properties, required: Object.keys(properties), additionalProperties: false };
+    accepted([fn("form", schema)]);
+  });
+
+  // NOTHING IN THE MEASURE MAY THROW — a throw is a -32603 for a declaration the client could have fixed.
+  // What protects the recursive walk is not the byte cap (that is compared afterwards) but the
+  // `JSON.stringify` ahead of it: measured on this host, `stringify` gives way at ~8k levels while the
+  // walk survives past 8k, so the walk is never handed a tree it cannot descend and the `catch` answers
+  // `not serializable` instead. The row pins the outcome, not which refusal — the crossover depth moves
+  // with the host's stack, and both messages are equally correct answers.
+  it("answers a pathologically deep schema with a refusal, never a throw", () => {
+    const message = refusal([fn("abyss", schemaOfItemsDepth(20_000))]);
+    expect(message.startsWith('tool "abyss": inputSchema is')).toBe(true);
   });
 
   it("names the converter's keyword and the tool when the schema is outside the subset", () => {
@@ -237,6 +301,14 @@ describe("validateDeclarations — namespace names", () => {
 
   it("refuses a duplicate namespace", () => {
     expect(refusal([ns("ops", fn("run")), ns("ops", fn("other"))])).toBe('duplicate namespace "ops"');
+  });
+
+  // Two namespaces are duplicates when they want ONE server slot, and the slot is the canonical name.
+  // Task 8's shape regex would reject the dot before this check ever ran, but the neighbouring
+  // occupied-slot check declines to rely on that promise and so does this one; the message still names the
+  // namespace as the client declared it.
+  it("refuses two namespaces whose canonical names collide", () => {
+    expect(refusal([ns("ops.a", fn("run")), ns("ops_a", fn("other"))])).toBe('duplicate namespace "ops_a"');
   });
 
   it("refuses __ in a namespace", () => {
@@ -299,6 +371,13 @@ describe("validateDeclarations — function names", () => {
   it("refuses a function named after a runtime-only native outside the union", () => {
     expect(refusal([fn("Skill")])).toBe('tool "Skill" is the name of a native tool');
     expect(refusal([ns("ops", fn("ToolSearch"))])).toBe('tool "ToolSearch" is the name of a native tool');
+  });
+
+  it("refuses a function named after an alias target as well as the alias", () => {
+    expect(refusal([fn("ListPeers")])).toBe('tool "ListPeers" is the name of a native tool');
+    expect(refusal([fn("ListAgents")])).toBe('tool "ListAgents" is the name of a native tool');
+    expect(refusal([ns("ops", fn("Brief"))])).toBe('tool "Brief" is the name of a native tool');
+    expect(refusal([ns("ops", fn("SendUserMessage"))])).toBe('tool "SendUserMessage" is the name of a native tool');
   });
 });
 

@@ -67,7 +67,10 @@ export const dynamicToolSpec = z.discriminatedUnion("type", [
 **Declaration caps — the model-context guard the wire cap is not** (review finding 1: peer.ts's 256 KiB
 frame bounds the REQUEST, not what lands in every later model turn):
 `MAX_DYNAMIC_TOOLS = 32` functions total across namespaces; per-tool `inputSchema` ≤ 8 KiB serialized,
-≤ 8 levels deep, ≤ 64 schema nodes; `MAX_TOOL_DESCRIPTION_CHARS = 2_000`. Refused loudly at
+≤ 8 levels deep, ≤ **256** schema nodes (execution amendment, 2026-08-24: under the generic-JSON node
+counting Task 2 defined — every JSON value is one node — the original 64 refused a 15-property tool at
+65 nodes while the byte cap never fired; 256 ≈ 5,600 bytes keeps the two caps co-binding);
+`MAX_TOOL_DESCRIPTION_CHARS = 2_000`. Refused loudly at
 `thread/start`, each with a message naming the offender — as are: a name colliding with the native tool
 catalog or with any configured MCP server name ([[sdk-mcp-tool-shadowing-and-permission]]), a duplicate
 name, the reserved namespace `dyn`, and a schema outside the conversion subset (the message names the
