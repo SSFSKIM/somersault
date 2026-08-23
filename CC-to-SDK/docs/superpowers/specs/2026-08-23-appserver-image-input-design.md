@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-23 · **Owner approval:** design A of the product-trio presentation, approved verbatim.
 **Grounding:** `docs/superpowers/grounding/2026-08-23-product-trio-ground.md` §1.
-**Rev 2** after the adversarial spec review (nine findings, all accepted — Revision Notes).
+**Rev 3** — rev 2 absorbed the adversarial spec review (nine findings), rev 3 the plan review's
+contract-level findings (Revision Notes).
 
 ## Purpose
 
@@ -57,13 +58,22 @@ export const turnStartParams = z.object({
 
 ## Canonical ordering — one contract for both origins
 
-The items form is **canonicalized, and the canonical form is the contract**: the text items concatenate
-in declaration order into ONE text fold; images follow in declaration order; degrade notes append at the
-end, in image order. This is exactly what the engine's `assembleUserContent` builds and what the host
-already reassembles on the staging path (`host.ts` — text, then staged images, then failure notes) — so
-inProcess and fleet turns deliver the model **the same input**, and an interleaved
-`text A → image → text B` request is defined (fold `AB`, then the image) rather than
-origin-dependent. (Review finding 4: without this, the two origins provably diverged.)
+The items form is **canonicalized, and the canonical form is the contract**: ONE text block carrying the
+text fold (text items concatenated in declaration order) with degrade notes appended to ITS end (in
+image order), followed by the surviving images in declaration order. This is the shape the host wire
+already produces — `chatAdapter`'s staging loop appends failure notes into the leading text and the host
+reassembles text-then-images — and `assembleUserContent(foldPlusNotes, images)` builds the identical
+block array in-process, so inProcess and fleet turns deliver the model **the same input**, byte for
+byte. An interleaved `text A → image → text B` request is defined (fold `AB`, then the image) rather
+than origin-dependent. (Spec-review finding 4 caught the divergence; plan-review finding 1 caught that
+rev 2's "notes after images" variant was UNSATISFIABLE on the host wire, which folds every text block
+into its single leading `text` — the contract now states the one shape both wires can carry.)
+
+A corollary with teeth: **the resolver enforces the FULL image cap suite itself** — sniffed bytes,
+strict base64 (alphabet/padding validated before decode), `MAX_DIMENSION`, per-image budget, aggregate
+budget — so no block it emits can still be degraded downstream. `normalizeTurnInput` replaces a failing
+image IN PLACE with a text block, which would break the canonical shape and differ across origins; the
+resolver leaving it nothing to degrade is what keeps the contract true.
 
 ## Item → engine delivery
 
@@ -87,8 +97,10 @@ export async function resolveInputItems(items: InputItem[]): Promise<UserTurnInp
   materialized (review finding 2). Unreadable, non-regular, oversize, or non-image all degrade to an
   appended note naming the client's own path.
 - The assembled block array then flows through the existing authoritative seam (`normalizeTurnInput` at
-  the Session builder; the staging client's own header-decode for fleet) — `turnItems.ts` converts and
-  pre-bounds; it does not replace the cap suite.
+  the Session builder; the staging client's own header-decode for fleet) — those seams stay authoritative
+  for THEIR callers, but for items input the resolver has already enforced the identical suite, so they
+  find nothing to degrade (see "Canonical ordering" — this is a contract requirement, not an
+  optimization).
 
 ## Admission and the queue — reservation before I/O
 
@@ -131,7 +143,11 @@ as open follow-up; `stageImage`'s row moves `unscored → N/A` ("host-local tran
 app-server bridges to it as a staging CLIENT on the fleet path"); the `prompt` row's gap-11 note and
 the `turn/start` row update (the row now names the input union so the name-level walker's blindness to
 field shapes is at least written down); the per-landing sweep restates. `node scripts/drift-check.mjs`
-exits 0 with `unparsed 0`.
+exits 0 with `unparsed 0`. The PUBLISHED wire schema is part of the same change: `npm run emit-schema`
+regenerates `schema/json/stable/appserver.json` (exported as `./appserver/schema/stable.json`), whose
+`turn/start.input` currently publishes string-only; the union ships in the artifact, with the
+absolute-path rule stated in the item's `description` (zod `refine`s do not emit to JSON Schema, so the
+published shape is documented as looser than runtime validation rather than silently so).
 
 ## Acceptance (behavior-phrased)
 
@@ -208,6 +224,14 @@ Pending — written at finish.
 ## Revision Notes
 
 - rev 1 (2026-08-23): initial spec from the approved design-A presentation.
+- rev 3 (2026-08-23): plan review (codex, eight findings, all accepted after verification) folded back:
+  canonical ordering restated as the one shape both wires carry (notes at the fold's end, before the
+  image blocks) after the "notes after images" variant proved unsatisfiable on the host wire; the
+  resolver now owns the FULL cap suite (incl. `MAX_DIMENSION` + strict base64) so downstream in-place
+  degradation can never split the canonical text block; the published JSON schema artifact
+  (`emit-schema`) joins the closure. Execution-level findings (post-resolution latch re-checks, the
+  fleet submit reservation, the shared `EngineSession` widening + the `turnInput.test.ts:279` scope
+  pin, discriminating cleanup tests) live in the plan's tasks.
 - rev 2 (2026-08-23): adversarial review (codex, nine findings, all accepted after verification):
   one-descriptor bounded reads replace stat-then-read; item-count + pre-I/O budget guards; resolution
   moved inside the execution slot with raw-input admission/queueing; canonical ordering published as
