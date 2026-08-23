@@ -222,9 +222,103 @@ Keyed (quota-gated — run after 2026-08-26 1pm):
   a failed write leaks the minted file until the sweep). Found by the spec review reading the code
   against the spec's "every failure path cleans" sentence — the sentence was the trap that exposed it.
 
+Found during execution (T1–T5):
+
+- **The staging window has no end-to-end test, and building one needs a production change** — so it was
+  named instead of smuggled in. `HostServer` dispatches `stageImage` SYNCHRONOUSLY
+  (`return { ok: true, ...this.handlers.stageImage(...) }`, `src/host/server.ts:209`), so a handler that
+  returned a promise would spread to nothing and the reply would carry no `path`: the fake host cannot
+  hold a stage reply open, which is exactly what a test of "an interrupt arriving mid-staging" requires.
+  The window is therefore pinned one level down, at the `fleetEngine` unit level over a fake socket
+  (`startStagingHost({ holdStage: true })`, which CAN withhold it). The cheapest honest route to the
+  end-to-end row is making that dispatch `await` its handler — a one-word change to the host wire, with
+  its own review, and out of scope here.
+- **Two guards can be indistinguishable at the reply and still not be redundant.** The sabotage pass
+  deleted `fleetTurnStart`'s post-resolution latch re-check and the suite stayed GREEN: the engine's own
+  `aborted` hook, one await later on the far side of staging, catches the same latch and answers with a
+  byte-identical `-33001`. What separates them is whether the host was touched at all — without the
+  turns.ts guard a `stageImage` op still goes out and a file is still minted on the host's disk. The rows
+  now assert that a stopped turn produced NO host I/O, which is both the discriminating assertion and the
+  honest statement of the property. Generalized: when two layers produce the same client-visible outcome,
+  only the side effect tells them apart.
+- **A zod `.refine` does not reach the published artifact — confirmed by regenerating it, not assumed.**
+  `emit-schema` publishes `image.url`'s `maxLength`/`pattern` but nothing at all for `localImage`'s
+  absolute-path refinement, so the rule lives in the item's `.describe(…)`, where it does survive. The
+  published shape is looser than runtime validation; the spec's job was to make that stated rather than
+  silent, and the artifact now says so in prose a client reads.
+- **The per-item caps interact in a way that leaves one budget nearly dead on the wire path.** With
+  `MAX_DATA_URL_CHARS` at 240,000 and `MAX_IMAGES_PER_PROMPT` at 20, data: URLs alone top out near 3.6 MB
+  — under the 5 MiB per-turn aggregate — so the aggregate binds only on `localImage` turns. It is not
+  dead code, but anyone reading the wire path alone would conclude it is.
+- **Widening `EngineSession.submit` broke no test fake, because TypeScript method parameters are
+  bivariant.** Five app-server suites still declare `submit(prompt: string, …)` and compile clean against
+  the `UserTurnInput` signature. A widening the typechecker cannot fail is a widening no existing test
+  notices — the new coverage had to be written deliberately rather than provoked.
+
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped 2026-08-23/24 on `appserver-image-input`, five tasks, against the Purpose as written.** A
+fleet-origin thread could not send an image at all when this spec opened; it can now, over the same
+`turn/start` a text turn uses, and scorecard gap 11 closes with its bound published rather than left to
+be discovered in production.
+
+What landed, in build order:
+
+1. **`client/stagedSubmit.ts`** — the staging loop moved out of `chatAdapter`, with the one named repair:
+   a minted path is tracked the moment `stageImage` returns it, before the write, so a failed write no
+   longer leaks the file until the orphan sweep.
+2. **`EngineSession.submit` widened to `UserTurnInput`**, and `fleetEngine` stages arrays behind a
+   synchronous reservation.
+3. **`appserver/turnItems.ts`** — the one conversion, owning the FULL cap suite (strict base64,
+   sniffed-bytes media type, `MAX_DIMENSION`, per-image and aggregate budgets, one-descriptor bounded
+   reads) so the downstream seam finds nothing to degrade and the canonical text block cannot split.
+4. **The wire**: `turnStartParams.input` as the union, raw admission with in-slot resolution, the queue
+   widened to store raw items, post-resolution latch re-checks on both origins, and the published
+   JSON-Schema artifact regenerated in the same change.
+5. **Closure**: the scorecard sweep above, and the keyed live test.
+
+**Verification at closure.** All seven keyless acceptance rows green: `turns.test.ts` 26/26,
+`turn-items.test.ts` 20/20, the extraction trio (`stageImage` + `client-chat-adapter` + `fleet-engine`)
+88/88, `host-image-transport.test.ts` 15/15, the legacy-skew rows inside rows 1 and 3, the full
+`test/unit/appserver` suite 1180/1180 across 71 files, and `drift-check.mjs` exit 0 with 100 rows and no
+`unparsed` bucket. **Row 8, the keyed one, has been written and has only ever SKIPPED**: the Claude
+weekly quota was exhausted through 2026-08-26 1pm, so `test/live/appserver-image-input.test.ts` is a
+clean keyless skip and nothing more. Until its first keyed run, "a real model reads the pixels an items
+turn delivers" is an unobserved claim in this round, and the file's own header says so.
+
+**What the reviews changed.** Four per-task reviews: 0 critical, 4 important, 23 minor. The importants
+were all real and all structural — an interrupt arriving mid-staging reaching the host BEFORE the prompt
+(which became `fleetEngine.submit`'s `aborted` hook), the nothing-left-to-degrade contract needing its
+own row, the fleet items happy path being unpinned, and a stopped turn reporting `completed` to every
+subscriber. None was a rewrite; each was a property the code did not yet state.
+
+**Gaps left open, each deliberately:**
+
+- **A REMOTE client with an image over ~190 KB has no v1 path.** The named follow-up (staged or chunked
+  upload, the D-M4-8 bridge family). This is the one place the closure is a bound rather than a "yes".
+- **`turn/steer` stays text-only** — an X-gated surface, per the decision log.
+- **No end-to-end staging-window test** (see Surprises): the host's synchronous `stageImage` dispatch
+  makes one impossible without a production change; the window is pinned at the `fleetEngine` unit level.
+- **`MAX_AGGREGATE_BYTES` is duplicated** between `turnItems.ts` and `session/turnInput.ts`, where it is
+  module-private. They MUST stay equal or the downstream seam regains something to degrade in place. A
+  one-line export would remove the drift risk.
+- **Field-level drift remains invisible to the walker.** This landing widened `turn/start`'s params
+  without moving a single walked token, so no generated instrument could report it — the mirror image of
+  the `prompt.images` blindness gap 11 was opened for.
+
+**Lessons worth carrying out of this round:**
+
+- **Loudness can be bought by SHAPE instead of by protocol.** F9 gave `stageImage` its own op so an old
+  host would answer "unknown op"; here a union in an existing method's params bought the same guarantee
+  for free, because an old server's `z.string()` refuses an array outright. Reach for a new op when the
+  transport is new — not when only the payload is.
+- **Publish the bound with the capability.** The frame cap was going to decide the maximum image size
+  whether or not anyone wrote it down; writing it into the spec, the schema's `.describe`, and the
+  scorecard row is what turns it from a production surprise into a client's design input.
+- **Assert the side effect when the reply cannot discriminate** (the sabotage hole above).
+- **An `unscored` row is a legitimate scorecard state and it earned its keep.** It held gap 11's open
+  product question across two sweeps without pretending either way, and moved to `N/A` only once a
+  decision existed to record. A vocabulary with no way to say "undecided" would have forced a lie.
 
 ## Revision Notes
 

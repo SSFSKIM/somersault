@@ -60,8 +60,12 @@ limit clamped to 500 + `warning`; disk-only on BOTH origins — M3 Task 11 verif
 no branch, since the pager already reads only persisted rows under `record.sessionId` and never merges
 the live per-turn buffer, which is exactly §1f's rule), `thread/compact/start` (compaction is a turn — same `beginTurn`
 spine — on an inProcess thread; a fleet thread forwards the bare host op with no turn at all, §1d),
-`turn/start` (Wave 4's `queue: true` flag enqueues instead of refusing when the thread is busy
-with a turn — see gap 1), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
+`turn/start` (its `input` is a UNION since 2026-08-23 — a plain string, or an items array of
+`text` / `image` / `localImage` mirroring Codex's own `UserInput` list, resolved to engine content blocks
+inside the turn's execution slot and delivered over BOTH origins; that is the app-server's image surface
+and the close of gap 11, with the caps it publishes stated there. Wave 4's `queue: true` flag enqueues
+instead of refusing when the thread is busy with a turn — see gap 1 — and it queues the RAW input, so a
+drained items turn is byte-for-byte a directly started one), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
 `decision/list`, `decision/respond`, `thread/model/set`,
 `thread/permissionMode/set` (`auto` self-heals the model first), `thread/thinking/set`,
 `thread/settings/apply`, `thread/capabilities/read` (M5 Task 13 adds ONE derived field beside the engine's
@@ -473,22 +477,47 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     otherwise recover TRUNCATED at a stale anchor, or fork to a new id while `record.sessionId` kept
     reporting the old one.
 
-11. **The app-server has no image surface, and the gate found only half of that** — gap 3's mirror
-    image. There, methods had no backing host op; here a host op has no method. F9 T-IMAGE (`9d823d0bf3`)
-    grew `host/ops.ts` a `stageImage` op and grew `prompt` an `images` claim array, and neither reached
-    `appserver/`: `git grep stageImage` under that directory returns nothing, so a fleet-origin thread
-    cannot send an image at all. **Whether it should is an open product question, deliberately not
-    answered here** — the scorecard's job is to stop the absence being invisible, not to commit the
-    roadmap to a `turn/stageImage`.
+11. **CLOSED 2026-08-23, with the bound published rather than left to be discovered** (kept at this
+    number so older references still resolve). This entry used to read "the app-server has no image
+    surface, and the gate found only half of that" — gap 3's mirror image, where a host op had no method
+    — and it deliberately left the product question open. The spec
+    [`2026-08-23-appserver-image-input-design.md`](../superpowers/specs/2026-08-23-appserver-image-input-design.md)
+    answers it, and the answer is NOT a `turn/stageImage`: **`turn/start`'s `input` widened from a string
+    to `string` or `InputItem[]`** (`text` / `image` / `localImage`, mirroring Codex's own `UserInput`
+    list), resolved once into engine content blocks and delivered over both origins — inProcess through
+    `session.submit`, fleet by staging those blocks over the host's `stageImage` op and claiming them in
+    `prompt.images`. A UNION rather than an optional `images` field, because a non-strict zod object
+    SILENTLY STRIPS an unknown optional field on an old server, while it refuses an items array outright
+    with `-32602 INVALID_PARAMS`: the same loud-skew property F9 gave `stageImage` its own op for,
+    obtained here by shape instead of by negotiation.
 
-    Two things are worth separating, because only one of them was catchable. The MISSING ROW went red
-    on the registry-coverage gate the moment the op landed — correctly, and it stayed red on `main`
-    from `9d823d0bf3` until this entry, because the gate is run as part of the drift ritual and the F9
-    wave did not run one. The `prompt.images` shortfall went undetected and would have stayed that way:
-    **the walker matches token NAMES, so an op that grows a new capability inside an existing schema
-    keeps its green row and its `both`.** A name-level instrument cannot see a field-level gap, which is
-    the same rot the M6 settings-key gate was built for, one level further down. Closing it means
-    walking op SHAPES, not op names — unbuilt, and named here rather than assumed.
+    **The v1 bound, stated because a client has to plan around it.** `image.url` admits `data:` URLs only
+    — Codex parity, not a shortfall: Codex's own app-server refuses remote image URLs
+    (`codex-rs/app-server/src/request_processors/turn_processor.rs`, `validate_user_input_image_urls` →
+    `REMOTE_IMAGE_URL_ERROR`) — and this server caps an inbound frame at 256 KiB (`appserver/peer.ts`
+    `MAX_IN`), so the schema caps one data: URL at `MAX_DATA_URL_CHARS` = 240,000 characters, **≈190 KB
+    decoded** once the JSON envelope is paid for. A larger image reaches the model over `localImage`, an
+    ABSOLUTE path on a filesystem the server shares — so a LOCAL client has no ceiling worth naming, and
+    **a REMOTE client with an image over ~190 KB has no v1 path at all.** That is the reason this gap
+    closes with a bound rather than as a flat "images work": the remaining case is named as the open
+    follow-up (a staged or chunked upload — the D-M4-8 bridge family), not quietly scored away. The rest
+    of the published caps, so no client has to learn them by refusal: `MAX_INPUT_ITEMS` = 64 items per
+    turn and the data-URL length are SHAPE errors (`-32602`); `MAX_IMAGES_PER_PROMPT` = 20, counted over
+    the DECLARED items before a byte is read, plus a 512,000-byte per-image budget and a 5 MiB per-turn
+    aggregate, degrade the offending image to an appended text note and let the turn run.
+
+    Two things were worth separating, because only one of them was catchable — and that half outlives the
+    gap. The MISSING ROW went red on the registry-coverage gate the moment the op landed — correctly, and
+    it stayed red on `main` from `9d823d0bf3` until this entry was first written, because the gate is run
+    as part of the drift ritual and the F9 wave did not run one. The `prompt.images` shortfall went
+    undetected and would have stayed that way: **the walker matches token NAMES, so an op that grows a new
+    capability inside an existing schema keeps its green row and its `both`.** A name-level instrument
+    cannot see a field-level gap, which is the same rot the M6 settings-key gate was built for, one level
+    further down. Closing THAT means walking op SHAPES, not op names — still unbuilt, and still named here
+    rather than assumed. This landing is the same blindness from the other side: it widened `turn/start`'s
+    own params without moving a single walked token, so nothing generated could report it. Which is why
+    the `prompt` and `turn/start` rows now spell the union out in prose — the only instrument that can see
+    a field is a sentence.
 
 **Since M3 Task 10 the `both` in this table is literal, not forward-looking — and since Task 11 that
 holds for the four swap-family rows too (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), whose
@@ -510,8 +539,8 @@ this origin. The dedup guard goes with it: a re-add forwards, and the host decid
 | `stop` | host/ops.ts | `thread/stop` | both | shipped(M3) — ends the SESSION, origin-branched: the host op for a fleet thread (EOF is the contract — no receipt is awaited — then the roster row must turn terminal within a bounded poll, `-33008` naming the stuck state if it does not, record left standing), `thread/close`'s own path for an inProcess one. Both announce `thread/closed {reason:"stopped"}` |
 | `pending` | host/ops.ts | `decision/list` | both | shipped(M1) |
 | `answer` | host/ops.ts | `decision/respond` | both | shipped(M1) — Wave T wire shapes (see above) |
-| `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) — **text only**: F9 T-IMAGE grew this op an `images` claim array that `turn/start` does not carry, so the row's `both` is true of the op and not of its whole schema (gap 11). A field-level shortfall the walker cannot see — it matches TOKEN names, so an op that grows a capability keeps a green row |
-| `stageImage` | host/ops.ts | **none** | N/A | **unscored — gap 11.** F9 T-IMAGE Task 5 (I3b): mints a staging file for ONE image and replies with the path the client writes the bytes to, over the filesystem rather than the socket, before claiming it in `prompt`'s `images`. Its own op deliberately, so an old host answers "unknown op" and the skew is LOUD (a bare field on `prompt` would be silently stripped). The app-server names no image surface at all — not this op, not `prompt.images` — so images are host-local today and a fleet thread cannot send one. Scored `unscored` rather than `N/A`: `N/A` in this table means *decided not to expose*, and nobody has decided this |
+| `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) — **carries images since 2026-08-23** (gap 11, CLOSED): `turn/start`'s `input` is a string OR an `InputItem[]` of `text` / `image` / `localImage`, and on the fleet origin the resolved image blocks are staged over the host's `stageImage` op and claimed in THIS op's `images` array, through the loop `client/stagedSubmit.ts` shares with the TUI path. `both` is now true of the op's whole schema. It was not before, and the row said `shipped(M1) — text only` while staying green and `both` for as long as that lasted: the walker matches TOKEN names, so an op that grows a capability inside an existing schema keeps its row. The union is written here because nothing generated can see it |
+| `stageImage` | host/ops.ts | **none** | N/A | N/A — **host-local transport by design; the app-server bridges to it as a staging CLIENT on the fleet path** (gap 11's decision, 2026-08-23). F9 T-IMAGE Task 5 (I3b): mints a staging file for ONE image and replies with the path the client writes the bytes to, over the filesystem rather than the socket, before claiming it in `prompt`'s `images`. Its own op deliberately, so an old host answers "unknown op" and the skew is LOUD (a bare field on `prompt` would be silently stripped) — `fleetEngine.submit` surfaces exactly that as the turn refusal the TUI path already got. No app-server METHOD mirrors it and none should: staging is a filesystem handshake between a host and a process that shares its disk, so a remote client could not use a mirrored method anyway, and the app-server's own image surface is `turn/start`'s input union, which it resolves and then bridges DOWN to this op. This row read `unscored` for two sweeps because `N/A` here means *decided not to expose* and nobody had decided; the decision exists now, so the row states it |
 | `interrupt` | host/ops.ts | `turn/interrupt` | both | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
 | `follow` | host/ops.ts | `thread/subscribe` | both | shipped(M1) |
 | `unfollow` | host/ops.ts | `thread/unsubscribe` | both | shipped(M1) |
@@ -748,19 +777,28 @@ already parses every row for its staleness pass, so since M3 Task 15 it tallies 
 lines on every run — `N rows by status` and `N rows by origin scope`. Run it; between runs the authority
 is each row's own `status` and `origin scope` column, as it always was.
 
-What those two lines say at this sweep (**M6 scorecard repair, 2026-08-22** — restated per landing, never
+What those two lines say at this sweep (**app-server image input, 2026-08-23** — restated per landing, never
 trusted between them): **100 rows, 97 of them shipped** (2 of those `shipped(M4)`, 9 `shipped(M5)`), the
-remaining three being the `N/A` pair — `seedReadState`
-(internal plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row) —
-plus `stageImage`, which the gate prints in a bucket of its own as **`unparsed 1`**. That bucket is
-deliberate and should stay: the row's status is outside the shipped/`N/A` vocabulary because the surface
-is genuinely unscored (gap 11), and forcing it to `N/A` would file an undecided question as a decision.
-An `unparsed` count above 1 means a row's status really is malformed.
+remaining three being the `N/A` trio — `seedReadState`
+(internal plumbing, no protocol method by design), `readFile` (probe-dead at 0.3.220, see its row) and now
+`stageImage`, whose status moved `unscored → N/A` in this landing — so the status line prints **no
+`unparsed` bucket at all**, the tally listing only buckets it counted: `unparsed 0` reads as absence.
+That bucket was a deliberate 1 for the two sweeps before this one: `unscored` sat outside the
+shipped/`N/A` vocabulary precisely because the surface was genuinely undecided (gap 11), and forcing it to
+`N/A` then would have filed an open question as a decision. The question has an answer now — host-local
+transport by design, the app-server bridging to it as a staging client while its own image surface is
+`turn/start`'s input union — so `N/A` states a decision instead of hiding one. **An `unparsed` count above
+zero now means a row's status really is malformed.**
 
-The previous sweep read **99 rows, 97 shipped** at M5 Task 11 (2026-08-19); the delta is `stageImage`'s
-row alone. The lesson the delta carries: that sweep was accurate the day it was written and wrong within
-two days, because a landing in ANOTHER wave (F9's image transport) grew a walked source without running
-this gate. Restating per landing only works if every landing that touches a walked source counts as one.
+The previous sweep read **100 rows, 97 shipped, `unparsed 1`** at the M6 scorecard repair (2026-08-22);
+neither count moves here, and that is the whole shape of this landing — it registers no method and adds no
+row, it widens an existing method's params and answers an existing row's open question. The sweep before
+that read **99 rows, 97 shipped** at M5 Task 11 (2026-08-19), and the delta was `stageImage`'s row alone.
+The lesson that delta carries is still the one to keep: that sweep was accurate the day it was written and
+wrong within two days, because a landing in ANOTHER wave (F9's image transport) grew a walked source
+without running this gate. Restating per landing only works if every landing that touches a walked source
+counts as one — including a landing like this one, which grew no walked source at all and still had to run
+the gate to be able to say so.
 **Three buckets are empty, each emptied by a nameable landing:** `planned(...)` by M3 Task 9, when
 `thread/stop` shipped; `probe-gated` by M2b Wave 4's Task 5, which probed all four gated tokens live on
 2026-08-11 (three promoted — `streamInput`, `reloadPlugins`, `reloadSkills` — and one retired to `N/A`);
