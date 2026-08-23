@@ -12,7 +12,7 @@ import type { CommandEntry } from "./commandComplete.js";
 // module cycle editorHistory.ts documents: hoisted `function` declarations, nothing called at module-eval
 // time. Everything this file used to export from that section is re-exported below, so no caller moved.
 import { acceptCommand, acceptGhost, acceptMention, commandActive, completionActive, ghostText, mentionActive, moveCommand, moveMention, syncCompletions } from "./completions.js";
-export { commandActive, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, mentionActive, setCommandCatalog, setMentionFiles, suggestPopupShown, syncCompletions } from "./completions.js";
+export { commandActive, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, mentionActive, setCommandCatalog, setMentionFiles, setSuggestionIndex, suggestPopupShown, syncCompletions } from "./completions.js";
 export type { GhostText } from "./completions.js";
 import { CHIP_CHARS, chipContaining, chipEndingAt, chipStartingAt, deleteTokenBefore, imageChipLabel, ingestPaste, snapOut, substituteChips, sweepOrphanImages } from "./pasteChips.js";
 // F5 task 7: the history WALK moved out to its own module (the plan's pre-allocated split), leaving this file
@@ -129,6 +129,14 @@ export interface EditorResult {
    *  image/image-failed entry rides to `onSubmit` structurally; every OTHER reader of `EditorResult` — every
    *  existing test that reads `.submit` — is unaffected, because `submit`'s own value never changed. */
   submission?: ComposerSubmission;
+  /** F10 T-HOVER Task 2 (CM33) — TRUE when this keystroke was consumed by the SUGGESTION POPUP as
+   *  navigation — the exact condition `onUp`/`onDown` branch on (`commandActive(s) || mentionActive(s)`),
+   *  reported rather than derived from a (prev, next) index diff. The diff is not the same predicate:
+   *  both popups WRAP, so it is right at the list bounds and wrong on a one-item list, where the arrow is
+   *  recognized and the index cannot move. Reporting also means a rebound key that routes through
+   *  `onUp`/`onDown` clears too, and a keystroke that merely happens to move the index (a click's own
+   *  `setSuggestionIndex`) does not. Canon: L602029 / L602031. */
+  suggestionNav?: true;
 }
 /** Minimal structural subset of ink's Key the reducer reads (so editor.ts needs no ink import). */
 export interface KeyFlags {
@@ -437,6 +445,13 @@ function onDown(s: EditorState): EditorState {
   if (mentionActive(s)) return moveMention(s, 1);
   return syncCompletions(s.cursor.row === s.lines.length - 1 ? historyNext(s, inputMode(s)) : moveCursorVert(s, 1));
 }
+/** F10 T-HOVER Task 2 (CM33) — the arrow-clear signal, in exactly one place. `s` is the PRE-key state (the
+ *  predicate `onUp`/`onDown` themselves branch on), `next` is `onUp(s)`/`onDown(s)`'s result. Reports
+ *  `suggestionNav` whenever the action was recognized as popup navigation, regardless of whether the
+ *  index could actually move — see `EditorResult.suggestionNav`'s own doc for why that is not the same
+ *  question as "did the index change". */
+const navResult = (s: EditorState, next: EditorState): EditorResult =>
+  commandActive(s) || mentionActive(s) ? { state: next, suggestionNav: true } : { state: next };
 
 function clearInput(s: EditorState): EditorState {           // Ctrl-L = CC chat:clearInput (screen clear stays /clear)
   return { ...s, lines: [""], cursor: { row: 0, col: 0 }, pastedContents: {}, mention: null, command: null };
@@ -525,8 +540,8 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
       case "b": return { state: syncCompletions(moveLeft(s)) };
       case "f": return { state: syncCompletions(moveRight(s)) };
       case "h": return { state: syncCompletions(deleteTokenBefore(s) ?? deleteLeft(s)) };
-      case "n": return { state: onDown(s) };                        // history at the bottom edge, popup nav while open
-      case "p": return { state: onUp(s) };
+      case "n": return navResult(s, onDown(s));                     // history at the bottom edge, popup nav while open
+      case "p": return navResult(s, onUp(s));
       // A kill keystroke ALWAYS reports `killed` (even with empty text) so applyKey's wrapper can tell "a
       // kill that killed nothing" apart from "not a kill at all" — the former must never break the run.
       case "k": { const r = killToEnd(s); return { state: syncCompletions(r.state), killed: { text: r.text, dir: "append" as const } }; }
@@ -580,8 +595,8 @@ function applyKeyInner(s: EditorState, input: string, key: KeyFlags, rows?: numb
   if (key.backspace || key.delete) return { state: syncCompletions(deleteTokenBefore(s) ?? deleteLeft(s)) };
   if (key.leftArrow) return { state: syncCompletions(moveLeft(s)) };
   if (key.rightArrow) return { state: syncCompletions(moveRight(s)) };
-  if (key.upArrow) return { state: onUp(s) };
-  if (key.downArrow) return { state: onDown(s) };
+  if (key.upArrow) return navResult(s, onUp(s));
+  if (key.downArrow) return navResult(s, onDown(s));
   // A BRACKETED paste (the keymap tagged it; see KeyFlags.paste): normalise it, then chip it or insert it —
   // `ingestPaste` owns that decision because it also owns the id counter and the map, and returns `s` unchanged
   // when the payload normalises to nothing. The result still goes through the SAME `syncCompletions` an

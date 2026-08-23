@@ -228,11 +228,15 @@ describe("SuggestPopup — hit region + hover semantics (mounted directly)", () 
   });
 
   it("(7) region.rows[i] names the terminal row the frame actually painted item i on — 1- and 2-line rows", () => {
+    // Ink-testing-library's `lastFrame()` is the component's OWN bounding box, always starting at its own
+    // row 0 — `region.top` (`hitTop`) is the OFFSET a real terminal would add on top of that, so the frame
+    // walk below is LOCAL (0-based) while the region's own `top` is asserted separately as the addend.
     const ALL_ONE: SuggestItem[] = [item("alpha"), item("beta"), item("gamma")];
     const { r: r1, ref: ref1 } = mountPopup({ items: ALL_ONE, hitTop: 10, selected: 0, hoveredId: null });
     const region1 = ref1.current!.region();
+    expect(region1.top).toBe(10);
     const frame1 = plain(r1.lastFrame() ?? "").split("\n");
-    let y = region1.top;
+    let y = 0;
     for (const row of region1.rows) {
       expect(frame1[y]).toContain(`/${row.id}`);
       y += row.lines;
@@ -245,7 +249,7 @@ describe("SuggestPopup — hit region + hover semantics (mounted directly)", () 
     const { r: r2, ref: ref2 } = mountPopup({ items: TWO_LINE, hitTop: 10, selected: 0, hoveredId: null });
     const region2 = ref2.current!.region();
     const frame2 = plain(r2.lastFrame() ?? "").split("\n");
-    let y2 = region2.top;
+    let y2 = 0;
     for (const row of region2.rows) {
       expect(frame2[y2]).toContain(`/${row.id}`);
       y2 += row.lines;
