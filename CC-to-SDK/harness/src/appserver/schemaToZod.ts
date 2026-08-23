@@ -26,6 +26,7 @@
 //   `type:object (nested objects unsupported)`      the one pinned literal — flat argument objects only
 //   `properties: unsupported shape`          a keyword whose VALUE is outside its JSON Schema domain
 //   `items: missing`                         a keyword the declared type requires and did not get
+//   `items: too deeply nested`               an `items` recursion the converter caps rather than following
 //   `minLength: not applicable to type:number`      a constraint declared against the wrong type
 //   `minLength/maxLength: inconsistent range`       min > max, either kind
 //   `required:b not in properties`           a dangling required entry, naming the entry
@@ -69,6 +70,11 @@ type FieldResult = FieldOk | ConvertErr;
 
 const refuse = (keyword: string): ConvertErr => ({ ok: false, keyword });
 
+/** Own-key presence, not `!== undefined`: a keyword the client wrote down with an explicit `undefined` is a
+ *  MALFORMED keyword, not an absent one. Treating it as absent would drop the constraint the client
+ *  advertised — the silent widening this file forbids — so presence decides and the value check refuses. */
+const hasOwn = (raw: Record<string, unknown>, key: string): boolean => Object.prototype.hasOwnProperty.call(raw, key);
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -80,8 +86,11 @@ function describeValue(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "<array>";
   if (typeof value === "object") return "<schema>";
-  if (typeof value === "string") return value.length <= 40 ? value : `${value.slice(0, 40)}…`;
-  return String(value);
+  // Every remaining kind is rendered through the SAME truncation: a function stringifies to its whole
+  // source text and a symbol to its whole description, so truncating only strings would leave the
+  // boundedness this function promises true of the wire path by accident rather than by construction.
+  const text = typeof value === "string" ? value : String(value);
+  return text.length <= 40 ? text : `${text.slice(0, 40)}…`;
 }
 
 /** Does a literal (an `enum` member or a `const`) belong to the declared type? */
@@ -102,8 +111,8 @@ function matchesType(value: unknown, type: string): boolean {
 function lengthBounds(raw: Record<string, unknown>, type: string): ConvertErr | { min?: number; max?: number } {
   const out: { min?: number; max?: number } = {};
   for (const key of ["minLength", "maxLength"] as const) {
+    if (!hasOwn(raw, key)) continue;
     const value = raw[key];
-    if (value === undefined) continue;
     if (type !== "string") return refuse(`${key}: not applicable to type:${type}`);
     if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return refuse(`${key}: unsupported shape`);
     if (key === "minLength") out.min = value;
@@ -120,8 +129,8 @@ function lengthBounds(raw: Record<string, unknown>, type: string): ConvertErr | 
 function numberBounds(raw: Record<string, unknown>, type: string): ConvertErr | { min?: number; max?: number } {
   const out: { min?: number; max?: number } = {};
   for (const key of ["minimum", "maximum"] as const) {
+    if (!hasOwn(raw, key)) continue;
     const value = raw[key];
-    if (value === undefined) continue;
     if (type !== "number" && type !== "integer") return refuse(`${key}: not applicable to type:${type}`);
     if (typeof value !== "number" || !Number.isFinite(value)) return refuse(`${key}: unsupported shape`);
     if (key === "minimum") out.min = value;
@@ -136,8 +145,8 @@ function numberBounds(raw: Record<string, unknown>, type: string): ConvertErr | 
 /** The base validator for one field, before bounds: a literal (`const`), a union of literals (`enum`), an
  *  array over its converted `items`, or the plain typed validator. */
 function baseSchema(raw: Record<string, unknown>, type: string, depth: number): FieldResult {
-  const hasConst = raw.const !== undefined;
-  const hasEnum = raw.enum !== undefined;
+  const hasConst = hasOwn(raw, "const");
+  const hasEnum = hasOwn(raw, "enum");
   if (hasConst && hasEnum) return refuse("const: conflicts with enum");
   if (hasConst) {
     if (type === "array") return refuse("const: not applicable to type:array");
@@ -203,26 +212,30 @@ function convertField(raw: Record<string, unknown>, depth: number): FieldResult 
   if (!base.ok) return base;
 
   // Bounds ride as refinements ON TOP of whatever base was built, so a bound declared alongside an `enum`
-  // still applies (dropping it there would be exactly the silent widening this layer forbids). The casts
-  // are sound: a length bound only survives `lengthBounds` for type "string", a numeric bound only for
-  // "number"/"integer", and the base validator has already rejected any other input by the time a
-  // refinement runs.
+  // still applies (dropping it there would be exactly the silent widening this layer forbids).
+  //
+  // EACH REFINEMENT IS TOTAL ON ITS OWN — it declines to judge a value of the wrong runtime type and lets
+  // the base validator own that failure. A bound only survives `lengthBounds`/`numberBounds` for the type it
+  // can constrain, and zod aborts a schema's remaining checks once the base type check fails, so a number
+  // cannot reach a length refine today. But that second half is a LIBRARY-INTERNAL ordering rule, and
+  // `[...5]` throws TypeError — inside `safeParse`, at the call seam, which is exactly the -32603 this file
+  // exists to prevent. Totality here must not depend on it. (Pinned by the non-string row in the suite.)
   let schema = base.schema;
   if (lengths.min !== undefined) {
     const min = lengths.min;
-    schema = schema.refine((v) => [...(v as string)].length >= min, `must be at least ${min} characters`);
+    schema = schema.refine((v) => typeof v !== "string" || [...v].length >= min, `must be at least ${min} characters`);
   }
   if (lengths.max !== undefined) {
     const max = lengths.max;
-    schema = schema.refine((v) => [...(v as string)].length <= max, `must be at most ${max} characters`);
+    schema = schema.refine((v) => typeof v !== "string" || [...v].length <= max, `must be at most ${max} characters`);
   }
   if (numbers.min !== undefined) {
     const min = numbers.min;
-    schema = schema.refine((v) => (v as number) >= min, `must be >= ${min}`);
+    schema = schema.refine((v) => typeof v !== "number" || v >= min, `must be >= ${min}`);
   }
   if (numbers.max !== undefined) {
     const max = numbers.max;
-    schema = schema.refine((v) => (v as number) <= max, `must be <= ${max}`);
+    schema = schema.refine((v) => typeof v !== "number" || v <= max, `must be <= ${max}`);
   }
   return { ok: true, schema };
 }

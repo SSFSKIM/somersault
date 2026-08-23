@@ -102,6 +102,13 @@ describe("jsonSchemaToZod — root keyword refusals", () => {
     expect(refusal({ type: "object", properties: {}, additionalProperties: { type: "string" } })).toBe(
       "additionalProperties:<schema>",
     );
+    // A non-boolean SCALAR is the other half of the same rule, and renders as the value itself.
+    expect(refusal({ type: "object", properties: {}, additionalProperties: 1 })).toBe("additionalProperties:1");
+  });
+
+  it("bounds the offending value it echoes back into the keyword", () => {
+    // The keyword travels into a -32602 message, so a client must not get to choose how long that is.
+    expect(refusal({ type: "x".repeat(60) })).toBe(`type:${"x".repeat(40)}…`);
   });
 
   it("refuses a dangling required entry, naming the entry", () => {
@@ -195,6 +202,29 @@ describe("jsonSchemaToZod — field keyword refusals", () => {
     expect(refusal(field({ type: "array" }))).toBe("items: missing");
     expect(refusal(field({ type: "string", const: "a", enum: ["a", "b"] }))).toBe("const: conflicts with enum");
   });
+
+  it("recurses through nested items and refuses past the recursion cap", () => {
+    // `items` is the one axis this converter follows recursively, so it carries its own finite cap
+    // (MAX_ITEMS_NESTING, distinct from Task 2's whole-schema MAX_SCHEMA_DEPTH). Both sides are pinned
+    // because the refusal string is as load-bearing as any other keyword in the vocabulary.
+    const nest = (levels: number): Record<string, unknown> =>
+      levels === 0 ? { type: "string" } : { type: "array", items: nest(levels - 1) };
+    let deepest: unknown = "x";
+    for (let i = 0; i < 8; i++) deepest = [deepest];
+    expect(converted(field(nest(8))).schema.safeParse({ a: deepest }).success).toBe(true);
+    expect(converted(field(nest(2))).schema.safeParse({ a: [["x"]] }).success).toBe(true);
+    expect(converted(field(nest(2))).schema.safeParse({ a: [[1]] }).success).toBe(false);
+    expect(refusal(field(nest(9)))).toBe("items: too deeply nested");
+  });
+
+  it("refuses a keyword the client wrote down with an explicit undefined", () => {
+    // Unreachable over JSON, but a keyword that is PRESENT and malformed must not read as absent: silently
+    // converting `{const: undefined}` as a bare string is the widening this layer forbids.
+    expect(refusal(field({ type: "string", const: undefined }))).toBe("const: unsupported shape");
+    expect(refusal(field({ type: "string", enum: undefined }))).toBe("enum: unsupported shape");
+    expect(refusal(field({ type: "string", maxLength: undefined }))).toBe("maxLength: unsupported shape");
+    expect(refusal(field({ type: "number", minimum: undefined }))).toBe("minimum: unsupported shape");
+  });
 });
 
 describe("jsonSchemaToZod — totality: conversion never throws", () => {
@@ -261,6 +291,28 @@ describe("jsonSchemaToZod — bounds", () => {
     expect(refusal(field({ type: "number", minimum: 5, maximum: 1 }))).toBe("minimum/maximum: inconsistent range");
     // Equal endpoints are a legal one-value range, not an inconsistency.
     expect(converted(field({ type: "number", minimum: 5, maximum: 5 })).schema.parse({ a: 5 })).toEqual({ a: 5 });
+  });
+
+  it("refuses a value of the wrong type against a BOUNDED field without ever throwing", () => {
+    // THE GUARD ON THE -32603 THIS MODULE EXISTS TO PREVENT. Length bounds are `.refine`s that iterate the
+    // value, so a non-string reaching one would be `[...5]` — a TypeError raised INSIDE `safeParse`, at
+    // Task 6's call seam, for what is only a badly-typed argument. Two things keep that from happening: zod
+    // aborts a schema's remaining checks once the base type check fails, and the refinements decline to
+    // judge a value of the wrong runtime type. The first is library-internal ordering that a zod bump could
+    // change; this row is the alarm on it, and asserts BOTH "did not throw" and a clean refusal.
+    const bounded = converted(field({ type: "string", minLength: 2, maxLength: 4 })).schema;
+    for (const wrong of [42, null, {}, [], true]) {
+      expect(() => bounded.safeParse({ a: wrong })).not.toThrow();
+      expect(bounded.safeParse({ a: wrong }).success).toBe(false);
+    }
+    // A bound on an `enum` builds a UNION base — a different zod code path to the same refinements.
+    const union = converted(field({ type: "string", enum: ["ab", "cd"], maxLength: 2 })).schema;
+    expect(() => union.safeParse({ a: 42 })).not.toThrow();
+    expect(union.safeParse({ a: 42 }).success).toBe(false);
+    // And the numeric bounds, whose comparison merely returns false on a non-number rather than throwing.
+    const numeric = converted(field({ type: "number", minimum: 1, maximum: 9 })).schema;
+    expect(() => numeric.safeParse({ a: "5" })).not.toThrow();
+    expect(numeric.safeParse({ a: "5" }).success).toBe(false);
   });
 
   it("counts CODE POINTS, not UTF-16 units", () => {
