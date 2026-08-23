@@ -11,6 +11,13 @@ export const SESSION_IDENTITY = ["resume", "resumeAt", "droppedTurnUuid", "forkS
  *  Kept as a second list rather than one mapping because they are two different wires, and a rename on
  *  either side should fail loudly here rather than silently stop stripping. */
 export const SESSION_IDENTITY_OPTIONS = ["resume", "resumeSessionAt", "resumeDropsTurn", "forkSession", "sessionId", "continue"] as const;
+/** And the same six on the THIRD wire: the spawned CLI's own argv (probe 114). `extraArgs` entries are
+ *  appended AFTER every typed identity flag the SDK pushes, and the CLI adopts the LAST occurrence of a
+ *  repeated flag — measured in both orders, with the result envelope and the transcript filename naming
+ *  the same winner — so an unstripped `extraArgs.resume` overrules the typed field exactly as the
+ *  options hatch could. The CLI hyphenates four of the six; same rule as above: a rename on the CLI side
+ *  should fail loudly here rather than silently stop stripping. */
+export const SESSION_IDENTITY_ARGS = ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue"] as const;
 
 /** `config` with every identity knob removed from its `extraOptions` ESCAPE HATCH — the second half of any
  *  identity strip, and the half both sites are apt to forget, because the hatch is spread into the SDK
@@ -26,9 +33,20 @@ export const SESSION_IDENTITY_OPTIONS = ["resume", "resumeSessionAt", "resumeDro
  *  Returns the config untouched when there is no hatch object, so a caller can pipe through this
  *  unconditionally without minting an `extraOptions` key nothing asked for. Never mutates its input. */
 export function stripIdentityHatch(config: Record<string, unknown>): Record<string, unknown> {
+  let out = config;
   const extra = config.extraOptions;
-  if (!extra || typeof extra !== "object") return config;
-  const hatch = { ...(extra as Record<string, unknown>) };
-  for (const key of SESSION_IDENTITY_OPTIONS) delete hatch[key];
-  return { ...config, extraOptions: hatch };
+  if (extra && typeof extra === "object") {
+    const hatch = { ...(extra as Record<string, unknown>) };
+    for (const key of SESSION_IDENTITY_OPTIONS) delete hatch[key];
+    out = { ...out, extraOptions: hatch };
+  }
+  // The second hatch, same treatment: `extraArgs` reaches the engine as raw CLI argv, where the last
+  // occurrence of a flag wins (probe 114) — a knob here needs no Options field at all to steal the swap.
+  const args = config.extraArgs;
+  if (args && typeof args === "object") {
+    const hatch = { ...(args as Record<string, unknown>) };
+    for (const key of SESSION_IDENTITY_ARGS) delete hatch[key];
+    out = { ...out, extraArgs: hatch };
+  }
+  return out;
 }

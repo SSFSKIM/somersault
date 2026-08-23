@@ -377,6 +377,38 @@ describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
     expect(hatch.maxThinkingTokens).toBe(4096);
   });
 
+  it("an identity flag hidden in `extraArgs` does not survive the swap either — the CLI-argv third wire (probe 114)", async () => {
+    // `extraArgs` entries are appended to the spawned CLI's argv AFTER every typed identity flag, and the
+    // CLI adopts the LAST occurrence of a repeated flag — probe 114 measured both, in both orders, with
+    // the result envelope and the transcript filename agreeing. So an unstripped `extraArgs.resume`
+    // overrules the `resume` the swap itself sets, in a THIRD vocabulary: the CLI's own flag spellings,
+    // which hyphenate four of the six.
+    const factoryConfigs: Array<Record<string, unknown>> = [];
+    const { c, threadId } = await bootThread({
+      session: () => mkEngine({ sessionId: "sess-args" }),
+      config: {
+        extraArgs: {
+          resume: "other-1", "resume-session-at": "other-anchor", "resume-drops-turn": "other-drop",
+          "fork-session": null, "session-id": "other-chosen", continue: null,
+          "append-system-prompt": "stay",   // the hatch's legitimate half, which must still ride across
+        },
+      },
+      deps: {
+        resumeAtFactory: (_s: string, _a: string, _d: string, cfg: Record<string, unknown>) => { factoryConfigs.push(cfg); return mkEngine({}); },
+      },
+    });
+
+    send(c, { id: 3, method: "thread/rewind", params: { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await settle();
+
+    expect(factoryConfigs).toHaveLength(1);
+    const args = factoryConfigs[0].extraArgs as Record<string, unknown>;
+    for (const flag of ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue"]) {
+      expect(flag in args, `extraArgs.${flag} must not survive into the rewind swap`).toBe(false);
+    }
+    expect(args["append-system-prompt"]).toBe("stay");
+  });
+
   it("scope 'code' with a null prevUuid is allowed: the file restore runs, no engine swap happens, and the reply still carries the session id", async () => {
     const engine = mkEngine({ sessionId: "sess-1" });
     let swapped = 0;

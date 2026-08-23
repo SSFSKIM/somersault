@@ -256,6 +256,29 @@ describe("review/start — read-only by policy, not only by prompt", () => {
     expect((srv.registry.get(t.id)!.config!.extraOptions as Record<string, unknown>).resume).toBe("sess-target");
   });
 
+  it("drops the same family out of the target's `extraArgs`, the CLI-argv third wire (probe 114)", async () => {
+    // `extraArgs` entries land on the spawned CLI's argv AFTER every typed flag, and the CLI takes the
+    // LAST occurrence of a repeated flag — probe 114 measured both, in both orders, envelope and
+    // transcript filename agreeing. An inherited `extraArgs.resume` would therefore point the
+    // "detached" review at the target's own conversation past both strips above, one vocabulary deeper
+    // again — the CLI's flag spellings, which hyphenate four of the six.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo", "inProcess", { cwd: "/repo", extraArgs: {
+      resume: "sess-target", "resume-session-at": "uuid-7", "resume-drops-turn": "uuid-8",
+      "fork-session": null, "session-id": "11111111-2222-3333-4444-555555555555", continue: null,
+      "append-system-prompt": "keep",   // an ordinary argv value, which must survive
+    } });
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const args = f.built.at(-1)!.config.extraArgs as Record<string, unknown>;
+    for (const key of ["resume", "resume-session-at", "resume-drops-turn", "fork-session", "session-id", "continue"])
+      expect(args, key).not.toHaveProperty(key);
+    expect(args["append-system-prompt"]).toBe("keep");
+    // And the TARGET's own config is not edited on the way past.
+    expect((srv.registry.get(t.id)!.config!.extraArgs as Record<string, unknown>).resume).toBe("sess-target");
+  });
+
   it("wins over an `extraOptions` that tries to un-root or re-arm the review", async () => {
     // The other half of the same inheritance: `extraOptions` is spread LAST into the SDK Options, so before
     // resolveOptions reserved these keys a target could carry `{cwd, disallowedTools}` in its hatch and the
