@@ -206,6 +206,11 @@ Keyed (quota-gated — run after 2026-08-26 1pm):
   "in-place" now meaning the canonical appended-note position.
 - **Extraction with one named repair** (the pre-write tracking gap) rather than byte-for-byte — a moved
   bug is still a bug, and the review found it before the move did.
+- **The image-count gate counts DECLARED images, not surviving ones** (T3 review, minor 7). The
+  amplification guard must cost nothing before I/O, so the ordinal is assigned in declaration order —
+  matching `stagedSubmit`'s exact behavior. Consequence, deliberate: a turn declaring three unreadable
+  images and twenty good ones delivers seventeen images and three excess notes; degraded images still
+  consume cap slots.
 - **`turn/steer` stays text; stageImage row → `N/A`** — unchanged from rev 1.
 
 ## Surprises & Discoveries
