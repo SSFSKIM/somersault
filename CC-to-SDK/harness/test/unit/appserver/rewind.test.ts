@@ -409,6 +409,47 @@ describe("appserver thread/rewind engine swap (M2b Task 1)", () => {
     expect(args["append-system-prompt"]).toBe("stay");
   });
 
+  it("neither a NESTED `extraOptions.extraArgs` nor an equals-encoded key survives the swap — the two ways round the argv strip", async () => {
+    // Two holes a flat, exact-key strip leaves open, both of which land the identity flag on the same argv:
+    //   (1) NESTING. `extraOptions` is spread over the resolved Options LAST — `{...options,
+    //       ...config.extraOptions}` (resolveOptions.ts) — so an `extraArgs` key INSIDE the hatch REPLACES
+    //       the sanitized top-level `extraArgs` wholesale. The strip's own output, undone one level up.
+    //   (2) EQUALS-ENCODING. The SDK pushes a null-valued key literally as `--<key>`, so
+    //       `{"resume=other-2": null}` reaches the CLI as `--resume=other-2` — a valid identity flag whose
+    //       KEY is never equal to "resume", and so invisible to a deletion that matches whole keys.
+    const factoryConfigs: Array<Record<string, unknown>> = [];
+    const { c, threadId } = await bootThread({
+      session: () => mkEngine({ sessionId: "sess-nested" }),
+      config: {
+        extraArgs: { "resume=other-2": null, "session-id=other-chosen": null, "append-system-prompt": "stay" },
+        extraOptions: {
+          extraArgs: { resume: "other-1", "continue=1": null, "append-system-prompt": "nested-stay" },
+          maxThinkingTokens: 4096,   // the hatch's legitimate half, which must still ride across
+        },
+      },
+      deps: {
+        resumeAtFactory: (_s: string, _a: string, _d: string, cfg: Record<string, unknown>) => { factoryConfigs.push(cfg); return mkEngine({}); },
+      },
+    });
+
+    send(c, { id: 3, method: "thread/rewind", params: { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await settle();
+
+    expect(factoryConfigs).toHaveLength(1);
+    const args = factoryConfigs[0].extraArgs as Record<string, unknown>;
+    for (const flag of ["resume=other-2", "session-id=other-chosen"]) {
+      expect(flag in args, `extraArgs["${flag}"] must not survive into the rewind swap`).toBe(false);
+    }
+    expect(args["append-system-prompt"]).toBe("stay");
+    const hatch = factoryConfigs[0].extraOptions as Record<string, unknown>;
+    const nested = hatch.extraArgs as Record<string, unknown>;
+    for (const flag of ["resume", "continue=1"]) {
+      expect(flag in nested, `extraOptions.extraArgs["${flag}"] must not survive into the rewind swap`).toBe(false);
+    }
+    expect(nested["append-system-prompt"]).toBe("nested-stay");   // sanitized, not deleted whole
+    expect(hatch.maxThinkingTokens).toBe(4096);
+  });
+
   it("scope 'code' with a null prevUuid is allowed: the file restore runs, no engine swap happens, and the reply still carries the session id", async () => {
     const engine = mkEngine({ sessionId: "sess-1" });
     let swapped = 0;

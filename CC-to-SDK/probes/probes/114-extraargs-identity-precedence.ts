@@ -54,7 +54,10 @@ if (existsSync(argvFile)) {
 }
 
 // ── Part B: does the real CLI adopt the last occurrence? ───────────────────────────────────────────
-const bin = new URL("../node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude", import.meta.url).pathname;
+// The native binary ships as one per-host package, so the path is composed from THIS host rather than
+// pinned to the one that first ran the probe — otherwise part B silently measures nothing off darwin/arm64.
+const nativePkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
+const bin = new URL(`../node_modules/${nativePkg}/claude`, import.meta.url).pathname;
 console.log(`B: binary: ${bin} exists=${existsSync(bin)}`);
 function adoptedSession(first: string, second: string, label: string): void {
   const cfg = mkdtempSync(join(tmpdir(), "p114cfg-"));
@@ -82,6 +85,11 @@ function adoptedSession(first: string, second: string, label: string): void {
   console.log(`B[${label}]: transcript names the ${byFile} id`);
 }
 const A = randomUUID(), B = randomUUID();
-adoptedSession(A, B, "A-then-B");
-adoptedSession(B, A, "B-then-A (control)");
+if (existsSync(bin)) {
+  adoptedSession(A, B, "A-then-B");
+  adoptedSession(B, A, "B-then-A (control)");
+} else {
+  // Said out loud, because an absent binary is an UNMEASURED part B — not a passing one.
+  console.log(`B: binary not installed for this platform (${nativePkg} on ${process.platform}/${process.arch}) — part B NOT measured`);
+}
 console.log("done");

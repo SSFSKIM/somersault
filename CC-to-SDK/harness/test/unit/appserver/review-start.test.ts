@@ -279,6 +279,45 @@ describe("review/start — read-only by policy, not only by prompt", () => {
     expect((srv.registry.get(t.id)!.config!.extraArgs as Record<string, unknown>).resume).toBe("sess-target");
   });
 
+  it("inherits neither a NESTED `extraOptions.extraArgs` nor an equals-encoded flag — the two ways round the argv strip", async () => {
+    // The argv strip above matches whole keys of the TOP-LEVEL `extraArgs`, and a target can carry the same
+    // flag past it two ways:
+    //   (1) NESTED. `extraOptions` is spread over the resolved Options LAST (resolveOptions.ts's
+    //       `{...options, ...config.extraOptions}`), so an `extraArgs` key inside the hatch REPLACES the
+    //       sanitized top-level one — the strip's own output, undone one level up, and the review reading
+    //       the target's transcript again.
+    //   (2) EQUALS-ENCODED. A null-valued key is pushed to the argv literally as `--<key>`, so
+    //       `{"resume=sess-target": null}` arrives as a valid `--resume=sess-target` under a key that is
+    //       not "resume".
+    // Read back through `resolveOptions` as well as off the config, because the nesting hole only bites at
+    // the point that spread runs — which is the function the real `openSession` runs on this config.
+    const f = factory();
+    const srv = boot(f);
+    const t = addRecord(srv, "/repo", "inProcess", { cwd: "/repo", extraArgs: {
+      "resume=sess-target": null, "session-id=11111111-2222-3333-4444-555555555555": null,
+      "append-system-prompt": "keep",
+    }, extraOptions: {
+      extraArgs: { resume: "sess-target", "continue=1": null, "append-system-prompt": "nested-keep" },
+      maxTurns: 12,   // the hatch's ordinary half, which must survive
+    } });
+    send("review/start", { threadId: t.id, target: { type: "uncommittedChanges" } });
+    await settle();
+    const config = f.built.at(-1)!.config;
+    const args = config.extraArgs as Record<string, unknown>;
+    for (const key of ["resume=sess-target", "session-id=11111111-2222-3333-4444-555555555555"])
+      expect(args, key).not.toHaveProperty(key);
+    expect(args["append-system-prompt"]).toBe("keep");
+    const nested = (config.extraOptions as Record<string, unknown>).extraArgs as Record<string, unknown>;
+    for (const key of ["resume", "continue=1"]) expect(nested, key).not.toHaveProperty(key);
+    expect(nested["append-system-prompt"]).toBe("nested-keep");   // sanitized, not deleted whole
+    expect((config.extraOptions as Record<string, unknown>).maxTurns).toBe(12);
+    // …and the same holds of what the engine would ACTUALLY be spawned with, hatch spread and all.
+    const resolved = resolveOptions(config as HarnessConfig).extraArgs as Record<string, unknown>;
+    for (const key of Object.keys(resolved)) expect(key.split("=")[0]).not.toBe("resume");
+    // And the TARGET's own config is not edited on the way past.
+    expect(((srv.registry.get(t.id)!.config!.extraOptions as Record<string, unknown>).extraArgs as Record<string, unknown>).resume).toBe("sess-target");
+  });
+
   it("wins over an `extraOptions` that tries to un-root or re-arm the review", async () => {
     // The other half of the same inheritance: `extraOptions` is spread LAST into the SDK Options, so before
     // resolveOptions reserved these keys a target could carry `{cwd, disallowedTools}` in its hatch and the
