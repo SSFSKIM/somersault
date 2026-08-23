@@ -1549,21 +1549,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
     return Math.max(0, dockCap(size.rows, true) - others);
   };
-  // F9 T-MOUSE TASK 4 FIX (task review Critical) — the exact conditions that gate `TaskPanel` and the
-  // live-turn slot in `dock` below (`todosOpen && !paneOwned`, `(state.busy || state.compacting) && !paneOwned`),
-  // reused rather than re-derived, so a future dock member added to one automatically reads correctly here —
-  // matching `dockDialogRows` above, which already sums these same two occupants' row counts for the same
-  // reason. `state.tasks.length > 0` alongside `todosOpen`: `TaskPanel` itself renders NULL on an empty task
-  // list (its own header: "no empty state"), so `todosOpen` alone — true by DEFAULT (`initialTodosOpen`) —
-  // would flag a session with zero tasks as crowded when the panel paints nothing at all (caught by the
-  // pre-existing idle-composer tests, which mount with an empty task list and would otherwise go
-  // not-addressable for no on-screen reason). `!paneOwned` is always true wherever this reaches
-  // `ChatComposer` (the composer itself only mounts when `paneOwned` is false — see the final arm of
-  // `overlayChain`), kept anyway so this stays a direct transcription of `dock`'s own JSX conditions rather
-  // than a fact this file would have to re-verify by hand if that invariant ever changed. Threaded into
-  // `ChatComposer` as `dockCrowded`, which suppresses the composer's published click-to-caret origin — see
-  // `ChatComposer.tsx`'s `originExact`.
-  const dockCrowded = !paneOwned && ((todosOpen && state.tasks.length > 0) || state.busy || Boolean(state.compacting));
   /** THE OVERLAY CHAIN — every surface that replaces the composer, in precedence order. Extracted from the
    *  dock in FSW T13 so ONE list of elements can be handed to either slot (see `seamActive` above): on the
    *  main screen and for a parked decision it renders where it always did, directly above the footer; in
@@ -1769,7 +1754,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // FSW T14 — D10 (hoist the palette out of here) and D11 (drop the notification block).
                       // Both are subtractions from what the composer paints; the destinations are the dock's
                       // `PaletteSlot` and the footer's right region, and both are above this element.
-                      fullscreen={fullscreen} originRef={composerRef} dockCrowded={dockCrowded} />
+                      fullscreen={fullscreen} originRef={composerRef} footerRows={footerRows(footerStatusInput())} />
   );
   const dock = (
     <>

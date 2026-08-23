@@ -8,7 +8,10 @@ import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEm
 // F9 T-MOUSE Task 4 — the composer's published origin, the SAME "computed constant" idiom
 // `FullscreenViewport` reads `useRegionTop` through (FullscreenFrame.tsx's own header comment on
 // `DockTopContext`). Absent (0) outside a bounded fullscreen frame, exactly like `useRegionTop`.
-import { useDockTop } from "./FullscreenFrame.js";
+import { useDockTop, useDockBottom } from "./FullscreenFrame.js";
+// F10 S1 — the bottom-up origin itself, and the painted-buffer-height term it needs that `wrapRows` alone
+// cannot give it (composerRows.ts's own header: the inverted EOL cursor cell and a wrapping ghost run).
+import { bufferPhysicalRows, composerOriginRow } from "./composerRows.js";
 import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
@@ -306,7 +309,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, dockCrowded = false }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, footerRows = 0 }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Two of canon's surface
    *  deltas land on this component, and both are SUBTRACTIONS from what it paints rather than new content:
    *  D10 hoists the suggestion popup out of here into the band above the dock (`usePaletteHoist` below), and
@@ -316,14 +319,13 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   /** F9 T-MOUSE Task 4 — see `ComposerCaret`. `ChatApp` holds the ref; a bare mount with nothing above it
    *  simply has no reader, exactly like `hitmapRef` in `FullscreenViewport`. */
   originRef?: React.Ref<ComposerCaret>;
-  /** F9 T-MOUSE Task 4 fix (task review Critical) — true whenever `ChatApp` is painting a `TaskPanel` or the
-   *  live-turn spinner/retry/compaction row above this component inside `dock` (the exact booleans that gate
-   *  those elements there: `todosOpen`, `state.busy`, `state.compacting`, each already implying `!paneOwned`
-   *  since this component only mounts when nothing pane-owning is up). The hoisted suggestion palette is NOT
-   *  included here — this component already knows its own `hoisted` locally and folds it in directly. Used
-   *  only to suppress `caretAt`'s addressability (see `originExact` below); defaults false so a bare mount
-   *  with no `ChatApp` above it keeps whatever `useDockTop()` alone would answer. */
-  dockCrowded?: boolean;
+  /** F10 S1 — the footer's own painted height, from `ChatApp`'s single `footerStatusInput()` derivation
+   *  (`footerRows(footerStatusInput())`, the SAME call `dockDialogRows` makes, so the two cannot disagree).
+   *  `0` means "not supplied" and the origin is not addressable — the same "computed constant, 0 = not
+   *  addressable" contract `useDockTop`/`useDockBottom` already use. Replaces `dockCrowded`: the bottom-up
+   *  origin (`composerOriginRow` below) needs no term for any occupant ABOVE the composer at all, so there is
+   *  nothing left for a "crowded" flag to gate. */
+  footerRows?: number;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -1217,6 +1219,30 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const suggest = suggestProps(state, historyEnvRef.current);
   const popupShown = popupDrawn(state);
   const ghost = ghostText(state);
+  // `leftInset`: the columns `PromptGlyph` reserves as its own flex sibling (a fixed `❯\xa0`/`!\xa0`, 2 cols —
+  // measured rather than hardcoded, since `promptGlyph`'s two arms are the same width by construction but
+  // nothing enforces it staying that way). `ComposerFrame` has no left/right border and no padding (its own
+  // header: two bare horizontal rules, nothing else), so `cols` IS the row's full width and `innerWidth` is
+  // exactly what `renderBuffer`'s per-line `<Text>` has left to paint into. Hoisted above the footer-state
+  // effect (F10 S1) so `paintedRows` below can be computed early enough to sit in that effect's own deps.
+  const leftInset = stringWidth(POINTER + NBSP);
+  const innerWidth = Math.max(1, cols - leftInset);
+  // F10 S1 — THE COMPOSER'S OWN PAINTED HEIGHT, computed once and read by two things: the origin arithmetic
+  // below, and (via the footer-state effect's deps, a few lines down) the ONE thing that keeps `useDockTop()`
+  // / `useDockBottom()` from going stale on PURE composer-local growth. Neither `FullscreenFrame`'s
+  // measurement effect nor its overflow watchdog re-runs when only a descendant's local `setState` changes
+  // (see the effect's own header, and `:29-36`) — React does not re-render an ancestor because a deep child
+  // did. Nothing in `ChatApp`'s own state changes when a draft grows from one row to three with no other
+  // occupant, so nothing tells `FullscreenFrame` the dock's true height moved — measured: `dockTop` stayed
+  // stamped at the ONE-row figure through a three-row draft, refusing a click nowhere near any real overflow.
+  // `onFooterState` is the existing, narrow channel composer-local facts already cross into `ChatApp` state
+  // (searching/pasting/bashMode/exitArm); widening its trigger to fire on a PAINTED-HEIGHT change too closes
+  // the gap at its root — one extra `setState` up in `ChatApp`, which is what actually re-renders
+  // `FullscreenFrame` and lets its effect re-measure — rather than approximating a fresher `dockTop` down
+  // here with arithmetic that cannot see what ChatApp's OTHER dock occupants (a task panel, the live-turn
+  // spinner) are using of the same cap.
+  const paintedRows = bufferPhysicalRows({ lines: state.lines, cursor: state.cursor,
+    ghost: ghost?.visible ? ghost.suffix : null, placeholder: isEmptyNow ? (placeholder ?? "") : null, innerWidth });
   const argHint = commandArgumentHint(bufferText(state), commandCatalog);
   // WAVE C TASK 2 — THE HINT STACK IS GONE, AND WITH IT `showFooter`. Ten of the eleven rows this component
   // used to paint below its frame are now the ONE footer row `ChatApp` mounts (`Footer.tsx`) plus the ONE
@@ -1286,8 +1312,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   };
   const onFooterStateRef = useRef(onFooterState); onFooterStateRef.current = onFooterState;
   useEffect(() => { onFooterStateRef.current?.(footerState); },
+    // `paintedRows` (F10 S1): NOT a fact this effect's own callback reports (`footerState` is unchanged) —
+    // riding along on the existing composer-local → ChatApp channel purely so a `setState` up there
+    // re-renders `ChatApp`, and therefore `FullscreenFrame`, whenever the composer's OWN painted height
+    // moves. See `paintedRows`'s own header for why that re-render is load-bearing rather than incidental.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [footerState.searching, footerState.pasting, footerState.pasteExpandHint, footerState.bashMode, footerState.exitArm?.key, footerState.exitArm?.verb, owns]);
+    [footerState.searching, footerState.pasting, footerState.pasteExpandHint, footerState.bashMode, footerState.exitArm?.key, footerState.exitArm?.verb, owns, paintedRows]);
   useEffect(() => () => { onFooterStateRef.current?.(IDLE_COMPOSER_FOOTER_STATE); }, []);
   // …and the popup goes with it. A dialog unmounting this component while a list was up would otherwise leave
   // the app holding rows back for a region that is no longer on screen — for the rest of the session.
@@ -1308,41 +1338,43 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     ? <SuggestPopup {...suggest} columns={cols} rows={termRows} overlay noPad />
     : null;
   usePaletteHoist(hoisted);
-  // ── F9 T-MOUSE TASK 4 — CLICK-TO-CARET'S ORIGIN ───────────────────────────────────────────────────────────
-  // `leftInset`: the columns `PromptGlyph` reserves as its own flex sibling (a fixed `❯\xa0`/`!\xa0`, 2 cols —
-  // measured rather than hardcoded, since `promptGlyph`'s two arms are the same width by construction but
-  // nothing enforces it staying that way). `ComposerFrame` has no left/right border and no padding (its own
-  // header: two bare horizontal rules, nothing else), so `cols` IS the row's full width and `innerWidth` is
-  // exactly what `renderBuffer`'s per-line `<Text>` has left to paint into.
-  const leftInset = stringWidth(POINTER + NBSP);
-  const innerWidth = Math.max(1, cols - leftInset);
-  // `bufferTopRow`: `useDockTop()` (the dock's own first row, published the same computed-constant way
-  // `RegionTopContext` is) plus the rows THIS component paints above line 0 of the buffer — the
-  // `waitingForPermission` box (`marginTop:1` + one text row, upstream L496241, present exactly while the
-  // composer is still clickable per `composerOwns("typing")`) and `ComposerFrame`'s own top rule. The
-  // notification overlay row is NOT counted: it renders only in classic (`fullscreen ||`, above), so it is
-  // always absent on this path. `0` — not addressable — off `fullscreen` or wherever `useDockTop` itself
-  // answers `0` (classic, or no `FullscreenFrame` above at all, e.g. a bare component test).
-  //   FAIL SAFE UNDER A DOCK CO-OCCUPANT (task review Critical, fix round). `useDockTop()` answers the
-  // DOCK BAND's first row, not the composer's — whenever a `TaskPanel`, the live-turn spinner/retry/
-  // compaction row, or a hoisted suggestion palette paints above the composer inside `dock` (ChatApp.tsx),
-  // the composer's TRUE screen row is that published row plus however many rows the earlier occupant took,
-  // which this arithmetic cannot see (`ChatApp` builds `dock`; each occupant's own painted height is that
-  // occupant's business, not threaded through). Measured: `FullscreenFrame`'s region does self-correct by
-  // shrinking to absorb SOME of a taller dock, but only up to its own floor — once the dock outgrows what
-  // the region still has to give back (a live turn plus a multi-line draft is enough), `dockTop` goes stale
-  // and a click resolves against a DIFFERENT, still-valid logical line rather than failing safe.
-  //   `dockCrowded` is that "another occupant is above me" fact, threaded from `ChatApp` (the palette is the
-  // one exception — `hoisted` below already answers it locally, so it isn't duplicated as a prop). ORIGIN
-  // GOES NOT-ADDRESSABLE (0) rather than attempting the arithmetic anyway — the same "computed constant,
-  // degrade to 0" contract `RegionTopContext`'s own header states, which the pre-fix code claimed to follow
-  // and did not hold to in this one case. THE COST, recorded: canon repositions the caret correctly during a
-  // busy turn or an open task panel (occupant-height accounting, R1 §2.6's general case); ccx v1 defers that
-  // and a click during those states is simply refused rather than silently wrong — the follow-up is threading
-  // each occupant's own painted row count into this arithmetic instead of a single crowded/not flag.
+  // F10 S1 — CLICK-TO-CARET'S ORIGIN, COMPUTED FROM BELOW ────────────────────────────────────────────────
+  // F9 published it from `useDockTop()` — the DOCK BAND's first row — plus the composer's own chrome, and
+  // therefore had to refuse whenever anything else painted above the composer inside `dock` (`dockCrowded`).
+  // Canon refuses nothing: `CCp` (L200134-200163) hit-tests a layout tree and recomputes each handler's own
+  // local row, and the composer handler's only early return is the reverse-search flag (L606604) — a busy
+  // turn repositions the caret normally, spinner and task panel painted above it. ccx has no layout tree,
+  // but it does not need one: the dock is BOTTOM-ANCHORED (FullscreenFrame.tsx:315-317), so every term
+  // between the frame's last row and the buffer's last row is either the frame's own (`useDockBottom`), the
+  // app's own (`footerRows`, the SAME call `dockDialogRows` makes so the two cannot disagree) or this
+  // component's own. No occupant ABOVE the composer appears in the arithmetic at all, which is the property
+  // the F9 comments wanted and could not get from a term-by-term sum — `dockDialogRows` is the proof, still
+  // charging a 2-row `CompactionRow` one row today.
+  //   BOTH `useDockTop()` AND THE WATCHDOG BEHIND `useDockBottom()` ARE MEASURED VALUES — `FullscreenFrame`
+  // only refreshes either one from its OWN re-render, which a purely composer-local `setState` never causes
+  // (React does not re-render an ancestor because a descendant's local state changed; see the frame's own
+  // header and `:29-36`). Left alone, that means EITHER term can go stale the moment the draft grows with no
+  // other occupant and no ChatApp-level state change alongside it — measured, on this exact formula, before
+  // `paintedRows` (above) was wired into `onFooterState`'s deps: a three-line idle draft, or a draft that
+  // pushed an already-tight task panel over its cap, both resolved against a frozen, one-row-composer
+  // geometry. `paintedRows` riding that existing composer→ChatApp channel is what closes the gap: every
+  // change to this component's own painted height now reaches `ChatApp` as a `setState`, which is what
+  // actually re-renders `FullscreenFrame` and lets its measurement effect (and the watchdog beside it)
+  // catch up — so by the time `bufferTopRow` below reads `dockTop`/`dockBottom`, both are current for
+  // whatever the LAST render committed, not stale from before this render's own growth.
+  //   THE REFUSAL IS STILL DUAL. `bufferTop`/`composerTop` below is arithmetic this component can always
+  // get right on its own (dockBottom, footerRows, its own `paintedRows`); `dockTop` is the sanity floor for
+  // a composer whose own top would sit above the region's own, and the watchdog is co-occupants (a task
+  // panel, the live-turn spinner) outgrowing the whole band — both real terms, now current rather than
+  // approximated. `hoisted` stays: the palette is composer-local growth into a band this component does not
+  // own, so it is folded in directly rather than threaded through either measured term.
   const dockTop = useDockTop();
-  const originExact = fullscreen && dockTop > 0 && !dockCrowded && !hoisted;
-  const bufferTopRow = originExact ? dockTop + (waitingForPermission ? 2 : 0) + 1 : 0;
+  const dockBottom = useDockBottom();
+  const bufferTopRow = fullscreen ? composerOriginRow({
+    dockTop, dockBottom, footerRows, inlineSearchOpen: search.searching,
+    waitingForPermission: !!waitingForPermission, paletteHoisted: hoisted !== null,
+    bufferPhysicalRows: paintedRows,
+  }) : 0;
   const caretAt = useCallback((col: number, row: number): boolean => {
     if (bufferTopRow <= 0) return false;
     const found = caretFromLocalPosition(stateRef.current.lines, innerWidth, row - bufferTopRow, col - leftInset);
