@@ -69,7 +69,7 @@ import { initialEditorState, type EditorState } from "./editor.js";
 import { pushHistory } from "./editorHistory.js";
 import { composerMode } from "./promptMode.js";
 import type { HistEntry } from "./historySearch.js";
-import { isEditableQueueEntry } from "./queue.js";
+import { isEditableQueueEntry, type QueueEntry } from "./queue.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
@@ -102,7 +102,7 @@ import { savePrefs as realSavePrefs } from "./prefs.js";
 import { resolveTerminalTitle, type TerminalTitle } from "./terminalTitle.js";
 import type { ProgressBar } from "./progressBar.js";
 import { suggestionText } from "./suggester.js";
-import type { RenderItem } from "./toolRenderer.js";
+import { queuedOwnerKey, type RenderItem } from "./toolRenderer.js";
 import type { RenderLine } from "./render.js";
 
 /** The rewind hold — the one surface in the tree with no keys of its own. A confirmed rewind is a multi-second
@@ -117,6 +117,18 @@ import type { RenderLine } from "./render.js";
 const QUEUE_PAD = 2;
 /** The same two columns as a string — D14 folds them into the line rather than into a Box (see `queuedItems`). */
 const QUEUE_INSET = " ".repeat(QUEUE_PAD);
+/** The queued-prompt tier of the fullscreen document (F10 T-HOVER, extracted so the producer matrix
+ *  (`test/tui/hover-owner.test.tsx`) runs the production code rather than a copy of it). One hover unit
+ *  PER QUEUED ENTRY: a queued prompt is one user message however many rows `userEchoLines` wrapped it
+ *  into. KEYED ON `q.id`, NOT ON `i` (r3 — Spec-drift 9): the queue's head drain pops slot 0 and shifts
+ *  the rest down one slot (`useChat.ts`'s `drainNext`, `q.slice(1)`), so an index key is a key the
+ *  survivors INHERIT — and the stale-hover clear only asks whether the hovered key is still painted
+ *  (`FullscreenViewport.tsx`), which after a drain it is, on a different prompt. Same reason the item id
+ *  is minted from `q.id` too. */
+export function queuedTranscriptItems(entries: readonly QueueEntry[], width: number, inset: string): readonly RenderItem[] {
+  return entries.flatMap((q) => userEchoLines(q.value, { width })
+    .map((l, j) => ({ kind: "line" as const, id: `queued:${q.id}:${j}`, ownerKey: queuedOwnerKey(q.id), line: indentRenderLine(l, inset) })));
+}
 /** WAVE C TASK 2 — the Esc-Esc rewind arm's queue entry. Both halves are ccx's, because the gesture is ccx's
  *  (upstream's second Esc clears the draft; the composer owns that arm and upstream's own
  *  `escape-again-to-clear` key with it). `ESC_ARM_MS` is the arm window itself, so the entry and the arm it
@@ -1392,10 +1404,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   ONE ITEM PER ROW, which is what `renderItemHeight` needs to be trusted: `userEchoLines` has already
   // wrapped to `queueWidth`, so every line it returns is exactly one physical row.
   const queuedItems: readonly RenderItem[] = useMemo(
-    () => (fullscreen
-      ? state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth })
-          .map((l, j) => ({ kind: "line" as const, id: `queued:${i}:${j}`, line: indentRenderLine(l, QUEUE_INSET) })))
-      : EMPTY_ITEMS),
+    () => (fullscreen ? queuedTranscriptItems(state.queue, queueWidth, QUEUE_INSET) : EMPTY_ITEMS),
     [fullscreen, state.queue, queueWidth]);
   // ── THE REGION'S TWO OCCUPANTS ARE DIFFERENT COMPONENTS, AND ONLY ONE OF THEM MAY COME AND GO ────────────
   // (T15 fix round I2, as the T17 fix round below amends it — read both, in this order.)
@@ -1466,7 +1475,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
         // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
         // where the overlay never occludes it (grounding §L2.6). The classic arm above keeps the trade.
-        : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} hitmapRef={hitmapRef} onWheelTick={discardTap} />)
+        : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} streamOwnerKey={state.streamOwnerKey} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} hitmapRef={hitmapRef} onWheelTick={discardTap} />)
       : null}
   </>;
   // ── FSW TASK 13 — WHICH OF CANON'S TWO OVERLAY MECHANISMS A SURFACE GETS ──────────────────────────────
@@ -1808,7 +1817,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       {/* FSW T14 / D14: fullscreen renders these at the viewport's tail instead (`queuedItems` above). */}
       {state.queue.length > 0 && !paneOwned && !fullscreen ? (
         <Box flexDirection="column" paddingX={QUEUE_PAD}>
-          {state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
+          {state.queue.flatMap((q) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${q.id}:${j}`} l={l} />))}
         </Box>
       ) : null}
       {/* The inline slot: below everything the transcript owns, directly above the composer. It is rendered

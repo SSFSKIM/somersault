@@ -64,13 +64,22 @@ const HINT_MAX_LINES = 10;
  *  `groupItems` emits for the same `foldAnchor` while closed (the two never coexist for one anchor). Canon's
  *  hover provider is `hovered && !expanded` (bundle L562783): an already-expanded member must not un-dim on
  *  hover, and `foldAnchor` alone cannot say which case a row is in, since both wear it. Like `foldAnchor` it
- *  must survive `wrapItems` — it does, for the same reason: every `wrapOne` arm spreads the source item. */
+ *  must survive `wrapItems` — it does, for the same reason: every `wrapOne` arm spreads the source item.
+ *
+ *  `ownerKey` (F10 T-HOVER, H1) is the HOVER unit — coarser than `id` on purpose. Canon's hover unit is one
+ *  whole SDK message (`K6w` L562778-562784, one `hoveredKey` at L563004), not the per-line/per-call identity
+ *  `id` mints; a hover consumer compares `ownerKey ?? sourceId(id)` (`mouse/hitmap.ts`'s `HitRow.ownerKey`).
+ *  OPTIONAL AT THE TYPE LEVEL ONLY — a type-level accommodation for a non-transcript caller (a dialog, the
+ *  markdown renderer, PlanDialog) that legitimately IS its own hover unit, never a rollout license for a
+ *  transcript producer: `test/tui/hover-owner.test.tsx`'s producer matrix fails a transcript producer that
+ *  omits it, not just a typecheck. Like `foldAnchor`/`expanded` it must survive `wrapItems` — it does, for
+ *  the same reason: every `wrapOne` arm spreads the source item. */
 export type RenderItem =
-  | { kind: "line"; id: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean }
+  | { kind: "line"; id: string; ownerKey?: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean }
   // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
   // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
-  | { kind: "gutter-block"; id: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean };
+  | { kind: "gutter-block"; id: string; ownerKey?: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
  *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
@@ -296,7 +305,7 @@ function nestedItems(children: readonly ToolEvent[], options: ProjectionOptions,
  *  very `⎿` gutter component a tool result body uses. That includes the `Done (…)` row, which wraps the
  *  synthetic assistant message with `shouldShowDot:!1`, i.e. the bullet is explicitly SUPPRESSED. (Census
  *  01#153 read that row as a `⏺` bulleted line; direct bundle read corrects it.) */
-const agentGutter = (id: string, body: readonly RenderLine[]): RenderItem => ({ kind: "gutter-block", id, gutter: TOOL_RESULT_GUTTER, body });
+const agentGutter = (id: string, ownerKey: string, body: readonly RenderLine[]): RenderItem => ({ kind: "gutter-block", id, ownerKey, gutter: TOOL_RESULT_GUTTER, body });
 const segmented = (segments: readonly Segment[]): RenderLine => ({ text: segments.map((segment) => segment.text).join(""), segments: [...segments] });
 /** `Cloud agent launched` + a plain space + the dim `· {taskId} · {sessionUrl}` (429641). A field the sidecar
  *  did not carry is simply absent from the tail rather than printed as `undefined`. */
@@ -309,10 +318,10 @@ function cloudLaunchedLine(event: ToolEvent): RenderLine {
 function agentProgressItems(event: ToolEvent, options: ProjectionOptions): readonly RenderItem[] {
   const children = agentChildren(options.toolEvents ?? [], event.id);
   // Upstream `KVp` (429822): nothing has come back yet, so the block is a placeholder, not an empty list.
-  if (children.length === 0) return [agentGutter(`${event.id}:progress`, [{ text: AGENT_INITIALIZING, dim: true }])];
+  if (children.length === 0) return [agentGutter(`${event.id}:progress`, toolOwnerKey(event.id), [{ text: AGENT_INITIALIZING, dim: true }])];
   const shown = children.slice(-AGENT_PROGRESS_ROWS), hidden = children.length - shown.length;
   const items = nestedItems(shown, options, /* linesOnly */ true);
-  if (hidden > 0) items.push({ kind: "line", id: `${event.id}:progress-hidden`, line: indentRenderLine(hiddenToolUsesLine(hidden, resolveExpandHint(options.expandHint)), AGENT_INDENT) });
+  if (hidden > 0) items.push({ kind: "line", id: `${event.id}:progress-hidden`, ownerKey: toolOwnerKey(event.id), line: indentRenderLine(hiddenToolUsesLine(hidden, resolveExpandHint(options.expandHint)), AGENT_INDENT) });
   return items;
 }
 /** `undefined` means `Vha`'s `return null` (429649): a terminal shape it does not recognise paints NO typed
@@ -320,20 +329,20 @@ function agentProgressItems(event: ToolEvent, options: ProjectionOptions): reado
  *  same nothing — `Done (0 tool uses)` is a number we do not have, and Static would freeze the lie on screen. */
 function agentTerminalItems(event: ToolEvent, options: ProjectionOptions): readonly RenderItem[] | undefined {
   const status = sidecarStatus(event);
-  if (status === "remote_launched") return [agentGutter(`${event.id}:launched`, [cloudLaunchedLine(event)])];
+  if (status === "remote_launched") return [agentGutter(`${event.id}:launched`, toolOwnerKey(event.id), [cloudLaunchedLine(event)])];
   const children = agentChildren(options.toolEvents ?? [], event.id);
   const totals = agentTotals(event, options.agentMeta?.get(event.id), children, options.now);
   // The hint (`Ug`, 240583440) returns null inside the transcript/verbose contexts, so it is compact-only —
   // the same rule `foundRow` follows, and the detail projections ARE that verbose form (R6.3).
   const compact = options.projection === "compact";
   if (status === "async_launched" && totals.source === "derived")
-    return [agentGutter(`${event.id}:launched`, [{ text: compact ? `${BACKGROUNDED_TEXT}${backgroundedHint(options)}` : BACKGROUNDED_TEXT }])];
+    return [agentGutter(`${event.id}:launched`, toolOwnerKey(event.id), [{ text: compact ? `${BACKGROUNDED_TEXT}${backgroundedHint(options)}` : BACKGROUNDED_TEXT }])];
   if (totals.source === "derived" && children.length === 0) return undefined;
-  const items: RenderItem[] = [agentGutter(`${event.id}:done`, [{ text: agentDoneText(totals) }])];
+  const items: RenderItem[] = [agentGutter(`${event.id}:done`, toolOwnerKey(event.id), [{ text: agentDoneText(totals) }])];
   // The hint is a SIBLING of the block, two literal spaces then `(ctrl+o to expand)` (429654).
   // `!i && <Text dimColor>["  ", <Bg/>]</Text>` (429654). `Bg` returning null takes the whole row with it,
   // which is exactly what an unbound `app:toggleTranscript` must do here: no offer, not an empty indent.
-  if (compact) { const hint = resolveExpandHint(options.expandHint); return hint === "" ? items : [...items, { kind: "line", id: `${event.id}:done-hint`, line: { text: `  ${hint}`, dim: true } }]; }
+  if (compact) { const hint = resolveExpandHint(options.expandHint); return hint === "" ? items : [...items, { kind: "line", id: `${event.id}:done-hint`, ownerKey: toolOwnerKey(event.id), line: { text: `  ${hint}`, dim: true } }]; }
   // What ctrl+o expands TO: the nested rows the compact unit folds away, with their own typed result rows.
   return [...items, ...nestedItems(children, options, /* linesOnly */ false)];
 }
@@ -358,18 +367,18 @@ function agentLastToolInfo(children: readonly ToolEvent[], options: ProjectionOp
  *  with the description because every member shares one type; otherwise the type leads and the description
  *  is parenthesized after it. The whole row is `dimColor` until the agent resolves, which costs the label its
  *  bold exactly as it does upstream (a `<Text dimColor bold>` never emits `\x1b[1m` — F1 Task 1). */
-function agentBatchMemberItems(member: AgentBatchMember, hideType: boolean, isLast: boolean, part: (name: string) => string, options: ProjectionOptions): RenderItem[] {
+function agentBatchMemberItems(member: AgentBatchMember, hideType: boolean, isLast: boolean, part: (name: string) => string, ownerOf: (eventId: string) => string, options: ProjectionOptions): RenderItem[] {
   const async = member.isAsync && member.resolved, dim = member.resolved ? {} : { dim: true as const };
   const label = hideType ? member.description ?? member.agentType : member.agentType;
   const row: Segment[] = [...treeSegments(isLast ? "└" : "├"), { text: label, bold: true, ...dim }];
   if (!hideType && member.description !== undefined) row.push({ text: ` (${member.description})`, ...dim });
   const children = agentChildren(options.toolEvents ?? [], member.event.id);
   if (!async) row.push({ text: agentBatchTotalsText(agentTotals(member.event, options.agentMeta?.get(member.event.id), children, options.now)), ...dim });
-  const items: RenderItem[] = [{ kind: "line", id: part(`agent:${member.event.id}`), line: segmented(row) }];
+  const items: RenderItem[] = [{ kind: "line", id: part(`agent:${member.event.id}`), ownerKey: ownerOf(member.event.id), line: segmented(row) }];
   if (async) return items;
   const status = member.resolved ? AGENT_BATCH_DONE : agentLastToolInfo(children, options) ?? AGENT_INITIALIZING;
   const gutter: Segment[] = [...treeSegments(isLast ? "" : "│"), { text: `⎿  ${status}`, dim: true }];
-  return [...items, { kind: "line", id: part(`agent:${member.event.id}:status`), line: segmented(gutter) }];
+  return [...items, { kind: "line", id: part(`agent:${member.event.id}:status`), ownerKey: ownerOf(member.event.id), line: segmented(gutter) }];
 }
 /** The whole unit. `form` is the append-only discipline made visible: the PENDING copy carries its own id
  *  part so the eventual published copy — same membership, same text — cannot collide with it in Static's
@@ -390,8 +399,12 @@ function agentBatchItems(batch: AgentBatch, form: "published" | "pending", optio
   // Task 7's `Done (…)` sibling hint follows, and the detail projections ARE that verbose form (R6.3).
   if (header.expand && options.projection === "compact" && resolveExpandHint(options.expandHint) !== "") segments.push({ text: " " }, { text: resolveExpandHint(options.expandHint), dim: true, color: grey });
   const part = (name: string) => agentBatchItemId(batch.memberIds, form === "pending" ? `pending-${name}` : name);
-  const items: RenderItem[] = [{ kind: "line", id: part("header"), line: segmented(segments) }];
-  view.members.forEach((member, index) => items.push(...agentBatchMemberItems(member, view.hideType, index === view.members.length - 1, part, options)));
+  // A batch member is one Task CALL, and this file already treats a call as the hover unit even though
+  // several calls ride one assistant message (`:448`/`:452`/`:466`, tool header/result). So a member's row
+  // and its `⎿` status row are one unit, the header is another, and a three-member batch is four units.
+  const ownerOf = (eventId: string) => toolOwnerKey(eventId, form === "pending" ? "pending" : undefined);
+  const items: RenderItem[] = [{ kind: "line", id: part("header"), ownerKey: agentBatchOwnerKey(batch.memberIds, form), line: segmented(segments) }];
+  view.members.forEach((member, index) => items.push(...agentBatchMemberItems(member, view.hideType, index === view.members.length - 1, part, ownerOf, options)));
   return items;
 }
 
@@ -412,7 +425,7 @@ function backgroundHintItem(event: ToolEvent, options: ProjectionOptions): Rende
   // (t9 review: without it the row flashes "to run in background" on a call already in the background).
   if (isRecord(event.input) && event.input.run_in_background === true) return undefined;
   if (options.bashHint === undefined || options.agentMeta?.get(event.id)?.taskType !== "local_bash") return undefined;
-  return { kind: "line", id: `${event.id}:background-hint`, line: { text: `${BACKGROUND_HINT_INDENT}${options.bashHint}`, dim: true } };
+  return { kind: "line", id: `${event.id}:background-hint`, ownerKey: toolOwnerKey(event.id), line: { text: `${BACKGROUND_HINT_INDENT}${options.bashHint}`, dim: true } };
 }
 
 /** One retained call → its renderable items. A `suppressed` tool projects to nothing — driven by the status Task 1's
@@ -445,11 +458,11 @@ function poppedOnErrorItems(event: ToolEvent, options: ProjectionOptions): reado
  *  members are whatever they happen to be, and colouring a perfectly ordinary ToolSearch red would invent a
  *  failure — so that caller passes the status the call's own result earned. */
 function suppressedHeaderItems(event: ToolEvent, status: ToolStatus, options: ProjectionOptions): readonly RenderItem[] {
-  return [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, status, options), wrap: "truncate-end" }];
+  return [{ kind: "line", id: `${event.id}:call`, ownerKey: toolOwnerKey(event.id), line: headerLine(event, status, options), wrap: "truncate-end" }];
 }
 function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
-  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
+  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, ownerKey: toolOwnerKey(event.id), line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
   if (normalized.status === "running") {
     const hint = backgroundHintItem(event, options);
     if (hint !== undefined) items.push(hint);
@@ -463,7 +476,7 @@ function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, opti
     if (agent !== undefined) return [...items, ...agent];
   }
   const body = resultBody(event, normalized, options);
-  if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, gutter: TOOL_RESULT_GUTTER, body });
+  if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, ownerKey: toolOwnerKey(event.id), gutter: TOOL_RESULT_GUTTER, body });
   return items;
 }
 
@@ -492,6 +505,34 @@ export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pen
  *  Membership here never grows (a batch is one assistant message, complete the moment it is parsed), so the
  *  id is stable from the first pending frame to the published one; only the `part` prefix separates them. */
 export const agentBatchItemId = (memberIds: readonly string[], part: string): string => `agents:${memberIds.join(",")}:${part}`;
+
+// ── F10 T-HOVER H1: the seven owner minters, beside the id minters they mirror ────────────────────────────
+// One home for the owner namespace — even though `streamOwnerKey`/`queuedOwnerKey` are called from other
+// modules (`streamingItems.ts`, `ChatApp.tsx`) — is what keeps two producers from inventing colliding
+// prefixes. Every transcript producer sets `ownerKey` beside `id`; the matrix (`test/tui/hover-owner.test.tsx`)
+// is what holds that discipline over time rather than the type alone.
+export const sdkOwnerKey = (base: string): string => `sdk:${base}`;
+export const localOwnerKey = (identity: string): string => `local:${identity}`;
+export const toolOwnerKey = (toolUseId: string, resultSequence?: number | "pending"): string =>
+  resultSequence === undefined ? `tool:${toolUseId}` : `tool:${toolUseId}:${resultSequence}`;
+export const groupOwnerKey = (memberIds: readonly string[]): string => `group:${memberIds.join(",")}`;
+/** An agent BATCH's header row. The batch's identity is its membership, exactly as `agentBatchItemId` already
+ *  decided; `form` is carried for the same reason the id part carries it — a pending copy and the published
+ *  copy of one batch can both be on screen during the hand-off, and two hover units that compare equal would
+ *  light both up. Its MEMBERS do not use this key — a batch member's row and its `⎿` status row own theirs
+ *  through `toolOwnerKey`, exactly as an ordinary tool call's header and result do. */
+export const agentBatchOwnerKey = (memberIds: readonly string[], form: "published" | "pending"): string =>
+  form === "pending" ? `agents:${memberIds.join(",")}:pending` : `agents:${memberIds.join(",")}`;
+/** The live streaming tier. `messageKey` is `LiveTurn.messageKey()` — the API message currently on the wire.
+ *  NOT the settled item's key: the settled row is keyed on `entry.identity` (the SDK message uuid,
+ *  `sdkEntryBase`) and the wire's `message.id` is a different id space, so hover does not survive the settle.
+ *  It does not need to — the region holds at most one message at a time (`streamingItems.ts`'s own header). */
+export const streamOwnerKey = (messageKey: string): string => `stream:${messageKey}`;
+/** One queued prompt, keyed on the ENTRY's own identity — never on its position in the array (r3). A hover
+ *  key must be stable across every mutation that leaves its subject on screen, and the queue's head drain
+ *  (`useChat.ts`'s `drainNext`, `q.slice(1)`) shifts every survivor down one slot while the pointer has not
+ *  moved. An index key is a key the survivors INHERIT; `q.id` is not. */
+export const queuedOwnerKey = (entryId: string): string => `queued:${entryId}`;
 
 /** PROJECTION IDENTITY ONLY — never append/dedup. Task 1's `appendSdk` deliberately refuses to hash a
  *  payload (two equal-looking calls can be genuinely distinct turns), but a retained entry with no
@@ -614,14 +655,14 @@ function nestedTeammateItems(message: Record<string, unknown>, options: Projecti
   if (texts.length === 0) return [];
   const agentId = String(message.parent_tool_use_id), name = teammateName(agentId, options);
   if (options.projection === "detail-collapsed")
-    return [{ kind: "line", id: sdkItemId(id, "teammate:collapsed"), line: teammateCollapsedLine(name, texts.length, teammateHint(options)) }];
+    return [{ kind: "line", id: sdkItemId(id, "teammate:collapsed"), ownerKey: sdkOwnerKey(id), line: teammateCollapsedLine(name, texts.length, teammateHint(options)) }];
   const color = subagentColor(teammateColorIndex(agentId, options));
   const items: RenderItem[] = [];
   texts.forEach((text, index) => {
     // `block:<i>:<line>` for `projectMessageEntry`'s reason: one markdown block renders many lines and two
     // items sharing an id publish once into Static, losing the rest.
     for (const [lineIndex, line] of teammateMessageLines(name, color, text, { width: options.columns }).entries())
-      items.push({ kind: "line", id: sdkItemId(id, `teammate:${index}:${lineIndex}`), line });
+      items.push({ kind: "line", id: sdkItemId(id, `teammate:${index}:${lineIndex}`), ownerKey: sdkOwnerKey(id), line });
   });
   return items;
 }
@@ -654,7 +695,7 @@ function agentLifecycleItem(event: ToolEvent, normalized: NormalizedToolResult, 
   // `failed: Error: boom` stutters where upstream's `failureReason` is a bare sentence off the notification.
   const failure = idleReason === "failed" ? normalized.flatText || normalized.output : undefined;
   const line = teammateLifecycleLine(teammateName(event.id, options), subagentColor(teammateColorIndex(event.id, options)), idleReason, failure, options.platform);
-  return { kind: "line", id: `${event.id}:teammate-lifecycle`, line };
+  return { kind: "line", id: `${event.id}:teammate-lifecycle`, ownerKey: toolOwnerKey(event.id), line };
 }
 
 /** The sole non-tool completed-SDK adapter: it reuses render.ts for assistant/user text and every other
@@ -694,7 +735,7 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
     for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, { ...renderOpts, imageOrdinal: imageOrdinalAt[index] }).entries())
       // `block:<i>:<line>` rather than the bare `block:<i>`: one markdown block legitimately renders many
       // lines, and two items sharing an id would publish once and lose the rest.
-      items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), line });
+      items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), ownerKey: sdkOwnerKey(id), line });
   });
   return items;
 }
@@ -728,7 +769,7 @@ export function projectLocalEvent(entry: LocalEntry, options?: ProjectionOptions
   if (!transcriptMode && entry.event.data?.species === SYSTEM_INFO_SPECIES) return [];
   const lines = entry.event.data?.species === COMPACT_SUMMARY_SPECIES
     ? compactSummaryLines(transcriptMode ? "" : resolveExpandHint(options?.expandHint), options?.platform) : entry.event.lines;
-  return lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), line }));
+  return lines.map((line, index) => ({ kind: "line" as const, id: localItemId(entry.identity, index), ownerKey: localOwnerKey(entry.identity), line }));
 }
 
 /** Re-key one call's items onto its ANCHOR (the call id + the sequence it publishes at), which is what keeps
@@ -736,7 +777,8 @@ export function projectLocalEvent(entry: LocalEntry, options?: ProjectionOptions
  *  gutter-block the body; anything beyond that (Task 7's Agent rows) takes its ORDINAL, because the id is
  *  Static's append-once key and a collision there silently drops a row. */
 const reid = (items: readonly RenderItem[], id: string, sequence: number | "pending"): RenderItem[] =>
-  items.map((item, index) => ({ ...item, id: toolItemId(id, sequence, index === 0 ? "header" : index === 1 && item.kind === "gutter-block" ? "body" : `part:${index}`) }));
+  items.map((item, index) => ({ ...item, ownerKey: toolOwnerKey(id, sequence),
+    id: toolItemId(id, sequence, index === 0 ? "header" : index === 1 && item.kind === "gutter-block" ? "body" : `part:${index}`) }));
 
 // ── F1 Task 5c: the DEFAULT view's collapsed group row ──────────────────────────────────────────────────
 // Task 5b's pure model decides WHAT a run collapses to; everything below decides how that reads on screen.
@@ -908,7 +950,7 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
     ? pending.startedAt(group.newestInFlightId) : undefined;
   const running = anchorMs === undefined ? undefined : options.now - anchorMs;
   const elapsed = running !== undefined && running >= ELAPSED_TICKER_MIN_MS ? ` · ${formatDuration(running)}` : undefined;
-  const items: RenderItem[] = [{ kind: "line", id, line: groupRowLine(counts, active, options, elapsed), ...tag }];
+  const items: RenderItem[] = [{ kind: "line", id, ownerKey: groupOwnerKey(group.memberIds), line: groupRowLine(counts, active, options, elapsed), ...tag }];
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
   if (active) {
     const hint = pending === undefined
@@ -920,7 +962,7 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
       // the ordinary hint (step 6) is neither clamped nor italic, just split on its own newlines.
       const text = hint.italic ? clampHintText(hint.text, options.columns - GROUP_HINT_GUTTER.length, HINT_MAX_LINES) : hint.text;
       const body = text.split("\n").map((line) => ({ text: line, dim: true, color: grey, ...(hint.italic ? { italic: true } : {}) }));
-      items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body, ...tag });
+      items.push({ kind: "gutter-block", id: toolGroupItemId(group.memberIds, "pending-hint"), ownerKey: groupOwnerKey(group.memberIds), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body, ...tag });
     }
   }
   return items;

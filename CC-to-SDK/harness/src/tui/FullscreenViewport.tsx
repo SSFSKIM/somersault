@@ -177,6 +177,10 @@ export interface FullscreenViewportProps {
    *  the only thing that decides what fits. Pre-built by ChatApp (it owns `userEchoLines`' width and the
    *  queued rule's inset); empty in classic and in every test that does not care. */
   queuedItems?: readonly RenderItem[];
+  /** F10 T-HOVER — the streaming tier's hover unit for THIS `streaming` snapshot (`LiveTurn.messageKey()`,
+   *  read once per snapshot by `useChat`). Defaulted so every existing mount is unaffected; `ChatApp` passes
+   *  the live value on the one mount whose output is hovered. */
+  streamOwnerKey?: string;
   /** The region's width — every tier is wrapped to it before the window is cut (T17), so a slice row is a
    *  painted row. The region is full-bleed, so this is the terminal's. */
   columns: number;
@@ -237,10 +241,10 @@ export interface FullscreenViewportProps {
  *  defensively `stripSgr`'d again even though every producer already hands `RenderLine.text` plain
  *  (`toolRenderer.tsx` strips a `preStyled` run at publish) — cheap, idempotent, and the honest reading of
  *  "plain text via the existing stripSgr" rather than a second contract nothing enforces. */
-const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, columns: number): HitRow => {
+const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, ownerKey: string, columns: number): HitRow => {
   const gutterWidth = l.gutter ? stringWidth(l.gutter.text) : 0;
   const linkRanges = linkRangesOf(l);
-  return { itemKey, anchor, kind: "line", gutterWidth, text: stripSgr(l.text), softWrap: l.continuation === true ? "continuation" : "hard",
+  return { itemKey, ownerKey, anchor, kind: "line", gutterWidth, text: stripSgr(l.text), softWrap: l.continuation === true ? "continuation" : "hard",
     width: Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
 };
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
@@ -256,10 +260,14 @@ export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): 
   const out: HitRow[] = [];
   for (const { item, start, end } of slices) {
     const itemKey = sourceId(item.id);
-    if (item.kind === "line") { out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, columns)); continue; }
+    // The spec's `ownerKey ?? sourceId(id)`, resolved once here rather than by every consumer a second time —
+    // `item.ownerKey` is absent only for a non-transcript caller (this array is always a transcript tier), so
+    // in practice this is always the producer's own key, never the fallback.
+    const ownerKey = item.ownerKey ?? itemKey;
+    if (item.kind === "line") { out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, ownerKey, columns)); continue; }
     for (let row = start; row < end; row++) {
       const body = item.body[row]!;
-      out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, columns), kind: "gutter-block",
+      out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, ownerKey, columns), kind: "gutter-block",
         gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
     }
   }
@@ -282,8 +290,11 @@ const NO_HIT_ROWS: readonly HitRow[] = [];
 /** A stable empty lookup for "no selection this frame" — F9 T-MOUSE Task 6, the same "derive what is
  *  consumed" discipline `NO_HIT_ROWS` states: a `new Map()` per idle render would be free but pointless. */
 const EMPTY_SPAN_MAP: ReadonlyMap<number, RowSpan> = new Map();
+/** F10 T-HOVER — the jump pill's hover key. Not an item id: the pill is not in the document, and by
+ *  construction (`body = height - 1`, the pill painted after the slices) it has no `HitRow` either. */
+export const PILL_HOVER_KEY = "#jump-pill";
 
-export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, onWheelTick, scrollRef, hitmapRef }: FullscreenViewportProps) {
+export function FullscreenViewport({ finalizedItems, pendingItems, streaming, streamOwnerKey, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, onWheelTick, scrollRef, hitmapRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
   const regionTop = useRegionTop();
   const height = Math.max(0, rows ?? granted);
@@ -295,7 +306,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // a settled frame allocates nothing here either.
   const finalRows = useMemo(() => wrapItemsToWidth(finalizedItems, columns), [finalizedItems, columns]);
   const pendingRows = useMemo(() => wrapItemsToWidth(pendingItems, columns), [pendingItems, columns]);
-  const streamRows = useMemo(() => streamingItems(streaming, columns), [streaming, columns]);
+  const streamRows = useMemo(() => (streamOwnerKey === undefined ? streamingItems(streaming, columns) : streamingItems(streaming, columns, streamOwnerKey)), [streaming, columns, streamOwnerKey]);
   const queuedRows = useMemo(() => wrapItemsToWidth(queuedItems, columns), [queuedItems, columns]);
   const items = useMemo(() => [...finalRows, ...pendingRows, ...streamRows, ...queuedRows], [finalRows, pendingRows, streamRows, queuedRows]);
   const total = useMemo(() => items.reduce((sum, item) => sum + renderItemHeight(item), 0), [items]);
@@ -330,7 +341,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   //   `top <= 0` IS THE RENDERER GATE (see the header): no frame, or the classic one, publishes no origin,
   // and then no cell on the screen belongs to anything. A row above or below the window indexes past the
   // array — the dock band, the park row, the blank tail and the jump pill's stolen row all land there.
-  const hit = useRef<{ top: number; rows: readonly HitRow[] }>({ top: 0, rows: [] });
+  const hit = useRef<{ top: number; rows: readonly HitRow[]; pillRow: number }>({ top: 0, rows: [], pillRow: 0 });
   const anchorAt = useCallback((col: number, row: number): string | undefined => {
     const { top, rows: painted } = hit.current;
     if (top <= 0) return undefined;
@@ -342,12 +353,16 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // nothing else in this render would otherwise change to reflect the pointer having moved, so this state
   // update IS the "targeted invalidation" the brief asks for: it re-renders this ONE component (a normal frame
   // paint this file already does on every content event), not the document, not `useChat`, not ChatApp's tree.
+  //   F10 T-HOVER: the key compared is the ROW's OWNER now (`item.ownerKey ?? sourceId(item.id)`, resolved
+  // once in `hitRowsOf`), not its `itemKey` — canon's hover unit is one whole SDK message, coarser than the
+  // per-line/per-call `itemKey` a later track addresses character offsets on.
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const hoverAt = useCallback((col: number, row: number): void => {
-    const { top, rows: painted } = hit.current;
+    const { top, rows: painted, pillRow } = hit.current;
     if (top <= 0) { setHoveredKey(null); return; }
+    if (pillRow > 0 && row === pillRow) { setHoveredKey(PILL_HOVER_KEY); return; }
     const at = painted[row - top];
-    setHoveredKey(at !== undefined && col >= 1 && col <= at.width ? at.itemKey : null);
+    setHoveredKey(at !== undefined && col >= 1 && col <= at.width ? at.ownerKey : null);
   }, []);
   const clearHover = useCallback(() => setHoveredKey(null), []);
 
@@ -504,13 +519,19 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // ONE PASS, TWO PRODUCTS: the rows below and the map of them. Derived from `slices` rather than re-sliced,
   // so the map is the paint by construction — including the row the pill takes, which `body` has already
   // removed from the window and which therefore has no entry to be clicked.
-  hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS };
+  //   PILL ROW, DETERMINISTIC RATHER THAN MEASURED (F10 T-HOVER): `showPill` is only true while the window is
+  // FULL (not sticky and not at the end, so there is content below), `body` is `height - 1` in exactly that
+  // case, and the pill paints directly after the slices — so its row is `regionTop + body` whenever it is up.
+  hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS, pillRow: showPill && regionTop > 0 ? regionTop + body : 0 };
   // F9 T-MOUSE Task 3 — a repaint that no longer paints the hovered cluster (it scrolled off, its fold state
-  // flipped, the document swapped under a session resume) must not leave a stale `itemKey` haunting a cell
-  // that now belongs to something else, or nothing. Checked against THIS render's own rows, never a stale
-  // copy, and applied DURING render for the same reason `settled`/`anchor` above are (:274) — an effect would
-  // paint one frame with a hover nothing on screen answers to before correcting itself.
-  if (hoveredKey !== null && !hit.current.rows.some((row) => row.itemKey === hoveredKey)) setHoveredKey(null);
+  // flipped, the document swapped under a session resume) must not leave a stale key haunting a cell that now
+  // belongs to something else, or nothing. Checked against THIS render's own rows, never a stale copy, and
+  // applied DURING render for the same reason `settled`/`anchor` above are (:274) — an effect would paint one
+  // frame with a hover nothing on screen answers to before correcting itself.
+  //   F10 T-HOVER: compared against OWNERS now, and the pill's own key is never cleared by "not a painted
+  // row" (it never is one) — only by the pill itself going away.
+  if (hoveredKey !== null && hoveredKey !== PILL_HOVER_KEY && !hit.current.rows.some((row) => row.ownerKey === hoveredKey)) setHoveredKey(null);
+  if (hoveredKey === PILL_HOVER_KEY && hit.current.pillRow === 0) setHoveredKey(null);
 
   // Final-review finding 7 — SELECTION STALENESS. Same "applied during render" discipline as the hover
   // check just above, for the same reason: an effect would paint one frame with a highlight (or a copy)
@@ -568,14 +589,20 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
       // L562783), not `hovered` alone — an already-expanded cluster member (`toolRenderer.tsx`'s
       // `expandedMemberItems`, which tags every item it produces `expanded: true`) must do nothing on hover,
       // dim included, whether or not THIS particular member happens to carry dim/banded content.
-      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && sourceId(s.item.id) === hoveredKey && s.item.expanded !== true}>
+      //   F10 T-HOVER: compared against the slice's OWN owner (`item.ownerKey ?? sourceId(item.id)`) rather
+      // than `sourceId(item.id)` alone — the hover unit is the whole message/call `ownerKey` names, not this
+      // one item, so every slice sharing that owner lights up together.
+      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && (s.item.ownerKey ?? sourceId(s.item.id)) === hoveredKey && s.item.expanded !== true}>
         <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} rowSelections={sliceSelections[i]} />
       </HoverContext.Provider>
     ))}
     {/* AMENDMENT 2: the pill names `v` exactly when `v` is registered above — one derivation, `showPill &&
         onDumpTranscript`, read twice, so the affordance and the key cannot drift apart. `editorDisplayName`
-        answers null with neither `$VISUAL` nor `$EDITOR` set, where canon prints its bare `open in editor`. */}
-    {showPill ? <JumpPill newRows={Math.max(0, total - stickyTotal.current)} columns={columns}
-      {...(onDumpTranscript ? { dumpEditor: editorDisplayName() ?? "editor" } : {})} /> : null}
+        answers null with neither `$VISUAL` nor `$EDITOR` set, where canon prints its bare `open in editor`.
+        F10 T-HOVER: the pill owns its own hover band now (`JumpPill.tsx`) — this Provider is its only wiring. */}
+    {showPill ? <HoverContext.Provider value={hoveredKey === PILL_HOVER_KEY}>
+      <JumpPill newRows={Math.max(0, total - stickyTotal.current)} columns={columns}
+        {...(onDumpTranscript ? { dumpEditor: editorDisplayName() ?? "editor" } : {})} />
+    </HoverContext.Provider> : null}
   </>;
 }

@@ -4,7 +4,7 @@ import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, osc8FileLink, osc8WebLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, groupOwnerKey, osc8FileLink, osc8WebLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, toolOwnerKey, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { FoldPendingState, stampToolStarts } from "../../src/tui/foldPendingState.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
@@ -309,7 +309,7 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     // The golden paints `  ⎿  src/app.ts` as ONE dim #999999 run — connector included, which is why the
     // gutter cells carry their own style here rather than staying plain text. `foldAnchor` (T8) is the
     // cluster this row belongs to: the hint block is part of the same clickable unit as the row above it.
-    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: [{ text: "src/app.ts", dim: true, color: grey }], foldAnchor: "read-1" });
+    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", ownerKey: groupOwnerKey(["read-1"]), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: [{ text: "src/app.ts", dim: true, color: grey }], foldAnchor: "read-1" });
     // R4.1: a single glyph BLINKING on a 600 ms period — glyph for one half, a bare 2-column gap for the other.
     const off = projectPending(doc, { ...context, now: 600 });
     expect((off[0] as { line: RenderLine }).line.text).toBe("  Reading 1 file… (ctrl+o to expand)");   // the glyph, not the box, blinks away
@@ -669,7 +669,7 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
     const grey = resolveThemeColor(themeTokens().inactive);
     const items = projectPending(doc, ctx());
     expect(items[1]).toEqual({
-      kind: "gutter-block", id: "group:read-1:pending-hint", gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true },
+      kind: "gutter-block", id: "group:read-1:pending-hint", ownerKey: groupOwnerKey(["read-1"]), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true },
       body: [{ text: "weighing the options", dim: true, color: grey, italic: true }], foldAnchor: "read-1",
     });
     clock.now = 2999;
@@ -975,7 +975,7 @@ describe("F3 Task 9 — the Bash background hint (LT20)", () => {
     const event = openBash();
     const items = renderToolEvent(event, running(event), { ...options, bashHint: hint, agentMeta: started("bash-1", "local_bash") });
     expect(items).toHaveLength(2);
-    expect(items[1]).toEqual({ kind: "line", id: "bash-1:background-hint", line: { text: "     (ctrl+b to run in background)", dim: true } });
+    expect(items[1]).toEqual({ kind: "line", id: "bash-1:background-hint", ownerKey: toolOwnerKey("bash-1"), line: { text: "     (ctrl+b to run in background)", dim: true } });
   });
 
   it("takes its text from the caller's LIVE keymap derivation, and renders nothing when the action is unbound", () => {
